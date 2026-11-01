@@ -106,10 +106,21 @@ platform jobs:
 
 - `TAURI_UPDATER_PUBKEY` (job environment; public)
 - `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (only the
-  `tauri build` step, never dependency installation or upload steps). Prebuild
-  runs earlier without them; `src-tauri/tauri.prebuilt.conf.json` replaces the
-  `beforeBuildCommand` hook so JavaScript builds do not rerun with the key.
-  Cargo build scripts inside `tauri build` still run in that environment.
+  step that writes updater signatures, never dependency installation or upload
+  steps). Prebuild runs earlier without them; `src-tauri/tauri.prebuilt.conf.json`
+  replaces the `beforeBuildCommand` hook so JavaScript builds do not rerun with
+  the key. On macOS and Linux that step is `tauri build`, whose Cargo build
+  scripts still run in that environment.
+
+Windows builds in two stages so the installer can package an
+Authenticode-signed executable (`CODE_SIGNING.md`): `tauri build --no-bundle`
+compiles without the key, `scripts/patch-bundle-type.mjs` writes the NSIS
+bundle type the bundler would otherwise patch in (the application offers updates
+only to NSIS installations), the executable is optionally signed, and
+`tauri bundle --bundles nsis --no-binary-patching` packages it and writes the
+updater signature with the key. When the installer is then Authenticode-signed,
+`tauri signer sign --app-version` recomputes the updater signature over the
+signed bytes, with the key, before staging verifies it.
 
 PR builds receive none of these secrets. Never embed a test public key in a
 production release.
@@ -220,7 +231,7 @@ from elsewhere, such as the shared OpenCode service, keep running.
 Commands (from the checkout, unless noted):
 
 ```text
-node --test packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs
+node --test packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs
 npm run typecheck --workspace @codenomad/ui
 cargo test --manifest-path packages/tauri-app/src-tauri/Cargo.toml --locked
 # From packages/tauri-app on Windows:

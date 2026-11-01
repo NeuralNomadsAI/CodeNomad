@@ -23,13 +23,25 @@ El ejecutable instalado y el servicio en ejecución pueden tener versiones disti
 | Recomendada | OpenCode **2.2.5** | Objetivo verificado, distinto del mínimo técnico. |
 | No verificada | Una versión más nueva o personalizada no validada por completo | No se rechaza simplemente por no estar probada; se comprueban los contratos API reales del servicio conectado. |
 
-También deben estar disponibles los contratos requeridos de sesiones, permisos, formularios, bandeja de entrada y entorno de sesión. La versión de un ejecutable no demuestra por sí sola que el servicio conectado los admita. Si la configuración inicial informa de un servicio en ejecución no compatible, selecciona/instala una CLI compatible y usa el reinicio explícito del servicio compartido cuando estés listo.
+El servicio conectado debe exponer los contratos requeridos de sesiones, permisos, formularios, bandeja de entrada y entorno de sesión. La programación nativa de Misiones también comprueba las API de programación, el paquete de plugin/proveedor y el ajuste efectivo `experimental.schedules`. La disponibilidad depende de esas capacidades utilizadas, también en versiones futuras compatibles. Si la configuración inicial informa de un servicio en ejecución no compatible, selecciona/instala una CLI compatible y usa el reinicio explícito del servicio compartido cuando estés listo.
 
 ## Equipo, WSL y ámbito del servicio compartido {#execution-host}
 
 En Windows, un ejecutable WSL seleccionado se ejecuta dentro de su distribución elegida. Instálalo/actualízalo allí y usa rutas que tengan sentido dentro de esa distribución. La conectividad WSL depende del reenvío de localhost de Windows. Una CLI de Windows y una CLI de WSL no son entornos de ejecución intercambiables.
 
 OpenCode es propietario de su registro global de servicio, sesiones, mensajes y base de datos. CodeNomad no crea una base de datos privada de OpenCode por ventana o proyecto. Cerrar una pestaña de proyecto cierra ese proyecto en CodeNomad; las sesiones siguen ejecutándose en OpenCode y vuelven a aparecer al reabrir el proyecto. CodeNomad nunca descarga las Locations nativas. Cerrar una ventana entera, salir o recargar conserva las conexiones de proyecto para restaurarlas; ni esas acciones ni el apagado del backend detienen el daemon compartido. Consulta [Proyectos](projects.md).
+
+## Mantener OpenCode iniciado {#service-supervision}
+
+Antes del primer inicio de Mission, **Mantener desactivado al iniciar la primera Mission** guarda un OFF explícito sin instalar antes la supervisión.
+
+En **Ajustes → OpenCode**, **Mantener OpenCode iniciado** instala supervisión del sistema en el host de ejecución, compartida por todos los perfiles CodeNomad que usan el servicio. Funciona independientemente de Missions, incluso con CodeNomad cerrado. El primer inicio de Mission la activa, salvo desactivación explícita previa; crear una Mission pausada conserva la elección. Pausar, detener o eliminar una Mission conserva esta preferencia.
+
+Desactivar retira la supervisión mientras OpenCode sigue funcionando y ya no se reiniciará. Para detenerlo de forma duradera, desactiva primero y luego detén OpenCode explícitamente. Con supervisión activa, `opencode service stop` provoca un reinicio.
+
+**En marcha · supervisión activa** exige un supervisor activo y un servicio OpenCode saludable. **Instalado · servicio iniciándose**, **Instalando o retirando la supervisión…** y **Fallo de supervisión** distinguen los estados. Un servicio que responde por sí solo deja la supervisión sin confirmar. Los detalles muestran la causa, último intento, reintento del supervisor y comprobación de recuperación del sistema cuando se conocen. **Comprobar supervisión** solo lee; **Reintentar supervisión** repara explícitamente la instalación solicitada. Una acción no confirmada conserva la solicitud original; **Reintentar acción original** reenvía solo esa acción exacta. Una revisión cambiada se actualiza para revisión en lugar de sobrescribirse.
+
+Windows, macOS y WSL arrancan tras iniciar sesión. WSL necesita reenvío localhost para la distribución elegida. En Linux nativo, linger inicia **todos los servicios de usuario habilitados** antes de iniciar sesión y los mantiene tras cerrarla. Al desactivar, se restaura linger solo si CodeNomad lo activó y ninguna otra supervisión lo necesita; se conservan los ajustes personales. Si restaurar linger pudiera detener los procesos OpenCode liberados mientras no hay ninguna sesión de usuario abierta, la restauración se aplaza y sigue visible con **Reintentar supervisión**. Reintenta cuando haya una sesión de usuario abierta o hayan terminado los procesos OpenCode liberados, permitiendo una restauración segura. Si Linux exige permiso, autoriza en el host de ejecución y reintenta; la preferencia solicitada permanece guardada. El sistema controla suspensión e hibernación. Un host indisponible o no compatible muestra un control desactivado con explicación.
 
 ## Actualizar, reiniciar o recargar {#maintenance}
 
@@ -41,7 +53,7 @@ OpenCode es propietario de su registro global de servicio, sesiones, mensajes y 
 | Acción | Ámbito y efecto | Recuperación segura |
 | --- | --- | --- |
 | Actualizar CLI | Cambia el ejecutable instalado compatible; no reinicia implícitamente el daemon en ejecución. | Comprueba las versiones instalada y en ejecución tras un fallo; reintenta explícitamente solo después de resolver el error. |
-| Reiniciar servicio | Reemplaza el proceso compartido e interrumpe el trabajo activo de todos los clientes OpenCode conectados; el historial de sesiones permanece. | Reconecta e inspecciona conversaciones y Misiones programadas; un reinicio no implica continuación automática. |
+| Reiniciar servicio | Reemplaza el proceso compartido e interrumpe el trabajo activo de todos los clientes OpenCode conectados; el historial de sesiones permanece. | Las programaciones nativas de Misiones saludables y en marcha se recuperan automáticamente; inspecciona las pasadas pendientes y cualquier pausa/error/incertidumbre. Las entradas diarias existentes requieren **Reanudar**. Inspecciona por separado las conversaciones puntuales y sus controles de recuperación; consulta [Misiones](missions.md#lifetime). |
 | Recargar la configuración de OpenCode | Mantiene el proceso, pero reconstruye **todas las Locations cargadas** para todos los clientes. Cancela permisos/formularios pendientes y cierra terminales/comandos en segundo plano; puede interrumpirse el trabajo activo. | Vuelve a comprobar recursos y trabajo pendiente tras recargar. No repitas un mensaje o modificación solo porque se perdió su respuesta. |
 
 Usa **Recargar la configuración de OpenCode**, en **Solución de problemas** cuando el servicio en ejecución lo admite, explícitamente cuando una configuración guardada o un plugin instalado siga sin estar disponible y la interrupción sea aceptable. No es una actualización visual inofensiva. CodeNomad no usará una CLI seleccionada más antigua para rebajar un daemon en ejecución más nuevo.

@@ -90,6 +90,21 @@
 .mission-tree-open:hover { background-color: var(--surface-hover); }
 .mission-tree-open:focus-visible { outline: 1px solid var(--accent-primary); outline-offset: -1px; }
 .mission-tree-recovery { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); padding-inline-start: calc(var(--space-xs) + 18px); font-size: var(--font-size-xs); }
+/* A run of tasks a compact map does not hold, in the rows' place, with its read further. */
+.mission-tree-gap {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs);
+  min-height: var(--touch-target-size-compact); color: var(--text-muted); font-size: var(--font-size-xs);
+}
+.mission-control .mission-tree-gap { padding-inline: calc(var(--space-sm) + var(--space-xs)); }
+.mission-control .mission-flow-linked .mission-tree-gap { padding-inline-start: calc(var(--space-sm) + 30px + var(--space-xs)); }
+.mission-tree-read { margin: var(--space-xs) 0 0; color: var(--text-muted); font-size: var(--font-size-xs); }
+/* Tasks needing action beyond the map's pins: above the rows, unlike a gap of the order. */
+.mission-tree-attention {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs);
+  margin: 0 0 var(--space-xs); color: var(--text-secondary); font-size: var(--font-size-xs);
+}
+.mission-tree-attention > svg { flex: 0 0 auto; color: var(--session-status-permission-fg); }
+.mission-tree-attention > small { color: var(--text-muted); }
 @media (pointer: coarse) {
   .mission-tree-open { min-width: var(--touch-target-size); min-height: var(--touch-target-size); opacity: 0.5; }
 }

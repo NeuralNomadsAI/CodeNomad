@@ -1,7 +1,6 @@
 import {
   MissionControl,
   MissionControlError,
-  NO_TASK_CONVERSATION,
 } from "../missions/control"
 import type {
   MissionDelegateInput,
@@ -30,10 +29,11 @@ import { taskExecutionModeSchema, taskContractReferenceWireSchema } from "../mis
 import { parseExecutionMode, parseMissionTaskMode, missionTaskModeSchema } from "../missions/task-execution-mode"
 import { normalizeTaskDeclaration, taskContractReferenceSchema } from "../missions/task-declaration"
 import { parseMissionProfiles, missionProfilesSchema, validateMissionProfileCatalog } from "../missions/playbook-profiles"
-import { boundedInterruption, boundedMutation, boundedRevision, compactMission, compactMissionTask, compactMissionTasks, nativeAssignment } from "../missions/tool-result"
+import { boundedInterruption, missionMutationToolResult } from "../missions/tool-result"
 import { missionContentRequestSchema } from "../missions/mission-content"
-import { MISSION_TASK_VIEW_FIELDS, boundedInspection, boundedMissionList, boundedTaskView, inspectionContent,
-  inspectionContentValue, type MissionInspectContent } from "../missions/inspect-view"
+import { missionTaskRequestSchema } from "../missions/mission-compact-map"
+import { missionPanelPageRequestSchema } from "../missions/mission-panel-page"
+import { inspectionContent, type MissionInspectContent } from "../missions/inspect-view"
 import { InterruptReceipts } from "../missions/interrupt-receipts"
 import { missionBriefingToolSchema, parseMissionBriefingRequest } from "../missions/briefing"
 import { MissionCreateNoEffectError } from "../missions/control-error"
@@ -42,6 +42,9 @@ import { MISSION_LIST_MAX_INCLUDE } from "../missions/mission-summary"
 import { createMissionWriterRetirement } from "./missions/writer-retirement"
 import type { NativeHumanAnswerGate } from "../missions/human-answer"
 import type { MissionJournalIndex } from "../missions/journal-index"
+import type { MissionDocumentAccess } from "../missions/mission-document-one-time"
+import { NativeMissionDocumentStore } from "../missions/mission-document-store"
+import type { MissionBusinessControl } from "../missions/business-control"
 
 interface MutationContext {
   error(type: typeof MISSION_RPC_REJECTION, message: string, data: { code: string; noEffect?: { requestID: string; missionID: string } }): unknown
@@ -110,10 +113,18 @@ export interface MissionsPluginContext extends MissionCatalogClient {
       register(
         definition: typeof CODENOMAD_MISSIONS_RPC,
       handlers: {
+        scheduleList(input: unknown): Promise<unknown>
+        scheduleRead(input: unknown): Promise<unknown>
+        scheduleControl(input: unknown): Promise<unknown>
+        scheduleCarrierRead(input: unknown): Promise<unknown>
+        documentCapabilities(input: unknown): Promise<unknown>
+        documentActivation(input: unknown): Promise<unknown>
         snapshot(input: unknown): Promise<unknown>
         list(input: unknown): Promise<unknown>
         mission(input: unknown): Promise<unknown>
         content(input: unknown): Promise<unknown>
+        tasks(input: unknown): Promise<unknown>
+        panelPage(input: unknown): Promise<unknown>
         recurrenceSnapshot(input: unknown): Promise<unknown>
         recurrenceControl(input: unknown): Promise<unknown>
         recurrenceControlStatus(input: unknown): Promise<unknown>
@@ -145,7 +156,7 @@ export interface MissionsPluginPolicy {
 
 export async function setupMissionsPlugin(context: MissionsPluginContext, transport?: MissionInputTransport,
   policy?: MissionsPluginPolicy, createManagedRoot?: MissionManagedRootCreation, humanGate?: NativeHumanAnswerGate, business = true,
-  journalIndex?: MissionJournalIndex): Promise<() => Promise<void>> {
+  journalIndex?: MissionJournalIndex, documents?: MissionDocumentAccess): Promise<() => Promise<void>> {
   let active = true
   let notificationOutbox: MissionNotificationOutbox | undefined
   const registrations: Registration[] = []
@@ -197,6 +208,9 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     authorizeNativeReport: policy?.authorizeNativeReport,
     humanGate,
     journalIndex,
+    documents,
+    documentReads: documents ? async use => use(new NativeMissionDocumentStore({ get: key => context.storage.get(key),
+      compareAndSet: async () => { throw new Error("Read-only Mission document projection") } }, context.location.project.id, context.location.project.canonical)) : undefined,
     completedFinalOnly: true,
     validateProfiles: async (profiles, directory, taskMode) => {
       if (profiles) validateMissionProfileCatalog(profiles, await readMissionCatalog(context, directory), taskMode)
@@ -211,6 +225,12 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
   try {
     await policy?.configure(control)
     const handlers: Parameters<MissionsPluginContext["rpc"]["register"]>[1] = {
+      scheduleList: async () => { throw new Error("Native Mission schedule graph unavailable") },
+      scheduleRead: async () => { throw new Error("Native Mission schedule graph unavailable") },
+      scheduleControl: async () => { throw new Error("Native Mission schedule graph unavailable") },
+      scheduleCarrierRead: async () => { throw new Error("Native Mission schedule graph unavailable") },
+      documentCapabilities: async () => { throw new Error("Native Mission document graph unavailable") },
+      documentActivation: async () => { throw new Error("Native Mission document graph unavailable") },
       snapshot: async () => JSON.parse(JSON.stringify(await control.snapshot())),
       list: async input => {
         const value = object(input)
@@ -222,6 +242,11 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       },
       mission: async input => JSON.parse(JSON.stringify(await control.mission(requiredText(object(input).missionID, "missionID", 100)))),
       content: async input => JSON.parse(JSON.stringify(await control.content(missionContentRequestSchema.parse(input)))),
+      tasks: async input => JSON.parse(JSON.stringify(await control.tasks(missionTaskRequestSchema.parse(input)))),
+      panelPage: async input => {
+        const parsed = missionPanelPageRequestSchema.safeParse(input)
+        return parsed.success ? JSON.parse(JSON.stringify(await control.panelPage(parsed.data))) : { available: false, reason: "invalid-request" }
+      },
       // Bundled Effect entry replaces this at registration with the native
       // request-graph handlers. A Promise setup graph never has Job authority.
       recurrenceSnapshot: async () => { throw new Error("Native recurrence graph unavailable") },
@@ -268,8 +293,13 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       delete: async (input, context) => { assertActive(); return mutationResult(context, () => control.delete(parseDeleteMissionInput(input))) },
     }
     rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
+      scheduleList: tracked(handlers.scheduleList),
+      scheduleRead: tracked(handlers.scheduleRead), scheduleControl: tracked(handlers.scheduleControl),
+      scheduleCarrierRead: tracked(handlers.scheduleCarrierRead),
+      documentCapabilities: tracked(handlers.documentCapabilities),
+      documentActivation: tracked(handlers.documentActivation),
       snapshot: tracked(handlers.snapshot), list: tracked(handlers.list), mission: tracked(handlers.mission),
-      content: tracked(handlers.content), recurrenceSnapshot: tracked(handlers.recurrenceSnapshot),
+      content: tracked(handlers.content), tasks: tracked(handlers.tasks), panelPage: tracked(handlers.panelPage), recurrenceSnapshot: tracked(handlers.recurrenceSnapshot),
       recurrenceControl: tracked(handlers.recurrenceControl), recurrenceControlStatus: tracked(handlers.recurrenceControlStatus),
       recurrenceRunNow: tracked(handlers.recurrenceRunNow), recurrenceRunNowStatus: tracked(handlers.recurrenceRunNowStatus),
       recurrenceRead: tracked(handlers.recurrenceRead),
@@ -298,13 +328,20 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
   }
 }
 
+export type { MissionBusinessControl } from "../missions/business-control"
+
 export interface MissionBusinessRoute {
-  control: MissionControl
+  control: MissionBusinessControl
+  /** Schedule passages lock the document before entering MissionControl's writer. */
+  execute?<T>(use: (control: MissionBusinessControl) => Promise<T>): Promise<T>
   /** Descendant reads use their verified root; mutations always retain the real caller. */
   readSessionID: string
   current(): void
   beforeTool(name: Parameters<MissionsPluginPolicy["beforeTool"]>[0], input: unknown): Promise<void>
 }
+
+const executeMissionBusiness = <T>(selected: MissionBusinessRoute, use: (control: MissionBusinessControl) => Promise<T>): Promise<T> =>
+  selected.execute ? selected.execute(use) : use(selected.control)
 
 /** One set of native names. Selection is invocation-scoped, never model-provided storage. */
 export async function setupMissionsBusiness(context: MissionsPluginContext,
@@ -340,7 +377,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "inspect",
-        description: "Inspect the caller's durable mission map and optional native catalog, or start a custom, debugging, Wayfinder, product delivery, or two-model comparison mission. Compare requires different model-a/model-b profiles and always a blind judge. Pass taskKey to read only that task with its revision, frontier, contract, exact current assignmentPrompt, observed native conversations and any qualifying human answers instead of the full map. A map too large for one result lists its tasks in pages: follow taskPage.nextTaskOffset with taskOffset. Any value too large for one result is replaced by { omittedCharacters, read }: pass read as the whole input to read that value in slices, following each slice's next. Pass list: true to find your missions and prepared hand-offs; missionID also reads a hand-off you prepared.",
+        description: "Inspect the caller's durable mission map and optional native catalog, or prepare a paused custom, debugging, Wayfinder, product delivery, or two-model comparison mission. The user presses Play in CodeNomad before Mission work begins; creation never sends a coordinator prompt. Compare requires different model-a/model-b profiles and always a blind judge. Pass taskKey to read only that task with its revision, frontier, contract, exact current assignmentPrompt, observed native conversations and any qualifying human answers instead of the full map. A map too large for one result lists its tasks in pages: follow taskPage.nextTaskOffset with taskOffset. Any value too large for one result is replaced by { omittedCharacters, read }: pass read as the whole input to read that value in slices, following each slice's next. Pass list: true to find your missions and prepared hand-offs; missionID also reads a hand-off you prepared.",
         input: inspectSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -349,38 +386,27 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           await tool.progress({ status: "Reading the mission map" })
           selected.current()
           const parsed = parseInspectInput(input)
-          if (parsed.list) return textResult(boundedMissionList(await selected.control.listMissions(selected.readSessionID), parsed.listOffset))
+          if (parsed.list) return textResult(await executeMissionBusiness(selected, control => control.inspectTool(selected.readSessionID, parsed, tool.id, undefined)))
           const read = parsed.content
           // The caller's Location's native catalog, read afresh on every call.
           const catalog = async () => readMissionCatalog(context, (await context.session.get({ sessionID: tool.sessionID })).location.directory)
           // A catalog read selects no mission: only the owned-root checks, no journal read.
           if (read?.kind === "catalog") {
-            await selected.control.ownedRoot(selected.readSessionID)
+            await executeMissionBusiness(selected, control => control.ownedRoot(selected.readSessionID))
             selected.current()
             return textResult(inspectionContent(undefined, read, await catalog()))
           }
           // A receipt read serves the held original interrupt result to the coordinator that received it.
           if (read?.kind === "receipt") {
-            await selected.control.ownedRoot(selected.readSessionID)
+            await executeMissionBusiness(selected, control => control.ownedRoot(selected.readSessionID))
             selected.current()
             const held = receipts.read(tool.sessionID, read.digest)
             if (held === undefined) throw new Error("This interruption receipt is no longer held: each task keeps only its newest one,"
               + " within the plugin's receipt budget, until the plugin reloads")
             return textResult(inspectionContent(undefined, read, held))
           }
-          const result = await selected.control.inspect(selected.readSessionID, parsed, tool.id)
-          const response = parsed.taskKey === undefined ? result
-            : await observedTaskView(selected.control, selected.readSessionID, result.mission, parsed.taskKey)
-          if (object(input).catalog === true) response.catalog = await catalog()
-          if (read) {
-            if (!result.mission) throw new MissionControlError("No mission is associated with this session", "mission-not-found")
-            const value = read.kind === "task" && (MISSION_TASK_VIEW_FIELDS as readonly string[]).includes(read.field)
-              ? taskViewField(await observedTaskView(selected.control, selected.readSessionID, result.mission, read.taskKey), read)
-              : inspectionContentValue(result, read)
-            return textResult(inspectionContent(result.mission.id, read, value))
-          }
-          return textResult(parsed.taskKey === undefined ? boundedInspection(result, parsed.taskOffset)
-            : boundedTaskView(response as Record<string, unknown>, result.mission!, parsed.taskKey))
+          const nativeCatalog = object(input).catalog === true ? await catalog() : undefined
+          return textResult(await executeMissionBusiness(selected, control => control.inspectTool(selected.readSessionID, parsed, tool.id, nativeCatalog)))
         },
       })
       add({
@@ -401,17 +427,12 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           selected.current()
           if (independent) {
             const parsed = parseDelegateInput(input)
-            const result = await selected.control.delegate(tool.sessionID, parsed)
-            return textResult(boundedMutation({ disposition: result.disposition, ...compactMission(result.mission),
-              task: compactMissionTasks(result.mission, [parsed.taskKey])[0] }, result.mission))
+            const result = await executeMissionBusiness(selected, control => control.delegate(tool.sessionID, parsed))
+            return textResult(missionMutationToolResult("delegate", parsed, result))
           }
-          const result = await selected.control.declare(tool.sessionID, normalizeTaskDeclaration({ ...value, blockedBy: value.blockedBy ?? [] }))
-          const task = result.mission.tasks.find(candidate => candidate.key === result.contract.taskKey)
-          if (!task || task.executionMode?.kind !== "native" || task.contractGeneration !== result.contract.generation) {
-            throw new MissionControlError("Declared native task context unavailable", "invalid-journal")
-          }
-          return textResult(boundedMutation({ disposition: result.disposition, ...compactMission(result.mission), task: compactMissionTask(task),
-            ...nativeAssignment(result.mission, task) }, result.mission))
+          const parsed = normalizeTaskDeclaration({ ...value, blockedBy: value.blockedBy ?? [] })
+          const result = await executeMissionBusiness(selected, control => control.declare(tool.sessionID, parsed))
+          return textResult(missionMutationToolResult("declare", parsed, result))
         },
       })
       add({
@@ -425,9 +446,8 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           await tool.progress({ status: "Revising mission plan" })
           selected.current()
           const revision = parseReviseInput(input)
-          const { mission } = await selected.control.revise(tool.sessionID, revision)
-          return textResult(boundedRevision(mission, [...revision.addTasks,
-            ...revision.retireTasks, ...revision.dependencyUpdates].map(item => item.taskKey)))
+          const result = await executeMissionBusiness(selected, control => control.revise(tool.sessionID, revision))
+          return textResult(missionMutationToolResult("revise", revision, result))
         },
       })
       add({
@@ -443,11 +463,10 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           const report = parseReportInput(input)
           const reference = object(input).contract
           const contract = reference === undefined ? undefined : taskContractReferenceSchema.parse(reference)
-          const result = contract === undefined ? await selected.control.report(tool.sessionID, report)
-            : await selected.control.reportNative({ contract, sessionID: tool.sessionID, toolCallID: tool.id, messageID: tool.messageID }, report)
+          const result = await executeMissionBusiness(selected, control => contract === undefined ? control.report(tool.sessionID, report)
+            : control.reportNative({ contract, sessionID: tool.sessionID, toolCallID: tool.id, messageID: tool.messageID }, report))
           // The control names the task it resolved, including an independent actor's omitted taskKey.
-          return textResult(boundedMutation({ disposition: result.disposition, ...compactMission(result.mission),
-            ...(result.taskKey === undefined ? {} : { task: compactMissionTasks(result.mission, [result.taskKey])[0] }) }, result.mission))
+          return textResult(missionMutationToolResult("report", report, result))
         },
       })
       add({
@@ -460,8 +479,8 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           const selected = await route(tool.sessionID, "briefing", input)
           await tool.progress({ status: "Recording project briefing" })
           selected.current()
-          const { mission } = await selected.control.briefing(tool.sessionID, parseMissionBriefingRequest(input))
-          return textResult(boundedMutation(compactMission(mission), mission))
+          const result = await executeMissionBusiness(selected, control => control.briefing(tool.sessionID, parseMissionBriefingRequest(input)))
+          return textResult(missionMutationToolResult("briefing", {}, result))
         },
       })
       add({
@@ -474,7 +493,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           const selected = await route(tool.sessionID, "interrupt", input)
           await tool.progress({ status: "Stopping retired task work" })
           selected.current()
-          const { target, ...result } = await selected.control.interruptTask(tool.sessionID, parseInterruptInput(input))
+          const { target, ...result } = await executeMissionBusiness(selected, control => control.interruptTask(tool.sessionID, parseInterruptInput(input)))
           // The task's slot is the identity the interruption resolved; its newest result always replaces the previous receipt.
           const slot = JSON.stringify([tool.sessionID, target.missionID, target.taskKey])
           const bounded = boundedInterruption(result, receipt => receipts.hold(tool.sessionID, slot, receipt))
@@ -492,7 +511,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           const selected = await route(tool.sessionID, "prepare", input)
           await tool.progress({ status: "Preparing a paused mission" })
           selected.current()
-          const { mission } = await selected.control.prepare(tool.sessionID, parsePrepareInput(input))
+          const { mission } = await executeMissionBusiness(selected, control => control.prepare(tool.sessionID, parsePrepareInput(input)))
           return textResult({ disposition: "prepared", missionID: mission.id, ...(mission.title === undefined ? {} : { title: mission.title }),
             status: mission.status, ...(mission.runState === undefined ? {} : { runState: mission.runState }), revision: mission.revision })
         },
@@ -548,9 +567,9 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           }
           selected.current()
           // One hinted membership read per turn: the instruction and the coordinator check share it.
-          const mission = await selected.control.contextFor(selected.readSessionID)
+          const mission = await executeMissionBusiness(selected, control => control.contextFor(selected.readSessionID))
           if (active && !mission && selected.readSessionID === event.sessionID) {
-            const paused = await pausedAncestorMission(selected.control, event.sessionID)
+            const paused = await executeMissionBusiness(selected, control => pausedAncestorMission(control, event.sessionID))
             if (active && paused) {
               selected.current()
               event.system.push({ type: "text", text: missionPausedInstruction(paused, true) })
@@ -567,7 +586,8 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           }
           event.system.push({ type: "text", text: mission.instruction })
           // Scheduled passages have no backend route for these actions: do not offer them.
-          if (!selected.control.backendActions) for (const name of ["interrupt", "prepare"]) delete event.tools[`mission_${name}`]
+          if (!await executeMissionBusiness(selected, async control => control.backendActions))
+            for (const name of ["interrupt", "prepare"]) delete event.tools[`mission_${name}`]
           if (!mission.coordinator) for (const name of COORDINATOR_TOOLS) delete event.tools[`mission_${name}`]
         } catch {
           // Mission context is additive. A damaged optional map must not block an otherwise valid model request.
@@ -905,27 +925,6 @@ export function parseReportInput(input: unknown): MissionReportInput {
     artifact: optionalJson(value.artifact),
     final: value.final === true,
   }
-}
-
-/** One task of the selected mission, without the full map: the exact prompt survives saved tool
- * output. Native conversations and qualifying human answers are advisory reads that may be unknown. */
-async function observedTaskView(control: MissionControl, sessionID: string, mission: MissionMap | null, taskKey: string): Promise<Record<string, unknown>> {
-  const task = mission?.tasks.find(candidate => candidate.key === taskKey)
-  if (!mission || !task) throw new MissionControlError(`Mission task not found: ${taskKey}`, "task-not-found")
-  const [native, answers] = await Promise.allSettled([control.observeTask(sessionID, mission.id, taskKey),
-    control.decisionCandidates(sessionID, mission.id, taskKey)])
-  return { ...compactMission(mission), task: compactMissionTask(task), ...nativeAssignment(mission, task),
-    reports: mission.reports.filter(report => report.taskKey === taskKey),
-    ...(native.status === "rejected" ? { native: { unknown: true } } : native.value
-      ? { native: native.value.sessions.length ? native.value : { ...native.value, note: NO_TASK_CONVERSATION } } : {}),
-    ...(answers.status === "rejected" ? { humanAnswers: { unknown: true } } : answers.value ? { humanAnswers: answers.value } : {}) }
-}
-
-/** A `taskKey` view value a content read names, from a view of the same revision. */
-function taskViewField(view: Record<string, unknown>, read: Extract<MissionInspectContent, { kind: "task" }>): unknown {
-  if (view.revision !== read.revision) throw new Error("Mission changed since this page: read it again from its first page")
-  if (!Object.prototype.hasOwnProperty.call(view, read.field)) throw new Error("Mission content unavailable")
-  return view[read.field]
 }
 
 function textResult(value: unknown): { content: string } {

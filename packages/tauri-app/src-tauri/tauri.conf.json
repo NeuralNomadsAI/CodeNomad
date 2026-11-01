@@ -23,6 +23,7 @@
   },
   "bundle": {
     "active": true,
+    "copyright": "Copyright © 2025-2026 CodeNomad contributors",
     "macOS": {
       "minimumSystemVersion": "13.5"
     },

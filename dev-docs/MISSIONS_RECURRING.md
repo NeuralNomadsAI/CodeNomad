@@ -1,9 +1,250 @@
-# Recurring Missions — simple native contract
+# Recurring Missions
 
 The Wayfinder UI-answer mark below applies to both one-time and recurring Missions.
 Acceptance status: `MISSIONS_RECURRING_QUALIFICATION.md`.
 
-## Product boundary
+## Unified native schedules
+
+Unified documents use `launch-policy.ts` for immediate, absolute/relative one-shot,
+elapsed Every, cron and up to eight cron calendars. A source condition uses its
+qualified reader. Native schedule rows own future dates and civil-time behavior;
+Missions owns admission, non-overlap, frozen inputs, launch counts and settlement.
+
+### Visible timing, limits and editing
+
+Scheduling labels use focusable **i** tips for secondary explanations, available
+on hover, keyboard focus and touch. Frequency and condition controls retain their
+timing and admission semantics. The list shows condition and end details only
+when configured, and source checks only with a condition. The info tip beside
+the **Technical details** disclosure explains technical activity and costs.
+
+The editor exposes nine frequencies: immediate once, once at a civil date, once
+after an elapsed delay, elapsed interval, daily, selected weekdays, several daily
+times, day of each month and advanced cron. First Play freezes relative origins
+and source baselines. Delays use positive whole minutes/hours; intervals are at
+least 15 minutes and first wake one interval after Play. Cron runs at most once
+per minute. Up to eight daily calendars share admission and non-overlap; duplicate
+times coalesce. Civil rules use the saved IANA zone and native DST behavior;
+months without the selected day are skipped. An unchanged interval retains its
+native phase; the preview uses its persisted next slot when available.
+
+Catch-up uses the native row's recorded `dueAt`, including when later slots were
+missed. Multiple principal wakes fan in to at most one catch-up passage before
+future slots resume. Explicitly paused recurring calendars resume at a future slot;
+a paused one-shot may arrive once, late. End bounds apply to the recorded due slot.
+
+Three combinable bounds are an absolute last slot, an elapsed end from first Play
+and a global maximum of admitted passages. The earliest time bound applies and
+continues through Pause; an eligible recorded slot may arrive after that end.
+The quota counts each passage once on admission of its coordinator's first input,
+including Run now and a passage that later fails. Checks, technical wakes and
+refused admissions consume zero; uncertain admission keeps its reservation until
+reconciliation. One-shot policies allow at most one launch. Counts and first-Play
+origins survive edits, restarts and the thirty-result history window.
+
+The five source conditions and their consumption rules are below. H9 editing
+follows the [shared editor table](MISSIONS.md#user-journey-regression-checks): full
+eligible preparation before admission, future configuration between recurring
+passages, objective/notes during admitted work and read-only uncertain state.
+Template changes require that no task has ever been created. Reopen preserves the
+loaded draft; explicit conflict reload retains a comparison, and receipt reads
+keep the original request/revision. Configuration and temporal generations remain
+separate; unchanged timing and end groups preserve phase and absolute limits.
+
+### Restart recovery
+
+OpenCode reloads persisted calendars after service restart. A healthy schedule
+desired running wakes its owning Location with CodeNomad UI/backend closed and
+without prior project access or human Resume. At rest it returns to calendar work;
+with pending work it reconciles the original passage/session/message identities.
+The durable auxiliary reconciliation calendar remains until that passage settles.
+
+Explicit Pause, terminal Stop, proven failure and a proven end without a report
+retain their admission barriers and human recovery controls. Incomplete native
+correlation or uncertain effects keep the original pending record and block a new
+passage. Native continuation is observed under its original identity. The technical
+wake joins the exact existing service; OS supervision owns service availability
+through its independent shared preference ([runtime setup](OPENCODE_RUNTIME_SETUP.md#service-supervision-primitives-and-native-adapters)).
+
+The authenticated product seam is `POST /api/workspaces/:id/missions/scheduled`
+for paused creation, and `GET|POST /api/workspaces/:id/missions/:missionID/schedule`
+for status and explicit controls. Requests pin the native directory, human principal,
+profile source, request ID and document revision through the existing signed bridge.
+`scheduleRead({missionID,requestID})` reads an exact retained control receipt;
+missing or evicted proof stays unknown. Passive reads send no controls.
+
+Serialized calendar validation returns an identity/payload-bound refusal for an
+expired first-Play date or a revision conflict before its first write. The initial
+dispatch's exact refusal releases its backend and UI holds with a conflict response;
+lost replies and applied partial controls retain uncertainty. An explicit Check or
+original-request retry of a positively read partial control may use a retired
+connection's replacement after revalidating the same owner, physical checkout,
+Location, profile and exact partial receipt. It acquires fresh physical admission
+before retiring the old permit and preserves the original request ID and revision.
+
+`GET /api/workspaces/:id/missions/scheduled/requests/:requestID` reads an exact
+creation receipt when the HTTP response containing the document ID was lost.
+It uses the retained physical permit, or derives the document ID from the acquired
+native project owner after permit settlement/restart. A negative or incomplete
+receipt retains uncertainty; the read performs exact observation only.
+
+`GET /api/workspaces/:id/missions/scheduled` brokers the read-only `scheduleList`
+RPC. It reads at most eight key-ordered unified documents per page, selected by an
+optional `after` Mission ID and `limit`. Tombstones consume page capacity and the
+cursor advances across them. Each page validates project identity and document
+bounds; malformed entries fail the page. Immediate unified documents carry
+`kind: one-time`, calendar-owned documents `kind: schedule`, allowing the panel
+to merge journal rows by Mission ID and retain their owning control path.
+List and detail projections include the full launch policy/configuration, frozen
+one-shot/end instants, admitted/settled/successful counts, structural/template locks,
+pending passage identity and the thirty retained passage receipts.
+
+The panel publishes its loaded inventory and cursor independently of the selected
+document's point read. A partial selected receipt keeps uncertainty visible beside
+the valid inventory. Scoped retained controls keep their display and original
+request/revision for explicit read-only reconciliation. Only successfully read
+documents enable new controls or representation changes; retained display metadata
+and partial error-body receipts keep the original reconciliation available. Selection,
+scope, connection and disposal fence late selected reads, including ABA changes.
+Exact control settlement schedules the still-current parent's fresh read and deletion
+callback before releasing a selected hold's display owner. Late confirmations release
+only their matching hold; chained receipt reads and activation continuations retain
+their original view and connection fences.
+
+List and detail also expose `observation`, `availableActions` and `blockReason`.
+Their `technical` projection exposes only the recorded current/retiring carrier
+session and calendar identifiers, role, slot, temporal generation and pending
+cleanup. It derives these from the same document read, including attempted
+creation and deletion still awaiting reconciliation. Installation paths, provider
+descriptors and profile environment stay private. The collapsed **Technical
+details** disclosure keeps these conversations read-only, with the principal-wake
+counter scoped to its current temporal generation. Source checks and business
+launches retain their separate counters.
+The native display adapter reads at most eight exact principal rows, validates
+their adopted mapping and checks the document revision again after I/O. Missing,
+foreign, partial or retired reads project `unknown`. `nextDueAt` is the earliest
+active native principal's saved date; a condition labels it as a check. Paused
+rows contribute their counter but have no active next wake. `nativeStatus`
+separately exposes active/paused/done/mixed principals beside the document's
+desired state. `wakeCount` sums
+native principal prompt admissions in the current `timeGeneration`; auxiliary
+wakes, source-verification counts and lifetime business launch/success totals
+have separate meanings. Available actions are durable-state candidates; the
+authenticated mutation rechecks capabilities, source/actor proofs and CAS.
+Prepared wakes lock structural editing through the same H9 projection used by
+the document mutator.
+
+During an admitted passage, a text-only configure validates H9 and persists its
+original request, document/journal revisions, passage identity and payload in the
+calendar operation before publishing `mission.updated` in its isolated journal.
+An exact retained event confirms the future objective/notes under document exclusion,
+including after passage archive. Reconciliation only reads that event; explicit replay
+uses the saved original revision and payload. Missing proof retains the operation and
+the editor's original uncertain request. Frozen passage inputs, task contracts, profiles and
+session/message identities remain intact. Never send a prompt from this edit path.
+Create and Edit share empty-calendar validation; saved unknown interval phases and
+intentionally exhausted launch quotas retain their explicit display. Preview end
+bounds apply to both the persisted next slot and subsequent slots, including late slots.
+
+`checks: {count,since} | null` counts completed, revalidated source observations
+committed with a principal fan-in's consumed high-water or passage reservation,
+and explicit Run now reservations. A group of up to eight principal wakes counts
+once. True and false conditions both count; baseline reads at Play, auxiliary
+wakes, replays, overlaps, suppressed wakes, failed/incomplete source reads and
+unconditional policies contribute zero. Admission or settlement retries preserve
+the count. Configuration changes and temporal generations retain it. New documents
+track from creation; documents without tracking begin at their first committed
+check. The UI displays `since` alongside the count and treats `null` as unavailable
+history, preserving the unknown earlier total.
+
+`node scripts/test-native-mission-schedule-list.mjs <absolute-isolated-cli>`
+qualifies the production read handlers and public native `storage.scan` against
+fixture-owned documents: bounded pagination across a tombstone, cursor semantics,
+list/detail parity and unchanged revisions. One document has real adopted native
+calendars; its exact next date/counter is read through the invocation-scoped
+adapter, with zero model requests.
+
+`GET /api/workspaces/:id/missions/scheduled/capabilities` reads the acquired
+connection's consumed API contract, effective schedules flag and origin. Its
+read-only activation plan exposes the target scopes/paths or a refusal category.
+The native document preparation endpoint owns authenticated configuration writes.
+Both display routes revalidate workspace, connection, physical checkout and request
+lifetime after asynchronous work. Missing methods or capabilities return an
+explicit unavailable response. UI reads use the shared secondary HTTP budget.
+
+Five explicit source conditions share the native source preparation boundary:
+another schedule's successful passage, a completed one-time Mission, commits on
+a local branch, stable new messages in a followed conversation, and an explicit
+file set. Event-only policies check every 15 minutes; calendar-backed conditions
+are read only at those calendar slots. First Play establishes their baseline,
+Pause/Resume preserves it, and configuration retains removed source checkpoints.
+A pending freezes the observed proof; only successful settlement consumes it.
+Success counters outlive the 30-result window, and missing retained success proof,
+cyclic dependencies, moved/deleted sources or incomplete reads block admission.
+Missing native correlation is an explicit unknown block; positively active source
+families retain their prior checkpoint while waiting. Historical journal-only
+sources use their validated coordinator placement under an explicitly authorized
+root. Followed conversations exclude the Mission's own passage families through
+their bounded native parent chains.
+Local file and Git reads yield the service event loop and share a cancellable
+ten-second budget with their final pre-publication revalidation. Exact native
+input/terminal bytes remain fenced synchronously inside the document CAS.
+Bounds, transaction fences and qualification are in the native contracts' event
+source readers section.
+
+The native calendar owner records create intents and reverse carrier ownership
+before native effects. It acknowledges the reconciliation calendar before arming
+principals. Temporal edits preserve retired proofs until cleanup, while relative
+origins, the first Play and admitted counts remain durable. A first Play on a
+calendar-backed policy requires ready settings activation. Creation remains paused.
+
+Human Play also calls the shared service-supervision default-ON path on its exact
+acquired connection. An explicit OFF remains OFF; creating, configuring, pausing,
+stopping and deleting a Mission preserve that service-wide preference. Supervision
+preparation precedes the signed control proof and native schedule dispatch. Runtime
+namespace/storage failures remain explicit at the product boundary; independent
+OS protection and native calendar admission keep separate status contracts.
+
+Each technical wake enters an exact-file, own-process HTTP RPC with an eight-second
+deadline. A read-only preflight freezes complete fan-in coverage before a dispatch
+claim. Technical high-water advances at durable reservation; the pending business
+reference remains separate, so auxiliary observation can reconcile the last passage.
+Native persisted schedules load their owning Location on wake after service startup.
+Pause/Stop, failures, unqualified observations and uncertain effects retain their
+admission barriers. Never resend an attempted original whose proof is missing.
+
+Context hooks and tool execution use the fixed-method internal business bridge;
+its receiving RPC acquires fresh Session/Database/Location services. Each business
+mutation takes the document exclusion before the existing journal writer. Native
+permissions, original message identities and whole-family H11 settlement apply.
+Technical carriers use the reserved `ses_cn_schedule_` namespace, local provider,
+local title/compaction hooks and authoritative ordinary-input guards.
+Ordinary sidebar browsing/search and both Mission conversation-source pickers
+exclude this namespace through the shared carrier-identity predicate; native
+observations remain available to ownership and reconciliation readers.
+Technical turns keep native model-selection events/statistics while making zero
+provider HTTP requests. Their compaction preserves the carrier/calendar identity
+and bounds processed context. Persisted native messages and events follow native
+retention and may grow until explicit terminal cleanup; the thirty Mission result
+receipts have their own independent bound.
+Technical wake conversations use a zero-token local model, so OpenCode's background precompaction never applies to them; their automatic local compaction does.
+
+Implementation contracts and isolated qualification commands:
+[native contracts](MISSIONS_NATIVE_CONTRACTS.md) and
+[schedule transport](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md).
+
+## Daily document product boundary
+
+Daily documents use `NativeMissionRecurrenceStore` and the daily controls below.
+Journal-only missions keep their existing execution path. Storage representation
+selects the owning adapter; reads and reconnects preserve it.
+
+The document/revision, controls, process-local Job/clock, snapshot and daily
+acceptance sections below describe existing daily documents. Unified native
+documents use the persisted-calendar and restart contract above. Whole-family
+settlement, original identity/correlation and completed-only source consumption
+apply to both paths; `lastDaily` and daily watched-cursor fields belong to the
+daily format. The Wayfinder UI-answer mark is shared by both paths.
 
 Creation stores a paused schedule, never starts work or arms a timer, and is never
 resent; Play requests carry the then-current revision so CAS refuses a duplicate.
@@ -11,7 +252,7 @@ New titles follow the 1–60 Mission title rule; stored schedules keep their
 120-character bound.
 Explicit user controls and native execution are separate responsibilities.
 
-## Schedule document and revision
+## Daily schedule document and revision
 
 Store one schedule document in project-scoped plugin kv, including:
 
@@ -29,8 +270,9 @@ Ceilings (`missions/recurrence-contract.ts`): 64 schedules per project, a 64 KiB
 configuration, a 256 KiB document and 64 remembered conversations
 (watched plus cursor-retaining); beyond that ceiling the document is refused, so never
 reset deduplication silently. Never add signing keys, authority epochs, grants,
-standing/child authority, per-effect receipts, budgets or ledgers, per-tool effect
-accounting or exact event-log replay to schedules, settlement or snapshots; human
+standing/child authority, per-effect receipts, per-tool budgets or ledgers, per-tool effect
+accounting or exact event-log replay to schedules, settlement or snapshots; the
+unified document owns the user-visible admitted-passage limit and count. Human
 answers use the UI-answer marks below.
 
 Native kv offers no compare-and-swap, so the plugin serializes document updates and
@@ -39,7 +281,7 @@ follow a read with an unguarded write. Controls, due admission and settlement us
 the same guarded document mutation path; concurrent attempts cannot replace each
 other's pending identity or lose an archive.
 
-## User controls
+## Daily document controls
 
 Create paused, Play, Pause, Stop, Resume, Run now and Check passage are admitted only through:
 
@@ -176,23 +418,26 @@ permissions and OS isolation are the security boundary, so never describe marks 
 tamper-proof. Ownership, authentication, permission and data-loss protections apply
 to every passage, and unknown effects stay unknown.
 
-## Native guarantees and missing primitives
+## Daily runtime guarantees and shared settlement primitives
 
 The implementation relies on existing native contracts, qualified at their callers:
 
 - Session creation with a caller-supplied session ID is idempotent.
 - Prompt admission with a caller-supplied message ID is first-admission-wins.
 - Plugin tools receive native session, message and call identity.
-- Jobs are process-local and disappear when the service restarts.
+- Daily Jobs are process-local and disappear when the service restarts.
 - A turn holds a durable execution claim (`session_v2.time_suspended`) until its
-  terminal event; a hard kill leaves the claim without one. Never rely on native
-  continuation after a restart.
+  terminal event; a hard kill preserves that claim. Managed native recovery can
+  resume it asynchronously after a restart.
 
-Resume never sends a continuation or replacement coordinator prompt. A claim
-written before the current service process started and not live now is a turn
-cut by a restart: once the rest of the family is quiescent, the passage settles
-`ended-without-report` with reason `interrupted` ("Interrupted by a restart").
-If native work later resumes such a claim anyway, its effects remain unknown.
+Resume observes the original coordinator input and native continuation. Every
+remaining claim blocks settlement, including an old claim absent from
+`Session.active`. Require the original input and a later durable idle in native
+`session_message.seq` order, then recheck the whole family, claims, inboxes,
+requests and outstanding background deliveries. Missing/pruned input, an
+uncorrelated terminal or a changed second observation keeps the same pending
+uncertain. Never infer a terminal from age, inactivity or a timeout; never send a
+second original prompt after admission has been recorded.
 
 Plugin-side mechanisms cover three native gaps:
 
@@ -200,9 +445,9 @@ Plugin-side mechanisms cover three native gaps:
 - Family settlement: observation of the whole passage family and queues.
 - Form answerer identity: the backend UI-answer mark below.
 
-## Scheduler and civil time
+## Daily scheduler and civil time
 
-Keep **one native Job per running schedule** in the live OpenCode process.
+Keep **one native Job per running daily document** in the live OpenCode process.
 It sleeps until `min(nextDueAt, now + 1h)`, then rereads the wall clock and document.
 This hourly ceiling bounds clock-change detection; never poll per minute.
 A native `session.execution.succeeded|failed|interrupted` publication (Bus
@@ -226,10 +471,11 @@ Desired running without a live native Job is displayed as **Interrupted** with
 an interruption reason. Service restart therefore leaves scheduling Interrupted.
 Do not rearm from plugin load, a read, UI reopen or backend reconnect.
 Only explicit Resume may restore scheduling; pending work is reconciled first.
-An Interrupted schedule keeps its passage pending; a passage cut by the restart
-settles as interrupted after Resume, without waiting for a native continuation.
+An Interrupted schedule keeps its passage pending. Resume reconciles its original
+identities and observes native continuation until terminal correlation and full
+family quiescence are available.
 
-## Write-ahead passage start and recovery
+## Daily write-ahead passage start and recovery
 
 Daily and manual passages use the same start/observation/settlement path.
 Before any native effect, CAS-write a pending record containing:
@@ -260,8 +506,8 @@ deterministic start message exists (delivered or inbox):
 - Absent for a transient cause: retry admission on a later wake with the **same**
   session and message identities (native first admission wins), never a new one.
   Retry applies only while no admission was ever recorded. Once recorded, a later
-  native absence of the start message (pruned history) is observed history: the
-  passage settles by family quiescence and the message is never sent again.
+  native absence of the start message (pruned history) keeps terminal correlation
+  uncertain and the original message is never sent again.
 Run now cannot overlap an unresolved pending passage or bypass terminal Stop.
 A manual run never counts as another scheduled civil day's completion.
 
@@ -337,11 +583,18 @@ Supported outcomes are:
   terminal failure in the family without a completed final report. Never guessed
   from prose or an idle flag.
 - `ended-without-report`: settled native work ended without a final report and
-  without native terminal failure; reason `interrupted` when a family claim was
-  cut by a service restart.
+  without native terminal failure; reason `interrupted` requires a correlated
+  native idle whose outcome is interrupted.
 
-Atomically archive the result, clear pending and update the scheduled `lastDaily`
-in the guarded schedule document. Keep history at ≤30; do not let a crash between
+The terminal reader uses native `session_message.seq`, anchored to the original
+coordinator input or exact fresh managed-root assignment. Historical failures
+before that input are excluded. Reused external roots retain uncertainty while
+their entry/family provenance is unqualified. The bounded `job.background/` KV
+projection (kind and session IDs only, ≤1024 records) blocks settlement while a
+completed child still owes its native parent notification.
+
+For daily documents, atomically archive the result, clear pending and update the
+scheduled `lastDaily` in the guarded document. Keep history at ≤30; do not let a crash between
 separate document writes permit a second passage for the same settled day.
 Advance watched processed-message cursors **only on completed**.
 Failed and ended-without-report leave those cursors unchanged.
@@ -429,20 +682,21 @@ reported as uncertain.
 Missing evidence leaves the gate unmet and never replays an answer; the ordinary
 answer path keeps its ownership and uncertainty checks.
 
-## Per-schedule snapshot
+## Daily document snapshot
 
 Expose `id`, `title`, `clock`, display `nextDueAt`, revision and available actions.
 Expose state including Interrupted and `interruptionReason` when applicable.
 Expose pending status `starting | running | settling | uncertain`, exact identity,
 latestResult and history. `starting` means a live Job/observer is handling a not
 yet admitted start; `uncertain` (with reason `not-observed` or `admission-failing`)
-only when no observer is live or its latest admission attempt failed. History and pending
+when no observer is live, admission is unconfirmed, or terminal correlation stays
+unknown. Native activity remains a separate observation. History and pending
 items carry their `daily | manual` trigger; a non-blocking `lastError` is exposed
 while relevant.
 Actions reflect terminality, unresolved controls and pending passage state.
 Read-only projections and invalidations never start work or settle unknown sends.
 
-## Acceptance journeys
+## Daily document acceptance journeys
 
 1. **Daily useful work:** create paused → explicit Play → close UI/backend → due
    passage uses ordinary read/shell and Mission tools → final report → whole family
@@ -451,9 +705,10 @@ Read-only projections and invalidations never start work or settle unknown sends
    in both task modes.
 2. **Restart with pending:** restart the service during a pending passage → reopen
    shows Interrupted → explicit Resume reconciles existing session/message/inbox →
-   no second coordinator message → settled archive (`ended-without-report` /
-   `interrupted` when the restart cut the turn) → next day. Missing/uncertain evidence
-   stays pending, and only Resume rearms scheduling.
+   observe native recovery with no second coordinator message → archive only after
+   correlated terminal and whole-family quiescence. An old claim or missing
+   correlation stays pending and uncertain through repeated wakes; only Resume
+   rearms the daily Job.
 3. **Run now:** explicit authenticated Run now uses the shared write-ahead path;
    duplicate request/status reads produce no second passage. An unresolved pending
    passage blocks overlap. A lost reply is reread, never automatically resent.
@@ -476,6 +731,51 @@ daemon or user Mission.
 
 ## Agent conventions
 
-- Missions autonomy target is explicitly native: the OpenCode service/plugin runs scheduled passages with both CodeNomad UI and intermediary backend closed; neither a persistent CodeNomad backend nor a window timer is a substitute. One process-local native Job per running schedule sleeps until min(nextDueAt, now + 1h), then rereads clock/document and admits only the latest due civil day newer than lastDaily. A native session-execution terminal event (Bus `listen`, 3 s debounce) also wakes the Job so archives follow family quiescence promptly; the event is a wake hint, never settlement evidence. Pause/Stop cancel the Job; desired running without a live Job is Interrupted until explicit Resume, never automatic rearming. Do not rely on native continuation after a restart: Resume never sends one, and a family turn cut by the restart settles `ended-without-report` / `interrupted`.
+### Unified document foundation
+
+`missions/launch-policy.ts` and `mission-document{,-state,-store}.ts` provide a
+strict internal configuration codec and conditional document store. Their
+`codenomad-missions/documents-v1` namespace owns paused creation, immediate/at/in/
+every/cron/multi launch policies, one optional source condition, combined end
+bounds, and a global admitted-passage count. Relative origins are frozen at first
+Play; the absolute slot end applies to recorded due times, including late arrivals.
+Each passage references its execution journal by immutable mission ID. The existing
+journal ranges, deletion reserve and activation index own execution history.
+
+Configuration generations advance separately from temporal generations. Per-calendar
+high-water, exact pending/preparing wake references, the monotone task-created mark,
+and first-Play/budget counters survive the 30-receipt window. Checkpoint payloads are
+bounded JSON snapshots; successful settlement consumes the pending snapshot.
+Deletion retains the full stopped document through reconciliation, then reserves a
+per-project tombstone entry before compacting it; the registry holds at most 4096
+entries and 1 MiB and refuses further compaction at capacity.
+
+The store requires transactional revision compare-and-set and a synchronous fresh
+ownership guard. `opencode/missions/native-mission-document-storage.ts` acquires
+the private Database in the current RPC graph and performs revision/byte-checked
+publication inside an immediate transaction. One-time product creation and first
+Play use this adapter through `mission-document-one-time.ts`; their immutable
+creation receipt reserves the coordinator identity before native creation, and the
+first Play retains its original lifecycle request/message and admission count.
+Panel reads project bounded document metadata through the existing map RPCs.
+
+`documentCapabilities` qualifies new unified document creation. Journal-only
+one-time maps keep their existing execution controls, declarations, continuations
+and final reports through the journal path, with their stored representation
+preserved. Daily entries remain visible with the controls of their daily contract.
+The authenticated daily controls documented above use `NativeMissionRecurrenceStore`.
+
+The storage-only `documentActivation` RPC retains at most two exact configuration
+targets, a namespace authority digest, original request/revision, attempted barriers
+and acknowledged result digests. `missionScheduleActivationJournal` in the server
+routes adapts those phases to the settings executor. Ready follows that executor's
+positive effective read and keeps the Mission paused. Immediate Play leaves this
+field null. Keep credentials and raw configuration out of the document.
+
+Scheduled admission, source baselines/changes, native adoption/cleanup, complete
+fan-in coverage, terminal-turn correlation and family quiescence belong to their
+own qualified adapters. Keep unknown data intact and qualification fixtures isolated.
+
+- Missions autonomy runs in the OpenCode service/plugin with both CodeNomad UI and intermediary backend closed. Never substitute a persistent CodeNomad backend or a window timer. Unified documents use the persisted native calendars and restart recovery above. Daily documents use one process-local native Job per running daily schedule, sleeping until min(nextDueAt, now + 1h), then rereading clock/document and admitting only the latest due civil day newer than lastDaily. A native session-execution terminal event (Bus `listen`, 3 s debounce) also wakes that Job so archives follow family quiescence promptly; the event is a wake hint, never settlement evidence. Pause/Stop cancel the daily Job; desired running without it is Interrupted until explicit Resume. Resume observes native continuation under the original identities. Every remaining claim and missing terminal correlation keeps pending uncertain; a correlated idle and full family/background-delivery quiescence are required for archive. Never infer interruption from claim age or inactivity, and never resend an admitted original prompt.
 - Core: `missions/recurrence-{contract,clock,store,runner}.ts` (native side `opencode/missions/native-recurrence-*.ts`); omitting a profile variant is valid. Every rule in the sections above binds.
 - Root and schedule admission read the family identity with `readFamilyAuthorityIdentity` (`workspaces/family-authority-claim.ts`) only for a directory WorkspaceManager already authorized: registered linked worktrees share their Git common directory's identity, and a Git-free conversation has none, so it can never infer a family.

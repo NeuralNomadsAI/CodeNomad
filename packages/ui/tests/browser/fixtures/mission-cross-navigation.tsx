@@ -13,12 +13,16 @@ import { clearSessionCatalogState, refreshSessionCatalog } from "../../../src/st
 import { openSessionPreview, showSessionChatFor, getSessionPreview } from "../../../src/stores/session-previews"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { sseManager } from "../../../src/lib/sse-manager"
+import { serverEvents } from "../../../src/lib/server-events"
+import { panelExtensionsApi } from "../../../src/lib/panel-extensions-api"
+import { observePanelReads } from "../panel-read-fixture"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import "../../../src/index.css"
 import { markSessionListsRestored } from "./session-list-restored"
 
+observePanelReads(panelExtensionsApi)
 await initializeClientState()
 writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, "missions")
 const id = "cross-navigation", scope = "/fixture", client = sdkManager.createClient(id, `/workspaces/${id}/instance`, () => true)
@@ -51,6 +55,7 @@ function Fixture() {
   })
   window.missionCrossNavigation = {
     snapshot, history: () => [...history],
+    transport: status => (serverEvents as unknown as { emitTransportStatus(status: string): void }).emitTransportStatus(status),
     coldCatalogue: async () => {
       // Drain this fixture's read before clearing its display marker. This never
       // cancels a shared read and does not change any product cache policy.
@@ -76,6 +81,7 @@ declare global {
     missionCrossNavigation: {
       snapshot(): ReturnType<typeof snapshot>; history(): ReturnType<typeof snapshot>[]
       coldCatalogue(): Promise<void>; clearActive(): void; created(): void
+      transport(status: "connected" | "disconnected"): void
     }
   }
 }

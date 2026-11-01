@@ -2,7 +2,7 @@ import "./process-output"
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, session } from "electron"
 import http from "node:http"
 import https from "node:https"
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
@@ -13,6 +13,7 @@ import { isBrowserUrlAllowed, secureBrowserWebview } from "./browser-webview-sec
 import { ClientStateManager } from "./client-state"
 import { setupClientStateIPC } from "./client-state-ipc"
 import { ClientStateNavigationController } from "./client-state-navigation"
+import { abandonLaunchWindow, acknowledgeLaunchConnection, CONNECT_LAUNCH_TIMEOUT_MS, type ConnectLaunchHost } from "./connect-launch"
 import { setupCliIPC } from "./ipc"
 import { notificationBadgeBitmap, setupNotificationBadgeIPC } from "./notification-badge"
 import { LocalWindowRegistry, type LocalWindowRecord } from "./local-window-registry"
@@ -24,10 +25,10 @@ import { configureBrowserPermissionHandlers, configureMediaPermissionHandlers, i
 import { setupPreferencesIPC } from "./preferences-ipc"
 import { createPreferencesUrl, PreferencesWindowRegistry, type PreferencesRequest } from "./preferences-window"
 import { CliProcessManager, setBackendProfileScope } from "./process-manager"
-import { navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
+import { loadNewRemoteWindow, navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isPinnedLaunch, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, prepareSecondLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveSelectedConfig, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, DeferredRestore, forwardedLaunchData, isConnectOnlyLaunch, isPinnedLaunch, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, prepareSecondLaunchIntent, readForwardedLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveSelectedConfig, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
 import { InvalidProfileError } from "./data-profile"
 import { stripPrivateRelaunchEnvironment, sweepSelectionFolders } from "./profile-selection-cleanup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH, installWindowSizeConstraints, installWindowZoomInput, setWindowZoomLevel, zoomedWindowMinimum, restoreWindowState, WindowStateTracker } from "./window-state"
@@ -36,6 +37,7 @@ import { forwardOpenerStartupState, runStartupStateCommandInWindow, startupState
 import { resolveProfileRoots } from "./data-profile-cleanup"
 import { setupDataProfileCleanupIPC } from "./data-profile-cleanup-ipc"
 import { openExternalWithFeedback } from "./open-external"
+import { RemoteRecoveryPages, showRemoteUnavailable } from "./remote-recovery"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
@@ -131,7 +133,8 @@ function startProfile(profileKey: string, pinned: boolean) {
     .digest("hex")
     .slice(0, 16)}`
   const initialIntent = parseLaunchIntent(argvForLaunch(process.argv), process.cwd())
-  startPrimaryInstance(() => app.requestSingleInstanceLock(), () => app.quit(), () => {
+  // The parsed intent travels with the singleton request: Chromium reorders the forwarded argv.
+  startPrimaryInstance(() => app.requestSingleInstanceLock(forwardedLaunchData(initialIntent)), () => app.quit(), () => {
     configureBrowserStorage(browserDataPath, sessionDataPath)
     runPrimary(initialIntent)
   })
@@ -176,8 +179,19 @@ function runPrimary(firstIntent: LaunchIntent) {
     request.on("error", (error) => console.warn("[electron] failed to clean up remote proxy session", sessionId, error))
     request.end()
   })
+  // The unavailable-server documents the host loads in remote windows whose server could not be loaded.
+  const remoteRecovery = new RemoteRecoveryPages()
   const preferencesWindows = new PreferencesWindowRegistry()
-  let pendingPreferencesRestore = clientState.preferences
+  // A connect-only launch restores the saved Preferences window only if it falls back to a normal start.
+  const preferencesRestore = new DeferredRestore(clientState.preferences, isConnectOnlyLaunch(firstIntent))
+  const restorePendingPreferences = () => {
+    const request = preferencesRestore.take()
+    if (!request) return
+    void openPreferences(request).catch((error) => {
+      preferencesRestore.retry(request)
+      console.warn("[electron] failed to restore Preferences", error)
+    })
+  }
   let preferencesNavigation: ClientStateNavigationController | null = null
   let preferencesTracker: WindowStateTracker | null = null
   let preferencesTransition: { id: number; key: string; run: () => void } | undefined
@@ -195,10 +209,13 @@ function runPrimary(firstIntent: LaunchIntent) {
       const icon = count ? nativeImage.createFromBitmap(notificationBadgeBitmap(count), { width: 32, height: 32 }) : null
       for (const window of windows) window.setOverlayIcon(icon, count ? String(count) : "")
     })
+  // Hidden windows a `--connect-server` launch owns (its local window, a remote window still loading).
+  const launchWindows = new WeakSet<BrowserWindow>()
   lifecycle = new MultiwindowLifecycle({
     app, clientStateManager: clientState, cliManager: cli,
     getLocalWindows: () => registry.all(), getAllWindows: () => BrowserWindow.getAllWindows(),
     isSupportWindow: (window) => preferencesWindows.current() === window,
+    isLaunchWindow: (window) => launchWindows.has(window),
     flushSupportWindows: async () => {
       const window = preferencesWindows.current()
       if (window && preferencesWindows.isReady(window)) {
@@ -267,19 +284,12 @@ function runPrimary(firstIntent: LaunchIntent) {
       for (const record of registry.all()) void navigateBackend(record, url)
       const preferences = preferencesWindows.current()
       if (preferences) void navigatePreferences(preferences, url)
-      else if (pendingPreferencesRestore) {
-        const request = pendingPreferencesRestore
-        pendingPreferencesRestore = undefined
-        void openPreferences(request).catch((error) => {
-          pendingPreferencesRestore = request
-          console.warn("[electron] failed to restore Preferences", error)
-        })
-      }
+      else restorePendingPreferences()
     },
     (error) => console.error("[cli] bootstrap token exchange failed", error),
   )
 
-  const createWindow = (windowId: string, persisted = true): LocalWindowRecord => {
+  const createWindow = (windowId: string, persisted = true, connectOnly = false): LocalWindowRecord => {
     const saved = persisted ? clientState.getWindowState(windowId) : undefined
     const minimum = zoomedWindowMinimum(saved?.zoomFactor ?? 1)
     const bounds = saved ? clampWindowBounds(saved.bounds, screen.getAllDisplays().map((display) => ({ ...display.workArea, scaleFactor: display.scaleFactor })), minimum) : undefined
@@ -287,13 +297,17 @@ function runPrimary(firstIntent: LaunchIntent) {
       width: bounds?.width ?? DEFAULT_WINDOW_WIDTH, height: bounds?.height ?? DEFAULT_WINDOW_HEIGHT,
       ...(bounds ? { x: bounds.x, y: bounds.y } : {}), useContentSize: true, minWidth: minimum.width, minHeight: minimum.height,
       ...applicationWindowChrome, autoHideMenuBar: true, backgroundColor: "#1a1a1a", icon: getIconPath(),
+      // A launch connection runs hidden; it only becomes visible as the last-resort fallback.
+      ...(connectOnly ? { show: false } : {}),
       webPreferences: {
         preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, webviewTag: true,
+        ...(connectOnly ? { backgroundThrottling: false } : {}),
         ...(saved ? { zoomFactor: saved.zoomFactor } : {}),
         additionalArguments: ["--codenomad-window-context=local", `--codenomad-window-id=${windowId}`],
       },
     })
     if (!isMac) window.setMenuBarVisibility(false)
+    if (connectOnly) launchWindows.add(window)
     const nativeWindowId = window.id
     const webContentsId = window.webContents.id
     const navigation = new ClientStateNavigationController(window, {
@@ -305,7 +319,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     const tracker = persisted && clientState.isPrimary ? new WindowStateTracker(window, clientState, saved, windowId) : null
     installWindowSizeConstraints(window, () => screen.getDisplayMatching(window.getBounds()).workArea, saved?.zoomFactor ?? 1)
     if (persisted && clientState.isPrimary) restoreWindowState(window, saved, bounds)
-    const record: LocalWindowRecord = { id: windowId, persisted, window, navigation, tracker, loading: false, backendUrl: null, pendingFolders: [] }
+    const record: LocalWindowRecord = { id: windowId, persisted, window, navigation, tracker, loading: false, backendUrl: null, pendingFolders: [], ...(connectOnly ? { connectOnly } : {}) }
     registry.add(record)
     bindNotificationBadge(window)
     bindClientState(window)
@@ -373,9 +387,36 @@ function runPrimary(firstIntent: LaunchIntent) {
     return createWindow(identity.id, identity.persisted)
   }
   const handleIntent = async (intent: LaunchIntent) => {
+    if (isConnectOnlyLaunch(intent) && !registry.mruRecord()) {
+      // Nothing to run the connection in: a hidden, unpersisted window runs it and closes once it settles.
+      const record = createWindow(randomUUID(), false, true)
+      registry.queueConnection(record.id, { target: intent.connectServer! })
+      const timeout = setTimeout(() => { void abandonLaunchWindow(connectLaunchHost, record.id).catch(reportLaunchConnectionError) }, CONNECT_LAUNCH_TIMEOUT_MS)
+      record.window.on("closed", () => clearTimeout(timeout))
+      return
+    }
     const record = intent.newWindow ? await createNewWindow() : registry.focusMru() ?? ensureLocalWindow() ?? await createNewWindow()
     for (const folder of intent.folders) registry.queueFolder(record.id, folder)
+    if (intent.connectServer !== undefined) registry.queueConnection(record.id, { target: intent.connectServer })
     registry.focus(record.id)
+  }
+  const restoreNormalStart = async () => {
+    for (const id of clientState.windowIds) if (!registry.get(id)) createWindow(id)
+    preferencesRestore.release()
+    if (backendTargetUrl && !preferencesWindows.current()) restorePendingPreferences()
+    return registry.focus(clientState.activeWindowId)
+      ?? registry.all().find((record) => !record.connectOnly && !record.window.isDestroyed())
+      ?? await createNewWindow()
+  }
+  const connectLaunchHost: ConnectLaunchHost = {
+    registry,
+    restoreNormalStart,
+    close: (record) => { if (!record.window.isDestroyed()) record.window.close() },
+    show: (record) => { launchWindows.delete(record.window); registry.focus(record.id) },
+  }
+  const reportLaunchConnectionError = (error: unknown) => console.error("[electron-startup] launch connection failed", error)
+  const abandonLaunchWindows = () => {
+    for (const record of registry.all()) if (record.connectOnly) void abandonLaunchWindow(connectLaunchHost, record.id).catch(reportLaunchConnectionError)
   }
   const intentQueue = createLaunchIntentQueue(handleIntent, (error) => console.error("[electron-startup] launch intent failed", error))
   const firstLaunch = intentQueue.enqueue(firstIntent)
@@ -384,7 +425,14 @@ function runPrimary(firstIntent: LaunchIntent) {
   setupCliIPC(cli, {
     resolveLocal: (sender) => registry.resolve(sender), resolvePreferences: (sender) => preferencesWindows.resolve(sender), getAllowedOrigins,
     openRemoteWindow, newWindow: () => intentQueue.enqueue({ newWindow: true, folders: [] }),
+    // Only the unavailable-server document the host loaded may ask for these: the server's own pages never can.
+    resolveRemoteRecovery: (event, token) => remoteWindows.resolve(event.sender) ? remoteRecovery.authorize(event, token) : undefined,
+    openLocalWindow: () => intentQueue.enqueue({ newWindow: false, folders: [] }),
     nextFolder: (id) => registry.nextFolder(id), acknowledgeFolder: (id, folder, opened) => registry.acknowledgeFolder(id, folder, opened),
+    nextConnection: (id) => registry.nextConnection(id),
+    acknowledgeConnection: (id, target, failure, handOff) => {
+      void acknowledgeLaunchConnection(connectLaunchHost, id, target, failure, handOff).catch(reportLaunchConnectionError)
+    },
     browserController,
   })
   const profileRoots = resolveProfileRoots(baseUserDataPath)
@@ -432,8 +480,8 @@ function runPrimary(firstIntent: LaunchIntent) {
     },
   })
   lifecycle.registerAppEvents()
-  app.on("second-instance", (_event, argv, workingDirectory) => {
-    const intent = parseLaunchIntent(argvForLaunch(argv), workingDirectory || process.cwd())
+  app.on("second-instance", (_event, argv, workingDirectory, additionalData) => {
+    const intent = readForwardedLaunchIntent(additionalData) ?? parseLaunchIntent(argvForLaunch(argv), workingDirectory || process.cwd())
     void intentQueue.enqueue(prepareSecondLaunchIntent(intent, storageScope.configIdentity)).catch(() => {})
   })
   app.on("open-file", (event, path) => {
@@ -467,6 +515,8 @@ function runPrimary(firstIntent: LaunchIntent) {
     }
   })
   cli.on("error", (error) => {
+    // A hidden launch window cannot show the backend failure: a normal start does.
+    abandonLaunchWindows()
     const payload = { message: error.message }
     registry.fanout("cli:error", payload)
     preferencesWindows.current()?.webContents.send("cli:error", payload)
@@ -492,8 +542,11 @@ function runPrimary(firstIntent: LaunchIntent) {
       reload: (window) => { const record = registry.resolve(window.webContents); if (record) void record.navigation.navigate((target) => target.webContents.reload()); else window.webContents.reload() },
       forceReload: (window) => { const record = registry.resolve(window.webContents); if (record) void record.navigation.navigate((target) => target.webContents.reloadIgnoringCache()); else window.webContents.reloadIgnoringCache() },
     })
-    for (const id of clientState.windowIds) createWindow(id)
-    registry.focus(clientState.activeWindowId)
+    // A launch that only connects to a server restores the local windows only if the connection fails.
+    if (!isConnectOnlyLaunch(firstIntent)) {
+      for (const id of clientState.windowIds) createWindow(id)
+      registry.focus(clientState.activeWindowId)
+    }
     intentQueue.start()
     await firstLaunch.catch(() => {})
     void cli.start({ dev: !app.isPackaged }).catch((error) => registry.fanout("cli:error", { message: error instanceof Error ? error.message : String(error) }))
@@ -507,7 +560,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     const candidates = [join(process.resourcesPath, "preload/index.js"), join(mainDirname, "../preload/index.js"), join(mainDirname, "../preload/index.cjs"), join(mainDirname, "../../electron/preload/index.cjs"), join(app.getAppPath(), "electron/preload/index.cjs")]
     return candidates.find(existsSync) ?? candidates[0]
   }
-  async function openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean }) {
+  async function openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean; requireLoad?: boolean }) {
     return remoteWindows.serialize(payload.id, async () => {
       const base = requireHttpUrl(payload.baseUrl, "baseUrl")
       const target = requireHttpUrl(payload.entryUrl ?? payload.baseUrl, "entryUrl")
@@ -522,8 +575,11 @@ function runPrimary(firstIntent: LaunchIntent) {
       const remoteSession = session.fromPartition(resolveRemoteSessionPartition(payload.id, payload.proxySessionId))
       const window = new BrowserWindow({
         width: 1400, height: 900, minWidth: MIN_WINDOW_WIDTH, minHeight: 600, backgroundColor: "#1a1a1a", icon: getIconPath(), title,
+        // A launch connection shows the window only once its page has loaded.
+        ...(payload.requireLoad ? { show: false } : {}),
         webPreferences: { session: remoteSession, preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, additionalArguments: ["--codenomad-window-context=remote"] },
       })
+      if (payload.requireLoad) launchWindows.add(window)
       const nativeWindowId = window.id
       const webContentsId = window.webContents.id
       const allowedOrigins = new Set([base.origin, target.origin])
@@ -539,11 +595,11 @@ function runPrimary(firstIntent: LaunchIntent) {
       setupNavigationGuards(window, undefined, getAllowedOrigins, getLoadingUrl)
       lifecycle.attachSupportWindow(window)
       window.on("closed", () => { remoteOrigins.delete(nativeWindowId); insecureOrigins.delete(webContentsId) })
-      try { await navigateRemoteWindow(window, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify) } catch (error) {
-        console.warn("[electron] failed to load remote window; showing loading screen", error)
-        const loading = loadingTarget()
-        await (loading.url ? window.loadURL(loading.url) : window.loadFile(loading.file!))
-      }
+      const navigate = () => navigateRemoteWindow(window, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify)
+      const showUnavailable = () => showRemoteUnavailable(remoteRecovery, window, loadingTarget(), navigate)
+      await loadNewRemoteWindow(window, navigate, showUnavailable, payload.requireLoad === true)
+      launchWindows.delete(window)
+      if (!window.isDestroyed() && !window.isVisible()) window.show()
     })
   }
 

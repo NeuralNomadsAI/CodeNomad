@@ -34,15 +34,7 @@ export async function readNativeServiceRegistration(input: {
   const stateDirectory = await map(input.stateDirectory)
   const configDirectory = await map(input.configDirectory)
   const join = (root: string, name: string) => (root.startsWith("/") ? path.posix : path.win32).join(root, name)
-  const names = (await readdir(configDirectory)).filter(name => serviceFile.test(name))
-  if (names.length > MAX_CONFIGS) throw new Error("Too many native service configurations")
-  const matches: Array<{ name: string; config: Record<string, unknown> }> = []
-  for (const name of names) {
-    const config = await readRecord(join(configDirectory, name))
-    if (config?.password === input.password) matches.push({ name, config })
-  }
-  if (matches.length !== 1) throw new Error("Cannot uniquely identify the selected OpenCode service channel")
-  const { name, config } = matches[0]!
+  const { name, config } = await readNativeServiceChannel(configDirectory, input.password)
   const registration = await readRecord(join(stateDirectory, name))
   if (!registration) {
     // A configured endpoint can still have an occupied listener without a
@@ -58,6 +50,19 @@ export async function readNativeServiceRegistration(input: {
   if (typeof registration.url !== "string" || !Number.isSafeInteger(registration.pid) || Number(registration.pid) <= 0
     || registration.password !== input.password) throw new Error("Invalid native service registration or credential mismatch")
   return { url: registration.url, pid: Number(registration.pid) }
+}
+
+/** Internal credential-scoped channel resolution. Credentials stay in memory. */
+export async function readNativeServiceChannel(configDirectory: string, password: string) {
+  const names = (await readdir(configDirectory)).filter(name => serviceFile.test(name))
+  if (names.length > MAX_CONFIGS) throw new Error("Too many native service configurations")
+  const matches: Array<{ name: string; config: Record<string, unknown> }> = []
+  for (const name of names) {
+    const config = await readRecord(path.join(configDirectory, name))
+    if (config && config.password === password) matches.push({ name, config })
+  }
+  if (matches.length !== 1) throw new Error("Cannot uniquely identify the selected OpenCode service channel")
+  return matches[0]!
 }
 
 async function readRecord(file: string): Promise<Record<string, unknown> | undefined> {

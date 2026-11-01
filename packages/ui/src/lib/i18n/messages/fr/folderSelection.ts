@@ -105,6 +105,11 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "Continuer",
   "folderSelection.servers.certificateInstall.cancelLabel": "Annuler",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad a besoin que le certificat local soit approuve avant de pouvoir ouvrir des fenetres distantes HTTPS auto-signees.",
+  "folderSelection.servers.launch.error.missing": "--connect-server attend le nom d'un serveur enregistré ou une URL http(s).",
+  "folderSelection.servers.launch.error.invalid": "« {value} » n'est pas une adresse de serveur http:// ou https:// valide.",
+  "folderSelection.servers.launch.error.credentials": "« {value} » contient des identifiants ou un code d'appairage. Une adresse de lancement ne peut pas en contenir : appairez le serveur depuis Se connecter à un serveur.",
+  "folderSelection.servers.launch.error.unknown": "Aucun serveur enregistré ne s'appelle « {value} ». Indiquez le nom d'un serveur enregistré ou une URL http(s).",
+  "folderSelection.servers.launch.error.ambiguous": "Plusieurs serveurs enregistrés s'appellent « {value} ». Renommez-en un ou indiquez son URL.",
   "folderSelection.sidecars.button": "Ouvrir SideCar",
 
   "projectRenameDialog.title": "Renommer l'espace de travail",

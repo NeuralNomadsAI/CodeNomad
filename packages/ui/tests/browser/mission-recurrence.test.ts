@@ -234,6 +234,13 @@ test("rows say Next, stuck passages explain their one action, history is plain a
     assert.match(await items.nth(1).innerText(), /^Oct 7, 2026, 9:00 AM · Completed · Run now$/)
     assert.equal(await detail.getByRole("button", { name: "Technical details", exact: true }).count(), 0)
     await captureMissionView(page, "stuck-passage-history")
+    schedule.pending = { passageID: "pas_stuck", status: "uncertain", trigger: "daily", reason: "not-observed",
+      missionID: "msn_passage", conversationID: "ses_original" }
+    schedule.lastError = { code: "settlement-failed", at: Date.UTC(2026, 9, 9, 8, 15) }
+    await page.evaluate(() => window.missionEditorLifetime.invalidateRecurrence())
+    await detail.locator(".mission-schedule-notice").getByText("This passage's start was accepted, but its end cannot be confirmed. Its original identity is preserved and another passage stays blocked.", { exact: true }).waitFor()
+    assert.equal(await detail.getByText("Resume checks the running passage; it never sends it twice.", { exact: true }).count(), 0)
+    assert.equal(await missionToolbarAction(page, RUN_NOW).isEnabled(), false, "unknown terminal evidence never offers another passage")
     // Without a live observer the sentence names the one action that reconciles it.
     schedule.state = "paused"; schedule.nextDueAt = null; schedule.lastError = undefined
     schedule.pending = { passageID: "pas_stuck", status: "uncertain", trigger: "daily", reason: "not-observed" }

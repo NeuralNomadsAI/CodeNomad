@@ -48,6 +48,11 @@ on:
         required: false
         default: true
         type: boolean
+      windows_signing_policy:
+        description: "SignPath signing policy for the Windows artifacts (test-signing or release-signing); empty builds them unsigned"
+        required: false
+        default: ""
+        type: string
 
 # Permissions are intentionally omitted here so callers can choose
 # least-privilege (e.g. dev CI uses read-only; releases grant write).
@@ -239,6 +244,15 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
 
+      # Runs first so a release missing its SignPath token fails before building.
+      - name: Resolve SignPath signing (Electron Windows)
+        id: signing
+        shell: pwsh
+        env:
+          POLICY: ${{ inputs.windows_signing_policy }}
+          HAS_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        run: ./.github/scripts/windows-signing.ps1 -Policy $env:POLICY -HasToken $env:HAS_TOKEN -Version "$env:VERSION" -PackageJson packages/electron-app/package.json
+
       - name: Setup Node
         uses: actions/setup-node@v7.1.0
         with:
@@ -258,6 +272,48 @@ jobs:
 
       - name: Verify bundled Node resource (Electron Windows)
         run: node scripts/verify-bundled-node.cjs packages/electron-app/electron/resources@win32-x64
+
+      # Runs on unsigned builds too, so PR builds prove that the packaging step
+      # gives CodeNomad.exe the same product version as the Tauri binaries.
+      - name: Check Electron executable metadata
+        shell: pwsh
+        env:
+          SIGNING_VERSION: ${{ steps.signing.outputs.version }}
+        run: |
+          $zip = "packages/electron-app/release/CodeNomad-Electron-windows-x64-$env:SIGNING_VERSION.zip"
+          $exe = Join-Path $env:RUNNER_TEMP "signpath/electron-unsigned/CodeNomad.exe"
+          ./.github/scripts/zip-entry.ps1 -Zip $zip -Entry CodeNomad.exe -Destination $exe
+          ./.github/scripts/verify-authenticode.ps1 -Path $exe -ProductVersion $env:SIGNING_VERSION -Unsigned
+
+      - name: Sign Electron Windows archive (SignPath)
+        if: ${{ steps.signing.outputs.enabled == 'true' }}
+        uses: ./.github/actions/signpath-sign
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          signing-policy: ${{ inputs.windows_signing_policy }}
+          artifact-configuration: electron-windows-zip
+          artifact-name: signpath-${{ github.run_id }}-${{ github.run_attempt }}-electron-windows
+          path: packages/electron-app/release/CodeNomad-Electron-windows-x64-${{ steps.signing.outputs.version }}.zip
+          parameters: |
+            version: ${{ toJSON(steps.signing.outputs.version) }}
+          output-directory: ${{ runner.temp }}/signpath/electron-signed
+
+      - name: Verify and install signed Electron Windows archive
+        if: ${{ steps.signing.outputs.enabled == 'true' }}
+        shell: pwsh
+        env:
+          POLICY: ${{ inputs.windows_signing_policy }}
+          SIGNING_VERSION: ${{ steps.signing.outputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = "CodeNomad-Electron-windows-x64-$env:SIGNING_VERSION.zip"
+          $unsigned = "packages/electron-app/release/$name"
+          $signed = Join-Path $env:RUNNER_TEMP "signpath/electron-signed/$name"
+          $exe = Join-Path $env:RUNNER_TEMP "signpath/electron-signed-check/CodeNomad.exe"
+          # Only CodeNomad.exe may differ from the archive that was built.
+          ./.github/scripts/zip-entry.ps1 -Zip $signed -Entry CodeNomad.exe -Destination $exe -Original $unsigned
+          ./.github/scripts/verify-authenticode.ps1 -Path $exe -ProductVersion $env:SIGNING_VERSION -Policy $env:POLICY
+          Copy-Item $signed $unsigned -Force
 
       - name: Upload release assets
         if: ${{ inputs.upload && inputs.tag != '' }}
@@ -739,6 +795,15 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
 
+      # Runs first so a release missing its SignPath token fails before building.
+      - name: Resolve SignPath signing (Tauri Windows)
+        id: signing
+        shell: pwsh
+        env:
+          POLICY: ${{ inputs.windows_signing_policy }}
+          HAS_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        run: ./.github/scripts/windows-signing.ps1 -Policy $env:POLICY -HasToken $env:HAS_TOKEN -Version "$env:VERSION" -PackageJson packages/tauri-app/package.json
+
       - name: Setup Node
         uses: actions/setup-node@v7.1.0
         with:
@@ -768,18 +833,63 @@ jobs:
       - name: Configure Tauri updater (Windows)
         run: npm run configure:updater --workspace @codenomad/tauri-app
 
-      - name: Build Windows bundle (Tauri)
+      # The application executable is built, marked as an NSIS installation and
+      # optionally signed before NSIS packages it: bundling with
+      # --no-binary-patching keeps that signature intact. Unsigned builds take
+      # the same path.
+      - name: Build Windows application (Tauri)
+        shell: bash
+        working-directory: packages/tauri-app
+        # Prebuild already ran, so tauri.prebuilt.conf.json replaces the hook.
+        run: npm exec -- tauri build --no-bundle --config src-tauri/tauri.prebuilt.conf.json
+
+      - name: Mark the Tauri executable as an NSIS installation
+        run: node packages/tauri-app/scripts/patch-bundle-type.mjs packages/tauri-app/target/release/codenomad-tauri.exe nsis
+
+      - name: Check Tauri executable before signing
+        if: ${{ steps.signing.outputs.enabled == 'true' }}
+        shell: pwsh
+        env:
+          SIGNING_VERSION: ${{ steps.signing.outputs.version }}
+        run: ./.github/scripts/verify-authenticode.ps1 -Path packages/tauri-app/target/release/codenomad-tauri.exe -ProductVersion $env:SIGNING_VERSION -Unsigned
+
+      - name: Sign Tauri executable (SignPath)
+        if: ${{ steps.signing.outputs.enabled == 'true' }}
+        uses: ./.github/actions/signpath-sign
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          signing-policy: ${{ inputs.windows_signing_policy }}
+          artifact-configuration: tauri-app-exe
+          artifact-name: signpath-${{ github.run_id }}-${{ github.run_attempt }}-tauri-app-exe
+          path: packages/tauri-app/target/release/codenomad-tauri.exe
+          parameters: |
+            version: ${{ toJSON(steps.signing.outputs.version) }}
+          output-directory: ${{ runner.temp }}/signpath/tauri-app-exe
+
+      - name: Verify and install signed Tauri executable
+        if: ${{ steps.signing.outputs.enabled == 'true' }}
+        shell: pwsh
+        env:
+          POLICY: ${{ inputs.windows_signing_policy }}
+          SIGNING_VERSION: ${{ steps.signing.outputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $signed = Join-Path $env:RUNNER_TEMP "signpath/tauri-app-exe/codenomad-tauri.exe"
+          ./.github/scripts/verify-authenticode.ps1 -Path $signed -ProductVersion $env:SIGNING_VERSION -Policy $env:POLICY
+          Copy-Item $signed packages/tauri-app/target/release/codenomad-tauri.exe -Force
+
+      - name: Bundle Windows installer (Tauri)
         shell: bash
         working-directory: packages/tauri-app
         env:
-          # Only this step holds the private key. Prebuild already ran without it,
-          # so tauri.prebuilt.conf.json replaces the hook; cargo build scripts still see it.
+          # Bundling writes the updater signature; the private key is held only
+          # here and by the re-signing step below.
           TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-        run: npm exec -- tauri build --config src-tauri/tauri.prebuilt.conf.json
+        run: npm exec -- tauri bundle --bundles nsis --no-binary-patching --config src-tauri/tauri.prebuilt.conf.json
 
       - name: Package Tauri artifacts (Windows)
-        if: ${{ inputs.upload || inputs.upload_actions_artifacts }}
+        if: ${{ inputs.upload || inputs.upload_actions_artifacts || steps.signing.outputs.enabled == 'true' }}
         shell: pwsh
         run: |
           # The NSIS installer is both the download and the updater payload.
@@ -791,6 +901,56 @@ jobs:
           if ($installers.Count -ne 1) { throw "Expected one Tauri NSIS installer, found $($installers.Count)" }
           $version = if ($env:VERSION) { $env:VERSION } else { (Get-Content packages/tauri-app/package.json | ConvertFrom-Json).version }
           Copy-Item $installers[0].FullName (Join-Path $artifactDir "CodeNomad-Tauri-windows-x64-$version.exe")
+
+      - name: Check Tauri installer before signing
+        if: ${{ steps.signing.outputs.enabled == 'true' }}
+        shell: pwsh
+        env:
+          SIGNING_VERSION: ${{ steps.signing.outputs.version }}
+        run: ./.github/scripts/verify-authenticode.ps1 -Path "packages/tauri-app/release-tauri/CodeNomad-Tauri-windows-x64-$env:SIGNING_VERSION.exe" -ProductVersion $env:SIGNING_VERSION -Unsigned
+
+      - name: Sign Tauri installer (SignPath)
+        if: ${{ steps.signing.outputs.enabled == 'true' }}
+        uses: ./.github/actions/signpath-sign
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          signing-policy: ${{ inputs.windows_signing_policy }}
+          artifact-configuration: tauri-installer
+          artifact-name: signpath-${{ github.run_id }}-${{ github.run_attempt }}-tauri-installer
+          path: packages/tauri-app/release-tauri/CodeNomad-Tauri-windows-x64-${{ steps.signing.outputs.version }}.exe
+          parameters: |
+            version: ${{ toJSON(steps.signing.outputs.version) }}
+          output-directory: ${{ runner.temp }}/signpath/tauri-installer
+
+      # The updater signature must cover the bytes users download, so it is
+      # recomputed over the Authenticode-signed installer; staging then verifies
+      # it and records the digest the release asset must match.
+      - name: Verify and install signed Tauri installer
+        if: ${{ steps.signing.outputs.enabled == 'true' }}
+        shell: pwsh
+        working-directory: packages/tauri-app
+        env:
+          POLICY: ${{ inputs.windows_signing_policy }}
+          SIGNING_VERSION: ${{ steps.signing.outputs.version }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = "CodeNomad-Tauri-windows-x64-$env:SIGNING_VERSION.exe"
+          $signed = Join-Path $env:RUNNER_TEMP "signpath/tauri-installer/$name"
+          ../../.github/scripts/verify-authenticode.ps1 -Path $signed -ProductVersion $env:SIGNING_VERSION -Policy $env:POLICY
+          $bundled = @(Get-ChildItem -Path target/release/bundle/nsis -File -Filter *.exe)
+          if ($bundled.Count -ne 1) { throw "Expected one Tauri NSIS installer, found $($bundled.Count)" }
+          Copy-Item $signed "release-tauri/$name" -Force
+          Copy-Item $signed $bundled[0].FullName -Force
+          $updaterSignature = "$($bundled[0].FullName).sig"
+          if ($env:TAURI_UPDATER_PUBKEY) {
+            if (-not (Test-Path $updaterSignature)) { throw "Missing updater signature: $updaterSignature" }
+            npm exec -- tauri signer sign --app-version $env:SIGNING_VERSION $bundled[0].FullName
+            if ($LASTEXITCODE -ne 0) { throw "Updater re-signing failed" }
+          } elseif (Test-Path $updaterSignature) {
+            throw "Unexpected updater signature without an updater public key"
+          }
 
       - name: Stage and publish signed updater (Windows)
         env:

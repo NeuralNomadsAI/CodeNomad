@@ -15,9 +15,13 @@ import { sdkManager } from "../../../src/lib/sdk-manager"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
+import { panelExtensionsApi } from "../../../src/lib/panel-extensions-api"
+import { observePanelReads } from "../panel-read-fixture"
 import { promptInputHeight } from "../../../src/components/prompt-input/height-state"
 import { markSessionListsRestored } from "./session-list-restored"
 import "../../../src/index.css"
+
+const panelReadCancelled = observePanelReads(panelExtensionsApi)
 
 // Production whole-InstanceShell foundation, independent of the concurrent
 // mission-cross-navigation fixture. Native HTTP/SSE transport remains fake.
@@ -96,6 +100,8 @@ async function measureComposer() {
 function Fixture() {
   window.missionNativeFamily = {
     snapshot, emit, measureComposer,
+    panelReadCancelled,
+    transport: status => (serverEvents as unknown as { emitTransportStatus(status: string): void }).emitTransportStatus(status),
     statusKnown: (sessionId, known) => setSessions(previous => {
       const next = new Map(previous), catalog = new Map(next.get(id)), session = catalog.get(sessionId)
       if (session) catalog.set(sessionId, { ...session, runtimeStatusKnown: known })
@@ -128,7 +134,8 @@ function Fixture() {
 }
 declare global {
   interface Window {
-    missionNativeFamily: { snapshot(): ReturnType<typeof snapshot>; emit(event: V2Event): void; ask(): void; askPermission(): void; coldChild(): Promise<void>; statusKnown(sessionId: string, known: boolean): void; measureComposer(): ReturnType<typeof measureComposer> }
+    missionNativeFamily: { snapshot(): ReturnType<typeof snapshot>; emit(event: V2Event): void; ask(): void; askPermission(): void; coldChild(): Promise<void>; statusKnown(sessionId: string, known: boolean): void; measureComposer(): ReturnType<typeof measureComposer>
+      panelReadCancelled(id: string): Promise<boolean>; transport(status: "connected" | "disconnected"): void }
   }
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)

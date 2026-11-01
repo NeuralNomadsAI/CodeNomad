@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { observeHeaderFixture } from "./header-fixture-diagnostics"
 
 let browser: Browser, url: string
 before(async () => {
@@ -21,8 +22,10 @@ after(async () => { await browser?.close() })
 
 async function setup(page: Page, blocked?: Promise<void>) {
   const requests: string[] = [], errors: string[] = []
+  const observer = observeHeaderFixture(page)
+  await observer.install()
   page.on("pageerror", error => errors.push(error.message))
-  await page.route(/\/(?:api|workspaces)\//, async route => {
+  await page.route(url => url.pathname.startsWith("/api/") || url.pathname.startsWith("/workspaces/"), async route => {
     const path = new URL(route.request().url()).pathname
     requests.push(path)
     if (path.endsWith("/git-status") || path.endsWith("/vcs/status")) await blocked
@@ -32,10 +35,28 @@ async function setup(page: Page, blocked?: Promise<void>) {
       : { data: [] }
     await route.fulfill({ json }).catch(() => {})
   })
-  await page.goto(url)
-  await page.locator('[data-project="first"]').waitFor()
+  try {
+    await page.goto(url)
+    await page.locator('[data-project="first"]').waitFor()
+  } catch (error) {
+    await observer.diagnose(message => console.error(message)).catch(() => undefined)
+    throw error
+  } finally { observer.detach() }
   return { requests, errors }
 }
+
+test("Git transport mocks preserve module paths containing an api segment", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route("**/__fixture_modules/api/bootstrap.js", route => route.fulfill({ contentType: "text/javascript", body: "export const ready = true" }))
+    const { requests } = await setup(page)
+    assert.equal(await page.evaluate(async () => {
+      const modulePath = "/__fixture_modules/api/bootstrap.js"
+      return (await import(modulePath)).ready
+    }), true)
+    assert.equal(requests.includes("/__fixture_modules/api/bootstrap.js"), false)
+  } finally { await page.close() }
+})
 
 test("metadata and restored tabs preserve shells, Git reads and commit drafts", async () => {
   const page = await browser.newPage()

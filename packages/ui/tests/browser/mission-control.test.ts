@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 import path from "node:path"
 import os from "node:os"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { fixtureEventStream } from "./fixture-event-stream"
 import { chromium, type Browser, type Locator, type Page } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import { clickMissionAction, inlineMissionEntry, missionGeneralAction, missionPicker, missionPickerExpander, missionPickerField, missionPopupOption,
@@ -13,6 +14,7 @@ import { borrowFixture } from "./fixture-borrow"
 import { isMissionContentRequest, listedMissions, panelMissions, routeMissionContent } from "./mission-content-fixture"
 
 let browser: Browser, url: string
+let events: Awaited<ReturnType<typeof fixtureEventStream>>
 before(async () => {
   const fixture = await borrowFixture({
     name: "mission-control",
@@ -22,10 +24,11 @@ before(async () => {
     ],
   })
   url = fixture.url
+  events = await fixtureEventStream(url)
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close() })
+after(async () => { try { await browser?.close() } finally { await events?.close() } })
 
 function mission(id: string): MissionMap {
   return { version: 1, id, projectID: "project", projectCanonical: "/fixture", objective: `Objective ${id}`, template: "custom", notes: "Notes",
@@ -49,6 +52,7 @@ async function setup(page: Page, windowContext: "local" | "remote" = "local") {
     } })
   `)
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await events.route(page)
   await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: { location: { directory: "fixture" }, capability: null, effectiveDepth: null, project: null } }))
   await routeMissionContent(page, listedMissions)
 }
@@ -390,7 +394,7 @@ test("a depth write acknowledged after leaving Settings is accepted and reread o
   } finally { release(); await page.close() }
 })
 
-test("Inherit repairs an existing empty project experimental block that hides the inherited depth", async () => {
+test("Inherit repairs an existing empty project experimental block and displays the effective origin separately from its write target", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   let empty = true, expectation = "empty-block"
   const writes: unknown[] = []
@@ -399,7 +403,8 @@ test("Inherit repairs an existing empty project experimental block that hides th
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
     await page.route("**/api/workspaces/fixture/subagent-depth*", route => {
       if (route.request().method() === "GET") return route.fulfill({ json: { location: { directory: "fixture" }, capability: { minimum: 0 },
-        effectiveDepth: empty ? null : 5, project: { path: "fixture/opencode.jsonc", depth: null, expectation, ...(empty ? { emptyExperimental: true } : {}) } } })
+        effectiveDepth: empty ? null : 5, origin: empty ? "fixture/opencode.jsonc" : "/global/opencode.jsonc",
+        project: { path: "fixture/opencode.jsonc", depth: null, expectation, ...(empty ? { emptyExperimental: true } : {}) } } })
       writes.push(route.request().postDataJSON()); empty = false; expectation = "repaired"
       return route.fulfill({ status: 204, body: "" })
     })
@@ -407,12 +412,115 @@ test("Inherit repairs an existing empty project experimental block that hides th
     await openMissionSettings(page)
     const controls = page.locator(".mission-depth")
     await controls.getByText("OpenCode effective depth unknown", { exact: true }).waitFor()
+    await controls.getByText("Project write target: fixture/opencode.jsonc", { exact: true }).waitFor()
+    await controls.getByText("OpenCode configuration file: fixture/opencode.jsonc", { exact: true }).waitFor()
     await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
     assert.equal(await controls.locator("input").inputValue(), "", "no override is set")
     await controls.getByRole("button", { name: "Inherit", exact: true }).click()
     await controls.getByText("OpenCode effective depth: 5", { exact: true }).waitFor()
+    await controls.getByText("OpenCode configuration file: /global/opencode.jsonc", { exact: true }).waitFor()
+    await controls.getByText("Project write target: fixture/opencode.jsonc", { exact: true }).waitFor()
+    assert.equal(await controls.locator('code[title="/global/opencode.jsonc"]').getAttribute("dir"), "ltr")
     assert.deepEqual(writes, [{ location: { directory: "fixture" }, depth: null, expectation: "empty-block" }])
     assert.equal(await controls.getByRole("button", { name: "Inherit", exact: true }).isDisabled(), true, "nothing left to inherit")
+  } finally { await page.close() }
+})
+
+test("the depth editor states the nesting rule and whether General subagents can nest, per OpenCode's resolved rules", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  // Each saved value selects the native state the next read reports.
+  const states: Record<string, { effectiveDepth: number; depth: number | null; nesting: unknown; nestingSkipped?: boolean }> = {
+    initial: { effectiveDepth: 1, depth: null, nesting: { effect: "deny", hidden: true } },
+    "3": { effectiveDepth: 3, depth: 3, nesting: { effect: "allow" } },
+    "2": { effectiveDepth: 2, depth: 2, nesting: { effect: "ask" } },
+    "4": { effectiveDepth: 4, depth: 4, nesting: { effect: "deny", hidden: true } },
+    null: { effectiveDepth: 5, depth: null, nesting: { effect: "deny", hidden: true } },
+    // General may not launch General; the tool stays, so other agents follow their own rules.
+    "6": { effectiveDepth: 6, depth: 6, nesting: { effect: "deny" } },
+    // The project's legacy General block could not take the rule: only the depth was saved.
+    "7": { effectiveDepth: 7, depth: 7, nesting: { effect: "deny", hidden: true }, nestingSkipped: true },
+    // The rule is written with a depth of 1 too, but OpenCode's depth limit still stops nesting.
+    "1": { effectiveDepth: 1, depth: 1, nesting: { effect: "allow" } },
+    // 0 keeps OpenCode's meaning: no subagents at all.
+    "0": { effectiveDepth: 0, depth: 0, nesting: { effect: "allow" } },
+  }
+  let state = states.initial
+  const writes: unknown[] = []
+  try {
+    await setup(page, "remote")
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/fixture/subagent-depth*", route => {
+      if (route.request().method() === "GET") return route.fulfill({ json: { location: { directory: "fixture" }, capability: { minimum: 0 },
+        effectiveDepth: state.effectiveDepth, nesting: state.nesting,
+        project: { path: "fixture/opencode.jsonc", depth: state.depth, expectation: `e${state.depth}`,
+          ...(state.nestingSkipped ? { nestingSkipped: true } : {}) } } })
+      writes.push(route.request().postDataJSON())
+      state = states[String(route.request().postDataJSON().depth)]
+      return route.fulfill({ status: 204, body: "" })
+    })
+    await page.goto(url); await fixtureCall(page, "connectCatalog")
+    await openMissionSettings(page)
+    const controls = page.locator(".mission-depth"), input = controls.locator("input"), note = controls.locator(".mission-depth-nesting")
+    const save = async (value: string, effective: number) => {
+      await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
+      await input.fill(value); await input.press("Enter")
+      await controls.getByText(`OpenCode effective depth: ${effective}`, { exact: true }).waitFor()
+    }
+    await controls.getByText("OpenCode effective depth: 1", { exact: true }).waitFor()
+    assert.equal(await controls.locator(".mission-depth-rule").innerText(), "Setting a project depth also lets subagents launch their own subagents in this project, up to that depth; at 1, OpenCode's own limit still stops nesting. This project rule takes precedence over General's restrictions from other config files.")
+    assert.equal(await note.innerText(), "At this depth, OpenCode's own depth limit stops nesting.")
+    await save("3", 3)
+    assert.equal(await note.innerText(), "General subagents can launch their own subagents here, so they nest up to this depth.")
+    await save("2", 2)
+    assert.equal(await note.innerText(), "General subagents ask before launching other General subagents here.")
+    await save("4", 4)
+    assert.equal(await note.innerText(), "General subagents cannot launch subagents here, so they do not nest.")
+    await save("6", 6)
+    assert.equal(await note.innerText(), "General subagents cannot launch other General subagents here; launching other agents depends on their permissions.")
+    assert.equal(await controls.getByText("Only the depth was saved: this project's legacy General `permission` is a single value or already uses both `task` and `subagent`, so CodeNomad did not add the nesting rule. Allow subagents for General in that file yourself.", { exact: true }).count(), 0, "the rule was written")
+    await save("7", 7)
+    assert.equal(await controls.getByRole("alert").filter({ hasText: "Only the depth was saved" }).innerText(), "Only the depth was saved: this project's legacy General `permission` is a single value or already uses both `task` and `subagent`, so CodeNomad did not add the nesting rule. Allow subagents for General in that file yourself.")
+    await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
+    await controls.getByRole("button", { name: "Inherit", exact: true }).click()
+    await controls.getByText("OpenCode effective depth: 5", { exact: true }).waitFor()
+    assert.equal(await note.innerText(), "General subagents cannot launch subagents here, so they do not nest.")
+    await save("1", 1)
+    assert.equal(await note.innerText(), "At this depth, OpenCode's own depth limit stops nesting.",
+      "General may launch subagents, but a depth of 1 still stops nesting")
+    await save("0", 0)
+    assert.equal(await note.innerText(), "At this depth, OpenCode's own depth limit stops nesting.")
+    assert.deepEqual(writes.map(write => (write as { depth: number | null }).depth), [3, 2, 4, 6, 7, null, 1, 0], "only depth writes")
+    assert.equal(await controls.getByText("Only the depth was saved: this project's legacy General `permission` is a single value or already uses both `task` and `subagent`, so CodeNomad did not add the nesting rule. Allow subagents for General in that file yourself.", { exact: true }).count(), 0, "no warning without the depth-only save")
+  } finally { await page.close() }
+})
+
+test("the mission editor displays the OpenCode configuration file only when capabilities name a path", async () => {
+  const page = await browser.newPage({ locale: "en-US" }), errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  let origin: string | null = "/ancestor/.opencode/opencode.jsonc"
+  try {
+    await setup(page, "remote")
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/missions/scheduled/capabilities*", route => route.fulfill({ json: { location: { directory: "fixture" },
+      api: { available: true }, enabled: false, origin, activation: { available: true,
+        targets: [{ scope: "global", path: "/global/opencode.jsonc" }, { scope: "project", path: "fixture/opencode.jsonc" }] } } }))
+    await page.goto(url); await fixtureCall(page, "connectCatalog")
+    for (const path of [origin, "fixture/opencode.jsonc", null]) {
+      origin = path
+      await missionGeneralAction(page, "Create mission").click()
+      const editor = page.locator("form.mission-editor"), scheduling = editor.locator(".mission-scheduling")
+      await scheduling.locator("summary").click()
+      if (origin) {
+        await scheduling.getByText(`OpenCode configuration file: ${origin}`, { exact: true }).waitFor()
+        assert.equal(await scheduling.locator("code").getAttribute("dir"), "ltr")
+      } else {
+        assert.equal(await scheduling.getByText(/OpenCode configuration file:/).count(), 0)
+        assert.equal(await scheduling.getByText("No document path", { exact: true }).count(), 0)
+      }
+      assert.equal(await scheduling.getByText("/global/opencode.jsonc", { exact: true }).count(), 0, "an activation target never substitutes for the effective origin")
+      await editor.getByRole("button", { name: "Cancel", exact: true }).click()
+    }
+    assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
 
@@ -591,12 +699,17 @@ test("depth uncertainty stays at its original Location through pending navigatio
     await page.goto(url); await fixtureCall(page, "connectCatalog")
     await openMissionSettings(page)
     const input = page.locator(".mission-depth input"), refresh = page.getByRole("button", { name: "Refresh project depth", exact: true })
-    await page.locator(".mission-depth-path").waitFor(); await input.fill("2")
+    const target = page.locator(".mission-depth-path").filter({ hasText: /^Project write target:/ })
+    const origin = page.locator(".mission-depth-path").filter({ hasText: /^OpenCode configuration file:/ })
+    await target.getByText("fixture/opencode.jsonc", { exact: true }).waitFor()
+    await origin.getByText("OpenCode configuration file: No document path", { exact: true }).waitFor()
+    await input.fill("2")
     await input.press("Enter"); await started
     assert.equal(await refresh.count(), 0, "no refresh while the save is still pending")
     // The open Settings section follows the project's Location while the save is still pending.
     await fixtureCall(page, "directory", "other")
-    await page.locator(".mission-depth-path").getByText("other/opencode.jsonc", { exact: true }).waitFor()
+    await target.getByText("other/opencode.jsonc", { exact: true }).waitFor()
+    await origin.getByText("OpenCode configuration file: No document path", { exact: true }).waitFor()
     assert.equal(await input.inputValue(), "9", "the new Location cannot inherit the old dirty draft")
     release()
     await fixtureCall(page, "directory", "fixture")
@@ -1093,7 +1206,7 @@ test("edits keep drafts and original revision during refresh, and creation retri
     await page.getByRole("alert").getByText("Deletion could not be completed. Retry to finish the remaining cleanup.").waitFor()
     assert.equal(await cleanup.isDisabled(), true)
     await fixtureCall(page, "refresh")
-    await page.locator("form").getByRole("button", { name: "Delete mission", exact: true }).click()
+    await page.locator("form").getByRole("button", { name: "Try again", exact: true }).click()
     await page.locator("form.mission-editor").waitFor({ state: "detached" })
     // Only the picker selects: deleting the selected Mission never falls back to
     // another one, even the current conversation's coordinator Mission.
@@ -1384,7 +1497,7 @@ test("top-level mission rows expose short one-line titles, semantic states, read
   } finally { await page.close() }
 })
 
-test("native activity stays separate from the plan and refreshes only while Missions is visible", async () => {
+test("native activity stays separate from the plan and refreshes only while a Missions panel or reader owns demand", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 850 } })
   try {
     await setup(page)
@@ -1428,6 +1541,13 @@ test("native activity stays separate from the plan and refreshes only while Miss
     assert.deepEqual(await states(), ["active", "active", "assigned", "assigned"])
 
     await fixtureCall(page, "mount", false)
+    const readerOwned = requests
+    const readerRefresh = page.waitForResponse(response => response.url().endsWith("/missions"))
+    await fixtureCall(page, "refresh")
+    await readerRefresh
+    assert.ok(requests > readerOwned, "the still-open central reader owns read-only refresh demand")
+    await page.locator(".mission-reader").getByRole("button", { name: "Back to chat", exact: true }).click()
+    await page.locator(".mission-reader").waitFor({ state: "detached" })
     const hidden = requests
     await fixtureCall(page, "refresh")
     await page.waitForTimeout(100)

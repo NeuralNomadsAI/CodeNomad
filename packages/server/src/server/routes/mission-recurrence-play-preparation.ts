@@ -18,6 +18,7 @@ import { readSupersededRecurrenceIntent } from "./mission-recurrence-supersede"
 import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 import type { RemoteControlManager } from "../../remote-control/manager"
 import { recurrenceHumanSession } from "./mission-recurrence-proof"
+import type { ServiceSupervisionSettings } from "../../host-lifetime/service-supervision-service"
 
 /** Exact Settings profile and currently owned physical root are resolved only
  * inside the authenticated human request, never from native RPC path options. */
@@ -25,7 +26,8 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
   deps: { auth: AuthManager; settings: Pick<SettingsService, "getProfileScope" | "configYamlPathForAuthority">;
     manager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getServiceDirectoryForPath" | "getSharedServiceConnection"
       | "ownsLocation" | "getServiceWslDistro" | "getServicePathStyle" | "getWorktreeIdentityForPath" | "getHostPathForServicePath">;
-    fence: WorktreeDeletionFence; bridgeToken: string; remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized"> }, signal: AbortSignal) {
+    fence: WorktreeDeletionFence; bridgeToken: string; remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">;
+    supervision?: Pick<ServiceSupervisionSettings, "missionPlay"> }, signal: AbortSignal) {
   const input = recurrenceControlHttpSchema.parse(raw), session = recurrenceHumanSession(request, deps)
   if (!session) throw new Error("Human authentication required")
   const workspace = deps.manager.get(workspaceID), base = deps.manager.getServiceLocation(workspaceID)
@@ -104,6 +106,10 @@ export async function prepareHumanRecurrenceControl(request: FastifyRequest, wor
       binding: { profileID: profile.key, executionHost, projectID: location.project.id, projectCanonical: location.project.canonical,
         roots: [{ mode: "directory-only", directory }] }, manager: deps.manager, roots: { assertRoots }, workspaceID, assertCurrent: current })
     await assertRoots()
+    if (input.action === "play" && deps.supervision) {
+      await deps.supervision.missionPlay(connection, input.requestID, current)
+      await assertRoots()
+    }
     const identity = { sessionID: session.sessionId, workspaceID, requestID: input.requestID,
       location: { directory },
       scheduleID: input.scheduleID, action: input.action, expectedRevision: input.expectedRevision,

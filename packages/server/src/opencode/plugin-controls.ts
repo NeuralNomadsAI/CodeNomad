@@ -30,9 +30,15 @@ import {
   type PluginConfigEntry,
   type PluginControlDocument,
   type PluginControlDocumentFileSystem,
+  type PluginControlDocumentPrepared,
   PluginControlDocumentError,
 } from "./plugin-control-document"
 import { createWslPluginControlDocumentFileSystem } from "./plugin-control-document-wsl"
+import { nativeSettingExpectation } from "./native-experimental-settings"
+
+export interface NativeConfigEdit { scope: PluginControlScope; path: string; expectation: string; updated: string }
+export type NativeConfigDocuments = { location: PluginControlLocation; entries: ConfigEntry[];
+  documents: Array<{ scope: PluginControlScope; path: string; document: PluginControlDocument }> }
 
 type PluginControlsWorkspaceManager = Pick<WorkspaceManager,
   | "get"
@@ -119,8 +125,8 @@ export class PluginControls {
   // Shared scope acquisition for native settings that have no native write API.
   // Callers receive only the already-authorized documents; path/WSL selection,
   // deletion admission, connection fencing and atomic conflict checks stay here.
-  async readConfigDocuments(workspaceId: string, location: PluginControlLocation, signal?: AbortSignal) {
-    const context = await this.readContext(workspaceId, location, signal)
+  async readConfigDocuments(workspaceId: string, location: PluginControlLocation, signal?: AbortSignal, strictDocuments = false) {
+    const context = await this.readContext(workspaceId, location, signal, strictDocuments)
     const documents = await Promise.all(context.targets.map(async target => ({
       scope: target.scope, path: target.path,
       document: await readPluginControlDocument(target.ioPath, context.fileSystem),
@@ -133,15 +139,16 @@ export class PluginControls {
     workspaceId: string,
     location: PluginControlLocation,
     scope: PluginControlScope,
-    edit: (document: PluginControlDocument) => string | Promise<string>,
+    edit: (document: PluginControlDocument, current: { entries: ConfigEntry[]; path: string; location: PluginControlLocation }) => string | Promise<string>,
     // Aborts the daemon reads and, re-checked under the lock, the commit itself.
     signal?: AbortSignal,
+    strictDocuments = false,
     expectedRevision?: string,
   ): Promise<void> {
     const directory = location.directory.trim().replace(/[\\/]+$/, "").toLowerCase()
     const key = scope === "global" ? `${workspaceId}\nglobal` : `${workspaceId}\nproject\n${directory}`
     return this.serializeMutation(key, async () => {
-      const context = await this.readContext(workspaceId, location, signal)
+      const context = await this.readContext(workspaceId, location, signal, strictDocuments)
       const target = context.targets.find(target => target.scope === scope)
       if (!target) throw new PluginControlsError("OpenCode configuration scope is unavailable", "unavailable")
       const identity = await this.options.workspaceManager.getWorktreeIdentityForPath(workspaceId, context.location.directory)
@@ -153,7 +160,7 @@ export class PluginControls {
         if (expectedRevision !== undefined && expectedRevision !== this.documentRevision(workspaceId, context, target, document)) {
           throw new PluginControlDocumentError("OpenCode configuration changed since confirmation", "conflict")
         }
-        const updated = await edit(document)
+        const updated = await edit(document, { entries: context.entries, path: target.path, location: context.location })
         await replacePluginControlDocument(document, updated, {
           beforeCommit: () => { assertCurrentConnection(context.connection); signal?.throwIfAborted() },
         }, context.fileSystem)
@@ -170,6 +177,61 @@ export class PluginControls {
       this.options.workspaceManager.getServiceWslDistro(workspaceId) ?? null, connection,
       document.exists, document.mode, document.byteOrderMark, document.text,
     ])).digest("hex")
+  }
+
+  /** Prepare both owned files before the first rename. Callers persist the intent
+   * in beforeWrite and each receipt in afterWrite; a partial commit never rolls back. */
+  editConfigDocuments(workspaceId: string, location: PluginControlLocation,
+    edit: (view: NativeConfigDocuments) => NativeConfigEdit[],
+    hooks: { beforeWrite(edits: readonly NativeConfigEdit[]): Promise<void>; beforeCommit?(edit: NativeConfigEdit): Promise<void>;
+      afterWrite(edit: NativeConfigEdit): Promise<void> },
+  ): Promise<void> {
+    return this.serializeMutation(`${workspaceId}\nsettings-batch`, async () => {
+      const context = await this.readContext(workspaceId, location, undefined, true)
+      if (!context.fileSystem.prepare) throw new PluginControlsError("Prepared native configuration editing is unavailable", "unavailable")
+      const identity = await this.options.workspaceManager.getWorktreeIdentityForPath(workspaceId, context.location.directory)
+      if (!identity) throw new PluginControlsError("Location is not owned by an active worktree", "forbidden")
+      const release = this.options.worktreeDeletionFence.enter([identity])
+      if (!release) throw new PluginControlsError("Worktree deletion is in progress", "conflict")
+      const prepared: Array<{ edit: NativeConfigEdit; write: PluginControlDocumentPrepared }> = []
+      try {
+        const documents = await Promise.all(context.targets.map(async target => ({ scope: target.scope,
+          path: target.path, document: await readPluginControlDocument(target.ioPath, context.fileSystem) })))
+        assertCurrentConnection(context.connection)
+        const edits = edit({ location: context.location, entries: context.entries, documents })
+        if (edits.length > 2 || new Set(edits.map(item => item.scope)).size !== edits.length)
+          throw new PluginControlsError("Invalid native configuration edit set", "invalid")
+        // Physical ordering is shared by every batch to avoid lock inversion.
+        const ordered = edits.map(item => {
+          const target = documents.find(target => target.scope === item.scope && target.path === item.path)
+          if (!target || nativeSettingExpectation(target.document) !== item.expectation)
+            throw new PluginControlsError("OpenCode configuration changed; refresh before saving", "conflict")
+          return { edit: item, document: target.document }
+        }).sort((a, b) => a.document.writePath < b.document.writePath ? -1 : 1)
+        for (const item of ordered) {
+          assertCurrentConnection(context.connection)
+          prepared.push({ edit: item.edit, write: await context.fileSystem.prepare(item.document, item.edit.updated,
+            { beforeCommit: () => assertCurrentConnection(context.connection) }) })
+        }
+        for (const item of prepared) await item.write.verify()
+        assertCurrentConnection(context.connection)
+        await hooks.beforeWrite(edits)
+        // Global and project are separate durable effects, in declared order.
+        for (const item of edits) {
+          assertCurrentConnection(context.connection)
+          const write = prepared.find(target => target.edit.scope === item.scope)!.write
+          await hooks.beforeCommit?.(item)
+          assertCurrentConnection(context.connection)
+          await write.commit()
+          assertCurrentConnection(context.connection)
+          await hooks.afterWrite(item)
+        }
+      } catch (error) { throw error instanceof PluginControlDocumentError ? mapDocumentError(error) : error }
+      finally {
+        await Promise.allSettled(prepared.map(item => item.write.dispose()))
+        release()
+      }
+    })
   }
 
   mutate(workspaceId: string, request: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse> {
@@ -256,7 +318,7 @@ export class PluginControls {
     })
   }
 
-  private async readContext(workspaceId: string, input: PluginControlLocation, signal?: AbortSignal): Promise<ReadContext> {
+  private async readContext(workspaceId: string, input: PluginControlLocation, signal?: AbortSignal, strictDocuments = false): Promise<ReadContext> {
     if (!this.options.workspaceManager.get(workspaceId)) {
       throw new PluginControlsError("Workspace not found", "not-found")
     }
@@ -308,7 +370,7 @@ export class PluginControls {
     const fileSystem = distro
       ? createWslPluginControlDocumentFileSystem(distro)
       : hostPluginControlDocumentFileSystem
-    const targets = await this.resolveTargets(workspaceId, paths, globalDirectory, location.directory, entries, fileSystem, Boolean(distro))
+    const targets = await this.resolveTargets(workspaceId, paths, globalDirectory, location.directory, entries, fileSystem, Boolean(distro), strictDocuments)
     assertCurrentConnection(connection)
     return { connection, entries, runtime, location, paths, style, globalDirectory, targets, fileSystem }
   }
@@ -321,6 +383,7 @@ export class PluginControls {
     entries: readonly ConfigEntry[],
     fileSystem: PluginControlDocumentFileSystem,
     nativeWsl: boolean,
+    strictDocuments: boolean,
   ): Promise<ResolvedTarget[]> {
     const [globalIoRoot, projectIoRoot] = nativeWsl
       ? [globalDirectory, projectDirectory]
@@ -342,6 +405,14 @@ export class PluginControls {
       inspected = await fileSystem.inspectMany([...globalCandidates, ...projectCandidates].map((candidate) => candidate.ioPath))
     } catch (error) {
       throw mapDocumentError(error)
+    }
+    if (strictDocuments) {
+      // Native settings require one unambiguous document per layer; never pick a
+      // JSONC file while a simultaneous JSON writer owns the same native layer.
+      for (let index = 0; index < inspected.length; index += 2) {
+        if (inspected[index]?.exists && inspected[index + 1]?.exists)
+          throw new PluginControlsError("OpenCode configuration changed: JSON and JSONC coexist in one layer", "conflict")
+      }
     }
     const globalTarget = selectTarget("global", globalCandidates, inspected.slice(0, globalCandidates.length))
     // Every inherited .opencode document follows every direct document. Keep

@@ -4,34 +4,44 @@ import { readFileSync } from "node:fs"
 
 import { missionMessages as deMissions } from "./de/missions"
 import { missionCreateMessages as deCreate } from "./de/missions-create"
-const de = { ...deMissions, ...deCreate }
+import { missionSchedulingMessages as deScheduling } from "./de/mission-scheduling"
+const de = { ...deMissions, ...deCreate, ...deScheduling }
 import { missionMessages as enMissions } from "./en/missions"
 import { missionCreateMessages as enCreate } from "./en/missions-create"
-const en = { ...enMissions, ...enCreate }
+import { missionSchedulingMessages as enScheduling } from "./en/mission-scheduling"
+const en = { ...enMissions, ...enCreate, ...enScheduling }
 import { missionMessages as esMissions } from "./es/missions"
 import { missionCreateMessages as esCreate } from "./es/missions-create"
-const es = { ...esMissions, ...esCreate }
+import { missionSchedulingMessages as esScheduling } from "./es/mission-scheduling"
+const es = { ...esMissions, ...esCreate, ...esScheduling }
 import { missionMessages as frMissions } from "./fr/missions"
 import { missionCreateMessages as frCreate } from "./fr/missions-create"
-const fr = { ...frMissions, ...frCreate }
+import { missionSchedulingMessages as frScheduling } from "./fr/mission-scheduling"
+const fr = { ...frMissions, ...frCreate, ...frScheduling }
 import { missionMessages as heMissions } from "./he/missions"
 import { missionCreateMessages as heCreate } from "./he/missions-create"
-const he = { ...heMissions, ...heCreate }
+import { missionSchedulingMessages as heScheduling } from "./he/mission-scheduling"
+const he = { ...heMissions, ...heCreate, ...heScheduling }
 import { missionMessages as jaMissions } from "./ja/missions"
 import { missionCreateMessages as jaCreate } from "./ja/missions-create"
-const ja = { ...jaMissions, ...jaCreate }
+import { missionSchedulingMessages as jaScheduling } from "./ja/mission-scheduling"
+const ja = { ...jaMissions, ...jaCreate, ...jaScheduling }
 import { missionMessages as neMissions } from "./ne/missions"
 import { missionCreateMessages as neCreate } from "./ne/missions-create"
-const ne = { ...neMissions, ...neCreate }
+import { missionSchedulingMessages as neScheduling } from "./ne/mission-scheduling"
+const ne = { ...neMissions, ...neCreate, ...neScheduling }
 import { missionMessages as ruMissions } from "./ru/missions"
 import { missionCreateMessages as ruCreate } from "./ru/missions-create"
-const ru = { ...ruMissions, ...ruCreate }
+import { missionSchedulingMessages as ruScheduling } from "./ru/mission-scheduling"
+const ru = { ...ruMissions, ...ruCreate, ...ruScheduling }
 import { missionMessages as trMissions } from "./tr/missions"
 import { missionCreateMessages as trCreate } from "./tr/missions-create"
-const tr = { ...trMissions, ...trCreate }
+import { missionSchedulingMessages as trScheduling } from "./tr/mission-scheduling"
+const tr = { ...trMissions, ...trCreate, ...trScheduling }
 import { missionMessages as zhHansMissions } from "./zh-Hans/missions"
 import { missionCreateMessages as zhHansCreate } from "./zh-Hans/missions-create"
-const zhHans = { ...zhHansMissions, ...zhHansCreate }
+import { missionSchedulingMessages as zhHansScheduling } from "./zh-Hans/mission-scheduling"
+const zhHans = { ...zhHansMissions, ...zhHansCreate, ...zhHansScheduling }
 
 const locales = { de, en, es, fr, he, ja, ne, ru, tr, "zh-Hans": zhHans }
 
@@ -39,7 +49,8 @@ test("the user-facing mission journey has a translated key for every literal mes
   const components = ["mission-task-tree.tsx", "mission-tracking.tsx", "mission-attention.tsx", "mission-overview-details.tsx",
     "mission-briefing.tsx", "mission-lifecycle-controls.tsx", "mission-recurrence-list.tsx", "mission-model-library.tsx",
     "mission-profile-summary.tsx", "mission-profile-controls.tsx", "mission-editor.tsx", "mission-task-reader.tsx",
-    "mission-preferences.tsx", "mission-subagent-depth.tsx", "mission-task-mode-controls.tsx", "mission-comparison-report.tsx"]
+    "mission-preferences.tsx", "mission-subagent-depth.tsx", "mission-task-mode-controls.tsx", "mission-comparison-report.tsx",
+    "mission-scheduling.tsx", "mission-scheduling-sources.tsx", "mission-schedule-list.tsx", "mission-schedule-controls.ts", "mission-editor-schedule.ts"]
   for (const file of components) {
     const source = readFileSync(new URL(`../../../components/${file}`, import.meta.url), "utf8")
     for (const match of source.matchAll(/"(missions\.[\w.-]+)"/g)) {

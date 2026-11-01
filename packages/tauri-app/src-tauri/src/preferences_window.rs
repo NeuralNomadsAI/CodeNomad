@@ -376,7 +376,7 @@ fn open_preferences(
     crate::menu_bar::hide(&preferences_window.as_ref().window());
 
     if let Err(error) =
-        crate::client_state::setup_local_window(app, &preferences_window, LABEL, true)
+        crate::client_state::setup_local_window(app, &preferences_window, LABEL, true, true)
     {
         let _ = preferences_window.destroy();
         return Err(error);
@@ -407,6 +407,13 @@ fn open_preferences(
 
 pub(crate) fn navigate_backend(app: &AppHandle) {
     if app.get_webview_window(LABEL).is_none() {
+        // A connect-only launch keeps the saved request pending; its normal-start fallback restores it.
+        if app
+            .state::<crate::local_windows::LocalWindows>()
+            .startup_restore_deferred()
+        {
+            return;
+        }
         if let Some(request) = app
             .try_state::<crate::client_state::ClientState>()
             .and_then(|state| state.preferences())

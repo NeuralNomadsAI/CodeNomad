@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js"
 import { serverApi } from "../api-client"
 import { useI18n } from "../i18n"
-import { openRemoteServerWindow } from "../native/remote-window"
+import { openRemoteServerWindow, type RemoteWindowOpenOptions } from "../native/remote-window"
 import { splitPairingLink } from "../remote-pairing-link"
 import { canOpenRemoteWindows, isTauriHost } from "../runtime-env"
 import { showAlertDialog } from "../../stores/alerts"
@@ -19,7 +19,7 @@ export function useRemoteServerProfiles() {
   const { remoteServers, saveRemoteServerProfile, markRemoteServerConnected, removeRemoteServerProfile } = useConfig()
   const [connectingServerId, setConnectingServerId] = createSignal<string | null>(null)
 
-  const saveServer = async (input: RemoteServerInput, requestedWindow: boolean) => {
+  const saveServer = async (input: RemoteServerInput, requestedWindow: boolean, windowOptions: RemoteWindowOpenOptions = {}) => {
     // A Remote Control pairing code is consumed by the window that opens it, so a pairing link opens one where possible.
     const pairing = splitPairingLink(input.baseUrl)
     const openWindow = requestedWindow || (pairing !== null && canOpenRemoteWindows())
@@ -52,7 +52,7 @@ export function useRemoteServerProfiles() {
           : undefined
 
       try {
-        await openRemoteServerWindow(profile, pairing?.entryUrl ?? proxySession?.windowUrl, proxySession?.sessionId)
+        await openRemoteServerWindow(profile, pairing?.entryUrl ?? proxySession?.windowUrl, proxySession?.sessionId, windowOptions)
       } catch (error) {
         if (proxySession) void serverApi.deleteRemoteProxySession(proxySession.sessionId).catch(() => {})
         throw error

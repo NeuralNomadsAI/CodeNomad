@@ -158,8 +158,12 @@ test("C4. A recorded admission is never re-sent when its start message later dis
   assert.equal(f.admissions, 1, "absence after a recorded admission is history, never a resend")
   await f.model(); await f.advance(DUE + 3_600_000 + 5_000)
   const settled = await f.snapshot()
-  assert.equal(settled.pending, null, "settles by family quiescence without the pruned message")
-  assert.equal(settled.latestResult?.outcome, "completed")
+  assert.equal((await f.document())!.pending?.passage.id, pending.passage.id, "missing original correlation preserves the exact pending")
+  assert.equal(settled.pending?.status, "uncertain")
+  assert.equal(settled.latestResult, null)
+  await f.advance(DUE + 7_200_000)
+  assert.equal((await f.document())!.pending?.passage.id, pending.passage.id, "elapsed time cannot create terminal proof")
+  assert.equal((await f.document())!.history.length, 0)
   assert.equal(f.admissions, 1)
   assert.equal(f.coordinators.length, 1)
 })
@@ -273,7 +277,7 @@ test("L2. After a restart, a stopped schedule's pending passage offers Check, wh
   const parked = await f.snapshot()
   assert.equal(parked.state, "stopped")
   assert.deepEqual(parked.actions, ["check"])
-  assert.equal(parked.pending?.status, "running")
+  assert.equal(parked.pending?.status, "uncertain", "the admitted passage has no live observer after restart")
   assert.equal(f.jobs.size, 0, "reads never restart the observer")
   // Stop already interrupted the coordinator and the restart cleared the Form,
   // so the Check-started observer can settle the family on its first wake.
@@ -326,7 +330,7 @@ test("M. A thrown first admission warns at once and retries its same identities 
         assert.deepEqual(f.starts.map(m => m.id), [passage.messageID], "the retry admits or reconciles the original start message once")
         assert.equal(f.admissions, 1)
         await f.restart()
-        assert.equal((await f.snapshot()).pending?.status, "running", "admitted work is not uncertain")
+        assert.equal((await f.snapshot()).pending?.status, "uncertain", "admission is retained while terminal observation is unavailable")
       } finally { await f.close() }
     })
   }

@@ -38,8 +38,15 @@ on:
         required: false
         default: true
         type: boolean
+      windows_signing_policy:
+        description: "SignPath signing policy for the Windows artifacts; empty publishes them unsigned"
+        required: false
+        default: ""
+        type: string
 
 permissions:
+  # SignPath reads the workflow run and its unsigned artifacts with this token.
+  actions: read
   id-token: write
   contents: write
 
@@ -107,6 +114,7 @@ jobs:
       version: ${{ needs.prepare-release.outputs.version }}
       tag: ${{ needs.prepare-release.outputs.tag }}
       release_name: ${{ needs.prepare-release.outputs.release_name }}
+      windows_signing_policy: ${{ inputs.windows_signing_policy }}
     secrets: inherit
 
   update-winget:

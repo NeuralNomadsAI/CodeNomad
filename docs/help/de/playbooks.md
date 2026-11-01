@@ -45,7 +45,7 @@ Das sind Anweisungen. Was ein Agent tatsächlich tun kann, bestimmen die OpenCod
 
 ### Fragen an Sie {#questions}
 
-Nur der Koordinator stellt Ihnen Fragen. Aufgaben und ihre Helfer geben ihre an die Unterhaltung zurück, die sie gestartet hat, mit Optionen, Belegen, Folgen, Umkehrbarkeit und einer Empfehlung, und arbeiten an dem weiter, was nicht von der Antwort abhängt. Der Koordinator klärt zuerst, was er kann, und bündelt die übrigen Fragen in einem Formular unter **Braucht Sie**; [Fragen und Entscheidungen](missions.md#questions) erklärt, was er fragt und wie Entscheidungen bezeichnet werden. Jeder Koordinator, einmalig oder täglich, und jede Aufgabenzuweisung erhalten diese Regel als Anweisung; die Erkundung fügt die Entscheidungsprüfungen [weiter unten](#wayfinder-checks) hinzu.
+Nur der Koordinator stellt Ihnen Fragen. Aufgaben und ihre Helfer geben ihre an die Unterhaltung zurück, die sie gestartet hat, mit Optionen, Belegen, Folgen, Umkehrbarkeit und einer Empfehlung, und arbeiten an dem weiter, was nicht von der Antwort abhängt. Der Koordinator klärt zuerst, was er kann, und bündelt die übrigen Fragen in einem Formular unter **Braucht Sie**; [Fragen und Entscheidungen](missions.md#questions) erklärt, was er fragt und wie Entscheidungen bezeichnet werden. Jeder Koordinator, einmalig oder geplant, und jede Aufgabenzuweisung erhalten diese Regel als Anweisung; die Erkundung fügt die Entscheidungsprüfungen [weiter unten](#wayfinder-checks) hinzu.
 
 Antworten Sie im Unterbrechungsdock (**Antworten** unter **Braucht Sie**): Nur das zählt als Ihre Antwort. Eine im Chat getippte Antwort ist eine gewöhnliche Nachricht.
 
@@ -53,7 +53,7 @@ Antworten Sie im Unterbrechungsdock (**Antworten** unter **Braucht Sie**): Nur d
 
 Der Koordinator ist angewiesen, einen Lagebericht nach seinem ersten Plan, nach jeder abgeschlossenen Aufgabe, immer wenn er auf Sie zu warten beginnt, und vor seinem Abschlussbericht zu veröffentlichen; siehe [Lageberichte und Aktualisierungsanfragen](missions.md#briefings). Lageberichte, Aufgabenzusammenfassungen und der Abschlussbericht sind für Sie geschrieben: in Ihrer Sprache, in wenigen kurzen Sätzen, das Ergebnis zuerst, Kennungen und Befehle bleiben in den Belegen.
 
-Der Abschlussbericht nennt, was geliefert wurde, was bleibt und was Ihre Entscheidung braucht. Eine einmalige Mission endet nur als abgeschlossen: Wenn ohne Sie nichts weitergeht, fragt der Koordinator Sie und wartet, statt zu scheitern, und nur Sie stoppen eine Mission. Ein täglicher Lauf kann auch als fehlgeschlagen enden.
+Der Abschlussbericht nennt, was geliefert wurde, was bleibt und was Ihre Entscheidung braucht. Eine einmalige Mission endet nur als abgeschlossen: Wenn ohne Sie nichts weitergeht, fragt der Koordinator Sie und wartet, statt zu scheitern, und nur Sie stoppen eine Mission. Ein geplanter Durchlauf kann auch als fehlgeschlagen enden.
 
 ### Was CodeNomad in jeder Mission prüft {#common-checks}
 
@@ -177,7 +177,7 @@ Er schreibt Ihre Antwort nie selbst und gibt seine eigene Entscheidung nie als I
 - Nur die fünf Rollen der Erkundung werden akzeptiert.
 - Eine Entscheidungsaufgabe wird nur mit der eigenen Entscheidung des Koordinators oder mit Ihrer Antwort abgeschlossen. Eine Entscheidung des Koordinators nennt die Frage, die Entscheidung und ihre Begründung und wird nie als Ihre Antwort erfasst.
 - Ihre Antwort zählt nur, wenn Sie sie in der CodeNomad-Oberfläche gegeben haben. CodeNomad ordnet sie über die Markierung der Frage einer Aufgabe zu: Die Frage wurde aus der Unterhaltung des Koordinators gestellt, ihr Text endet mit der Markierung dieser Aufgabe und nennt keine andere Entscheidung, sie wurde nach der Erklärung der Aufgabe beantwortet und hat keine andere Entscheidung geklärt. Jede Frage eines gebündelten Formulars wird für sich zugeordnet; eine Frage, die zwei Entscheidungen nennt, klärt keine davon. Eine Antwort auf eine Frage aus der eigenen Unterhaltung der Entscheidungsaufgabe wird ebenfalls akzeptiert.
-- Der eigene Bericht einer Aufgabe kann nicht angeben, wer entschieden hat. Bevor eine Mission oder ein täglicher Lauf erfolgreich endet, prüft CodeNomad jede abgeschlossene Entscheidung erneut, Markierungen eingeschlossen.
+- Der eigene Bericht einer Aufgabe kann nicht angeben, wer entschieden hat. Bevor eine Mission oder ein geplanter Durchlauf erfolgreich endet, prüft CodeNomad jede abgeschlossene Entscheidung erneut, Markierungen eingeschlossen.
 - Diese Prüfungen gelten mit **Native Unteragenten**. Mit **Unabhängige Sitzungen** melden Entscheidungsbearbeiter ihre Papiere selbst, und der Koordinator hält jedes Ergebnis in den Notizen fest und nennt, wer entschieden hat; CodeNomad prüft das nicht.
 
 Nur Anweisungen: wann eine Wahl als leicht umkehrbar gilt, die Qualität von Papieren und Recherche und das Beschränken auf Planung.

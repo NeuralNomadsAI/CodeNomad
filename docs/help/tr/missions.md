@@ -6,11 +6,13 @@ Görevler, kalıcı bir proje planını OpenCode'un kendi konuşmalarıyla birle
 
 1. Sağ panelde **Görevler** bölümünü açıp **Görev oluştur** eylemini seçin. Form, oluşturana veya iptal edene kadar görev listesinin ve seçili görevin görev düğümlerinin yerini alır.
 2. **Görev ne yapmalı?** alanını doldurun ve ilk cümleden otomatik doldurulan **Başlık** alanını kontrol edin (en fazla 60 karakter).
-3. **Ne zaman** altında **Bir kez** veya **Her gün saat** seçeneğini belirleyin. Günlük işler için gösterilen saat dilimini doğrulayın; **Değiştir** ile bir IANA saat dilimi girebilirsiniz.
+3. **Bir kez, hemen** ve **Koşulsuz** için **Zamanlama** bölümünü kapalı bırakın veya sıklık, koşul ve isteğe bağlı sınırlar seçmek için genişletin. Zamanlanmış iş oluşturmadan önce **Kayıtlı saat dilimi (IANA)** değerini ve önizlemeyi doğrulayın.
 4. **Rehber**, **Notlar**, **Ajanlar ve modeller**, **Görev oturumları**, projenin **Alt oturum iç içe geçme derinliği** ayarı, kayıtlı özetler ve isteğe bağlı takip edilen konuşmalar için **Seçenekler** bölümünü genişletin. **İki modeli karşılaştır** seçildiğinde **Model A** ve **Model B** seçicileri ana formda görünür.
-5. **Oluştur** eylemini seçin. Yeni kaydı seçip hazır olduğunuzda ayrı ▶ eylemini kullanın: tek seferlik işler için **Görevi başlat**, günlük zamanlama için **{id} zamanlamasını başlat**.
+5. **Oluştur** eylemini seçin. Duraklatılmış kaydı seçip inceleyin, ardından hazır olduğunuzda ▶ **Başlat** eylemini kullanın. Hemen başlayan koşulsuz iş tek bir görev başlatır; gecikmeli, yinelenen veya koşullu bir ilke yerel zamanlamayı etkinleştirir.
 
-**Oluşturmak hiçbir zaman işi başlatmaz.** Tek seferlik görev hazırlanır; günlük zamanlama duraklatılmış durumdadır. Ne oluşturma ne de özeti kaydetme bir zamanlayıcıyı devreye alır. Oluşturma seçili proje/Location kapsamındadır ve istenen profillerle görev oturumu ilkesini sabitler. Doğrulama mesajları ilgili alanın yanındadır; hiçbir şey gönderilmediğini belirten bir ret durumunda taslak düzeltilebilmesi için korunur. Tek seferlik bir görevin koordinatörü sizin için takip işi gibi ayrı bir görev de hazırlayabilir: bu görev listede **Hazır** olarak görünür ve diğer her görev gibi yalnızca ▶ eylemiyle başlar.
+**Oluştur, duraklatılmış bir Görev kaydeder.** İş ve yerel takvimler yalnızca başlatma eylemiyle etkinleştirilir; oluşturmak veya özet kaydetmek, paylaşılan hizmet gözetimi tercihini korur. Oluşturma seçili proje/Location kapsamındadır ve istenen profillerle görev oturumu ilkesini kaydeder. Doğrulama ilgili alanın yanında görünür; hiçbir şey gönderilmediğini belirten bir ret, taslağı düzeltme için korur. Tek seferlik koordinatör ayrı bir devam görevi de hazırlayabilir: **Hazır** olarak görünür ve kendi ▶ eylemiyle başlar.
+
+Kayıtlı tek seferlik görevler yürütme kontrollerini, görev ağacını, konuşmalarını ve nihai raporlarını korur. Mevcut günlük zamanlamalar günlük kontrolleri ve [günlük zamanlama kurallarıyla](#existing-daily-schedules) listede kalır. Kaydı seçip o nesne için sunulan kontrolleri kullanın.
 
 ### İş akışı rehberleri {#playbooks}
 
@@ -46,6 +48,10 @@ Rehber koordinasyona yön verir; OpenCode izinlerini aşmaz veya başarıyı gar
 | Başarısız / Geri çekildi | Görev başarısız oldu ya da koordinatör onu değiştirdi veya bıraktı. |
 
 Grafik tamamlanan ve plandan çıkarılan işleri de içerir. Bir görevi plandan çıkarmak konuşmasını kendiliğinden durdurmaz. Tek seferlik bir görevde koordinatör, OpenCode alt ajanı olarak başlattığı ve plandan çıkarılan bir görevin konuşmalarını diğer görevlere dokunmadan ayrıca durdurabilir. **Sürüyor**, görevin yaşam döngüsü durumudur; koordinatörün o anda çalıştığının kanıtı değildir. Ayrıntılı metin paneldeki görev listesinde değil, merkezi okuyucudadır; **Teknik ayrıntılar** altında kimlikler ve istenen yürütme bilgileri kapalı tutulur.
+
+Büyük bir plan, görevlerinin bir sayfasını gösterir: bağımlılık sırasına göre ilk 50 görev ve engeller, hatalar ve en yeni sonuçlar gibi ilgi gerektiren en fazla 20 görev. Yüklenmemiş her görev dizisi **N görev gösterilmiyor** olarak görünür; **Daha fazla göster** oradan sonraki 50 görevi yükler. Sayfanın tutabileceğinden fazla görev ilgi beklediğinde **N görev daha ilgi bekliyor** görevin türe göre sayılarını verir, **Göster** de bu görevleri yükler. Kesikli kısa bir çizgi gösterilmeyen bir bağımlılığı veya bağımlı görevi işaretler; bir görevin okuyucusundaki bağımlılık bağlantısı önce o görevi yükler. Bir görevin okuyucusu en yeni sonuçlarını gösterir; **N önceki sonuç gösterilmiyor**, tüm geçmişi yükleyen **Tümünü göster** seçeneğini sunar. Bir görev veya rapor yüklenemediğinde okuyucu bunu belirtir; **Tekrar dene** onu yeniden yükler.
+
+Görev sayfaları yalnızca istenen sayfa tamamen alındıktan sonra görünür. Başarısız veya değişen okuma, son gösterilen görevleri korur. Okuma sırasında liste değişirse **Yenile**, ardından **Tekrar dene** kullanın; sayfa baştan okunur. Eksik bir bölüm, görevin veya isteğin bulunmadığını kanıtlamaz; okumayı yeniden denemek çalışma başlatmaz. Görevler eklentisi sayfayı sağlayamazsa yeniden bağlandıktan veya eklentiyi yeniden yükledikten sonra deneyin.
 
 ### Renkler ve kesintiye uğrayan görevler {#status-colours}
 
@@ -97,13 +103,15 @@ Sonuçlar aynı yoldan geri döner. Yerel alt ajan sonucunu kendisini başlatan 
 
 Sonraki bir iş, önceki çalışmaya iki yolla dayanır. Bağımlılıklar çalışmanın sırasını belirler: koordinatör bir işi, bağlı olduğu işler tamamlandığında başlatır ve ilgili sonuçları özete ya da atamanın yanına koyar; bağımsız oturumlar bu raporları haritada da okuyabilir. Tamamlanmış bir işin kendi konuşmasını sürdürmek için koordinatör, o konuşmayı yeniden kullanan bir devam işi bildirir: devam işi orada, OpenCode'un [sıkıştırmış](history.md#compact-session) olabileceği o konuşmanın güncel bağlamıyla sürer; daha önceki ayrıntılar arama için saklanan geçmişte kalır. Hata ayıklama rehberi iki incelemeyi de uygulayıcıya bu şekilde geri verir. **Bağımsız oturumlar** ile koordinatör bir işi mevcut bir ana konuşmaya da atayabilir; bu konuşma, ilgisiz önceki çalışmalar dahil kendi bağlamını korur. Aksi halde iş kendi atamasıyla yeni bir konuşmada başlar ve başka bir işin konuşma dökümü ona koordinatör ya da bir arama aracılığıyla ulaşır. **İki modeli karşılaştır** rehberinde hakemin ataması ve bağlamı hedefi ve notları içermez; özeti anonimleştirilmiş çıktıları taşır.
 
-Günlük bir zamanlamada her çalıştırma kendi koordinatörü ve haritasıyla başlar. İlk mesajı, zamanlamanın talimatlarını ve son tamamlanan çalıştırmadan bu yana [takip edilen konuşmalarına](#daily-schedules) eklenen yeni kullanıcı ve asistan metnini içerir; önceki çalıştırmaların sonuçları zamanlamanın geçmişinde kalır. Bir çalıştırma içinde başlatılan konuşmalar o çalıştırmanın haritasını okuyabilir. Yeni bir tek seferlik görev de yeni bir haritayla başlar: sonuçları aktarmak için onları hedefine veya **Notlar** bölümüne yazın ya da koordinatörün, hedefini ve notlarını kendisinin yazdığı bir devam görevi hazırlamasına izin verin.
+Her zamanlanmış geçiş, kayıtlı talimatlarını ve sabitlenmiş girdilerini kullanarak kendi koordinatörü ve görev haritasıyla başlar. Takip edilen konuşmalar sınırlı yeni kullanıcı ve asistan metni sağlar; işlenen mesaj imleçleri başarılı bir geçişten sonra ilerler. Önceki geçişler zamanlama geçmişinde kalır. Bir geçiş içinde başlatılan konuşmalar o geçişin haritasını okuyabilir. Yeni bir tek seferlik görevin ayrı bir haritası vardır: aktarılacak sonuçları hedefine veya **Notlar** bölümüne yazın ya da koordinatörden bu bağlamla bir devam görevi hazırlamasını isteyin.
 
 ### Önceki konuşmalarda arayın {#context-search}
 
-CodeNomad çalıştığı sürece projedeki her ajan konuşması, görev koordinatörleri ve işler dahil, CodeNomad'in oturum arama aracına (`codenomad.session_search`, OpenCode'un Code Mode özelliği üzerinden kullanılır) sahiptir. Araç, konuşmanın proje klasöründeki kayıtlı konuşmalarda **Tüm çalışma alanı** [aramasıyla](history.md#full-history-search) aynı sıralamayla arar ve her konuşmanın başlığı ve kimliğiyle kısa alıntılar, ayrıca bir konuşmanın tamamını okumanın yolunu döndürür. OpenCode araç izinleri geçerlidir. Ajan, kendisi karar verdiğinde veya hedef, notlar ya da mesajınız bunu istediğinde arar; örneğin önceki bir görevin veya işin vardığı sonucu bulmak için. CodeNomad kapalıyken yürüyen günlük bir çalıştırma bu araç olmadan çalışır.
+CodeNomad çalıştığı sürece projedeki her ajan konuşması, görev koordinatörleri ve işler dahil, CodeNomad'in oturum arama aracına (`codenomad.session_search`, OpenCode'un Code Mode özelliği üzerinden kullanılır) sahiptir. Araç, konuşmanın proje klasöründeki kayıtlı konuşmalarda **Tüm çalışma alanı** [aramasıyla](history.md#full-history-search) aynı sıralamayla arar ve her konuşmanın başlığı ve kimliğiyle kısa alıntılar, ayrıca bir konuşmanın tamamını okumanın yolunu döndürür. OpenCode araç izinleri geçerlidir. Ajan, kendisi karar verdiğinde veya hedef, notlar ya da mesajınız bunu istediğinde arar; örneğin önceki bir görevin veya işin vardığı sonucu bulmak için. CodeNomad kapalıyken yürüyen zamanlanmış bir geçiş bu araç olmadan çalışır.
 
 ## Profiller, iş devri ve derinlik {#profiles}
+
+Derinliği kaydetmek, proje yapılandırmasında etkin yerel zamanlamaları korur. Projedeki açık bir `schedules:false` kapalı kalır; derinliği kaldırmak zamanlama ayarını korur. Yerel ayarlar kaydedilmeden önce aynı katmandaki JSON ve JSONC dosyalarının çakışması giderilmelidir.
 
 1. **Yeni görev varsayılanları** ayarını düzenlemek için Görevler dişli simgesini veya **Ayarlar → Görevler** yolunu kullanın.
 2. **Uygulanacak kapsam** altında **Tüm görevler** veya bir rehber seçin; ardından **Görev oturumları** ayarını ve **Ajanlar ve modeller** altında her rol için bir satırı (önce koordinatör, sonra rehberin rolleri) belirleyin. Her seçim hemen kaydedilir; Kaydet düğmesi yoktur.
@@ -114,10 +122,10 @@ CodeNomad çalıştığı sürece projedeki her ajan konuşması, görev koordin
 | Ayar | Kapsam ve etki |
 | --- | --- |
 | Yeni görev varsayılanları | Yapılandırma genelinde yalnızca **yeni** görevleri etkileyen varsayılanlar; rehber istisnası genel varsayılanı geçersiz kılar. |
-| Ajan / Model / Düşünme | Oluşturmayla kaydedilen koordinatör/rol tercihleri; meşgul bir aktör sonraki işlere uyması için sessizce değiştirilmez. Günlük çalıştırmalar sabitlenmiş profil tercihlerini yeniden kullanır. |
+| Ajan / Model / Düşünme | Oluşturmayla kaydedilen koordinatör/rol tercihleri; meşgul bir aktör sonraki işlere uyması için sessizce değiştirilmez. Zamanlanmış geçişler kayıtlı profil tercihlerini kullanır; düzenlemeler gelecek geçişlere uygulanır. |
 | OpenCode alt ajanları | Görev oturumları koordinatörün altında subagent/all ajanlarını kullanır. |
 | Bağımsız oturumlar | Bildirilen görev oturumları primary/all ajanlarını ve bağımsız konuşmaları kullanır; bu, dahili OpenCode yardımcılarını devre dışı bırakmaz. |
-| Alt oturum iç içe geçme derinliği | Yalnızca Görevler için değil, oradaki **tüm** OpenCode konuşmaları için proje yapılandırması. Boş bırakılırsa devralınır: **Devral**, proje geçersiz kılmasını ve boş bıraktığı ya da yalnızca genel **Görselleri bir kez sakla** değerini içeren `experimental` bloğunu kaldırır. OpenCode projenin `experimental` bloğunu bir bütün olarak okur; bu nedenle orada tutulan diğer deneysel ayarlar genel derinliği gizlemeye devam eder. Kaydetme OpenCode'u yeniden yüklemez veya çalışan konuşmaları değiştirmez. |
+| Alt oturum iç içe geçme derinliği | Yalnızca Görevler için değil, oradaki **tüm** OpenCode konuşmaları için proje yapılandırması. Boş bırakılırsa devralınır: **Devral**, proje geçersiz kılmasını ve boş bıraktığı ya da yalnızca genel **Görselleri bir kez sakla** değerini içeren `experimental` bloğunu kaldırır. OpenCode projenin `experimental` bloğunu bir bütün olarak okur; bu nedenle orada tutulan diğer deneysel ayarlar genel derinliği gizlemeye devam eder. OpenCode'un yerleşik **General** alt ajanı varsayılan olarak alt ajan başlatamaz, bu yüzden konuşmaları hiç iç içe geçmez: herhangi bir proje derinliğini kaydetmek, alt ajanların o derinliğe kadar kendi alt ajanlarını başlatmasına izin veren ve diğer yapılandırma dosyalarındaki General kısıtlamalarından öncelikli olan bir kuralı da aynı dosyaya ekler (1 derinliğinde OpenCode'un derinlik sınırı iç içe geçmeyi yine engeller); **Devral** onu kaldırır. **Etkin OpenCode derinliği** altında düzenleyici, General alt ajanlarının iç içe geçip geçemeyeceğini belirtir. Proje General'ı eski biçimde tek bir `permission` değeriyle ya da hem `task` hem `subagent` zaten ayarlanmış olarak tanımlıyorsa yalnızca derinlik kaydedilir ve düzenleyici bunu belirtir: General için alt ajanlara o dosyada kendiniz izin verin. Kaydetme OpenCode'u yeniden yüklemez veya çalışan konuşmaları değiştirmez. |
 
 **Yerel varsayılan** ile **Genel** farklıdır: ilki OpenCode'un kendi varsayılanlarını ister, ikincisi genel seçimi devralır; bir rehber kapsamında yerel varsayılanları seçmek açık bir istisna olarak kalır. Katalog kullanılabilirliği kontrol edilir; istenen profil, bir konuşmanın o anda kullandığı profilin kanıtı değildir. Her iki görev modunda da dahili yardımcı çağrılarını OpenCode izinleri ve yapılandırılmış derinlik yönetir.
 
@@ -133,9 +141,51 @@ Reddedilen veya doğrulanmayan bir seçim asla yeniden gönderilmez: kayıtlı d
 
 Özetler talimatları ve istenen tercihleri saklar; görev planlarını, sonuçları, konuşmaları, zamanlama saatlerini veya yürütme yetkisini saklamaz. Bir özeti yüklemek sıradan oluşturma taslağını doldurur; hiçbir şeyi başlatmaz veya zamanlamaz. Özeti kaldırmak mevcut görevleri/konuşmaları korur. **Ayarlar → Görevler → Kayıtlı özetler** kitaplığı yönetir; kitaplık okunamaz hale gelirse **Kaydedilmiş kitaplığı sıfırla** (onaydan sonra) yürütmeleri değil, kayıtlı özetleri kaldırır. Zamanlamalarda özeti kaydetme eylemi yoktur.
 
-## Günlük saat, kaçırılan günler ve takip edilen konuşmalar {#daily-schedules}
+## Zamanlama, kaçırılan zamanlar ve takip edilen konuşmalar {#daily-schedules}
 
-Günlük zamanlamalar geçen 24 saatlik aralığı değil, kayıtlı IANA saat dilimini ve takvim saatini kullanır. Saatler zamanlamanın saat diliminde gösterilir; görüntüleyenin saat diliminden farklıysa belirtilir. Her çalıştırmanın kendi koordinatörü ve yalıtılmış görev haritası vardır; seçili zamanlama güncel görev ağacını ve tarih/sonuç geçmişini gösterir. Geçmiş bir çalıştırmayı seçerek merkezi alanda okuyabilirsiniz. Geçmiş 30 sonuçla sınırlıdır.
+### Yerel zamanlama {#native-scheduling}
+
+Etiketlerin yanındaki **i** simgeleri seçenekleri açıklar: üzerine gelin, klavyeyle odaklayın veya dokunun.
+
+Oluşturma veya düzenleme ekranında **Zamanlama** bölümünü genişletin. **Sıklık** şu seçenekleri sunar:
+
+| Seçim | Zamanlama |
+| --- | --- |
+| Bir kez, hemen | Başlatma eyleminde tek bir çalıştırma; isteğe bağlı koşul aşağıda açıklandığı gibi denetlenir. |
+| Bir kez, belirli tarihte | IANA saat diliminde kayıtlı tek tarih ve saat; başlatma anında geçmiş olan tarih reddedilir. |
+| Bir kez, gecikmeyle | Başlatma eyleminde başlayan, dakika veya saat cinsinden pozitif tam sayı süre. |
+| Belirli aralıklarla | En az 15 dakika; ilk uyanma başlatmadan bir aralık sonradır. |
+| Her gün | Kayıtlı saat diliminde tek bir yerel takvim saati. |
+| Seçilen hafta günleri | İşaretlenen hafta günlerinde tek bir saat. |
+| Günde birkaç kez | 09:15 ve 17:45 gibi en fazla sekiz bağımsız saat; yinelenen saatler tek bir geçişi paylaşır. |
+| Her ayın belirli günü | Seçilen saatte ayın 1–31. günü; o günün bulunmadığı aylar atlanır. |
+| Gelişmiş (cron) | Dakikada en fazla bir kez çalışan yerel cron ifadesi. |
+
+**Sonraki zamanlar (en fazla beş)**, kayıtlı saat dilimine ve varsayılan başlatma anına göre önizleme sunar. Koşul varsa **Sonraki denetimler (en fazla beş)** denetimleri gösterir; bir geçiş doğrulanmış bir değişikliğe bağlıdır. Değiştirilmeyen kayıtlı aralık, yerel aşamasını korur. Duraklatılmış veya bilinmeyen aşama, yerel durumu okunana kadar kullanılamaz olarak gösterilir. Gecikmeler ve aralıklar geçen süreyi kullanır; takvimler kayıtlı saat dilimini ve OpenCode'un yaz saati kurallarını izler. Gösterilen tarihler hizmetin ve ana bilgisayarın kullanılabilirliğine bağlı hesaplamalardır.
+
+Bir kesintiden sonra yerel zamanlama, gelecek zamanlara dönmeden önce kaçırılan işi telafi etmek için en fazla bir geçiş sunar. Kaydedilmiş yerel planlı zamanı kullanır; bu zaman, daha sonra kaçırılan zamanlardan önce olabilir. Günde birkaç saat seçeneği aynı telafi hakkını ve çakışma korumasını paylaşır. Başka bir geçiş başlamadan önce çözülmemiş geçiş, özgün konuşma ve mesaj kimlikleri altında uzlaştırılır. Açıkça duraklatılmış yineleme sürdürüldüğünde sonraki gelecek zaman kullanılır; duraklatılmış tek seferlik iş bir kez gecikmeli gelebilir.
+
+### Koşullar ve kaynaklar {#scheduling-conditions}
+
+İsteğe bağlı tek bir **Koşul** ve **Bu projedeki kaynak** seçin: **Başka bir zamanlama başarılı olur**, **Yerel dalda yeni commit’ler**, **Tek seferlik Görev başarıyla tamamlanır**, **Takip edilen konuşmada yeni mesaj** veya **Belirtilen dosyalar değişir**. Yalnızca koşul için **Bir kez, hemen** seçimini koruyun: yerel denetimler tek geçiş başlatılana kadar 15 dakikada bir çalışır. Takvimle birlikte koşul yalnızca o takvimin zamanlarında denetlenir. Yinelenen koşullar, yeni uygun değişikliklerden sonra yeniden çalıştırma başlatabilir.
+
+İlk başlatma başlangıç referansını belirler. Sürdürme, duraklatmadan sonra gözlemlenen değişiklikler dahil bu referansı korur. Başarı kaynakları doğrulanmış başarılı sonuç ve sonuçlandırılmış bir yerel konuşma ailesi gerektirir. Dal denetimleri, uzaktan veri getirmeden yerel commit'leri ve ata ilişkilerini kullanır. Konuşma denetimleri tam ve kararlı yeni mesajları bekler; teknik uyanmaları ve geçişin kendi konuşmalarını dışarıda bırakır. Dosyalar için satır başına bir tane olmak üzere projeye göre en fazla 128 açık yol kullanılır; özyinelemeli kalıplar ve bağlantılı yollar reddedilir. Eksik, taşınmış, belirsiz veya kapasiteyi aşan kaynak kabulü açıklamayla engeller. Denetimler arasındaki değişikliklerin algılanabilmesi için kaynakta kalıcı bir iz bırakması gerekir.
+
+Birlikte gözlemlenen değişiklikler gruplanır. Geçiş, gözlemlenen kaynak kanıtlarını sabitler; başarıyla sonuçlandırma bu anlık görüntüyü işlenmiş sayar ve sonraki değişiklikleri gelecekteki denetime bırakır. Başarısız geçiş kaynak kontrol noktasını korur ve müdahale gerektirir. **Seçenekler** altındaki **Takip edilen konuşmalar (isteğe bağlı)**, konuşma mesajı koşulu seçmekten bağımsız olarak bağlam sağlar.
+
+### Bitişler ve sayılar {#scheduling-limits}
+
+Sürekli yineleme için sınırları boş bırakın. **İzin verilen son zaman** ve **İlk Oynat’tan bu kadar saat sonraki son zaman (isteğe bağlı)** uygun zamanları sınırlar; en erken sınır geçerlidir. Süre ilk başlatmada başlar ve duraklatma sırasında da ilerler. Bitişten önce kaydedilmiş bir zaman uzun bir kesintiden sonra geç ulaşabilir. Kabul edilmiş bir geçişin sonucu alınana kadar gözlemlenmesi sürer.
+
+**Başlatılan en fazla çalıştırma sayısı**, tüm saatler ve **Şimdi çalıştır** için ortak toplamdır. Koordinatörünün ilk girdisi kabul edildiğinde geçiş bir kez sayılır; daha sonra başarısız olan geçiş de dahildir. Denetimler, değişmeyen koşullar ve reddedilen uyanmalar yer tüketmez; belirsiz kabul, uzlaştırılana kadar yerini tutar. Tek seferlik ilkeler en fazla bir geçişe izin verir. Kullanılan yerler düzenleme ve yeniden başlatmalarda korunur; değiştirilmeyen bitiş sınırları ilk başlatma referansını ve mutlak son zamanı korur. Üst sınırı değiştirmek, tüm çalışma ömrü için toplam sınırı değiştirir; kullanılan sayıya eşit veya daha düşük bir toplam sınır zamanlamayı bitirir. Düzenleyicinin açıkladığı gibi sıklığı değiştirmek, kaydetme sırasında yeni bir aralık aşaması başlatabilir.
+
+Seçili yerel zamanlama **İstenen durum**, **Yerel takvim**, **Sonraki uyanma** veya **Sonraki kontrol**, **… tarihinden beri izleniyor** bilgisiyle **Kontroller**, **Başlatılan geçişler**, **Başarılı geçişler**, bitişi ve **Önceki çalıştırmalar** bilgilerini gösterir. Geçmiş bir geçişi **Konuşmayı aç** üzerinden okuyun. **Zamanlama tamamlandı**, zamanlamanın bitişini açıklar; geçişin sonucunu ayrıca inceleyin. Son 30 sonuç korunur; ömür boyu sayılar bu pencerenin dışında da kalır. **Daha fazla Mission yükle**, kayıtlı nesnelerin sonraki sayfasını yükler.
+
+Liste, koşul ve bitişi yalnızca tanımlandığında; **Kontroller** bilgisini ise yalnızca koşul varsa gösterir.
+
+### Mevcut günlük zamanlamalar {#existing-daily-schedules}
+
+Mevcut günlük zamanlamalar kayıtlı IANA saat dilimini ve yerel takvim saatini kullanır. Her çalıştırmanın kendi koordinatörü ve görev haritası vardır; sonucu merkezi alanda okumak için güncel görev ağacını veya geçmiş bir tarih/sonucu seçin. Saklanan geçmişleri 30 sonuç tutar. Bu kayıtlar için aşağıdaki günlük kurallar geçerlidir:
 
 | Durum | Zamanlama davranışı |
 | --- | --- |
@@ -146,21 +196,28 @@ Günlük zamanlamalar geçen 24 saatlik aralığı değil, kayıtlı IANA saat d
 | Saatin geri alınması | Daha önce işlenen bir günü yeniden zamanı gelmiş saymaz. |
 | Mevcut çalıştırma hâlâ bekliyor | Yeni günlük çalıştırmayı bununla çakıştırmaz. |
 
-Oluşturulma zamanı da uygun günlük işleri sınırlar; yeni bir zamanlamayı başlatmak, var olmadan önceki tarihleri işleme izni değildir. Sunulduğunda **Şimdi çalıştır** ayrı bir manuel çalıştırma başlatır; günlük saatin yerini almaz veya bekleyen çalıştırmayı aşmaz. Gösterilen sonraki zaman bir hesaplamadır, tam o anda yürütme garantisi değildir.
+Oluşturulma zamanı da uygun günlük işleri sınırlar. Mevcut günlük kayıtta sunulduğunda **Şimdi çalıştır**, bekleyen çalıştırma koruması altında ayrı bir manuel çalıştırma başlatır ve günlük saati korur. Gösterilen sonraki zaman, hizmetin ve ana bilgisayarın kullanılabilirliğine bağlı bir hesaplamadır.
 
 **Takip edilen konuşmalar (isteğe bağlı)** seçili konuşmalardan sınırlı bağlam ekler. İşlenen mesaj imleçlerini yalnızca tamamlanan çalıştırma ilerletir; başarısız/kesintiye uğrayan çalıştırma bu bağlamı sessizce tüketmez. Talimatlar ve bağlam kapasiteyi aşarsa sınırsız geçmiş okunduğunu varsaymak yerine talimatları kısaltın veya takip edilen konuşmaları kaldırın.
 
 ## Çalışma ömrü ve hizmet yeniden başlatmaları {#lifetime}
+
+**Teknik ayrıntılar** yanındaki **i**, teknik etkinliği ve maliyetleri açıklar. **Ayarlar → OpenCode** altında gözetim durumu ve hatalar görünür kalır; genel açıklamalar **i** içindedir.
+
+Yerel bir zamanlamada **Teknik ayrıntılar** bölümünü genişleterek **Ana taşıyıcı** ve **Uzlaştırma taşıyıcısı** bilgilerini, bunların yerel takvimlerini ve varsa **Temizlik uzlaştırma bekliyor** durumunu görebilirsiniz. Bu teknik konuşmalarda mesaj yazma eylemi bulunmaz ve bunlar olağan konuşma ve kaynak seçicilerinde görünmez. Teknik uyanmalar, başlıklar ve bağlam sıkıştırma, sağlayıcılara HTTP isteği göndermeden yerel modeli kullanır; yerel olaylar ve istatistikler bunları yine de içerebilir, ancak gerçek geçişlerin olağan model maliyetleri korunur. Bağlam sıkıştırma, konuşma ve takvim kimliğini koruyarak işlenen bağlamı sınırlar. Saklanan yerel mesajlar ve olaylar, tamamlanmış bir zamanlama açıkça temizlenene kadar birikebilir; saklanan 30 Mission sonucu ayrıdır. Derinlik denetimi ve **Zamanlama**, kullanılabilir olduğunda yolu **OpenCode yapılandırma dosyası:** altında gösterir; derinlik denetimi **Projenin yazma hedefi** bilgisini ayrıca belirtir.
 
 | Bileşen | Kapatılması ne anlama gelir |
 | --- | --- |
 | CodeNomad proje sekmesi | Projeyi CodeNomad'de kapatır; yerel işler OpenCode'da devam eder ve projeyi yeniden açtığınızda konuşmalar bulunur. |
 | Pencerenin tamamı, uygulamadan çıkış veya arayüzün yeniden yüklenmesi | Proje bağlantılarını geri yükleme için korur; OpenCode işlerini veya hizmetini durdurmaz. |
 | CodeNomad arka ucu | OpenCode'u durdurmaz. Çalışan tek seferlik bir görev sürer: koordinatörü, OpenCode alt ajanı olarak yürüyen görevleri ve görev araçları OpenCode içinde çalışır. Bağımsız oturumlara görev atama ve raporlarını koordinatöre iletme, koordinatörün hazırladığı görevler, plandan çıkarılan bir görevin konuşmalarını durdurma, kurtarma ve Görev Kontrolü arka ucu bekler; OpenCode hizmetinin yeniden başlatılmasından sonra tek seferlik bir görevi sürdürmek de öyle. |
-| Çalışan günlük zamanlama | Saat ve çalıştırma yürütmesi, CodeNomad arayüzü ve arka ucu kapalıyken de OpenCode eklentisinde/hizmetinde sürer. Yürütme ana bilgisayarı ve OpenCode hizmeti çalışır durumda kalmalıdır. |
-| OpenCode hizmetinin yeniden başlatılması | Sürece bağlı zamanlama işleri kaybolur. Çalışması istenen zamanlama, açıkça **Sürdür** seçilene kadar **Kesintiye uğradı** durumuna geçer; CodeNomad'i yeniden açmak onu devreye almaz. |
+| Etkinleştirilmiş yerel zamanlama | Kalıcı OpenCode takvimleri, yürütme ana bilgisayarı ve hizmet kullanılabilirken CodeNomad arayüzü ve arka ucu kapalı olsa da projeyi uyandırır ve geçişleri çalıştırır. |
+| OpenCode hizmetinin yeniden başlatılması — sağlıklı yerel zamanlama | İstenen durumu çalışıyor olan sağlıklı zamanlama takvimini otomatik sürdürür. Yeni kabulden önce bekleyen iş özgün kimlikleri altında uzlaştırılır. |
+| Mevcut günlük zamanlama | Hizmet yaşadığı sürece eklenti saati CodeNomad kapalıyken çalışır. Hizmet yeniden başlatılırsa **Kesintiye uğradı** durumunda kalır; açık **Sürdür** eylemi bekleyen çalıştırmayı uzlaştırır ve günlük saati yeniden etkinleştirir. |
 
-Yeniden başlatmadan sonra bekleyen çalıştırmayı inceleyip hazır olduğunuzda **Sürdür** eylemini seçin. Sürdürme mevcut çalıştırmayı, koordinatör girdisini iki kez göndermeden uzlaştırır; kesilen OpenCode turunun devam edeceğini vaat etmez. Yeniden başlatmanın kestiği bir tur, **Yeniden başlatmayla kesildi** durumuyla raporsuz sonlanmış olarak sonuçlandırılabilir. Yeniden başlatmayı araçların yan etkilerini yeniden deneme yöntemi olarak kullanmayın.
+Yerel zamanlamalarda açık duraklatma, durdurma, başarısız iş ve belirsiz sonuçlar, yeniden başlatmadan sonra kabul engellerini korur. Korunan geçişi ve özgün isteği inceleyin; sunulduğunda **Çalıştırmayı denetle** veya **Kayıtlı isteği yenile** eylemini kullanın, ardından yalnızca durum izin veriyorsa **Sürdür** eylemini seçin. Yerel devam, mevcut kimliği altında gözlemlenir. Kanıtlanmış başarısızlık veya raporsuz sonlanma insan müdahalesiyle kurtarma gerektirir; eksik kanıt geçişi belirsiz bırakır. Başlatılmış araç etkilerini tekrarlamak için asla yeniden başlatma kullanmayın.
+
+[OpenCode'u çalışır tut](opencode.md#service-supervision), paylaşılan hizmeti yürütme ana bilgisayarında ayrıca gözetir. KAPALI tercihini kaydetmediyseniz ilk Görev başlatma bunu etkinleştirir; duraklatılmış Görev oluşturmak bu seçimi korur. Kapatmak, OpenCode'u otomatik yeniden başlatma olmadan çalışır bırakır. Windows, macOS ve WSL oturum açma sınırını kullanır; yerel Linux izinlere bağlı kullanıcı linger özelliğini kullanır. Uyku, hazırda bekletme, WSL'nin boşta kalma ömrü ve harici ana bilgisayarın denetimi kullanılabilirliği sınırlar; gözetim durumunu zamanlamadan bağımsız inceleyin.
 
 Görevler masaüstü uygulamalarıyla ve bağımsız bir CodeNomad [sunucusuyla](server.md) çalışır. Panel **Görev Kontrolü kullanılamıyor** gösterdiğinde mesajı nedeni belirtir:
 
@@ -180,7 +237,9 @@ Görevler masaüstü uygulamalarıyla ve bağımsız bir CodeNomad [sunucusuyla]
 
 Tek seferlik Duraklat devam eden işin bitmesine izin verir: koordinatör ve alt ajanları bulundukları adımı tamamlar, yeni bir şey başlatmaz ve durur; bu sırada panelde şu görünür: **Duraklatılıyor: devam eden adımlar tamamlanıyor.** **Şimdi kes** ise onları hemen durdurur: görevin OpenCode konuşma ailesini kesintiye uğratıp koordinasyonu bekletir. Durdur da kesintiye uğratır, ailede sıradaki girdileri/teslimatları iptal eder ve kalıcıdır. Kesintiler sınırlı işlemlerdir: **Bazı alt ajanlar hâlâ çalışıyor olabilir.** birinin tamamlanmadığını gösterir. Tüm kabuk/araç etkilerinin iptal edildiğini varsaymak yerine korunan sonucu inceleyip açık yeniden deneme eylemini kullanın. Sürdürme, koordinatöre neyin duraklatıldığını veya kesildiğini bildirir; işin nasıl devam edeceğine koordinatör karar verir.
 
-Günlük Duraklat/Durdur zamanlamayı iptal eder ve koordinatörle bağımsız uzmanlar dahil kayıtlı kök aktörlerin kesilmesini ister; ancak **bu konuşmaların veya alt konuşmalarının durduğunu kanıtlamaz**. OpenCode konuşma ailelerini inceleyin. Durdurma kalıcıdır: durdurulmuş zamanlama Başlat, Sürdür veya Şimdi çalıştır eylemlerini kullanamaz. **Çalıştırmayı denetle** bekleyen çalıştırmayı tekrar göndermeden uzlaştırır. Geçici zamanlanmış denetim hataları son hatayı gösterir ve otomatik yeniden denenir; kullanıcı kontrolüne ait yanıtın kaybolması kontrolün otomatik yeniden gönderilmesine yol açmaz.
+Yerel zamanlamada **Duraklat**, gelecek kabulleri kapatır ve kabul edilmiş geçişin kesilmesini ister; **Sürdür**, yeniden etkinleştirmeden önce mevcut işi uzlaştırır. **Durdur…** kalıcıdır. **Şimdi çalıştır**, takvimi korurken aynı bekleyen geçiş korumasını ve başlatılan geçiş kotasını kullanır. **Çalıştırmayı denetle** özgün geçişi uzlaştırır. Doğrulanmamış eylemi koruyup **Kayıtlı isteği yenile** kullanın; pasif yenileme ve yeniden bağlanma bu isteği korur. Başlatılmış araç etkileri kesintiden sonra sürebilir.
+
+Mevcut günlük kayıtlar günlük **Duraklat**, **Durdur…**, **Sürdür**, **Şimdi çalıştır** ve **Çalıştırmayı denetle** kontrollerini korur. Duraklatma ve durdurma, saatlerini iptal eder ve bağımsız uzmanlar dahil kayıtlı kök konuşmaların kesilmesini ister. Yerel konuşma ailelerini ve varsa kısmi kesinti sonucunu inceleyin. Geçici günlük denetim hataları gösterilen uyarıyla yeniden denenir; kaybolan kullanıcı kontrol yanıtı özgün isteğine bağlı kalır. Durdurulmuş kayıt kalıcı olarak durdurulmuş kalır.
 
 Raporunu vermeden boşta kalan tek seferlik koordinatör için ana ▶ eylemi doğrulama ve kurtarma yapabilir; uygun görevlerde eksik rapora yönelik hedefli kurtarma bulunur. Kurtarma önce OpenCode etkinliğini, alt konuşmaları ve beklemeleri kontrol eder; etkinlik bilinmiyorsa girdiyi kabul etmez. Atamaları yeniden göndermez veya planı değiştirmez. Çözülmemiş sorular, izinler, kabuklar veya arka plan işleri için konuşmaları açın.
 
@@ -188,12 +247,28 @@ Raporunu vermeden boşta kalan tek seferlik koordinatör için ana ▶ eylemi do
 
 ## Konuşmaları düzenleyin, silin ve temizleyin {#cleanup}
 
-Düzenlenebilir tek seferlik görevde **Seçili görevi düzenle** eylemini kullanın; çakışma olursa üzerine yazmak yerine güncel revizyonu yüklemek için düzenleyiciyi kapatıp açın. Form hâlâ yüklenirken amaç veya notlar değişirse, form bunları doldurmak yerine görevin siz açtıktan sonra değiştiğini belirtir; güncel sürümü düzenlemek için **Yeniden aç** seçeneğini kullanın. Günlük zamanlamalarda düzenleme/silme kontrolleri yoktur.
+Form hâlâ yüklenirken amaç veya notlar değişirse, form bunları doldurmak yerine görevin siz açtıktan sonra değiştiğini belirtir; güncel sürümü düzenlemek için **Yeniden aç** seçeneğini kullanın.
+
+Geçişler arasında, nesneyi tutan bir geçiş veya çözülmemiş kontrol yoksa duraklatılmış ya da çalışan yerel zamanlamanın başlığı, talimatları, notları, istenen profilleri, görev oturumu modu, kaynakları, takvimi ve sınırları düzenlenebilir. Duraklatılmış zamanlama duraklatılmış kalır; etkinleştirilmiş zamanlama devam etmeden önce takvimini uzlaştırır. Kaydetme geçmiş sonuçları, işlenmiş kaynakları, başlatma sayısını ve ilk başlatma referansını korur; değiştirilmeyen bitiş sınırları mutlak son zamanlarını korur.
+
+Kabul edilmiş geçiş sırasında yalnızca talimatlar ve notlar etkin metin düzenleme kurallarına uyar: değişiklikler geçişin geçmişine kaydedilir ve gelecek geçişler için saklanır. Mevcut işler, özetler, profiller ve yürütme kimlikleri kabul anındaki değerlerini korur. Yapısal alanlar, duraklatmadan sonra da geçiş sonuçlanana kadar kilitli kalır. Tamamlanmış veya geri çekilmiş işler dahil herhangi bir iş oluşturulduktan sonra rehber kilitli kalır. Belirsiz kabul/kontrol veya eksik bütünlük kanıtı yapısal düzenlemeyi salt okunur tutar. Oluşturma ve düzenleme aynı takvim doğrulamasını kullanır; önizleme, düzenlenen son izinli zamanı gecikmiş olsa bile kayıtlı sonraki uyanışa uygular.
+
+Yerel dal kaynağı worktree bulunmayan dalları da içerir ve yalnızca yerel referansları okur. Seçici en fazla 200 yerel dalı destekler; daha büyük listelerde kaynak kullanılamaz olarak gösterilir. Etkinleştirme mümkün olduğunda **Başlat** ve **Sürdür** tam yapılandırma yollarıyla onay ister. Yerel zamanlama etkin değilken **Şimdi çalıştır** bir açıklamayla devre dışı kalır; OpenCode yapılandırmasında `experimental.schedules` ayarını etkinleştirip yenileyin. Etkinleştirme yanıtı kaybolursa sonuç denetimi için özgün istek korunur.
+
+İlk Play öncesinde **Seçenekler** altındaki takip edilen konuşmaları koruyarak anlık ve koşulsuz başlatmaya dönebilirsiniz. Play, tamamlanmış ve kararlı mesaj önekini okuyup sabitler (kaynak başına en fazla 32 mesaj, toplam başlatma girdisi 16.384 karakter içinde). Eksik, taşınmış veya kapasiteyi aşan kaynaklar açıklamayla başlatmayı engeller. Yeniden deneme, özgün sabit bağlamı ve başlatma kimliğini korur.
+
+Makbuz okuması kısmi hazırlığı doğruladığında **Tekrar dene** görünür. Tıklama aynı makbuzu yeniden denetler ve yalnızca ilk kaydedilen değişikliği sürdürür; görev duraklatılmış kalır.
+
+Yeni hazırlanmış bir görevin ilk başlatılmasından önce başlık, talimatlar, notlar, çalışma kitabı, istenen ajan/model/düşünme, görev oturumu modu ve **Zamanlama** düzenlenebilir. Aynı Görevi koruyarak anlık, gecikmeli, yinelenen ve koşullu başlatmalar arasında geçiş yapabilirsiniz. Kaydetme görevi duraklatılmış tutar ve yeni, boş bir koordinatör hazırlar; ilk konuşma korunur. Yalnızca Play işi başlatır veya zamanlamayı etkinleştirir. Başlatmadan sonra talimatlar ve notlar etkin görevin düzenleme kurallarına uyar. Kaydetme onaylanmazsa **Kayıtlı isteği yenile** ilk sonucu okur; kısmi hazırlık başlatmayı, metin düzenlemeyi ve silmeyi engellediği sürece aynı isteği koruyun.
+
+Düzenlenebilir tek seferlik görev veya yerel zamanlama için **Seçili görevi düzenle** eylemini kullanın. Kilitli alanların yanındaki açıklamaları okuyun. Revizyon çakışmasında **Güncel yapılandırmayı yeniden yükle** eylemini seçin, ardından yeniden kaydetmeden önce korunan taslağı incelemek için **Karşılaştırma için önceki taslak** bölümünü açın. Mevcut günlük zamanlamalar kendi araç çubuklarındaki kontrolleri korur.
+
+Yerel zamanlamada **Seçili görevi sil…**, kaydı kaldırmadan önce gelecek geçişleri devre dışı bırakır. Konuşmalar ve sonuçlar korunur; uzlaştırma bekleyen temizlik **Teknik ayrıntılar** içinde görünür kalır. Doğrulanmamış silme isteğini koruyup özgün isteği yenileyin.
 
 1. Artık gerek duymadığınız tek seferlik görev için **Seçili görevi sil…** eylemini seçip onayı inceleyin.
 2. Onaylamadan önce isteğe bağlı olarak **Bu görev için oluşturulan uzman konuşmalarını da sil** seçeneğini işaretleyin.
 3. Kaldırılan/korunan/bekleyen sayılarını **Konuşma temizliği** bölümünde kontrol edin. Sunuluyorsa yalnızca kaydedilmiş, kalan temizliği yeniden deneyin.
 
-Görevi silmek durdurmakla aynı şey değildir; önce Durdur'u kullanıp kalan işleri inceleyin. Koordinatörler ve yeniden kullanılan konuşmalar korunur. Paylaşılan, taşınan, alt konuşması bulunan veya sahipliği doğrulanamayan uzmanlar da korunabilir. Kısmi temizlik geri alınmaz ve arka planda sessizce tamamlanmaz. Genel bakış okuyucusu tamamlanan en son 20 temizliği tutar. Görevleri silmek projedeki depolama alanlarını boşaltır: daha eski silinmiş görevler otomatik olarak temizlenir.
+Görevi silmek durdurmakla aynı şey değildir; önce Durdur'u kullanıp kalan işleri inceleyin. Koordinatörler ve yeniden kullanılan konuşmalar korunur. Paylaşılan, taşınan, alt konuşması bulunan veya sahipliği doğrulanamayan uzmanlar da korunabilir. Kısmi temizlik geri alınmaz ve arka planda sessizce tamamlanmaz. Konuşma temizliği 0 bekleyen gösterse bile silme doğrulaması beklenirken görev kartı kaybolabilir. Silme doğrulanana kadar özgün **Tekrar dene** eylemini kullanmaya devam edin; aynı silme isteği ve seçenekler korunur. Genel bakış okuyucusu tamamlanan en son 20 temizliği tutar. Görevleri silmek projedeki depolama alanlarını boşaltır: daha eski silinmiş görevler otomatik olarak temizlenir.
 
 OpenCode işleri ve hizmet kontrolleri için [İzinler](permissions.md), [Konuşmalar](conversations.md) ve [OpenCode kurulumu](opencode.md) sayfalarına bakın.

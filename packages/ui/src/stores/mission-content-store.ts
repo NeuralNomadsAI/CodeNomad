@@ -1,10 +1,12 @@
 import { createSignal, type Accessor, type Setter } from "solid-js"
-import type { MissionBodyDescriptor, MissionContentResponse, MissionContentSelector, MissionContentSlice } from "../../../server/src/missions/mission-content-wire"
+import type { MissionBodyDescriptor, MissionContentResponse, MissionContentSelector } from "../../../server/src/missions/mission-content-wire"
+import { validMissionContentSlice } from "../lib/mission-content-slice"
 
 /** One mission body: the mission it belongs to, where, and its selector. */
 export interface MissionBodyRef { instanceId: string; projectID: string; missionID: string; selector: MissionContentSelector }
-/** A body's text from offset 0, cut from exactly one digest: never two values joined. */
-export interface MissionBody { digest: string; revision: number; characters: number; json: boolean; text: string }
+/** A body's text from offset 0, cut from exactly one digest: never two values joined.
+ * `mark`: the owner metadata it was read under (`MissionBodyConsumer.version`). */
+export interface MissionBody { digest: string; revision: number; characters: number; json: boolean; text: string; mark?: string }
 /** `error`: the last read failed, a plugin without content reads included. */
 export type MissionBodyStatus = "loading" | "ready" | "missing" | "error"
 /** `revision`: the mission revision of the last accepted answer. */
@@ -20,6 +22,10 @@ export interface MissionBodyConsumer {
    * body of another digest is read again; the newest map wins. A map naming no such
    * body (no descriptor) expects nothing. */
   expect(descriptor: MissionBodyDescriptor | undefined, revision: number | undefined): void
+  /** For a body no descriptor describes (an older plugin's map): the mark its owner's
+   * metadata gives it now. A body held, or a read sent, under another mark is read again;
+   * undefined asks nothing. */
+  version(mark: string | undefined): void
   retry(): void
   release(): void
 }
@@ -47,6 +53,11 @@ interface Entry {
   answered?: number
   /** The body the newest map shown by a reader names. */
   expected?: { revision: number; digest: string }
+  /** The mark readers ask the body to be read under (`version`), the mark of the read in
+   * flight, and the mark of the last missing answer. */
+  mark?: string
+  sentMark?: string
+  missingMark?: string
   /** Counts recovery invalidations: an answer to a read sent before the latest is superseded. */
   epoch: number
   stale: boolean
@@ -77,11 +88,13 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     const expected = entry.expected
     return !expected || digest === expected.digest || (revision ?? 0) >= expected.revision
   }
+  /** Whether an answer read under `mark` is read under the mark readers ask for, if any. */
+  const marked = (entry: Entry, mark: string | undefined) => entry.mark === undefined || mark === entry.mark
   /** Whether what the entry holds is the body the newest map names (or nothing is held yet). */
   const fresh = (entry: Entry) => {
-    if (entry.status === "missing") return satisfies(entry, undefined, entry.answered)
+    if (entry.status === "missing") return satisfies(entry, undefined, entry.answered) && marked(entry, entry.missingMark)
     const body = entry.pending ?? entry.display
-    return !body || satisfies(entry, body.digest, body.revision)
+    return !body || satisfies(entry, body.digest, body.revision) && marked(entry, body.mark)
   }
 
   const cancel = (entry: Entry) => {
@@ -109,7 +122,7 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     }
   }
 
-  const accept = (entry: Entry, query: { digest?: string; offset: number }, response: MissionContentResponse) => {
+  const accept = (entry: Entry, query: { digest?: string; offset: number }, response: MissionContentResponse, mark: string | undefined) => {
     if (!response || typeof response !== "object") throw new Error("Invalid mission content")
     // A first answer older than the body its map names is read again, within the restart bound.
     const settle = (digest: string | undefined, revision: number | undefined) => {
@@ -137,20 +150,21 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
       if (response.refused !== "mission-not-found" && response.refused !== "content-not-found") throw new Error("Invalid mission content")
       entry.display = entry.pending = undefined
       entry.answered = response.revision ?? entry.answered
+      entry.missingMark = mark
       entry.status = "missing"
       settle(undefined, response.revision)
       return
     }
-    const slice = valid(entry.ref.selector, query, response.content)
+    const slice = validMissionContentSlice(entry.ref.selector, query, response.content)
     if (!Number.isSafeInteger(response.revision)) throw new Error("Invalid mission content")
     const revision = response.revision!
     entry.answered = Math.max(entry.answered ?? 0, revision)
     entry.status = "ready"
     if (query.offset === 0) {
       settle(slice.digest, revision)
-      const body = { digest: slice.digest, revision, characters: slice.characters, json: slice.json === true, text: slice.text }
+      const body = { digest: slice.digest, revision, characters: slice.characters, json: slice.json === true, text: slice.text, ...(mark === undefined ? {} : { mark }) }
       if (entry.display?.digest === body.digest) {
-        entry.display = { ...entry.display, revision, text: entry.display.text.length >= body.text.length ? entry.display.text : body.text }
+        entry.display = { ...entry.display, revision, ...(mark === undefined ? {} : { mark }), text: entry.display.text.length >= body.text.length ? entry.display.text : body.text }
         entry.pending = undefined
       } else entry.pending = body
     } else {
@@ -165,8 +179,9 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
   }
 
   const read = (entry: Entry, query: { digest?: string; offset: number }) => {
-    const controller = new AbortController(), epoch = entry.epoch
+    const controller = new AbortController(), epoch = entry.epoch, mark = entry.mark
     entry.controller = controller
+    entry.sentMark = mark
     // A read after a failure shows the body it reads for, never the failure it retries.
     if (entry.status === "error") { entry.status = entry.display ? "ready" : "loading"; publish(entry) }
     // A late answer for a released, replaced or switched entry never publishes; one sent
@@ -174,7 +189,7 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     const admitted = () => entry.controller === controller && !controller.signal.aborted && entries.get(entry.key) === entry && entry.epoch === epoch
     void fetch(entry.ref, query, controller.signal).then(response => {
       if (!admitted()) return
-      accept(entry, query, response)
+      accept(entry, query, response, mark)
       publish(entry)
     }).catch(() => {
       if (!admitted()) return
@@ -202,7 +217,8 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     } else if (!covers(shown, need(entry))) read(entry, { digest: shown.digest, offset: shown.text.length })
   }
 
-  const use = (ref: MissionBodyRef, identity: string): MissionBodyConsumer => {
+  /** `mark`: the first `version` of a body no descriptor describes, so its first read is sent under it. */
+  const use = (ref: MissionBodyRef, identity: string, mark?: string): MissionBodyConsumer => {
     const key = keyOf(ref)
     let entry = entries.get(key)
     // Another instance connection, folder or native generation never shows this body.
@@ -212,6 +228,7 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
       entry = { key, ref, identity, state, publish: setState, status: "loading", epoch: 0, stale: false, parked: false, restarts: 0, consumers: new Map(), used: 0 }
       entries.set(key, entry)
     }
+    if (mark !== undefined) entry.mark = mark
     const owner = entry, id = Symbol(key)
     owner.consumers.set(id, { need: 1 })
     owner.used = ++tick
@@ -235,6 +252,21 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
         owner.expected = { revision, digest: descriptor.digest }
         // A read in flight checks the newest map when it settles.
         if (owner.controller || owner.stale || owner.status === "loading" || fresh(owner)) return
+        owner.stale = true
+        owner.parked = false
+        pump(owner)
+      },
+      version: mark => {
+        if (!owner.consumers.has(id) || mark === owner.mark) return
+        owner.mark = mark
+        if (mark === undefined) return
+        // A read sent under another mark is superseded: its answer never publishes, and one
+        // fresh read follows it. A body held under another mark is read again.
+        if (owner.controller) {
+          if (owner.sentMark !== mark) { owner.epoch++; owner.stale = true }
+          return
+        }
+        if (fresh(owner)) return
         owner.stale = true
         owner.parked = false
         pump(owner)
@@ -282,18 +314,4 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     retainedBytes: () => [...entries.values()].filter(entry => !entry.consumers.size)
       .reduce((total, entry) => total + 2 * ((entry.display?.text.length ?? 0) + (entry.pending?.text.length ?? 0)), 0),
   }
-}
-
-/** The slice, when it is exactly the one this read asked for. */
-function valid(selector: MissionContentSelector, query: { digest?: string; offset: number }, slice: MissionContentSlice | undefined): MissionContentSlice {
-  const identity = (value: MissionContentSlice) => value.kind === selector.kind && value.field === selector.field
-    && value.taskKey === ("taskKey" in selector ? selector.taskKey : undefined)
-    && value.reportId === ("reportId" in selector ? selector.reportId : undefined)
-    && value.change === ("change" in selector ? selector.change : undefined)
-  if (!slice || typeof slice.text !== "string" || typeof slice.digest !== "string" || !identity(slice)
-    || slice.offset !== query.offset || query.digest !== undefined && slice.digest !== query.digest
-    || !Number.isSafeInteger(slice.characters) || slice.offset + slice.text.length > slice.characters
-    || (slice.next === undefined ? slice.offset + slice.text.length !== slice.characters
-      : slice.next !== slice.offset + slice.text.length || slice.next >= slice.characters || !slice.text.length)) throw new Error("Invalid mission content slice")
-  return slice
 }

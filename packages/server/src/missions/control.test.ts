@@ -628,6 +628,7 @@ test("projects human edits and coordinator revisions once in an attributed order
   assert.deepEqual(replay.mission.history[0], {
     revision: update.expectedRevision + 1,
     source: "user",
+    requestID: update.requestID,
     objective: { before: "Initial objective", after: "Human-edited objective" },
     notes: { before: "Initial notes", after: "Human-edited notes" },
     addedTaskKeys: [], retiredTasks: [], dependencyUpdates: [],

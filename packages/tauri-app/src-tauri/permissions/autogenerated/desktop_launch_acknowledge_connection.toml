@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-launch-acknowledge-connection"
+description = "Enables the desktop_launch_acknowledge_connection command without any pre-configured scope."
+commands.allow = ["desktop_launch_acknowledge_connection"]
+
+[[permission]]
+identifier = "deny-desktop-launch-acknowledge-connection"
+description = "Denies the desktop_launch_acknowledge_connection command without any pre-configured scope."
+commands.deny = ["desktop_launch_acknowledge_connection"]

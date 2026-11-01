@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, parseMissionEvent, stableToken, type MissionStorage } from "./journal"
-import { cleanupReceiptID } from "./cleanup-projection"
+import { cleanupReceiptID, documentCleanupReceiptID } from "./cleanup-projection"
 import { MISSION_MAX_EVENTS, missionLifecycleReserve, type MissionEvent, type MissionJsonValue } from "./model"
 
 // These ranges hold no actor-admitting entry unless a test seeds one: ordinary
@@ -54,6 +54,23 @@ function fixture() {
 }
 
 const damageCases = ["original-foreign-miskeyed", "project", "mission", "key", "alternate-event-id", "foreign-orphan", "deletion", "session", "type", "wrong-kind", "malformed"] as const
+
+test("deletion reserves an exact document confirmation slot at ordinary capacity; native or foreign receipts cannot spend it", async () => {
+  const f = fixture()
+  f.fillTo(MISSION_MAX_EVENTS - 2)
+  const deletion = { ...f.deletion(undefined, undefined, []), documentCleanup: true as const }
+  await f.journal.assertCanAppend(deletion)
+  await f.journal.append(deletion)
+  const receipt: MissionEvent = { ...f.base, id: documentCleanupReceiptID(deletion.id), type: "mission.document-cleaned", deletionID: deletion.id }
+  await assert.rejects(f.journal.append(f.ordinary()), /2000-event safety limit/)
+  await assert.rejects(f.journal.assertCanAppend({ ...f.receipt(f.deletion()), id: receipt.id }), /2000-event safety limit/)
+  await assert.rejects(f.journal.assertCanAppend({ ...receipt, id: "evt_unreserved" }), /2000-event safety limit/)
+  await f.journal.assertCanAppend(receipt)
+  await f.journal.append(receipt)
+  assert.equal(f.own(), MISSION_MAX_EVENTS)
+  assert.equal((await f.journal.event(receipt.missionID, receipt.id))!.type, "mission.document-cleaned")
+})
+
 for (const damage of damageCases) {
   test(`cleanup capacity: ${damage} receipt counts physically but cannot discharge the reserved target`, async () => {
     const f = fixture(); f.fillTo(ORDINARY - 3)
@@ -260,7 +277,7 @@ test("prospective control credit cannot waive ordering, revision, scope or real 
 })
 
 test("Stop leaves cleanup reservations intact; other missions' reservations stay in their own ranges", async () => {
-  const f = fixture(); f.fillTo(1996)
+  const f = fixture(); f.fillTo(ORDINARY - 2)
   const pause = { ...f.control(), action: "pause" as const }
   await f.journal.append(pause)
   await f.journal.append(f.deletion())
@@ -321,6 +338,21 @@ for (const actorCount of [1, 9, 40]) {
     assert.deepEqual([events.length, discardedEvents], [f.values.size, 0])
   })
 }
+
+test("a preparation reserves both its new coordinator and the retained original coordinator", async () => {
+  const f = fixture(), location = { directory: "/owned/project" }
+  f.seed({ ...f.base, id: "evt_created", type: "mission.created", projectCanonical: "/owned/project", objective: "Prepared",
+    template: "custom", prepared: true, coordinator: { sessionID: "ses_original", title: "Coordinator", location } })
+  const replacement: MissionEvent = { ...f.base, id: "evt_prepared", type: "mission.prepared", createdAt: 2,
+    projectCanonical: "/owned/project", requestID: "replace", fingerprint: "a".repeat(64), expectedRevision: 1,
+    title: "Replacement", objective: "Updated", template: "custom", taskMode: "native",
+    coordinator: { sessionID: "ses_replacement", title: "Replacement", location } }
+  f.fillTo(MISSION_MAX_EVENTS - missionLifecycleReserve(2) - 1)
+  await f.journal.assertCanAppend(replacement)
+  await f.journal.append(replacement)
+  await assert.rejects(f.journal.assertCanAppend(f.ordinary()), /safety limit/)
+  await assert.rejects(f.journal.append(f.ordinary()), /safety limit/)
+})
 
 test("append rechecks prospective Stop capacity after an earlier preflight", async () => {
   const f = fixture(); f.fillTo(ORDINARY - 3)

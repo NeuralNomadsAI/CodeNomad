@@ -84,3 +84,30 @@ synthetic provider.
 - Tests that need stateful middleware (SSE feeds driven by the test, custom
   Vite transform hooks, configs that diverge from the canonical daemon
   config) keep their own server and live in the heavy tier.
+- Before pointer/keyboard selection in a Monaco diff, wait for its computed
+  diff decoration (`.line-insert` in the Git fixture), then locate the line.
+  Plain model text can paint before the worker result inserts deleted-code view
+  zones. `git-history.test.ts` holds a real worker reply and defers Monaco's
+  repaint to exercise that geometry change with native pointer checks intact.
+  Its main-world DOM readiness probe releases the reply and repaint; a direct
+  native click instead receives the reply at pointer movement and releases
+  repaint on pointer-up, keeping the stale geometry through mouse-down.
+- Fixtures importing the production event transport serve `/api/events` with
+  `text/event-stream`, including when native frames enter through the real
+  dispatcher directly. Keep network-failure collectors strict for failed streams
+  and unrelated cancelled requests.
+- Shell fixtures share `tests/browser/panel-read-fixture.ts` to observe optional
+  panel-extension list cancellations: the exact request identity, its owning
+  aborted signal and its native `AbortError` receipt must agree. Drain pending
+  classifications before asserting; retain raw failures alongside the classified
+  cancellations. Same-URL network aborts and missing, unknown or reused identities
+  remain failures. Hold a controller-owned read across a native SSE open to
+  exercise supersession with the navigation ownership assertions intact.
+- Fixtures consuming EventSource serve a persistent `text/event-stream` response
+  and let the real connection close with its page. Never answer that path with
+  the generic JSON fallback. Composer bootstrap awaits DOM readiness and its
+  explicit rendered-fixture signal; stream headers are observed before navigation.
+- A fixture entry with top-level asynchronous restoration exposes its ready signal
+  after instance registration. Tests await that signal before connecting its native
+  client: the document load event can precede module continuation, and a later
+  `addInstance` publishes the fixture's initial client value.

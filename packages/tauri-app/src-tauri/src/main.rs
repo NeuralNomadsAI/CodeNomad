@@ -1639,11 +1639,17 @@ fn schedule_launch_drain(app: AppHandle, queue: Arc<launch::LaunchQueue>) {
     });
 }
 
+/// `launch_windows` are the hidden windows a `--connect-server` launch runs in: like Preferences, they never keep CodeNomad alive.
 fn is_final_application_window<'a>(
     closing_label: &str,
     mut labels: impl Iterator<Item = &'a str>,
+    launch_windows: &[String],
 ) -> bool {
-    !labels.any(|label| label != closing_label && label != preferences_window::LABEL)
+    !labels.any(|label| {
+        label != closing_label
+            && label != preferences_window::LABEL
+            && !launch_windows.iter().any(|launch| launch == label)
+    })
 }
 
 fn consume_approved_auxiliary_close(app: &AppHandle, label: &str) -> bool {
@@ -1681,6 +1687,8 @@ fn request_final_application_window_close(app: AppHandle, label: String, local_w
                 .keys()
                 .filter(|candidate| !shutdown::local_window_close_in_flight(&app, candidate))
                 .map(String::as_str),
+            &app.state::<local_windows::LocalWindows>()
+                .connect_only_labels(),
         );
         // Closing the last window quits CodeNomad, Remote Control included; it
         // resumes at the next launch.
@@ -1701,7 +1709,16 @@ enum LocalCloseEventAction {
     Continue,
 }
 
-fn local_close_event_action(consumed: Option<bool>, in_flight: bool) -> LocalCloseEventAction {
+/// A hidden `--connect-server` launch window holds no user state: it closes at once, without the
+/// renderer flush whose acknowledgement a renderer that never started cannot send.
+fn local_close_event_action(
+    consumed: Option<bool>,
+    in_flight: bool,
+    launch_window: bool,
+) -> LocalCloseEventAction {
+    if launch_window {
+        return LocalCloseEventAction::Allow;
+    }
     match consumed {
         Some(true) => LocalCloseEventAction::Allow,
         Some(false) => LocalCloseEventAction::Prevent,
@@ -1777,11 +1794,19 @@ fn main() {
         devtools_active_port,
     );
 
+    let launch_arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    // Before the single-instance plugin can forward a `|` that would split into other arguments.
+    #[cfg(windows)]
+    if let Some(message) = launch::pipe_argument_error(&launch_arguments) {
+        eprintln!("[startup] {message}");
+        profile_selection_dialog::show_startup_error(&message);
+        std::process::exit(2);
+    }
     let launch_queue = Arc::new(launch::LaunchQueue::default());
-    launch_queue.enqueue(launch::parse_launch_intent(
-        &std::env::args().skip(1).collect::<Vec<_>>(),
-        &cwd,
-    ));
+    let first_intent = launch::parse_launch_intent(&launch_arguments, &cwd);
+    // A launch that only connects to a server restores the local windows only if the connection fails.
+    let restore_on_start = !first_intent.is_connect_only();
+    launch_queue.enqueue(first_intent);
     let singleton_queue = Arc::clone(&launch_queue);
     let second_launch_config = std::path::PathBuf::from(&scope.config_identity);
     let single_instance = tauri_plugin_single_instance::init(move |app, args, callback_cwd| {
@@ -1953,8 +1978,13 @@ fn main() {
             app.manage(shutdown::ShutdownCoordinator::default());
             app.manage(desktop_updater::UpdateState::default());
             build_menu(&app.handle())?;
-            local_windows::restore_windows(&app.handle())
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+            if restore_on_start {
+                local_windows::restore_windows(&app.handle())
+                    .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+            } else {
+                app.state::<local_windows::LocalWindows>()
+                    .defer_startup_restore();
+            }
             schedule_launch_drain(app.handle().clone(), Arc::clone(&setup_queue));
             update_fullscreen_shortcut(&app.handle());
 
@@ -2007,6 +2037,8 @@ fn main() {
             local_windows::desktop_launch_ready,
             local_windows::desktop_launch_next_folder,
             local_windows::desktop_launch_acknowledge_folder,
+            local_windows::desktop_launch_next_connection,
+            local_windows::desktop_launch_acknowledge_connection,
             desktop_updater::check_desktop_update,
             desktop_updater::install_desktop_update,
             desktop_updater::take_desktop_update_failure,
@@ -2246,7 +2278,10 @@ fn main() {
                 if local_window {
                     let consumed = shutdown::consume_local_window_close(&app_handle, &label);
                     let in_flight = shutdown::local_window_close_in_flight(&app_handle, &label);
-                    match local_close_event_action(consumed, in_flight) {
+                    let launch_window = app_handle
+                        .state::<local_windows::LocalWindows>()
+                        .is_connect_only(&label);
+                    match local_close_event_action(consumed, in_flight, launch_window) {
                         LocalCloseEventAction::Allow => return,
                         LocalCloseEventAction::Prevent => {
                             api.prevent_close();
@@ -2259,7 +2294,13 @@ fn main() {
                 }
                 let windows = app_handle.windows();
                 let final_window =
-                    is_final_application_window(&label, windows.keys().map(String::as_str));
+                    is_final_application_window(
+                        &label,
+                        windows.keys().map(String::as_str),
+                        &app_handle
+                            .state::<local_windows::LocalWindows>()
+                            .connect_only_labels(),
+                    );
                 if final_window {
                     api.prevent_close();
                     request_final_application_window_close(app_handle.clone(), label, local_window);
@@ -2654,31 +2695,72 @@ mod menu_tests {
         assert!(is_final_application_window(
             "local-a",
             ["local-a", "preferences"].into_iter(),
+            &[],
         ));
         assert!(!is_final_application_window(
             "local-a",
             ["local-a", "preferences", "local-b"].into_iter(),
+            &[],
         ));
         assert!(!is_final_application_window(
             "local-a",
             ["local-a", "preferences", "remote-a"].into_iter(),
+            &[],
+        ));
+    }
+
+    #[test]
+    fn hidden_launch_windows_do_not_keep_the_last_application_window_alive() {
+        let launch = vec!["local-launch".to_string()];
+        // Closing the last visible window quits even while a launch connection is pending.
+        assert!(is_final_application_window(
+            "local-a",
+            ["local-a", "local-launch"].into_iter(),
+            &launch,
+        ));
+        assert!(is_final_application_window(
+            "remote-a",
+            ["remote-a", "local-launch", "preferences"].into_iter(),
+            &launch,
+        ));
+        // The launch window closing beside its remote window is an ordinary close.
+        assert!(!is_final_application_window(
+            "local-launch",
+            ["local-launch", "remote-a"].into_iter(),
+            &launch,
+        ));
+        assert!(!is_final_application_window(
+            "local-a",
+            ["local-a", "local-launch"].into_iter(),
+            &[],
         ));
     }
 
     #[test]
     fn approved_local_close_wins_over_its_in_flight_marker() {
         assert_eq!(
-            local_close_event_action(Some(true), true),
+            local_close_event_action(Some(true), true, false),
             LocalCloseEventAction::Allow
         );
         assert_eq!(
-            local_close_event_action(None, true),
+            local_close_event_action(None, true, false),
             LocalCloseEventAction::Prevent
         );
         assert_eq!(
-            local_close_event_action(None, false),
+            local_close_event_action(None, false, false),
             LocalCloseEventAction::Continue
         );
+    }
+
+    #[test]
+    fn hidden_launch_windows_close_without_a_renderer_flush() {
+        // Continue would request the flush that a launch window still on loading.html never acknowledges.
+        for (consumed, in_flight) in [(None, false), (None, true), (Some(false), false)] {
+            assert_eq!(
+                local_close_event_action(consumed, in_flight, true),
+                LocalCloseEventAction::Allow
+            );
+        }
     }
 
     #[test]

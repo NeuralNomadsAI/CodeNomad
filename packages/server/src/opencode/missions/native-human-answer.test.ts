@@ -34,6 +34,7 @@ async function fixture(asker: "ses_child" | "ses_root" = "ses_child", questions:
   db.exec(`CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT,time_created INTEGER,time_updated INTEGER);
     CREATE TABLE session_v2(id TEXT PRIMARY KEY,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,metadata TEXT);
     CREATE TABLE session_message(id TEXT PRIMARY KEY,session_id TEXT,type TEXT,data TEXT);
+    CREATE TABLE session_part(message_id TEXT,session_id TEXT,ordinal INTEGER,type TEXT,data TEXT);
     CREATE TABLE event(id TEXT,seq INTEGER,type TEXT,aggregate_id TEXT,data TEXT);`)
   const put = (key: string, value: unknown) => db.prepare("INSERT OR REPLACE INTO kv VALUES(?,?,1,1)").run(encode(key), JSON.stringify(value))
   const get = (key: string) => { const row = db.prepare("SELECT value FROM kv WHERE key=?").get(encode(key)) as { value: string } | undefined; return row && JSON.parse(row.value) }
@@ -102,7 +103,8 @@ async function fixture(asker: "ses_child" | "ses_root" = "ses_child", questions:
   const auth = new AuthManager({ configPath: path.join(directory, "auth.yaml"), username: "human", generateToken: true }, pino({ level: "silent" }) as never)
   const cookie = auth.createSession("human")
   let ordinary = false
-  const connection = { endpoint: { url: "http://127.0.0.1:1" }, client: { session: { get: nativeGet }, rpc: () => native }, assertCurrent: () => {},
+  const connection = { endpoint: { url: "http://127.0.0.1:1" }, client: { session: { get: nativeGet },
+    rpc: () => ({ ...native, scheduleCarrierRead: async () => ({ owned: false }) }) }, assertCurrent: () => {},
     fetch: async (_url: unknown, init: { body: string }) => {
       ordinary = true
       await Effect.runPromise(Effect.provide(forms.reply({ id: form.id, answer: JSON.parse(init.body).answer }), graph))
@@ -173,6 +175,22 @@ test("dock header writes a secret-free mark before native reply and gate accepts
     assert.equal(JSON.stringify(mark).includes("cookie"), false)
     assert.equal(JSON.stringify(mark).includes("signature"), false)
     for (const secret of f.secrets) assert.equal(JSON.stringify(mark).includes(secret), false)
+  } finally { await f.dispose() }
+})
+
+test("human proof reads split tool parts ahead of stale inline content", async () => {
+  const f = await fixture()
+  try {
+    assert.equal((await f.submit()).statusCode, 204)
+    for (const row of f.db.prepare("SELECT id,session_id,data FROM session_message").all()) {
+      const data = JSON.parse(String(row.data))
+      for (const [ordinal, part] of data.content.entries())
+        f.db.prepare("INSERT INTO session_part VALUES(?,?,?,?,?)").run(row.id, row.session_id, ordinal, part.type, JSON.stringify(part))
+      f.db.prepare("UPDATE session_message SET data=? WHERE id=?").run(JSON.stringify({ ...data, content: [] }), row.id)
+    }
+    assert.equal((await f.native.verify(f.decision)).via, "ui")
+    f.db.exec("UPDATE session_part SET data=json_set(data,'$.state.status','running') WHERE message_id='msg_question'")
+    await assert.rejects(f.native.verify(f.decision), /answer mismatch/)
   } finally { await f.dispose() }
 })
 

@@ -129,7 +129,7 @@ export class PluginSources {
         }
         throw error
       }
-      }, undefined, request.expectedRevision)
+      }, undefined, false, request.expectedRevision)
     } catch (error) {
       if (error instanceof PluginControlsError && error.kind === "conflict") throw new PluginSourcesError("OpenCode configuration changed since confirmation", "conflict", "stale")
       throw error

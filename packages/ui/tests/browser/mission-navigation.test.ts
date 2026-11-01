@@ -118,7 +118,7 @@ async function setup(missing = false) {
     // Only these explicit view retirements cancel the exact read-only list GET.
     // Preserve raw failure diagnostics and all actor/read/navigation failures.
     if (recurrenceDemandRetired && request.method() === "GET" && request.failure()?.errorText === "net::ERR_ABORTED"
-      && own && /^\/api\/workspaces\/(fixture|replacement)\/missions\/recurrence$/.test(own.path)) cancelledRecurrenceReads.push(error)
+      && own && /^\/api\/workspaces\/(fixture|replacement)\/missions\/(recurrence|scheduled)$/.test(own.path)) cancelledRecurrenceReads.push(error)
     else networkErrors.push(error)
   })
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
@@ -126,6 +126,8 @@ async function setup(missing = false) {
   await page.route("**/api/**", async route => {
     const pathname = new URL(route.request().url()).pathname
     requests.push(`${route.request().method()} ${pathname}`)
+    if (pathname === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
+    if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission("A"), mission("B")]), generatedAt: 1, discardedEvents: 0 } })
     if (pathname.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project",
       projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] } })

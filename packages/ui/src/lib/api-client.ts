@@ -85,6 +85,9 @@ import { missionLifecycleRequest, type MissionLifecycleInput } from "./mission-l
 import { authenticatedFetch } from "./auth-recovery"
 import { CODENOMAD_API_BASE as API_BASE } from "./api-base"
 import { backgroundReads } from "./background-read-queue"
+import { readMissionTaskPage } from "./mission-task-page-read"
+import { assertTaskReadLive, TASK_READ_TIMEOUT_MS } from "./mission-task-read-lifetime"
+import type { MissionTaskPageContext } from "./mission-task-page-schema"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
 
 const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
@@ -284,6 +287,10 @@ export const serverApi = {
 
   fetchWorktrees(id: string, fresh = false): Promise<WorktreeListResponse> {
     return request<WorktreeListResponse>(`/api/workspaces/${encodeURIComponent(id)}/worktrees${fresh ? "?fresh=true" : ""}`)
+  },
+
+  fetchLocalGitBranches(id: string, directory: string, signal?: AbortSignal): Promise<{ branches: string[] }> {
+    return request(`/api/workspaces/${encodeURIComponent(id)}/git-branches?${new URLSearchParams({ directory })}`, { signal })
   },
 
   createWorktree(id: string, payload: WorktreeCreateRequest): Promise<{ slug: string; directory: string; branch?: string }> {
@@ -654,6 +661,13 @@ export const serverApi = {
   fetchOpenCodeUpdateStatus(options: { recheck?: boolean } = {}): Promise<OpenCodeUpdateStatus> {
     return request<OpenCodeUpdateStatus>(options.recheck ? "/api/opencode/update?recheck=1" : "/api/opencode/update")
   },
+  getServiceSupervision(options: { serviceKey?: string; requestID?: string } = {}): Promise<import("../../../server/src/api-types").SupervisionSettingsResponse> {
+    const query = new URLSearchParams(options).toString()
+    return request(`/api/opencode/supervision${query ? `?${query}` : ""}`)
+  },
+  controlServiceSupervision(input: import("../../../server/src/api-types").SupervisionSettingsControl): Promise<import("../../../server/src/api-types").SupervisionSettingsResponse> {
+    return request("/api/opencode/supervision", { method: "POST", body: JSON.stringify(input) })
+  },
   updateOpenCode(options: { replaceLegacy?: { path: string; version: string } } = {}): Promise<OpenCodeUpdateResponse> {
     return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST",
       body: JSON.stringify(options.replaceLegacy ? { replaceLegacy: { path: options.replaceLegacy.path, version: options.replaceLegacy.version } } : {}) })
@@ -734,6 +748,23 @@ export const serverApi = {
   fetchMission(instanceId: string, missionId: string): Promise<MissionReadResponse> {
     return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`)
   },
+  /** More of one mission's tasks for display: a window of its display order or tasks by name;
+   * it shares the secondary read budget. */
+  fetchMissionTasks(instanceId: string, missionId: string, input: import("../../../server/src/missions/mission-panel-map").MissionTaskRequest,
+    scope: { projectID: string; current(): boolean; signal?: AbortSignal; deadline?: number; context?: MissionTaskPageContext }):
+    Promise<import("../../../server/src/missions/mission-panel-map").MissionTaskPageResponse> {
+    const deadline = Math.min(scope.deadline ?? Infinity, performance.now() + TASK_READ_TIMEOUT_MS)
+    const timeout = AbortSignal.timeout(Math.max(0, Math.ceil(deadline - performance.now())))
+    const signal = scope.signal ? AbortSignal.any([scope.signal, timeout]) : timeout
+    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/panel-page`
+    return readMissionTaskPage(missionId, input, { ...scope, signal, deadline, runTransfer: read => secondaryRead(signal, read), exchange: body => {
+      if (!scope.current()) throw new DOMException("Obsolete task read", "AbortError")
+      assertTaskReadLive(signal, deadline)
+      return authenticatedFetch(API_BASE ? new URL(path, API_BASE).toString() : path, {
+        method: "POST", body, signal, credentials: "include", headers: { "Content-Type": "application/json" },
+      })
+    } })
+  },
   /** One slice of a mission body, for display only; it shares the secondary read budget. */
   fetchMissionContent(instanceId: string, missionId: string, input: Omit<import("../../../server/src/missions/mission-content-wire").MissionContentRequest, "missionID">,
     signal: AbortSignal): Promise<import("../../../server/src/missions/mission-content-wire").MissionContentResponse> {
@@ -743,6 +774,37 @@ export const serverApi = {
   /** This backend's playbook definitions, as its Missions prompts are built from them. */
   fetchMissionPlaybooks(taskMode: import("../../../server/src/missions/task-execution-mode").MissionTaskMode): Promise<import("../../../server/src/missions/playbook-details").MissionPlaybookDetails> {
     return request(`/api/missions/playbooks?taskMode=${encodeURIComponent(taskMode)}`)
+  },
+  fetchMissionSchedules(instanceId: string, input: { after?: string; limit?: number; directory?: string } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleList> {
+    const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
+    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/scheduled?${query}`, { signal }))
+  },
+  fetchMissionScheduleCapability(instanceId: string, directory?: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleCapability> {
+    const query = new URLSearchParams(directory === undefined ? {} : { directory })
+    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/scheduled/capabilities?${query}`, { signal }))
+  },
+  fetchMissionSchedule(instanceId: string, missionID: string, input: { directory?: string; requestID?: string } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
+    const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined) as [string, string][])
+    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionID)}/schedule?${query}`, { signal }))
+  },
+  fetchMissionScheduleCreation(instanceId: string, requestID: string, directory?: string): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
+    const query = new URLSearchParams(directory === undefined ? {} : { directory })
+    return secondaryRead(undefined, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/scheduled/requests/${encodeURIComponent(requestID)}?${query}`))
+  },
+  saveMissionSchedule(instanceId: string, input: import("../stores/mission-schedule-editor-holds").MissionScheduleEditorRequest): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
+    const { missionID, ...body } = input
+    const target = missionID ? `${encodeURIComponent(missionID)}/schedule` : "scheduled"
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${target}`, { method: "POST", body: JSON.stringify(body) })
+  },
+  controlMissionSchedule(instanceId: string, missionID: string, input: { action: "play" | "resume" | "pause" | "stop" | "check" | "run-now" | "delete";
+    requestID: string; expectedRevision: number; directory?: string; deleteManagedSessions?: boolean }): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionID)}/schedule`, {
+      method: "POST", body: JSON.stringify(input) })
+  },
+  missionScheduleSettings(instanceId: string, missionID: string, input: { requestID: string; expectedDocumentRevision: number }, apply = false): Promise<{ document: import("../../../server/src/missions/mission-document-one-time").MissionDocumentSummary }> {
+    const url = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionID)}/schedule-settings`
+    return apply ? request(url, { method: "POST", body: JSON.stringify(input) })
+      : secondaryRead(undefined, () => request(`${url}?${new URLSearchParams({ requestID: input.requestID, expectedDocumentRevision: String(input.expectedDocumentRevision) })}`))
   },
   /** The same read, with the full map, from the authoritative full snapshot, for admitting an application-authored prompt. */
   fetchMissionAdmission(instanceId: string, missionId: string): Promise<MissionReadResponse<MissionMap>> {
@@ -874,7 +936,6 @@ function buildClientEventsUrl(identity: { clientId: string; connectionId: string
   if (EVENTS_URL.startsWith("http://") || EVENTS_URL.startsWith("https://")) {
     return url.toString()
   }
-
   return `${url.pathname}${url.search}`
 }
 

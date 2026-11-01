@@ -6,6 +6,7 @@ import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page, type Route } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import type {} from "./fixtures/mission-editor-lifetime"
+import { pausedMissionScheduleReceipt } from "./mission-scheduled-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -42,6 +43,7 @@ async function setup(page: Page, answer: (route: Route, attempt: number, body: R
   await page.route("**/api/storage/config/ui", route => route.fulfill({ json: { settings: { missionProfileDefaults: [{ template: "custom", profiles }] } } }))
   await page.route("**/api/workspaces/fixture/missions**", route => {
     const request = route.request(), path = new URL(request.url()).pathname
+    if (path.endsWith("/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" }, api: { available: true }, enabled: true } })
     if (request.method() === "GET") return route.fulfill({ json: path.endsWith("/missions/recurrence")
       ? { version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] }
       : { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } })
@@ -87,33 +89,32 @@ test("pre-send creation refusals keep the draft, re-enable Create and explain th
   } finally { await page.close() }
 })
 
-/** Daily creation: answers recurrence POSTs through `answer` (later page routes win). */
+/** Scheduled creation: answers scheduled POSTs through `answer`. */
 async function setupDaily(page: Page, answer: (route: Route, attempt: number) => Promise<void> | void) {
   const fixture = await setup(page, route => route.abort())
   const attempts: Array<Record<string, unknown>> = []
-  await page.route("**/api/workspaces/fixture/missions/recurrence", route => {
+  await page.route("**/api/workspaces/fixture/missions/scheduled", route => {
     if (route.request().method() !== "POST") return route.fallback()
     attempts.push(route.request().postDataJSON())
     return answer(route, attempts.length)
   })
   await fixture.objective.fill("Review merged changes daily")
-  await fixture.form.getByLabel("Every day at", { exact: true }).check()
-  await fixture.form.getByLabel("Daily local time", { exact: true }).fill("07:30")
+  await fixture.form.locator(".mission-scheduling > summary").click()
+  await fixture.form.getByLabel("Frequency", { exact: true }).selectOption("daily")
+  await fixture.form.getByLabel("Time 1", { exact: true }).fill("07:30")
   return { ...fixture, attempts }
 }
-const schedule = { schedule: { id: "rec_created", revision: 0, state: "paused", digest: "d".repeat(64), projectID: "project", projectCanonical: "/fixture" } }
 
 test("daily pre-send refusals keep the draft and Create available with the same request identity", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
   const refusals = [
-    { status: 503, json: { error: "Mission plugin unavailable", code: "creation-unavailable" }, message: /Nothing was sent/ },
-    { status: 409, json: { error: "Worktree deletion is in progress", code: "creation-worktree-deleting" }, message: /worktree deletion is in progress/i },
-    { status: 403, json: { error: "Recurrence directory is not owned" }, message: /was not admitted/ },
+    { status: 400, json: { error: "Invalid schedule input", code: "schedule-input-invalid" }, message: /could not be saved/ },
+    { status: 401, json: { error: "Human authentication required", code: "schedule-human-required" }, message: /could not be saved/ },
   ]
   try {
-    const fixture = await setupDaily(page, (route, attempt) => attempt <= refusals.length
+    const fixture = await setupDaily(page, async (route, attempt) => attempt <= refusals.length
       ? route.fulfill({ status: refusals[attempt - 1]!.status, json: refusals[attempt - 1]!.json })
-      : route.fulfill({ json: schedule }))
+      : route.fulfill({ json: await pausedMissionScheduleReceipt(route.request().postDataJSON()) }))
     for (const refusal of refusals) {
       await submitReady(page)
       await fixture.submit.click()

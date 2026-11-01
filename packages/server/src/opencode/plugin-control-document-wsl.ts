@@ -6,8 +6,8 @@ import {
   PluginControlDocumentError,
   encodePluginControlOriginal,
   type PluginControlDocument,
-  type PluginControlDocumentFileSystem,
   type PluginControlDocumentLoad,
+  type PluginControlDocumentPrepared,
   type PluginControlDocumentReplaceOptions,
 } from "./plugin-control-document"
 
@@ -62,6 +62,31 @@ hash_of() {
 mode_of() {
   stat -c '%a' -- "$1" 2>/dev/null || stat -f '%p' -- "$1" 2>/dev/null || return 1
 }
+verify_source() {
+  [ ! -L "$target" ] || exit 73
+  if [ "$existed" = 1 ]; then
+    [ -f "$target" ] || exit 73
+    actual=$(hash_of "$target") || exit 66
+    [ "$actual" = "$expected" ] || exit 73
+    currentMode=$(mode_of "$target") || exit 66
+    [ "$currentMode" = "$expectedMode" ] || exit 73
+    [ -w "$target" ] && [ $((0$currentMode & 0222)) -ne 0 ] || exit 78
+  else
+    [ ! -e "$target" ] || exit 73
+  fi
+  parent=$(dirname -- "$target")
+  parentMode=$(mode_of "$parent") || exit 66
+  [ -w "$parent" ] && [ -x "$parent" ] && [ $((0$parentMode & 0222)) -ne 0 ] && [ $((0$parentMode & 0111)) -ne 0 ] || exit 78
+}
+verify_lock() {
+  [ -d "$lock" ] || exit 75
+  current=$(cat -- "$lock/owner" 2>/dev/null || true)
+  [ "$current" = "$nonce" ] || exit 75
+}
+verify_destination() {
+  resolved=$(realpath -m -- "$requested" 2>/dev/null || realpath -- "$requested" 2>/dev/null) || exit 73
+  [ "$resolved" = "$target" ] || exit 73
+}
 `
 
 const PREPARE_SCRIPT = String.raw`# prepare-document
@@ -75,11 +100,14 @@ mode=$6
 expectedMode=$7
 existed=$8
 expected=$9
-stale=${10}
-deadlineMs=${11}
+shift 9
+stale=$1
+deadlineMs=$2
+requested=$3
 locked=0
+created=0
 cleanup() {
-  rm -f -- "$temporary"
+  if [ "$created" = 1 ]; then rm -f -- "$temporary"; fi
   if [ "$locked" = 1 ]; then
     current=$(cat -- "$lock/owner" 2>/dev/null || true)
     if [ "$current" = "$nonce" ]; then rm -rf -- "$lock" 2>/dev/null || true; fi
@@ -89,6 +117,7 @@ trap cleanup EXIT
 mkdir -p -- "$directory"
 umask 077
 ( set -C; : > "$temporary" ) 2>/dev/null || exit 76
+created=1
 chmod "$mode" "$temporary"
 cat > "$temporary"
 chmod "$mode" "$temporary"
@@ -104,21 +133,13 @@ done
 printf '%s' "$nonce" > "$lock/owner"
 chmod 600 -- "$lock/owner"
 locked=1
-if [ "$existed" = 1 ]; then
-  [ -f "$target" ] || exit 73
-  actual=$(hash_of "$target") || exit 66
-  [ "$actual" = "$expected" ] || exit 73
-  currentMode=$(mode_of "$target") || exit 66
-  [ "$currentMode" = "$expectedMode" ] || exit 73
-else
-  [ ! -e "$target" ] || exit 73
-fi
+verify_source
+verify_lock
+verify_destination
 trap - EXIT
 `
 
-const COMMIT_SCRIPT = String.raw`# commit-document
-set -eu
-${SHELL_LIB}target=$1
+const PREPARED_CHECK = String.raw`${SHELL_LIB}target=$1
 existed=$2
 expected=$3
 temporary=$4
@@ -126,24 +147,20 @@ lock=$5
 nonce=$6
 mode=$7
 expectedMode=$8
-cleanup() {
-  rm -f -- "$temporary"
-  current=$(cat -- "$lock/owner" 2>/dev/null || true)
-  if [ "$current" = "$nonce" ]; then rm -rf -- "$lock" 2>/dev/null || true; fi
-}
-trap cleanup EXIT
-[ -d "$lock" ] || exit 75
-current=$(cat -- "$lock/owner" 2>/dev/null || true)
-[ "$current" = "$nonce" ] || exit 75
-if [ "$existed" = 1 ]; then
-  [ -f "$target" ] || exit 73
-  actual=$(hash_of "$target") || exit 66
-  [ "$actual" = "$expected" ] || exit 73
-  currentMode=$(mode_of "$target") || exit 66
-  [ "$currentMode" = "$expectedMode" ] || exit 73
-else
-  [ ! -e "$target" ] || exit 73
-fi
+requested=$9
+verify_lock
+verify_source
+verify_lock
+verify_destination
+`
+
+const VERIFY_SCRIPT = String.raw`# verify-document
+set -eu
+${PREPARED_CHECK}`
+
+const COMMIT_SCRIPT = String.raw`# commit-document
+set -eu
+${PREPARED_CHECK}
 mv -T -f -- "$temporary" "$target" 2>/dev/null || {
   if [ -d "$target" ]; then exit 73; fi
   mv -f -- "$temporary" "$target"
@@ -184,7 +201,7 @@ export type WslPluginControlExecutor = (
 export function createWslPluginControlDocumentFileSystem(
   distro: string,
   execute: WslPluginControlExecutor = executeWslScript,
-): PluginControlDocumentFileSystem {
+) {
   const run = (script: string, args: readonly string[], input?: Buffer, maxBuffer?: number) => (
     execute(distro, script, args, input, maxBuffer)
   )
@@ -232,12 +249,13 @@ export function createWslPluginControlDocumentFileSystem(
     })
   }
 
-  const replace = async (
+  const prepare = async (
     document: PluginControlDocument,
     updated: string,
     options?: PluginControlDocumentReplaceOptions,
-  ) => {
+  ): Promise<PluginControlDocumentPrepared> => {
     assertNativePath(document.writePath)
+    assertNativePath(document.requestedPath)
     const directory = path.posix.dirname(document.writePath)
     const suffix = `${process.pid}.${randomBytes(8).toString("hex")}`
     const temporary = `${document.writePath}.${suffix}.tmp`
@@ -245,54 +263,73 @@ export function createWslPluginControlDocumentFileSystem(
     const nonce = randomBytes(16).toString("hex")
     const mode = document.mode.toString(8).padStart(3, "0")
     const expected = createHash("sha256").update(encodePluginControlOriginal(document)).digest("hex")
-    let locked = false
-    try {
-      const prepared = await run(PREPARE_SCRIPT, [
-        directory,
+    const prepared = await run(PREPARE_SCRIPT, [
+      directory,
+      document.writePath,
+      temporary,
+      lock,
+      nonce,
+      mode,
+      mode,
+      document.exists ? "1" : "0",
+      expected,
+      String(LOCK_STALE_SECONDS),
+      String(LOCK_WAIT_MS),
+      document.requestedPath,
+    ], Buffer.from(updated, "utf8"))
+    if (prepared.status === 73) throw changedError()
+    if (prepared.status === 75) {
+      throw new PluginControlDocumentError("OpenCode configuration is being updated by another process", "conflict")
+    }
+    assertSuccess(prepared, "Unable to prepare OpenCode configuration in WSL")
+    let disposed = false
+    let committed = false
+    const assertActive = () => {
+      if (disposed || committed) throw new PluginControlDocumentError("OpenCode configuration preparation is no longer active", "conflict")
+    }
+    const check = async (script: string) => {
+      assertActive()
+      const result = await run(script, [
         document.writePath,
+        document.exists ? "1" : "0",
+        expected,
         temporary,
         lock,
         nonce,
         mode,
         mode,
-        document.exists ? "1" : "0",
-        expected,
-        String(LOCK_STALE_SECONDS),
-        String(LOCK_WAIT_MS),
-      ], Buffer.from(updated, "utf8"))
-      if (prepared.status === 73) throw changedError()
-      if (prepared.status === 75) {
-        throw new PluginControlDocumentError("OpenCode configuration is being updated by another process", "conflict")
-      }
-      assertSuccess(prepared, "Unable to prepare OpenCode configuration in WSL")
-      locked = true
-      try {
-        options?.beforeCommit?.()
-      } catch (error) {
-        throw new PluginControlDocumentError("OpenCode configuration replacement is no longer authorized", "filesystem", { cause: error })
-      }
-      const committed = await run(COMMIT_SCRIPT, [
-        document.writePath,
-        document.exists ? "1" : "0",
-        expected,
-        temporary,
-        lock,
-        nonce,
-        mode,
-        mode,
+        document.requestedPath,
       ])
-      if (committed.status !== null) locked = false
-      if (committed.status === 73) throw changedError()
-      if (committed.status === 75) {
+      if (result.status === 73) throw changedError()
+      if (result.status === 75) {
         throw new PluginControlDocumentError("OpenCode configuration lock was lost before the atomic rename", "conflict")
       }
-      assertSuccess(committed, "Unable to atomically replace OpenCode configuration in WSL")
-    } finally {
-      if (locked) await run(CLEANUP_SCRIPT, [temporary, lock, nonce]).catch(() => undefined)
+      assertSuccess(result, "Unable to verify or atomically replace OpenCode configuration in WSL")
+    }
+    return {
+      verify: () => check(VERIFY_SCRIPT),
+      commit: async () => {
+        assertActive()
+        try { options?.beforeCommit?.() }
+        catch (error) { throw new PluginControlDocumentError("OpenCode configuration replacement is no longer authorized", "filesystem", { cause: error }) }
+        await check(COMMIT_SCRIPT)
+        committed = true
+      },
+      dispose: async () => {
+        if (disposed) return
+        disposed = true
+        assertSuccess(await run(CLEANUP_SCRIPT, [temporary, lock, nonce]), "Unable to clean up OpenCode configuration preparation in WSL")
+      },
     }
   }
 
-  return { inspectMany, load, replace }
+  const replace = async (document: PluginControlDocument, updated: string, options?: PluginControlDocumentReplaceOptions) => {
+    const prepared = await prepare(document, updated, options)
+    try { await prepared.commit() }
+    finally { await prepared.dispose().catch(() => undefined) }
+  }
+
+  return { inspectMany, load, prepare, replace }
 }
 
 function splitNullFields(buffer: Buffer, count: number, includeRemainder = false): Buffer[] {

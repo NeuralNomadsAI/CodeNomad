@@ -6,21 +6,28 @@ import type { MissionInputTransport, NativeMissionSession } from "./control-type
 import { MISSION_JOURNAL_STORAGE_PREFIX, MissionJournal, parseMissionEvent, type MissionStorage } from "./journal"
 import { MISSION_CONTROL_CONCURRENCY } from "./lifecycle"
 import { MISSION_INSPECT_OUTPUT_LIMIT, boundedInspection } from "./inspect-view"
+import { MISSION_TASK_PAGE } from "./mission-panel-map"
 import { MISSION_MAX_EVENTS, missionLifecycleReserve, type MissionJsonValue, type MissionMap } from "./model"
 import { readMissionCatalog } from "./native-catalog"
 import { controlResumeAdmissionID } from "./receipt-identity"
 import { CODENOMAD_MISSIONS_RPC } from "./rpc"
+import { NativeMissionDocumentStore, type MissionDocumentStorage } from "./mission-document-store"
 import { parseReviseInput, setupMissionsPlugin } from "../opencode/missions-plugin"
 
 const PROJECT = { id: "project-1", canonical: "/repo", location: { directory: "/repo" } }
 const ACTORS = 40
 const TASKS = 500
 
-function fixture() {
+function fixture(unified = false) {
   const values = new Map<string, MissionJsonValue>()
-  const storage: MissionStorage = {
+  const storage: MissionStorage & MissionDocumentStorage = {
     get: async key => structuredClone(values.get(key)),
     set: async (key, value) => { values.set(key, structuredClone(value)) },
+    compareAndSet: async (key, value, expected, current) => {
+      current()
+      assert.equal((values.get(key) as { revision?: number } | undefined)?.revision ?? null, expected)
+      values.set(key, structuredClone(value))
+    },
     scan: async ({ prefix, after, limit = 100 }) => {
       const keys = [...values.keys()].filter(key => key.startsWith(prefix) && (!after || key > after)).sort().slice(0, limit)
       return { entries: keys.map(key => ({ key, value: structuredClone(values.get(key)!) })), next: keys.length === limit ? keys.at(-1) : undefined }
@@ -50,7 +57,10 @@ function fixture() {
     },
     cleanup: async (_, input) => { cleaned.push(input.sessionID); return { outcome: "removed" } },
   }
-  const control = () => new MissionControl({ project: PROJECT, storage, now: () => now++, transport, sessions: {
+  const documents = new NativeMissionDocumentStore(storage, PROJECT.id, PROJECT.canonical)
+  const access = <T>(use: (store: NativeMissionDocumentStore) => Promise<T>) => use(documents)
+  const control = () => new MissionControl({ project: PROJECT, storage, now: () => now++, transport,
+    ...(unified ? { documents: access, documentReads: access } : {}), sessions: {
     get: async ({ sessionID }) => { if (!native.has(sessionID)) throw new Error("missing"); return native.get(sessionID)! },
     create: async input => { const session = { ...input, projectID: PROJECT.id }; native.set(session.id, session); return session },
     prompt: async () => { throw new Error("Transport required") }, synthetic: async () => { throw new Error("Transport required") },
@@ -76,6 +86,7 @@ function fixture() {
   /** A running mission with `ACTORS` actors: the coordinator and one managed root per independent task. */
   const crowded = async () => {
     let mission = (await control().create({ requestID: "crowded", objective: "Many actors", template: "custom" })).mission
+    if (mission.runState === "prepared") mission = await lifecycle(mission, "start")
     for (let index = 1; index < ACTORS; index++) {
       mission = (await control().delegate(mission.coordinatorSessionId, { missionID: mission.id, taskKey: `actor-${index}`, title: `Actor ${index}`,
         brief: `Independent work ${index}`, role: "worker", blockedBy: [], delivery: "queue" })).mission
@@ -137,11 +148,12 @@ test(`a mission of ${ACTORS} actors and ${TASKS} tasks is planned, reported, con
   assert.equal(f.calls.length, ACTORS - 5, "the coordinator and every actor with unreported work resume")
   assert.ok(f.flight.peak <= MISSION_CONTROL_CONCURRENCY)
 
-  // The panel's reads carry the compact map, every task row, and the mission's row.
+  // The panel's reads carry the compact map with a page of its tasks, and the mission's row.
   const list = await f.control().list({ include: [mission.id] })
-  assert.equal(list.missions.find(item => item.id === mission.id)?.tasks.length, TASKS)
+  assert.deepEqual([list.missions.find(item => item.id === mission.id)?.taskPage?.total, list.missions.find(item => item.id === mission.id)?.taskPage?.end],
+    [TASKS, MISSION_TASK_PAGE])
   assert.equal(list.summaries?.find(item => item.id === mission.id)?.actorSessionIds.length, ACTORS)
-  assert.equal((await f.control().mission(mission.id)).mission?.tasks.length, TASKS)
+  assert.equal((await f.control().mission(mission.id)).mission?.taskPage?.total, TASKS)
   const listOutput = ajv.compile(CODENOMAD_MISSIONS_RPC.methods.list.output)
   assert.ok(listOutput(JSON.parse(JSON.stringify(list))), JSON.stringify(listOutput.errors))
 
@@ -217,6 +229,26 @@ test(`a ${ACTORS}-actor mission filled by a graceful Pause and Interrupt now can
   const deleted = await f.control().delete({ missionID: mission.id, requestID: "delete", expectedRevision: mission.revision, deleteManagedSessions: true })
   assert.equal(deleted.cleanup?.removed, ACTORS - 1)
   assert.equal(f.range(mission.id), MISSION_MAX_EVENTS - 1)
+})
+
+test("a full documented mission can Stop every actor, clean every managed specialist and confirm document compaction", { timeout: 120_000 }, async () => {
+  const f = fixture(true)
+  let mission = await f.crowded()
+  assert.ok(mission.document)
+  assert.ok(mission.actors.filter(actor => actor.kind !== "coordinator").every(actor => actor.managed))
+  f.fill(mission, missionLifecycleReserve(ACTORS, true))
+  mission = await f.current(mission.id)
+  await assert.rejects(f.control().update({ missionID: mission.id, requestID: "full", expectedRevision: mission.revision, objective: "No room" }), /safety limit/)
+  mission = await f.lifecycle(mission, "stop")
+  assert.deepEqual([mission.status, mission.control?.pending.length, f.calls.length], ["stopped", 0, ACTORS])
+  const result = await f.control().delete({ missionID: mission.id, requestID: "delete_documented", expectedRevision: mission.revision, deleteManagedSessions: true })
+  assert.equal(result.cleanup?.removed, ACTORS - 1)
+  assert.equal(result.cleanup?.documentPending, false)
+  assert.equal(f.cleaned.includes(mission.coordinatorSessionId), false)
+  assert.equal(f.range(mission.id), MISSION_MAX_EVENTS - 1)
+  const events = (await f.journal.missionEvents(mission.id)).events
+  assert.equal(events.filter(event => event.type === "mission.document-cleaned").length, 1)
+  assert.equal((await f.control().snapshot()).missions.length, 0)
 })
 
 test("a revision rewrites at most one dependency list per live task, however many tasks there are", async () => {

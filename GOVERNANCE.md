@@ -1,13 +1,15 @@
 # CodeNomad Governance
 
-CodeNomad is an open-source project of the [NeuralNomadsAI](https://github.com/NeuralNomadsAI) GitHub organization, released under the [MIT license](LICENSE).
+CodeNomad is an open-source project of the [NeuralNomadsAI](https://github.com/NeuralNomadsAI) GitHub organization, released under the [MIT license](LICENSE). Each contributor keeps the copyright of their contributions and publishes them under that license; the license's copyright notice names them together as the CodeNomad contributors.
 
 ## Maintainers
 
 | Maintainer | GitHub | Role |
 |---|---|---|
-| Shantur Rathore | [@shantur](https://github.com/shantur) | Owner of the NeuralNomadsAI organization and administrator of the repository |
-| Pascal André | [@pascalandr](https://github.com/pascalandr) | Maintainer with write access to the repository |
+| Shantur Rathore | [@shantur](https://github.com/shantur) | Maintainer and administrator of the repository; owner of the NeuralNomadsAI organization |
+| Pascal André | [@pascalandr](https://github.com/pascalandr) | Maintainer and administrator of the repository |
+
+The maintainers have the same rights and responsibilities for the project. Either of them can change the repository's settings, manage its access, and act for the project with the services it uses, such as code signing, package registries and funding platforms.
 
 Maintainers review and merge pull requests, publish releases and moderate the project's spaces under the [code of conduct](CODE_OF_CONDUCT.md).
 

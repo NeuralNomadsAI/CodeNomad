@@ -26,6 +26,15 @@ function sessionMap(definitions: Array<[string, string | null, number]>): Map<st
 }
 
 describe("session tree", () => {
+  it("hides reserved schedule carriers in browsing and search without removing native observations", () => {
+    const carrier = "ses_cn_schedule_fixture", sessions = sessionMap([["ordinary", null, 1], [carrier, null, 2]])
+    const threads = buildSessionThreadsFromMap(sessions, ["ordinary", carrier])
+    assert.deepEqual(threads.map(item => item.session.id), ["ordinary"])
+    const options = { sort: "activity" as const, getWorktreeLabel: () => "", includeMainSessions: true, includeSubsessions: true }
+    assert.deepEqual(projectSessionSearchResults(sessions.values(), options).map(item => item.session.id), ["ordinary"])
+    assert.deepEqual(projectSessionFamilies([{ session: sessions.get(carrier)!, children: [], depth: 0, hasChildren: false, latestUpdated: 2 }], options), [])
+    assert.equal(sessions.has(carrier), true, "display filtering preserves authoritative native data")
+  })
   it("preserves case in the Linux portion of WSL UNC paths", () => {
     assert.equal(
       normalizeSessionDirectory("\\\\WSL.localhost\\Ubuntu\\Repo\\Feature"),

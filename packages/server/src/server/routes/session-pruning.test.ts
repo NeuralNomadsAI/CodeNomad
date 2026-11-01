@@ -6,7 +6,7 @@ import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuat
 
 const payload = { sessionID: "s", messageID: "m", revision: "a".repeat(64), indexes: [0] }
 const url = "/api/workspaces/w/session-pruning/prune"
-function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; workspaceID?: string } = {}) {
+function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; workspaceID?: string; carrier?: boolean } = {}) {
   const calls: any[] = []
   const requestOptions: any[] = []
   const app = Fastify()
@@ -15,14 +15,14 @@ function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; w
     getServiceLocation: () => ({ directory: "/owned/worktree" }),
     getWorktrees: async () => ({ isGitRepo: false, worktrees: [] }),
     getSharedServiceClient: async () => ({
-      session: { get: async () => ({ location: { directory: "/owned/worktree", workspaceID: options.workspaceID } }) },
-      rpc: { call: async (input: unknown, opts: any) => {
+      session: { get: async () => ({ id: "s", location: { directory: "/owned/worktree", workspaceID: options.workspaceID } }) },
+      rpc: Object.assign(() => ({ scheduleCarrierRead: async () => ({ owned: options.carrier === true }) }), { call: async (input: unknown, opts: any) => {
         assert(opts.signal instanceof AbortSignal)
         calls.push(input)
         requestOptions.push(opts)
         if (options.fail) throw new Error("plugin unavailable")
         return { output: options.output ?? { status: "blocked", reason: "maintenance_required" } }
-      } },
+      } }),
     }) as any,
     ownsLocation: async () => options.owned !== false,
     desktopPluginsReady: async () => {},
@@ -46,6 +46,18 @@ test("rejects unowned sessions before any RPC", async () => {
   try {
     assert.equal((await app.inject({ method: "POST", url, payload })).statusCode, 403)
     assert.equal(calls.length, 0)
+  } finally { await app.close() }
+})
+
+test("ordinary content pruning cannot modify an unmarked carrier; its read-only preview stays available", async () => {
+  const { app, calls } = fixture({ carrier: true })
+  try {
+    const response = await app.inject({ method: "POST", url, payload })
+    assert.deepEqual(response.json(), { status: "blocked", reason: "unavailable" })
+    assert.equal(calls.length, 0)
+    await app.inject({ method: "POST", url: url.replace(/prune$/, "preview"), payload: { sessionID: "s", messageID: "m" } })
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].method, "preview")
   } finally { await app.close() }
 })
 

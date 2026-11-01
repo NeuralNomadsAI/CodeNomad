@@ -5,6 +5,7 @@ import { reduceMissionEvents, type MissionEvent, type MissionJsonValue, type Mis
 import { hasInvalidReportNotificationHistory, isCoordinatorNotificationReport, parseNativeBinding, parseNativeCall, sameNativeCall } from "./native-report-provenance"
 import { controlReceiptID, reportAdmissionID, reportNotificationID } from "./receipt-identity"
 import type { MissionTaskExecutionMode } from "./task-execution-mode"
+import { MISSION_DOCUMENT_PREFIX } from "./mission-document"
 
 function fixture(mode: MissionTaskExecutionMode | null = { kind: "native", parentTaskKey: null }) {
   const values = new Map<string, MissionJsonValue>(), reads: string[] = []
@@ -119,7 +120,8 @@ test("malformed persisted native provenance is discarded without repair or alter
   assert.equal(snapshot.missions[0].tasks[0].report, undefined)
   assert.equal(snapshot.missions[0].tasks[0].nativeExecution?.ended, undefined)
   assert.equal(JSON.stringify(f.values.get(key)), bytes)
-  assert.ok(f.reads.every(key => key.startsWith(`${MISSION_JOURNAL_STORAGE_PREFIX}/`)))
+  const documentKey = `${MISSION_DOCUMENT_PREFIX}/project/${f.journal.projectToken}/missions/msn_provenance`
+  assert.ok(f.reads.every(key => key.startsWith(`${MISSION_JOURNAL_STORAGE_PREFIX}/`) || key === documentKey))
 })
 
 test("report before call end roundtrips exact provenance without inventing native return or notification admission", async () => {

@@ -55,13 +55,15 @@ export const readNativeRecurrenceSnapshot = Effect.fn("missions.readNativeRecurr
     // Starting while a live Job/observer is admitting the original start message.
     // Uncertain only without an observer, or while that admission keeps failing.
     const blocked = lastError?.code === "admission-failed"
-    const pendingStatus = doc.pending?.admission ? "running" as const : observed && !blocked ? "starting" as const : "uncertain" as const
+    const settlementUnknown = lastError?.code === "settlement-failed"
+    const pendingStatus = doc.pending?.admission && observed && !settlementUnknown ? "running" as const
+      : !doc.pending?.admission && observed && !blocked ? "starting" as const : "uncertain" as const
     results.push({ id: doc.id, title: doc.config.title, revision: doc.revision, state, clock: doc.config.clock,
       nextDueAt: state === "running" ? recurrenceNextDueAt(doc, Date.now()) : null,
       ...(state === "interrupted" ? { interruptionReason: jobStatus === "error" ? "error" as const : doc.interruptionReason ?? "service-restart" } : {}),
       ...(lastError ? { lastError } : {}),
       pending: doc.pending ? { passageID: doc.pending.passage.id, status: pendingStatus, trigger: doc.pending.passage.due.kind,
-        ...(pendingStatus === "uncertain" ? { reason: observed ? "admission-failing" as const : "not-observed" as const } : {}),
+        ...(pendingStatus === "uncertain" ? { reason: !doc.pending.admission && observed ? "admission-failing" as const : "not-observed" as const } : {}),
         ...(doc.pending.admission ? { missionID: doc.pending.admission.missionID, conversationID: doc.pending.admission.conversationID } : {}) } : null,
       latestResult: history.at(-1) ?? null, history, actions,
       controls: doc.controls.map(({ targetsKnown: _known, ...record }) => ({ ...record, version: 1,

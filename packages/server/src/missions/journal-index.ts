@@ -3,6 +3,9 @@ import { orderMissionCleanups } from "./cleanup-projection"
 import { missionWorkRemains } from "../opencode/missions/lifetime"
 import type { MissionView } from "./journal"
 import { missionSummary, type MissionSummary } from "./mission-summary"
+import { activityActorWindow, missionActivityContext, MISSION_MARK_ACTORS, MISSION_MARK_MISSIONS,
+  type MissionActivityContext } from "./mission-activity-context"
+import { contentDigest } from "./content-digest"
 
 /** How a mission's events name a session: its creation's coordinator or hand-off
  * author, or a task actor (independent dispatch or native binding). */
@@ -48,6 +51,8 @@ export interface MissionIndexHints {
   cleanups(): MissionCleanup[]
   /** One panel row per live map, in snapshot order. */
   summaries(): MissionSummary[]
+  /** Lightweight mark contexts, up to 16 missions and 10 actors each; no range rereads. */
+  activity(offset: number): { contexts: MissionActivityContext[]; order: string; offset: number; end: number; total: number }
 }
 
 /** The scalars `compareEvents` reads, copied: an entry keeps no event. */
@@ -61,6 +66,7 @@ interface Entry {
   /** Live (non-deleted) map only. */
   updatedAt?: number
   summary?: MissionSummary
+  activity?: MissionActivityContext
   open: boolean
   discardedEvents: number
   controlUnavailable: boolean
@@ -226,12 +232,15 @@ function entryOf(view: MissionView): Entry | undefined {
     if (event.type === "mission.created") {
       add(event.coordinator.sessionID, "coordinator")
       if (event.preparedBy) add(event.preparedBy.coordinatorSessionID, "prepared-by")
-    } else if (event.type === "task.dispatching") add(event.actor.sessionID, "dispatching")
+    } else if (event.type === "mission.prepared") add(event.coordinator.sessionID, "coordinator")
+    else if (event.type === "task.dispatching") add(event.actor.sessionID, "dispatching")
     else if (event.type === "task.native-bound") add(event.actor.sessionID, "native-bound")
   }
   return {
     missionID: view.missionID, refs, ...(first ? { first: { createdAt: first.createdAt, id: first.id } } : {}),
     ...(mission ? { updatedAt: mission.updatedAt, summary: missionSummary(mission) } : {}),
+    ...(mission ? { activity: missionActivityContext(mission, { discardedEvents: view.discardedEvents,
+      controlUnavailable: Boolean(view.controlUnavailable), notificationUnavailable: Boolean(view.notificationUnavailable), cleanupUnavailable: Boolean(view.cleanupUnavailable) }) } : {}),
     open: missionWorkRemains({ ...view, missions: mission ? [mission] : [] }),
     discardedEvents: view.discardedEvents, controlUnavailable: Boolean(view.controlUnavailable),
     notificationUnavailable: Boolean(view.notificationUnavailable), cleanupUnavailable: Boolean(view.cleanupUnavailable),
@@ -295,6 +304,13 @@ function hints(state: State, live: () => void): MissionIndexHints {
       live()
       return entries().filter(entry => entry.summary).sort(compareEntries)
         .map(({ summary }) => ({ ...summary!, actorSessionIds: [...summary!.actorSessionIds] }))
+    },
+    activity: offset => {
+      live()
+      const ordered = entries().filter(entry => entry.activity).sort(compareEntries), start = Math.min(offset, ordered.length)
+      return { contexts: ordered.slice(start, start + MISSION_MARK_MISSIONS).map(entry => activityActorWindow(entry.activity!, 0, MISSION_MARK_ACTORS)),
+        order: contentDigest(JSON.stringify(ordered.map(entry => entry.missionID))),
+        offset: start, end: Math.min(start + MISSION_MARK_MISSIONS, ordered.length), total: ordered.length }
     },
   }
 }

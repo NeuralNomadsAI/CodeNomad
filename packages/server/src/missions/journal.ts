@@ -28,9 +28,11 @@ import { parseMissionTitle } from "./mission-title"
 import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { parseNativeCallObservation } from "./native-call-observation"
 import { nativeCallObservationID } from "./native-call-reconciliation"
-import { SETTLED_CLEANUP_HISTORY, cleanupReceiptID, hasInvalidCleanupHistory, isCleanupReason, isCleanupReceipt, projectMissionCleanups } from "./cleanup-projection"
+import { SETTLED_CLEANUP_HISTORY, cleanupReceiptID, documentCleanupReceiptID, hasInvalidCleanupHistory,
+  isCleanupReason, isCleanupReceipt, isDocumentCleanupReceipt, projectMissionCleanups } from "./cleanup-projection"
 import { parseDeletionRecord, planDeletionPurge, type MissionDeletionRecord } from "./journal-purge"
 import { MissionJournalIndex, noteMissionJournalWrite, type MissionIndexHints, type MissionIndexRange, type SynchronousHint } from "./journal-index"
+import { MISSION_DOCUMENT_PREFIX } from "./mission-document"
 
 // Storage generation, independent of the event wire/schema version. No legacy reads.
 export const MISSION_JOURNAL_STORAGE_PREFIX = "codenomad-missions/v2"
@@ -42,7 +44,8 @@ const RANGE = /^\/([A-Za-z0-9_-]{3,100})\//
 const MISSION_FULL = `Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit of this mission`
 const RANGE_OVER_BOUND = `Mission journal exceeds the ${MISSION_MAX_EVENTS}-event safety limit of one mission`
 type CapacityIntent = Extract<MissionEvent, { type: "mission.deleted" | "mission.control-requested" }>
-interface CapacitySlot { intent: CapacityIntent; sessionID: string }
+type CapacitySlot = { intent: CapacityIntent; sessionID: string }
+  | { intent: Extract<MissionEvent, { type: "mission.deleted" }>; document: true }
 /** `unreadable`: missions whose deletion record could not be read, kept as damage. */
 interface Observation { events: MissionEvent[]; discardedEvents: number; purged: MissionEvent[]; unreadable: string[] }
 
@@ -335,10 +338,10 @@ export class MissionJournal {
   private async fits(missionID: string, request: MissionEvent | number): Promise<boolean> {
     const capacity = await this.storedCapacity(missionID)
     const slots = capacity.cleanupSlots, used = capacity.count + slots.size
-    if (typeof request === "number") return used + request + missionLifecycleReserve(capacity.actors.size) <= MISSION_MAX_EVENTS
+    if (typeof request === "number") return used + request + missionLifecycleReserve(capacity.actors.size, capacity.document) <= MISSION_MAX_EVENTS
     const kept = request.type === "mission.deleted" || this.matchesCapacityReceipt(request, slots) ? 0
-      : request.type === "mission.control-requested" && request.action === "stop" ? missionTerminalShare(capacity.actors.size)
-        : missionLifecycleReserve(new Set([...capacity.actors, ...eventActors(request)]).size)
+      : request.type === "mission.control-requested" && request.action === "stop" ? missionTerminalShare(capacity.actors.size, capacity.document)
+        : missionLifecycleReserve(new Set([...capacity.actors, ...eventActors(request)]).size, capacity.document)
     return used + this.requiredCapacity(request, slots) + kept <= MISSION_MAX_EVENTS
   }
 
@@ -370,10 +373,11 @@ export class MissionJournal {
         && event.expectedRevision > intent.expectedRevision
         && compareEvents(event, intent) > 0).length : 0
     return 1 + (event.type === "mission.deleted" ? event.cleanupTargets?.length ?? 0 : 0)
+      + (event.type === "mission.deleted" && event.documentCleanup ? 1 : 0)
       + (event.type === "mission.control-requested" ? event.targets.length : 0) - superseded
   }
 
-  private async storedCapacity(missionID: string): Promise<{ count: number; cleanupSlots: Map<string, CapacitySlot>; actors: Set<string> }> {
+  private async storedCapacity(missionID: string): Promise<{ count: number; cleanupSlots: Map<string, CapacitySlot>; actors: Set<string>; document: boolean }> {
     const prefix = `${this.prefix()}/${safeKey(missionID)}/`
     let count = 0
     // Every session a valid entry admits as an actor: a superset of the map's actors.
@@ -400,7 +404,8 @@ export class MissionJournal {
         if (event) for (const sessionID of eventActors(event)) actors.add(sessionID)
         if (event?.type === "mission.deleted") {
           for (const target of event.cleanupTargets ?? []) reserve(event, target.sessionID)
-        } else if (event?.type === "mission.session-cleaned") receipts.push(event)
+          if (event.documentCleanup) cleanupSlots.set(this.eventKey(event.missionID, documentCleanupReceiptID(event.id)), { intent: event, document: true })
+        } else if (event?.type === "mission.session-cleaned" || event?.type === "mission.document-cleaned") receipts.push(event)
         else if (event?.type === "mission.control-requested") {
           const previous = latestControls.get(event.missionID)
           if (!previous || compareEvents(event, previous) > 0) latestControls.set(event.missionID, event)
@@ -412,12 +417,16 @@ export class MissionJournal {
       for (const target of operation.targets) reserve(operation, target.sessionID)
     }
     for (const receipt of receipts) if (this.matchesCapacityReceipt(receipt, cleanupSlots)) cleanupSlots.delete(this.eventKey(receipt.missionID, receipt.id))
-    return { count, cleanupSlots, actors }
+    // Presence only reserves capacity; it grants no document authority. An unreadable
+    // sidecar refuses the append. Isolated passage adapters accept only journal keys.
+    const document = !this.storage.isolated && await this.storage.get(`${MISSION_DOCUMENT_PREFIX}/project/${this.projectToken}/missions/${safeKey(missionID)}`) !== undefined
+    return { count, cleanupSlots, actors, document }
   }
 
   private matchesCapacityReceipt(event: MissionEvent, slots: Map<string, CapacitySlot>): boolean {
     const slot = slots.get(this.eventKey(event.missionID, event.id))
     if (!slot) return false
+    if ("document" in slot) return isDocumentCleanupReceipt(event, slot.intent)
     const { intent, sessionID } = slot
     return intent.type === "mission.deleted" ? isCleanupReceipt(event, intent, sessionID)
       : isControlReceipt(event, intent, sessionID)
@@ -462,7 +471,7 @@ function parseFinishCounter(value: MissionJsonValue, projectID: string): number 
 
 /** Sessions an event admits as mission actors (`reduceMission`), which the lifecycle reserve covers. */
 function eventActors(event: MissionEvent): string[] {
-  return event.type === "mission.created" ? [event.coordinator.sessionID]
+  return event.type === "mission.created" || event.type === "mission.prepared" ? [event.coordinator.sessionID]
     : event.type === "task.dispatching" || event.type === "task.native-bound" ? [event.actor.sessionID] : []
 }
 
@@ -478,6 +487,15 @@ function isSafeKey(value: string): boolean {
 export function parseMissionEvent(input: unknown): MissionEvent | undefined {
   if (!record(input) || input.version !== MISSION_SCHEMA_VERSION || !baseEvent(input)) return undefined
   switch (input.type) {
+    case "mission.prepared": {
+      if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1
+        || typeof input.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(input.fingerprint)) return undefined
+      const creation = parseMissionEvent({ ...input, type: "mission.created", prepared: true })
+      if (creation?.type !== "mission.created") return undefined
+      const { type: _type, prepared: _prepared, preparedBy: _author, ...fields } = creation
+      return { ...fields, type: "mission.prepared", requestID: input.requestID,
+        expectedRevision: Number(input.expectedRevision), fingerprint: input.fingerprint }
+    }
     case "mission.briefed": {
       const briefing = parseMissionBriefing(input.briefing)
       if (!briefing || !text(input.actorSessionID, MAX_SHORT_TEXT) || briefing.id !== input.id || briefing.createdAt !== input.createdAt) return undefined
@@ -565,6 +583,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
     case "mission.deleted": {
       if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1) return undefined
       if (input.deleteManagedSessions !== undefined && typeof input.deleteManagedSessions !== "boolean") return undefined
+      if (input.documentCleanup !== undefined && input.documentCleanup !== true) return undefined
       const cleanupTargets: Array<{ sessionID: string; location: MissionLocation }> = []
       if (input.cleanupTargets !== undefined) {
         // Each target needs a receipt within the mission's range.
@@ -581,6 +600,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
         ...eventBase(input), type: "mission.deleted", requestID: input.requestID, expectedRevision: Number(input.expectedRevision),
         ...(input.deleteManagedSessions === undefined ? {} : { deleteManagedSessions: input.deleteManagedSessions }),
         ...(input.cleanupTargets === undefined ? {} : { cleanupTargets }),
+        ...(input.documentCleanup === true ? { documentCleanup: true as const } : {}),
       }
     }
     case "mission.session-cleaned":
@@ -588,6 +608,9 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
         || (input.outcome !== "removed" && input.outcome !== "retained")) return undefined
       return { ...eventBase(input), type: "mission.session-cleaned", deletionID: input.deletionID, sessionID: input.sessionID, outcome: input.outcome,
         ...(input.outcome === "retained" && isCleanupReason(input.reason) ? { reason: input.reason } : {}) }
+    case "mission.document-cleaned":
+      if (!text(input.deletionID, MAX_SHORT_TEXT)) return undefined
+      return { ...eventBase(input), type: "mission.document-cleaned", deletionID: input.deletionID }
     case "mission.revised": {
       if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1
         || !text(input.actorSessionID, MAX_SHORT_TEXT) || !text(input.reason, 2_000)

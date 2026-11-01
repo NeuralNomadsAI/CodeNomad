@@ -5,6 +5,7 @@ import { getRootClient } from "../stores/opencode-client"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { buildProjectSessionListOptions } from "../stores/session-list-options"
 import { sessions } from "../stores/session-state"
+import { isReservedMissionScheduleSessionID } from "../../../server/src/missions/mission-schedule-carrier-identity"
 
 /** Reuses the native paged title search without changing the sidebar's search. */
 export function MissionConversationPicker(props: {
@@ -33,8 +34,9 @@ export function MissionConversationPicker(props: {
         search, order: "desc",
       }), { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) }).then(result => {
         if (!current()) return
-        setRows(previous => page ? [...previous, ...result.data.filter(row => !previous.some(item => item.id === row.id))] : result.data)
-        setLabels(previous => ({ ...previous, ...Object.fromEntries(result.data.map(row => [row.id, row.title || t("sessionPicker.session.untitled")])) }))
+        const choices = result.data.filter(row => !isReservedMissionScheduleSessionID(row.id))
+        setRows(previous => page ? [...previous, ...choices.filter(row => !previous.some(item => item.id === row.id))] : choices)
+        setLabels(previous => ({ ...previous, ...Object.fromEntries(choices.map(row => [row.id, row.title || t("sessionPicker.session.untitled")])) }))
         setNext(result.cursor?.next ?? undefined)
       }).catch(() => { if (current()) setFailed(true) }).finally(() => { if (current()) setLoading(false) })
     }, search ? 200 : 0)

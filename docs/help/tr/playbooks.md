@@ -45,7 +45,7 @@ Bunlar talimattır. Bir ajanın gerçekte ne yapabileceğini, ajanının ve proj
 
 ### Size sorulan sorular {#questions}
 
-Size yalnızca koordinatör soru sorar. İşler ve yardımcıları kendi sorularını, onları başlatan konuşmaya seçenekler, kanıtlar, sonuçlar, geri alınabilirlik ve bir öneriyle geri gönderir ve yanıta bağlı olmayan işe devam eder. Koordinatör önce yapabildiğini çözer ve kalan soruları **Yanıtınız gerekiyor** altında tek bir formda toplar; neleri sorduğunu ve kararların nasıl etiketlendiğini [Sorular ve kararlar](missions.md#questions) açıklar. Tek seferlik veya günlük her koordinatör ve her iş ataması bu kuralı talimat olarak alır; Keşif [aşağıdaki](#wayfinder-checks) karar denetimlerini ekler.
+Size yalnızca koordinatör soru sorar. İşler ve yardımcıları kendi sorularını, onları başlatan konuşmaya seçenekler, kanıtlar, sonuçlar, geri alınabilirlik ve bir öneriyle geri gönderir ve yanıta bağlı olmayan işe devam eder. Koordinatör önce yapabildiğini çözer ve kalan soruları **Yanıtınız gerekiyor** altında tek bir formda toplar; neleri sorduğunu ve kararların nasıl etiketlendiğini [Sorular ve kararlar](missions.md#questions) açıklar. Tek seferlik veya zamanlanmış her koordinatör ve her iş ataması bu kuralı talimat olarak alır; Keşif [aşağıdaki](#wayfinder-checks) karar denetimlerini ekler.
 
 İstek panelinde yanıtlayın (**Yanıtınız gerekiyor** altında **Yanıtla**): yalnızca bu sizin yanıtınız sayılır. Sohbete yazılan bir yanıt sıradan bir mesajdır.
 
@@ -53,7 +53,7 @@ Size yalnızca koordinatör soru sorar. İşler ve yardımcıları kendi sorular
 
 Koordinatöre ilk planından sonra, sonuçlandırdığı her işten sonra, sizi beklemeye başladığı her an ve son raporundan önce bir durum özeti yayımlaması talimatı verilir; [Durum özetleri ve güncelleme istekleri](missions.md#briefings) bölümüne bakın. Durum özetleri, iş özetleri ve son rapor sizin için yazılır: sizin dilinizde, birkaç kısa cümleyle, önce sonuç; tanımlayıcılar ve komutlar kanıtlarda kalır.
 
-Son rapor neyin teslim edildiğini, neyin kaldığını ve neyin sizin kararınızı gerektirdiğini belirtir. Tek seferlik bir görev yalnızca tamamlanmış olarak biter: siz olmadan hiçbir şey ilerleyemediğinde koordinatör başarısız olmak yerine size sorar ve bekler; bir görevi yalnızca siz durdurursunuz. Günlük bir çalıştırma başarısız olarak da bitebilir.
+Son rapor neyin teslim edildiğini, neyin kaldığını ve neyin sizin kararınızı gerektirdiğini belirtir. Tek seferlik bir görev yalnızca tamamlanmış olarak biter: siz olmadan hiçbir şey ilerleyemediğinde koordinatör başarısız olmak yerine size sorar ve bekler; bir görevi yalnızca siz durdurursunuz. Zamanlanmış bir geçiş başarısız olarak da bitebilir.
 
 ### CodeNomad'in her görevde denetledikleri {#common-checks}
 
@@ -177,7 +177,7 @@ Yanıtınızı asla kendisi yazmaz ve kendi kararını sizinki gibi sunmaz. Sonu
 - Yalnızca Keşif'in beş rolü kabul edilir.
 - Bir karar işi yalnızca koordinatörün kendi kararıyla veya sizin yanıtınızla tamamlanır. Koordinatör kararı soruyu, kararı ve gerekçesini belirtir ve asla sizin yanıtınız olarak kaydedilmez.
 - Yanıtınız yalnızca CodeNomad arayüzünde verdiyseniz sayılır. CodeNomad onu sorunun etiketiyle bir işe bağlar: soru koordinatörün konuşmasından sorulmuştur, metni o işin etiketiyle biter ve başka bir karar anmaz, iş bildirildikten sonra yanıtlanmıştır ve başka bir kararı sonuçlandırmamıştır. Toplu bir formun her sorusu ayrı bağlanır; iki kararı anan bir soru hiçbirini sonuçlandırmaz. Karar işinin kendi konuşmasından sorulan bir sorunun yanıtı da kabul edilir.
-- Bir işin kendi raporu kimin karar verdiğini iddia edemez. Bir görev veya günlük çalıştırma başarıyla bitmeden önce CodeNomad, tamamlanan her kararı etiketleri dahil yeniden denetler.
+- Bir işin kendi raporu kimin karar verdiğini iddia edemez. Bir görev veya zamanlanmış geçiş başarıyla bitmeden önce CodeNomad, tamamlanan her kararı etiketleri dahil yeniden denetler.
 - Bu denetimler **Yerel alt ajanlar** ile geçerlidir. **Bağımsız oturumlar** ile karar sorumluları özetlerini kendileri bildirir ve koordinatör her sonucu kimin karar verdiğini belirterek notlara kaydeder; CodeNomad bunu doğrulamaz.
 
 Yalnızca talimat olanlar: bir seçimin ne zaman geri alınması ucuz sayılacağı, özetlerin ve araştırmanın kalitesi ve planlamayla sınırlı kalmak.

@@ -5,6 +5,7 @@ import { useConfig, type ServerLogLevel } from "../../stores/preferences"
 import { useI18n } from "../../lib/i18n"
 import { OpenCodeUpdateCard } from "./opencode-update-card"
 import { OpenCodeExecutableCard } from "./opencode-executable-card"
+import { ServiceSupervisionCard } from "./service-supervision-card"
 
 type LogLevelOption = { value: ServerLogLevel; label: string }
 
@@ -25,6 +26,7 @@ export const OpenCodeSettingsSection: Component = () => {
     <div class="settings-section-stack">
       <OpenCodeUpdateCard />
       <OpenCodeExecutableCard />
+      <ServiceSupervisionCard />
 
       <div class="settings-card">
         <div class="settings-card-header">

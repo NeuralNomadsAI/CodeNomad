@@ -1,4 +1,6 @@
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
+import { contentDigest } from "./content-digest"
+export { contentDigest } from "./content-digest"
 import type { MissionInspection } from "./control-types"
 import type { MissionMap, MissionPlanChange, MissionReport, MissionTask } from "./model"
 import type { MissionContentSelector } from "./mission-content-wire"
@@ -301,12 +303,6 @@ function omission(mission: Pick<MissionMap, "id" | "revision"> | undefined, sele
 /** The text a content read slices: the string itself, or the value's JSON. */
 export function contentText(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value) ?? "null"
-}
-
-/** SHA-256 of the text's UTF-16 code units, so strings differing only in unpaired
- * surrogates (which UTF-8 encodes alike) keep distinct digests. */
-export function contentDigest(text: string): string {
-  return createHash("sha256").update(text, "utf16le").digest("base64url")
 }
 
 function isHighSurrogate(text: string, index: number): boolean {

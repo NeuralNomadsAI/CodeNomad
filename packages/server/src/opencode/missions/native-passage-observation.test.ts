@@ -2,23 +2,41 @@ import assert from "node:assert/strict"
 import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
 import { Context, Effect } from "effect"
-import { acquireNativePassageObservation } from "./native-passage-observation"
+import { acquireNativePassageObservation, qualifyNativePassageStorage } from "./native-passage-observation"
 import { passageFixture } from "./native-passage-test-fixture"
 import { observeNativePassageSettlement } from "./native-recurrence-settlement"
 import { RECURRENCE_STORAGE_PREFIX } from "../../missions/recurrence-contract"
 import { stableToken } from "../../missions/journal"
 
-test("a claim cut by a service restart settles ended-without-report/interrupted; a live-process claim stays pending", async () => {
+test("terminal storage capability checks real columns and JSON projections without rows or effects", async () => {
+  const db = new DatabaseSync(":memory:")
+  try {
+    db.exec(`CREATE TABLE session_message(id TEXT,seq INTEGER,type TEXT,data TEXT); CREATE TABLE kv(key TEXT,value TEXT);
+      CREATE TABLE session_part(message_id TEXT,session_id TEXT,ordinal INTEGER,type TEXT,data TEXT)`)
+    const sql: string[] = []
+    const graph = Context.make(Context.Service<never, unknown>("@opencode/storage/Database"), { db: { $client: {
+      unsafe: (query: string) => { sql.push(query); return { withoutTransform: Effect.sync(() => db.prepare(query).all()) } },
+    } } })
+    await Effect.runPromise(qualifyNativePassageStorage().pipe(Effect.provide(graph)))
+    assert.equal(sql.length, 3); assert.ok(sql.every(query => query.endsWith("WHERE 0")))
+    db.exec("DROP TABLE session_message; CREATE TABLE session_message(id TEXT,type TEXT,data TEXT)")
+    await assert.rejects(Effect.runPromise(qualifyNativePassageStorage().pipe(Effect.provide(graph))), /seq/)
+  } finally { db.close() }
+})
+
+test("an old inactive claim remains uncertain across wakes until a correlated native terminal releases it", async () => {
   const f = await passageFixture(), db = new DatabaseSync(":memory:")
   try {
     await f.start() // admitted, no report: the hard kill cut the coordinator mid-turn
     db.exec(`CREATE TABLE session_v2(id TEXT,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,time_suspended INTEGER);
-      CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,data TEXT);
+      CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,data TEXT,seq INTEGER PRIMARY KEY AUTOINCREMENT);
+      CREATE TABLE session_part(message_id TEXT,session_id TEXT,ordinal INTEGER,type TEXT,data TEXT);
       CREATE TABLE session_inbox(id TEXT,session_id TEXT);
-      CREATE TABLE event(aggregate_id TEXT,type TEXT,seq INTEGER);`)
-    // Observed natively (f60TKB): time_suspended kept, no execution terminal event.
+      CREATE TABLE event(aggregate_id TEXT,type TEXT,seq INTEGER);
+      CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT);`)
+    // Managed restart recovery can hold the durable claim before taking local ownership.
     db.prepare("INSERT INTO session_v2 VALUES(?,NULL,'project',?,NULL,1000)").run(f.passage.coordinatorSessionID, f.root)
-    db.prepare("INSERT INTO session_message VALUES(?,?,'synthetic','{}')").run(f.passage.messageID, f.passage.coordinatorSessionID)
+    db.prepare("INSERT INTO session_message(id,session_id,type,data) VALUES(?,?,'synthetic','{}')").run(f.passage.messageID, f.passage.coordinatorSessionID)
     const tag = (name: string) => Context.Service<never, unknown>(name)
     const running = new Set<string>()
     let graph = Context.empty() as Context.Context<never>
@@ -36,6 +54,13 @@ test("a claim cut by a service restart settles ended-without-report/interrupted;
     running.add(f.passage.coordinatorSessionID)
     assert.equal(await observe(2000), undefined, "a resumed (live) execution is not interrupted")
     running.clear()
+    const before = await f.calendar.read("schedule")
+    for (let wake = 0; wake < 3; wake++) assert.equal(await observe(2000), undefined, "old inactive claim never becomes terminal by age")
+    assert.deepEqual(await f.calendar.read("schedule"), before, "no archive, cursor advance or replacement pending")
+    db.prepare("INSERT INTO session_message(id,session_id,type,data) VALUES('msg_terminal',?,'idle',?)")
+      .run(f.passage.coordinatorSessionID, JSON.stringify({ outcome: "interrupted" }))
+    assert.equal(await observe(2000), undefined, "even a stale idle cannot override a surviving claim")
+    db.prepare("UPDATE session_v2 SET time_suspended=NULL").run()
     const settled = (await observe(2000))!
     assert.equal(settled.result.outcome, "ended-without-report")
     assert.equal(settled.result.reason, "interrupted")
@@ -52,14 +77,17 @@ async function idleFamily(finish?: "completed") {
   await f.start()
   if (finish) await f.finish(finish)
   db.exec(`CREATE TABLE session_v2(id TEXT,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,time_suspended INTEGER);
-    CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,data TEXT);
+    CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,data TEXT,seq INTEGER PRIMARY KEY AUTOINCREMENT);
+    CREATE TABLE session_part(message_id TEXT,session_id TEXT,ordinal INTEGER,type TEXT,data TEXT);
     CREATE TABLE session_inbox(id TEXT,session_id TEXT);
-    CREATE TABLE event(aggregate_id TEXT,type TEXT,seq INTEGER);`)
+    CREATE TABLE event(aggregate_id TEXT,type TEXT,seq INTEGER);
+    CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT);`)
   const coordinator = f.passage.coordinatorSessionID, child = "ses_failed_child"
   db.prepare("INSERT INTO session_v2 VALUES(?,NULL,'project',?,NULL,NULL)").run(coordinator, f.root)
   db.prepare("INSERT INTO session_v2 VALUES(?,?,'project',?,NULL,NULL)").run(child, coordinator, f.root)
-  db.prepare("INSERT INTO session_message VALUES(?,?,'synthetic','{}')").run(f.passage.messageID, coordinator)
-  const idle = (id: string, session: string, outcome: string) => db.prepare("INSERT INTO session_message VALUES(?,?,'idle',?)")
+  db.prepare("INSERT INTO session_message(id,session_id,type,data) VALUES(?,?,'synthetic','{}')").run(f.passage.messageID, coordinator)
+  db.prepare("INSERT INTO session_message(id,session_id,type,data) VALUES('msg_child_input',?,'user','{}')").run(child)
+  const idle = (id: string, session: string, outcome: string) => db.prepare("INSERT INTO session_message(id,session_id,type,data) VALUES(?,?,'idle',?)")
     .run(id, session, JSON.stringify({ time: { created: 1 }, outcome }))
   const tag = (name: string) => Context.Service<never, unknown>(name)
   let graph = Context.empty() as Context.Context<never>
@@ -80,6 +108,7 @@ test("a native failed turn without a final report archives failed, read from the
   const t = await idleFamily()
   try {
     t.idle("msg_idle_ok", t.coordinator, "succeeded")
+    t.idle("msg_idle_child_ok", t.child, "succeeded")
     assert.equal((await t.observe())?.outcome, "ended-without-report", "succeeded/interrupted idles are not failures")
     t.idle("msg_idle_child", t.child, "failed")
     const failed = (await t.observe())!
@@ -95,7 +124,45 @@ test("a completed final report wins over a later native failure during wrap-up",
   const t = await idleFamily("completed")
   try {
     t.idle("msg_idle_fail", t.coordinator, "failed")
+    t.idle("msg_idle_child_ok", t.child, "succeeded")
     assert.equal((await t.observe())?.outcome, "completed")
+  } finally { await t.dispose() }
+})
+
+test("terminal correlation uses the exact original input and native sequence, excluding unrelated failure history", async () => {
+  const t = await idleFamily()
+  try {
+    t.db.prepare("INSERT INTO session_message(id,session_id,type,data,seq) VALUES('msg_history',?,'idle',?,-1)")
+      .run(t.coordinator, JSON.stringify({ outcome: "failed" }))
+    t.idle("msg_idle_child", t.child, "succeeded")
+    assert.equal(await t.observe(), undefined, "an idle before the pending original cannot qualify")
+    t.idle("msg_idle_original", t.coordinator, "succeeded")
+    assert.equal((await t.observe())?.outcome, "ended-without-report", "older unrelated failure is excluded")
+    t.db.prepare("INSERT INTO session_message(id,session_id,type,data) VALUES('msg_new',?,'user','{}')").run(t.coordinator)
+    assert.equal(await t.observe(), undefined, "a delivered input after the terminal is uncovered")
+    t.idle("msg_idle_new", t.coordinator, "succeeded")
+    assert.equal((await t.observe())?.outcome, "ended-without-report")
+    t.db.prepare("DELETE FROM session_message WHERE id=?").run(t.f.passage.messageID)
+    for (let wake = 0; wake < 3; wake++) assert.equal(await t.observe(), undefined, "pruned original keeps the exact pending uncertain")
+    assert.equal(t.f.counts().sends, 1)
+  } finally { await t.dispose() }
+})
+
+test("an undelivered native background result blocks family settlement even after the child's terminal", async () => {
+  const t = await idleFamily("completed")
+  try {
+    t.idle("msg_idle_root", t.coordinator, "succeeded")
+    t.idle("msg_idle_child", t.child, "succeeded")
+    const pending = { status: "completed", recovery: { kind: "subagent", parentSessionID: t.coordinator, childSessionID: t.child } }
+    t.db.prepare("INSERT INTO kv VALUES('job.background/msg_delivery',?)").run(JSON.stringify(pending))
+    for (let wake = 0; wake < 3; wake++) assert.equal(await t.observe(), undefined, "a durable delivery may still wake the root")
+    t.db.prepare("DELETE FROM kv").run()
+    assert.equal((await t.observe())?.outcome, "completed")
+    t.db.prepare("INSERT INTO kv VALUES('job.background/msg_foreign',?)")
+      .run(JSON.stringify({ recovery: { kind: "subagent", parentSessionID: "ses_foreign", childSessionID: "ses_elsewhere" } }))
+    assert.equal((await t.observe())?.outcome, "completed", "unrelated known ownership is excluded")
+    t.db.prepare("UPDATE kv SET value='{}'").run()
+    await assert.rejects(t.observe(), /background coverage unavailable/, "unknown background ownership fails closed")
   } finally { await t.dispose() }
 })
 
@@ -105,15 +172,18 @@ test("read/grep/edit/webfetch/shell completed calls do not block real passage se
     await f.start()
     await f.finish()
     db.exec(`CREATE TABLE session_v2(id TEXT,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,time_suspended INTEGER);
-      CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,data TEXT);
+      CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,data TEXT,seq INTEGER PRIMARY KEY AUTOINCREMENT);
+      CREATE TABLE session_part(message_id TEXT,session_id TEXT,ordinal INTEGER,type TEXT,data TEXT);
       CREATE TABLE session_inbox(id TEXT,session_id TEXT);
       CREATE TABLE event(aggregate_id TEXT,type TEXT,seq INTEGER);
       CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT);`)
     // Real Windows native SQL uses `/` while Location/schedule paths use `\`.
     db.prepare("INSERT INTO session_v2 VALUES(?,NULL,'project',?,NULL,NULL)").run(f.passage.coordinatorSessionID, f.root.replaceAll("\\", "/"))
-    db.prepare("INSERT INTO session_message VALUES(?,?,'synthetic','{}')").run(f.passage.messageID, f.passage.coordinatorSessionID)
+    db.prepare("INSERT INTO session_message(id,session_id,type,data) VALUES(?,?,'synthetic','{}')").run(f.passage.messageID, f.passage.coordinatorSessionID)
     const content = ["read", "grep", "edit", "webfetch", "shell"].map(name => ({ type: "tool", name, state: { status: "completed" } }))
-    db.prepare("INSERT INTO session_message VALUES('msg_tools',?,'assistant',?)").run(f.passage.coordinatorSessionID, JSON.stringify({ content }))
+    db.prepare("INSERT INTO session_message(id,session_id,type,data) VALUES('msg_tools',?,'assistant',?)").run(f.passage.coordinatorSessionID, JSON.stringify({ content }))
+    db.prepare("INSERT INTO session_message(id,session_id,type,data) VALUES('msg_idle',?,'idle',?)")
+      .run(f.passage.coordinatorSessionID, JSON.stringify({ outcome: "succeeded" }))
     db.prepare("INSERT INTO event VALUES(?,'session.execution.succeeded.1',1)").run(f.passage.coordinatorSessionID)
     const tag = (name: string) => Context.Service<never, unknown>(name)
     let graph = Context.empty() as Context.Context<never>
@@ -152,6 +222,13 @@ test("read/grep/edit/webfetch/shell completed calls do not block real passage se
     assert.equal(await observe(), undefined)
     content[4].state.status = "completed"
     db.prepare("UPDATE session_message SET data=? WHERE id='msg_tools'").run(JSON.stringify({ content }))
+    assert.equal((await observe())?.result.outcome, "completed")
+    // Split parts override even a stale inline completed copy.
+    content[4].state.status = "running"
+    db.prepare("INSERT INTO session_part VALUES('msg_tools',?,0,'tool',?)").run(f.passage.coordinatorSessionID, JSON.stringify(content[4]))
+    assert.equal(await observe(), undefined, "split running tool blocks settlement")
+    content[4].state.status = "completed"
+    db.prepare("UPDATE session_part SET data=?").run(JSON.stringify(content[4]))
     assert.equal((await observe())?.result.outcome, "completed")
     db.prepare("INSERT INTO session_inbox VALUES('msg_pending',?)").run(f.passage.coordinatorSessionID)
     assert.equal(await observe(), undefined, "an inbox item blocks quiescence")

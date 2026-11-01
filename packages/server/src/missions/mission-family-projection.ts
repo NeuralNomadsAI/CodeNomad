@@ -1,15 +1,41 @@
 import type { SessionInfo } from "@opencode/client"
 import { sameLocation } from "../opencode/compatibility/location"
 import { missionTaskExecutionEvidence } from "./execution-evidence"
-import type { MissionActivityProjection, MissionPanelMap } from "./model"
+import type { MissionActivityProjection, MissionActor, MissionPanelMap } from "./model"
 import { MAX_MISSION_DESCENDANTS, type NativeMissionFamilyTree } from "./native-session-family"
 
 type FamilyProjection = NonNullable<MissionActivityProjection["missions"][number]["family"]>
 
+/** Bounded per-actor task attribution, equivalent to scanning all its task candidates. */
+export interface MissionFamilyTaskContext { taskKey?: string; parentSessionID?: string; invalid: boolean }
+export type MissionFamilyContext = Pick<MissionPanelMap, "projectID" | "tasks"> & {
+  actors: Pick<MissionActor, "sessionId" | "location">[]
+  taskContexts?: Record<string, MissionFamilyTaskContext>
+}
+
+export function missionFamilyTaskContexts(tasks: MissionPanelMap["tasks"]): Record<string, MissionFamilyTaskContext> {
+  const actors = new Map<string, { active: number; known: number; activeKey?: string; knownKey?: string; parent?: string; invalid: boolean }>()
+  for (const task of tasks) {
+    if (!task.actorSessionId) continue
+    const value = actors.get(task.actorSessionId) ?? { active: 0, known: 0, invalid: false }
+    const evidence = missionTaskExecutionEvidence(task), parent = task.nativeExecution?.binding.parentSessionID
+    value.invalid ||= evidence.nativeCall === "unknown" || (parent !== undefined && value.parent !== undefined && parent !== value.parent)
+    if (parent !== undefined) value.parent = parent
+    if (evidence.nativeCall === "active") { value.active++; value.activeKey = task.key }
+    if (evidence.hasExecution) { value.known++; value.knownKey = task.key }
+    actors.set(task.actorSessionId, value)
+  }
+  return Object.fromEntries([...actors].map(([id, value]) => [id, { invalid: value.invalid,
+    ...(value.parent === undefined ? {} : { parentSessionID: value.parent }),
+    ...(!value.invalid && (value.active === 1 || value.active === 0 && value.known === 1)
+      ? { taskKey: value.active === 1 ? value.activeKey : value.knownKey } : {}),
+  }]))
+}
+
 /** Joins caller-validated native observations to declared display context only.
  * Ordinary children never become actors, tasks, reports or control targets. */
 export function projectMissionFamily(input: {
-  mission: MissionPanelMap
+  mission: MissionFamilyContext
   trees: ReadonlyMap<string, NativeMissionFamilyTree>
   observed: boolean
   /** Declared actors this refresh did not read (its actor budget): the family is partial without them. */
@@ -64,20 +90,11 @@ export function projectMissionFamily(input: {
       current = current.parentID ? sessions.get(current.parentID) : undefined
     }
   }
-  const contexts = new Map<string, string | undefined>()
+  const contexts = new Map<string, string | undefined>(), taskContexts = mission.taskContexts ?? missionFamilyTaskContexts(mission.tasks)
   for (const actor of read) {
-    const candidates = mission.tasks.filter(task => task.actorSessionId === actor.sessionId).map(task => ({
-      task, evidence: missionTaskExecutionEvidence(task),
-    }))
-    // No native invocation clock exists here: updatedAt can be a later report.
-    // A unique live call wins over historical settled tasks; otherwise only a
-    // unique evidenced task can be selected. Unknown/tied context stays absent.
-    const invalid = candidates.some(({ task, evidence }) => evidence.nativeCall === "unknown"
-      || (task.nativeExecution && task.nativeExecution.binding.parentSessionID !== sessions.get(actor.sessionId)!.parentID))
-    const active = candidates.filter(({ evidence }) => evidence.nativeCall === "active")
-    const known = candidates.filter(({ evidence }) => evidence.hasExecution)
-    const selected = !invalid && (active.length === 1 ? active[0] : active.length === 0 && known.length === 1 ? known[0] : undefined)
-    contexts.set(actor.sessionId, selected ? selected.task.key : undefined)
+    const context = taskContexts[actor.sessionId]
+    contexts.set(actor.sessionId, context && !context.invalid
+      && (context.parentSessionID === undefined || context.parentSessionID === sessions.get(actor.sessionId)!.parentID) ? context.taskKey : undefined)
   }
   const members: FamilyProjection["members"] = []
   for (const session of sessions.values()) {

@@ -9,6 +9,18 @@ server awaits `session.environment({ sessionID, variables })` before forwarding.
 
 - Both writes use the connection acquired after ownership and worktree-fence
   admission; a stale connection or disconnected request prevents forwarding.
+- Ordinary session mutations first use `server/mission-schedule-input-guard.ts`
+  to point-read `codenomad.missions.scheduleCarrierRead` at the session's admitted
+  Location. Durable current/retiring carrier membership and reserved carrier
+  metadata block ordinary sends, compaction, forks, imports and session edits.
+  The `ses_cn_schedule_` session-ID namespace is reserved for owned technical
+  controls, including when mutable native markers have been removed.
+  Imports validate metadata throughout nested sources; supplied create/import
+  IDs retain their existing native Location. The proxy revalidates that Location
+  after the read, before environment or other native writes. A structured
+  `rpc.method_not_found` preserves journal-only plugin compatibility; unknown
+  ownership stays blocked. Family moves, worktree evacuation and temporary discard
+  check their resolved session targets before their first destructive effect.
 - `WorkspaceManager.getSessionEnvironment` reads current settings for each send.
 - Bundled Missions also applies this snapshot before its assignment prompts and
   report synthetics, through the authenticated desktop bridge's narrow mission

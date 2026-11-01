@@ -18,6 +18,7 @@ import { createFixtureShutdown } from "./fixture-shutdown"
 import { missionPicker, missionPopupOption } from "./mission-actions"
 import type {} from "./fixtures/mission-native-family"
 import { panelMissions } from "./mission-content-fixture"
+import { collectPanelReadFailures, PANEL_READ_HEADER } from "./panel-read-fixture"
 
 let server: ViteDevServer, browser: Browser, url: string, output: string
 before(async () => {
@@ -70,9 +71,11 @@ async function setup(label: string, narrow = false, independent = false) {
   page.setDefaultTimeout(12000)
   const errors: string[] = [], failures: string[] = [], consoleErrors: string[] = [], requests: Array<{ method: string; path: string; body?: unknown }> = []
   const voidResponses = new Set<Request>(), voidBodyCancellations: string[] = []
-  const rawRequestFailures: string[] = [], navigationReadCancellations: Array<{ failure: string; requestedSession: string; activeSession: string }> = []
+  const panelReads = collectPanelReadFailures(page, url)
+  const { rawRequestFailures, panelListCancellations } = panelReads
+  const navigationReadCancellations: Array<{ failure: string; requestedSession: string; activeSession: string }> = []
   const failureChecks: Promise<unknown>[] = [], outlineResponses: Array<{ session: string; at: number }> = []
-  const drainRequestFailures = async () => { await Promise.all(failureChecks) }
+  const drainRequestFailures = async () => { await panelReads.drain(); await Promise.all(failureChecks) }
   const receipts: Array<{ method: string; path: string; status: number }> = [], fallbackResponses: string[] = []
   let family = structuredClone(independent ? deepFamily : observedFamily), deferred = false, release!: () => void, reached!: () => void, completed!: () => void
   const hold = new Promise<void>(resolve => { release = resolve }), arrival = new Promise<void>(resolve => { reached = resolve })
@@ -85,7 +88,7 @@ async function setup(label: string, narrow = false, independent = false) {
   })
   page.on("requestfailed", request => {
     const message = `${request.url()} ${request.failure()?.errorText}`
-    rawRequestFailures.push(message)
+    if (panelReads.record(request, failures)) return
     // The actual Promise client cancels empty-response bodies. Retain these
     // confirmed 204 receipts separately, never excuse an unconfirmed failure.
     if (voidResponses.has(request) && request.failure()?.errorText === "net::ERR_ABORTED") voidBodyCancellations.push(message)
@@ -124,6 +127,9 @@ async function setup(label: string, narrow = false, independent = false) {
     const request = route.request(), pathname = new URL(request.url()).pathname, location = { directory: "/fixture" }
     requests.push({ method: request.method(), path: pathname, ...(request.postData() ? { body: request.postDataJSON() } : {}) })
     if (pathname === "/api/events") return route.continue()
+    if (pathname === "/api/panel-extensions") return route.fulfill({ json: [] })
+    if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
+    if (pathname.endsWith("/schedule")) return route.fulfill({ json: { version: 1, projectID: "project" } })
     if (pathname === "/api/storage/config/ui") return route.fulfill({ json: { settings: { locale: narrow ? "he" : "en", showMessageTimeline: true } } })
     if (pathname === "/api/workspaces/native-family/integrations") return route.fulfill({ json: { location, catalog: { state: "fresh" }, integrations: [] } })
     // CodeNomad's canonical bounded pruning routes, not guessed native URLs.
@@ -183,7 +189,7 @@ async function setup(label: string, narrow = false, independent = false) {
   })
   const save = async () => {
     await drainRequestFailures()
-    await writeFile(path.join(output, `${label}.json`), JSON.stringify({ transport: "isolated-http-fakes", errors, failures, consoleErrors, rawRequestFailures, navigationReadCancellations, voidBodyCancellations, requests, receipts, fallbackResponses,
+    await writeFile(path.join(output, `${label}.json`), JSON.stringify({ transport: "isolated-http-fakes", errors, failures, consoleErrors, rawRequestFailures, navigationReadCancellations, panelListCancellations, voidBodyCancellations, requests, receipts, fallbackResponses,
       apiCounts: Object.fromEntries([...new Set(requests.map(item => `${item.method} ${item.path}`))].map(key => [key, requests.filter(item => `${item.method} ${item.path}` === key).length])),
       snapshot: await page.evaluate(() => window.missionNativeFamily?.snapshot()).catch(() => null),
       openGates: ["live authenticated HTTP/SSE desktop host", "invocation profile provenance"] }, null, 2))
@@ -194,7 +200,7 @@ async function setup(label: string, narrow = false, independent = false) {
     if (!narrow) await pickerField(page).waitFor()
     assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).selectedMission, undefined) }
   catch (error) { await save(); release(); await page.close(); throw error }
-  return { page, errors, failures, requests, save, drainRequestFailures, arrival, completion, release, defer: () => { deferred = true },
+  return { page, errors, failures, requests, rawRequestFailures, panelListCancellations, save, drainRequestFailures, arrival, completion, release, defer: () => { deferred = true },
     setFamily: (next: typeof observedFamily) => { family = next },
     unknown: () => { family = { state: "unknown", members: observedFamily.members } } }
 }
@@ -508,7 +514,9 @@ test("390px RTL Attention selects the exact same-active-child permission before 
     await page.locator('.interruption-dock .interruption-navigation button').filter({ has: page.locator('svg.lucide-chevron-right') }).tap()
     await page.waitForFunction(() => document.querySelector(".interruption-dock")?.textContent?.includes("global-fixture.txt"))
     await page.locator(".shell-panel-toggle--right button:visible").tap()
+    const selectedSchedule = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/missions/A/schedule"))
     await pickMission(page, "A")
+    await (await selectedSchedule).json()
     const attention = page.locator(".mission-attention-list")
     await attention.locator("li.mission-needs-item", { hasText: "safe-fixture.txt" }).waitFor()
     const permissionAnswer = answer(attention, "safe-fixture.txt")
@@ -521,6 +529,48 @@ test("390px RTL Attention selects the exact same-active-child permission before 
     assert.equal(requests.filter(item => item.path.includes("permission") && item.method !== "GET").length, 0)
     await ctx.drainRequestFailures(); assert.deepEqual(ctx.errors, []); assert.deepEqual(ctx.failures, [])
   } finally { await ctx.save(); ctx.release(); await page.close() }
+})
+
+test("native catalog supersession is recorded separately while real catalog and unrelated aborts remain failures", { timeout: 60000 }, async () => {
+  const ctx = await setup("catalog-cancellation"), { page } = ctx
+  let release!: () => void, arrived!: (request: Request) => void, first = true
+  const held = new Promise<void>(resolve => { release = resolve })
+  const arrival = new Promise<Request>(resolve => { arrived = resolve })
+  const catalog = new URL("/api/panel-extensions", url).href
+  try {
+    await page.route(catalog, async route => {
+      if (first) { first = false; arrived(route.request()); await held }
+      await route.fulfill({ json: [] })
+    })
+    await page.evaluate(() => window.missionNativeFamily.transport("connected"))
+    const pending = await arrival, readId = pending.headers()[PANEL_READ_HEADER]
+    assert.ok(readId, "the actual production list call has a unique fixture identity")
+    const cancelled = page.waitForEvent("requestfailed", request => request === pending)
+    const replacement = page.waitForResponse(response => response.url() === catalog && response.request() !== pending)
+    await page.evaluate(() => window.missionNativeFamily.transport("connected"))
+    await cancelled
+    assert.deepEqual(await (await replacement).json(), [], "the replacement read succeeds")
+    release(); await ctx.drainRequestFailures()
+    assert.deepEqual(ctx.failures, [])
+    assert.ok(ctx.panelListCancellations.some(read => read.readId === readId))
+    assert.ok(ctx.rawRequestFailures.includes(`${catalog} net::ERR_ABORTED`))
+
+    // Same URL and error code, but without an owning-signal AbortError receipt.
+    await page.route(catalog, route => route.abort("aborted"))
+    const broken = page.waitForEvent("requestfailed", request => request.url() === catalog)
+    await page.evaluate(() => window.missionNativeFamily.transport("connected"))
+    const request = await broken
+    await ctx.drainRequestFailures()
+    assert.equal(await page.evaluate(id => window.missionNativeFamily.panelReadCancelled(id), request.headers()[PANEL_READ_HEADER]), false)
+    assert.deepEqual(ctx.failures, [`${catalog} net::ERR_ABORTED`])
+    const unrelated = new URL("/api/unrelated-read-probe", url).href
+    await page.route(unrelated, route => route.abort("aborted"))
+    const failed = page.waitForEvent("requestfailed", request => request.url() === unrelated)
+    await page.evaluate(url => fetch(url).catch(() => undefined), unrelated); await failed
+    await ctx.drainRequestFailures()
+    assert.deepEqual(ctx.failures, [`${catalog} net::ERR_ABORTED`, `${unrelated} net::ERR_ABORTED`])
+    assert.deepEqual(ctx.errors, [])
+  } finally { release(); await ctx.save(); ctx.release(); await page.close() }
 })
 
 test("deferred ordinary-child navigation cannot overwrite a newer sibling selection", { timeout: 60000 }, async () => {
