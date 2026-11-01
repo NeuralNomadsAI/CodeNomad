@@ -92,6 +92,16 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
     const value = depth(), capability = state().snapshot?.capability
     return Boolean(!state().invalidInput && capability && (value === null || Number.isSafeInteger(value) && value >= capability.minimum && (capability.maximum === undefined || value <= capability.maximum)))
   }
+  /** Whether General subagents can nest here, per OpenCode's resolved rules and the effective depth. */
+  const nesting = () => {
+    const snapshot = state().snapshot, nesting = snapshot?.nesting, effective = snapshot?.effectiveDepth
+    if (!nesting || effective == null) return undefined
+    // Below 2, OpenCode's own depth limit stops nesting whatever General may do.
+    if (effective < 2) return t("missions.depth.nesting.limited")
+    // The effect concerns General launching General; a visible tool leaves other targets to their own rules.
+    if (nesting.hidden) return t("missions.depth.nesting.blocked")
+    return t(nesting.effect === "allow" ? "missions.depth.nesting.allowed" : nesting.effect === "ask" ? "missions.depth.nesting.ask" : "missions.depth.nesting.generalDenied")
+  }
   // Reads and writes only lock the field (read-only keeps keyboard focus); it is disabled when unusable.
   const locked = () => busy() || refreshPending()
   const disabled = () => !props.active() || state().phase === "uncertain" || state().error || !state().snapshot?.capability || !state().snapshot?.project
@@ -131,6 +141,7 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
     <header><h4>{t("missions.depth.title")}</h4><SettingsInfoTip text={t("missions.depth.hint")} /></header>
     <Show when={state().snapshot?.project}>{project => <code class="mission-depth-path" title={project().path}>{project().path}</code>}</Show>
     <p class="mission-depth-effective">{state().snapshot?.effectiveDepth == null ? t("missions.depth.unknown") : t("missions.depth.effective", { depth: state().snapshot!.effectiveDepth! })}</p>
+    <Show when={nesting()}>{text => <p class="mission-depth-nesting">{text()}</p>}</Show>
     <label>{t("missions.depth.label")}<input type="number" step="1" min={state().snapshot?.capability?.minimum} max={state().snapshot?.capability?.maximum}
       placeholder={t("missions.depth.inherit")} aria-describedby={description} value={state().draft} disabled={disabled()} readOnly={locked()}
       onInput={event => entry().state[1]({ ...state(), draft: event.currentTarget.value, invalidInput: event.currentTarget.validity.badInput, rejected: false, dirty: true, saved: false })}
@@ -139,6 +150,8 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
         if (event.key === "Enter") { event.preventDefault(); commit() }
         else if (event.key === "Escape" && state().dirty && !locked()) { event.preventDefault(); event.stopPropagation(); discard() }
       }} ref={field} /></label>
+    <p class="mission-depth-rule">{t("missions.depth.nesting.rule")}</p>
+    <Show when={state().snapshot?.project?.depth != null && state().snapshot?.project?.nestingSkipped}><p role="alert">{t("missions.depth.nesting.skipped")}</p></Show>
     <span id={description} class="sr-only">{t("missions.depth.hint")}</span>
     <div class="window-actions">
       {/* Pressing the button keeps focus in the field, so leaving it cannot first save the typed value.
