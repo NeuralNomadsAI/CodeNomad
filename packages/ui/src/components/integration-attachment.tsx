@@ -4,7 +4,8 @@ import type { IntegrationAttachResponse, IntegrationDetachResponse, IntegrationH
 import { integrationAttachmentRequest } from "../lib/integrations-api"
 import { useI18n } from "../lib/i18n"
 import { HttpResponseError } from "../lib/retryable-file-search"
-import { integrationEpoch, integrations } from "../stores/integrations"
+import { integrationBindings, integrationEpoch, integrations } from "../stores/integrations"
+import type { IntegrationBindingTarget } from "../stores/integration-bindings-store"
 
 interface Target { id: string; title?: string; metadata?: Record<string, unknown> }
 interface Offer { integration: IntegrationView; host: IntegrationHostOffer }
@@ -24,6 +25,15 @@ export function createIntegrationAttachment(props: {
   const unsupported = () => response()?.integrations.some(entry => entry.family === "native" && entry.state === "ok" && entry.status?.host?.state === "unsupported")
   const identity = createMemo(() => JSON.stringify([props.instanceId, props.directory, props.session?.id, props.active !== false]))
   const demandIdentity = createMemo(() => JSON.stringify([props.instanceId, props.directory, props.active !== false]))
+  const bindingEntries = () => response()?.integrations.filter(entry => entry.family === "native" && entry.configured) ?? []
+  const target = (integrationId: string): IntegrationBindingTarget => ({ instanceId: props.instanceId, directory: props.directory, sessionID: props.session?.id ?? "", integrationId })
+  const bindingDemand = createMemo(() => JSON.stringify([identity(), bindingEntries().map(entry => entry.id)]))
+  createEffect(on(bindingDemand, () => {
+    if (props.active === false || !props.session || !props.directory) return
+    const releases = bindingEntries().map(entry => integrationBindings.demand(target(entry.id)))
+    onCleanup(() => releases.forEach(release => release()))
+  }))
+  const attached = (integrationId: string) => integrationBindings.state(target(integrationId)).state === "attached"
   // Maps notify every reader; equality here isolates this view from other workspaces and sessions.
   const epoch = createMemo(() => integrationEpoch(props.instanceId, props.session?.id))
   const [capture, setCapture] = createSignal<Capture>()
@@ -34,15 +44,17 @@ export function createIntegrationAttachment(props: {
   // Captured action receipts survive native echoes; they describe an action, never a live binding.
   const [operation, setOperation] = createSignal<Offer>()
   const [outcome, setOutcome] = createSignal<"attached" | "detached" | "none">()
+  const [detachError, setDetachError] = createSignal<{ identity: string; message: string }>()
   let controller: AbortController | undefined
   let cancel: HTMLButtonElement | undefined
+  let viewGeneration = 0
   const close = () => { controller?.abort(); setCapture(undefined); setOperation(undefined); setOutcome(undefined); setError(undefined); setOffers([]); setSelected(undefined); setPending(false) }
   createEffect(on(demandIdentity, () => {
     const instanceId = props.instanceId, directory = props.directory
     if (props.active === false || !directory) return
     onCleanup(integrations.demand(instanceId, directory))
   }))
-  createEffect(on(identity, close))
+  createEffect(on(identity, () => { viewGeneration++; close(); setDetachError(undefined) }))
   createEffect(on(epoch, () => {
     if (!operation()) { close(); return }
     controller?.abort()
@@ -83,19 +95,46 @@ export function createIntegrationAttachment(props: {
   const mutate = async (action: "attach" | "detach") => {
     const value = capture(), offer = action === "attach" ? selected() : operation()
     if (!value || !offer || !owns(value) || pending()) return
-    if (action === "attach" ? !current(value) || offer.host.protocol !== "ok" : outcome() !== "attached") return
+    if (action === "attach" ? !current(value) || offer.host.protocol !== "ok" : !attached(offer.integration.id)) return
+    const bindingTarget = target(offer.integration.id)
+    if (integrationBindings.busy(bindingTarget)) return
     setOperation(offer); setOffers([]); setSelected(undefined)
     setPending(true); setError(undefined)
-    try {
+    await integrationBindings.run(bindingTarget, async () => { try {
       const result = await integrationAttachmentRequest<IntegrationAttachResponse | IntegrationDetachResponse>(value.instanceId, value.directory,
         // Finish the admitted write across native echoes; navigation still fences its feedback.
         offer.integration.id, action, new AbortController().signal, { sessionID: value.session.id, ...(action === "attach" ? { offerID: offer.host.offerID } : {}) })
       if (!owns(value)) return
       if (result.outcome === "attached" || result.outcome === "detached" || result.outcome === "none") setOutcome(result.outcome)
-      else setError(t(`integrations.outcome.${result.outcome}`))
+      else if (["busy", "gone", "refused"].includes(result.outcome)) setError(t(`integrations.outcome.${result.outcome}`))
+      else setError(fail(undefined))
     } catch (failure) { if (owns(value)) setError(fail(failure)) }
-    finally { if (owns(value)) setPending(false) }
+    finally { if (owns(value)) setPending(false) } })
   }
+  const detach = async (integrationId: string) => {
+    const capturedIdentity = identity(), generation = viewGeneration, bindingTarget = target(integrationId)
+    if (props.active === false || !props.session || !attached(integrationId) || integrationBindings.busy(bindingTarget)) return
+    setDetachError(undefined)
+    await integrationBindings.run(bindingTarget, async () => {
+      try { await integrationAttachmentRequest<IntegrationDetachResponse>(bindingTarget.instanceId, bindingTarget.directory, integrationId,
+        "detach", new AbortController().signal, { sessionID: bindingTarget.sessionID }) }
+      catch (failure) { if (identity() === capturedIdentity && generation === viewGeneration) setDetachError({ identity: capturedIdentity, message: fail(failure) }) }
+    })
+  }
+  const indicator = () => <Show when={props.active !== false && props.session}>
+    <div class="integration-bindings"><For each={bindingEntries()}>{entry => {
+      const binding = () => integrationBindings.state(target(entry.id))
+      const label = () => { const value = binding(); return value.state === "attached" ? value.label : undefined }
+      const description = () => `${entry.app.name}: ${label() ? t("integrations.binding.attached", { label: label()! }) : t("integrations.binding.unknown")}`
+      return <Show when={binding().state !== "none"}><div class="integration-binding" data-integration-binding={entry.id}>
+        <span class="integration-binding-label" tabindex="0" title={description()} aria-label={description()}>
+          <bdi>{entry.app.name}</bdi>: <bdi>{label() ?? t("integrations.binding.unknown")}</bdi>
+        </span>
+        <Show when={label()}><button type="button" class="window-text-button" disabled={integrationBindings.busy(target(entry.id))}
+          onClick={() => void detach(entry.id)}>{t("integrations.detach")}</button></Show>
+      </div></Show>
+    }}</For><Show when={detachError()?.identity === identity()}><p role="alert">{detachError()?.message}</p></Show></div>
+  </Show>
   const picker = () => <Show when={capture()}>{value => <Dialog open modal onOpenChange={next => { if (!next) close() }}>
     <Dialog.Portal><Dialog.Overlay class="modal-overlay z-[1300]" />
       <Dialog.Content class="window-shell integration-attachment" onOpenAutoFocus={event => { event.preventDefault(); cancel?.focus() }}>
@@ -130,10 +169,10 @@ export function createIntegrationAttachment(props: {
           <Show when={!operation()}><button type="button" class="button-primary" disabled={pending() || !selected()} onClick={() => void mutate("attach")}>
             {t(selected() && reattach(selected()!) ? "integrations.reattachConfirm" : "integrations.confirm")}
           </button></Show>
-          <Show when={outcome() === "attached"}><button type="button" class="button-primary" disabled={pending()} onClick={() => void mutate("detach")}>{t("integrations.detach")}</button></Show>
+          <Show when={operation() && attached(operation()!.integration.id)}><button type="button" class="button-primary" disabled={pending()} onClick={() => void mutate("detach")}>{t("integrations.detach")}</button></Show>
         </footer>
       </Dialog.Content>
     </Dialog.Portal>
   </Dialog>}</Show>
-  return { available, unsupported, entries, response, state, open, picker, canAttach: (id: string) => available() && entries().some(entry => entry.id === id && attachable(entry)) }
+  return { available, unsupported, entries, response, state, open, picker, indicator, canAttach: (id: string) => available() && entries().some(entry => entry.id === id && attachable(entry)) }
 }

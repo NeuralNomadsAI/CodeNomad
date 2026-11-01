@@ -1,4 +1,5 @@
-import type { IntegrationsResponse, IntegrationHostsResponse, IntegrationAttachResponse, IntegrationDetachResponse, IntegrationInstallHostResponse } from "../../../server/src/integration-types"
+import type { IntegrationsResponse, IntegrationHostsResponse, IntegrationAttachResponse, IntegrationDetachResponse, IntegrationInstallHostResponse, IntegrationBindingResponse } from "../../../server/src/integration-types"
+import type { IntegrationBindingTarget } from "../stores/integration-bindings-store"
 import { CODENOMAD_API_BASE as API_BASE } from "./api-base"
 import { authenticatedFetch } from "./auth-recovery"
 import { backgroundReads } from "./background-read-queue"
@@ -15,6 +16,24 @@ export function fetchIntegrations(instanceId: string, directory: string, signal:
       throw new Error("Invalid integration response")
     }
     return value as IntegrationsResponse
+  }, "visible")
+}
+
+/** Projected per-session binding only; transport failures revoke authority without exposing native diagnostics. */
+export function fetchIntegrationBinding(target: IntegrationBindingTarget, signal: AbortSignal): Promise<IntegrationBindingResponse> {
+  return backgroundReads.run(signal, async () => {
+    const path = `/api/workspaces/${encodeURIComponent(target.instanceId)}/integrations/${encodeURIComponent(target.integrationId)}/binding?${new URLSearchParams({ directory: target.directory, sessionID: target.sessionID })}`
+    try {
+      const response = await authenticatedFetch(API_BASE ? new URL(path, API_BASE).toString() : path, { signal, credentials: "include", cache: "no-store" })
+      if (!response.ok) return { state: "unknown" }
+      const value = await response.json()
+      if (!value || typeof value !== "object" || Array.isArray(value)) return { state: "unknown" }
+      const keys = Object.keys(value)
+      if (keys.length === 1 && (value.state === "none" || value.state === "unknown")) return { state: value.state }
+      if (keys.length === 2 && keys.includes("label") && value.state === "attached" && typeof value.label === "string"
+        && [...value.label].length > 0 && [...value.label].length <= 120 && !/[/\\\p{Cc}]/u.test(value.label)) return { state: "attached", label: value.label }
+    } catch { /* A failed authority read is unknown; never retain a previous attachment. */ }
+    return { state: "unknown" }
   }, "visible")
 }
 

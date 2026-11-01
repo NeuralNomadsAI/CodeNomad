@@ -2,12 +2,12 @@
 
 An OpenCode integration connects OpenCode to an application (Blender, Gaffer, Microsoft 365...). Its public
 specification lives in [NeuralNomadsAI/opencode-integrations](https://github.com/NeuralNomadsAI/opencode-integrations)
-under `spec/`; CodeNomad consumes draft 0.1 of it. Each integration is one OpenCode plugin package that carries:
+under `spec/`; CodeNomad consumes draft 0.2 of it. Each integration is one OpenCode plugin package that carries:
 
 - a static marker under the `opencodeIntegration` key of its `package.json` (`spec`, `id`, `displayName`,
   `family`, `plugin`, `rpc`, and `host` for the `native` family or `vendor` for `vendor-mcp`);
 - the RPC status contract 1 under its RPC ID `neuralnomads.<app>`: `status` and the payload-free event
-  `status_changed` for every family; `installHost`, `hosts`, `attachHost`, `detachHost`, `advertise`, `withdraw`
+  `status_changed` for every family; `installHost`, `hosts`, `attachHost`, `detachHost`, `bindingRead`, `advertise`, `withdraw`
   and `hosts_changed` for `native` integrations, whose application part announces itself to the plugin.
 
 The three families are `native` (an authenticated loopback host inside the application, reached through
@@ -24,7 +24,8 @@ The three families are `native` (an authenticated loopback host inside the appli
   samples, including the conformance package's cases, through both the zod schema and the vendored JSON Schema
   (Ajv, draft 2020-12) and fails on any disagreement or missing definition. Lengths count code points, as JSON
   Schema does.
-- Inputs are strict. Outputs are reader schemas: they accept and drop unknown fields, and unknown `notices`.
+- Inputs are strict. Outputs accept and drop unknown fields, and unknown `notices`, except `bindingRead`:
+  its input and every output branch, authority and binding object are closed, with all patterns validated locally.
 - `integrationCatalogDocumentSchema` is `catalog.schema.json` exactly; readers use `integrationCatalogSchema`,
   which also refuses two entries sharing an `id`, `package`, `plugin` or `rpc`.
 - Shared types are exported from `packages/server/src/integration-types.ts`.
@@ -110,6 +111,8 @@ loaded, are duplicates whatever their form (registry or Git). With the catalog u
 `server/routes/integration-attachments.ts` expose:
 
 - `GET /api/workspaces/:id/integrations/:integrationId/hosts?directory=` → `{ offers }`;
+- `GET /api/workspaces/:id/integrations/:integrationId/binding?directory=&sessionID=` →
+  `{ state: "attached", label } | { state: "none" } | { state: "unknown" }`;
 - `POST /api/workspaces/:id/integrations/:integrationId/attach?directory=` with `{ offerID, sessionID }` →
   `{ outcome: "attached" | "busy" | "gone" | "refused" }`;
 - `POST /api/workspaces/:id/integrations/:integrationId/detach?directory=` with `{ sessionID }` →
@@ -117,10 +120,20 @@ loaded, are duplicates whatever their form (registry or Git). With the catalog u
 
 The query and bodies are strict. Native session IDs require the `ses` prefix before any native IO. The integration must be native, recognised unambiguously and active in the owned
 Location's plugin snapshot. The server derives its RPC ID from the catalog and calls only the fixed methods
-`status`, `hosts`, `attachHost` and `detachHost`. Hosts and attach check the status marker and refuse an
+`status`, `hosts`, `attachHost`, `detachHost` and `bindingRead`. Hosts and attach check the status marker and refuse an
 `unsupported` host. Detach remains usable when the application has gone. Every RPC output passes through
 `readIntegrationRpcOutput`; display labels, document names and application versions also pass `looksLikePath`.
-Unknown output fields are stripped. Failures expose only fixed codes, including in logs.
+Unknown output fields are stripped except for `bindingRead`, whose extra fields invalidate the whole answer.
+Failures expose only fixed codes, including in logs.
+
+`IntegrationAttachments.bindingRead` calls the catalog's fixed method for the one exact native session, with
+the same before/after session, Location, connection and ownership checks and global deadline as attachment actions.
+It validates the full closed output, including required authority for `attached` and `none`, before projecting
+only state and the safe display label. Generations, revision and offer ID remain backend-only. Only a conforming
+authoritative `none` produces `none`; inactive or missing methods, errors, malformed outputs, missing sessions,
+timeouts and superseded connections produce `unknown`. Ownership refusals may return 403, which display readers
+must treat as `unknown`. A moved session is readable at its newly verified Location; its old Location is refused.
+The read uses native `session.get` by exact ID; never read or write Q8 or enumerate sessions for binding authority.
 
 `server/request-logging.ts` projects integration requests to fixed route templates at debug and trace levels.
 Completion diagnostics keep the method, status and duration; the integration namespace uses a fixed fallback
@@ -194,11 +207,24 @@ The conversation header (wide and overflow layouts) and each associated Plugins 
 picker. The picker initially focuses Cancel, names its captured target conversation and the daemon machine, and
 requires explicit selection and confirmation. Navigation discards the captured target; reconnect and relevant
 native invalidations discard offers. Admitted action receipts remain readable for their unchanged target across
-native echoes, with an explicit safe Detach action after a successful attach. WSL-unsupported status shows help.
+native echoes. WSL-unsupported status shows help.
 Plugins shows an unavailable catalog or the last
 valid catalog's fetch time. Saved Q8 hints offer confirmed reattachment only for matching integration and label.
-Action receipts describe the completed request. A durable live-binding indicator requires an integration-owned
-per-session binding read.
+Action receipts describe the completed request.
+
+`createIntegrationBindingsStore` (`stores/integration-bindings-store.ts`) shares reads for the exact instance,
+Location, session and native integration shown by the conversation header or its Plugins picker. The header keeps
+the application name and safe binding label outside the action overflow at every width; labels use isolated text,
+ellipsis and a full accessible title. An authoritative `none` renders no indicator, while `unknown` is explicit.
+Only a fresh `attached` binding offers Detach, including in the picker. Q8 supplies matching confirmed-reattach
+suggestions. Binding reads carry only the session selector and receive only the projected state/label.
+
+The store uses the shared secondary HTTP budget. Relevant integration/plugin/configuration events and exact-session
+updates, moves or deletions revoke authority immediately and coalesce reads over 300 ms, with one trailing follow-up.
+Reconnect, native stream-open and renderer stream-open reconcile demanded bindings; disconnect revokes them.
+Every read checks its demand identity and generation before publication. Errors publish `unknown`; releasing the last
+demand aborts and drops its state. Attach and detach run once, then invalidate and reconcile their captured target
+in `finally`, including uncertain outcomes, while navigation leaves reads scoped to the latest shown target.
 
 The existing Plugins row menu also offers **Install application integration…** or **Update application integration…**
 only for its exact `configuredSources` association and a fresh active native integration reporting
@@ -221,7 +247,7 @@ error. Uncertain errors require checking the application before a fresh action. 
   only after a new hello, 16 offers and one per offer key under concurrent announcements, validated
   `attachHost`/`detachHost` IDs, `busy`/`gone`/`refused` attachment, at most 10,000 bindings) on the injected clock;
   host part compatibility is derived for the fake's own range `^0.1.0` only, prereleases included.
-  `createFakeIntegrationRpc` adds `status`, `installHost` and the event relay; `sharedOfferRegistry` keeps one
+  `createFakeIntegrationRpc` adds `status`, `installHost`, closed `bindingRead` with generations/revision and the event relay; `sharedOfferRegistry` keeps one
   real-clock registry per daemon process.
 - `scripts/fixtures/fake-integration/index.mjs`: `writeFakeIntegrationPackage`/`packFakeIntegration` write or
   pack `@neuralnomads/opencode-<id>` (default `fixture`) with options `markerMismatch` (`status` reports
@@ -247,6 +273,8 @@ Commands:
   later pages, rate-limit wait, timeout),
   `recognition.test.ts` (three ways, ambiguity, every state, timeout and concurrency), `server/routes/integrations.test.ts`
   and `packages/ui/src/stores/integrations-store.test.ts` (event coalescing, no polling).
+  `packages/ui/src/stores/integration-bindings-store.test.ts` checks shared exact-target demand, immediate authority
+  revocation, generation fences, trailing reads, native/renderer disconnect suspension and captured mutation cleanup.
   `catalog-fixture.ts` builds conforming catalog entries and plugin snapshots.
 - `node --import tsx scripts/test-integrations-recognition-native.mjs <absolute-cli>`: the fake integration loaded
   (`ok`), its marker-mismatch variant (`non-conforming`), a third disabled by its exact rule (`inactive`, recognised)
@@ -256,6 +284,8 @@ Commands:
   packages/server/src/opencode/plugin-sources.test.ts`: real route/service checks for strict inputs, ownership and
   connection changes, missing/moved sessions, full output validation, path refusal, sanitized failures, bounded
   calls, exact Q8 metadata preservation/removal and removal's verified-zero guard with unchanged files on refusal.
+  Binding qualification covers full closed output validation before projection, authoritative none versus unknown,
+  strict query parsing, two sessions/Locations, moved sessions, exact native identity, cancellation and late replies.
   Installation qualification covers the strict empty body, catalog-derived fixed `installHost({ target: "default" })`,
   full output validation with outcome-only projection, sessionless calls and unconditional WSL refusal before catalog
   persistence or installer calls, including a mirrored compatible offer.
@@ -266,6 +296,9 @@ Commands:
   all renderer logger namespaces enabled. Every console level's text and structured arguments, nested Error
   messages/stacks and page errors are captured before navigation and sentinel-scanned before teardown. Adversarial
   HTTP/JSON/transport failures exercise read, hosts, attach, detach, retry and late navigation.
+  Binding qualification covers external authority, Q8/receipt separation, unknown versus none, wide/narrow durable
+  labels with isolation/truncation/accessibility, strict projected-response bounds, moved sessions, late replies,
+  expiry/revocation hints and native/renderer disconnects with pending trailing work.
   Installation qualification exercises the existing row's source association and fresh `host.action`, sessionless
   visibility, Cancel-first shared confirmation with machine/package-version text, preconsent navigation/event fences,
   all projected outcomes, unsupported WSL and uncertain errors without automatic replay.
@@ -273,8 +306,12 @@ Commands:
   OpenCode 2.2.5 with actual Fastify attachment/read/SSE routes, native sessions and metadata, a loopback
   `IntegrationCatalogSource`, and the real relay feeding `createIntegrationsStore` through SSE. Checks a 60-second
   event-free demand and ten native plugin events inside 300 ms, strict inputs and cross-Location refusals. The
-  Blender pilot includes `2a3d1b0`, uses its existing built plugin and add-on installer, and runs `serve.py` with
-  factory startup, private resources, an explicit fixture config directory and registration. Sentinel scans cover
+  Blender pilot extracts the immutable pin recorded in `VENDORED.json` from the supplied checkout read-only,
+  verifies the RPC SHA-256 and builds the real plugin/kit inside the private fixture (esbuild, existing semver 7.8.5).
+  Its add-on installer and `serve.py` run with factory startup, private home/temp/XDG/user resources, private copies
+  of the executable's shipped `BLENDER_SYSTEM_*` resources, and an explicit fixture config directory/registration.
+  Binding reads exercise external native attach/detach, two sessions/Locations, native move with old-Location
+  refusal, and consent-off withdrawal against the pinned real kit. Sentinel scans cover
    HTTP, native and relayed events, SSE, metadata and fixture logs, including the production debug/trace completion
    logger and an adversarial opaque session ID.
   Every child uses the fixture environment. Manual AC-B4 has its own acceptance run.

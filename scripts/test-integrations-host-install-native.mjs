@@ -222,6 +222,7 @@ export default { id: marker.plugin, async setup(ctx) {
     registerRequestLogging(app, logger)
     app.addHook("onRequest", async request => { request.log = logger })
     registerIntegrationAttachmentRoutes(app, { attachments: { installHost: (...args) => service.installHost(...args),
+      bindingRead: (...args) => service.bindingRead(...args),
       hosts: (...args) => service.hosts(...args), attach: (...args) => service.attach(...args), detach: (...args) => service.detach(...args) } })
     const base = await app.listen({ host: "127.0.0.1", port: 0 })
     const request = async (name, expected, body = {}, query = "") => {

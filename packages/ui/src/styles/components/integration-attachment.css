@@ -20,3 +20,8 @@
 .integration-attachment-offers [aria-pressed="true"] { outline: 2px solid var(--accent-primary); outline-offset: -2px; }
 .integration-attachment .window-footer { flex-shrink: 0; }
 .integration-attachment button:focus { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+.integration-bindings:empty { display: none; }
+.integration-bindings { display: grid; gap: var(--space-xs); padding-inline: var(--space-md); font-size: var(--font-size-xs); }
+.integration-binding { display: flex; align-items: center; gap: var(--space-sm); min-width: 0; }
+.integration-binding-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.integration-binding .window-text-button { flex-shrink: 0; }

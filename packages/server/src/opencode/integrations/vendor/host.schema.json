@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/NeuralNomadsAI/opencode-integrations/blob/main/spec/schemas/host.schema.json",
-  "title": "Host wire protocol 1 of a native OpenCode integration (draft 0.1)",
+  "title": "Host wire protocol 1 of a native OpenCode integration (draft 0.2)",
   "description": "Newline-delimited JSON over a loopback TCP connection: one request line, one response line. `hello` is the result of the `hello` method. Rules that need the marker (protocol equality, host and application version ranges) and the capability hash are enforced by the plugin and by packages/conformance.",
   "$defs": {
     "request": {

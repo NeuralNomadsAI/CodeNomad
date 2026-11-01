@@ -1,5 +1,5 @@
 // Fake OpenCode integration (dev-docs/OPENCODE_INTEGRATIONS.md, Test fixtures): the native RPC contract of
-// opencode-integrations spec draft 0.1 with an injectable clock and hello probe. Dependency-free, because
+// opencode-integrations spec draft 0.2 with an injectable clock and hello probe. Dependency-free, because
 // writeFakeIntegrationPackage copies this file into the plugin package the fixture daemon loads; tests may
 // also call it in process.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto"
@@ -120,8 +120,11 @@ export function requestHost({ port, token }, method, params = {}, timeoutMs = HE
 /** The offer registry of HST-11 to HST-16. `now` is the injectable clock; `hello` replaces the TCP probe. */
 export function createOfferRegistry({ protocol = 1, now = Date.now, hello = endpoint => requestHost(endpoint, "hello"), newOfferID } = {}) {
   const offers = new Map(), bindings = new Map(), listeners = new Set()
+  const serviceGeneration = globalThis[Symbol.for("codenomad.fake-integration.serviceGeneration")] ??= randomBytes(16).toString("base64url")
+  const registryGeneration = randomBytes(16).toString("base64url")
+  let revision = 0
   const mint = newOfferID ?? (() => `offer_${randomBytes(12).toString("base64url")}`)
-  const emit = () => { for (const listener of listeners) { listener("hosts"); listener("status") } }
+  const emit = () => { revision++; for (const listener of listeners) { listener("hosts"); listener("status") } }
   const remove = offerID => {
     offers.delete(offerID)
     for (const [sessionID, bound] of bindings) if (bound === offerID) bindings.delete(sessionID)
@@ -186,11 +189,13 @@ export function createOfferRegistry({ protocol = 1, now = Date.now, hello = endp
       if (bound && bound !== offerID && offers.has(bound)) return { outcome: "busy" }
       if (!bound && bindings.size >= MAX_BINDINGS) return { outcome: "refused" }
       bindings.set(sessionID, offerID)
+      if (bound !== offerID) revision++
       for (const listener of listeners) listener("status")
       return { outcome: "attached" }
     },
     detach(sessionID) {
       if (!isText(sessionID, SESSION_ID, 128) || !bindings.delete(sessionID)) return { outcome: "none" }
+      revision++
       for (const listener of listeners) listener("status")
       return { outcome: "detached" }
     },
@@ -199,6 +204,14 @@ export function createOfferRegistry({ protocol = 1, now = Date.now, hello = endp
       sweep()
       const offer = offers.get(bindings.get(sessionID))
       return offer ? { offerID: offer.offerID, label: offer.label } : null
+    },
+    bindingRead(input) {
+      if (!isObject(input) || !hasOnly(input, ["sessionID"]) || typeof input.sessionID !== "string"
+        || !/^[A-Za-z0-9_-]{1,128}$(?![\s\S])/.test(input.sessionID)) return { state: "unknown" }
+      sweep()
+      const offer = offers.get(bindings.get(input.sessionID))
+      const authority = { serviceGeneration, registryGeneration, revision }
+      return offer ? { state: "attached", authority, binding: { offerID: offer.offerID, label: offer.label } } : { state: "none", authority }
     },
     liveHellos() { sweep(); return [...offers.values()].map(offer => ({ compatibility: offer.compatibility, hostVersion: offer.hostVersion, appVersion: offer.appVersion })) },
     counts() { sweep(); return { offers: offers.size, attachedSessions: bindings.size } },
@@ -251,6 +264,7 @@ export function createFakeIntegrationRpc({ marker, version = FAKE_INTEGRATION_VE
     // OpenCode enforces no pattern in the registered definitions: the registry checks both IDs.
     attachHost: async input => registry.attach(input?.offerID, input?.sessionID),
     detachHost: async input => registry.detach(input?.sessionID),
+    bindingRead: async input => registry.bindingRead(input),
     advertise: input => registry.advertise(input),
     withdraw: async input => registry.withdraw(input),
   }

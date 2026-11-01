@@ -73,20 +73,29 @@ async function open(width = 1500, height = 850) {
   const diagnostics = captureDiagnostics(page)
   // lib/logger has namespace switches rather than a separate severity threshold: enable all of them at boot.
   await page.addInitScript(() => localStorage.setItem("opencode:logger:namespaces", JSON.stringify(["sse", "api", "session", "actions", "foreground-refresh", "scroll"])))
+  // Drive transport status/open explicitly through ServerEvents, without incidental HTTP fixture reconnects.
+  await page.addInitScript(() => { (window as any).EventSource = class { addEventListener() {} removeEventListener() {} close() {} } })
   const calls: Array<{ action: string; directory: string | null; body: any; method?: string }> = []
   const model = { state: "ok", offers: 1, family: "native", host: "ok", catalog: "fresh", association: 4, outcome: "attached", detachOutcome: "detached", removeCode: "", hold: undefined as Route | undefined, holdHosts: false, holdAttach: false, holdDetach: false,
+    binding: "none", bindingLabel: "Scene", bindingExtra: false, holdBinding: false, bindingRequests: [] as Route[], bindingBySession: {} as Record<string, { state: string; label?: string }>,
     hostAction: undefined as "install" | "update" | undefined, associationScope: "global", version: "1.0.0", installOutcome: "installed", holdInstall: false,
-    failure: undefined as { action: "read" | "hosts" | "attach" | "detach" | "install-host"; kind: FailureKind } | undefined }
+    failure: undefined as { action: "read" | "hosts" | "attach" | "detach" | "install-host" | "binding"; kind: FailureKind } | undefined }
   await page.route("**/api/**", async route => {
     const request = route.request(), parsed = new URL(request.url())
     if (parsed.pathname.endsWith("/plugin-sources") && request.method() === "DELETE" && model.removeCode) {
       return route.fulfill({ status: 409, json: { code: model.removeCode, error: "Removal refused" } })
     }
-    const match = parsed.pathname.match(/\/integrations(?:\/blender\/(hosts|attach|detach|install-host))?$/)
+    const match = parsed.pathname.match(/\/integrations(?:\/blender\/(hosts|attach|detach|install-host|binding))?$/)
     if (!match) return route.fulfill({ json: {} })
     const action = match[1] ?? "read"
     calls.push({ action, directory: parsed.searchParams.get("directory"), body: request.postDataJSON(), ...(action === "install-host" ? { method: request.method() } : {}) })
     if (model.failure?.action === action) return failResponse(route, model.failure.kind)
+    if (action === "binding") {
+      if (model.holdBinding) { model.bindingRequests.push(route); return }
+      const value = model.bindingBySession[parsed.searchParams.get("sessionID") ?? ""]
+        ?? { state: model.binding, ...(model.binding === "attached" ? { label: model.bindingLabel } : {}) }
+      return route.fulfill({ json: { ...value, ...(model.bindingExtra ? { authority: privateHost } : {}) } })
+    }
     if (action === "hosts") {
       if (model.holdHosts) { model.hold = route; return }
       return route.fulfill({ json: { offers: [{ offerID: "offer-1", label: "Scene", document: "Scene.blend", protocol: "ok" }] } })
@@ -97,7 +106,11 @@ async function open(width = 1500, height = 850) {
       if (model.holdInstall) { model.hold = route; return }
       return route.fulfill({ json: { outcome: model.installOutcome } })
     }
-    if (action === "attach" || action === "detach") return route.fulfill({ json: { outcome: action === "detach" ? model.detachOutcome : model.outcome } })
+    if (action === "attach" || action === "detach") {
+      if (action === "attach" && model.outcome === "attached") model.binding = "attached"
+      if (action === "detach") model.binding = "none"
+      return route.fulfill({ json: { outcome: action === "detach" ? model.detachOutcome : model.outcome } })
+    }
     return route.fulfill({ json: { location: { directory: "/repo" }, catalog: { state: model.catalog, fetchedAt: "2026-11-01T12:00:00Z" }, integrations: [{
       id: "blender", displayName: "OpenCode for Blender", app: { name: "Blender", versions: ">=5.2" }, family: model.family,
       configured: true, configuredSources: [{ scope: model.associationScope, entryIndex: model.association }], scopes: ["global"], state: model.state,
@@ -137,6 +150,8 @@ async function held(model: { hold?: Route }) {
   return route
 }
 const installLabel = "Install application integration…"
+const bindingRow = (page: Page) => page.locator('[data-integration-binding="blender"]')
+const bindingDetach = (page: Page) => bindingRow(page).getByRole("button", { name: "Detach this conversation", exact: true })
 const updateLabel = "Update application integration…"
 const pluginRow = (page: Page) => page.locator('[data-plugin-id="neuralnomads.blender"]')
 async function refreshInstallation(page: Page) {
@@ -420,7 +435,7 @@ test("real shell wide and narrow entries use a Cancel-focused trusted picker, ex
       if (screenshots) await dialog.screenshot({ path: join(screenshots, `attachment-${width}.png`) })
       assert.equal(calls.filter(call => call.action === "attach").length, 0, "selecting never consents")
       await dialog.getByRole("button", { name: "Confirm reattach", exact: true }).click()
-      await dialog.getByText(/This is a local observation/).waitFor()
+       await dialog.getByText(/Attachment request completed here/).waitFor()
       assert.deepEqual(calls.find(call => call.action === "attach"), { action: "attach", directory: "/repo", body: { sessionID: "session", offerID: "offer-1" } })
       await dialog.getByRole("button", { name: "Detach this conversation", exact: true }).click()
       await dialog.getByText(/Detach request completed here/).waitFor()
@@ -495,7 +510,7 @@ test("late hosts cannot retarget another conversation; busy/gone/refused remain 
     await page.getByRole("dialog", { name: label }).waitFor({ state: "hidden" })
     await model.hold?.fulfill({ json: { outcome: "attached" } })
     await page.waitForTimeout(100)
-    assert.equal(await page.getByText(/This is a local observation/).count(), 0, "late mutation feedback never belongs to another session")
+    assert.equal(await page.getByText(/Attachment request completed here/).count(), 0, "late mutation feedback never belongs to another session")
     assert.equal(calls.filter(call => call.action === "attach").at(-1)?.body.sessionID, "other")
   } finally { await finish() }
 })
@@ -588,8 +603,9 @@ test("native echoes before and after attach and detach HTTP responses retain sco
       await dialog.getByText("Waiting for the application…", { exact: true }).waitFor()
       assert.match(await dialog.innerText(), /Blender Scene Scene.blend/)
       assert.match(await dialog.innerText(), /Fixture conversation/)
+      model.binding = "attached"
       await attach.fulfill({ json: { outcome: "attached" } })
-      await dialog.getByText(/This is a local observation; the current binding cannot be checked/).waitFor()
+      await dialog.getByText(/Attachment request completed here/).waitFor()
       await echoes(page)
       await call(page, "open")
       await dialog.getByRole("button", { name: "Detach this conversation", exact: true }).waitFor()
@@ -600,8 +616,9 @@ test("native echoes before and after attach and detach HTTP responses retain sco
       await echoes(page)
       await dialog.getByText("Waiting for the application…", { exact: true }).waitFor()
       assert.equal(await dialog.getByRole("button", { name: "Detach this conversation", exact: true }).isDisabled(), true)
+      model.binding = "none"
       await detach.fulfill({ json: { outcome: detachOutcome } })
-      await dialog.getByText(/Detach request completed here.*local action receipt/).waitFor()
+      await dialog.getByText(/Detach request completed here/).waitFor()
       await echoes(page)
       assert.equal(await dialog.isVisible(), true)
       assert.equal(await dialog.getByRole("button", { name: "Detach this conversation", exact: true }).count(), 0)
@@ -638,6 +655,7 @@ test("native echoes retain refused outcomes and transport errors, including a us
     const dialog = page.getByRole("dialog", { name: label })
     await dialog.getByRole("button", { name: /Blender.*Scene/ }).click()
     await dialog.getByRole("button", { name: "Confirm attachment", exact: true }).click()
+    model.binding = "attached"
     await (await held(model)).fulfill({ json: { outcome: "attached" } })
     await dialog.getByRole("button", { name: "Detach this conversation", exact: true }).click()
     const detach = await held(model)
@@ -648,6 +666,7 @@ test("native echoes retain refused outcomes and transport errors, including a us
     assert.equal(await dialog.getByRole("button", { name: "Detach this conversation", exact: true }).isEnabled(), true)
     assert.equal(calls.filter(call => call.action === "detach").length, 1, "an error never replays detach")
     await dialog.getByRole("button", { name: "Detach this conversation", exact: true }).click()
+    model.binding = "none"
     await (await held(model)).fulfill({ json: { outcome: "none" } })
     await dialog.getByText(/Detach request completed here/).waitFor()
   } finally { await finish() }
@@ -737,5 +756,182 @@ for (const kind of failureKinds) test(`renderer confidentiality across ${kind}, 
     assert.equal(count("attach"), 3, "navigation never replays an admitted mutation")
     await diagnostics.drain()
     assert.ok(diagnostics.consoleEntries.some(entry => entry.text.includes("event batch")), "the real native dispatcher emitted safe SSE diagnostics")
+  } finally { await finish() }
+})
+
+for (const width of [1500, 390]) test(`AC-C12 durable binding outside overflow at ${width}px: external authority, safe bounded label, Q8 and none/unknown`, async () => {
+  const { page, calls, model, finish } = await open(width)
+  try {
+    await page.waitForFunction(() => Boolean(document.querySelector('.session-header-expanded-actions')))
+    await page.waitForTimeout(100)
+    assert.equal(await bindingRow(page).count(), 0, "authoritative none has no indicator")
+    await call(page, "hint", "blender", "Scene")
+    assert.equal(await bindingRow(page).count(), 0, "Q8 grants neither an indicator nor Detach")
+    model.binding = "attached"
+    model.bindingLabel = `אבג <img onerror=alert(1)> ${"W".repeat(90)}`
+    await call(page, "event", "rpc.neuralnomads.blender.hosts_changed")
+    await bindingDetach(page).waitFor()
+    const row = bindingRow(page), label = row.locator(".integration-binding-label")
+    assert.match(await row.innerText(), /Blender/)
+    assert.equal(await row.locator("img, script").count(), 0, "labels render as text")
+    assert.equal(await label.locator("bdi").count(), 2)
+    assert.ok((await label.getAttribute("title"))?.includes(model.bindingLabel), "full label stays accessible")
+    assert.equal(await label.getAttribute("title"), await label.getAttribute("aria-label"))
+    assert.equal(await row.evaluate(el => Boolean(el.closest('.session-header-expanded-actions, [role="menu"]'))), false)
+    const box = await row.boundingBox()
+    assert.ok(box && box.x >= 0 && box.x + box.width <= width, "durable row stays within the viewport")
+    assert.equal(await label.evaluate(el => getComputedStyle(el).textOverflow), "ellipsis")
+    assert.equal(await label.evaluate(el => el.scrollWidth > el.clientWidth), true, "long label is visibly truncated")
+    assert.equal(calls.filter(call => call.action === "hosts" || call.action === "attach").length, 0, "external native attach needs no local receipt")
+    await bindingDetach(page).click()
+    await row.waitFor({ state: "hidden" })
+    assert.deepEqual(calls.find(call => call.action === "detach")?.body, { sessionID: "session" })
+    model.binding = "unknown"
+    await call(page, "event", "rpc.neuralnomads.blender.status_changed")
+    await row.getByText(/Binding unknown/).waitFor()
+    assert.equal(await bindingDetach(page).count(), 0)
+    model.binding = "none"
+    await call(page, "event", "plugin.updated")
+    await row.waitFor({ state: "hidden" })
+  } finally { await finish() }
+})
+
+test("AC-C12 reload restores a live binding without Q8 or an action receipt and reads external detachment afresh", async () => {
+  const { page, model, calls, finish } = await open()
+  try {
+    model.binding = "attached"
+    model.bindingLabel = "Restored scene"
+    await page.reload()
+    await bindingDetach(page).waitFor()
+    assert.match(await bindingRow(page).innerText(), /Restored scene/)
+    assert.equal(calls.filter(call => call.action === "attach").length, 0, "reload never replays attachment")
+    model.binding = "none"
+    const freshRead = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/binding"))
+    await page.reload()
+    await page.waitForFunction(() => Boolean((window as any).integrationFixture))
+    await freshRead
+    assert.equal(await bindingRow(page).count(), 0, "no saved UI authority survives reload")
+    assert.equal(calls.filter(call => call.action === "detach").length, 0, "external detachment is a read, never a replay")
+  } finally { await finish() }
+})
+
+test("AC-C12 pending binding reads cannot publish into another session/Location or revive revoked authority", async () => {
+  const { page, calls, model, finish } = await open()
+  try {
+    model.binding = "attached"
+    await call(page, "event", "rpc.neuralnomads.blender.status_changed")
+    await bindingDetach(page).waitFor()
+    model.holdBinding = true
+    await call(page, "event", "config.updated")
+    assert.equal(await bindingDetach(page).count(), 0, "invalidation revokes Detach before debounce")
+    await page.waitForTimeout(350)
+    assert.equal(model.bindingRequests.length, 1)
+    await shell(page, "addSession", "other")
+    await shell(page, "selectSession", "other")
+    await page.waitForTimeout(100)
+    assert.equal(model.bindingRequests.length, 2)
+    await model.bindingRequests[0]!.fulfill({ json: { state: "attached", label: "Obsolete" } }).catch(() => {})
+    await model.bindingRequests[1]!.fulfill({ json: { state: "none" } })
+    await bindingRow(page).waitFor({ state: "hidden" })
+    assert.equal(await page.getByText("Obsolete", { exact: true }).count(), 0)
+    await call(page, "move", "other", "/worktree")
+    await page.waitForTimeout(100)
+    assert.equal(calls.filter(call => call.action === "binding").at(-1)?.directory, "/worktree")
+    await model.bindingRequests[2]!.fulfill({ json: { state: "attached", label: "Moved" } })
+    await bindingDetach(page).waitFor()
+    assert.match(await bindingRow(page).innerText(), /Moved/)
+    await call(page, "disconnect")
+    assert.equal(await bindingDetach(page).count(), 0)
+    await call(page, "reconnect")
+    await page.waitForTimeout(100)
+    await call(page, "open")
+    await model.bindingRequests[3]!.fulfill({ json: { state: "attached", label: "Pre-open" } })
+    await page.waitForTimeout(100)
+    assert.equal(await bindingDetach(page).count(), 0, "pre-open answer is fenced")
+    await model.bindingRequests[4]!.fulfill({ json: { state: "none" } })
+    await bindingRow(page).waitFor({ state: "hidden" })
+    assert.equal(calls.some(call => call.action === "detach"), false)
+  } finally { await finish() }
+})
+
+test("AC-C12 receipts never grant Detach: fresh authority controls the picker, expiry/revocation and uncertain mutations reconcile once", async () => {
+  const { page, calls, model, finish } = await open()
+  try {
+    model.holdAttach = true
+    await launch(page)
+    const dialog = page.getByRole("dialog", { name: label })
+    await dialog.getByRole("button", { name: /Blender.*Scene/ }).click()
+    await dialog.getByRole("button", { name: "Confirm attachment", exact: true }).click()
+    await (await held(model)).fulfill({ json: { outcome: "attached" } })
+    await dialog.getByText(/Attachment request completed here/).waitFor()
+    await page.waitForTimeout(100)
+    assert.equal(await dialog.getByRole("button", { name: "Detach this conversation", exact: true }).count(), 0, "successful receipt with authoritative none grants nothing")
+    model.binding = "attached"
+    await call(page, "event", "rpc.neuralnomads.blender.status_changed")
+    const detach = dialog.getByRole("button", { name: "Detach this conversation", exact: true })
+    await detach.waitFor()
+    model.binding = "unknown"
+    await call(page, "event", "rpc.neuralnomads.blender.hosts_changed")
+    assert.equal(await detach.count(), 0, "expiry immediately revokes picker Detach")
+    model.binding = "attached"
+    await call(page, "reconnect")
+    await detach.waitFor()
+    model.holdBinding = true
+    model.failure = { action: "detach", kind: "network-error" }
+    const before = calls.filter(call => call.action === "binding").length
+    await detach.click()
+    await dialog.getByRole("alert").filter({ hasText: /\S/ }).waitFor()
+    assert.equal(await detach.count(), 0, "an uncertain mutation cannot retain authority")
+    await page.waitForTimeout(100)
+    assert.equal(calls.filter(call => call.action === "binding").length, before + 1, "finally reads once without native echoes")
+    await model.bindingRequests[0]!.fulfill({ json: { state: "none" } })
+    await call(page, "event", "rpc.neuralnomads.blender.status_changed")
+    await page.waitForTimeout(350)
+    assert.equal(calls.filter(call => call.action === "detach").length, 1, "no automatic mutation replay")
+  } finally { await finish() }
+})
+
+for (const kind of [...failureKinds, "extra-fields", "oversized-label"] as const) test(`AC-C12 binding ${kind} revokes attached and keeps renderer diagnostics confidential`, async () => {
+  const { page, model, finish } = await open()
+  try {
+    model.binding = "attached"
+    await call(page, "reconnect")
+    await bindingDetach(page).waitFor()
+    if (kind === "extra-fields") model.bindingExtra = true
+    else if (kind === "oversized-label") model.bindingLabel = "x".repeat(121)
+    else model.failure = { action: "binding", kind }
+    await call(page, "reconnect")
+    await bindingRow(page).getByText(/Binding unknown/).waitFor()
+    await page.waitForTimeout(100)
+    assert.equal(await bindingDetach(page).count(), 0)
+    assertNoSentinels(await page.locator("body").innerText(), sentinelOptions, "binding error display")
+    model.bindingExtra = false; model.bindingLabel = "Scene"; model.failure = undefined
+    await call(page, "open")
+    await bindingDetach(page).waitFor()
+  } finally { await finish() }
+})
+
+for (const disconnect of ["disconnect", "transportDisconnect"]) test(`AC-C12 ${disconnect} aborts dirty trailing work until reconnect`, async () => {
+  const { page, model, calls, finish } = await open()
+  try {
+    model.binding = "attached"
+    await call(page, "reconnect")
+    await bindingDetach(page).waitFor()
+    model.holdBinding = true
+    await call(page, "event", "config.updated")
+    await page.waitForTimeout(350)
+    await call(page, "event", "plugin.updated")
+    await page.waitForTimeout(350)
+    const reads = calls.filter(call => call.action === "binding").length
+    await call(page, disconnect)
+    assert.equal(await bindingDetach(page).count(), 0)
+    await model.bindingRequests[0]!.fulfill({ json: { state: "attached", label: "Stale" } }).catch(() => {})
+    await call(page, "event", "rpc.neuralnomads.blender.hosts_changed")
+    await page.waitForTimeout(400)
+    assert.equal(calls.filter(call => call.action === "binding").length, reads, "disconnected work cannot revive authority")
+    assert.equal(await bindingDetach(page).count(), 0)
+    model.holdBinding = false
+    await call(page, disconnect === "disconnect" ? "reconnect" : "open")
+    await bindingDetach(page).waitFor()
   } finally { await finish() }
 })

@@ -4,7 +4,8 @@
 // All children have allowlisted/private environments. AC-B4 remains a separate manual check.
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
-import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises"
+import { createHash } from "node:crypto"
+import { access, cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
@@ -24,6 +25,7 @@ import { IntegrationCatalogSource } from "../packages/server/src/opencode/integr
 import { catalogEntry, catalogOf } from "../packages/server/src/opencode/integrations/catalog-fixture.ts"
 import { IntegrationsReader } from "../packages/server/src/opencode/integrations/integrations.ts"
 import { IntegrationAttachments } from "../packages/server/src/opencode/integrations/attachments.ts"
+import { readIntegrationRpcOutput } from "../packages/server/src/opencode/integrations/contract.ts"
 import { INTEGRATION_ATTACHMENT_METADATA_KEY as Q8 } from "../packages/server/src/integration-types.ts"
 import { registerIntegrationRoutes } from "../packages/server/src/server/routes/integrations.ts"
 import { registerIntegrationAttachmentRoutes } from "../packages/server/src/server/routes/integration-attachments.ts"
@@ -31,9 +33,10 @@ import { registerEventRoutes } from "../packages/server/src/server/routes/events
 import { registerRequestLogging } from "../packages/server/src/server/request-logging.ts"
 import { createIntegrationsStore, isIntegrationRefreshEvent } from "../packages/ui/src/stores/integrations-store.ts"
 
-const pilot = path.resolve(process.argv[3] ?? "D:/opencode_bundles-work/opencode-integrations")
+const pilotSource = path.resolve(process.argv[3] ?? "D:/opencode_bundles-work/opencode-integrations")
+const integrationRevision = "54d6e5d0f4c22e74d228822fcaaa0912818a8b46"
 const blender = process.argv[4] ?? "D:/build_windows_Release_x64_vc17_Release/bin/Release/blender.exe"
-const plugin = path.join(pilot, "integrations/blender/plugin")
+let pilot, plugin
 const host = await startFakeHost({ leaky: true })
 const secretOptions = { port: host.port }
 const check = (value, label) => assertNoSentinels(value, secretOptions, label)
@@ -72,9 +75,25 @@ try {
   await withProductRuntime(process.argv[2], async ({ root, configDirectory }) => {
     fixtureRoot = root
     const env = await fixtureEnvironment(root)
-    assert.equal((await command("git", ["merge-base", "--is-ancestor", "2a3d1b0", "HEAD"], env, pilot)).code, 0,
-      "The Blender pilot includes the reviewed fix")
-    await readFile(path.join(plugin, "dist/index.js"))
+    // Read the immutable pin, never the checkout's current build; all extraction/build writes stay private.
+    const archive = path.join(root, "integration-pin.tar")
+    assert.equal((await command("git", ["archive", "--format=tar", `--output=${archive}`, integrationRevision], env, pilotSource)).code, 0)
+    pilot = path.join(root, "integration-pin")
+    await mkdir(pilot)
+    assert.equal((await command("tar", ["-xf", archive, "-C", pilot], env, root)).code, 0)
+    const schema = await readFile(path.join(pilot, "spec/schemas/rpc.schema.json"))
+    assert.equal(createHash("sha256").update(schema).digest("hex"), "291ee28dd4f286b400ef914e85b69c6d6331272b07f0c648e32e0176285bbc47")
+    const semver = JSON.parse(await readFile(path.join(pilotSource, "node_modules/semver/package.json"), "utf8"))
+    assert.equal(semver.version, "7.8.5")
+    plugin = path.join(pilot, "integrations/blender/plugin")
+    const buildOptions = { entryPoints: [path.join(plugin, "src/plugin.ts")], outfile: path.join(plugin, "dist/index.js"),
+      bundle: true, format: "esm", platform: "node", target: "node22", external: ["@opencode/plugin", "@opencode/plugin/*"],
+      nodePaths: [path.join(pilotSource, "node_modules")],
+      banner: { js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);' } }
+    assert.equal((await command(process.execPath, ["--input-type=module", "-e",
+      `import { build } from ${JSON.stringify(import.meta.resolve("esbuild"))}; await build(${JSON.stringify(buildOptions)});`], env, root)).code, 0,
+    "The private builder and its esbuild child inherit only the fixture environment")
+    console.log(`Real integration kit pin: ${integrationRevision}; private Blender plugin build`)
     await access(blender)
     const fake = await writeFakeIntegrationPackage(path.join(root, "fake-integration"))
     await writeFile(path.join(configDirectory, "opencode.jsonc"), JSON.stringify({
@@ -253,6 +272,8 @@ try {
       store = undefined
 
       const session = await client.session.create({ location: { directory: location }, title: "C4 fixture" })
+      const bindingRead = (sessionID, options = {}) => request("binding", { ...options, query: `&sessionID=${encodeURIComponent(sessionID)}` })
+      assert.deepEqual(await bindingRead(session.id), { state: "none" })
       const metadata = { fixture: { keep: true }, unrelated: "preserve" }
       await client.session.update({ sessionID: session.id, metadata })
       const listed = await request("hosts")
@@ -260,6 +281,7 @@ try {
       assert(listed.offers.every(offer => Object.keys(offer).sort().join(",") === "label,offerID,protocol"), "Leaky display fields are stripped")
       const offerID = listed.offers[0].offerID
       assert.deepEqual(await request("attach", { body: { offerID, sessionID: session.id } }), { outcome: "attached" })
+      assert.deepEqual(await bindingRead(session.id), { state: "attached", label: "Fixture scene" })
       assert.equal((await request("")).integrations.find(item => item.id === "fixture").status.connection.attachedSessions, 1)
       const attached = await client.session.get({ sessionID: session.id })
       check(attached.metadata, "Q8 metadata")
@@ -271,6 +293,7 @@ try {
       const updatedMetadata = { ...attached.metadata, unrelated: "updated by another native writer", latest: { keep: 2 } }
       await client.session.update({ sessionID: session.id, metadata: updatedMetadata })
       assert.deepEqual(await request("detach", { body: { sessionID: session.id } }), { outcome: "detached" })
+      assert.deepEqual(await bindingRead(session.id), { state: "none" })
       assert.equal((await request("")).integrations.find(item => item.id === "fixture").status.connection.attachedSessions, 0)
       const detached = await client.session.get({ sessionID: session.id })
       const { [Q8]: _hint, ...expectedMetadata } = updatedMetadata
@@ -283,6 +306,7 @@ try {
       const otherSession = await client.session.create({ location: { directory: other } })
       await client.session.update({ sessionID: otherSession.id, metadata })
       const beforeRefusal = calls.length
+      await bindingRead(otherSession.id, { expected: 403 })
       assert.equal((await request("attach", { body: { offerID, sessionID: otherSession.id }, expected: 403 })).code, "forbidden")
       assert.equal((await request("detach", { body: { sessionID: otherSession.id }, expected: 403 })).code, "forbidden")
       assert.equal((await request("hosts", { directory: foreign, expected: 403 })).code, "forbidden")
@@ -308,6 +332,7 @@ try {
       assert.equal((await rpc("advertise", host.advertiseInput({ label: "C:fixture", offer_key: "path-label" }))).outcome, "accepted")
       assert.equal((await request("hosts", { expected: 502 })).code, "non-conforming")
       await rpc("withdraw", { offer_key: "path-label", token: host.token })
+      await request("binding", { query: `&sessionID=ses_${FAKE_INTEGRATION_SENTINELS.scriptHandle}&${FAKE_INTEGRATION_SENTINELS.token}=bad`, expected: 400 })
       console.log("PASS cross-owned-location refusal, unowned location, strict/malformed inputs, missing/gone sessions/offers, unsafe display refusal")
 
       const blenderEnv = await fixtureEnvironment(root, { ...Object.fromEntries(Object.entries(env).filter(([key]) =>
@@ -315,6 +340,17 @@ try {
       assert(Object.keys(blenderEnv).every(key => !/^BLENDER_SYSTEM_|^BLENDER_USER_(SCRIPTS|CONFIG|DATAFILES|EXTENSIONS)$|^PYTHON(PATH|HOME)$/.test(key)),
         "All system/user-script overrides are scrubbed")
       await mkdir(blenderEnv.BLENDER_USER_RESOURCES, { recursive: true })
+      const versionProbe = await command(blender, ["--version"], blenderEnv, root)
+      assert.equal(versionProbe.code, 0)
+      const resourceVersion = /Blender (\d+\.\d+)/.exec(versionProbe.output)?.[1]
+      assert(resourceVersion, "Blender identifies its shipped system resources")
+      for (const part of ["scripts", "datafiles", "python", "extensions"]) {
+        const target = path.join(root, "blender-system", part)
+        await cp(path.join(path.dirname(blender), resourceVersion, part), target, { recursive: true })
+        blenderEnv[`BLENDER_SYSTEM_${part.toUpperCase()}`] = target
+      }
+      assert(["SCRIPTS", "DATAFILES", "PYTHON", "EXTENSIONS"].every(part => blenderEnv[`BLENDER_SYSTEM_${part}`].startsWith(root + path.sep)),
+        "Every explicit system override is a private copy of this executable's shipped resources")
       const { installAddon } = await tsImport(pathToFileURL(path.join(pilot, "integrations/blender/test/helpers/blender.ts")).href, import.meta.url)
       installAddon({ root, env: blenderEnv, extensions: path.join(blenderEnv.BLENDER_USER_RESOURCES, "extensions/user_default") })
       blenderChild = spawn(blender, ["-b", "--factory-startup", "--python-exit-code", "3", "--python",
@@ -334,18 +370,48 @@ try {
       assert.equal(blenderOffers[0].label, "Blender: Untitled")
       assert.equal(blenderOffers[0].protocol, "ok")
       assert.deepEqual(await request("attach", { integration: "blender", body: { offerID: blenderOffers[0].offerID, sessionID: session.id } }), { outcome: "attached" })
+      const blenderBinding = (sessionID, options = {}) => bindingRead(sessionID, { integration: "blender", ...options })
+      const nativeBinding = async (sessionID, directory = location) => {
+        const { output } = await recorded.client.rpc.call({ rpcID: "neuralnomads.blender", method: "bindingRead", input: { sessionID }, location: { directory } })
+        check(output, "real kit binding output")
+        assert(readIntegrationRpcOutput("bindingRead.output", output).ok, "real kit supplies a fully conforming closed output")
+        return output
+      }
+      const read = await nativeBinding(session.id)
+      assert.equal(read.state, "attached")
+      assert.deepEqual(await blenderBinding(session.id), { state: "attached", label: "Blender: Untitled" })
+      assert.deepEqual(await blenderBinding(otherSession.id, { directory: other }), { state: "none" })
+      // A second client mutates the real kit directly: reads stay authoritative while Q8 remains unchanged.
+      const external = async (method, input, directory = location) => {
+        const { output } = await client.rpc.call({ rpcID: "neuralnomads.blender", method, input, location: { directory } })
+        check(output, "external native outcome")
+        return output
+      }
+      assert.deepEqual(await external("detachHost", { sessionID: session.id }), { outcome: "detached" })
+      assert.deepEqual(await blenderBinding(session.id), { state: "none" })
+      assert.deepEqual(await external("attachHost", { offerID: blenderOffers[0].offerID, sessionID: session.id }), { outcome: "attached" })
+      assert.deepEqual(await blenderBinding(session.id), { state: "attached", label: "Blender: Untitled" })
+      await client.session.move({ sessionID: session.id, directory: other })
+      await blenderBinding(session.id, { expected: 403 })
+      assert.equal((await nativeBinding(session.id)).state, "unknown", "old native Location loses authority")
+      assert.deepEqual(await blenderBinding(session.id, { directory: other }), { state: "attached", label: "Blender: Untitled" })
+      await client.session.move({ sessionID: session.id, directory: location })
+      assert.deepEqual(await blenderBinding(session.id), { state: "attached", label: "Blender: Untitled" })
       const blenderMetadata = (await client.session.get({ sessionID: session.id })).metadata
       assert.deepEqual(blenderMetadata[Q8].integration, "blender")
       check(blenderMetadata, "Blender Q8")
       assert.deepEqual(await request("detach", { integration: "blender", body: { sessionID: session.id } }), { outcome: "detached" })
+      assert.deepEqual(await blenderBinding(session.id), { state: "none" })
       assert.deepEqual((await client.session.get({ sessionID: session.id })).metadata, expectedMetadata)
+      assert.deepEqual(await external("attachHost", { offerID: blenderOffers[0].offerID, sessionID: session.id }), { outcome: "attached" })
       await until("Blender consent-off withdrawal", async () => blenderOutput.includes("CONSENT_OFF")
         && (await request("hosts", { integration: "blender" })).offers.length === 0, 35_000)
+      assert.deepEqual(await blenderBinding(session.id), { state: "none" }, "withdrawal revokes the live binding")
       await writeFile(stopFile, "stop")
       assert.equal(await blenderStopped, 0, "Blender exits cleanly from its private fixture")
       assert(["OFFERED", "CONSENT_OFF", "SERVED"].every(marker => blenderOutput.includes(marker)), "The pilot completes its consent lifecycle")
       check(blenderOutput, "Blender output")
-      console.log("PASS Blender pilot >=2a3d1b0: private factory-startup, explicit config-dir, native advertise, HTTP hosts/attach/detach, consent-off withdraw")
+      console.log("PASS pinned real Blender kit: bindingRead projection, two sessions/Locations, external attach/detach, native move with old-Location refusal, consent-off withdrawal")
       assert.equal(subscriptionCount, 1, "One native shared-stream subscriber serves both logical recipients")
       check(native, "native stream")
       check(relayed, "relayed events")

@@ -48,7 +48,7 @@ describe("fake integration package", () => {
     assert.deepEqual(integrationMarkerSchema.parse(manifest.opencodeIntegration), written.marker)
     const entry = await readFile(path.join(directory, "package", "index.js"), "utf8")
     assert.match(entry, /from "\.\/core\.mjs"/)
-    for (const method of ["status", "installHost", "hosts", "attachHost", "detachHost", "advertise", "withdraw"]) assert.match(entry, new RegExp(`"${method}":\\{"input"`))
+    for (const method of ["status", "installHost", "hosts", "attachHost", "detachHost", "bindingRead", "advertise", "withdraw"]) assert.match(entry, new RegExp(`"${method}":\\{"input"`))
     assert.doesNotMatch(entry, /"pattern"/, "OpenCode refuses patterns in RPC definitions")
     const packed = await packFakeIntegration(directory, { id: "drift", markerMismatch: true })
     assert.equal(packed.name, "@neuralnomads/opencode-drift")
@@ -73,6 +73,31 @@ describe("fake integration package", () => {
 })
 
 describe("fake offer registry", () => {
+  it("reads only the exact binding, with closed authority and revisions across detach and expiry", async () => {
+    const host = await fakeHost()
+    const { call, advance } = harness()
+    const none = await call("bindingRead", { sessionID: "ses_a" }, host.port)
+    assert.equal(none.state, "none")
+    await call("advertise", host.advertiseInput())
+    const { offers: [offer] } = await call("hosts")
+    await call("attachHost", { offerID: offer.offerID, sessionID: "ses_a" })
+    const attached = await call("bindingRead", { sessionID: "ses_a" }, host.port)
+    assert.deepEqual(attached.binding, { offerID: offer.offerID, label: offer.label })
+    assert.equal(attached.authority.registryGeneration, none.authority.registryGeneration)
+    assert(attached.authority.revision > none.authority.revision)
+    assert.equal((await call("bindingRead", { sessionID: "ses_b" })).state, "none")
+    for (const input of [{}, null, { sessionID: "ses_a\n" }, { sessionID: "ses_a", extra: true }]) {
+      assert.deepEqual(await call("bindingRead", input), { state: "unknown" })
+    }
+    await call("detachHost", { sessionID: "ses_a" })
+    assert((await call("bindingRead", { sessionID: "ses_a" })).authority.revision > attached.authority.revision)
+    await call("attachHost", { offerID: offer.offerID, sessionID: "ses_a" })
+    advance(OFFER_LEASE_MS)
+    const expired = await call("bindingRead", { sessionID: "ses_a" })
+    assert.equal(expired.state, "none")
+    assert(expired.authority.revision > attached.authority.revision)
+  })
+
   it("creates an offer only after a valid hello and keeps every secret out of outputs and events", async () => {
     const host = await fakeHost({ leaky: true })
     const { call, events } = harness()

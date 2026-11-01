@@ -26,6 +26,7 @@ function harness(level: "debug" | "trace") {
     attach: async () => { await read(); return { outcome: "attached" } },
     detach: async () => { await read(); return { outcome: "none" } },
     installHost: async () => { await read(); return { outcome: "installed" } },
+    bindingRead: async () => { await read(); return { state: "unknown" } },
   } })
   app.post("/ordinary/:id", request => ({ query: request.query, body: request.body }))
   const records = () => lines.map(line => JSON.parse(line))
@@ -44,6 +45,11 @@ for (const level of ["debug", "trace"] as const) {
       { method: "GET", url: `${root}/fixture/hosts?directory=${secret}` },
       { method: "GET", url: `${root}/fixture/hosts${query}&directory=${secret}` },
       { method: "GET", url: `${root}/fixture/hosts?${secret}=${secret}` },
+      { method: "GET", url: `${root}/fixture/binding${query}&sessionID=ses_${secret}` },
+      { method: "GET", url: `${root}/${secret}/binding${query}&sessionID=ses_${secret}` },
+      { method: "GET", url: `${root}/fixture/binding${query}&sessionID=ses_a&sessionID=ses_${secret}` },
+      { method: "GET", url: `${root}/fixture/binding?directory=${secret}&sessionID=ses_a&${secret}=${secret}` },
+      { method: "GET", url: `${root}/fixture/binding/${secret}${query}` },
       { method: "POST", url: `${root}/fixture/attach${query}`, payload: { offerID: "offer_fixture", sessionID: `ses_${secret}` } },
       { method: "POST", url: `${root}/fixture/attach${query}`, payload: { offerID: secret, sessionID: secret, [secret]: { nested: secret } } },
       { method: "POST", url: `${root}/fixture/detach${query}`, payload: { sessionID: `ses_${secret}` } },
@@ -73,19 +79,20 @@ for (const level of ["debug", "trace"] as const) {
     for (const error of [Object.assign(new Error(secret), { cause: new Error(secret), input: secret }),
       new PluginControlsError(secret, "unavailable"), new PluginControlsError(secret, "forbidden")]) {
       f.state.error = error
-      for (const action of ["", "/fixture/hosts", "/fixture/attach", "/fixture/detach", "/fixture/install-host"]) {
+      for (const action of ["", "/fixture/hosts", "/fixture/binding", "/fixture/attach", "/fixture/detach", "/fixture/install-host"]) {
         const mutation = action.endsWith("attach") || action.endsWith("detach") || action.endsWith("install-host")
-        await f.app.inject({ method: mutation ? "POST" : "GET", url: `${root}${action}${query}`,
+        await f.app.inject({ method: mutation ? "POST" : "GET", url: `${root}${action}${query}${action.endsWith("binding") ? "&sessionID=ses_fixture" : ""}`,
           ...(mutation ? { payload: action.endsWith("install-host") ? {} : action.endsWith("detach") ? { sessionID: "ses_fixture" } : { sessionID: "ses_fixture", offerID: "offer_fixture" } } : {}) })
         f.check()
       }
     }
     const completed = f.records().filter(record => record.msg === "HTTP request completed")
-    assert.equal(completed.length, requests.length + 15, "each hook-admitted request and failure completed logging")
+    assert.equal(completed.length, requests.length + 18, "each hook-admitted request and failure completed logging")
     for (const record of completed) {
-      assert.match(record.url, /^\/api\/workspaces\/:id\/integrations(?:\/:integrationId\/(?:hosts|attach|detach|install-host)|\/\*)?$/)
+      assert.match(record.url, /^\/api\/workspaces\/:id\/integrations(?:\/:integrationId\/(?:hosts|binding|attach|detach|install-host)|\/\*)?$/)
       assert.equal(typeof record.status, "number")
     }
+    assert(completed.some(record => record.url.endsWith("/:integrationId/binding")), "binding uses its exact fixed template")
     const payloads = f.records().filter(record => record.msg === "HTTP request payload")
     assert.equal(payloads.length, level === "trace" ? completed.length : 0, "trace logging actually ran")
     for (const record of payloads) for (const key of ["params", "query", "body", "err"]) assert.equal(key in record, false)

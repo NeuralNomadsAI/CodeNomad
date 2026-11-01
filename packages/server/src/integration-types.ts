@@ -55,6 +55,8 @@ export interface IntegrationsResponse {
 }
 
 export type IntegrationHostsResponse = import("./opencode/integrations/contract").IntegrationRpcValue<"hosts.output">
+/** Display-only projection of the exact native session's authoritative binding read. */
+export type IntegrationBindingResponse = { state: "attached"; label: string } | { state: "none" } | { state: "unknown" }
 export type IntegrationAttachRequest = import("./opencode/integrations/contract").IntegrationRpcValue<"attachHost.input">
 export type IntegrationAttachResponse = import("./opencode/integrations/contract").IntegrationRpcValue<"attachHost.output">
 export type IntegrationDetachRequest = import("./opencode/integrations/contract").IntegrationRpcValue<"detachHost.input">

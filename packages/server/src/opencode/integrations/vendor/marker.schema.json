@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/NeuralNomadsAI/opencode-integrations/blob/main/spec/schemas/marker.schema.json",
   "title": "opencodeIntegration marker",
-  "description": "Static marker under the `opencodeIntegration` key of an integration package.json. Draft 0.x: `spec` is 0. Rules that need the package itself (ID derived from the package name, payload digest, uniqueness across the repository) are enforced by packages/conformance.",
+  "description": "Static marker under the `opencodeIntegration` key of an integration package.json. Draft 0.2: `spec` is 0. Rules that need the package itself (ID derived from the package name, payload digest, uniqueness across the repository) are enforced by packages/conformance.",
   "type": "object",
   "additionalProperties": false,
   "required": ["spec", "id", "displayName", "family", "plugin", "rpc"],
@@ -73,9 +73,9 @@
       "host": {
         "app": "blender",
         "protocol": 1,
-        "range": "^0.1.0",
+        "range": "^0.2.0",
         "appVersions": ">=5.2",
-        "payload": "host/blender/opencode_link-0.1.0.zip",
+        "payload": "host/blender/opencode_link-0.2.0.zip",
         "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
       }
     },

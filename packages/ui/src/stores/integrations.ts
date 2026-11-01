@@ -1,10 +1,12 @@
 import { createSignal } from "solid-js"
-import { fetchIntegrations } from "../lib/integrations-api"
+import { fetchIntegrationBinding, fetchIntegrations } from "../lib/integrations-api"
+import { createIntegrationBindingsStore } from "./integration-bindings-store"
 import { createEventRefreshScheduler } from "../lib/event-refresh-scheduler"
 import { serverEvents } from "../lib/server-events"
 import { createIntegrationsStore, isIntegrationRefreshEvent } from "./integrations-store"
 
 export const integrations = createIntegrationsStore(fetchIntegrations)
+export const integrationBindings = createIntegrationBindingsStore(fetchIntegrationBinding)
 // Invalidates live offer snapshots, including across reconnects. Action receipts have their own view ownership.
 const [epochs, setEpochs] = createSignal<ReadonlyMap<string, number>>(new Map())
 const [sessionEpochs, setSessionEpochs] = createSignal<ReadonlyMap<string, number>>(new Map())
@@ -16,10 +18,13 @@ const reconnects = createEventRefreshScheduler(instanceId => integrations.refres
 serverEvents.on("instance.event", event => {
   if (event.type !== "instance.event") return
   const type = event.event.type
+  const sessionID = (event.event as { data?: { sessionID?: unknown } }).data?.sessionID
+  integrationBindings.applyEvent(event.instanceId, type, typeof sessionID === "string" ? sessionID : undefined)
   if (isIntegrationRefreshEvent(type)) {
     invalidate(event.instanceId)
     integrations.applyEvent(event.instanceId, type)
   } else if (type === "server.connected") {
+    integrationBindings.reconnect(event.instanceId)
     invalidate(event.instanceId)
     integrations.invalidate(event.instanceId)
     reconnects.schedule(event.instanceId, "urgent")
@@ -32,17 +37,26 @@ serverEvents.on("instance.event", event => {
 })
 serverEvents.on("instance.eventStatus", event => {
   if (event.type !== "instance.eventStatus") return
+  integrationBindings.reconnect(event.instanceId, event.status === "connected")
   invalidate(event.instanceId)
   integrations.invalidate(event.instanceId)
   if (event.status === "connected") reconnects.schedule(event.instanceId, "urgent")
 })
 serverEvents.onOpen(() => {
+  integrationBindings.reconnect()
   setConnectionEpoch(value => value + 1)
   integrations.invalidate()
   void integrations.refreshDemanded()
 })
+serverEvents.onTransportStatus(status => {
+  if (status !== "disconnected") return
+  setConnectionEpoch(value => value + 1)
+  integrations.invalidate()
+  integrationBindings.reconnect(undefined, false)
+})
 serverEvents.on("workspace.stopped", event => {
   if (event.type !== "workspace.stopped") return
+  integrationBindings.clearInstance(event.workspaceId)
   invalidate(event.workspaceId)
   reconnects.cancel(event.workspaceId)
   integrations.clearInstance(event.workspaceId)

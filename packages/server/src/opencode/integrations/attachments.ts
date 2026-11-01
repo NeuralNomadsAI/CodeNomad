@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import type { PluginControlLocation } from "../../api-types"
-import type { IntegrationAttachmentHint, IntegrationAttachRequest, IntegrationDetachRequest, IntegrationHostsResponse } from "../../integration-types"
+import type { IntegrationAttachmentHint, IntegrationAttachRequest, IntegrationBindingResponse, IntegrationDetachRequest, IntegrationHostsResponse } from "../../integration-types"
 import { INTEGRATION_ATTACHMENT_METADATA_KEY } from "../../integration-types"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
@@ -32,7 +32,7 @@ export interface IntegrationAttachmentsDeps {
 }
 
 type Context = { workspaceId: string; location: PluginControlLocation; entry: IntegrationCatalogEntry; connection: ServiceConnection; signal: AbortSignal }
-type Method = "status" | "hosts" | "attachHost" | "detachHost" | "installHost"
+type Method = "status" | "hosts" | "attachHost" | "detachHost" | "installHost" | "bindingRead"
 
 /** Fixed catalog RPCs for an owned Location; Q8 stores a reattach hint, with live state owned by the plugin. */
 export class IntegrationAttachments {
@@ -62,6 +62,21 @@ export class IntegrationAttachments {
       await this.status(context)
       return this.call(context, "hosts", {})
     })
+  }
+
+  async bindingRead(workspaceId: string, integrationId: string, location: PluginControlLocation, input: IntegrationRpcValue<"bindingRead.input">, signal?: AbortSignal): Promise<IntegrationBindingResponse> {
+    if (!integrationRpcSchemas["bindingRead.input"].safeParse(input).success || !input.sessionID.startsWith("ses")) throw new IntegrationAttachmentError("invalid")
+    try {
+      return await this.run(workspaceId, integrationId, location, signal, async context => {
+        const result = await this.call(context, "bindingRead", input, input.sessionID)
+        if (result.state !== "attached") return { state: result.state }
+        if (looksLikePath(result.binding.label)) throw new IntegrationAttachmentError("non-conforming")
+        return { state: "attached", label: result.binding.label }
+      })
+    } catch (error) {
+      if (error instanceof IntegrationAttachmentError && (error.code === "invalid" || error.code === "forbidden")) throw error
+      return { state: "unknown" }
+    }
   }
 
   attach(workspaceId: string, integrationId: string, location: PluginControlLocation, input: IntegrationAttachRequest, signal?: AbortSignal) {

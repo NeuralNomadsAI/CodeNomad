@@ -1190,6 +1190,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 </div>
               </div>
             </Toolbar>
+            {attachment.indicator()}
           </AppBar>
         </Show>
 

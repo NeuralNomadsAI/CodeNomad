@@ -13,10 +13,12 @@ const secret = "SECRET_SENTINEL_TOKEN_SCRIPT_BINDING_PORT"
 const offer = { offerID: "offer_fixture", label: "Blender window", document: "Scene.blend", appVersion: "5.2.0", protocol: "ok" }
 const status = () => ({ contract: 1, integration: { id: "fixture", version: "0.1.0", family: "native", spec: 0 },
   host: { state: "ok" }, connection: { state: "available", offers: 1, attachedSessions: 0 } })
+const authority = { serviceGeneration: "service_private", registryGeneration: "registry_private", revision: 1 }
+const binding = { state: "attached", authority, binding: { offerID: offer.offerID, label: offer.label } }
 
 function harness(options: {
   outputs?: Record<string, unknown>
-  rpc?: (method: string) => unknown | Promise<unknown>
+  rpc?: (method: string, input: unknown, location: unknown) => unknown | Promise<unknown>
   onRpc?: (method: string) => void
   onGet?: (count: number) => void
   timeoutMs?: number
@@ -31,8 +33,10 @@ function harness(options: {
   onControls?: () => void | Promise<void>
   catalogEmpty?: boolean
   updateError?: boolean
+  guardHintRead?: boolean
 } = {}) {
   const state = { current: true, owned: true, directory: "/work", workspaceID: undefined as string | undefined,
+    sessionID: undefined as string | undefined, locations: {} as Record<string, string>,
     missing: false, gets: 0, metadata: { unrelated: { nested: true }, "codenomad.other": "keep" } as Record<string, any> }
   const calls: Array<{ rpcID: string; method: string; input: unknown; location: unknown }> = []
   const trace: string[] = [], writes: unknown[] = [], logs: string[] = [], catalogReads: unknown[] = []
@@ -42,7 +46,9 @@ function harness(options: {
         trace.push("get")
         options.onGet?.(++state.gets)
         if (state.missing) throw Object.assign(new Error(secret), { _tag: "SessionNotFoundError" })
-        return { id: sessionID, location: { directory: state.directory, ...(state.workspaceID ? { workspaceID: state.workspaceID } : {}) }, metadata: structuredClone(state.metadata) }
+        const metadata = structuredClone(state.metadata)
+        return { id: state.sessionID ?? sessionID, location: { directory: state.locations[sessionID] ?? state.directory, ...(state.workspaceID ? { workspaceID: state.workspaceID } : {}) },
+          metadata: options.guardHintRead ? new Proxy(metadata, { get(target, name) { assert.notEqual(name, key, "Q8 must never be read"); return Reflect.get(target, name) } }) : metadata }
       },
       update: async (input: { sessionID: string; metadata: Record<string, unknown> }) => {
         trace.push("update")
@@ -56,7 +62,7 @@ function harness(options: {
       trace.push(input.method)
       calls.push(input)
       options.onRpc?.(input.method)
-      const output = options.rpc ? await options.rpc(input.method) : options.outputs?.[input.method]
+      const output = options.rpc ? await options.rpc(input.method, input.input, input.location) : options.outputs?.[input.method]
         ?? (input.method === "status" ? status() : input.method === "hosts" ? { offers: [offer] }
           : input.method === "attachHost" ? { outcome: "attached" } : { outcome: "detached" })
       return { output }
@@ -68,7 +74,7 @@ function harness(options: {
       source: { type: "package", target: "@neuralnomads/opencode-fixture", version: "0.1.0" }, state: { status: "active" } }],
   })
   const attachments = new IntegrationAttachments({
-    controls: { read: async () => { await options.onControls?.(); if (options.controlsError) throw options.controlsError; return snapshot() } },
+    controls: { read: async (_id, location) => { await options.onControls?.(); if (options.controlsError) throw options.controlsError; return { ...snapshot(), location } } },
     catalog: { read: async input => { catalogReads.push(input); return { state: "fresh", catalog: options.catalogEmpty ? catalogOf() : catalogOf(catalogEntry("fixture", { family: options.family ?? "native" })) } } },
     workspaceManager: {
       getSharedServiceConnection: async () => ({ client, assertCurrent: () => { if (!state.current) throw new Error(secret) } }) as never,
@@ -86,10 +92,10 @@ function harness(options: {
   registerRequestLogging(app, logger)
   app.addHook("onRequest", async request => { request.log = logger })
   registerIntegrationAttachmentRoutes(app, { attachments })
-  const request = async (action: "hosts" | "attach" | "detach" | "install-host", payload?: Record<string, unknown>, query = "directory=%2Fwork", integration = "fixture") => {
+  const request = async (action: "hosts" | "binding" | "attach" | "detach" | "install-host", payload?: Record<string, unknown>, query = action === "binding" ? "directory=%2Fwork&sessionID=ses_fixture" : "directory=%2Fwork", integration = "fixture") => {
     const response = await app.inject({
-    method: action === "hosts" ? "GET" : "POST", url: `/api/workspaces/w/integrations/${integration}/${action}?${query}`,
-    ...(action === "hosts" ? {} : { payload: payload ?? (action === "install-host" ? {} : action === "attach" ? { offerID: offer.offerID, sessionID: "ses_fixture" } : { sessionID: "ses_fixture" }) }),
+    method: action === "hosts" || action === "binding" ? "GET" : "POST", url: `/api/workspaces/w/integrations/${integration}/${action}?${query}`,
+    ...(action === "hosts" || action === "binding" ? {} : { payload: payload ?? (action === "install-host" ? {} : action === "attach" ? { offerID: offer.offerID, sessionID: "ses_fixture" } : { sessionID: "ses_fixture" }) }),
     })
     assert.equal(logs.join("").includes(secret), false, "actual trace/debug/route logs contain no sentinel")
     assert.equal(logs.some(line => JSON.parse(line).msg === "HTTP request payload"), true, "actual trace completion was captured")
@@ -99,6 +105,143 @@ function harness(options: {
 }
 
 describe("integration attachment routes (real service and schemas)", () => {
+  it("AC-C12 validates the whole binding then projects only state/label, independent of Q8", async t => {
+    for (const output of [binding, { state: "none", authority }, { state: "unknown" }, { state: "unknown", authority }]) {
+      const f = harness({ outputs: { bindingRead: output }, guardHintRead: true })
+      t.after(() => f.app.close())
+      f.state.metadata[key] = { integration: "fixture", label: "stale hint", attachedAt: 1 }
+      const before = structuredClone(f.state.metadata)
+      const response = await f.request("binding")
+      assert.equal(response.statusCode, 200)
+      assert.equal(response.headers["cache-control"], "no-store")
+      assert.deepEqual(response.json(), output.state === "attached" ? { state: "attached", label: offer.label } : { state: output.state })
+      assert.deepEqual(f.calls, [{ rpcID: "neuralnomads.fixture", method: "bindingRead", input: { sessionID: "ses_fixture" }, location: { directory: "/work" } }])
+      assert.deepEqual(f.trace, ["get", "bindingRead", "get"])
+      assert.deepEqual(f.state.metadata, before)
+      assert.equal(f.writes.length, 0)
+      assert.equal(JSON.stringify(response.json()).includes("private"), false)
+    }
+  })
+
+  it("AC-C12 closes the query before any IO, including duplicate and non-native session IDs", async t => {
+    const f = harness()
+    t.after(() => f.app.close())
+    for (const query of ["", "directory=%2Fwork", "sessionID=ses_fixture", "directory=%2Fwork&sessionID=other",
+      "directory=%2Fwork&sessionID=ses_a%0A", "directory=%2Fwork&sessionID=ses_a&sessionID=ses_b",
+      "directory=%2Fwork&sessionID=ses_a&rpcID=neuralnomads.other", "directory=%2Fwork&sessionID=ses_a&method=status",
+      "directory=%2Fwork&sessionID=ses_a&workspaceID=old", "directory=%2Fwork&directory=%2Fother&sessionID=ses_a"]) {
+      const response = await f.request("binding", undefined, query)
+      assert.equal(response.statusCode, 400, query)
+      assert.equal(response.headers["cache-control"], "no-store")
+    }
+    assert.equal(f.calls.length, 0)
+    assert.equal(f.catalogReads.length, 0)
+    assert.equal(f.state.gets, 0)
+    await assert.rejects(f.attachments.bindingRead("w", "fixture", { directory: "/work" }, { sessionID: "ses_a", extra: true } as never), { code: "invalid" })
+  })
+
+  it("AC-C12 never interprets missing authority, malformed/extra nested fields, unsafe labels or native failures as none", async t => {
+    const outputs = [{ state: "none" }, { state: "attached", binding: binding.binding },
+      { ...binding, token: secret }, { ...binding, authority: { ...authority, binding_key: secret } },
+      { ...binding, binding: { ...binding.binding, script_handle: secret } },
+      { ...binding, authority: { ...authority, revision: Number.MAX_SAFE_INTEGER + 1 } },
+      { ...binding, authority: { ...authority, serviceGeneration: "bad\n" } },
+      { ...binding, binding: { ...binding.binding, offerID: "short" } },
+      ...["C:private", "~private", "/private/scene", "bad\n", "x".repeat(121)].map(label => ({ ...binding, binding: { ...binding.binding, label } })),
+      { state: "unknown", authority: { ...authority, revision: -1 } }, { state: "none", authority, binding: binding.binding }]
+    for (const output of outputs) {
+      const f = harness({ outputs: { bindingRead: output } })
+      t.after(() => f.app.close())
+      assert.deepEqual((await f.request("binding")).json(), { state: "unknown" })
+      assert.equal(f.writes.length, 0)
+    }
+    for (const type of ["rpc.unavailable", "rpc.method_not_found", "rpc.invalid_output", "other"]) {
+      const f = harness({ rpc: () => { throw Object.assign(new Error(secret), { _tag: "RpcError", type, input: secret }) } })
+      t.after(() => f.app.close())
+      assert.deepEqual((await f.request("binding")).json(), { state: "unknown" })
+    }
+    for (const options of [{ active: false }, { ambiguous: true }, { family: "api" as const }, { catalogEmpty: true },
+      { controlsError: new Error(secret) }]) {
+      const f = harness(options)
+      t.after(() => f.app.close())
+      assert.deepEqual((await f.request("binding")).json(), { state: "unknown" })
+      assert.equal(f.calls.length, 0)
+    }
+  })
+
+  it("AC-C12 isolates two sessions/Locations and follows the same session ID only at its newly verified Location", async t => {
+    const f = harness({ rpc: (_method, input) => (input as { sessionID: string }).sessionID === "ses_a" ? binding : { state: "none", authority } })
+    t.after(() => f.app.close())
+    f.state.locations = { ses_a: "/work", ses_b: "/other-owned" }
+    assert.deepEqual((await f.request("binding", undefined, "directory=%2Fwork&sessionID=ses_a")).json(), { state: "attached", label: offer.label })
+    assert.deepEqual((await f.request("binding", undefined, "directory=%2Fother-owned&sessionID=ses_b")).json(), { state: "none" })
+    const count = f.calls.length
+    assert.equal((await f.request("binding", undefined, "directory=%2Fwork&sessionID=ses_b")).statusCode, 403)
+    assert.equal(f.calls.length, count)
+    f.state.locations.ses_a = "/other-owned"
+    assert.equal((await f.request("binding", undefined, "directory=%2Fwork&sessionID=ses_a")).statusCode, 403)
+    assert.equal(f.calls.length, count)
+    assert.deepEqual((await f.request("binding", undefined, "directory=%2Fother-owned&sessionID=ses_a")).json(), { state: "attached", label: offer.label })
+    assert.deepEqual(f.calls.at(-1)?.location, { directory: "/other-owned" })
+    assert.equal(f.writes.length, 0)
+  })
+
+  it("AC-C12 checks exact native identity, ownership and connection before and after the RPC", async t => {
+    for (const timing of ["before", "after"]) for (const change of ["move", "missing", "id", "ownership", "connection", "workspaceID"]) {
+      let f!: ReturnType<typeof harness>
+      const mutate = () => {
+        if (change === "move") f.state.directory = "/moved"
+        if (change === "missing") f.state.missing = true
+        if (change === "id") f.state.sessionID = "ses_other"
+        if (change === "ownership") f.state.owned = false
+        if (change === "connection") f.state.current = false
+        if (change === "workspaceID") f.state.workspaceID = "retired"
+      }
+      f = harness({ outputs: { bindingRead: binding }, onRpc: () => { if (timing === "after") mutate() } })
+      t.after(() => f.app.close())
+      if (timing === "before") mutate()
+      const response = await f.request("binding")
+      if (change === "missing" || change === "connection") assert.deepEqual(response.json(), { state: "unknown" })
+      else assert.equal(response.statusCode, 403, `${timing} ${change}`)
+      assert.equal(f.calls.length, timing === "before" ? 0 : 1)
+      assert.equal(f.writes.length, 0)
+    }
+  })
+
+  it("AC-C12 bounds the whole read and fences a late reply without blocking a fresh read", async t => {
+    let started!: () => void, release!: (value: unknown) => void, first = true
+    const entered = new Promise<void>(resolve => { started = resolve })
+    const f = harness({ timeoutMs: 30, rpc: () => {
+      if (!first) return { state: "none", authority }
+      first = false; started(); return new Promise(resolve => { release = resolve })
+    } })
+    t.after(() => f.app.close())
+    const pending = f.request("binding")
+    await entered
+    assert.deepEqual((await pending).json(), { state: "unknown" })
+    assert.deepEqual((await f.request("binding")).json(), { state: "none" })
+    const gets = f.state.gets
+    release(binding)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(f.state.gets, gets, "expired continuation dispatches no native get")
+    assert.equal(f.writes.length, 0)
+    for (const cancellation of ["abort", "timeout"]) {
+      let unblock!: () => void, began!: () => void
+      const blocked = new Promise<void>(resolve => { began = resolve })
+      const slow = harness({ timeoutMs: 30, onControls: () => { began(); return new Promise<void>(resolve => { unblock = resolve }) } })
+      t.after(() => slow.app.close())
+      const controller = new AbortController()
+      const result = slow.attachments.bindingRead("w", "fixture", { directory: "/work" }, { sessionID: "ses_fixture" }, controller.signal)
+      await blocked
+      if (cancellation === "abort") controller.abort()
+      assert.deepEqual(await result, { state: "unknown" })
+      unblock()
+      await new Promise(resolve => setImmediate(resolve))
+      assert.equal(slow.calls.length, 0)
+      assert.equal(slow.state.gets, 0)
+    }
+  })
+
   it("AC-C15 validates installation output then projects only outcomes, with one fixed catalogue call and no session IO", async t => {
     for (const outcome of ["installed", "updated", "unchanged", "refused", "failed"]) {
       const f = harness({ outputs: { installHost: { outcome, detail: "Safe explanation", token: secret, script_handle: secret } } })
