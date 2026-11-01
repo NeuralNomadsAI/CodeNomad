@@ -268,6 +268,7 @@ export function createWslPluginControlDocumentFileSystem(
       }
       assertSuccess(prepared, "Unable to prepare OpenCode configuration in WSL")
       locked = true
+      await options?.revalidate?.()
       try {
         options?.beforeCommit?.()
       } catch (error) {

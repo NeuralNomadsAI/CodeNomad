@@ -10,8 +10,10 @@ async function bridge(permissions: string[], apiVersion: 1 | 2 | 3 | 4 = 4) {
   let initialize: ((event: unknown) => void) | undefined
   const window: any = { addEventListener: (_: string, listener: typeof initialize) => { initialize = listener }, removeEventListener() {} }
   const parent = {}
-  const document = panelExtensionDocument("", "one-use", apiVersion, permissions)
-  vm.runInNewContext(document.match(/<script>([\s\S]*?)<\/script>/)![1]!, { window, parent, setTimeout, clearTimeout })
+  const html = panelExtensionDocument("", "one-use", apiVersion, permissions)
+  vm.runInNewContext(html.match(/<script>([\s\S]*?)<\/script>/)![1]!, {
+    window, parent, document: { activeElement: null }, HTMLElement: class {}, setTimeout, clearTimeout,
+  })
   const channel = new MessageChannel()
   const ready = once(channel.port1, "message")
   initialize!({ source: parent, data: { type: "codenomad:init" }, ports: [channel.port2] })
@@ -24,10 +26,11 @@ async function bridge(permissions: string[], apiVersion: 1 | 2 | 3 | 4 = 4) {
   return { api, port: channel.port1, close }
 }
 
-test("API 4 bundles is an independently granted frozen read surface; APIs 1–3 stay exact", async () => {
+test("API 4 bundles is frozen and permission-scoped; APIs 1–3 stay exact", async () => {
   for (const [version, permissions, objects] of [
     [1, ["bundles.read"], []], [2, ["bundles.read"], ["assets"]], [3, ["bundles.read"], ["workItems"]],
-    [4, ["panel.preferences"], ["preferences"]], [4, ["bundles.manage"], []], [4, ["bundles.read", "bundles.manage"], ["bundles"]],
+    [4, ["panel.preferences"], ["preferences"]], [4, ["bundles.manage"], []], [4, ["bundles.read"], ["bundles"]],
+    [4, ["bundles.read", "bundles.manage"], ["bundles"]],
   ] as const) {
     const { api, close } = await bridge([...permissions], version)
     try {
@@ -35,10 +38,29 @@ test("API 4 bundles is an independently granted frozen read surface; APIs 1–3 
       assert.deepEqual(Object.keys(api).filter(key => !["apiVersion", "getContext", "onContext"].includes(key)), [...objects])
       if (api.bundles) {
         assert.equal(Object.isFrozen(api.bundles), true)
-        assert.deepEqual(Object.keys(api.bundles), ["catalog", "state", "hosts", "onChanged"])
+        assert.deepEqual(Object.keys(api.bundles), ["catalog", "state", "hosts",
+          ...(permissions.some(permission => permission === "bundles.manage") ? ["request", "setActive", "installHost", "attach", "detach"] : []), "onChanged"])
       }
     } finally { close() }
   }
+})
+
+test("declared management methods use their fixed port names and inputs, without owner or plan fields", async () => {
+  const { api, port, close } = await bridge(["bundles.read", "bundles.manage"])
+  try {
+    for (const [method, input] of [
+      ["request", { action: "install", integration: "fixture", scope: "global" }],
+      ["setActive", { integration: "fixture", scope: "global", enabled: true }],
+      ["installHost", { integration: "fixture" }], ["attach", { integration: "fixture", offerID: "offer_fixture" }],
+      ["detach", { integration: "fixture" }],
+    ] as const) {
+      const received = once(port, "message"), pending = api.bundles[method](input)
+      const [request] = await received
+      assert.deepEqual(request, { type: "api4:request", id: request.id, capability: "bundles", method, input })
+      port.postMessage({ type: "api4:result", id: request.id, result: { outcome: "invalid" } })
+      assert.equal((await pending).outcome, "invalid")
+    }
+  } finally { close() }
 })
 
 test("all bundles reads use fixed port methods; the fifth shared request and host 429 map to busy", async () => {

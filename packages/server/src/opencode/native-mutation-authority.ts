@@ -4,6 +4,8 @@ export interface NativeMutationAuthority {
   revalidate(): Promise<void>
   /** Synchronous, idempotent check of live revocation, expiry and connection/mount fences. */
   assertCurrent(): void
+  /** Internal synchronous observer of the first actual mutation dispatch. */
+  onSubmitted?(): void
 }
 
 /** A submitted native mutation may still complete. Never replay it automatically. */
@@ -27,7 +29,10 @@ export class NativeMutationAdmission {
   /** Mark only immediately before the irreversible native call, never during preparation. */
   admit(): void {
     this.assertCurrent()
-    this.submitted = true
+    if (!this.submitted) {
+      this.submitted = true
+      this.authority?.onSubmitted?.()
+    }
   }
 
   failure(error: unknown): unknown {

@@ -46,6 +46,8 @@ export interface PluginControlDocumentLoad {
 
 export interface PluginControlDocumentReplaceOptions {
   beforeCommit?: () => void
+  /** Refresh asynchronous authority after preparation/lock waits, before final verification. */
+  revalidate?: () => Promise<void>
   /** Synchronous, idempotent authority assertion at writer admission and final dispatch. */
   assertCurrent?: () => void
   /** Synchronous submission observer; called only at rename/WSL commit dispatch. */
@@ -178,6 +180,7 @@ async function replaceHostDocument(
     await chmod(temporary, document.mode)
     const lock = await acquireReplacementLock(document.writePath)
     releaseLock = lock.release
+    await options?.revalidate?.()
     await assertUnchanged(document)
     try {
       options?.beforeCommit?.()

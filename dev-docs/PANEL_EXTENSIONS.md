@@ -26,7 +26,7 @@ opening one item's page in the browser. API 4 carries `session.context` plus any
 non-empty subset of a finite permission set used by the independent **Design**
 image companion ([API 4](#api-4)): read-back images of the displayed conversation, their prompts,
 composer prefill, the Images conversation, the Design agent and panel preferences.
-Its draft integration capability adds bounded catalogue, state and application-offer reads.
+Its integration capabilities add bounded catalogue, state and application-offer reads plus authenticated, host-confirmed management requests.
 
 ## Package layout
 
@@ -242,7 +242,7 @@ exact package before and after IO. Never add a permission registry, generic RPC 
 | `opencode.designAgent` | none | while enabled, this backend's leases request the Design agent (`opencode/design/demand.ts`) |
 | `panel.preferences` | `preferences.get()`, `preferences.set(object)` | the server profile's store, per extension |
 | `bundles.read` (draft) | `bundles.catalog()`, `bundles.state()`, `bundles.hosts({ integration })`, `bundles.onChanged(listener)` | the conversation captured by the mounted host; fixed integration readers and exact-session `bindingRead` |
-| `bundles.manage` (requires `bundles.read`) | reserved in the draft; public methods are reads | management consent sentence reviewed at installation; internal confirmation lifecycle below |
+| `bundles.manage` (requires `bundles.read`) | `bundles.request({ action, integration, scope })`, `bundles.setActive({ integration, scope, enabled })`, `bundles.installHost({ integration })`, `bundles.attach({ integration, offerID })`, `bundles.detach({ integration })` | authenticated parent-owned mount and backend confirmation lifecycle; detach and removal return `invalid` |
 
 ```js
 const status = await codenomad.images.status()
@@ -338,12 +338,44 @@ exfiltrate them like API 2 bytes, which the install sentence and the help state.
 ### Draft integration reads
 
 `bundles.read` defines `codenomad.bundles` through the API 4 MessageChannel.
-The current draft surface consists of `catalog()`, `state()`, `hosts({ integration })`
-and `onChanged(listener)`. `bundles.manage` is reserved in the public bridge.
-Installation shows both permissions' full consent sentences when declared, including
-the management sentence's explicit global consent for detaching other projects'
-conversations during Global removal. Each manifest permission is unique and belongs
+The read surface consists of `catalog()`, `state()`, `hosts({ integration })`
+and `onChanged(listener)`. Declaring `bundles.manage` also defines the five fixed management methods above on the frozen object.
+Installation shows both permissions' full consent sentences when declared. Management
+covers requests to install, update, enable or disable an integration, install its
+application component and attach an application to the displayed conversation; each
+action has its own CodeNomad confirmation. Each manifest permission is unique and belongs
 to the finite set; APIs 1 to 3 retain their exact tuples.
+
+Management inputs use the backend's strict discriminated schemas. ACKs are
+`{ outcome: "confirming", requestID }`, `{ outcome: "busy" }` or `{ outcome: "invalid" }`.
+Admission uses the existing in-memory catalogue snapshot: unknown integrations and
+native Project-scoped requests/activation answer `invalid` and count toward the shared budget.
+The existing shared four-request cap and 19.5-second method deadline apply to the ACK;
+the human wait continues independently. `api4-channel.ts` posts the ACK to the captured
+port before its deferred host function sends `start` to the backend.
+The parent `control:confirm` call consumes the plan before awaiting fresh admission reads.
+Stale admission answers HTTP 409 and closes the plan with its single terminal event;
+accepted admission answers `{ ok: true }` while native completion follows the private event lane.
+
+`lib/bundles-private-events.ts` holds the authenticated SSE owner in parent memory and
+routes each private event to its captured mount. Open, disconnect and explicit stream
+close invalidate ownership. `ExtensionPanel` creates a backend mount after authenticating
+its one-use frame handshake and renders `BundlesConfirmationView` as a trusted sibling.
+Disposal, navigation and native disconnect revoke management and close its modal.
+The existing right-panel toolbar offers **Reload extension** for the active managing
+extension; only its trusted click invokes `userRemount`. Automatic mounting preserves
+rate/cancellation history and never replays actions.
+
+The modal awaits the `displayed` response before starting its own 600-ms guard, keeps
+Cancel initially focused and retains Kobalte's modal trap. On management invocation,
+the document bridge privately captures the exact active HTMLElement. A confirming ACK
+keys that reference by request ID in a bounded, expiring map; after modal close, the
+parent sends only `bundles:focus` and that request ID. The same captured document then
+restores that exact connected element. Owner, mount, plan, digest and native targets
+stay parent/backend-side; only validated `BundlesChange` projections reach listeners.
+`tests/browser/panel-extension-bundles-management.test.ts` exercises the actual panel,
+bridge, MessagePort, authenticated SSE, Fastify routes, lifecycle and native service
+adapters, with exact iframe-button focus assertions and deterministic native-client IO.
 
 The dedicated strict schemas in `panel-extensions/bundles-contract.ts` bound inputs
 and projected outputs on both sides of the trusted HTTP adapter. Only these fixed
@@ -393,8 +425,8 @@ pin remains draft 0.2, spec 0, RPC contract 1, as recorded in
 
 `panel-extensions/bundles-lifecycle.ts` owns a backend/profile's in-memory confirmation
 arbiter. All its mounts and windows share that instance and its `BundlesBudget`; the read
-routes accept the same budget. The public frame object and route dispatcher expose reads.
-Operation-specific preparation and dispatch enter only through trusted in-process callbacks.
+routes accept the same budget. Management routes bind the authenticated stream's owner to
+the mounted exact package. Operation-specific preparation and dispatch use trusted in-process callbacks.
 
 - `mount()` mints an opaque mount identity and combines mount disposal with the consent
   lease's abort signal. `PanelExtensionStore.captureMutationAuthority()` authorizes the
@@ -402,8 +434,8 @@ Operation-specific preparation and dispatch enter only through trusted in-proces
   existing leases synchronously at write admission. Preferences preserve the lease.
 - `request()` reserves the shared slot synchronously and returns an ACK and `afterAck`.
   ACKs are `{ outcome: "confirming", requestID }`, `{ outcome: "busy" }` or
-  `{ outcome: "invalid" }`. The trusted renderer's `acknowledgeBundlesRequest()` posts
-  the ACK before scheduling preparation. The human wait has its own lifetime; every
+  `{ outcome: "invalid" }`. The trusted renderer posts the ACK to the captured port
+  before its deferred `start` control begins preparation. The human wait has its own lifetime; every
   API 4 channel request retains its 19.5-second deadline.
 - The trusted builder supplies the server-derived instance, exact session/Location,
   connection, integration, scope, catalogue range and exact document digest. Its fresh
@@ -431,16 +463,15 @@ Operation-specific preparation and dispatch enter only through trusted in-proces
   `resetCutoffForUserRemount()` is reserved to a trusted explicit user-remount action;
   automatic mounts preserve strikes/cutoff and every remount preserves rate history.
 
-The adapter acceptance boundary includes synchronization of SCR §4.4's direct-detach
-rule with AC-C5/AC-E2's blanket confirmation wording. Native Global removal retains its
-separate ownership/domain/coordination qualification gate. Native operation builders,
-transport-owned mount revocation and explicit-user-remount wiring belong to adapter delivery.
+The draft public transport returns `invalid` for `detach()` and
+`request({ action: "remove", ... })`. The internal local detach builder remains a
+trusted in-process entry point.
 
 Checks: `bundles-lifecycle.test.ts` exercises live store leases, target conflicts, expiry,
 quota/cutoff boundaries and revocation across awaits. `tests/browser/bundles-confirmation.test.ts`
 uses the actual Solid modal, document bridge, MessagePort and channel with a parent-only
 admission driver: ACK ordering, 30-second human wait, guarded activation, terminal events,
-state coalescing and disposed/revoked owners. Public raw-management rejection stays covered
+state coalescing and disposed/revoked owners. Malformed and undeclared raw-management rejection stays covered
 by `panel-extension-bundles.test.ts`.
 
 ### Sandbox

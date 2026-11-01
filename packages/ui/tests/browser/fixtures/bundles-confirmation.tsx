@@ -78,7 +78,9 @@ function Frame(props: { index: number }) {
 function Fixture() {
   return <>
     <Show when={generation()} keyed>{_generation => <><Frame index={0} /><Frame index={1} /></>}</Show>
-    <Show when={view()} keyed>{current => <BundlesConfirmationView view={current.value} lifecycle={lifecycle} owner={current.owner} />}</Show>
+    <Show when={view()} keyed>{current => <BundlesConfirmationView view={current.value}
+      displayed={plan => lifecycle.displayed(current.owner, plan)} confirm={plan => lifecycle.confirm(current.owner, plan)}
+      cancel={plan => lifecycle.cancel(current.owner, plan)} />}</Show>
   </>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)

@@ -56,9 +56,9 @@ Every replacement revokes activation across all projects, even if the permission
 | `opencode.designAgent` | Adds CodeNomad's Design agent and its image skills to OpenCode while this extension is enabled. |
 | `panel.preferences` | Remember this panel's own settings. |
 | `bundles.read` (draft) | Read the OpenCode integrations catalogue, their state in this project and available open applications. |
-| `bundles.manage` (requires `bundles.read`) | Reserved in the draft. The public integrations bridge provides catalogue, state and application-offer reads. |
+| `bundles.manage` (requires `bundles.read`) | Ask to install or update catalogue integrations, enable or disable them, install their application component, and attach an open application to the displayed conversation. Each action requires its own CodeNomad confirmation. |
 
-The draft integrations bridge exposes only catalogue, state, available applications and change notifications. Attachment information concerns the displayed conversation alone. The reserved management permission describes requests requiring host confirmation; Global removal requires explicit global consent for detaching conversations in other projects. Review this scope even for a package that declares this reserved permission.
+Integration management requires an authenticated CodeNomad connection. Review the trusted confirmation's action, version, Global/Project scope, conversation, document and execution-machine warning. Cancel receives focus first; Confirm unlocks after 600 ms and the view expires after two minutes. Detach and removal requests are refused. Attachment information concerns the displayed conversation alone. Switching sessions, navigating, disconnecting or revoking consent closes pending confirmation. **Reload extension** in the panel toolbar starts a fresh mounting and clears the repeated-cancellation cooldown; automatic remounts preserve it. Actions are never replayed automatically.
 
 Asset access follows the currently mounted host/session, not an author-selected session. Local/remote references may be listed as unavailable; the asset API does not fetch arbitrary remote URLs or open local files. Switching sessions, disconnecting or revoking consent invalidates old access.
 

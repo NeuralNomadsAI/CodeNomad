@@ -29,6 +29,8 @@ const api4Objects = (permissions: readonly string[]) => [
       catalog: () => request('api4', 'Bundles unavailable', 'catalog', {}, 'bundles'),
       state: () => request('api4', 'Bundles unavailable', 'state', {}, 'bundles'),
       hosts: (input = {}) => request('api4', 'Bundles unavailable', 'hosts', input, 'bundles'),
+      ${permissions.includes("bundles.manage") ? ["request", "setActive", "installHost", "attach", "detach"].map(method =>
+        `${method}: (input = {}) => request('api4', 'Bundles unavailable', '${method}', input, 'bundles', true),`).join("\n      ") : ""}
       onChanged: listener => { bundleChanges.add(listener); return () => bundleChanges.delete(listener); }
     }),` : "",
 ].join("\n    ")
@@ -39,13 +41,15 @@ const bridge = (handshake: string, apiVersion: PanelExtensionApiVersion, permiss
   let context = null;
   let channel;
   let sequence = 0;
-  const pending = new Map(), changes = new Set(), bundleChanges = new Set();
-  const request = (capability, failure, method, input, scope) => new Promise((resolve, reject) => {
+  const pending = new Map(), changes = new Set(), bundleChanges = new Set(), focus = new Map();
+  const capturedDocument = document;
+  const request = (capability, failure, method, input, scope, management = false) => new Promise((resolve, reject) => {
     if (!channel || !context) { reject(new Error(failure)); return; }
     if (pending.size >= 4) { reject(new Error(scope === 'bundles' ? 'busy' : failure)); return; }
     const id = ++sequence;
     const timeout = setTimeout(() => { pending.delete(id); reject(new Error(failure)); }, 20000);
-    pending.set(id, { resolve, reject, timeout, failure });
+    pending.set(id, { resolve, reject, timeout, failure,
+      trigger: management && document.activeElement instanceof HTMLElement ? document.activeElement : undefined });
     channel.postMessage(scope ? { type: capability + ':request', id, capability: scope, method, input } : { type: capability + ':request', id, method, input });
   });
   const listeners = new Set();
@@ -71,6 +75,13 @@ const bridge = (handshake: string, apiVersion: PanelExtensionApiVersion, permiss
     const port = event.ports[0];
     channel = port;
     port.onmessage = event => {
+      if (event.data?.type === 'bundles:focus') {
+        const saved = focus.get(event.data.requestID);
+        if (!saved) return;
+        focus.delete(event.data.requestID); clearTimeout(saved.timeout);
+        if (document === capturedDocument && saved.trigger.ownerDocument === capturedDocument && saved.trigger.isConnected) saved.trigger.focus();
+        return;
+      }
       if (event.data?.type === 'assets:changed') { for (const listener of changes) { try { listener(); } catch {} } return; }
       if (event.data?.type === 'images:changed') {
         const detail = Object.freeze({ gallery: event.data.gallery === true, status: event.data.status === true });
@@ -92,6 +103,13 @@ const bridge = (handshake: string, apiVersion: PanelExtensionApiVersion, permiss
       if (event.data?.type === 'assets:result' || event.data?.type === 'workItems:result' || event.data?.type === 'api4:result') {
         const request = pending.get(event.data.id); if (!request) return;
         pending.delete(event.data.id); clearTimeout(request.timeout);
+        const result = event.data.result;
+        if (request.trigger && !event.data.error && result?.outcome === 'confirming' &&
+          typeof result.requestID === 'string' && /^[a-f0-9]{32,64}$/.test(result.requestID)) {
+          while (focus.size >= 8) { const key = focus.keys().next().value; clearTimeout(focus.get(key).timeout); focus.delete(key); }
+          const old = focus.get(result.requestID); if (old) clearTimeout(old.timeout);
+          focus.set(result.requestID, { trigger: request.trigger, timeout: setTimeout(() => focus.delete(result.requestID), 300000) });
+        }
         if (event.data.error) request.reject(new Error(event.data.error === 'busy' ? 'busy' : request.failure)); else request.resolve(event.data.result);
         return;
       }

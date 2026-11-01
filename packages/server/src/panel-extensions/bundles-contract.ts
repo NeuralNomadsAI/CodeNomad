@@ -14,6 +14,31 @@ export const bundlesEmptyInputSchema = z.object({}).strict()
 export const bundlesHostsInputSchema = z.object({ integration: entry.id }).strict()
 export const bundlesSessionSchema = z.string().regex(/^ses[A-Za-z0-9_-]{0,125}$/)
 
+const capability = z.string().regex(/^[a-f0-9]{32,64}$/)
+const scope = z.enum(["global", "project"])
+const integration = bundlesHostsInputSchema.shape.integration
+const mounted = { owner: capability, mountID: capability }
+export const bundlesMountInputSchema = z.object({ owner: capability, instanceId: z.string().min(1).max(256),
+  digest: z.string().regex(/^[a-f0-9]{64}$/), sessionID: bundlesSessionSchema }).strict()
+export const bundlesManageInputSchema = z.discriminatedUnion("method", [
+  z.object({ ...mounted, method: z.literal("request"), input: z.object({ action: z.enum(["install", "update", "remove"]), integration, scope }).strict() }).strict(),
+  z.object({ ...mounted, method: z.literal("setActive"), input: z.object({ integration, scope, enabled: z.boolean() }).strict() }).strict(),
+  z.object({ ...mounted, method: z.literal("installHost"), input: z.object({ integration }).strict() }).strict(),
+  z.object({ ...mounted, method: z.literal("attach"), input: z.object({ integration, offerID: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/) }).strict() }).strict(),
+  z.object({ ...mounted, method: z.literal("detach"), input: z.object({ integration }).strict() }).strict(),
+])
+export const bundlesControlInputSchema = z.discriminatedUnion("command", [
+  z.object({ ...mounted, command: z.literal("start"), requestID: capability }).strict(),
+  z.object({ ...mounted, command: z.literal("displayed"), planID: capability }).strict(),
+  z.object({ ...mounted, command: z.literal("confirm"), planID: capability }).strict(),
+  z.object({ ...mounted, command: z.literal("cancel"), planID: capability }).strict(),
+  z.object({ ...mounted, command: z.literal("dispose") }).strict(),
+  z.object({ ...mounted, command: z.literal("userRemount") }).strict(),
+])
+export type BundlesMountInput = z.infer<typeof bundlesMountInputSchema>
+export type BundlesManageInput = z.infer<typeof bundlesManageInputSchema>
+export type BundlesControlInput = z.infer<typeof bundlesControlInputSchema>
+
 export const bundlesCatalogResultSchema = catalogState.extend({ integrations: z.array(z.object({
   id: entry.id, displayName: entry.displayName, family: entry.family, summary: entry.summary,
   app: entry.app, docs: entry.docs, catalogStatus: entry.status,

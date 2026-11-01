@@ -56,9 +56,9 @@ Paketin her değiştirilmesi, izin listesi değişmese bile tüm projelerde etki
 | `opencode.designAgent` | Bu uzantı etkinken CodeNomad'in Design ajanını ve görsel becerilerini OpenCode'a ekler. |
 | `panel.preferences` | Bu panelin kendi ayarlarını hatırlamak. |
 | `bundles.read` (taslak) | OpenCode entegrasyon kataloğunu, bu projedeki durumlarını ve kullanılabilir açık uygulamaları okumak. |
-| `bundles.manage` (`bundles.read` gerektirir) | Taslakta ayrılmıştır. Genel entegrasyon köprüsü katalog, durum ve uygulama tekliflerini okumayı sağlar. |
+| `bundles.manage` (`bundles.read` gerektirir) | Katalog entegrasyonlarını yükleme veya güncelleme, etkinleştirme veya devre dışı bırakma, uygulama bileşenlerini yükleme ve açık bir uygulamayı görüntülenen konuşmaya bağlama istemek. Her eylem ayrı bir CodeNomad onayı gerektirir. |
 
-Taslak entegrasyon köprüsü yalnızca katalog, durum, kullanılabilir uygulamalar ve değişiklik bildirimlerini sunar. Bağlantı bilgisi yalnızca görüntülenen konuşmayla ilgilidir. Ayrılmış yönetim izni, ana bilgisayarın onayını gerektiren istekleri tanımlar; Genel kapsamdan kaldırarak diğer projelerdeki konuşmaların bağlantısını kesmek için açık genel onay gerekir. Bu ayrılmış izni bildiren bir paket için de bu kapsamı inceleyin.
+Yönetim, kimliği doğrulanmış bir CodeNomad bağlantısı gerektirir. Güvenilir onayda eylemi, sürümü, Genel/Proje kapsamını, konuşmayı, belgeyi ve yürütme makinesi uyarısını inceleyin. Önce İptal odaklanır; Onayla 600 ms sonra açılır ve görünüm iki dakika sonra sona erer. Bağlantıyı kesme ve kaldırma istekleri reddedilir. Bağlantı bilgisi yalnızca görüntülenen konuşmayla ilgilidir. Oturum değiştirme, gezinme, bağlantının kopması veya iznin geri alınması onayı kapatır. Panel araç çubuğundaki **Uzantıyı yeniden yükle** yeni bir yükleme başlatır ve yinelenen iptallerin bekleme süresini sıfırlar; otomatik yeniden yüklemeler bunu korur. Eylemler otomatik olarak tekrarlanmaz.
 
 Varlık erişimi, yazarın seçtiği bir oturumu değil, halihazırda bağlı olan ana bilgisayarı/oturumu takip eder. Yerel/uzak referanslar mevcut değil olarak listelenebilir; API varlığı rastgele uzak URL'ler getirmez veya yerel dosyaları açmaz. Oturumları değiştirmek, bağlantıyı kesmek veya izni iptal etmek eski erişimi geçersiz kılar.
 

@@ -286,12 +286,34 @@ The read budget is 60 calls per extension in a sliding minute, four in flight an
 the fifth in-flight call and HTTP 429 report `busy`. Integration/plugin/configuration and exact-session events
 and reconnects coalesce over 300 ms into `{ kind: "state" }` notifications. Navigation, moves/deletion,
 disconnect and unmount invalidate old reads; never poll. `bundles.manage` requires `bundles.read` in the
-manifest and remains reserved in the public draft bridge. Its installation
-sentence includes explicit global consent for detaching other projects' conversations during Global removal.
+manifest. Its fixed `request` (install/update), `setActive`, `installHost` and `attach`
+methods use the shared trusted confirmation lifecycle through an owner-authenticated
+mount. Request ACKs precede preparation; each terminal `confirmed` event denotes
+native submission, with actual state supplied by subsequent authoritative reads.
+The development bridge returns `invalid` for remove and detach. Direct local detach
+awaits a trustworthy explicit-action boundary for an opaque frame; removal has its
+separate confirmed-action adapter delivery.
 See [Panel extensions](PANEL_EXTENSIONS.md#draft-integration-reads) for the boundary.
 The trusted internal confirmation lifecycle and revocable store leases are described in
 [Internal integration confirmation lifecycle](PANEL_EXTENSIONS.md#internal-integration-confirmation-lifecycle).
 The vendored source remains `54d6e5d0f4c22e74d228822fcaaa0912818a8b46`, draft 0.2, spec 0, RPC contract 1.
+
+`panel-extensions/bundles-actions.ts` derives package ranges, activation IDs and
+native targets from the reviewed catalogue and current native inventory. Plans bind
+the exact write target and source declaration bytes/destination/mode, runtime
+provenance, selected offer and installation action. Native operations require Global;
+host installation requires an explicit inspected `absent/install` or versioned
+`outdated/update` status. WSL preflight precedes catalogue/native preparation reads.
+Expected self-authored configuration bytes and native update versions have narrow
+post-submission normalization; all other consent, session, catalogue and target
+checks remain live through subsequent metadata writes and success reconciliation.
+
+The read DTO retains native runtime state and activation separately. Bounded
+`pending`/`unconfirmed` presentation requires an operation tracker; the existing
+Plugins tracker records only its own source additions in renderer memory. Never infer
+installation from a missing version or create a timer in author code as authority.
+Catalogue documentation URLs remain display data inside the sandbox; opening them
+requires a separately qualified fixed trusted action.
 
 ## Test fixtures
 
@@ -377,7 +399,15 @@ Commands:
   kernel WSL detections run with and without authenticated validated offers; selected/backend WSL refuses before
   catalog or native RPC reads. Mirrored-offer kit refusals preserve every protected fixture file, including the
   preloaded catalog. A Linux positive control invokes exactly one installer callback and private sentinel write.
-  HTTP, native events, raw SSE and debug/trace logs are sentinel-scanned; every child has a private fixture environment.
+   HTTP, native events, raw SSE and debug/trace logs are sentinel-scanned; every child has a private fixture environment.
+- `node --import tsx scripts/test-panel-extension-bundles-management-native.mjs <absolute-cli> [integration-checkout] [blender-executable]`:
+  exercises actual authenticated owner SSE lanes, HTTP mount/ACK/start/confirmation,
+  configuration writers, native package updates, installation and attachment with
+  authoritative bindings/Q8. Private registry/runtime and optional immutable Blender
+  kit resources stay fixture-owned. It checks stale plans, cancellation, revocation,
+  concurrency, Project/WSL refusals, uncertain updates without replay and confidentiality
+  across foreign streams, extension projections, metadata and structured diagnostics.
+  Its final output names any native-platform or installer cases requiring separate qualification.
 - `node --import tsx scripts/test-integration-fixtures-native.mjs <absolute-cli>`: installs the fake package and
   its marker-mismatch variant through the fake registry, checks every output against `contract.ts`, runs the
   Python client against the fixture's own registration (advertise, attach, detach, withdraw), checks that its

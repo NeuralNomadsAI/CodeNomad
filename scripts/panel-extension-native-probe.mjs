@@ -20,7 +20,7 @@ const API4_FRAME_METHODS = {
   "opencode.designAgent": {},
   "panel.preferences": { preferences: ["get", "set"] },
   "bundles.read": { bundles: ["catalog", "state", "hosts"] },
-  "bundles.manage": {},
+  "bundles.manage": { bundles: ["request", "setActive", "installHost", "attach", "detach"] },
 }
 const LEGACY_FRAME_METHODS = { 1: {}, 2: { assets: ["list", "read"] }, 3: { workItems: ["list", "open"] } }
 const LISTENERS = { 2: { assets: ["onChanged"] }, 4: { images: ["onChanged"], bundles: ["onChanged"] } }
@@ -28,6 +28,11 @@ const ARGS = {
   "assets.read": ["probe-target", { thumbnail: true }], "workItems.list": [{ kind: "issue" }], "workItems.open": ["issue", 1],
   "images.read": ["probe-target", { thumbnail: true }], "composer.prefill": [{ text: "probe" }], "preferences.set": [{ probe: true }],
   "bundles.hosts": [{ integration: "blender" }],
+  "bundles.request": [{ action: "install", integration: "blender", scope: "global" }],
+  "bundles.setActive": [{ integration: "blender", scope: "global", enabled: true }],
+  "bundles.installHost": [{ integration: "blender" }],
+  "bundles.attach": [{ integration: "blender", offerID: "probe_offer" }],
+  "bundles.detach": [{ integration: "blender" }],
 }
 
 export const MODES = ["real", "same-origin", "no-csp"]

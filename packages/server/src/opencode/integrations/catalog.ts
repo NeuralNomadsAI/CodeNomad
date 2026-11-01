@@ -89,6 +89,9 @@ export class IntegrationCatalogSource {
     return this.view()
   }
 
+  /** Existing in-memory view for synchronous admission; loading and refresh remain explicit reads. */
+  snapshot(): IntegrationCatalogView { return this.view() }
+
   private view(): IntegrationCatalogView {
     if (!this.known) return { state: "unavailable", catalog: { schemaVersion: 1, integrations: [] } }
     return { state: this.attempt?.ok ? "fresh" : "stale", fetchedAt: this.known.fetchedAt, catalog: this.known.catalog }

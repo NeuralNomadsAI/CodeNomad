@@ -113,6 +113,38 @@ export class PluginControls {
     return { location: context.location, entries: context.entries, documents }
   }
 
+  /** Read one actual declaration, independently of the scope's preferred write target. Internal callers only. */
+  async readSourceDocument(workspaceId: string, location: PluginControlLocation, source: PluginConfiguredSource, signal?: AbortSignal) {
+    source = { ...source }
+    signal?.throwIfAborted()
+    const context = await this.readContext(workspaceId, location, signal)
+    if ((source.scope !== "global" && source.scope !== "project") || !source.path || !validAbsolutePath(context.paths, source.path)
+      || buildSnapshot(context).configured.sources.filter(candidate => candidate.scope === source.scope && candidate.path === source.path
+        && candidate.target === source.target && candidate.entryIndex === source.entryIndex && candidate.hasOptions === source.hasOptions).length !== 1) {
+      throw new PluginControlsError("Plugin declaration is absent from the authorized configuration", "forbidden")
+    }
+    const root = source.scope === "global" ? context.globalDirectory : context.location.directory
+    const nativeWsl = Boolean(this.options.workspaceManager.getServiceWslDistro(workspaceId))
+    // The fresh native entry selects the document; scope ownership excludes inherited and foreign paths.
+    const parent = context.paths.dirname(source.path)
+    if (!samePath(context.paths, parent, root)
+      && !(source.scope === "project" && samePath(context.paths, parent, context.paths.join(root, ".opencode")))) {
+      throw new PluginControlsError("Plugin declaration is outside the selected configuration scope", "forbidden")
+    }
+    const ioPath = nativeWsl ? source.path : await this.options.workspaceManager.getHostPathForServicePath(workspaceId, source.path)
+    if (!ioPath || !(nativeWsl ? path.posix : hostPathStyle()).isAbsolute(ioPath)) {
+      throw new PluginControlsError("OpenCode configuration paths could not be mapped to the execution host", "unavailable")
+    }
+    signal?.throwIfAborted()
+    const document = await readPluginControlDocument(ioPath, context.fileSystem)
+    const entry = document.plugins[source.entryIndex]
+    if (!document.exists || (typeof entry === "string" ? entry : entry?.package) !== source.target) {
+      throw new PluginControlsError("Plugin declaration changed in the authorized configuration", "conflict")
+    }
+    signal?.throwIfAborted(); assertCurrentConnection(context.connection)
+    return { location: context.location, scope: source.scope, path: source.path, document }
+  }
+
   editConfigDocument(
     workspaceId: string,
     location: PluginControlLocation,
@@ -138,6 +170,7 @@ export class PluginControls {
         const updated = await edit(document)
         await admission?.revalidate()
         await replacePluginControlDocument(document, updated, {
+          revalidate: () => admission?.revalidate() ?? Promise.resolve(),
           assertCurrent: () => { assertCurrentConnection(context.connection); signal?.throwIfAborted(); admission?.assertCurrent() },
           onDispatch: () => admission?.admit(),
         }, context.fileSystem)
@@ -217,6 +250,7 @@ export class PluginControls {
         const updated = appendPluginControlRule(document, rule)
         try {
           await replacePluginControlDocument(document, updated, {
+            revalidate: () => admission.revalidate(),
             assertCurrent: () => { assertCurrentConnection(context.connection); admission.assertCurrent() },
             onDispatch: () => admission.admit(),
           }, context.fileSystem)

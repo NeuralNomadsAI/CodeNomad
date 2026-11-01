@@ -113,7 +113,7 @@ test("real Enter initially cancels and repeated Enter on an enabled Confirm tran
     const first = await ask(page); await page.getByRole("dialog").waitFor()
     await page.keyboard.press("Enter")
     await page.getByRole("dialog").waitFor({ state: "detached" })
-    assert.equal(await page.locator('iframe[title="Extension 0"]').evaluate(el => document.activeElement === el), true)
+    await page.waitForFunction(() => document.activeElement === document.querySelector('iframe[title="Extension 0"]'))
     assert.equal((await snapshot(page)).dispatched, 0)
     await page.clock.install()
     const second = await ask(page); await page.getByRole("dialog").waitFor()

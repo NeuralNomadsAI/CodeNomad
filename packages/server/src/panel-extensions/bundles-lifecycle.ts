@@ -5,6 +5,9 @@ import type { BundlesChange } from "./bundles-contract"
 export const BUNDLES_PLAN_MS = 300_000, BUNDLES_CONFIRMATION_MS = 120_000, BUNDLES_CONFIRM_GUARD_MS = 600
 export const BUNDLES_CANCEL_WINDOW_MS = 60_000, BUNDLES_CANCEL_LIMIT = 3, BUNDLES_CUTOFF_MS = 300_000
 export type BundlesAck = { outcome: "confirming"; requestID: string } | { outcome: "busy" | "invalid" }
+export class BundlesStalePlanError extends Error {
+  constructor() { super("Stale bundles plan"); this.name = "BundlesStalePlanError" }
+}
 type Terminal = "confirmed" | "cancelled" | "expired" | "failed"
 export interface BundlesClock {
   now(): number
@@ -121,30 +124,52 @@ export class BundlesLifecycle {
   }
 
   confirm(owner: BundlesMount, planID: string): void {
+    void this.confirmChecked(owner, planID).catch(() => {})
+  }
+
+  /** Resolve at fresh admission only; native completion and uncertainty remain on the private result lane. */
+  async confirmChecked(owner: BundlesMount, planID: string, signal?: AbortSignal): Promise<void> {
     const pending = this.active
-    if (!pending || pending.owner !== owner || pending.planID !== planID || pending.phase !== "confirming"
-      || pending.shownAt === undefined || this.time.now() - pending.shownAt < BUNDLES_CONFIRM_GUARD_MS) return
-    try { this.assert(pending) } catch { this.finish(pending, this.expired(pending) ? "expired" : "failed"); return }
+    if (!pending || pending.owner !== owner || pending.planID !== planID || pending.phase !== "confirming") throw new BundlesStalePlanError()
+    try { this.assert(pending) } catch { this.finish(pending, this.expired(pending) ? "expired" : "failed"); throw new BundlesStalePlanError() }
+    if (pending.shownAt === undefined || this.time.now() - pending.shownAt < BUNDLES_CONFIRM_GUARD_MS) return
     // Consume synchronously before any await: click/Enter races and replays are inert.
     pending.phase = "dispatching"
     this.time.clearTimeout(pending.timer)
     pending.timer = this.time.setTimeout(() => this.finish(pending, "expired"), Math.max(0, pending.deadline - this.time.now()))
     pending.owner.show(null)
+    const admissionSignal = AbortSignal.any([pending.controller.signal, ...(signal ? [signal] : []), AbortSignal.timeout(19_000)])
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => reject(admissionSignal.reason)
+        admissionSignal.throwIfAborted()
+        admissionSignal.addEventListener("abort", abort, { once: true })
+        this.revalidate(pending, admissionSignal).then(resolve, reject)
+          .finally(() => admissionSignal.removeEventListener("abort", abort))
+      })
+      admissionSignal.throwIfAborted(); this.assert(pending)
+    } catch {
+      this.finish(pending, this.expired(pending) ? "expired" : "failed")
+      throw new BundlesStalePlanError()
+    }
     void this.dispatch(pending)
+  }
+
+  private async revalidate(pending: Pending, signal: AbortSignal): Promise<void> {
+    const check = () => { signal.throwIfAborted(); this.assert(pending) }
+    check(); await pending.owner.authority.revalidate(); check()
+    const target = await pending.prepared!.readTarget(signal); check()
+    if (!sameTarget(pending.prepared!.target, target)) throw new BundlesStalePlanError()
   }
 
   private async dispatch(pending: Pending): Promise<void> {
     const prepared = pending.prepared!
     const authority: NativeMutationAuthority = {
       assertCurrent: () => this.assert(pending),
-      revalidate: async () => {
-        this.assert(pending); await pending.owner.authority.revalidate(); this.assert(pending)
-        const target = await prepared.readTarget(pending.controller.signal); this.assert(pending)
-        if (!sameTarget(prepared.target, target)) throw new Error("Stale bundles target")
-      },
+      revalidate: () => this.revalidate(pending, pending.controller.signal),
     }
     try {
-      await authority.revalidate(); authority.assertCurrent()
+      authority.assertCurrent()
       let submitted = false
       await prepared.dispatch(authority, () => {
         if (submitted) throw new Error("Bundles request already submitted")

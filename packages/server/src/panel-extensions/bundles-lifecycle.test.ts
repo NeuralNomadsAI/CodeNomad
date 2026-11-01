@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { BundlesLifecycle, BUNDLES_PLAN_MS, BUNDLES_CONFIRMATION_MS, type BundlesClock, type BundlesConfirmation, type BundlesPrepared,
+import { BundlesLifecycle, BundlesStalePlanError, BUNDLES_PLAN_MS, BUNDLES_CONFIRMATION_MS, type BundlesClock, type BundlesConfirmation, type BundlesPrepared,
   type BundlesTarget } from "./bundles-lifecycle"
 import { PanelExtensionStore } from "./store"
 import { NativeMutationAdmission } from "../opencode/native-mutation-authority"
@@ -197,4 +197,45 @@ test("actual store authority revokes at mutation admission, before async queue/p
       assert.throws(() => lease.assertCurrent()); await pending; lease.dispose()
     }
   } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+test("checked confirmation consumes before its first fresh await, rejects stale admission and emits one terminal", async () => {
+  const f = fixture(); let release!: () => void
+  f.prepared.readTarget = async () => { await new Promise<void>(resolve => { release = resolve }); return { ...initial, documentDigest: "changed" } }
+  await f.open(); f.time.advance(600); const plan = f.view!.planID
+  const first = f.lifecycle.confirmChecked(f.owner, plan)
+  const failed = assert.rejects(first, BundlesStalePlanError)
+  await assert.rejects(f.lifecycle.confirmChecked(f.owner, plan), BundlesStalePlanError)
+  await flush(); release(); await failed; await flush()
+  assert.equal(f.dispatched, 0); assert.equal(f.events.length, 1)
+  assert.equal((f.events[0] as any).outcome, "failed")
+})
+
+test("checked confirmation ends at admission, preserving one confirmed terminal across uncertain native completion", async () => {
+  const f = fixture(); let release!: () => void, submissions = 0
+  f.prepared.dispatch = async (authority, submitted) => {
+    authority.assertCurrent(); submissions++; submitted()
+    await new Promise<void>(resolve => { release = resolve })
+    throw new Error("uncertain after native submission")
+  }
+  await f.open(); f.time.advance(600); const plan = f.view!.planID
+  await f.lifecycle.confirmChecked(f.owner, plan)
+  assert.equal(submissions, 1); assert.equal((f.events[0] as any).outcome, "confirmed")
+  release(); await flush()
+  assert.equal(f.events.length, 1)
+  await assert.rejects(f.lifecycle.confirmChecked(f.owner, plan), BundlesStalePlanError)
+  f.lifecycle.confirm(f.owner, plan); await flush()
+  assert.equal(submissions, 1); assert.equal(f.events.length, 1)
+})
+
+test("checked admission unwinds caller cancellation while ignored late native reads retain their fences", async () => {
+  const f = fixture(), caller = new AbortController(); let release!: () => void
+  f.prepared.readTarget = async () => { await new Promise<void>(resolve => { release = resolve }); return initial }
+  await f.open(); f.time.advance(600)
+  const result = f.lifecycle.confirmChecked(f.owner, f.view!.planID, caller.signal)
+  const failed = assert.rejects(result, BundlesStalePlanError)
+  await flush(); caller.abort(); await failed
+  release(); await flush()
+  assert.equal(f.dispatched, 0); assert.equal(f.events.length, 1)
+  assert.equal((f.events[0] as any).outcome, "failed")
 })

@@ -14,6 +14,7 @@ import type { PromptInputApi } from "../prompt-input/types"
 import { assertThumbnailBounds } from "./image-bounds"
 import { thumbnail } from "./assets-channel"
 import { composePrefill, prefillMarkers, PREFILL_LIMITS } from "./composer-prefill"
+import type { BundlesManagement } from "./bundles-management"
 
 /** Frame deadline is 20 s; the host answers first and cancels its own work. */
 export const API4_HOST_DEADLINE_MS = 19_500
@@ -57,7 +58,7 @@ type Answer = { result: unknown; after?: () => void }
  */
 export function useApi4Channel(props: {
   instanceId: string; id: string; digest: string; permissions: readonly string[]; sessionId: string | null
-  send: (value: unknown) => void; host: Api4Host; mounted: () => boolean
+  send: (value: unknown) => void; host: Api4Host; mounted: () => boolean; management?: BundlesManagement
 }) {
   const pending = new Set<AbortController>()
   const authority = { instanceId: props.instanceId, id: props.id, digest: props.digest }
@@ -96,20 +97,21 @@ export function useApi4Channel(props: {
     if (own && GALLERY_EVENTS.has(type)) invalidate(true, type === "session.updated" || type === "session.moved")
     else if (STATUS_EVENTS.has(type)) invalidate(false, true)
     if (isIntegrationRefreshEvent(type) || type === "server.connected" || (own && ["session.updated", "session.moved", "session.deleted"].includes(type))) invalidateBundles()
-    if ((own && (type === "session.moved" || type === "session.deleted")) || type === "server.connected") abort()
+    if ((own && (type === "session.moved" || type === "session.deleted")) || type === "server.connected") { abort(); props.management?.dispose() }
     if (own && type === "session.deleted") sessionAvailable = false
   }), serverEvents.on("instance.eventStatus", event => {
     if (event.type !== "instance.eventStatus" || event.instanceId !== props.instanceId) return
     nativeConnected = event.status === "connected"
-    if (!nativeConnected || nativeGeneration !== event.generation) abort()
+    if (!nativeConnected || nativeGeneration !== undefined && nativeGeneration !== event.generation) abort()
+    props.management?.dispose()
     nativeGeneration = event.generation
     if (nativeConnected) { invalidate(true, true); invalidateBundles() }
   }), serverEvents.onTransportStatus(status => {
     connected = status === "connected"
-    if (!connected) abort()
+    if (!connected) { abort(); props.management?.dispose() }
     else { invalidate(true, true); invalidateBundles() }
   }), serverEvents.onOpen(() => { abort(); invalidateBundles() })]
-  const dispose = () => { disposed = true; clearTimeout(timer); clearTimeout(bundlesTimer); abort(); pending.clear(); releases.splice(0).forEach(release => release()) }
+  const dispose = () => { disposed = true; props.management?.dispose(); clearTimeout(timer); clearTimeout(bundlesTimer); abort(); pending.clear(); releases.splice(0).forEach(release => release()) }
   onCleanup(dispose)
 
   const location = () => getActiveCatalogLocation(props.instanceId).directory
@@ -182,6 +184,14 @@ export function useApi4Channel(props: {
       },
     }),
   }))
+  if (granted("bundles.manage") && props.management) {
+    for (const method of ["request", "setActive", "installHost", "attach", "detach"]) {
+      methods.get("bundles")!.set(method, async (input, signal) => {
+        if (!bundlesCurrent()) throw new Error("Bundles unavailable")
+        return props.management!.manage(method, input, signal)
+      })
+    }
+  }
 
   async function conversation(mode: "open" | "new", signal: AbortSignal): Promise<Answer> {
     const result = await resolveImagesConversation(props.instanceId, mode,
@@ -250,5 +260,5 @@ export function useApi4Channel(props: {
       answer({ error: capability === "bundles" && error instanceof PanelExtensionBusyError ? "busy" : true })
     }
   }
-  return Object.assign(receive, { dispose })
+  return Object.assign(receive, { dispose, current: bundlesCurrent })
 }

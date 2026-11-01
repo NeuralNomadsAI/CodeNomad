@@ -40,7 +40,7 @@ export class IntegrationAttachments {
   private readonly sessions = new Map<string, Promise<unknown>>()
   constructor(private readonly deps: IntegrationAttachmentsDeps) {}
 
-  async installHost(workspaceId: string, integrationId: string, location: PluginControlLocation, signal?: AbortSignal, authority?: NativeMutationAuthority) {
+  async assertHostInstallationSupported(workspaceId: string): Promise<void> {
     // Refuse before catalog.read(), which can persist a refresh. A mirrored offer never authorizes installation.
     if (this.deps.workspaceManager.getServiceWslDistro?.(workspaceId)) throw new IntegrationAttachmentError("unsupported")
     if ((this.deps.hostPlatform ?? process.platform) === "linux") {
@@ -50,6 +50,10 @@ export class IntegrationAttachments {
       catch { throw new IntegrationAttachmentError("unavailable") }
       if (/microsoft/i.test(version)) throw new IntegrationAttachmentError("unsupported")
     }
+  }
+
+  async installHost(workspaceId: string, integrationId: string, location: PluginControlLocation, signal?: AbortSignal, authority?: NativeMutationAuthority) {
+    await this.assertHostInstallationSupported(workspaceId)
     return this.run(workspaceId, integrationId, location, signal, async context => {
       await this.status(context)
       const result = await this.call(context, "installHost", { target: "default" })
@@ -58,11 +62,11 @@ export class IntegrationAttachments {
     }, true, authority)
   }
 
-  hosts(workspaceId: string, integrationId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<IntegrationHostsResponse> {
+  hosts(workspaceId: string, integrationId: string, location: PluginControlLocation, signal?: AbortSignal, authority?: NativeMutationAuthority): Promise<IntegrationHostsResponse> {
     return this.run(workspaceId, integrationId, location, signal, async context => {
       await this.status(context)
       return this.call(context, "hosts", {})
-    })
+    }, Boolean(authority), authority)
   }
 
   async bindingRead(workspaceId: string, integrationId: string, location: PluginControlLocation, input: IntegrationRpcValue<"bindingRead.input">, signal?: AbortSignal): Promise<IntegrationBindingResponse> {

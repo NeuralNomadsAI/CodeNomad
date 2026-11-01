@@ -233,15 +233,18 @@ consent/digest, captured session/Location and target authority; synchronous,
 idempotent `assertCurrent()` checks live revocation, expiry, connection and mount
 fences. A trusted adapter must supply both from host-owned state and propagate its
 cancellation/deadline. Never construct authority from an iframe/request boolean or
-a cached successful authorization. Extension-facing mutation adapters must supply
-this context on every call; the public bundles surface exposes reads only.
+a cached successful authorization. Extension-facing mutation adapters supply
+this context on every call through the owner-bound bundles transport.
 
 `PluginSources.add(..., authority?)` and `PluginControls.mutate(..., authority?)`
 revalidate inside their existing queues and after asynchronous prerequisites.
 Nested `editConfigDocument(..., signal?, admission?)` carries the same per-call
 `NativeMutationAdmission` through the document queue. The writer asserts before
 preparation and final dispatch; its synchronous `onDispatch` observer marks only
-host `rename` or WSL commit-command submission. Preparation and no-op reads keep
+host `rename` or WSL commit-command submission. Its asynchronous `revalidate`
+hook runs after preparation and lock waits, before the final content/mode and
+lock-owner checks. `NativeMutationAuthority.onSubmitted` observes the first
+irreversible submission once per invocation. Preparation and no-op reads keep
 the submission flag clear. Authorized adds use the already-loaded catalogue
 (`refresh: false`) so authorization cannot persist a catalogue refresh.
 
@@ -264,8 +267,12 @@ These boundaries fence local submission. Already dispatched native requests and
 WSL commands retain their external lifetime; cancellation and queue release provide
 no rollback or terminality guarantee. External editors retain their filesystem
 race window between verification and rename. Session moves/deletions by other
-clients retain native read-then-mutate semantics. Global removal coordination
-requires its separate qualification.
+clients retain native read-then-mutate semantics.
+
+`readSourceDocument` resolves an exact source from a fresh authorized snapshot
+and reads its actual declaration document through the same host/WSL filesystem.
+Bundles plans bind its content, destination and mode separately from the scope's
+activation write target, including when both Global JSON and JSONC documents exist.
 
 OpenCode watches these configuration roots. Never restart the daemon or report a
 successful file write as an active plugin: the mutation response publishes the

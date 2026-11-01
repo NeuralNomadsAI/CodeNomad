@@ -4,6 +4,7 @@ import { EventBus } from "../../events/bus"
 import { WorkspaceEventPayload } from "../../api-types"
 import type { ClientConnectionManager } from "../../clients/connection-manager"
 import { Logger } from "../../logger"
+import type { BundlesTransport } from "../../panel-extensions/bundles-transport"
 
 interface RouteDeps {
   eventBus: EventBus
@@ -12,6 +13,7 @@ interface RouteDeps {
   connectionManager: ClientConnectionManager
   backpressureLimitBytes?: number
   backpressureTimeoutMs?: number
+  bundlesTransport?: Pick<BundlesTransport, "openStream">
 }
 
 let nextClientId = 0
@@ -45,6 +47,7 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
     let unsubscribe = () => {}
     let unregister = () => {}
     let unregisterConnection = () => {}
+    let closeBundles = () => {}
     let heartbeat: ReturnType<typeof setInterval> | undefined
     let drainTimeout: ReturnType<typeof setTimeout> | undefined
     let closed = false
@@ -67,6 +70,7 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
       pending.length = 0
       bufferedBytes = 0
       unsubscribe()
+      closeBundles()
       if (force) reply.raw.destroy()
       else reply.raw.end?.()
       deps.logger.debug({ clientId }, "SSE client disconnected")
@@ -125,6 +129,10 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
       write(`data: ${JSON.stringify(event)}\n\n`)
     }
 
+    // Private frames share the stream's bounded writer, bypassing EventBus and payload diagnostics.
+    closeBundles = deps.bundlesTransport?.openStream(request, reply.raw, write) ?? (() => {})
+    if (closed) { closeBundles(); return }
+
     unsubscribe = deps.eventBus.onEvent(send)
     if (closed) {
       unsubscribe()
@@ -136,10 +144,12 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
     }, 15000)
 
     unregister = deps.registerClient(close)
+    if (closed) { unregister(); return }
     unregisterConnection = deps.connectionManager.register({
       ...connection,
       close,
     })
+    if (closed) { unregister(); unregisterConnection(); return }
 
     request.raw.on("close", () => handleClose())
     request.raw.on("error", () => handleClose())
