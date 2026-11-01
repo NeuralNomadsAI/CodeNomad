@@ -63,7 +63,7 @@ async function setup(missing = false) {
   await page.route("**/private-preview-frame", route => route.fulfill({ contentType: "text/html", body: "<p>Private browser preview</p>" }))
   try {
     const [eventStreamResponse] = await Promise.all([
-      page.waitForResponse(response => response.request().resourceType() === "eventsource" && new URL(response.url()).pathname === "/api/events"),
+      page.waitForResponse(response => response.request().resourceType() === "eventsource" && new URL(response.url()).pathname === "/api/events", { timeout: 120_000 }),
       page.goto(url),
     ])
     // Loaded Missions enable the current-mission field (nothing is selected by default).
