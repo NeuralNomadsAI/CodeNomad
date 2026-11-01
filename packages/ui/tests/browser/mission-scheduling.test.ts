@@ -39,6 +39,35 @@ const policy = (page: Page) => page.evaluate(() => (window as any).schedulingFix
 const patch = (page: Page, value: object) => page.evaluate(value => (window as any).schedulingFixture.change(value), value)
 const times = (page: Page) => page.locator(".mission-scheduling-preview time").evaluateAll(items => items.map(item => item.getAttribute("datetime")))
 
+test("normal explanations stay behind label help while dates, errors and all form controls remain accessible", async () => {
+  const { page, errors } = await setup()
+  try {
+    const schedule = page.locator(".mission-scheduling")
+    assert.equal(await schedule.locator("p").count(), 0)
+    assert.equal(await schedule.locator(".mission-scheduling-preview").count(), 0, "immediate unconditional has no redundant preview")
+    assert.equal(await policy(page).then(value => value.timing.kind), "immediate")
+    const frequencyHelp = schedule.locator(".settings-info-tip").first()
+    await page.getByLabel("Frequency", { exact: true }).focus()
+    await page.keyboard.press("Shift+Tab")
+    assert.equal(await frequencyHelp.evaluate(element => element === document.activeElement), true)
+    await page.getByRole("tooltip").filter({ hasText: /Create saves a paused Mission/ }).waitFor()
+    await page.getByLabel("Frequency", { exact: true }).selectOption("every")
+    await page.getByLabel("Condition", { exact: true }).selectOption("files-changed")
+    await page.getByRole("alert").waitFor()
+    await page.getByLabel("Relative file paths (one per line)", { exact: true }).fill("src/main.ts")
+    await page.getByLabel("Maximum launched passages", { exact: true }).fill("2")
+    assert.equal(await schedule.locator("p").count(), 0)
+    assert.equal(await times(page).then(values => values.length), 5, "checks remain separate from the passage quota")
+    assert.equal((await policy(page)).ends.maxLaunches, 2)
+    assert.equal((await policy(page)).condition.kind, "files-changed")
+    await schedule.locator(".mission-scheduling-preview .settings-info-tip").focus()
+    await page.getByRole("tooltip").filter({ hasText: /Preview assuming Play/ }).waitFor()
+    assert.deepEqual(await schedule.locator("[aria-describedby]").evaluateAll(elements => elements.flatMap(element =>
+      element.getAttribute("aria-describedby")!.split(/\s+/).filter(id => !document.getElementById(id)))), [])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("keyboard disclosure and invalid fields expose their exact translated error to assistive technology", async () => {
   const { page, errors } = await setup()
   try {
@@ -107,7 +136,9 @@ test("interval validation, monthly skip, exact native DST preview and combined e
     await page.getByLabel("Frequency", { exact: true }).selectOption("monthly")
     await page.getByLabel("Maximum launched passages", { exact: true }).fill("")
     await page.getByLabel("Day of month", { exact: true }).fill("31")
-    assert.match(await page.locator(".mission-scheduling").innerText(), /Months without this day are skipped/)
+    assert.doesNotMatch(await page.locator(".mission-scheduling").innerText(), /Months without this day are skipped/)
+    await page.getByRole("img", { name: /Months without this day are skipped/ }).focus()
+    await page.getByRole("tooltip").filter({ hasText: /Months without this day are skipped/ }).waitFor()
     assert.deepEqual((await times(page)).map(at => new Date(at!).getUTCMonth()), [2, 4, 6, 7, 9])
     await page.getByLabel("Frequency", { exact: true }).selectOption("daily")
     await page.getByLabel("Time 1", { exact: true }).fill("02:30")

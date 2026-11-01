@@ -145,6 +145,8 @@ Reddedilen veya doğrulanmayan bir seçim asla yeniden gönderilmez: kayıtlı d
 
 ### Yerel zamanlama {#native-scheduling}
 
+Etiketlerin yanındaki **i** simgeleri seçenekleri açıklar: üzerine gelin, klavyeyle odaklayın veya dokunun.
+
 Oluşturma veya düzenleme ekranında **Zamanlama** bölümünü genişletin. **Sıklık** şu seçenekleri sunar:
 
 | Seçim | Zamanlama |
@@ -179,6 +181,8 @@ Sürekli yineleme için sınırları boş bırakın. **İzin verilen son zaman**
 
 Seçili yerel zamanlama **İstenen durum**, **Yerel takvim**, **Sonraki uyanma** veya **Sonraki kontrol**, **… tarihinden beri izleniyor** bilgisiyle **Kontroller**, **Başlatılan geçişler**, **Başarılı geçişler**, bitişi ve **Önceki çalıştırmalar** bilgilerini gösterir. Geçmiş bir geçişi **Konuşmayı aç** üzerinden okuyun. **Zamanlama tamamlandı**, zamanlamanın bitişini açıklar; geçişin sonucunu ayrıca inceleyin. Son 30 sonuç korunur; ömür boyu sayılar bu pencerenin dışında da kalır. **Daha fazla Mission yükle**, kayıtlı nesnelerin sonraki sayfasını yükler.
 
+Liste, koşul ve bitişi yalnızca tanımlandığında; **Kontroller** bilgisini ise yalnızca koşul varsa gösterir.
+
 ### Mevcut günlük zamanlamalar {#existing-daily-schedules}
 
 Mevcut günlük zamanlamalar kayıtlı IANA saat dilimini ve yerel takvim saatini kullanır. Her çalıştırmanın kendi koordinatörü ve görev haritası vardır; sonucu merkezi alanda okumak için güncel görev ağacını veya geçmiş bir tarih/sonucu seçin. Saklanan geçmişleri 30 sonuç tutar. Bu kayıtlar için aşağıdaki günlük kurallar geçerlidir:
@@ -197,6 +201,8 @@ Oluşturulma zamanı da uygun günlük işleri sınırlar. Mevcut günlük kayı
 **Takip edilen konuşmalar (isteğe bağlı)** seçili konuşmalardan sınırlı bağlam ekler. İşlenen mesaj imleçlerini yalnızca tamamlanan çalıştırma ilerletir; başarısız/kesintiye uğrayan çalıştırma bu bağlamı sessizce tüketmez. Talimatlar ve bağlam kapasiteyi aşarsa sınırsız geçmiş okunduğunu varsaymak yerine talimatları kısaltın veya takip edilen konuşmaları kaldırın.
 
 ## Çalışma ömrü ve hizmet yeniden başlatmaları {#lifetime}
+
+**Teknik ayrıntılar** yanındaki **i**, teknik etkinliği ve maliyetleri açıklar. **Ayarlar → OpenCode** altında gözetim durumu ve hatalar görünür kalır; genel açıklamalar **i** içindedir.
 
 Yerel bir zamanlamada **Teknik ayrıntılar** bölümünü genişleterek **Ana taşıyıcı** ve **Uzlaştırma taşıyıcısı** bilgilerini, bunların yerel takvimlerini ve varsa **Temizlik uzlaştırma bekliyor** durumunu görebilirsiniz. Bu teknik konuşmalarda mesaj yazma eylemi bulunmaz ve bunlar olağan konuşma ve kaynak seçicilerinde görünmez. Teknik uyanmalar, başlıklar ve bağlam sıkıştırma, sağlayıcılara HTTP isteği göndermeden yerel modeli kullanır; yerel olaylar ve istatistikler bunları yine de içerebilir, ancak gerçek geçişlerin olağan model maliyetleri korunur. Bağlam sıkıştırma, konuşma ve takvim kimliğini koruyarak işlenen bağlamı sınırlar. Saklanan yerel mesajlar ve olaylar, tamamlanmış bir zamanlama açıkça temizlenene kadar birikebilir; saklanan 30 Mission sonucu ayrıdır. Derinlik denetimi ve **Zamanlama**, kullanılabilir olduğunda yolu **OpenCode yapılandırma dosyası:** altında gösterir; derinlik denetimi **Projenin yazma hedefi** bilgisini ayrıca belirtir.
 

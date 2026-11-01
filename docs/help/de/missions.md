@@ -145,6 +145,8 @@ Aufträge speichern Anweisungen und angeforderte Auswahl, keine Aufgabenpläne, 
 
 ### Native Zeitplanung {#native-scheduling}
 
+Die **i**-Symbole neben den Beschriftungen erklären die Auswahl: per Mauszeiger, Tastaturfokus oder Antippen.
+
 Klappen Sie **Zeitplanung** beim Erstellen oder Bearbeiten auf. **Häufigkeit** bietet:
 
 | Auswahl | Zeitpunkt |
@@ -179,6 +181,8 @@ Lassen Sie Grenzen für eine fortlaufende Wiederholung leer. **Letzter erlaubter
 
 Der ausgewählte native Zeitplan zeigt **Gewünschter Zustand**, **Nativer Kalender**, **Nächste Aktivierung** oder **Nächste Prüfung**, **Prüfungen** mit **Erfasst seit…**, **Gestartete Durchläufe**, **Erfolgreiche Durchläufe**, sein Ende und **Frühere Läufe**. Lesen Sie einen früheren Durchlauf über **Unterhaltung öffnen**. **Zeitplan beendet** beschreibt das Ende des Zeitplans; prüfen Sie das Ergebnis des Durchlaufs separat. Ergebnisse behalten die neuesten 30 Einträge; Gesamtzählungen überdauern dieses Fenster. **Weitere Missions laden** lädt die nächste Seite gespeicherter Objekte.
 
+Die Liste zeigt Bedingung und Ende nur, wenn festgelegt, und **Prüfungen** nur mit einer Bedingung.
+
 ### Bestehende tägliche Zeitpläne {#existing-daily-schedules}
 
 Bestehende tägliche Zeitpläne verwenden die gespeicherte IANA-Zone und Ortszeit. Jeder Lauf hat eigenen Koordinator und eigene Missionskarte; wählen Sie seinen aktuellen Aufgabenbaum oder ein früheres Datum/Ergebnis zur zentralen Anzeige. Ihr aufbewahrter Verlauf enthält 30 Ergebnisse. Für diese Einträge gelten die folgenden täglichen Regeln:
@@ -197,6 +201,8 @@ Auch die Erstellungszeit begrenzt zulässige tägliche Arbeit. **Jetzt ausführe
 **Verfolgte Gespräche (optional)** ergänzt begrenzten Kontext aus ausgewählten Unterhaltungen. Nur ein abgeschlossener Lauf bewegt deren verarbeitete Nachrichtenzeiger vor; fehlgeschlagene/unterbrochene Läufe verbrauchen diesen Kontext nicht stillschweigend. Überschreiten Anweisungen plus Kontext die Kapazität, kürzen Sie Anweisungen oder entfernen Sie verfolgte Unterhaltungen, statt unbegrenzt gelesenen Verlauf anzunehmen.
 
 ## Lebensdauer und Dienstneustarts {#lifetime}
+
+Das **i** neben **Technische Details** erklärt technische Aktivität und Kosten. Unter **Einstellungen → OpenCode** bleiben Überwachungsstatus und Fehler sichtbar; allgemeine Erklärungen stehen im **i**.
 
 Klappen Sie bei einem nativen Zeitplan **Technische Details** auf, um seinen **Hauptträger** und **Abgleichträger**, deren native Kalender und eine etwaige Meldung **Bereinigung wartet auf Abgleich** zu sehen. Diese technischen Unterhaltungen bieten keine Aktion zur Nachrichteneingabe und erscheinen nicht in den üblichen Unterhaltungs- und Quellenauswahlen. Technische Aktivierungen, Titel und Kompaktierung nutzen das lokale Modell ohne HTTP-Anfragen an Anbieter; native Ereignisse und Statistiken können sie dennoch enthalten, während tatsächliche Durchläufe ihre üblichen Modellkosten behalten. Kompaktierung begrenzt den verarbeiteten Kontext bei gleichbleibender Identität der Unterhaltung und des Kalenders. Gespeicherte native Nachrichten und Ereignisse können bis zur ausdrücklichen Bereinigung eines beendeten Zeitplans anwachsen; die 30 aufbewahrten Mission-Ergebnisse sind davon getrennt. Die Tiefeneinstellung und **Zeitplanung** zeigen den Pfad unter **OpenCode-Konfigurationsdatei:**, wenn er verfügbar ist; die Tiefeneinstellung kennzeichnet das **Schreibziel des Projekts** separat.
 

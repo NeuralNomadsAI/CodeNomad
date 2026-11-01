@@ -145,6 +145,8 @@ Las descripciones guardan instrucciones y elecciones solicitadas, no planes de t
 
 ### Programación nativa {#native-scheduling}
 
+Los iconos **i** junto a las etiquetas explican las opciones: pasa el puntero, enfócalos con el teclado o tócalos.
+
 Despliega **Programación** al crear o editar. **Frecuencia** ofrece:
 
 | Opción | Momento |
@@ -179,6 +181,8 @@ Deja los límites vacíos para una recurrencia continua. **Último horario permi
 
 La programación nativa seleccionada muestra **Estado deseado**, **Calendario nativo**, **Próxima activación** o **Próxima comprobación**, **Comprobaciones** con **Seguimiento desde…**, **Pasadas iniciadas**, **Pasadas exitosas**, su final y **Ejecuciones anteriores**. Lee una pasada anterior mediante **Abrir conversación**. **Programación terminada** describe el final de la programación; inspecciona por separado el resultado de la pasada. Se conservan los últimos 30 resultados; los recuentos acumulados persisten más allá de esa ventana. **Cargar más Missions** carga la siguiente página de objetos guardados.
 
+La lista muestra la condición y el final solo si están definidos, y **Comprobaciones** solo con una condición.
+
 ### Programaciones diarias existentes {#existing-daily-schedules}
 
 Las programaciones diarias existentes usan la zona IANA y la hora civil guardadas. Cada ejecución tiene su propio coordinador y mapa de misión; selecciona su árbol de tareas actual o una fecha/resultado anterior para leerlo en el centro. Su historial conservado contiene 30 resultados. Las siguientes reglas diarias se aplican a estas entradas:
@@ -197,6 +201,8 @@ La fecha de creación también acota el trabajo diario admisible. **Ejecutar aho
 **Conversaciones seguidas (opcional)** añade contexto acotado de conversaciones elegidas. Solo una ejecución completada avanza sus cursores de mensajes procesados; una ejecución fallida/interrumpida no consume silenciosamente ese contexto. Si las instrucciones más el contexto superan la capacidad, acorta las instrucciones o retira conversaciones seguidas en lugar de suponer que se lee un historial ilimitado.
 
 ## Duración y reinicios del servicio {#lifetime}
+
+El **i** junto a **Detalles técnicos** explica la actividad técnica y los costes. En **Configuración → OpenCode**, la supervisión mantiene visibles el estado y los errores; su **i** contiene las explicaciones generales.
 
 En una programación nativa, despliega **Detalles técnicos** para identificar su **Portador principal** y su **Portador de reconciliación**, sus calendarios nativos y cualquier **Limpieza pendiente de reconciliación**. Estas conversaciones técnicas no ofrecen una acción de composición y quedan fuera de los selectores habituales de conversaciones y fuentes. Las activaciones técnicas, los títulos y la compactación usan el modelo local sin solicitudes HTTP a los proveedores; los eventos y estadísticas nativos aún pueden incluirlos, mientras que las pasadas reales mantienen sus costes de modelo habituales. La compactación limita el contexto procesado y conserva la identidad de la conversación y del calendario. Los mensajes y eventos nativos almacenados pueden acumularse hasta la limpieza explícita de una programación terminada; los 30 resultados de Mission conservados son independientes. El control de profundidad y **Programación** muestran la ruta bajo **Archivo de configuración de OpenCode:** cuando está disponible; el control de profundidad indica por separado su **Destino de escritura del proyecto**.
 

@@ -6,6 +6,7 @@ import { chromium, type Browser, type Page } from "playwright"
 import type { SupervisionSettingsControl, SupervisionSettingsResponse } from "../../../server/src/api-types"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { serviceSupervisionMessages as messages } from "../../src/lib/i18n/messages/en/service-supervision"
 
 let browser: Browser, url: string
 before(async () => {
@@ -83,7 +84,7 @@ test("supervision observes without installing; explicit ON/OFF pin service revis
   try {
     await page.goto(url)
     const toggle = page.getByRole("switch", { name: "Keep OpenCode running", exact: true })
-    await page.getByText(/Enables at the first Mission Play/).waitFor()
+    await page.getByRole("status").filter({ hasText: /^Off$/ }).waitFor()
     assert.equal(await toggle.isChecked(), false)
     assert.equal(fixture.writes.length, 0)
     await toggle.click()
@@ -93,15 +94,45 @@ test("supervision observes without installing; explicit ON/OFF pin service revis
     assert.deepEqual({ ...fixture.writes[0], requestID: "id" }, { serviceKey: key, expectedRevision: 0, requestID: "id", action: "on" })
     assert.match(fixture.writes[0].requestID, /^[a-f\d-]{36}$/)
     await toggle.click()
-    await page.getByText(/Turning this off leaves OpenCode running/).waitFor()
+    await page.getByRole("status").filter({ hasText: /^Off$/ }).waitFor()
     await page.getByText("OpenCode responds, but supervision is not confirmed active.", { exact: true }).waitFor()
     assert.deepEqual(fixture.writes.map(item => [item.action, item.expectedRevision]), [["on", 0], ["off", 1]])
     await page.evaluate(() => (window as any).fixture.mount(false))
     await page.evaluate(() => (window as any).fixture.mount(true))
-    await page.getByText(/Turning this off leaves OpenCode running/).waitFor()
+    await page.getByRole("status").filter({ hasText: /^Off$/ }).waitFor()
     assert.equal(fixture.writes.length, 2, "remount never reinstalls")
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
+})
+
+test("supervision prose stays in the info tip, accessible by keyboard and touch without changing the setting", async () => {
+  for (const touch of [false, true]) {
+    const page = await browser.newPage({ viewport: { width: 390, height: 950 }, hasTouch: touch })
+    const fixture = await setup(page)
+    try {
+      await page.goto(url)
+      const status = page.getByRole("status").filter({ hasText: /^Off$/ })
+      await status.waitFor()
+      const toggle = page.getByRole("switch")
+      assert.equal(await toggle.getAttribute("aria-describedby"), await status.getAttribute("id"))
+      const prose = ["info", "scope", "default", "off"].map(key => messages[`settings.supervision.${key}` as keyof typeof messages])
+      for (const text of prose) assert.equal(await page.getByText(text, { exact: false }).count(), 0)
+      const tip = page.locator(".settings-info-tip"), tooltip = page.getByRole("tooltip")
+      if (touch) await tip.tap()
+      else {
+        await page.keyboard.press("Tab")
+        assert.equal(await tip.evaluate(el => el === document.activeElement), true)
+      }
+      await tooltip.waitFor()
+      assert.equal(await tooltip.innerText(), prose.join(" "))
+      if (touch) await tip.tap()
+      else await page.keyboard.press("Tab")
+      await tooltip.waitFor({ state: "hidden" })
+      assert.equal(await toggle.isChecked(), false)
+      assert.equal(fixture.writes.length, 0)
+      assert.deepEqual(fixture.errors, [])
+    } finally { await page.close() }
+  }
 })
 
 test("all protection states and platform causes are visible, including deferred Linux rollback with Retry", async () => {
@@ -148,7 +179,7 @@ test("lost acknowledgements reconcile by exact receipt; unknown actions keep the
     fixture.mode("lost-applied")
     await page.goto(url)
     const toggle = page.getByRole("switch", { name: "Keep OpenCode running", exact: true })
-    await page.getByText(/Enables at the first Mission Play/).waitFor()
+    await page.getByRole("status").filter({ hasText: /^Off$/ }).waitFor()
     await toggle.click()
     await page.getByText("Running · supervision active", { exact: true }).waitFor()
     assert.equal(fixture.writes.length, 1)
@@ -166,7 +197,7 @@ test("lost acknowledgements reconcile by exact receipt; unknown actions keep the
     await frames(page)
     assert.equal(fixture.writes.length, 2, "status reads and remounts never resend")
     await page.getByRole("button", { name: "Retry original action", exact: true }).click()
-    await page.getByText(/Turning this off leaves OpenCode running/).waitFor()
+    await page.getByRole("status").filter({ hasText: /^Off$/ }).waitFor()
     assert.deepEqual(fixture.writes[2], original, "explicit retry keeps key, revision and request ID")
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
@@ -177,7 +208,7 @@ test("reads coalesce, stale observations are withheld, hidden sections make no r
   const fixture = await setup(page)
   try {
     await page.goto(url)
-    await page.getByText(/Enables at the first Mission Play/).waitFor()
+    await page.getByRole("status").filter({ hasText: /^Off$/ }).waitFor()
     fixture.holdRead()
     await page.getByRole("button", { name: "Check supervision status", exact: true }).click()
     const before = fixture.reads()
@@ -236,11 +267,11 @@ test("a stale revision refreshes without overwriting another profile's choice", 
   const fixture = await setup(page)
   try {
     await page.goto(url)
-    await page.getByText(/Enables at the first Mission Play/).waitFor()
+    await page.getByRole("status").filter({ hasText: /^Off$/ }).waitFor()
     fixture.state({ desired: "off", revision: 5 })
     await page.getByRole("switch").click()
     await page.getByRole("alert").filter({ hasText: /Another action changed this service/ }).waitFor()
-    await page.getByText(/Turning this off leaves OpenCode running/).waitFor()
+    await page.locator('[role="switch"]:enabled').waitFor()
     assert.equal(fixture.writes.length, 1)
     assert.equal(fixture.writes[0].expectedRevision, 0)
     assert.equal(await page.getByRole("button", { name: "Retry original action", exact: true }).count(), 0)
@@ -255,18 +286,18 @@ test("an in-flight control survives remount and its late reply cannot publish in
   const fixture = await setup(page)
   try {
     await page.goto(url)
-    await page.getByText(/Enables at the first Mission Play/).waitFor()
+    await page.getByRole("status").filter({ hasText: /^Off$/ }).waitFor()
     fixture.mode("hold")
     await page.getByRole("switch").click()
     await fixture.held
     await page.evaluate(() => (window as any).fixture.mount(false))
     await page.evaluate(() => (window as any).fixture.mount(true))
-    await page.getByText(/Enables at the first Mission Play/).waitFor()
+    await page.getByRole("status").filter({ hasText: /^Off$/ }).waitFor()
     assert.equal(await page.getByRole("switch").isDisabled(), true)
     assert.equal(fixture.writes.length, 1)
     fixture.state({ serviceKey: otherKey, desired: "off", revision: 8 })
     await page.evaluate(() => (window as any).fixture.select("/another/opencode2"))
-    await page.getByText(/Turning this off leaves OpenCode running/).waitFor()
+    await page.locator('[role="switch"]:enabled').waitFor()
     fixture.release()
     await frames(page)
     assert.equal(await page.getByRole("switch").isChecked(), false)
@@ -281,13 +312,13 @@ test("a remounted card observes completion of the control still owned by its pri
   const fixture = await setup(page)
   try {
     await page.goto(url)
-    await page.getByText(/Enables at the first Mission Play/).waitFor()
+    await page.getByRole("status").filter({ hasText: /^Off$/ }).waitFor()
     fixture.mode("hold")
     await page.getByRole("switch").click()
     await fixture.held
     await page.evaluate(() => (window as any).fixture.mount(false))
     await page.evaluate(() => (window as any).fixture.mount(true))
-    await page.getByText(/Enables at the first Mission Play/).waitFor()
+    await page.getByRole("status").filter({ hasText: /^Off$/ }).waitFor()
     assert.equal(await page.getByRole("switch").isDisabled(), true)
     fixture.release()
     await page.getByText("Running · supervision active", { exact: true }).waitFor()
@@ -303,7 +334,7 @@ test("explicit OFF can be saved before first Play without installing supervision
   try {
     await page.goto(url)
     await page.getByRole("button", { name: "Keep off at first Mission Play", exact: true }).click()
-    await page.getByText(/Turning this off leaves OpenCode running/).waitFor()
+    await page.getByRole("button", { name: "Keep off at first Mission Play", exact: true }).waitFor({ state: "detached" })
     assert.deepEqual(fixture.writes.map(item => item.action), ["off"])
     assert.equal(await page.getByRole("switch").isChecked(), false)
     assert.equal(await page.getByRole("button", { name: "Keep off at first Mission Play", exact: true }).count(), 0)
@@ -316,7 +347,7 @@ test("a malformed acknowledgement retains the original action instead of treatin
   const fixture = await setup(page)
   try {
     await page.goto(url)
-    await page.getByText(/Enables at the first Mission Play/).waitFor()
+    await page.getByRole("status").filter({ hasText: /^Off$/ }).waitFor()
     fixture.mode("malformed")
     await page.getByRole("switch").click()
     await page.getByRole("alert").filter({ hasText: /This action is unconfirmed/ }).waitFor()

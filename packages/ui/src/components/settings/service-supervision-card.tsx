@@ -24,16 +24,13 @@ export function ServiceSupervisionCard() {
   return <section class="settings-card" aria-labelledby={titleID}>
     <div class="settings-card-header">
       <h3 id={titleID} class="settings-card-title">{t("settings.supervision.title")}
-        <SettingsInfoTip text={t("settings.supervision.info")} /></h3>
+        <SettingsInfoTip text={["info", "scope", "default", "off"].map(key => t(`settings.supervision.${key}`)).join(" ")} /></h3>
       <SettingsSwitch label={t("settings.supervision.title")} checked={settings.snapshot()?.desired === "on"}
-        disabled={disabled()} describedBy={descriptionID} onChange={checked => void settings.save(checked ? "on" : "off")} />
+        disabled={disabled()} describedBy={settings.snapshot() ? descriptionID : undefined} onChange={checked => void settings.save(checked ? "on" : "off")} />
     </div>
     <div class="settings-card-body">
-      <p id={descriptionID} class="settings-toggle-caption">{t("settings.supervision.scope")}</p>
       <Show when={settings.snapshot()} fallback={<Show when={!settings.error()}><p role="status">{t("settings.supervision.loading")}</p></Show>}>{data => <>
-        <p role="status" class="settings-toggle-title">{t(`settings.supervision.state.${data().state}`)}</p>
-        <Show when={data().desired === "unset"}><p class="settings-toggle-caption">{t("settings.supervision.default")}</p></Show>
-        <Show when={data().desired === "off"}><p class="settings-toggle-caption">{t("settings.supervision.off")}</p></Show>
+        <p id={descriptionID} role="status" class="settings-toggle-title">{t(`settings.supervision.state.${data().state}`)}</p>
         <Show when={data().cause}>{cause => <p role="status" class="settings-toggle-caption">{t(`settings.supervision.cause.${cause()}`)}</p>}</Show>
         <Show when={data().serviceResponding && data().state !== "running"}>
           <p class="settings-toggle-caption">{t("settings.supervision.responding")}</p>

@@ -1,5 +1,6 @@
 import { For, Show } from "solid-js"
 import { useI18n } from "../lib/i18n"
+import { SettingsInfoTip } from "./settings/settings-info-tip"
 import type { MissionConditionKind, MissionSchedulingDraft } from "./mission-scheduling-data"
 
 type SelectedSource = Exclude<MissionConditionKind, "files-changed">
@@ -12,7 +13,7 @@ export function MissionSchedulingSources(props: { draft: MissionSchedulingDraft;
   const { t } = useI18n()
   const choices = () => props.sources[props.draft.condition as SelectedSource]
   return <>
-    <label>{t("missions.scheduling.condition")}<select aria-label={t("missions.scheduling.condition")} value={props.draft.condition}
+    <label><span>{t("missions.scheduling.condition")}<Show when={props.draft.condition !== "none"}><SettingsInfoTip text={t("missions.scheduling.conditionHint")} /></Show></span><select aria-label={t("missions.scheduling.condition")} value={props.draft.condition}
       onChange={event => props.onChange({ condition: event.currentTarget.value as MissionSchedulingDraft["condition"], source: "" })}>
       <For each={conditions}>{kind => <option value={kind}>{t(`missions.scheduling.condition.${kind}`)}</option>}</For>
     </select></label>
@@ -27,8 +28,8 @@ export function MissionSchedulingSources(props: { draft: MissionSchedulingDraft;
       </select></label>
       <Show when={!choices()}><p role="status">{t("missions.scheduling.sourcesUnavailable")}</p></Show>
     </Show>}>
-      <label>{t("missions.scheduling.files")}<textarea rows={3} aria-invalid={!!props.errorID} aria-describedby={props.errorID} value={props.draft.files} maxLength={64 * 1024}
-        onInput={event => props.onChange({ files: event.currentTarget.value })} /></label><p>{t("missions.scheduling.filesHint")}</p>
+      <label><span>{t("missions.scheduling.files")}<SettingsInfoTip text={t("missions.scheduling.filesHint")} /></span><textarea aria-label={t("missions.scheduling.files")} rows={3} aria-invalid={!!props.errorID} aria-describedby={props.errorID} value={props.draft.files} maxLength={64 * 1024}
+        onInput={event => props.onChange({ files: event.currentTarget.value })} /></label>
     </Show>
   </>
 }

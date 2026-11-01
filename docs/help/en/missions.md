@@ -145,6 +145,8 @@ Briefs store instructions and requested choices, not task plans, results, conver
 
 ### Native scheduling {#native-scheduling}
 
+The **i** icons beside scheduling labels explain the choices: hover, focus with the keyboard or tap.
+
 Expand **Scheduling** in Create or Edit. **Frequency** offers:
 
 | Choice | Timing |
@@ -179,6 +181,8 @@ Leave limits blank for ongoing recurrence. **Last allowed slot** and **Last allo
 
 The selected native schedule shows **Desired state**, **Native calendar**, **Next wake** or **Next check**, **Checks** with **Tracked since**, **Launched passages**, **Successful passages**, its end and **Past runs**. Read a past passage through **Open conversation**. **Schedule finished** describes the schedule's end; inspect the passage outcome separately. Results retain the latest 30 entries; lifetime counts survive that window. **Load more Missions** loads the next saved-object page.
 
+The list shows condition and end details only when configured, and **Checks** only with a condition.
+
 ### Existing daily schedules {#existing-daily-schedules}
 
 Existing daily schedules use the saved IANA zone and civil time. Each run has its own coordinator and mission map; select its current task tree or a past date/outcome to read the result centrally. Their retained history holds 30 results. The following daily rules apply to these entries:
@@ -197,6 +201,8 @@ Creation time also bounds eligible daily work. **Run now**, when offered on an e
 **Followed conversations (optional)** adds bounded context from chosen conversations. Only a completed run advances their processed-message cursors; a failed/interrupted run does not silently consume that context. If instructions plus context exceed capacity, shorten instructions or remove followed conversations rather than assuming unlimited history is read.
 
 ## Lifetime and service restarts {#lifetime}
+
+The **i** beside **Technical details** explains technical activity and costs. In **Settings → OpenCode**, supervision keeps status and errors visible; its **i** holds routine explanations.
 
 For a native schedule, expand **Technical details** to identify its **Principal carrier** and **Reconciliation carrier**, their native calendars and any **Cleanup awaiting reconciliation**. These technical conversations have no composer action and stay out of ordinary conversation/source pickers. Technical wakes, titles and compaction use the local model without provider HTTP requests; native events/statistics can still include them, while actual passages keep their ordinary model costs. Compaction bounds the processed context with the same conversation/calendar identity. Stored native messages and events can grow until explicit cleanup of a finished schedule; the 30 retained Mission results are separate. The depth control and **Scheduling** show the path under **OpenCode configuration file:** when available; the depth control labels its **Project write target** separately.
 

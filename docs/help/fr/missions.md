@@ -145,6 +145,8 @@ Les consignes stockent les instructions et choix demandés, pas les plans de tâ
 
 ### Programmation native {#native-scheduling}
 
+Les icônes **i** près des libellés expliquent les choix : survolez-les, placez-y le focus au clavier ou touchez-les.
+
 Développez **Programmation** dans le formulaire de création ou de modification. **Fréquence** propose :
 
 | Choix | Déclenchement |
@@ -179,6 +181,8 @@ Laissez les limites vides pour une récurrence continue. **Dernier créneau auto
 
 La programmation native sélectionnée affiche **État voulu**, **Calendrier natif**, **Prochain réveil** ou **Prochaine vérification**, **Vérifications** avec **Suivi depuis le…**, **Passages lancés**, **Passages réussis**, sa fin et **Exécutions passées**. Lisez un ancien passage via **Ouvrir la conversation**. **Programmation terminée** décrit la fin de la programmation ; inspectez séparément le résultat du passage. Les résultats conservent les 30 dernières entrées ; les totaux cumulés persistent au-delà de cette fenêtre. **Charger d’autres Missions** charge la page suivante d’objets enregistrés.
 
+La liste affiche la condition et la fin si elles sont définies, et **Vérifications** seulement avec une condition.
+
 ### Programmations quotidiennes existantes {#existing-daily-schedules}
 
 Les programmations quotidiennes existantes utilisent le fuseau IANA et l’heure civile enregistrés. Chaque exécution possède son propre coordinateur et son propre plan de mission ; sélectionnez son arbre actuel ou une date/un résultat passé pour le lire au centre. Leur historique conservé contient 30 résultats. Les règles quotidiennes suivantes s’appliquent à ces entrées :
@@ -197,6 +201,8 @@ La date de création borne aussi le travail quotidien admissible. **Lancer maint
 **Conversations suivies (facultatif)** ajoute un contexte borné des conversations choisies. Seule une exécution terminée avance leurs curseurs de messages traités ; une exécution échouée/interrompue ne consomme pas silencieusement ce contexte. Si les instructions et le contexte dépassent la capacité, raccourcissez les instructions ou retirez des conversations suivies au lieu de supposer qu’un historique illimité est lu.
 
 ## Durée de vie et redémarrages du service {#lifetime}
+
+Le **i** près de **Détails techniques** explique l’activité technique et les coûts. Dans **Paramètres → OpenCode**, la supervision garde l’état et les erreurs visibles ; son **i** contient les explications courantes.
 
 Pour une programmation native, développez **Détails techniques** pour identifier son **Porteur principal** et son **Porteur de réconciliation**, leurs calendriers natifs et tout **Nettoyage en attente de réconciliation**. Ces conversations techniques n'ont pas d'action de composition et restent absentes des sélecteurs ordinaires de conversations et de sources. Les réveils techniques, les titres et la compaction utilisent le modèle local sans requêtes HTTP vers les fournisseurs ; les événements et statistiques natifs peuvent quand même les inclure, tandis que les passages effectifs conservent leurs coûts de modèle habituels. La compaction borne le contexte traité en conservant l'identité de la conversation et du calendrier. Les messages et événements natifs stockés peuvent s'accumuler jusqu'au nettoyage explicite d'une programmation terminée ; les 30 résultats de Mission conservés sont distincts. Le réglage de profondeur et **Programmation** affichent le chemin sous **Fichier de configuration OpenCode :** lorsqu’il est disponible ; le réglage de profondeur indique séparément sa **Cible d’écriture du projet**.
 

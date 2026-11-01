@@ -7,6 +7,7 @@ import { createMissionScheduleControls } from "./mission-schedule-controls"
 import { MissionActionBar } from "./mission-action-bar"
 import { missionLaunchLimit } from "../../../server/src/missions/mission-launch-kind"
 import { MissionScheduleDiagnostics } from "./mission-schedule-diagnostics"
+import { SettingsInfoTip } from "./settings/settings-info-tip"
 
 export function createMissionScheduleList(props: { instanceId: string; projectID?: string; directory: string;
   active: () => boolean; enabled: () => boolean; refresh: number; selected?: string; detailId: string;
@@ -36,7 +37,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   }
   const condition = (doc: UnifiedMissionSchedule) => {
     const source = doc.configuration.launch.condition
-    if (!source) return t("missions.scheduling.condition.none")
+    if (!source) return undefined
     const reference = source.kind === "files-changed" ? source.paths.join(", ") : source.kind === "branch-commits" ? source.ref
       : source.kind === "conversation-message" ? source.conversationID : source.missionID
     return `${t(`missions.scheduling.condition.${source.kind}`)} · ${reference}`
@@ -52,7 +53,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
     title: doc.configuration.title,
     mark: doc.blockReason ? "interrupted" : doc.pendingPassage ? "working" : doc.firstPlayedAt === null && doc.state === "paused" ? "prepared"
       : doc.state === "paused" ? "paused" : doc.state === "finished" ? "done" : "idle",
-    status: [t(`missions.scheduleList.state.${doc.state}`), frequency(doc), condition(doc), nextWake(doc)].join(" · ") })))
+    status: [t(`missions.scheduleList.state.${doc.state}`), frequency(doc), condition(doc), nextWake(doc)].filter(Boolean).join(" · ") })))
   const refresh = () => setRevision(value => value + 1)
   const view = () => <>
     <Show when={list.error()}><p role="status" class="mission-control-stale">{t("missions.scheduleList.readFailed")}</p></Show>
@@ -90,13 +91,15 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
           </>} />
         <dl class="mission-schedule-facts">
           <dt>{t("missions.scheduling.frequency")}</dt><dd><bdi>{frequency(doc())}</bdi></dd>
-          <dt>{t("missions.scheduling.condition")}</dt><dd><bdi>{condition(doc())}</bdi></dd>
+          <Show when={doc().configuration.launch.condition}><dt>{t("missions.scheduling.condition")}<SettingsInfoTip text={t("missions.scheduling.conditionHint")} /></dt><dd><bdi>{condition(doc())}</bdi></dd></Show>
           <dt>{t("missions.scheduleList.desired")}</dt><dd>{t(`missions.scheduleList.state.${doc().state}`)}</dd>
           <dt>{t("missions.scheduleList.observed")}</dt><dd>{observed(doc())}</dd>
-          <dt>{t(doc().observation.kind === "check" ? "missions.scheduleList.nextCheck" : "missions.scheduleList.nextWake")}</dt><dd><bdi>{date(doc().observation.nextDueAt, zone())}</bdi></dd>
-          <dt>{t("missions.scheduling.endAt")}</dt><dd><bdi>{date(doc().slotEndsAt ?? doc().configuration.launch.ends.at, zone())}</bdi>
-            <Show when={doc().firstPlayedAt === null && doc().configuration.launch.ends.afterMs !== null}> · {t("missions.scheduleList.endAfter", { minutes: String(doc().configuration.launch.ends.afterMs! / 60_000) })}</Show></dd>
-          <dt>{t("missions.scheduleList.checks")}</dt><dd>{doc().checks ? `${doc().checks!.count} · ${t("missions.scheduleList.since", { when: date(doc().checks!.since) })}` : t("missions.scheduleList.unavailable")}</dd>
+          <dt>{t(doc().observation.kind === "check" ? "missions.scheduleList.nextCheck" : "missions.scheduleList.nextWake")}<SettingsInfoTip text={t("missions.scheduleList.lateSlot")} /></dt><dd><bdi>{date(doc().observation.nextDueAt, zone())}</bdi></dd>
+          <Show when={doc().slotEndsAt !== null || doc().configuration.launch.ends.at !== null || doc().configuration.launch.ends.afterMs !== null}>
+            <dt>{t("missions.scheduling.endAt")}</dt><dd><bdi>{date(doc().slotEndsAt ?? doc().configuration.launch.ends.at, zone())}</bdi>
+              <Show when={doc().firstPlayedAt === null && doc().configuration.launch.ends.afterMs !== null}> · {t("missions.scheduleList.endAfter", { minutes: String(doc().configuration.launch.ends.afterMs! / 60_000) })}</Show></dd>
+          </Show>
+          <Show when={doc().configuration.launch.condition}><dt>{t("missions.scheduleList.checks")}</dt><dd>{doc().checks ? `${doc().checks!.count} · ${t("missions.scheduleList.since", { when: date(doc().checks!.since) })}` : t("missions.scheduleList.unavailable")}</dd></Show>
           <dt>{t("missions.scheduleList.launched")}</dt><dd><bdi dir="ltr">{doc().launchedCount} / {missionLaunchLimit(doc().configuration.launch) ?? t("missions.scheduleList.unlimited")}</bdi></dd>
           <dt>{t("missions.scheduleList.succeeded")}</dt><dd>{doc().successfulCount}</dd>
         </dl>
@@ -105,8 +108,6 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
             : reason() === "failed" || reason() === "ended-without-report" ? "missions.recurrence.interruptedError" : "missions.scheduling.lock.uncertain")}
           <code><bdi>{reason()}</bdi></code>
         </p>}</Show>
-        <Show when={doc().configuration.launch.condition}><p class="mission-schedule-notice">{t("missions.scheduling.conditionHint")}</p></Show>
-        <p class="mission-schedule-notice">{t("missions.scheduleList.lateSlot")}</p>
         <Show when={expanded()}><section class="mission-schedule-instructions"><h3>{t("missions.control.objective")}</h3><p>{doc().configuration.objective}</p>
           <Show when={doc().configuration.notes}><p>{doc().configuration.notes}</p></Show></section></Show>
         <section class="mission-past-runs" aria-label={t("missionsPanel.pastRuns")}><h3>{t("missionsPanel.pastRuns")}</h3>

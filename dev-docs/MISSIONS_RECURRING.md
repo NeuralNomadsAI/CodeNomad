@@ -12,6 +12,12 @@ Missions owns admission, non-overlap, frozen inputs, launch counts and settlemen
 
 ### Visible timing, limits and editing
 
+Scheduling labels use focusable **i** tips for secondary explanations, available
+on hover, keyboard focus and touch. Frequency and condition controls retain their
+timing and admission semantics. The list shows condition and end details only
+when configured, and source checks only with a condition. The info tip beside
+the **Technical details** disclosure explains technical activity and costs.
+
 The editor exposes nine frequencies: immediate once, once at a civil date, once
 after an elapsed delay, elapsed interval, daily, selected weekdays, several daily
 times, day of each month and advanced cron. First Play freezes relative origins
