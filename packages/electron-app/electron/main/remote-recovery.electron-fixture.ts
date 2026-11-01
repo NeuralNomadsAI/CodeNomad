@@ -114,9 +114,14 @@ app.whenReady().then(async () => {
   step = "5 crash"
   let commits = 0
   page.on("did-navigate", () => { commits++ })
-  const gone = new Promise((resolve) => page.once("render-process-gone", () => resolve(undefined)))
-  page.forcefullyCrashRenderer()
-  await gone
+  const gone = new Promise<string>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("render-process-gone not reported within 10 s")), 10_000)
+    page.once("render-process-gone", (_event, details) => { clearTimeout(timeout); resolve(details.reason) })
+  })
+  // The renderer process dies outright. forcefullyCrashRenderer() makes Chromium crash it itself,
+  // whose report depends on the host's crash handling: on the Linux CI runner it never arrived.
+  process.kill(page.getOSProcessId(), "SIGKILL")
+  result.crashReason = await gone
   await new Promise((resolve) => setTimeout(resolve, 300))
   const commitsBeforeReload = commits
   step = "5 reload after crash"

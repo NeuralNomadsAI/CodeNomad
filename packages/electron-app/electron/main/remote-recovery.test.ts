@@ -56,6 +56,7 @@ test("only the host's own unavailable-server document reaches the remote recover
     assert.deepEqual(result.afterReload, { oldToken: { openLocalWindow: "refused" }, newToken: { openLocalWindow: "allowed" } })
     // A crash revokes the token for good and reloads nothing by itself; the user's reload afterwards
     // shows a fresh document whose actions work exactly once.
+    assert.equal(typeof result.crashReason, "string")
     assert.deepEqual(result.afterCrash, {
       automaticReloads: 0, newToken: true, oldToken: refused, openLocalWindow: { openLocalWindow: "allowed" },
     })
