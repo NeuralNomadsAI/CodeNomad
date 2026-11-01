@@ -6,6 +6,7 @@ import type { MissionInputTransport, NativeMissionSession } from "./control-type
 import { MISSION_JOURNAL_STORAGE_PREFIX, MissionJournal, parseMissionEvent, type MissionStorage } from "./journal"
 import { MISSION_CONTROL_CONCURRENCY } from "./lifecycle"
 import { MISSION_INSPECT_OUTPUT_LIMIT, boundedInspection } from "./inspect-view"
+import { MISSION_TASK_PAGE } from "./mission-panel-map"
 import { MISSION_MAX_EVENTS, missionLifecycleReserve, type MissionJsonValue, type MissionMap } from "./model"
 import { readMissionCatalog } from "./native-catalog"
 import { controlResumeAdmissionID } from "./receipt-identity"
@@ -137,11 +138,12 @@ test(`a mission of ${ACTORS} actors and ${TASKS} tasks is planned, reported, con
   assert.equal(f.calls.length, ACTORS - 5, "the coordinator and every actor with unreported work resume")
   assert.ok(f.flight.peak <= MISSION_CONTROL_CONCURRENCY)
 
-  // The panel's reads carry the compact map, every task row, and the mission's row.
+  // The panel's reads carry the compact map with a page of its tasks, and the mission's row.
   const list = await f.control().list({ include: [mission.id] })
-  assert.equal(list.missions.find(item => item.id === mission.id)?.tasks.length, TASKS)
+  assert.deepEqual([list.missions.find(item => item.id === mission.id)?.taskPage?.total, list.missions.find(item => item.id === mission.id)?.taskPage?.end],
+    [TASKS, MISSION_TASK_PAGE])
   assert.equal(list.summaries?.find(item => item.id === mission.id)?.actorSessionIds.length, ACTORS)
-  assert.equal((await f.control().mission(mission.id)).mission?.tasks.length, TASKS)
+  assert.equal((await f.control().mission(mission.id)).mission?.taskPage?.total, TASKS)
   const listOutput = ajv.compile(CODENOMAD_MISSIONS_RPC.methods.list.output)
   assert.ok(listOutput(JSON.parse(JSON.stringify(list))), JSON.stringify(listOutput.errors))
 

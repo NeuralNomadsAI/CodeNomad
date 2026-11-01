@@ -91,6 +91,12 @@ export async function projectMissionActivity(input: {
   const unsettledCalls = new Set<string>()
   for (const { mission, actor } of occurrences) {
     const key = `${mission.id}\0${actor.sessionId}`
+    // A compact map holds a page of its tasks: its evidence speaks for all of them.
+    if (mission.actorEvidence) {
+      if (mission.actorEvidence.reportOwed.includes(actor.sessionId)) missingReports.add(key)
+      if (mission.actorEvidence.callOpen.includes(actor.sessionId)) unsettledCalls.add(key)
+      continue
+    }
     // A running mission's coordinator still owes its final report, unless a saved
     // report's coordinator notification is still being delivered to wake it.
     if (actor.sessionId === mission.coordinatorSessionId && missionIsRunning(mission) && !mission.reports.some(report =>

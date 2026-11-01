@@ -1,18 +1,17 @@
 import { For, createEffect, createSignal, onCleanup } from "solid-js"
 import type { MissionPanelTask } from "../../../server/src/api-types"
+import { missionTaskOrder } from "../../../server/src/missions/mission-task-order"
 
-/** Stable topological order, including retired work; unrelated tasks never gain an edge. */
+/** Stable topological order, including retired work; unrelated tasks never gain an edge.
+ * The order the server pages compact maps in, for a map that holds all its tasks. */
 export function orderMissionTasks(tasks: MissionPanelTask[]): MissionPanelTask[] {
-  const remaining = new Map(tasks.map(task => [task.key, task]))
-  const ordered: MissionPanelTask[] = []
-  while (remaining.size) {
-    const ready = [...remaining.values()].filter(task => !task.blockedBy.some(key => remaining.has(key)))
-    // Defensive display fallback for an incomplete or cyclic historical snapshot.
-    if (!ready.length) { ordered.push(...remaining.values()); break }
-    for (const task of ready) { ordered.push(task); remaining.delete(task.key) }
-  }
-  return ordered
+  return missionTaskOrder(tasks)
 }
+
+/** Edges of a row whose other end is a task not shown: drawn as dashed stubs. */
+export type MissionGraphOmitted = Map<string, { dependencies: number; dependents: number }>
+/** A stub's length, and its lane: inside the first edge lane (`4`). */
+const STUB = 8, STUB_LANE = 1.5
 
 /** Lane area width, matched by `.mission-flow-linked` row padding in mission-graph.css. */
 const MISSION_GRAPH_WIDTH = 30
@@ -21,7 +20,7 @@ const MISSION_GRAPH_WIDTH = 30
  * enters its dependent's, so the icons are the graph's nodes. Both coordinates are
  * measured: the row/button padding between the lane area and the icon belongs to
  * the edge, in the SVG's own (possibly scaled or RTL-mirrored) user space. */
-export function MissionGraph(props: { tasks: MissionPanelTask[]; list: HTMLUListElement }) {
+export function MissionGraph(props: { tasks: MissionPanelTask[]; list: HTMLUListElement; omitted?: MissionGraphOmitted }) {
   let svg!: SVGSVGElement
   const [points, setPoints] = createSignal<Array<{ key: string; x: number; y: number }>>([])
   const [height, setHeight] = createSignal(0)
@@ -76,9 +75,17 @@ export function MissionGraph(props: { tasks: MissionPanelTask[]; list: HTMLUList
     // an unrelated intermediate task just because it occupies the same depth.
     return links.map(link => ({ ...link, lane: 4 + lanes.get(link.from.key)! * Math.min(6, 20 / Math.max(1, ends.length - 1)) }))
   }
+  // A dependency precedes its dependent in the display order: stubs to tasks not shown
+  // rise from the row for its dependencies and fall for its dependents.
+  const stubs = () => points().flatMap(point => {
+    const omitted = props.omitted?.get(point.key)
+    return ([["dependencies", -STUB], ["dependents", STUB]] as const).filter(([side]) => omitted?.[side])
+      .map(([side, rise]) => ({ key: point.key, side, d: `M ${point.x} ${point.y} H ${STUB_LANE} V ${point.y + rise}` }))
+  })
   const width = () => Math.ceil(Math.max(MISSION_GRAPH_WIDTH, ...points().map(point => point.x)))
   return <svg ref={svg} class="mission-graph" width={width()} height={height()} aria-hidden="true">
     <For each={edges()}>{edge => <path data-from={edge.from.key} data-to={edge.to.key}
       d={`M ${edge.from.x} ${edge.from.y} H ${edge.lane} V ${edge.to.y} H ${edge.to.x}`} />}</For>
+    <For each={stubs()}>{stub => <path class="mission-graph-omitted" data-task={stub.key} data-omitted={stub.side} d={stub.d} />}</For>
   </svg>
 }

@@ -6,7 +6,8 @@ import { MissionJournal, stableToken, type MissionStorage, type MissionView } fr
 import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "./mission-summary"
 import { readMissionContent, type MissionContentRequest, type MissionContentResult } from "./mission-content"
 import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
-import { compactMissionMap } from "./mission-compact-map"
+import { compactMissionMap, missionTaskPage } from "./mission-compact-map"
+import type { MissionTaskPageResult, MissionTaskRequest } from "./mission-panel-map"
 import {
   MISSION_SCHEMA_VERSION,
   missionPlanChanges,
@@ -182,6 +183,18 @@ export class MissionControl {
     const damage = projectDamage(aggregate, [view])
     return { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, generatedAt: (this.options.now ?? Date.now)(),
       ...(view.mission ? { mission: compactMissionMap(stampDamage(view.mission, damage)) } : {}), cleanups: view.cleanups ?? [], ...damage }
+  }
+
+  /** More of one mission's tasks for display (`missionTaskPage`): a window of its display
+   * order or tasks by key, ID or report, from one read of its range alone; refused once
+   * the order `request.order` names has changed (read-mostly: never a write's authority). */
+  async tasks(request: MissionTaskRequest & { missionID: string }): Promise<MissionTaskPageResult> {
+    const { mission } = await this.journal.missionView(request.missionID)
+    const base = { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, missionID: request.missionID }
+    if (!mission) return { ...base, refused: "mission-not-found" }
+    const page = missionTaskPage(mission, request)
+    if (request.order !== undefined && request.order !== page.taskPage.order) return { ...base, revision: mission.revision, refused: "order-changed" }
+    return { ...base, revision: mission.revision, ...page }
   }
 
   /** One mission body for display, in slices (`readMissionContent`): one read of that

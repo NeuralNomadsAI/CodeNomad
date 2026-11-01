@@ -13,6 +13,41 @@ const digest = (text: string) => createHash("sha256").update(text, "utf16le").di
 const describe = (text: string) => ({ characters: text.length, digest: digest(text) })
 const flush = () => new Promise(resolve => setImmediate(resolve))
 
+test("a body no descriptor describes is read again once its owner's mark changes, a read in flight under an earlier mark never shown", async () => {
+  const s = server(1_000), store = createMissionContentStore(s.fetch)
+  s.values.set("mission:objective", "five")
+  const consumer = store.use(ref(), "connection", "mark-5"), states = observe(consumer.state)
+  consumer.need(Infinity)
+  await flush()
+  assert.deepEqual([consumer.state().body?.text, consumer.state().body?.mark, s.reads.length], ["five", "mark-5", 1], "the first read is sent under the first mark")
+  // New metadata: the body is read again; the same metadata reads nothing more.
+  s.values.set("mission:objective", "six")
+  consumer.version("mark-6")
+  await flush()
+  consumer.version("mark-6")
+  await flush()
+  assert.deepEqual([consumer.state().body?.text, s.reads.length], ["six", 2])
+  // A read sent under mark 6 answers after mark 7 arrived: superseded, then read again.
+  s.hold(true)
+  consumer.retry()
+  await flush()
+  s.values.set("mission:objective", "seven")
+  consumer.version("mark-7")
+  s.hold(false)
+  s.reads[2].settle()
+  await flush(); await flush()
+  assert.deepEqual([consumer.state().body?.text, consumer.state().body?.mark, s.reads.length], ["seven", "mark-7", 4])
+  assert.ok(!states.seen.some(state => state.body?.text === "seven" && state.body.mark === "mark-6"), "the superseded answer never published")
+  // A retained body shown again under another mark is read again.
+  consumer.release()
+  s.values.set("mission:objective", "eight")
+  const again = store.use(ref(), "connection", "mark-8")
+  again.need(Infinity)
+  await flush()
+  assert.deepEqual([again.state().body?.text, s.reads.length], ["eight", 5])
+  states.dispose(); again.release()
+})
+
 /** A content route over mutable values, cutting `slice` characters per answer; each read waits for `release`. */
 function server(slice = 10) {
   const values = new Map<string, string>(), revisions = new Map<string, number>()

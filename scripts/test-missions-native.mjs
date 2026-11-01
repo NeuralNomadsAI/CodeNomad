@@ -744,7 +744,17 @@ try {
   assert.deepEqual([wideMap.runState, wideMap.control.pending.length], ["running", 0])
   await Promise.all([wideCoordinator, ...wideActors].map(sessionID => client.session.wait({ sessionID }, { signal: AbortSignal.timeout(20_000) })))
   const widePanel = (await bridge.inject({ method: "GET", url: `${missionURL}?include=${wide.id}` })).json()
-  assert.equal(widePanel.missions.find(mission => mission.id === wide.id).tasks.length, 107)
+  // The panel's map holds a page of the tasks; the task route reads the rest in display order.
+  const panelWide = widePanel.missions.find(mission => mission.id === wide.id)
+  assert.deepEqual([panelWide.taskPage.total, panelWide.taskPage.end], [107, 50])
+  const panelKeys = panelWide.tasks.slice(0, panelWide.taskPage.end).map(value => value.key)
+  for (let offset = panelWide.taskPage.end; offset < panelWide.taskPage.total;) {
+    const page = (await bridge.inject({ method: "GET", url: `${missionURL}/${wide.id}/tasks?order=${encodeURIComponent(panelWide.taskPage.order)}&offset=${offset}` })).json()
+    assert.equal(page.available, true, JSON.stringify(page))
+    panelKeys.push(...page.tasks.map(value => value.key))
+    offset = page.taskPage.end
+  }
+  assert.deepEqual(panelKeys, wideMap.tasks.map(value => value.key), "The panel's pages read every task once, in display order")
   assert.equal(widePanel.activity.missions.find(item => item.missionId === wide.id).actors.length, 12)
   await wideAction("stop")
   assert.deepEqual([wideMap.status, wideMap.control.pending.length, wideMap.control.receipts.length], ["stopped", 0, 12])
@@ -754,7 +764,7 @@ try {
   assert.deepEqual([wideDeleted.json().cleanup.removed, wideDeleted.json().cleanup.pending], [11, 0])
   for (const sessionID of wideActors) await assert.rejects(client.session.get({ sessionID }), "Cleanup removes every managed root")
   assert.equal((await client.session.get({ sessionID: wideCoordinator })).id, wideCoordinator)
-  gate("a mission beyond eight actors and 96 tasks: managed roots, revisions, paged inspect, Pause/Play/Stop receipts and cleanup deletion")
+  gate("a mission beyond eight actors and 96 tasks: managed roots, revisions, paged inspect, panel task pages, Pause/Play/Stop receipts and cleanup deletion")
 
   stage = "finished mission history and journal index"
   // Many finished missions through the real bundle, then a new activation whose

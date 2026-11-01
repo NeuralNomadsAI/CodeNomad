@@ -20,6 +20,8 @@ export function MissionOverviewDetails(props: {
     updateMissionProjectView(props.scope, { reader: { missionId: props.mission.id, kind, itemId, recurrence: props.recurrence } })
   const history = () => [...(props.mission.history ?? [])].reverse()
   const reports = createMemo(() => missionReports(props.mission))
+  // A compact map holds its rows' reports: the rest belong to tasks it does not hold.
+  const omittedReports = () => Math.max(0, (props.mission.taskPage?.reports ?? 0) - reports().length)
   const reportTarget = (report: MissionPanelReport) => {
     const task = props.mission.tasks.find(task => task.report?.id === report.id)
     return !props.mission.reports.some(item => item.id === report.id) && task ? { kind: "task" as const, id: task.id } : { kind: "report" as const, id: report.id }
@@ -43,8 +45,9 @@ export function MissionOverviewDetails(props: {
         </li>}</For></ol>
       </details>
     </Show>
-    <Show when={reports().length}>
+    <Show when={reports().length || omittedReports()}>
       <details class="mission-report-technical"><summary>{t("missions.control.reports.title")}</summary>
+        <Show when={omittedReports()}>{count => <p>{t(`missionsPanel.reports.omitted.${count() === 1 ? "one" : "other"}`, { count: count() })}</p>}</Show>
         <ol class="mission-reader-links"><For each={reports()}>{report => <li>
           <button type="button" class="window-text-button" onClick={() => { const target = reportTarget(report); open(target.kind, target.id) }}>
             {props.mission.tasks.find(task => task.key === report.taskKey)?.title ?? (report.taskKey || t("missions.control.overview"))}</button>

@@ -6,7 +6,9 @@ import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type BrowserContextOptions, type Page } from "playwright"
 import type { MissionMap, MissionTask } from "../../../server/src/api-types"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
-import { panelMissions } from "./mission-content-fixture"
+import { compactMissionMap } from "../../../server/src/missions/mission-compact-map"
+import { missionTaskOrder } from "../../../server/src/missions/mission-task-order"
+import { panelMissions, routeMissionTasks } from "./mission-content-fixture"
 
 // Real MissionControl with the full stylesheet: single-scroller policy on short
 // layouts, measured dependency rail endpoints and native picker key semantics.
@@ -151,7 +153,7 @@ async function railEnds(page: Page) {
     const rtl = getComputedStyle(svg).direction === "rtl"
     const anchor = (key: string) => document.querySelector(`.mission-tree-node[data-task-key="${key}"] [data-graph-anchor]`)!.getBoundingClientRect()
     const client = (x: number, y: number) => { const point = svg.createSVGPoint(); point.x = x; point.y = y; return point.matrixTransform(matrix) }
-    return [...svg.querySelectorAll("path")].map(path => {
+    return [...svg.querySelectorAll<SVGPathElement>("path[data-from]")].map(path => {
       const [, x1, y1, , y2, x2] = path.getAttribute("d")!.match(/^M ([\d.]+) ([\d.]+) H ([\d.]+) V ([\d.]+) H ([\d.]+)$/)!.map(Number)
       const ends = [[path.dataset.from!, client(x1, y1)], [path.dataset.to!, client(x2, y2)]] as const
       return { edge: `${path.dataset.from}>${path.dataset.to}`, gaps: ends.map(([key, point]) => {
@@ -193,7 +195,7 @@ for (const variant of [
   })
 }
 
-test("a map of 500 tasks and 40 actors renders every row and declared rail, and stays responsive", async () => {
+test("a map of 500 tasks and 40 actors shows a page of rows, reads further on request to every row and declared rail, and stays responsive", async () => {
   // Groups of ten chained tasks: 450 declared edges.
   const tasks = Array.from({ length: 500 }, (_, index) => ({ ...task(`t${index}`, index % 10 ? [`t${index - 1}`] : [], index % 7 ? "queued" : "completed"),
     actorSessionId: `ses_actor_${index % 40}` }))
@@ -202,8 +204,23 @@ test("a map of 500 tasks and 40 actors renders every row and declared rail, and 
   const large = [{ ...mission("large", tasks), actors } as MissionMap]
   const { page, errors } = await open({ viewport: { width: 900, height: 700 } }, large, "large")
   try {
-    await page.waitForFunction(() => document.querySelectorAll(".mission-tree-node").length === 500)
-    await page.waitForFunction(() => document.querySelectorAll(".mission-graph path").length === 450)
+    const requests: string[] = []
+    await routeMissionTasks(page, () => large, requests)
+    const rows = () => page.locator(".mission-tree-node").evaluateAll(nodes => nodes.map(node => (node as HTMLElement).dataset.taskKey))
+    // The map's page: its window of the display order and its pinned rows, the rest gaps.
+    assert.deepEqual(await rows(), compactMissionMap(large[0]).tasks.map(task => task.key))
+    assert.equal(await page.locator(".mission-tree > h3 .mission-disclosure-trigger small").innerText(), "500")
+    // Each deliberate read takes the first gap's page, in the order the map named.
+    for (let read = 0; await page.locator(".mission-tree-gap").count(); read++) {
+      assert.ok(read < 10, "at most one read a page")
+      const before = (await rows()).length
+      await page.locator(".mission-tree-gap button").first().click()
+      await page.waitForFunction(count => document.querySelectorAll(".mission-tree-node").length > count, before)
+    }
+    assert.ok(requests.every(query => query.includes(`order=${compactMissionMap(large[0]).taskPage!.order}`)), requests.join(" "))
+    assert.deepEqual(await rows(), missionTaskOrder(tasks).map(task => task.key))
+    await page.waitForFunction(() => document.querySelectorAll(".mission-graph path[data-from]").length === 450)
+    assert.equal(await page.locator(".mission-graph path.mission-graph-omitted").count(), 0, "every edge's both ends are shown")
     // Toggling one task's reader re-renders the tree in place without rebuilding it.
     const elapsed = await page.evaluate(async () => {
       const row = document.querySelector<HTMLButtonElement>('.mission-tree-node[data-task-key="t499"] .mission-tree-task')!

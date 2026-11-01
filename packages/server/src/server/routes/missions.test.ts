@@ -8,6 +8,8 @@ import { stableToken } from "../../missions/journal"
 import { fixture } from "../../missions/journal-history-fixture"
 import { describeMissionBodies } from "../../missions/mission-body-descriptors"
 import { compactMissionMap } from "../../missions/mission-compact-map"
+import { FIXTURE_PROJECT, missionPluginFixture } from "../../missions/mission-plugin-fixture"
+import { missionTaskOrder } from "../../missions/mission-task-order"
 
 const snapshot = {
   version: 1 as const,
@@ -310,6 +312,52 @@ test("an older plugin's full maps reach the panel compact, described when they c
   Object.assign(snapshot, { missions: [full] })
   try { assert.deepEqual((await old.inject({ method: "GET", url: paths.read })).json().mission, compact) }
   finally { Object.assign(snapshot, { missions: [] }); await old.close() }
+})
+
+test("the task route brokers the tasks RPC, and pages an older plugin's single-mission read itself", async () => {
+  const f = missionPluginFixture(), control = () => f.control()
+  let mission = (await control().create({ requestID: "pages", objective: "Pages", template: "custom" })).mission
+  for (let round = 0; round < 3; round++) mission = (await control().revise(mission.coordinatorSessionId, { missionID: mission.id, expectedRevision: mission.revision,
+    requestID: `round-${round}`, reason: "More", retireTasks: [], dependencyUpdates: [], addTasks: Array.from({ length: 24 }, (_, index) => ({ taskKey: `task-${round}-${index}`,
+      title: `Task ${round}.${index}`, brief: "Brief", role: "specialist", blockedBy: round ? [`task-${round - 1}-${index}`] : [] })) })).mission
+  const full = (await control().snapshot()).missions[0], order = (await control().mission(mission.id)).mission!.taskPage!.order
+  const keys = missionTaskOrder(full.tasks).map(task => task.key)
+  const missing = { type: "rpc.method_not_found", message: "Unknown RPC method" }
+  const route = async (legacy: boolean) => {
+    const client = {
+      location: { get: async () => ({ directory: "/repo", project: { id: FIXTURE_PROJECT.id } }) },
+      plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
+      rpc: () => ({
+        tasks: async (input: never) => { if (legacy) throw missing; return control().tasks(input) },
+        // An older plugin's single read: its full map with descriptors.
+        mission: async (input: { missionID: string }) => legacy ? { ...(await control().mission(input.missionID)), mission: describeMissionBodies(full) }
+          : control().mission(input.missionID),
+      }),
+    }
+    const app = Fastify({ logger: false })
+    registerMissionRoutes(app, { workspaceManager: { get: () => ({ id: "workspace-1" }), getServiceLocation: () => ({ directory: "/repo" }),
+      getSharedServiceConnection: async () => ({ client, assertCurrent() {} }) } as never })
+    return app
+  }
+  const url = (query: string) => `/api/workspaces/workspace-1/missions/${mission.id}/tasks?${query}`
+  for (const legacy of [false, true]) {
+    const app = await route(legacy)
+    try {
+      const page = (await app.inject({ method: "GET", url: url(`order=${order}&offset=50`) })).json()
+      assert.deepEqual([page.available, page.taskPage.offset, page.taskPage.end, page.tasks.map((task: { key: string }) => task.key)],
+        [true, 50, 72, keys.slice(50)], `legacy ${legacy}`)
+      const named = (await app.inject({ method: "GET", url: url(`order=${order}&keys=task-0-0,task-2-23`) })).json()
+      assert.deepEqual(named.tasks.map((task: { key: string }) => task.key), ["task-0-0", "task-2-23"])
+      assert.equal((await app.inject({ method: "GET", url: url("order=other&offset=0") })).json().refused, "order-changed")
+      const attention = (await app.inject({ method: "GET", url: url(`order=${order}&attention=0`) })).json()
+      assert.deepEqual([attention.tasks, attention.taskPage.attention], [[], { counts: { notifications: 0, blocked: 0, failed: 0, recovery: 0 }, omitted: 0,
+        sequence: page.taskPage.attention.sequence, offset: 0, end: 0 }])
+      const names = (prefix: string, count: number) => Array.from({ length: count }, (_, index) => `${prefix}${index}`).join(",")
+      for (const query of ["offset=0&keys=task-0-0", "offset=0&attention=0", "order=x", `keys=${names("k", 51)}`, `keys=${names("k", 30)}&ids=${names("i", 21)}`, "offset=-1"]) {
+        assert.equal((await app.inject({ method: "GET", url: url(query) })).statusCode, 400, query)
+      }
+    } finally { await app.close() }
+  }
 })
 
 test("does not accept a client-controlled directory or expose generic RPC", async () => {

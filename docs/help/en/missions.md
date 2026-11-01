@@ -47,6 +47,8 @@ The playbook guides coordination; it does not bypass native permissions or guara
 
 The graph includes completed and retired work. Retiring a task does not itself stop its conversation. In a one-time mission, the coordinator can separately stop the conversations of a retired task it launched as a native subagent, without touching other tasks. **In progress** is the mission's lifecycle state, not proof that its coordinator is currently running. Full prose belongs in the central reader, not the panel's task list; **Technical details** folds identifiers and requested execution information.
 
+A large plan shows a page of its tasks: the first 50 in dependency order and up to 20 that need attention, such as blockages, failures and the newest results. Each run of tasks not loaded shows as **N tasks not shown**; **Show more** loads the next 50 there. When more tasks need attention than the page holds, **N more tasks need attention** gives the mission's counts by kind, and **Show them** loads those tasks. A dashed stub marks a dependency or a dependent task that is not shown, and a dependency link in a task's reader loads its task first. A task's reader shows its newest results; **N earlier results not shown** offers **Show all**, which loads its whole history. When a task or report cannot be loaded, the reader says so; **Try again** loads it again.
+
 ### Colours and interrupted missions {#status-colours}
 
 Mission marks, task icons and the list's chevron use the session list's colours: colour shows only what needs you now.
