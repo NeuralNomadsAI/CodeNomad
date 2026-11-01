@@ -6,6 +6,7 @@ import { lifecycleInputSchema, lifecycleOperationSchema } from "./lifecycle-sche
 import { MAX_PROJECTED_CLEANUPS, missionCleanupSchema } from "./cleanup-projection"
 import { MISSION_TITLE_MAX } from "./mission-title"
 import { MISSION_LIST_MAX_INCLUDE, MISSION_SUMMARY_OBJECTIVE, missionSummarySchema } from "./mission-summary"
+import { missionPanelPageInputSchema, missionPanelPageOutputSchema } from "./mission-panel-page"
 import { MISSION_BODY_FIELDS } from "./mission-content-wire"
 import { MISSION_BRIEFING_CONTENT, MISSION_EXCERPT_MAX, MISSION_LATE_REPORT_ROWS, MISSION_PINNED_REPORTS, MISSION_TASK_PAGE, MISSION_TASK_PINS,
   MISSION_TASK_REPORT_ROWS } from "./mission-panel-map"
@@ -375,6 +376,7 @@ export const CODENOMAD_MISSIONS_RPC = {
       output: { type: "object", properties: snapshotProperties,
         required: ["version", "projectID", "generatedAt", "missions", "discardedEvents"], additionalProperties: false },
     },
+    panelPage: { input: missionPanelPageInputSchema, output: missionPanelPageOutputSchema },
     // Read-mostly panel reads from the journal index and per-mission ranges (`MissionControl.list`/`mission`).
     list: {
       input: { type: "object", properties: {

@@ -406,6 +406,70 @@ Each finish carries the project's finish number (`mission.finished.sequence`, th
 
 **Journal index** (`missions/journal-index.ts`). Each `codenomad.missions` activation (`opencode/missions/desktop-plugin.ts`) owns one never-persisted `MissionJournalIndex`, shared by its ordinary journals (MissionControl through `setupMissionsPlugin`, presence retention) and disposed with it; never make it module-global, since a reloaded revision may reuse the module. `MissionJournal.readHints(read)` builds it on first use with one key-ordered streaming scan (same read bound as `observe()`), then runs `read` synchronously under the append exclusion on hints: `refs(sessionID)` (missions whose events name the session as coordinator, `preparedBy` author, dispatching or native-bound actor; live maps in snapshot order, ties by the first event then binary key order, then the rest in key order), `openIDs()` (per-range `missionWorkRemains`), `aggregate()` (the snapshot's discarded count, damage flags including entries outside every range, and latest live `updatedAt`), `cleanups()` (the snapshot's displayed cleanup history: pending, then the 20 newest settled) and `summaries()` (one panel row per live map, in snapshot order). The callback only extracts values: its type refuses a Promise or thenable result and a thenable is rejected at runtime before the exclusion could adopt it; range reads (`missionView`) happen after `readHints` resolves. Entries keep scalar ordering tokens and bounded labels, never events. Every ordinary journal write attempt (append, record write, purge removal), before it starts and whether it then fails, lands or goes unconfirmed, bumps a per-project write generation shared by all incarnations in the process and marks its mission dirty, so the next read re-reads that range; a range whose deletion record was unreadable stays dirty. A generation the index did not produce itself (another current-build activation, an unindexed journal) or any read failure makes it rebuild. Writers outside that generation stay unseen until the next rebuild: an older build activated in another native Location of the same project (native activation is per Location, its plugin storage per plugin ID, and native KV has no change counter), a failed-reload fallback, another process, bytes written without `MissionJournal`. A full rebuild at least every 60 seconds (`MISSION_INDEX_STALE_AFTER_MS`) heals such misses. The answers are therefore hints: anything that authorizes a write or native effect (cleanup authority and shared-session checks, membership admission or refusal, deletion, purge planning, recreation checks, damage gates before a write) keeps its authoritative full read; only read-mostly paths (the per-turn context hook, panel lists and summaries, outbox enumeration, and presence retention when the hints show open work; an empty answer is confirmed by a full read before presence is released) may use the hints. `MissionControl.hintedMissions` is that read: it takes candidate IDs from the hints, re-reads each range with `missionView`, keeps snapshot order (stable by `updatedAt`, ties in hint order) and stamps the hints' project damage flags on each map as a snapshot does; isolated passage journals use their snapshot instead. Its callers: the context hook (`contextFor`, one membership read per model turn returning the instruction and whether the session coordinates the mission; a conversation no mission names reads no range), `mission.inspect` without `start` (by `missionID` reads exactly that range), `inspect({ list })`, the task observation and decision-candidate reads behind `inspect({ taskKey })`, the notification outbox's enumeration over `openIDs()` (every running mission is open), and the panel's `list` and `mission` reads (§Snapshots, journal locking and map routes). Each notification then re-reads the whole journal before its native admission and before its receipt, and both the native message ID and the receipt ID are deterministic, so a mission the hints miss is only delayed until the rebuild and a stale candidate is skipped once the full read shows it admitted. The context of a mission written by such an unseen writer is withheld until the rebuild; its tools stay offered and every one re-selects authoritatively. `retainMissionWork` retains on `hintsShowWork` (an open mission or project damage) and otherwise decides on the full snapshot. Creation and `inspect({ start })`, declaration, delegation, revision, briefing, report, update, lifecycle, recovery, prepare, task interruption, deletion and cleanup keep their full reads; the change events after lifecycle and deletion carry the revision those operations already read. `journal-read-budget.test.ts` pins both sides over a finished history of 10,000 entries in 200 missions: the hinted paths make no full scan and read at most their own ranges (`GET /missions` through the plugin reads only the open and included ranges and observes only their actors), while membership refusals and damage gates see entries the hints have not. Isolated recurrence-passage storage (`MissionStorage.isolated`) writes its own physical namespace, never counts and has no index (`native-passage-business.test.ts` traps ordinary journal writes from passages).
 
+### Opt-in bounded panel transport
+
+`MissionControl.panelPage`, the `panelPage` RPC and `POST /api/workspaces/:id/missions/panel-page`
+provide a byte-bounded display transport alongside the `list`, `mission` and `tasks` contracts
+used by the current UI. The transport covers persisted directory and compact-map data;
+live actor activity continues through the list route's activity projection. Its schema,
+types, byte counter and paginator live in `missions/mission-panel-page.ts`.
+
+- Every successful body, including `available`, the envelope, escaped nested text and the
+  continuation, fits **65,536 UTF-8 bytes of compact JSON** (`MISSION_PANEL_PAGE_BYTES`).
+  Each transfer holds at most 50 pieces. Input bodies fit **16,384 bytes**; the route's
+  body limit and the plugin's parsed-selector check enforce that separately. Invalid,
+  changed, missing-source, damaged-range and invalid-cursor answers contain only a fixed
+  reason. The native output schema uses complete strict success/refusal alternatives:
+  literal `available`, required version/project/source/page on success, required reason
+  on refusal. `isMissionPanelPageResult` validates that same schema at the HTTP seam,
+  rejecting extra properties; the route also checks the byte count, project, source and mission/field identity;
+  transport failures use the route's fixed unavailable shape. HTTP headers are outside
+  the JSON-body budget.
+- Requests name one source: `summaries`, `cleanups`, `mission` with `missionID` and optional
+  own root `field`, or `tasks` with `task` (the existing `missionTaskRequestSchema` selector,
+  including its mission ID). Directory sources use only `readHints`, preserving its
+  60-second foreign-write contract. Warm directory traversal reads zero mission ranges,
+  including when every mission is open. A mission or task request reads exactly its named
+  range. Each successful range envelope carries its observation's `discardedEvents`,
+  `controlUnavailable`, `notificationUnavailable` and `cleanupUnavailable`, independently
+  of the field or task selected. These are range-local facts; directory envelopes carry
+  the hints' project aggregate separately. An absent map in a damaged observation refuses
+  `damaged`; a clean absent observation refuses `mission-not-found`.
+  No source uses the snapshot or the legacy list as a fallback; a plugin without
+  `panelPage` answers unavailable. Mutation and admission continue through their full reads.
+- The directory contains the same summary and displayed-cleanup rows as the index,
+  preserving order, actor session IDs, completion sequences and original cleanup retry
+  identities. It returns no mission maps. A mission request returns its compact map as
+  one row; with `field`, an array's elements are rows and another value is one row.
+  This gives direct bounded traversals of `actors`, `reports`, `history`, `control`,
+  `actorEvidence` and extension fields. A task request returns the exact existing task
+  page as one row, including its own task/attention continuation. Unknown compact-map
+  fields, such as document metadata, pending document state and history request IDs,
+  retain their exact JSON values.
+- A successful envelope gives `source`, `projectID`, mission/field identity and range
+  observation `revision` when applicable, then `page: {digest,total,pieces,next?}`. Each
+  piece is `{index,offset,characters,text}`: a row's JSON or a slice of it. Join only
+  contiguous offsets of the same digest and row, and parse a row only after all its
+  characters arrived. A large nested string or actor/receipt list progresses across
+  transfers instead of rejecting the source for its size. `next` is the exact
+  `{digest,index,offset}` to repeat as `cursor`, with every other selector unchanged.
+  A changed collection refuses `changed`; another unchanged field stays traversable
+  across unrelated revisions. End-of-page means partial discovery until `next` is absent;
+  a partial row supplies no absence, deletion or mutation evidence.
+
+The route is opt-in: the UI's selection, marks, requests and cleanup retries keep their
+existing display contract. Consumers adopting this transport key pages by workspace,
+project and the complete source selector, retain each page's own revision, and keep a
+failed middle page's cursor for explicit Retry. An unrelated successful page never
+authorizes the failed page's rows. The paginator holds no retained snapshot or polling
+job; it serializes and hashes the chosen collection afresh for each transfer. That work
+is linear in source size per transfer, making a full traversal approximately quadratic
+at a fixed transfer budget, and temporarily holds source rows, serialized strings and
+the joined hash input. Directory pagination performs this synchronous work inside
+`readHints`' project append exclusion; range pagination runs after its range observation
+releases that exclusion. Both use the native host's event-loop thread. The transfer-byte
+bound and retained-cache policy leave those source CPU, memory and append-lane costs visible.
+
 ### Explicit execution controls
 
 The UI creates missions with `prepared: true`. Its one-screen form has a single **Create** button that only creates; the prepared mission is then started by its explicit Play, never automatically by creation. A single Play button starts a prepared mission or resumes a paused one; Pause and terminal Stop are adjacent. Mission journals created without `prepared` run until an explicit control changes them. `POST /api/workspaces/:id/missions/:missionID/control` brokers the typed `lifecycle` RPC (`action: start | pause | stop`, `requestId`, `expectedRevision`).

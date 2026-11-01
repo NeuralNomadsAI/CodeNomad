@@ -4,12 +4,13 @@ import Fastify from "fastify"
 
 import { registerMissionRoutes } from "./missions"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
-import { stableToken } from "../../missions/journal"
+import { MissionJournal, stableToken } from "../../missions/journal"
 import { fixture } from "../../missions/journal-history-fixture"
 import { describeMissionBodies } from "../../missions/mission-body-descriptors"
 import { compactMissionMap } from "../../missions/mission-compact-map"
 import { FIXTURE_PROJECT, missionPluginFixture } from "../../missions/mission-plugin-fixture"
 import { missionTaskOrder } from "../../missions/mission-task-order"
+import { MISSION_PANEL_PAGE_BYTES, missionPanelPage } from "../../missions/mission-panel-page"
 
 const snapshot = {
   version: 1 as const,
@@ -31,6 +32,8 @@ function manager(options: {
   legacy?: boolean
   /** What the `mission` RPC answers. */
   missionRead?: object
+  panelRead?: object
+  panelHandler?: (input: unknown) => Promise<unknown>
 } = {}) {
   const calls: Array<{ method: string; value: unknown }> = []
   const plugin = options.plugin ?? "active"
@@ -68,6 +71,12 @@ function manager(options: {
           calls.push({ method: "rpc-definition", value: definition.id })
           const missing = { type: "rpc.method_not_found", message: "Unknown RPC method" }
           return {
+            panelPage: async (input: unknown, callOptions: unknown) => {
+              calls.push({ method: "panel-page", value: { input, callOptions } })
+              if (options.legacy) throw missing
+              if (options.rpcError) throw options.rpcError
+              return options.panelHandler ? options.panelHandler(input) : options.panelRead
+            },
             snapshot: async (input: unknown, callOptions: unknown) => {
               calls.push({ method: "snapshot", value: { input, callOptions } })
               if (options.rpcError) throw options.rpcError
@@ -91,6 +100,96 @@ function manager(options: {
   }
   return { calls, value: value as never }
 }
+
+test("opt-in panel pages fit the actual HTTP wire and fail bounded without legacy snapshot/list fallback", async () => {
+  const panel = missionPanelPage({ source: "summaries", projectID: "project-1" }, [{ actors: Array(3_000).fill("\u0000😀€\\\"") }])
+  for (const options of [{ panelRead: panel }, { legacy: true }, { panelRead: { ...panel, projectID: "foreign" } },
+    { panelRead: { ...panel, unexpected: "x".repeat(MISSION_PANEL_PAGE_BYTES) } },
+    // Structurally valid, but the Unicode text exceeds the serialized byte budget.
+    { panelRead: { available: true, version: 1, projectID: "project-1", source: "summaries", page: {
+      digest: "x".repeat(43), total: 1, pieces: [{ index: 0, offset: 0, characters: 30_000, text: "€".repeat(30_000) }],
+    } } }, { rpcError: new Error("bad".repeat(100_000)) }]) {
+    const f = manager(options), app = Fastify({ logger: false })
+    registerMissionRoutes(app, { workspaceManager: f.value })
+    try {
+      const reply = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: { source: "summaries" } })
+      assert.ok(reply.rawPayload.length <= MISSION_PANEL_PAGE_BYTES, `${reply.rawPayload.length} bytes`)
+      assert.deepEqual(reply.json(), options.panelRead === panel ? panel : { available: false, reason: options.rpcError ? "workspace-unavailable" : "plugin-unavailable", missions: [] })
+      assert.equal(f.calls.filter(call => ["snapshot", "list-rpc", "mission-rpc", "active"].includes(call.method)).length, 0)
+      const before = f.calls.length
+      const bad = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: { source: "summaries", field: "actors" } })
+      assert.deepEqual([bad.statusCode, bad.json()], [400, { available: false, reason: "invalid-request" }])
+      const oversized = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: { source: "summaries", junk: "x".repeat(20_000) } })
+      assert.equal(oversized.statusCode, 413)
+      assert.ok(oversized.rawPayload.length < 1_024)
+      assert.equal(f.calls.length, before, "invalid selectors never reach the plugin")
+    } finally { await app.close() }
+  }
+})
+
+test("HTTP rejects incomplete or mixed panel successes and refusals, with a fixed bounded unavailable body", async () => {
+  const complete = missionPanelPage({ source: "summaries", projectID: "project-1" }, [])
+  for (const panelRead of [{ available: true, projectID: "project-1", source: "summaries" }, { available: false },
+    { ...complete, page: {} }, { ...complete, reason: "changed" }, { available: false, reason: "changed", page: {} }]) {
+    const f = manager({ panelRead }), app = Fastify({ logger: false })
+    registerMissionRoutes(app, { workspaceManager: f.value })
+    try {
+      const reply = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: { source: "summaries" } })
+      assert.equal(reply.statusCode, 502)
+      assert.deepEqual(reply.json(), { available: false, reason: "plugin-unavailable", missions: [] })
+      assert.ok(reply.rawPayload.length < 100)
+      assert.equal(f.calls.some(call => ["snapshot", "list-rpc", "mission-rpc", "active"].includes(call.method)), false)
+    } finally { await app.close() }
+  }
+})
+
+test("range damage survives whole-map, field and task reads through real control, RPC and HTTP; damaged absence stays distinct", async () => {
+  const f = missionPluginFixture(), plugin = await f.plugin(), control = f.control()
+  const app = Fastify({ logger: false })
+  const m = manager({ panelHandler: input => plugin.rpc("panelPage", input) })
+  registerMissionRoutes(app, { workspaceManager: m.value })
+  try {
+    const mission = (await control.create({ requestID: "range-damage", objective: "Damage", template: "custom" })).mission
+    const clean = (await control.create({ requestID: "range-clean", objective: "Clean", template: "custom" })).mission
+    await control.panelPage({ source: "summaries" })
+    const key = [...f.values].find(([, event]) => (event as { type?: string; missionID?: string })?.type === "mission.created"
+      && (event as { missionID?: string }).missionID === mission.id)![0]
+    const prefix = key.slice(0, key.lastIndexOf("/") + 1)
+    f.values.set(`${prefix}evt_bad`, {})
+    const observed = await new MissionJournal(f.storage, FIXTURE_PROJECT.id, FIXTURE_PROJECT.canonical).missionView(mission.id)
+    const damage = { discardedEvents: observed.discardedEvents, controlUnavailable: observed.controlUnavailable,
+      notificationUnavailable: observed.notificationUnavailable, cleanupUnavailable: observed.cleanupUnavailable }
+    assert.deepEqual(damage, { discardedEvents: 1, controlUnavailable: true, notificationUnavailable: true, cleanupUnavailable: true })
+    const scans: string[] = [], scan = f.storage.scan.bind(f.storage)
+    f.storage.scan = async input => { scans.push(input.prefix); return scan(input) }
+    const requests = [{ source: "mission" as const, missionID: mission.id }, { source: "mission" as const, missionID: mission.id, field: "actors" },
+      { source: "tasks" as const, task: { missionID: mission.id, offset: 0 } }]
+    for (const input of requests) {
+      const direct = await control.panelPage(input)
+      const rpc = await plugin.rpc("panelPage", input)
+      const response = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: input })
+      assert.equal(response.statusCode, 200)
+      assert.deepEqual([rpc, response.json()], [direct, direct])
+      assert.ok(direct.available)
+      for (const [field, value] of Object.entries(damage)) assert.equal((direct as unknown as Record<string, unknown>)[field], value, `${input.source} ${field}`)
+      assert.ok(response.rawPayload.length <= MISSION_PANEL_PAGE_BYTES)
+    }
+    assert.ok(scans.length > 0 && scans.every(value => value === prefix), "only the named range, never fresh project hints or snapshot")
+    // Another range's damage never becomes this range's flags.
+    const sibling = await control.panelPage({ source: "mission", missionID: clean.id, field: "actors" })
+    assert.ok(sibling.available)
+    assert.deepEqual([sibling.discardedEvents, sibling.controlUnavailable, sibling.notificationUnavailable, sibling.cleanupUnavailable], [0, false, false, false])
+    f.values.set(key, {})
+    for (const input of requests) {
+      assert.deepEqual(await control.panelPage(input), { available: false, reason: "damaged" })
+      assert.deepEqual(await plugin.rpc("panelPage", input), { available: false, reason: "damaged" })
+      const response = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: input })
+      assert.deepEqual(response.json(), { available: false, reason: "damaged" })
+      assert.ok(response.rawPayload.length < 100)
+    }
+    assert.deepEqual(await plugin.rpc("panelPage", { source: "mission", missionID: "msn_absent" }), { available: false, reason: "mission-not-found" })
+  } finally { await app.close(); await plugin.dispose() }
+})
 
 function mutationManager(options: { owns?: boolean; error?: unknown; dropProfiles?: boolean; dropTaskMode?: boolean
   pluginInactive?: boolean; noConnection?: boolean; locationError?: unknown; createError?: unknown } = {}) {
