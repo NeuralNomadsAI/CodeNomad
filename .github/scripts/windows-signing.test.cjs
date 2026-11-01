@@ -52,10 +52,16 @@ test("every signed binary of a build is restricted to the same product version",
       assert.match(element, /product-version="\$\{version\}"/, file)
     }
   }
-  // electron-builder's own ProductVersion string is numeric; the hook aligns it
-  // and every Windows build checks the result before any signing.
+  // electron-builder's own ProductVersion string is numeric. The full version
+  // must reach the resource edit electron-builder performs before signing, never
+  // a hook that edits the executable after it may have been signed.
   const electron = JSON.parse(fs.readFileSync(path.join(__dirname, "../../packages/electron-app/package.json"), "utf8"))
-  assert.equal(electron.build.afterSign, "./scripts/after-sign.cjs")
+  assert.equal(electron.build.afterSign, undefined)
+  assert.equal(electron.build.afterAllArtifactBuild, undefined)
+  const build = fs.readFileSync(path.join(__dirname, "../../packages/electron-app/scripts/build.js"), "utf8")
+  assert.match(build, /args\.includes\("--win"\) \? \[`-c\.extraMetadata\.shortVersionWindows=\$\{version\}`\] : \[\]/)
+  assert.match(build, /"electron-builder", "--publish=never", \.\.\.job\.args, \.\.\.windowsVersionArgs\(job\.args, version\)/)
+  // Every Windows build checks the result before any SignPath submission.
   const check = workflow("build-and-upload.yml").jobs["build-windows"].steps.find((step) => step.name === "Check Electron executable metadata")
   assert.equal(check.if, undefined)
   assert.match(check.run, /-ProductVersion \$env:SIGNING_VERSION -Unsigned/)

@@ -59,7 +59,6 @@
   "build": {
     "appId": "ai.neuralnomads.codenomad.client",
     "publish": null,
-    "afterSign": "./scripts/after-sign.cjs",
     "productName": "CodeNomad",
     "copyright": "Copyright © 2025-2026 CodeNomad contributors",
     "directories": {

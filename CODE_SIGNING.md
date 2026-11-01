@@ -56,8 +56,9 @@ built and is not signed.
    identical to those in SignPath) list the exact files and require the product
    name `CodeNomad` and the release version as the product version of every
    signed file. Tauri writes the full release version; for Electron,
-   `packages/electron-app/scripts/after-sign.cjs` replaces electron-builder's
-   numeric product version string with it.
+   `packages/electron-app/scripts/build.js` passes it to electron-builder as
+   `shortVersionWindows`, which electron-builder writes into `CodeNomad.exe`
+   before it signs the executable.
 4. Pascal André reviews and manually approves each release signing request in
    SignPath. The workflow waits up to two hours for each approval.
 5. Before submission the workflow checks each file's product name and version

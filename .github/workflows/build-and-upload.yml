@@ -273,7 +273,7 @@ jobs:
       - name: Verify bundled Node resource (Electron Windows)
         run: node scripts/verify-bundled-node.cjs packages/electron-app/electron/resources@win32-x64
 
-      # Runs on unsigned builds too, so PR builds prove that the afterSign hook
+      # Runs on unsigned builds too, so PR builds prove that the packaging step
       # gives CodeNomad.exe the same product version as the Tauri binaries.
       - name: Check Electron executable metadata
         shell: pwsh
