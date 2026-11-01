@@ -45,7 +45,7 @@ Yüzey, gizliyken son anlık görüntüsünü korur ve gösterildiğinde, yerel 
 3. Eklenti yalnızca bu projede çalışmayacaksa **Genel** seçili kalsın, ardından **Ekle** öğesini seçin.
 4. Bildirim gözlemlendiğinde yerel olarak gönderilen ekleme, ilk istekten itibaren en fazla iki dakika boyunca OpenCode çalışma durumunu bildirene kadar **Kuruluyor** gösterir. Ardından anahtarlı normal veya başarısız bir satır görünür. Yeniden yüklemeden sonra veya yeterli yerel kanıt yoksa **Onaylanmadı** gösterilir; geç gelen yanıt süreyi asla yeniden başlatmaz.
 
-Bir eklentiyi kaldırmak için adının yanındaki menüyü açıp **Genel kapsamından kaldır** veya **Proje kapsamından kaldır** öğesini seçin. Yalnızca o kapsamın yapılandırma dosyasındaki bildirim silinir; **Genel**/**Proje** etkinleştirme kuralları kural olarak kalır ve OpenCode'un paket önbelleği yerinde kalır.
+Bir eklentiyi kaldırmak için adının yanındaki menüyü açıp **Genel kapsamından kaldır** veya **Proje kapsamından kaldır** öğesini seçin. Yalnızca o kapsamın yapılandırma dosyasındaki bildirim silinir; hem etkinleştiren hem devre dışı bırakan **Genel**/**Proje** kuralları aynen korunur ve OpenCode'un paket önbelleği yerinde kalır.
 
 Eklentinin kodu OpenCode içinde sizin izinlerinizle çalışır. Bir **Proje** girdisi, o klasör OpenCode'da her açıldığında çalışır ve OpenCode masaüstü uygulaması bölümleri olan paketler bunları yalnızca **Genel** kapsamdan yükler; böyle bir paket başka yerde bildirildiğinde araç ipucu bunu belirtir. Yerel yollar, yapılandırma değişkenleri ve eklenti kimlikleri burada reddedilir: yerel eklentileri yapılandırma dosyasında bildirin. Bu Location için geçerli bir yapılandırmada zaten bildirilmiş bir paket, sürümü, aralığı veya biçimi ne olursa olsun reddedilir.
 
@@ -85,6 +85,12 @@ Kayıtlı Q8 meta verileri yalnızca yeniden bağlama önerisi sunar: **Yeniden 
 Eklentiler, katalog kullanılamadığında bir bildirim veya eskiyse alınma zamanı ile son geçerli kataloğu gösterir. Yeniden denemek için yenileyin.
 
 Kaldırma uyarısı eklentiyi ve tam kapsamı adlandırır. **İptal** odaklanır; **Genel/Proje kapsamından kaldır** 600 ms sonra kullanılabilir ve açık bir işlem gerektirir. Kullanan konuşmalarda kullanılabilirliği ve bağlantıları kesebilir; Genel kapsam diğer projeleri de etkileyebilir. Gönderimden önce iptal, süre dolması veya gezinme hiçbir şeyi değiştirmez. Yalnızca onaylanan bildirim kaldırılır; kurallar, önbellek, uygulama dosyaları ve kayıtlı bağlantı ipuçları korunur. Yapılandırma değişirse yeniden seçim ve onay gerekir. Başarı bildirimin kaldırıldığını belirtir; çalışma durumu OpenCode yeniden yüklemesini izler. Yanıt kaybolursa yeniden denemeden önce yenileyip yapılandırmayı kontrol edin. Yeniden kurulum kullanılabilirliği geri getirebilir; yeniden yükleme veya bağlama gerekebilir ve kesilen işlemler devam etmeyebilir.
+
+Kaldırılan bir katalog entegrasyonunu yeniden kurmak için:
+
+1. Eklentileri yenileyin ve güncel yerel yapılandırma ile çalışma durumunda hem bildirimin hem de yüklü eklentinin bulunmadığını doğrulayın. Gerekirse açıkça **OpenCode yapılandırmasını yeniden yükle** öğesini seçin, ardından tekrar yenileyin.
+2. **Intégrations** öğesini açın, entegrasyonu seçin ve tekrar **Yükle** öğesini seçin. Yerel uygulama entegrasyonları yalnızca **Genel** kapsamını kullanır. Güncel ayrıntıları inceleyin ve yeni bir onay verin.
+3. OpenCode'un yerel yeniden yüklemesinden sonra Eklentileri yenileyip gerçek etkinleştirmeyi ve çalışma zamanı kullanılabilirliğini kontrol edin. Korunan kurallarla birlikte OpenCode'un yerel bildirim sırası etkinleştirmenin sonucunu belirler; gerekirse bilinçli olarak değiştirin. Her konuşmanın bağlantısını ve kesilen işlemlerini kontrol edin; yeni bir istek başlatmadan önce gerekirse açıkça yeniden bağlayın.
 
 ## Uygulama entegrasyonunu kurun veya güncelleyin {#application-installation}
 

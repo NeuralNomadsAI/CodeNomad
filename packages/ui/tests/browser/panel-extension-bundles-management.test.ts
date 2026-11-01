@@ -574,6 +574,83 @@ test("removal public port needs trusted Global warning and confirmation; exact s
   } finally { await page.close() }
 })
 
+test("retained activation rules permit a fresh guarded reinstall after genuine disable/enable and observed source unload", async () => {
+  const { page, clean } = await open(), runtime = structuredClone(backend.state.runtime)
+  const source = { package: backend.spec, options: { secret: "PRIVATE_REMOVED_OPTIONS", nested: { retain: true } } }
+  const other = { package: "ordinary-plugin", options: { secret: "PRIVATE_RETAINED_OPTIONS", nested: [1, false] } }
+  const disabled = `-${backend.entry.plugin}`, enabled = backend.entry.plugin
+  const configText = (plugins: unknown[]) => "\uFEFF// Retain this comment and CRLF formatting.\r\n"
+    + JSON.stringify({ plugins, preserved: { theme: "unchanged", order: [3, 2, 1] } }, null, 2).replace(/\n/g, "\r\n") + "\r\n"
+  const read = () => frame(page).locator("body").evaluate(() => (window as any).readState())
+  const metadata = structuredClone(backend.state.metadata), bindings = [...backend.state.binding.entries()]
+  const activate = async (enabled: boolean) => {
+    const ack = await ask(page, "setActive", { integration: "fixture", scope: "global", enabled })
+    await confirm(page)
+    assert.equal((await terminal(page, ack.requestID)).outcome, "confirmed")
+  }
+  try {
+    await writeFile(backend.file, configText([source, other]))
+    assert.deepEqual((await read()).integrations[0].plugin, { declared: true, runtime: "active" })
+    await activate(false)
+    assert.equal(await readFile(backend.file, "utf8"), configText([source, other, disabled]))
+    backend.observeRuntime([])
+    assert.equal((await read()).integrations[0].activation.effective, "disabled")
+    await activate(true)
+    assert.equal(await readFile(backend.file, "utf8"), configText([source, other, disabled, enabled]))
+    backend.observeRuntime(runtime)
+    assert.deepEqual((await read()).integrations[0].plugin, { declared: true, runtime: "active" })
+
+    // Fence the author's terminal-triggered display read so removal IO is measured separately.
+    backend.hold("state")
+    const rpc = [...backend.state.rpc], removal = await ask(page, "request", { action: "remove", integration: "fixture", scope: "global" })
+    await confirm(page)
+    assert.equal((await terminal(page, removal.requestID)).outcome, "confirmed")
+    const retained = configText([other, disabled, enabled])
+    assert.equal(await readFile(backend.file, "utf8"), retained)
+    assert.deepEqual(backend.state.rpc, rpc, "source removal performs no status, binding, attach or detach RPC")
+    assert.deepEqual(backend.state.runtime, runtime, "durable removal does not manufacture a runtime stop")
+    const invalidations = await frame(page).locator("body").evaluate(() => (window as any).changes.filter((event: any) => event.kind === "state").length)
+    backend.observeRuntime([])
+    backend.release("state")
+    const absent = (await read()).integrations[0]
+    assert.equal(absent.configured, true, "retained exact rules still recognise the integration")
+    assert.deepEqual(absent.plugin, { declared: false, runtime: "unloaded" })
+    assert.equal(absent.activation.effective, "enabled")
+    await frame(page).locator("body").evaluate((_body, count) => new Promise<void>(resolve => {
+      if ((window as any).changes.filter((event: any) => event.kind === "state").length > count) return resolve()
+      const stop = (window as any).codenomad.bundles.onChanged((event: any) => { if (event.kind === "state") { stop(); resolve() } })
+    }), invalidations)
+
+    const input = { action: "install", integration: "fixture", scope: "global" }
+    const cancelled = await ask(page, "request", input)
+    assert.notEqual(cancelled.requestID, removal.requestID)
+    assert.equal(await page.getByRole("button", { name: "Cancel", exact: true }).evaluate(el => el === document.activeElement), true)
+    assert.equal(await page.getByRole("button", { name: "Confirm", exact: true }).isDisabled(), true)
+    await page.keyboard.press("Enter")
+    assert.equal((await terminal(page, cancelled.requestID)).outcome, "cancelled")
+    assert.equal(await readFile(backend.file, "utf8"), retained)
+    const reinstall = await ask(page, "request", input), button = page.getByRole("button", { name: "Confirm", exact: true })
+    assert.notEqual(reinstall.requestID, cancelled.requestID)
+    assert.equal(await button.isDisabled(), true, "a fresh request has a fresh display guard")
+    const confirmations = backend.requests.filter(row => row.body.command === "confirm").length
+    await button.evaluate(el => { (el as HTMLButtonElement).click(); (el as HTMLButtonElement).click() })
+    assert.equal(backend.requests.filter(row => row.body.command === "confirm").length, confirmations)
+    await confirm(page)
+    assert.equal((await terminal(page, reinstall.requestID)).outcome, "confirmed")
+    assert.equal(backend.requests.filter(row => row.body.command === "confirm").length, confirmations + 1)
+    assert.equal(await readFile(backend.file, "utf8"), configText([other, disabled, enabled, backend.spec]))
+    assert.equal((await read()).integrations[0].plugin.declared, true)
+    assert.deepEqual(backend.state.metadata, metadata); assert.deepEqual([...backend.state.binding.entries()], bindings)
+    assert.deepEqual(backend.state.updates, []); assert.deepEqual(backend.state.packages, [])
+    assert.equal(backend.state.sessionLists, 0)
+    assert.ok(!backend.state.rpc.some(method => ["attachHost", "detachHost", "installHost"].includes(method)))
+    const publicEvents = await frame(page).locator("body").evaluate(() => (window as any).changes.filter((event: any) => event.kind === "request"))
+    assert.equal(publicEvents.filter((event: any) => event.requestID === reinstall.requestID).length, 1)
+    assert.ok(!(await frame(page).locator("body").evaluate(() => JSON.stringify({ dom: document.body.textContent, messages: (window as any).messages }))).includes(backend.spec))
+    await clean()
+  } finally { backend.release("state"); await page.close() }
+})
+
 test("removal source/options/range drift and ambiguous or missing candidates have no effects through the public port", async () => {
   for (const change of ["options", "range", "index", "multiple", "missing", "ambiguous"] as const) {
     const { page, clean } = await open()

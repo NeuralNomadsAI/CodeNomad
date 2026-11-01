@@ -47,7 +47,7 @@ export async function bundlesManagementServer() {
   const file = path.join(global, "opencode.jsonc"), entry = catalogEntry("fixture"), spec = `${entry.package}@${entry.range}`
   const catalogEntries = [entry]
   const state = { current: true, owned: true, runtime: [] as any[], rpc: [] as string[], updates: [] as unknown[], packages: [] as unknown[],
-    metadata: {} as Record<string, unknown>, location: project, fail: false, prepares: 0, offset: 0,
+    metadata: {} as Record<string, unknown>, location: project, fail: false, prepares: 0, offset: 0, sessionLists: 0,
     catalogState: "fresh" as "fresh" | "stale" | "unavailable",
     host: { state: "absent", action: "install" } as Record<string, string>, nativeGeneration: 1,
     binding: new Map<string, boolean>(), rpcInputs: [] as Array<{ method: string; input: any }>, uncertain: false, holdTerminal: false,
@@ -59,6 +59,7 @@ export async function bundlesManagementServer() {
     config: { get: async () => [{ type: "directory", path: global }, { type: "document", path: file, info: parse(await readFile(file, "utf8")) }] },
     plugin: { list: async () => ({ data: state.runtime }), update: async (input: any) => { state.packages.push(input); state.runtime[0].source.version = "0.2.0" } },
     session: { get: async ({ sessionID }: any) => ({ id: sessionID, title: state.conversation, location: { directory: state.location }, metadata: state.metadata }),
+      list: async () => { state.sessionLists++; return { data: [] } },
       update: async (input: any) => { state.updates.push(input); state.metadata = input.metadata } },
     rpc: { call: async ({ method, input }: any) => {
       state.rpc.push(method); state.rpcInputs.push({ method, input })
@@ -129,7 +130,7 @@ export async function bundlesManagementServer() {
    return { app, address, state, requests, streamFrames, file, spec, entry, catalogEntries, controls, sources, project,
     hold: (key: string) => held.add(key), release,
     flushTerminals() { state.holdTerminal = false; for (const write of terminals.splice(0)) write() },
-    async reset(installed = true, readOnly = false) {
+    async reset(installed = true, readOnly = false, panelHtml = author) {
       for (const key of held) release(key)
       terminals.length = 0; state.holdTerminal = false; state.uncertain = false
       state.current = true; state.owned = true; state.location = project; state.fail = false; state.offset += 301_000
@@ -139,14 +140,14 @@ export async function bundlesManagementServer() {
       catalogEntries.splice(0, catalogEntries.length, entry)
       entry.displayName = "OpenCode for fixture"
       state.offerLabel = "Fixture window"; state.offerDocument = "Scene.blend"; state.conversation = "Work"
-      state.rpc = []; state.rpcInputs = []; state.updates = []; state.packages = []; state.prepares = 0
+      state.rpc = []; state.rpcInputs = []; state.updates = []; state.packages = []; state.prepares = 0; state.sessionLists = 0
       state.metadata = { foreign: "FOREIGN_SESSION_7ce0" }; state.binding = new Map([["ses_FOREIGN_SESSION_7ce0", true]])
       state.runtime = installed ? [{ id: entry.plugin, source: { type: "package", target: spec, version: "0.1.0" }, features: {}, state: { status: "active" },
         privateToken: "FOREIGN_TOKEN_96aa" }] : []
       await writeFile(file, JSON.stringify({ plugins: installed ? [spec] : [] }) + "\n")
       const installedPackage = (await store.list()).find(candidate => candidate.manifest.id === pkg.manifest.id)
-      const target = readOnly ? await readPanelExtensionArchive(fixtureArchive(author, { id: pkg.manifest.id, name: "Bundles fixture", apiVersion: 4,
-        permissions: ["session.context", "bundles.read"] })) : pkg
+      const target = readOnly || panelHtml !== author ? await readPanelExtensionArchive(fixtureArchive(panelHtml, { id: pkg.manifest.id, name: "Bundles fixture", apiVersion: 4,
+        permissions: ["session.context", "bundles.read", ...(!readOnly ? ["bundles.manage"] : [])] })) : pkg
       if (installedPackage?.digest !== target.digest) await store.install(target, installedPackage?.digest)
       await store.activate(target.manifest.id, target.digest, true); requests.length = 0; streamFrames.length = 0
       bus.publish({ type: "instance.eventStatus", instanceId: "api4-instance", status: "connected", generation: state.nativeGeneration } as any)
@@ -158,6 +159,10 @@ export async function bundlesManagementServer() {
       permissions: ["session.context", "bundles.read", "bundles.manage"],
     })), pkg.digest) },
     disconnect: () => { for (const close of closes) close() },
+    observeRuntime(runtime: typeof state.runtime) {
+      state.runtime = runtime
+      bus.publish({ type: "instance.event", instanceId: "api4-instance", event: { type: "plugin.updated", data: { location: { directory: project } } } } as any)
+    },
     nativeDisconnect() { state.current = false; bus.publish({ type: "instance.eventStatus", instanceId: "api4-instance", status: "disconnected", generation: state.nativeGeneration } as any) },
     nativeReconnect() { state.current = true; bus.publish({ type: "instance.eventStatus", instanceId: "api4-instance", status: "connected", generation: ++state.nativeGeneration } as any) },
     advance(ms: number) { state.offset += ms; for (const [key, timer] of timers) if (timer.due <= now()) { clearTimeout(timer.native); timers.delete(key); timer.callback() } },

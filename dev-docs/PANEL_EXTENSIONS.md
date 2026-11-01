@@ -411,6 +411,13 @@ revalidates that capture and calls the shared `PluginSources.remove` with genuin
 authority. Removal performs no integration status, binding, session census, detach or Q8
 IO and leaves package cache, application/user files, activation rules and other declarations intact.
 
+Install preparation and its live target revalidation require absence of recognised source
+declarations and runtime, with ambiguity refused. Retained activation rules alone allow a
+new confirmed install, even when `configured` remains true. The source is appended through
+the ordinary writer, preserving rules and document formatting; effective activation follows
+native declaration order. The public `plugin.declared` and `plugin.runtime` facts determine
+the panel's Install affordance independently of rule-based `configured` state.
+
 The trusted removal dialog reuses
 `instanceServiceStatus.plugins.sources.removeWarning`, `removeGlobalWarning` and
 `removeRecovery`: availability and connections may be interrupted, Global may affect

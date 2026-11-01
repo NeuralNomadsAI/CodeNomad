@@ -45,7 +45,7 @@ Die Oberfläche behält im verborgenen Zustand ihren letzten Schnappschuss und p
 3. Behalten Sie **Global** bei, außer das Plugin soll nur für dieses Projekt laufen, und wählen Sie **Hinzufügen**.
 4. Sobald die Deklaration erkannt wurde, zeigt ein lokal übermittelter Eintrag ab der ursprünglichen Anfrage höchstens zwei Minuten **Wird installiert**, bis OpenCode seinen Laufzeitstatus meldet. Danach erscheint eine normale Plugin-Zeile mit Schaltern oder eine fehlgeschlagene Zeile. Nach dem Neuladen oder ohne ausreichenden lokalen Nachweis erscheint **Nicht bestätigt**; eine späte Antwort startet die Frist niemals neu.
 
-Zum Entfernen öffnen Sie das Menü neben dem Namen und wählen **Aus Global entfernen** oder **Aus Projekt entfernen**. Nur die Deklaration in der Konfigurationsdatei dieses Bereichs wird gelöscht; ihre Aktivierungsregeln für **Global**/**Projekt** bleiben als Regeln erhalten, und der Paket-Cache von OpenCode bleibt bestehen.
+Zum Entfernen öffnen Sie das Menü neben dem Namen und wählen **Aus Global entfernen** oder **Aus Projekt entfernen**. Nur die Deklaration in der Konfigurationsdatei dieses Bereichs wird gelöscht; ihre aktivierenden und deaktivierenden Regeln für **Global**/**Projekt** bleiben wortgetreu erhalten, und der Paket-Cache von OpenCode bleibt bestehen.
 
 Der Code des Plugins läuft mit Ihren Rechten in OpenCode. Ein **Projekt**-Eintrag läuft jedes Mal, wenn dieser Ordner in OpenCode geöffnet wird, und Pakete mit Teilen für die OpenCode-Desktop-App laden diese nur aus **Global**; der Tooltip weist darauf hin, wenn ein solches Paket anderswo deklariert ist. Lokale Pfade, Konfigurationsvariablen und Plugin-IDs werden hier abgelehnt: Deklarieren Sie lokale Plugins in der Konfigurationsdatei. Ein Paket, das bereits in einer für diese Location geltenden Konfiguration deklariert ist, wird abgelehnt, unabhängig von Version, Bereich oder Form.
 
@@ -85,6 +85,12 @@ Gespeicherte Q8-Metadaten liefern ausschließlich einen Vorschlag zum erneuten V
 Plugins zeigt bei fehlendem Katalog einen Hinweis oder bei veraltetem Katalog den letzten gültigen Stand mit Abrufzeit. Aktualisieren Sie Plugins für einen neuen Versuch.
 
 Beim Entfernen zeigt eine Warnung Plugin und genauen Bereich. **Abbrechen** erhält den Fokus; **Aus Global/Projekt entfernen** wird nach 600 ms verfügbar und erfordert eine ausdrückliche Aktion. Das Entfernen kann Verfügbarkeit und Verbindungen verwendender Unterhaltungen unterbrechen; Global kann weitere Projekte betreffen. Abbruch, Ablauf oder Navigation vor dem Senden lassen alles unverändert. Nur die bestätigte Deklaration wird entfernt; Aktivierungsregeln, Cache, Anwendungsdateien und gespeicherte Verbindungshinweise bleiben erhalten. Änderungen der Konfiguration erfordern eine neue Auswahl und Bestätigung. Erfolg bestätigt die entfernte Deklaration; der Laufzeitstatus folgt dem Neuladen durch OpenCode. Bei verlorener Antwort zunächst Plugins aktualisieren und den tatsächlichen Zustand prüfen. Neuinstallation kann die Verfügbarkeit wiederherstellen; Neuladen oder erneutes Verbinden kann nötig sein. Unterbrochene Vorgänge werden möglicherweise nicht fortgesetzt.
+
+So installieren Sie eine entfernte Katalogintegration erneut:
+
+1. Aktualisieren Sie Plugins und prüfen Sie anhand der aktuellen nativen Konfiguration und des Laufzeitstatus, dass sowohl die Deklaration als auch das geladene Plugin fehlen. Wählen Sie bei Bedarf ausdrücklich **OpenCode-Konfiguration neu laden** und aktualisieren Sie anschließend erneut.
+2. Öffnen Sie **Intégrations**, wählen Sie die Integration und erneut **Installieren**. Native Anwendungsintegrationen verwenden ausschließlich **Global**. Prüfen Sie die aktuellen Angaben und bestätigen Sie erneut.
+3. Aktualisieren Sie nach dem nativen Neuladen von OpenCode die Plugins und prüfen Sie die tatsächliche Aktivierung und Laufzeitverfügbarkeit. OpenCodes native Deklarationsreihenfolge bestimmt zusammen mit den erhaltenen Regeln die effektive Aktivierung; passen Sie diese bei Bedarf bewusst an. Prüfen Sie die Verbindung und unterbrochenen Vorgänge jeder Unterhaltung und verbinden Sie sie bei Bedarf ausdrücklich erneut, bevor Sie eine neue Anfrage starten.
 
 ## Anwendungsintegration installieren oder aktualisieren {#application-installation}
 

@@ -185,6 +185,13 @@ interruption/Global/recovery warnings. Success requires observing removal in the
 bound document; a lost response or post-dispatch failure yields a fixed uncertain
 `failed` event and requires a configuration read before any fresh explicit action.
 
+After authoritative reads show no recognised declaration or runtime, a new confirmed
+installation appends the catalogue source through `PluginSources.add`. Retained activation
+rules alone permit this action, including when they keep `configured` true; ambiguous
+recognition still refuses. Rules and formatting remain verbatim, and effective activation
+follows native declaration order. Recovery uses fresh runtime and exact-conversation binding
+reads, with an explicit reload or attachment action when needed.
+
 ### Application installation
 
 `POST /api/workspaces/:id/integrations/:integrationId/install-host?directory=` in

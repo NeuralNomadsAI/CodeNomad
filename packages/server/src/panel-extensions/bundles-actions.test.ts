@@ -8,7 +8,9 @@ import { BundlesActions, type BundlesAction, type BundlesHostContext } from "./b
 import { BundlesLifecycle, type BundlesConfirmation, type BundlesPrepared } from "./bundles-lifecycle"
 import { catalogEntry, catalogOf } from "../opencode/integrations/catalog-fixture"
 import { IntegrationAttachments } from "../opencode/integrations/attachments"
+import { recognizeIntegrations } from "../opencode/integrations/recognition"
 import { PluginControls } from "../opencode/plugin-controls"
+import { appendPluginControlRule } from "../opencode/plugin-control-document"
 import { PluginSources } from "../opencode/plugin-sources"
 import { PluginPackages } from "../opencode/plugin-packages"
 import { NativeMutationUncertainError } from "../opencode/native-mutation-authority"
@@ -879,4 +881,210 @@ test("removal confirms only after observed source removal; a lost acknowledgemen
       await assert.rejects(lifecycle.confirmChecked(owner, planID)); assert.equal(events.length, 1)
     } finally { release.resolve(); lifecycle.dispose(); await f.cleanup() }
   }
+})
+
+async function removeForReinstall(f: Awaited<ReturnType<typeof fixture>>, rules: string[] = []) {
+  const unrelated = '{"package":"unrelated-package","options":{"keep":"PRIVATE_UNRELATED","nested":[1,true]}}'
+  const text = '\uFEFF{\r\n // retain comment and options\r\n "plugins": [\r\n  ' + unrelated
+    + ',\r\n  {"package":' + JSON.stringify(f.spec) + ',"options":{"removed":"PRIVATE_REMOVED"}}'
+    + ',\r\n  "retained-package"'
+    + rules.map(rule => ',\r\n  ' + JSON.stringify(rule)).join("") + '\r\n ],\r\n "keep": {"value":42}\r\n}\r\n'
+  await writeFile(f.file, text)
+  const snapshot = await f.controls.read("w", f.context.location)
+  const revision = snapshot.targets.find(target => target.scope === "global")!.expectedRevision
+  await f.sources.remove("w", { location: f.context.location, scope: "global", target: f.spec, entryIndex: 1, expectedRevision: revision! })
+  const retained = await readFile(f.file, "utf8")
+  assert.deepEqual(parse(retained), { plugins: [JSON.parse(unrelated), "retained-package", ...rules], keep: { value: 42 } })
+  assert.ok(retained.startsWith('\uFEFF{\r\n // retain comment and options\r\n'))
+  assert.ok(retained.includes(unrelated)); assert.ok(!retained.includes("PRIVATE_REMOVED"))
+  assert.ok(!retained.replaceAll("\r\n", "").includes("\n"))
+  f.state.runtime = [] // The native reload has unloaded the removed package.
+  return { retained, unrelated }
+}
+
+async function reinstallConfirmation(f: Awaited<ReturnType<typeof fixture>>) {
+  const ready = deferred(), finished = deferred(), events: any[] = []
+  let now = 0, view: BundlesConfirmation | null = null, failure: unknown
+  const lifecycle = new BundlesLifecycle({ now: () => now, setTimeout: () => ({}), clearTimeout() {} })
+  const owner = lifecycle.mount({ extension: "fixture.panel", digest: "a".repeat(64), authority: f.context.authority, signal: f.abort.signal,
+    show(value) { if (value) { view = value; ready.resolve() } }, changed(event) { events.push(event); ready.resolve() } })
+  const request = lifecycle.request(owner, async signal => {
+    const plan = await f.actions.prepare(f.context, { action: "install", integration: "fixture", scope: "global" }, signal)
+    return { ...plan, async dispatch(...args) {
+      try { await plan.dispatch(...args) } catch (error) { failure = error; throw error } finally { finished.resolve() }
+    } }
+  })
+  assert.equal(request.ack.outcome, "confirming")
+  request.afterAck(); await ready.promise
+  const shown = view as BundlesConfirmation | null
+  if (!shown) lifecycle.dispose()
+  assert.ok(shown, `reinstall must reach confirmation, got ${JSON.stringify(events)}`)
+  return { lifecycle, owner, view: shown, events, request, get failure() { return failure },
+    async confirm() { lifecycle.displayed(owner, shown.planID); now = 600; await lifecycle.confirmChecked(owner, shown.planID) },
+    async settled() { await finished.promise; await Promise.resolve(); await Promise.resolve() } }
+}
+
+test("reinstall after exact removal preserves retained normalized rules, BOM, CRLF, comments and unrelated options", async t => {
+  for (const variant of ["disabled", "positiveOnly", "disableEnable", "noRules"] as const) await t.test(variant, async () => {
+    const f = await fixture(true)
+    let confirmation: Awaited<ReturnType<typeof reinstallConfirmation>> | undefined
+    try {
+      const id = f.entry.plugin, rules = variant === "disabled" ? [`-${id}`] : variant === "positiveOnly" ? [id]
+        : variant === "disableEnable" ? [`-${id}`, id] : []
+      if (variant === "positiveOnly") {
+        // A lone non-builtin ID is otherwise a source. Earlier discovery establishes this exact ID as a rule.
+        const earlier = path.join(f.global, "opencode.json")
+        await writeFile(earlier, JSON.stringify({ plugins: [`-${id}`] }) + "\n")
+        f.state.documentPaths = [earlier, f.file]
+      }
+      const { retained, unrelated } = await removeForReinstall(f, rules)
+      const before = await f.controls.read("w", f.context.location)
+      const recognition = recognizeIntegrations(f.state.catalog, before)[0]!
+      assert.deepEqual(recognition.sources, []); assert.equal(recognition.runtime, undefined); assert.equal(recognition.ambiguous, false)
+      const expectedRules = variant === "positiveOnly" ? [false, true] : variant === "disabled" ? [false] : variant === "disableEnable" ? [false, true] : []
+      assert.deepEqual(before.configured.rules.filter(rule => rule.selector === id).map(rule => rule.enabled), expectedRules)
+      if (variant === "positiveOnly") assert.equal(before.configured.rules.at(-1)!.path, f.file)
+      const document = (await f.controls.readConfigDocuments("w", f.context.location)).documents.find(target => target.scope === "global")!.document
+      const expected = appendPluginControlRule(document, f.spec)
+      confirmation = await reinstallConfirmation(f)
+      await confirmation.confirm(); await confirmation.settled()
+      assert.equal(confirmation.failure, undefined); assert.deepEqual(confirmation.events.map(event => event.outcome), ["confirmed"])
+      const after = await readFile(f.file, "utf8")
+      assert.equal(after, expected, "install makes only the exact shared append edit to the captured document")
+      assert.deepEqual(parse(after), { plugins: [JSON.parse(unrelated), "retained-package", ...rules, f.spec], keep: { value: 42 } })
+      const snapshot = await f.controls.read("w", f.context.location)
+      assert.deepEqual(snapshot.configured.rules, before.configured.rules, "install neither rewrites nor appends activation rules")
+      assert.equal(recognizeIntegrations(f.state.catalog, snapshot)[0]!.sources.length, 1)
+      assert.deepEqual(snapshot.runtime, [], "a durable source declaration does not fabricate a loaded plugin")
+      assert.notEqual(after, retained); assert.deepEqual(f.state.rpc, []); assert.deepEqual(f.state.updates, []); assert.deepEqual(f.state.packageUpdates, [])
+    } finally { confirmation?.lifecycle.dispose(); await f.cleanup() }
+  })
+})
+
+test("ordinary Plugins disable/enable, exact removal and reinstall retain the actual ordered rules", async () => {
+  const f = await fixture(true)
+  try {
+    const id = "example.ordinary", spec = "ordinary-plugin@^1", unrelated = { package: "unrelated-package", options: { keep: true } }
+    f.state.runtime[0].id = id
+    f.state.runtime[0].source = { type: "package", target: spec, version: "1.0.0" }
+    await writeFile(f.file, '\uFEFF{\r\n // ordinary plugin options\r\n "plugins": [' + JSON.stringify(unrelated)
+      + ', {"package":' + JSON.stringify(spec) + ',"options":{"removed":true}}, "retained-package"], "keep":42\r\n}\r\n')
+    for (const enabled of [false, true]) {
+      const result = await f.controls.mutate("w", { location: f.context.location, scope: "global", pluginId: id, enabled })
+      assert.equal(result.changed, true)
+    }
+    const selected = await f.controls.read("w", f.context.location)
+    assert.deepEqual(selected.configured.rules.map(rule => [rule.selector, rule.enabled]), [[id, false], [id, true]])
+    assert.ok(recognizeIntegrations(f.state.catalog, selected).every(entry => entry.sources.length === 0 && entry.runtime === undefined))
+    const source = selected.configured.sources.find(source => source.target === spec)!
+    await f.sources.remove("w", { location: f.context.location, scope: "global", target: spec, entryIndex: source.entryIndex,
+      expectedRevision: selected.targets.find(target => target.scope === "global")!.expectedRevision! })
+    f.state.runtime = []
+    const document = (await f.controls.readConfigDocuments("w", f.context.location)).documents.find(target => target.scope === "global")!.document
+    assert.deepEqual(document.plugins, [unrelated, "retained-package", `-${id}`, id])
+    await f.sources.add("w", { location: f.context.location, scope: "global", spec })
+    assert.equal(await readFile(f.file, "utf8"), appendPluginControlRule(document, spec))
+    const snapshot = await f.controls.read("w", f.context.location)
+    assert.deepEqual(snapshot.configured.rules.map(rule => [rule.selector, rule.enabled]), [[id, false], [id, true]])
+    assert.equal(snapshot.configured.sources.filter(source => source.target === spec).length, 1)
+    assert.deepEqual(f.state.rpc, []); assert.deepEqual(f.state.updates, []); assert.deepEqual(f.state.packageUpdates, [])
+  } finally { await f.cleanup() }
+})
+
+test("reinstall refuses existing disabled or inherited declarations, unknown ambiguous sources and remaining runtime", async t => {
+  for (const variant of ["disabled", "inherited", "unknownAmbiguous", "activeRuntime", "failedRuntime", "ambiguousRuntime"] as const) await t.test(variant, async () => {
+    const f = await fixture(true)
+    try {
+      if (variant === "activeRuntime" || variant === "failedRuntime" || variant === "ambiguousRuntime") {
+        const runtime = f.state.runtime[0]
+        await removeForReinstall(f)
+        runtime.state = variant === "failedRuntime" ? { status: "failed", error: "PRIVATE_RUNTIME_ERROR" } : { status: "active" }
+        f.state.runtime = [runtime]
+        if (variant === "ambiguousRuntime") f.state.runtime.push({ ...runtime, source: { type: "package", target: "unknown-package", version: "0.1.0" } })
+      } else {
+        f.state.runtime = []
+        if (variant === "disabled") await writeFile(f.file, JSON.stringify({ plugins: [f.spec, `-${f.entry.plugin}`] }))
+        else if (variant === "inherited") {
+          const inherited = path.join(f.root, "opencode.jsonc")
+          await writeFile(inherited, JSON.stringify({ plugins: [f.spec] })); await writeFile(f.file, '{"plugins":[]}')
+          f.state.documentPaths.push(inherited)
+        } else {
+          const unknown = "git+https://github.com/fixture/unknown.git"
+          f.state.catalog = catalogOf({ ...f.entry, sources: { git: [unknown] } }, catalogEntry("other", { sources: { git: [unknown] } }))
+          await writeFile(f.file, JSON.stringify({ plugins: [unknown] }))
+        }
+      }
+      const recognition = recognizeIntegrations(f.state.catalog, await f.controls.read("w", f.context.location))[0]!
+      if (variant === "unknownAmbiguous") assert.equal(recognition.ambiguous, true)
+      else if (variant === "ambiguousRuntime") {
+        assert.equal(recognition.sources.length, 0); assert.equal(recognition.runtime, undefined); assert.equal(recognition.ambiguous, true)
+      }
+      else if (variant.endsWith("Runtime")) { assert.equal(recognition.sources.length, 0); assert.ok(recognition.runtime) }
+      else { assert.equal(recognition.sources.length, 1); assert.equal(recognition.runtime, undefined) }
+      const before = await readFile(f.file, "utf8")
+      await assert.rejects(f.prepare({ action: "install", integration: "fixture", scope: "global" }))
+      assert.equal(await readFile(f.file, "utf8"), before)
+      assert.deepEqual(f.state.rpc, []); assert.deepEqual(f.state.updates, []); assert.deepEqual(f.state.packageUpdates, [])
+    } finally { await f.cleanup() }
+  })
+})
+
+test("reinstall confirmation binds options, index, content, mode, destination, connection, catalogue and revocation", async t => {
+  for (const change of ["options", "index", "content", "mode", "destination", "connection", "catalogue", "revoke"] as const) await t.test(change, async () => {
+    const f = await fixture(true), mode = (await stat(f.file)).mode & 0o777
+    let confirmation: Awaited<ReturnType<typeof reinstallConfirmation>> | undefined
+    try {
+      await removeForReinstall(f)
+      confirmation = await reinstallConfirmation(f)
+      let adds = 0
+      const add = f.sources.add.bind(f.sources)
+      f.sources.add = (...args) => { adds++; return add(...args) }
+      const retained = await readFile(f.file, "utf8")
+      if (change === "options") await writeFile(f.file, retained.replace("PRIVATE_UNRELATED", "PRIVATE_CHANGED"))
+      else if (change === "index") await writeFile(f.file, retained.replace('"plugins": [', '"plugins": ["another-package",'))
+      else if (change === "content") await writeFile(f.file, retained + "// external comment\r\n")
+      else if (change === "mode") await chmod(f.file, mode ^ 0o200)
+      else if (change === "destination") f.state.globalDirectory = f.project
+      else if (change === "connection") f.manager.getSharedServiceConnection = async () => ({ ...f.context.connection })
+      else if (change === "catalogue") f.state.catalog.integrations[0]!.range = "^0.2"
+      else f.abort.abort()
+      const before = await readFile(f.file, "utf8")
+      await assert.rejects(confirmation.confirm())
+      await assert.rejects(confirmation.lifecycle.confirmChecked(confirmation.owner, confirmation.view.planID), "consumed stale plans cannot replay")
+      assert.equal(adds, 0); assert.equal(await readFile(f.file, "utf8"), before)
+      assert.deepEqual(confirmation.events.map(event => event.outcome), ["failed"])
+      assert.deepEqual(f.state.rpc, []); assert.deepEqual(f.state.updates, []); assert.deepEqual(f.state.packageUpdates, [])
+    } finally { confirmation?.lifecycle.dispose(); await chmod(f.file, mode); await f.cleanup() }
+  })
+})
+
+test("reinstall lost writer reply remains uncertain after real submission and lifecycle never replays the consumed plan", async () => {
+  const f = await fixture(true)
+  let confirmation: Awaited<ReturnType<typeof reinstallConfirmation>> | undefined
+  try {
+    await removeForReinstall(f)
+    const edit = f.controls.editConfigDocument.bind(f.controls), add = f.sources.add.bind(f.sources)
+    let writes = 0, adds = 0
+    f.controls.editConfigDocument = async (...args) => {
+      await edit(...args)
+      writes++
+      throw new Error("PRIVATE_LOST_WRITER_REPLY")
+    }
+    f.sources.add = (...args) => { adds++; return add(...args) }
+    confirmation = await reinstallConfirmation(f)
+    await confirmation.confirm(); await confirmation.settled()
+    assert.ok(confirmation.failure instanceof NativeMutationUncertainError)
+    // Install's confirmed event denotes transmission. The lost writer receipt still prevents claiming completion.
+    assert.deepEqual(confirmation.events.map(event => event.outcome), ["confirmed"])
+    assert.ok(!JSON.stringify(confirmation.events).includes("PRIVATE_"))
+    const snapshot = await f.controls.read("w", f.context.location)
+    assert.equal(recognizeIntegrations(f.state.catalog, snapshot)[0]!.sources.length, 1)
+    assert.deepEqual(snapshot.runtime, [])
+    assert.equal(parse(await readFile(f.file, "utf8")).plugins.filter((entry: unknown) => entry === f.spec).length, 1)
+    await assert.rejects(confirmation.lifecycle.confirmChecked(confirmation.owner, confirmation.view.planID))
+    confirmation.request.afterAck(); confirmation.lifecycle.confirm(confirmation.owner, confirmation.view.planID)
+    await Promise.resolve()
+    assert.equal(adds, 1); assert.equal(writes, 1); assert.equal(confirmation.events.length, 1)
+    assert.deepEqual(f.state.rpc, []); assert.deepEqual(f.state.updates, []); assert.deepEqual(f.state.packageUpdates, [])
+  } finally { confirmation?.lifecycle.dispose(); await f.cleanup() }
 })

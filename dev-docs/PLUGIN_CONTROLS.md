@@ -42,6 +42,9 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   (409). The result must parse to the original minus exactly that element.
   Activation rules (`id`/`-id`) are left in place, and OpenCode's package cache is
   never touched.
+  Once authoritative reads show the declaration and runtime absent, a fresh explicit add
+  can append the source after retained rules. The native declaration order determines
+  effective activation; the existing document primitive preserves those rules verbatim.
   Every plugin uses the ordinary source removal, independently of catalog, family or binding count.
   The trusted Cancel-first confirmation names the plugin and exact scope, warns of interrupted availability
   and connections (including other projects for Global), and enables its scoped removal action after 600 ms.

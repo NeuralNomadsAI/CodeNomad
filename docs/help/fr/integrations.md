@@ -45,7 +45,7 @@ La surface conserve son dernier instantané quand elle est masquée et le revali
 3. Gardez **Global**, sauf si le plugin ne doit s’exécuter que pour ce projet, puis choisissez **Ajouter**.
 4. Une fois sa déclaration observée, un ajout soumis localement affiche **Installation** pendant au plus deux minutes depuis la demande initiale, jusqu’au signalement de son exécution par OpenCode. Il devient alors une ligne ordinaire avec ses commutateurs, ou une ligne en échec. Après rechargement ou sans preuve locale suffisante, il affiche **Non confirmé** ; une réponse tardive ne relance jamais ce délai.
 
-Pour retirer un plugin, ouvrez le menu à côté de son nom et choisissez **Retirer de Global** ou **Retirer de Projet**. Seule la déclaration du fichier de configuration de cette portée est supprimée ; ses règles d’activation **Global**/**Projet** restent des règles, et le cache de paquets d’OpenCode reste en place.
+Pour retirer un plugin, ouvrez le menu à côté de son nom et choisissez **Retirer de Global** ou **Retirer de Projet**. Seule la déclaration du fichier de configuration de cette portée est supprimée ; ses règles d’activation **Global**/**Projet**, d’activation comme de désactivation, restent à l’identique, et le cache de paquets d’OpenCode reste en place.
 
 Le code du plugin s’exécute avec vos droits dans OpenCode. Une entrée **Projet** s’exécute chaque fois que ce dossier est ouvert dans OpenCode, et les paquets qui ont des parties pour l’application de bureau d’OpenCode ne les chargent que depuis **Global** ; l’infobulle le signale quand un tel paquet est déclaré ailleurs. Les chemins locaux, les variables de configuration et les ID de plugin sont refusés ici : déclarez les plugins locaux dans le fichier de configuration. Un paquet déjà déclaré dans une configuration qui s’applique à cette Location est refusé, quelle que soit sa version, sa plage ou sa forme.
 
@@ -85,6 +85,12 @@ La métadonnée Q8 sauvegardée fournit uniquement une suggestion de rattachemen
 Plugins affiche **Catalogue d’intégrations indisponible** si aucun catalogue n’est lisible, ou le dernier catalogue valide avec son heure de récupération s’il est périmé. Actualisez Plugins pour réessayer.
 
 Retirer un plugin ouvre un avertissement nommant le plugin et sa portée exacte. **Annuler** reçoit le focus ; **Retirer de Global/Projet** devient disponible après 600 ms et exige une action explicite. Le retrait peut interrompre la disponibilité et les connexions des conversations utilisant le plugin ; Global peut aussi affecter d’autres projets. Annuler, laisser expirer ou naviguer avant l’envoi conserve tout inchangé. Seule la déclaration confirmée est retirée : règles d’activation, cache, fichiers d’application et indications d’attachement sont conservés. Une configuration modifiée exige une nouvelle sélection et confirmation. Le succès confirme le retrait de la déclaration ; l’état effectif suit le rechargement d’OpenCode. Si la réponse est perdue, actualisez Plugins pour vérifier la configuration avant une nouvelle tentative. Réinstaller peut rétablir la disponibilité ; un rechargement ou rattachement peut être nécessaire, sans reprise garantie des opérations interrompues.
+
+Pour réinstaller une intégration du catalogue que vous avez retirée :
+
+1. Actualisez Plugins et vérifiez que la configuration native et l’état d’exécution actuels confirment l’absence de sa déclaration et du plugin chargé. Si nécessaire, choisissez explicitement **Recharger la configuration OpenCode**, puis actualisez à nouveau.
+2. Ouvrez **Intégrations**, sélectionnez l’intégration et choisissez à nouveau **Installer**. Les intégrations natives d’applications utilisent uniquement **Global**. Vérifiez les informations actuelles et donnez une nouvelle confirmation.
+3. Après le rechargement natif d’OpenCode, actualisez Plugins et vérifiez l’activation et la disponibilité réelles. L’ordre natif des déclarations d’OpenCode détermine l’activation effective avec les règles conservées ; ajustez l’activation délibérément si nécessaire. Vérifiez la liaison et les opérations interrompues de chaque conversation, puis rattachez-la explicitement si nécessaire avant de lancer une nouvelle requête.
 
 ## Installer ou mettre à jour l’intégration de l’application {#application-installation}
 

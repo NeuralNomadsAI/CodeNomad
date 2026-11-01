@@ -22,6 +22,7 @@ import { startFakeNpmRegistry } from "./fixtures/fake-npm-registry.mjs"
 import { startOfferRenewal, findConfirmation } from "./fixtures/bundles-management.mjs"
 import { recognizeIntegrations } from "../packages/server/src/opencode/integrations/recognition.ts"
 import { PluginControls } from "../packages/server/src/opencode/plugin-controls.ts"
+import { appendPluginControlRule } from "../packages/server/src/opencode/plugin-control-document.ts"
 import { PluginSources } from "../packages/server/src/opencode/plugin-sources.ts"
 import { PluginPackages } from "../packages/server/src/opencode/plugin-packages.ts"
 import { NativeMutationUncertainError } from "../packages/server/src/opencode/native-mutation-authority.ts"
@@ -360,9 +361,7 @@ try {
         console.log(`PASS B disable/enable native reload at ${version}`)
         return disabled
       }
-      // Qualify reinstallation before generating retained activation rules. Rule-only
-      // install eligibility has its own product defect; removal must preserve those rules.
-      const disabled = installationOnly ? await activation("0.1.0") : undefined
+      const disabled = await activation("0.1.0")
       const next = laterPackage.get("0.1.1"); registry.publish(next.name, "0.1.1", next.bytes)
       const exact = (await runtime("0.1.0")).source.target
       await execute(mounted, owner, "request", requestInput("update")); await runtime("0.1.1")
@@ -540,13 +539,24 @@ try {
       assert.deepEqual((await client.session.get({ sessionID: foreign.id })).metadata, beforeForeign)
       assert.equal(await readFile(cacheCanary, "utf8"), "PRIVATE_CACHE_KEEP"); assert.equal(await readFile(appCanary, "utf8"), "PRIVATE_APPLICATION_KEEP")
       uncertainRemoval = false; skew += 61_000
-      // A new explicit action and consent installs again; this is separate from the lost removal request.
-      await until("native declaration and recognition/runtime observe removal", async () => {
+      // A new explicit action and consent installs again, retaining the existing rules verbatim.
+      const retainedDocument = await readFile(configFile, "utf8"), retainedEntries = parse(retainedDocument).plugins
+      assert(retainedEntries.includes("-neuralnomads.fixture")); assert(retainedEntries.includes("neuralnomads.fixture"))
+      await until("native declaration/runtime observe removal with retained rules", async () => {
         const snapshot = await controls.read("fixture", location)
         const recognized = recognizeIntegrations(catalog.snapshot().catalog, snapshot).find(item => item.entry.id === "fixture")
-        return !snapshot.configured.sources.some(source => source.target === exact) && recognized?.ways.length === 0 && !recognized.runtime
+        return recognized && !recognized.ambiguous && recognized.sources.length === 0 && !recognized.runtime
       })
+      const ruleOnly = (await read("state")).integrations.find(item => item.id === "fixture")
+      assert.equal(ruleOnly.configured, true)
+      assert.deepEqual(ruleOnly.plugin, { declared: false, runtime: "unloaded" })
+      const retainedTarget = (await controls.readConfigDocuments("fixture", location)).documents.find(document => document.scope === "global")
+      assert(retainedTarget)
       await execute(mounted, owner, "request", requestInput("install")); await runtime("0.1.2")
+      assert.deepEqual(parse(await readFile(configFile, "utf8")).plugins, [...retainedEntries, exact])
+      assert.equal(await readFile(configFile, "utf8"), appendPluginControlRule(retainedTarget.document, exact),
+        "Reinstall appends only the declaration, preserving the complete retained document")
+      console.log("PASS D25 reinstall: genuine disable/enable/remove, absent declaration/runtime with configured rules, fresh confirmation, exact retained document/rules and native runtime read-back")
       await activation("0.1.2")
       const removeCalls = calls.length
       const removedView = await execute(mounted, owner, "request", requestInput("remove"))
@@ -599,5 +609,5 @@ try {
   }, { registry: registry.url })
   await scanLogs(fixtureRoot)
   console.log("PASS B fixture daemon/backend/Blender logs: host sentinels and private owner/mount/plan/request identities absent")
-  console.log("GAPS B: rule-only reinstall eligibility after disable/enable/remove remains a separate product defect; renderer focus/MessagePort acceptance, full desktop mutation/privacy, real Blender installer, backend-kernel WSL variants and dispatched cancellation terminality remain separate; manual GUI/B4 gates retained")
+  console.log("GAPS B: renderer focus/MessagePort acceptance, full desktop mutation/privacy, real Blender installer, backend-kernel WSL variants and dispatched cancellation terminality remain separate; manual GUI/B4 and macOS/Linux gates retained")
 } finally { await host.close(); await registry.close() }

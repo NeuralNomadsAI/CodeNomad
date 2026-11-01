@@ -105,7 +105,7 @@ export class BundlesActions {
       if (!sameLocation(snapshot.location, context.location)) stale()
       const recognition = recognizeIntegrations(catalog.catalog, snapshot).find(candidate => candidate.entry.id === entry.id)!
       if (recognition.ambiguous) stale()
-      if (action.action === "install" && !submitted && recognition.ways.length) stale()
+      if (action.action === "install" && !submitted && (recognition.sources.length || recognition.runtime)) stale()
       if (action.action === "setActive" && !recognition.control) stale()
       const documents = await this.deps.controls.readConfigDocuments(context.instanceId, context.location, currentSignal)
       if (!sameLocation(documents.location, context.location)) stale()

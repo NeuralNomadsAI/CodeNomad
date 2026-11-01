@@ -45,7 +45,7 @@ The surface retains its last snapshot while hidden and revalidates when shown, o
 3. Keep **Global** unless the plugin should run only for this project, then select **Add**.
 4. Once its declaration is observed, a locally submitted addition shows **Installing** for up to two minutes from the original request, until OpenCode reports its runtime. It then becomes an ordinary plugin row with its switches, or a failed row. A reloaded or otherwise unverified addition shows **Not confirmed**; a late response never restarts the two-minute window.
 
-To remove a plugin, open the menu beside its name and select **Remove from Global** or **Remove from Project**. Only the declaration in that scope's configuration file is deleted; its **Global**/**Project** activation rules stay as rules, and OpenCode's package cache is left in place.
+To remove a plugin, open the menu beside its name and select **Remove from Global** or **Remove from Project**. Only the declaration in that scope's configuration file is deleted; its **Global**/**Project** activation rules, both enabling and disabling, stay verbatim, and OpenCode's package cache is left in place.
 
 The plugin's code runs with your permissions inside OpenCode. A **Project** entry runs whenever that folder is opened in OpenCode, and packages with parts for OpenCode's desktop app load those parts only from **Global**; the tooltip says so when such a package is declared elsewhere. Local paths, configuration variables and plugin IDs are refused here: declare local plugins in the configuration file. A package already declared in a configuration that applies to this Location is refused, whatever its version, range or form.
 
@@ -85,6 +85,12 @@ Saved Q8 metadata supplies only a reattach suggestion: **Reattach** appears in t
 Plugins shows **Integration catalog unavailable** when no catalog can be read, or the last valid catalog with its fetch time when stale. Refresh Plugins to retry.
 
 Removing any plugin opens a warning naming the plugin and exact scope. **Cancel** is initially focused; **Remove from Global/Project** becomes available after 600 ms and needs an explicit click or keyboard action. Removal can interrupt availability and connections in conversations using the plugin; Global can also affect other projects. Cancellation, expiry or navigation before submission leaves everything unchanged. CodeNomad removes only the confirmed declaration, preserving activation rules, package cache, application files and saved attachment hints. Changed configuration requires a fresh selection and confirmation. Success confirms the declaration was removed; runtime state follows OpenCode's reload. If the response is lost, refresh Plugins to check the actual configuration before a new attempt. Reinstalling may restore availability, with a reload or reattachment sometimes needed; interrupted operations may not resume.
+
+To reinstall a removed catalog integration:
+
+1. Refresh Plugins and verify that current native configuration and runtime show both its declaration and loaded plugin absent. If needed, explicitly choose **Reload OpenCode configuration**, then refresh again.
+2. Open **Intégrations**, select the integration and choose **Install** again. Native application integrations use **Global** only. Review the current details and give a fresh confirmation.
+3. After OpenCode's native reload, refresh Plugins and check actual activation and runtime availability. OpenCode's native declaration order determines effective activation with the retained rules; adjust activation deliberately if needed. Check each conversation's binding and interrupted operations, and explicitly reattach if needed before starting a new request.
 
 ## Install or update the application integration {#application-installation}
 

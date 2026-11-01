@@ -45,7 +45,7 @@ La superficie conserva su última instantánea mientras está oculta y se revali
 3. Mantén **Global**, salvo que el plugin deba ejecutarse solo para este proyecto, y elige **Añadir**.
 4. Una vez observada la declaración, una adición enviada localmente muestra **Instalando** durante un máximo de dos minutos desde la solicitud original, hasta que OpenCode informa de su ejecución. Después pasa a ser una fila normal con interruptores o una fila con error. Tras recargar o sin pruebas locales suficientes aparece **Sin confirmar**; una respuesta tardía nunca reinicia el plazo.
 
-Para quitar un plugin, abre el menú junto a su nombre y elige **Quitar de Global** o **Quitar de Proyecto**. Solo se elimina la declaración del archivo de configuración de ese ámbito; sus reglas de activación **Global**/**Proyecto** siguen como reglas y la caché de paquetes de OpenCode se conserva.
+Para quitar un plugin, abre el menú junto a su nombre y elige **Quitar de Global** o **Quitar de Proyecto**. Solo se elimina la declaración del archivo de configuración de ese ámbito; sus reglas **Global**/**Proyecto**, tanto de activación como de desactivación, se conservan literalmente y la caché de paquetes de OpenCode se conserva.
 
 El código del plugin se ejecuta con tus permisos dentro de OpenCode. Una entrada de **Proyecto** se ejecuta cada vez que esa carpeta se abre en OpenCode, y los paquetes con partes para la aplicación de escritorio de OpenCode solo las cargan desde **Global**; la información emergente lo indica cuando ese paquete se declara en otro sitio. Aquí se rechazan las rutas locales, las variables de configuración y los ID de plugin: declara los plugins locales en el archivo de configuración. Se rechaza un paquete ya declarado en una configuración que se aplica a esta Location, sea cual sea su versión, rango o forma.
 
@@ -85,6 +85,12 @@ Los metadatos Q8 guardados solo ofrecen una sugerencia para volver a vincular: *
 Plugins muestra que el catálogo no está disponible o conserva el último catálogo válido con su fecha de obtención si está obsoleto. Actualiza Plugins para reintentar.
 
 Al quitar un plugin se muestra una advertencia con su nombre y ámbito exacto. **Cancelar** recibe el foco; **Quitar de Global/Proyecto** se habilita tras 600 ms y exige una acción explícita. Puede interrumpir la disponibilidad y las conexiones de las conversaciones que lo usan; Global también puede afectar a otros proyectos. Cancelar, dejar caducar o navegar antes del envío no cambia nada. Solo se quita la declaración confirmada; se conservan reglas, caché, archivos de la aplicación y pistas guardadas de conexión. Si cambia la configuración, selecciona y confirma de nuevo. El éxito confirma la eliminación de la declaración; el estado de ejecución sigue la recarga de OpenCode. Si se pierde la respuesta, actualiza Plugins para comprobar la configuración antes de reintentar. Reinstalar puede restaurar la disponibilidad; puede ser necesario recargar o volver a vincular y las operaciones interrumpidas podrían no reanudarse.
+
+Para reinstalar una integración del catálogo que hayas quitado:
+
+1. Actualiza Plugins y verifica en la configuración nativa y el estado de ejecución actuales que estén ausentes tanto su declaración como el plugin cargado. Si hace falta, elige explícitamente **Recargar la configuración de OpenCode** y vuelve a actualizar.
+2. Abre **Intégrations**, selecciona la integración y elige **Instalar** de nuevo. Las integraciones nativas de aplicaciones usan solo **Global**. Revisa los datos actuales y confirma de nuevo.
+3. Tras la recarga nativa de OpenCode, actualiza Plugins y comprueba la activación y la disponibilidad reales. El orden nativo de las declaraciones de OpenCode determina la activación efectiva con las reglas conservadas; ajústala deliberadamente si hace falta. Comprueba el vínculo y las operaciones interrumpidas de cada conversación y vuelve a vincular explícitamente si hace falta antes de iniciar una nueva solicitud.
 
 ## Instalar o actualizar la integración de la aplicación {#application-installation}
 
