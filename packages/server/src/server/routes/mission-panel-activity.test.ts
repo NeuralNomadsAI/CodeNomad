@@ -9,6 +9,7 @@ import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuat
 import { missionPanelPageRequestSchema, type MissionPanelPageResult, type MissionPanelCursor } from "../../missions/mission-panel-page"
 import type { MissionPanelActivityObservation } from "../../missions/mission-panel-observation"
 import type { MissionJsonValue } from "../../missions/model"
+import { contentDigest } from "../../missions/content-digest"
 
 /** Real journal, plugin handler, HTTP seam and activity pipeline; only the native service
  * is deterministic. No task/map reconstruction or feature logic is copied into the test. */
@@ -213,7 +214,7 @@ test("invalid plugin contexts retain bounded plugin-unavailable semantics and ca
         const context = JSON.parse(result.page.pieces[0].text)
         context.actors = Array(161).fill(context.actors[0]); context.actorPage.end = 161; context.actorPage.total = 161
         const text = JSON.stringify(context)
-        return { ...result, page: { ...result.page, pieces: [{ index: 0, offset: 0, characters: text.length, text }] } }
+        return { ...result, page: { ...result.page, digest: contentDigest(`[${text}]`), pieces: [{ index: 0, offset: 0, characters: text.length, text }] } }
       }
       const response = await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions/panel-page", payload: { source: "activity", missionID: "msn_activity_1" } })
       assert.deepEqual([response.statusCode, response.json()], [502, { available: false, reason: "plugin-unavailable", missions: [] }])
@@ -221,6 +222,68 @@ test("invalid plugin contexts retain bounded plugin-unavailable semantics and ca
       assert.equal(f.calls.length, 0)
     }
   } finally { f.plugin.rpc = original; await f.close() }
+})
+
+test("context assembly pins the first collection, length and provenance before any native IO", async t => {
+  for (const poison of ["digest", "next-digest", "characters", "mixed-context", "marks-header", "revision", "duplicate-marks",
+    "missing-discardedEvents", "missing-controlUnavailable", "missing-notificationUnavailable", "missing-cleanupUnavailable", "stable"]) {
+    await t.test(poison, async () => {
+      const f = await fixture(), original = f.plugin.rpc
+      let reads = 0
+      try {
+        const source = poison.includes("marks") || poison.startsWith("missing-") ? "marks" : "activity"
+        const request = { source, ...(source === "activity" ? { missionID: "msn_activity_1" } : {}) }
+        f.plugin.rpc = async (method, raw) => {
+          const input = missionPanelPageRequestSchema.parse(raw)
+          // Alter only real registered-producer output. Fresh reads let the fault seam
+          // model a producer following its own forged next digest, rather than refusing it.
+          const result = await original(method, { ...input, cursor: undefined })
+          assert.ok(result.available && result.page.pieces.length === 1 && !result.page.next)
+          reads++
+          let text = result.page.pieces[0].text
+          const value = JSON.parse(text)
+          if (poison === "duplicate-marks") {
+            value.contexts[1] = value.contexts[0]
+            text = JSON.stringify(value)
+          }
+          if (poison === "revision") { value.revision++; text = JSON.stringify(value) }
+          let digest = contentDigest(`[${text}]`), end = Math.floor(text.length / 2)
+          if (poison === "mixed-context") {
+            const a = structuredClone(value), b = structuredClone(value)
+            a.actors[0].title = "first"; b.actors[0].title = "other"; b.discardedEvents = 1
+            const aText = JSON.stringify(a), bText = JSON.stringify(b)
+            assert.equal(aText.length, bText.length)
+            end = aText.indexOf(',"discardedEvents"')
+            const mixed = aText.slice(0, end) + bText.slice(end)
+            assert.notDeepEqual(JSON.parse(mixed), a); assert.notDeepEqual(JSON.parse(mixed), b)
+            digest = contentDigest(`[${aText}]`)
+            text = input.cursor ? bText : aText
+            if (input.cursor) result.discardedEvents = 1
+          }
+          if (poison === "marks-header" && input.cursor) result.discardedEvents++
+          if (poison === "revision" && input.cursor) result.revision++
+          if (poison.startsWith("missing-")) delete result[poison.slice("missing-".length)]
+          const split = ["next-digest", "characters", "mixed-context", "marks-header", "revision", "stable"].includes(poison)
+          const offset = split && input.cursor ? end : 0
+          if (poison === "digest" || poison === "next-digest" && input.cursor) digest = "x".repeat(43)
+          return { ...result, page: { digest, total: 1, pieces: [{ index: 0, offset,
+            characters: text.length + (poison === "characters" && !input.cursor ? 100 : 0),
+            text: text.slice(offset, split && !input.cursor ? end : undefined) }],
+            ...(split && !input.cursor ? { next: { digest: poison === "next-digest" ? "x".repeat(43) : digest, index: 0, offset: end } } : {}),
+          } }
+        }
+        const response = await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions/panel-page", payload: request })
+        if (poison === "stable") {
+          assert.deepEqual([response.statusCode, response.json().phase, reads, f.calls.length], [200, "observed", 2, 7])
+        } else {
+          assert.deepEqual([response.statusCode, response.json().reason, f.calls.length], [502, "plugin-unavailable", 0])
+          assert.deepEqual(response.json(), { available: false, reason: "plugin-unavailable", missions: [] })
+          assert.equal(response.rawPayload.length, 63)
+          if (poison === "next-digest") assert.equal(reads, 1, "reject a switched next digest before requesting it")
+        }
+      } finally { f.plugin.rpc = original; await f.close() }
+    })
+  }
 })
 
 test("business completion, graceful Pause and pending receipts remain separate from observed native work; range damage survives live envelopes", async () => {

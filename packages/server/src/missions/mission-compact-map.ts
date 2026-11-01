@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { missionDecisionMaker } from "./decision-artifact"
-import { missionActorEvidence, missionTaskExecutionEvidence } from "./execution-evidence"
+import { missionTaskExecutionEvidence } from "./execution-evidence"
+import { missionActorEvidence } from "./mission-actor-evidence"
 import { contentDigest } from "./inspect-view"
 import { describe } from "./mission-body-descriptors"
 import { MISSION_BODY_FIELDS, type MissionBodyDescriptors } from "./mission-content-wire"

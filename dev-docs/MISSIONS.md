@@ -491,7 +491,13 @@ response limits, exact pieces and changed-content refusal:
 The RPC answers `phase:"context"`, with the bounded persisted input as its single JSON
 row; the HTTP route reconstructs that input, validates its root/project/window identity
 and actor/string bounds, and runs the existing `projectMissionActivity` pipeline after
-the journal lock. HTTP answers `phase:"observed"` with `observedAt`. The selected-source
+the journal lock. Assembly pins the first collection digest, row character count and
+complete provenance header, including the required range/project damage fields and the
+selected mission's revision. Every piece and continuation keeps those identities and
+advances within the fixed length; the completed row's `contentDigest("[" + text + "]")`
+must match before JSON adoption or native IO. Marks require unique mission IDs.
+Invalid context output uses the bounded `plugin-unavailable` response.
+HTTP answers `phase:"observed"` with `observedAt`. The selected-source
 row is `MissionPanelActivityObservation` (`missions/mission-panel-observation.ts`):
 `{context,coverage,requests,activity}`; marks return
 `{missionPage,observations:[...]}` as one row. Every successful selected envelope keeps
@@ -508,6 +514,8 @@ receipt count. Complete actor lists, lifecycle receipts and other persisted arra
 remain byte-paged through the mission field source. Task attribution is shared with
 the full-map family projection (`missionFamilyTaskContexts`), including ambiguous calls
 and parent conflicts. Business status/revision stay distinct from native execution.
+The UI-shared `execution-evidence.ts` stays browser-pure; server producers aggregate
+actor evidence through `mission-actor-evidence.ts`.
 
 `activity` retains actor states and family evidence; `coverage` is `observed`, `partial`
 or `unknown`, never silently complete for actors outside the window. A native unknown
