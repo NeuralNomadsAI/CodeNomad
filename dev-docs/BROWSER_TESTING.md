@@ -92,3 +92,14 @@ synthetic provider.
   Its main-world DOM readiness probe releases the reply and repaint; a direct
   native click instead receives the reply at pointer movement and releases
   repaint on pointer-up, keeping the stale geometry through mouse-down.
+- Fixtures importing the production event transport serve `/api/events` with
+  `text/event-stream`, including when native frames enter through the real
+  dispatcher directly. Keep network-failure collectors strict for failed streams
+  and unrelated cancelled requests.
+- Shell fixtures share `tests/browser/panel-read-fixture.ts` to observe optional
+  panel-extension list cancellations: the exact request identity, its owning
+  aborted signal and its native `AbortError` receipt must agree. Drain pending
+  classifications before asserting; retain raw failures alongside the classified
+  cancellations. Same-URL network aborts and missing, unknown or reused identities
+  remain failures. Hold a controller-owned read across a native SSE open to
+  exercise supersession with the navigation ownership assertions intact.

@@ -18,6 +18,7 @@ import { createFixtureShutdown } from "./fixture-shutdown"
 import { missionPicker, missionPopupOption } from "./mission-actions"
 import type {} from "./fixtures/mission-native-family"
 import { panelMissions } from "./mission-content-fixture"
+import { collectPanelReadFailures, PANEL_READ_HEADER } from "./panel-read-fixture"
 
 let server: ViteDevServer, browser: Browser, url: string, output: string
 before(async () => {
@@ -70,10 +71,11 @@ async function setup(label: string, narrow = false, independent = false) {
   page.setDefaultTimeout(12000)
   const errors: string[] = [], failures: string[] = [], consoleErrors: string[] = [], requests: Array<{ method: string; path: string; body?: unknown }> = []
   const voidResponses = new Set<Request>(), voidBodyCancellations: string[] = []
-  const rawRequestFailures: string[] = [], navigationReadCancellations: Array<{ failure: string; requestedSession: string; activeSession: string }> = []
-  const panelListCancellations: Array<{ failure: string; readId: string }> = []
+  const panelReads = collectPanelReadFailures(page, url)
+  const { rawRequestFailures, panelListCancellations } = panelReads
+  const navigationReadCancellations: Array<{ failure: string; requestedSession: string; activeSession: string }> = []
   const failureChecks: Promise<unknown>[] = [], outlineResponses: Array<{ session: string; at: number }> = []
-  const drainRequestFailures = async () => { await Promise.all(failureChecks) }
+  const drainRequestFailures = async () => { await panelReads.drain(); await Promise.all(failureChecks) }
   const receipts: Array<{ method: string; path: string; status: number }> = [], fallbackResponses: string[] = []
   let family = structuredClone(independent ? deepFamily : observedFamily), deferred = false, release!: () => void, reached!: () => void, completed!: () => void
   const hold = new Promise<void>(resolve => { release = resolve }), arrival = new Promise<void>(resolve => { reached = resolve })
@@ -86,21 +88,11 @@ async function setup(label: string, narrow = false, independent = false) {
   })
   page.on("requestfailed", request => {
     const message = `${request.url()} ${request.failure()?.errorText}`
-    rawRequestFailures.push(message)
+    if (panelReads.record(request, failures)) return
     // The actual Promise client cancels empty-response bodies. Retain these
     // confirmed 204 receipts separately, never excuse an unconfirmed failure.
     if (voidResponses.has(request) && request.failure()?.errorText === "net::ERR_ABORTED") voidBodyCancellations.push(message)
-    else if (request.method() === "GET" && request.url() === new URL("/api/panel-extensions", url).href
-      && request.failure()?.errorText === "net::ERR_ABORTED" && request.headers()["x-native-family-panel-read"]) {
-      const readId = request.headers()["x-native-family-panel-read"]
-      // Transport/visibility changes supersede optional catalog reads. Require
-      // this exact production call to reject with its own aborted signal;
-      // a browser/network abort with the same URL and code remains a failure.
-      failureChecks.push(page.evaluate(id => window.missionNativeFamily.panelReadCancelled(id), readId).then(cancelled => {
-        if (cancelled) panelListCancellations.push({ failure: message, readId })
-        else failures.push(message)
-      }).catch(() => { failures.push(message) }))
-    } else if (request.method() === "POST" && ["outline", "outlinePreview"].some(route => new URL(request.url()).pathname === `/api/workspaces/native-family/session-history/${route}`)
+    else if (request.method() === "POST" && ["outline", "outlinePreview"].some(route => new URL(request.url()).pathname === `/api/workspaces/native-family/session-history/${route}`)
       && request.failure()?.errorText === "net::ERR_ABORTED") {
       // Production timeline-previews.ts and session-outline.ts abort demand on
       // session/inactive cleanup. Verify the exact old-session request before
@@ -544,7 +536,7 @@ test("native catalog supersession is recorded separately while real catalog and 
       await route.fulfill({ json: [] })
     })
     await page.evaluate(() => window.missionNativeFamily.transport("connected"))
-    const pending = await arrival, readId = pending.headers()["x-native-family-panel-read"]
+    const pending = await arrival, readId = pending.headers()[PANEL_READ_HEADER]
     assert.ok(readId, "the actual production list call has a unique fixture identity")
     const cancelled = page.waitForEvent("requestfailed", request => request === pending)
     const replacement = page.waitForResponse(response => response.url() === catalog && response.request() !== pending)
@@ -562,7 +554,7 @@ test("native catalog supersession is recorded separately while real catalog and 
     await page.evaluate(() => window.missionNativeFamily.transport("connected"))
     const request = await broken
     await ctx.drainRequestFailures()
-    assert.equal(await page.evaluate(id => window.missionNativeFamily.panelReadCancelled(id), request.headers()["x-native-family-panel-read"]), false)
+    assert.equal(await page.evaluate(id => window.missionNativeFamily.panelReadCancelled(id), request.headers()[PANEL_READ_HEADER]), false)
     assert.deepEqual(ctx.failures, [`${catalog} net::ERR_ABORTED`])
     const unrelated = new URL("/api/unrelated-read-probe", url).href
     await page.route(unrelated, route => route.abort("aborted"))
