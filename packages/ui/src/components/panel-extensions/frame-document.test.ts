@@ -38,7 +38,7 @@ test("API 4 bundles is frozen and permission-scoped; APIs 1–3 stay exact", asy
       assert.deepEqual(Object.keys(api).filter(key => !["apiVersion", "getContext", "onContext"].includes(key)), [...objects])
       if (api.bundles) {
         assert.equal(Object.isFrozen(api.bundles), true)
-        assert.deepEqual(Object.keys(api.bundles), ["catalog", "state", "hosts",
+        assert.deepEqual(Object.keys(api.bundles), ["catalog", "state", "hosts", "openDocs",
           ...(permissions.some(permission => permission === "bundles.manage") ? ["request", "setActive", "installHost", "attach", "detach"] : []), "onChanged"])
       }
     } finally { close() }
@@ -107,5 +107,25 @@ test("bundles listeners are separate; strict frozen request events stay lossless
     port.postMessage({ type: "images:changed" })
     await flushed
     assert.equal(bundles.length, 3)
+  } finally { close() }
+})
+
+test("documentation bridge keeps fixed ID-only intent and fulfilled busy/unavailable outcomes", async () => {
+  const { api, port, close } = await bridge(["bundles.read"])
+  const reads: any[] = []
+  port.on("message", request => reads.push(request))
+  try {
+    const pending = [api.bundles.catalog(), api.bundles.catalog(), api.bundles.catalog(), api.bundles.catalog()]
+    assert.equal((await api.bundles.openDocs({ integration: "blender" })).outcome, "busy")
+    while (reads.length < 4) await new Promise(resolve => setTimeout(resolve, 5))
+    for (const request of reads) port.postMessage({ type: "api4:result", id: request.id, result: "ok" })
+    await Promise.all(pending)
+    for (const error of ["busy", true]) {
+      const received = once(port, "message"), result = api.bundles.openDocs({ integration: "blender" })
+      const [request] = await received
+      assert.deepEqual(request, { type: "api4:request", id: request.id, capability: "bundles", method: "openDocs", input: { integration: "blender" } })
+      port.postMessage({ type: "api4:result", id: request.id, error })
+      assert.equal((await result).outcome, error === "busy" ? "busy" : "unavailable")
+    }
   } finally { close() }
 })
