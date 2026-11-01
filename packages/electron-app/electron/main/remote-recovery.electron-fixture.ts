@@ -44,7 +44,9 @@ const attempt = (token: string | null, names = ["openLocalWindow", "retryRemoteW
 const tokenOf = (url: string) => new URL(url).hash.split("=")[1] ?? null
 const refused = (token: string | null) => attempt(token)
 
-const timer = setTimeout(() => { writeFileSync(resultPath, JSON.stringify({ error: "timeout" })); app.exit(2) }, 40_000)
+// The step in progress, reported if the fixture stalls.
+let step = "starting"
+const timer = setTimeout(() => { writeFileSync(resultPath, JSON.stringify({ error: `timeout during: ${step}` })); app.exit(2) }, 40_000)
 
 app.whenReady().then(async () => {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
@@ -70,10 +72,12 @@ app.whenReady().then(async () => {
   }
 
   // 1. The remote server's own document pretends to be the recovery page.
+  step = "1 spoof"
   await window.loadURL(remoteUrl)
   result.spoofWithoutToken = await page.executeJavaScript(`history.replaceState(null, "", "/loading.html#remote-unavailable=guess"); ${refused("guess")}`)
 
   // 2. The host's recovery document; Try again reaches a 204, which commits nothing.
+  step = "2 failed retry"
   await show()
   const first = page.getURL()
   result.hostWrongToken = await page.executeJavaScript(refused("not-the-token"))
@@ -90,10 +94,12 @@ app.whenReady().then(async () => {
   result.countsAfterRetries = { ...counts }
 
   // 3. Leaving for the server's document revokes the token, even replayed in a spoofed URL.
+  step = "3 revoked spoof"
   await window.loadURL(remoteUrl)
   result.spoofWithRevokedToken = await page.executeJavaScript(`history.replaceState(null, "", ${JSON.stringify(new URL(third).pathname + new URL(third).search + new URL(third).hash)}); ${refused(tokenOf(third))}`)
 
   // 4. Reloading the recovery document revokes its token and shows a fresh document.
+  step = "4 reload"
   await show()
   const beforeReload = page.getURL()
   page.reload()
@@ -105,6 +111,7 @@ app.whenReady().then(async () => {
 
   // 5. A renderer crash revokes the token and reloads nothing; the user's reload then shows a fresh
   //    document whose actions work, while the crashed token stays refused.
+  step = "5 crash"
   let commits = 0
   page.on("did-navigate", () => { commits++ })
   const gone = new Promise((resolve) => page.once("render-process-gone", () => resolve(undefined)))
@@ -112,6 +119,7 @@ app.whenReady().then(async () => {
   await gone
   await new Promise((resolve) => setTimeout(resolve, 300))
   const commitsBeforeReload = commits
+  step = "5 reload after crash"
   page.reload()
   const afterCrash = await nextDocument(afterReload)
   result.afterCrash = {

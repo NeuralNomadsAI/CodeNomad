@@ -22,16 +22,22 @@ test("only the host's own unavailable-server document reaches the remote recover
       join(here, "remote-recovery.electron-fixture.ts"),
       scratch, resultPath, join(here, "../preload/index.cjs"),
     ]
+    // Electron's own output, kept (bounded) for the failure message.
+    let output = ""
     const exitCode = await new Promise<number | null>((resolve, reject) => {
-      const child = spawn(electronBinary, args, { env: environment, windowsHide: true, stdio: "ignore" })
+      const child = spawn(electronBinary, args, { env: environment, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
+      const keep = (chunk: Buffer) => { output = (output + chunk.toString()).slice(-8_000) }
+      child.stdout.on("data", keep)
+      child.stderr.on("data", keep)
       // A fixture that cannot start (Electron keeps its error dialog open) must not outlive the test.
       const deadline = setTimeout(() => child.kill(), 45_000)
       child.once("error", (error) => { clearTimeout(deadline); reject(error) })
       child.once("exit", (code) => { clearTimeout(deadline); resolve(code) })
     })
-    const result = JSON.parse(readFileSync(resultPath, "utf8"))
-    assert.equal(result.error, undefined, result.error)
-    assert.equal(exitCode, 0)
+    let result: Record<string, unknown>
+    try { result = JSON.parse(readFileSync(resultPath, "utf8")) } catch { result = { error: "no result" } }
+    assert.equal(result.error, undefined, `${result.error}\nElectron output:\n${output}`)
+    assert.equal(exitCode, 0, output)
 
     const refused = { openLocalWindow: "refused", retryRemoteWindow: "refused" }
     // A remote document rewriting its URL with the History API stays the remote document.
