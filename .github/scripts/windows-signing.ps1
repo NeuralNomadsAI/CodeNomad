@@ -1,5 +1,5 @@
 # Resolve whether this build signs its Windows artifacts with SignPath and the
-# versions the artifact configurations expect. An empty policy builds unsigned
+# version the artifact configurations expect. An empty policy builds unsigned
 # (pull requests, forks, unconfigured releases); a requested policy without the
 # API token fails instead of publishing unsigned files.
 param(
@@ -22,11 +22,9 @@ if ($Policy) {
 }
 
 if (-not $Version) { $Version = (Get-Content $PackageJson -Raw | ConvertFrom-Json).version }
-if ($Version -notmatch '^(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.+-]*)?$') { throw "Invalid version: $Version" }
-# electron-builder writes major.minor.patch.0 as the executable's ProductVersion.
-$electronProductVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
+# Every signed Windows binary carries this as its product version.
+if ($Version -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]*)?$') { throw "Invalid version: $Version" }
 
 "enabled=$($enabled.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 "version=$Version" >> $env:GITHUB_OUTPUT
-"electron_product_version=$electronProductVersion" >> $env:GITHUB_OUTPUT
 Write-Host ($(if ($enabled) { "Windows artifacts will be signed with SignPath policy $Policy" } else { "Windows artifacts stay unsigned" }))

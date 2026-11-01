@@ -54,13 +54,17 @@ built and is not signed.
    packages the signed application, and the Electron archive.
 3. The artifact configurations in `.signpath/artifact-configurations/` (kept
    identical to those in SignPath) list the exact files and require the product
-   name `CodeNomad` and the release's product version.
+   name `CodeNomad` and the release version as the product version of every
+   signed file. Tauri writes the full release version; for Electron,
+   `packages/electron-app/scripts/after-sign.cjs` replaces electron-builder's
+   numeric product version string with it.
 4. Pascal André reviews and manually approves each release signing request in
    SignPath. The workflow waits up to two hours for each approval.
-5. Before submission the workflow checks each file's product name and version;
-   afterwards it verifies the returned Authenticode signature, its timestamp,
-   the SignPath Foundation signer and the product version, and that the
-   Electron archive differs from the build only in `CodeNomad.exe`.
+5. Before submission the workflow checks each file's product name and version
+   (Electron's on every build); afterwards it verifies the returned
+   Authenticode signature, its timestamp, the SignPath Foundation signer and
+   the product version, and that the contents of the Electron archive differ
+   from the build only in `CodeNomad.exe`.
 6. The Tauri updater signature is recomputed over the signed installer, and the
    update manifest, release asset digests and WinGet hash are taken from the
    published signed files. Release records identify the source commit and

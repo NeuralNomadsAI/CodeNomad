@@ -135,7 +135,7 @@ Electron names deb architectures the Debian way (`amd64`) and Tauri keeps its na
 
 - **Build on:** Windows 10+, macOS, or Linux
 - **Run on:** Windows 10+
-- **Code signing:** Optional for local builds; release builds sign through SignPath (see [Code signing policy](CODE_SIGNING.md))
+- **Code signing:** Optional for local builds; release builds sign through SignPath when signing is enabled (see [Code signing policy](CODE_SIGNING.md))
 
 ### Linux
 

@@ -273,17 +273,17 @@ jobs:
       - name: Verify bundled Node resource (Electron Windows)
         run: node scripts/verify-bundled-node.cjs packages/electron-app/electron/resources@win32-x64
 
-      - name: Check Electron executable before signing
-        if: ${{ steps.signing.outputs.enabled == 'true' }}
+      # Runs on unsigned builds too, so PR builds prove that the afterSign hook
+      # gives CodeNomad.exe the same product version as the Tauri binaries.
+      - name: Check Electron executable metadata
         shell: pwsh
         env:
           SIGNING_VERSION: ${{ steps.signing.outputs.version }}
-          PRODUCT_VERSION: ${{ steps.signing.outputs.electron_product_version }}
         run: |
           $zip = "packages/electron-app/release/CodeNomad-Electron-windows-x64-$env:SIGNING_VERSION.zip"
           $exe = Join-Path $env:RUNNER_TEMP "signpath/electron-unsigned/CodeNomad.exe"
           ./.github/scripts/zip-entry.ps1 -Zip $zip -Entry CodeNomad.exe -Destination $exe
-          ./.github/scripts/verify-authenticode.ps1 -Path $exe -ProductVersion $env:PRODUCT_VERSION -Unsigned
+          ./.github/scripts/verify-authenticode.ps1 -Path $exe -ProductVersion $env:SIGNING_VERSION -Unsigned
 
       - name: Sign Electron Windows archive (SignPath)
         if: ${{ steps.signing.outputs.enabled == 'true' }}
@@ -296,7 +296,6 @@ jobs:
           path: packages/electron-app/release/CodeNomad-Electron-windows-x64-${{ steps.signing.outputs.version }}.zip
           parameters: |
             version: ${{ toJSON(steps.signing.outputs.version) }}
-            productVersion: ${{ toJSON(steps.signing.outputs.electron_product_version) }}
           output-directory: ${{ runner.temp }}/signpath/electron-signed
 
       - name: Verify and install signed Electron Windows archive
@@ -305,7 +304,6 @@ jobs:
         env:
           POLICY: ${{ inputs.windows_signing_policy }}
           SIGNING_VERSION: ${{ steps.signing.outputs.version }}
-          PRODUCT_VERSION: ${{ steps.signing.outputs.electron_product_version }}
         run: |
           $ErrorActionPreference = "Stop"
           $name = "CodeNomad-Electron-windows-x64-$env:SIGNING_VERSION.zip"
@@ -314,7 +312,7 @@ jobs:
           $exe = Join-Path $env:RUNNER_TEMP "signpath/electron-signed-check/CodeNomad.exe"
           # Only CodeNomad.exe may differ from the archive that was built.
           ./.github/scripts/zip-entry.ps1 -Zip $signed -Entry CodeNomad.exe -Destination $exe -Original $unsigned
-          ./.github/scripts/verify-authenticode.ps1 -Path $exe -ProductVersion $env:PRODUCT_VERSION -Policy $env:POLICY
+          ./.github/scripts/verify-authenticode.ps1 -Path $exe -ProductVersion $env:SIGNING_VERSION -Policy $env:POLICY
           Copy-Item $signed $unsigned -Force
 
       - name: Upload release assets

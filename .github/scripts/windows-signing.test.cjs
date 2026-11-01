@@ -40,6 +40,27 @@ test("every SignPath submission is gated, verified and limited to the Windows jo
   }
 })
 
+test("every signed binary of a build is restricted to the same product version", () => {
+  const configurations = path.join(__dirname, "../../.signpath/artifact-configurations")
+  for (const file of fs.readdirSync(configurations)) {
+    const xml = fs.readFileSync(path.join(configurations, file), "utf8")
+    assert.deepEqual([...xml.matchAll(/<parameter name="([^"]+)"/g)].map((m) => m[1]), ["version"], file)
+    const restrictions = [...xml.matchAll(/<pe-file [^>]*>/g)].map(([element]) => element)
+    assert.ok(restrictions.length > 0, file)
+    for (const element of restrictions) {
+      assert.match(element, /product-name="CodeNomad"/, file)
+      assert.match(element, /product-version="\$\{version\}"/, file)
+    }
+  }
+  // electron-builder's own ProductVersion string is numeric; the hook aligns it
+  // and every Windows build checks the result before any signing.
+  const electron = JSON.parse(fs.readFileSync(path.join(__dirname, "../../packages/electron-app/package.json"), "utf8"))
+  assert.equal(electron.build.afterSign, "./scripts/after-sign.cjs")
+  const check = workflow("build-and-upload.yml").jobs["build-windows"].steps.find((step) => step.name === "Check Electron executable metadata")
+  assert.equal(check.if, undefined)
+  assert.match(check.run, /-ProductVersion \$env:SIGNING_VERSION -Unsigned/)
+})
+
 test("the Tauri executable is marked and signed before NSIS bundles it unpatched", () => {
   const steps = workflow("build-and-upload.yml").jobs["build-tauri-windows"].steps
   const index = (pattern) => steps.findIndex((step) => pattern.test(step.run ?? step.with?.["artifact-configuration"] ?? ""))
