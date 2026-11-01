@@ -5,6 +5,7 @@ import type { MissionListResponse, MissionPanelMap, MissionPanelTask } from "../
 import type { MissionTaskPageResponse, MissionTaskRequest } from "../../../server/src/missions/mission-panel-map"
 import { createMissionContentStore } from "./mission-content-store"
 import { createMissionStore } from "./mission-store"
+import { MissionTaskPageReadError } from "../lib/mission-task-page-read"
 import { answerTaskRequest, createTaskPageCache, failTaskRequest, mergeTaskPages, missionBodyRevision, taskRequestsOf } from "./mission-task-pages"
 
 /** A plan of independent tasks in display order, at a revision: compact maps and pages of it
@@ -27,7 +28,7 @@ const compact = (value: Plan): MissionPanelMap => ({ version: 1, id: "msn_wide",
 const listed = (value: Plan): MissionListResponse => ({ available: true, version: 1, projectID: "project-1", generatedAt: 1, discardedEvents: 0,
   activity: { generatedAt: 1, missions: [] }, missions: [compact(value)] })
 /** The tasks route over `current()`: its page, or the refusal of another order. */
-const pages = (current: () => Plan, calls: MissionTaskRequest[]) => async (_instanceId: string, missionId: string, request: MissionTaskRequest): Promise<MissionTaskPageResponse> => {
+const pages = (current: () => Plan, calls: MissionTaskRequest[]) => async (_instanceId: string, missionId: string, request: MissionTaskRequest, _scope?: unknown): Promise<MissionTaskPageResponse> => {
   calls.push(request)
   const value = current(), base = { available: true as const, version: 1 as const, projectID: "project-1", missionID: missionId, revision: value.revision }
   if (request.order !== undefined && request.order !== orderOf(value)) return { ...base, refused: "order-changed" }
@@ -35,6 +36,71 @@ const pages = (current: () => Plan, calls: MissionTaskRequest[]) => async (_inst
   return { ...base, taskPage: taskPage(value, offset, request.offset !== undefined ? offset + keys.length : offset), tasks: keys.map(key => row(value, key)), reports: [] }
 }
 const keys = (store: ReturnType<typeof createMissionStore>) => store.state("instance-1").missions[0].tasks.map(task => task.key)
+
+test("connection and wanted-mission transitions fence task reads without dropping last-good rows or replaying failures", async () => {
+  const value = plan(150), calls: MissionTaskRequest[] = [], route = pages(() => value, calls)
+  let release!: () => void, entered!: () => void, current!: () => boolean, signal!: AbortSignal
+  const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { entered = resolve })
+  const store = createMissionStore(async () => listed(value), async (...args) => {
+    current = args[3].current; signal = args[3].signal; entered(); await gate; return route(...args)
+  })
+  await store.ensure("instance-1")
+  store.want("instance-1", "selection", "msn_wide")
+  const pending = store.loadTasks("instance-1", "msn_wide", { offset: 50 })
+  await started
+  assert.equal(current(), true)
+  store.invalidateTasks("instance-1")
+  assert.equal(current(), false); assert.equal(signal.aborted, true)
+  assert.equal(keys(store).length, 50)
+  release(); assert.equal(await pending, "skipped")
+  assert.equal(keys(store).length, 50)
+  assert.equal(store.state("instance-1").taskReads, undefined)
+
+  let fail = true, attempts = 0
+  const changed = createMissionStore(async () => listed(value), async (...args) => {
+    attempts++; if (fail) throw new MissionTaskPageReadError("changed"); return route(...args)
+  })
+  await changed.ensure("instance-1")
+  assert.equal(await changed.loadTasks("instance-1", "msn_wide", { offset: 50 }), "failed")
+  assert.equal(changed.state("instance-1").taskReads?.msn_wide.failure?.reason, "changed")
+  await changed.refresh("instance-1"); await changed.refresh("instance-1")
+  assert.equal(attempts, 1, "same-revision refresh does not retry a changed cursor")
+  fail = false; assert.equal(await changed.loadTasks("instance-1", "msn_wide", { offset: 50 }), "read")
+  assert.equal(keys(changed).length, 100)
+  fail = true
+  await changed.loadTasks("instance-1", "msn_wide", { offset: 100 })
+  fail = false; changed.invalidateTasks("instance-1"); await changed.refresh("instance-1")
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(keys(changed).length, 150, "a plugin/connection invalidation re-arms a parked read without discarding shown rows")
+})
+
+test("a task read released by its last wanted owner cannot publish", async () => {
+  const value = plan(120), calls: MissionTaskRequest[] = [], route = pages(() => value, calls)
+  let release!: () => void, entered!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { entered = resolve })
+  const store = createMissionStore(async () => listed(value), async (...args) => { entered(); await gate; return route(...args) })
+  await store.ensure("instance-1"); store.want("instance-1", "selection", "msn_wide")
+  const pending = store.loadTasks("instance-1", "msn_wide", { offset: 50 })
+  await started; store.want("instance-1", "selection", undefined); release()
+  assert.equal(await pending, "skipped"); assert.equal(keys(store).length, 50)
+})
+
+test("queued reads keep their wanted lifetime and a newer revision does not reread an unselected open mission's task windows", async () => {
+  let value = plan(150), sends = 0, release!: () => void, entered!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { entered = resolve })
+  const route = pages(() => value, [])
+  const store = createMissionStore(async () => listed(value), async (...args) => { sends++; entered(); await gate; return route(...args) })
+  store.setDemand("instance-1", true); store.want("instance-1", "selection", "msn_wide"); await store.ensure("instance-1")
+  const running = store.loadTasks("instance-1", "msn_wide", { offset: 50 })
+  await started
+  const queued = store.loadTasks("instance-1", "msn_wide", { offset: 100 })
+  store.want("instance-1", "selection", "other")
+  release()
+  assert.deepEqual(await Promise.all([running, queued]), ["skipped", "skipped"])
+  assert.equal(sends, 1, "the obsolete queued selector never reaches the fetch boundary")
+  value = plan(150, 2); await store.refresh("instance-1"); await new Promise(resolve => setImmediate(resolve))
+  assert.equal(sends, 1, "open but unwanted missions receive no task-window revalidation")
+})
 
 test("rows read further show in display order beside the base map's, each overriding it only from a later page, never across orders", () => {
   const value = plan(120), map = compact(value)

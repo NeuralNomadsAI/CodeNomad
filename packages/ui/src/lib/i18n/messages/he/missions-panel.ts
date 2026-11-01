@@ -77,6 +77,7 @@ export const missionsPanelMessages = {
   "missionsPanel.tasks.omitted.other": "{count} משימות לא מוצגות",
   "missionsPanel.tasks.showMore": "הצג עוד",
   "missionsPanel.tasks.readFailed": "לא ניתן היה לקרוא את המשימות האלה.",
+  "missionsPanel.tasks.readChanged": "רשימת המשימות השתנתה במהלך הקריאה. יש לרענן ולנסות שוב.",
   "missionsPanel.task.omittedDependencies.one": "תלות {count} לא מוצגת",
   "missionsPanel.task.omittedDependencies.other": "{count} תלויות לא מוצגות",
   "missionsPanel.task.omittedDependents.one": "משימה תלויה {count} לא מוצגת",

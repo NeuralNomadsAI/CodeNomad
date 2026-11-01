@@ -77,6 +77,7 @@ export const missionsPanelMessages = {
   "missionsPanel.tasks.omitted.other": "{count} görev gösterilmiyor",
   "missionsPanel.tasks.showMore": "Daha fazla göster",
   "missionsPanel.tasks.readFailed": "Bu görevler okunamadı.",
+  "missionsPanel.tasks.readChanged": "Okuma sırasında görev listesi değişti. Yenileyip tekrar deneyin.",
   "missionsPanel.task.omittedDependencies.one": "{count} bağımlılık gösterilmiyor",
   "missionsPanel.task.omittedDependencies.other": "{count} bağımlılık gösterilmiyor",
   "missionsPanel.task.omittedDependents.one": "{count} bağımlı görev gösterilmiyor",

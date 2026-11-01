@@ -49,6 +49,8 @@ Der Graph enthält abgeschlossene und zurückgezogene Arbeit. Eine Aufgabe zurü
 
 Ein großer Plan zeigt eine Seite seiner Aufgaben: die ersten 50 in Abhängigkeitsreihenfolge und bis zu 20, die Aufmerksamkeit brauchen, etwa Blockaden, Fehlschläge und die neuesten Ergebnisse. Jede Folge nicht geladener Aufgaben erscheint als **N Aufgaben nicht angezeigt**; **Mehr anzeigen** lädt dort die nächsten 50. Brauchen mehr Aufgaben Aufmerksamkeit, als die Seite fasst, nennt **N weitere Aufgaben brauchen Aufmerksamkeit** die Zahlen der Mission nach Art, und **Anzeigen** lädt diese Aufgaben. Ein gestrichelter Ansatz markiert eine nicht angezeigte Abhängigkeit oder abhängige Aufgabe, und ein Abhängigkeitslink im Leser einer Aufgabe lädt zuerst deren Aufgabe. Der Leser einer Aufgabe zeigt ihre neuesten Ergebnisse; **N frühere Ergebnisse nicht angezeigt** bietet **Alle anzeigen**, das ihren ganzen Verlauf lädt. Kann eine Aufgabe oder ein Bericht nicht geladen werden, sagt der Leser es; **Erneut versuchen** lädt sie erneut.
 
+Aufgabenseiten erscheinen erst nach vollständigem Empfang. Bei fehlgeschlagenen oder geänderten Lesevorgängen bleiben die zuletzt gezeigten Aufgaben erhalten. Ändert sich die Liste während des Lesens, wählen Sie **Aktualisieren**, dann **Erneut versuchen**; die Seite wird von vorn gelesen. Ein fehlender Teil belegt niemals, dass eine Aufgabe oder Anfrage fehlt. Das Wiederholen eines Lesevorgangs startet keine Arbeit. Kann das Missions-Plugin die Seite nicht liefern, versuchen Sie es nach erneutem Verbinden oder Neuladen des Plugins.
+
 ### Farben und unterbrochene Missionen {#status-colours}
 
 Missionsmarkierungen, Aufgabensymbole und das Chevron der Liste verwenden die Farben der Sitzungsliste: Farbe zeigt nur, was Sie jetzt braucht.

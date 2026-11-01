@@ -457,8 +457,25 @@ types, byte counter and paginator live in `missions/mission-panel-page.ts`.
   across unrelated revisions. End-of-page means partial discovery until `next` is absent;
   a partial row supplies no absence, deletion or mutation evidence.
 
-The route is opt-in: the UI's selection, marks, requests and cleanup retries keep their
-existing display contract. Consumers adopting this transport key pages by workspace,
+Task reads further in the one-time UI use `panelPage`'s task source through
+`lib/mission-task-page-read.ts`: one explicit window or named read, reconstructed
+under its first digest, fixed row length and required project/mission/revision/damage
+header, and hash-verified before publication. The actual response body is capped at
+64 KiB before JSON parsing, selectors at 16 KiB; each transfer shares the secondary
+read budget. A logical read has a 30-second deadline. Partial text lives only for
+that operation. A failure parks the selector beside last-good rows; explicit Retry
+starts at the first slice. Changed content has its own refresh/retry message and
+zero automatic restarts or legacy task-route fallback. Connection/plugin events,
+clear and wanted-owner changes fence in-flight slices and publication. The task
+cache keeps per-row revisions and existing explicit window/attention coverage.
+The producer/consumer contract tests live in `packages/ui/tests/contracts/`, outside
+the browser application's source graph, and run in the Missions UI unit CI step.
+
+Picker discovery, selected/wanted maps, activity and cleanup display retain the list
+contract; exact cleanup reconciliation retains its single-mission read. Completion
+seeding uses that complete inventory.
+The recurrence-passage reader keeps its own transport.
+Consumers adopting this transport key pages by workspace,
 project and the complete source selector, retain each page's own revision, and keep a
 failed middle page's cursor for explicit Retry. An unrelated successful page never
 authorizes the failed page's rows. The paginator holds no retained snapshot or polling

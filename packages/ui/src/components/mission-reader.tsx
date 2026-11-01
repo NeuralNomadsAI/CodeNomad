@@ -207,6 +207,10 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     if (wanted && !untrack(targetReads).has(wanted.key)) untrack(() => readTarget(wanted))
   })
   const targetState = () => { const wanted = targetRequest(); return wanted && (targetReads().get(wanted.key) ?? "loading") }
+  const targetChanged = () => {
+    const wanted = targetRequest(), failure = wanted && missionStore.state(props.instanceId).taskReads?.[wanted.missionId]?.failure
+    return failure?.reason === "changed" && JSON.stringify(failure.request) === JSON.stringify(wanted?.request)
+  }
   const retryTarget = () => { const wanted = targetRequest(); if (wanted) readTarget(wanted) }
   const playbook = () => target()?.kind === "playbook" ? target()!.missionId as MissionTemplateId : undefined
   const title = () => playbook() ? t("missions.playbook.title", { name: t(`missions.control.template.${playbook()}`) })
@@ -435,7 +439,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
         <Show when={target()?.kind !== "recurrence" && !playbook()}>
         <Show when={sections().length} fallback={<Show when={targetState() === "failed"} fallback={<p>{t(missionStore.state(props.instanceId).status === "loading"
           || targetState() === "loading" ? "missions.control.loading" : "missions.control.reader.missing")}</p>}>
-          <MissionBodyPending failed onRetry={retryTarget} />
+          <MissionBodyPending failed changed={targetChanged()} onRetry={retryTarget} />
         </Show>}>
         <For each={sections().map(section => section.label)}>{label => {
           const section = () => sections().find(section => section.label === label)!

@@ -4,6 +4,7 @@ import type { MissionActivityProjection, MissionListResponse, MissionPanelMap, M
 import type { MissionCleanup, MissionUnavailableReason } from "../../../server/src/missions/model"
 import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "../../../server/src/missions/mission-summary"
 import { MISSION_TASK_PAGE, type MissionTaskPageResponse, type MissionTaskRequest } from "../../../server/src/missions/mission-panel-map"
+import { MissionTaskPageReadError, type MissionTaskPageFailure } from "../lib/mission-task-page-read"
 import { answerTaskRequest, coverAttention, createTaskPageCache, failTaskRequest, mergeTaskPages, recordTaskRequest, reorderTaskPageCache, taskRequestsOf,
   type MissionTaskPageCache } from "./mission-task-pages"
 
@@ -33,13 +34,14 @@ export interface MissionViewState {
 
 export interface MissionListRequest { include?: string[]; summariesVersion?: string }
 /** `failure`: the oldest read further that failed and no read has answered since; others succeeding keep it. */
-export interface MissionTaskRead { loading: boolean; failure?: { error: string; request: MissionTaskRequest } }
+export interface MissionTaskRead { loading: boolean; failure?: { error: string; request: MissionTaskRequest; reason?: MissionTaskPageFailure } }
 /** The attention windows answered for `sequence`, by offset. */
 export interface MissionTaskAttentionRead { sequence: string; windows: number[] }
 /** How a read further ended: answered in the shown order, failed, refused or answered in
  * another order (the list is read again, and the read with it), or not sent (no paged map). */
 export type MissionTaskReadResult = "read" | "failed" | "reordered" | "skipped"
-export type MissionTaskFetch = (instanceId: string, missionId: string, request: MissionTaskRequest) => Promise<MissionTaskPageResponse>
+export type MissionTaskFetch = (instanceId: string, missionId: string, request: MissionTaskRequest,
+  scope: { projectID: string; current(): boolean; signal: AbortSignal }) => Promise<MissionTaskPageResponse>
 
 const EMPTY_STATE: MissionViewState = { status: "idle", missions: [], summaries: [] }
 
@@ -54,6 +56,8 @@ export interface MissionStore {
   refresh(instanceId: string): Promise<void>
   /** Reads more of a listed paged map's tasks, a window or tasks by name, into that map. */
   loadTasks(instanceId: string, missionId: string, request: MissionTaskRequest): Promise<MissionTaskReadResult>
+  /** Fence in-flight task slices on a connection/plugin transition, retaining last-good rows. */
+  invalidateTasks(instanceId: string): void
   clear(instanceId: string): void
 }
 
@@ -76,6 +80,7 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
   const bases = new Map<string, Map<string, MissionPanelMap>>()
   /** Bumped by `clear`: a page read of an earlier epoch never publishes. */
   const epochs = new Map<string, number>()
+  const taskLifetimes = new Map<string, AbortController>()
   const withPages = (instanceId: string, maps: MissionPanelMap[]) => maps.map(map =>
     mergeTaskPages(bases.get(instanceId)?.get(map.id) ?? map, pages.get(instanceId)?.get(map.id)))
   /** Reads further running, per instance and mission. */
@@ -181,7 +186,9 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
       // What was read before a map's revision is read again: each read vouches only for itself.
       for (const map of response.missions) {
         const cache = owned?.get(map.id)
-        if (cache && map.taskPage) for (const request of taskRequestsOf(cache, MISSION_TASK_PAGE, map.revision)) void readTasks(instanceId, map.id, request)
+        if (cache && map.taskPage && (!demand.has(instanceId) || wanted(instanceId).includes(map.id))) {
+          for (const request of taskRequestsOf(cache, MISSION_TASK_PAGE, map.revision)) void readTasks(instanceId, map.id, request)
+        }
       }
       // A deactivation since this read started cancelled its follow-up: activation reads again.
       if (stale.length && cancellations.get(instanceId) === cancelled) trailing.add(instanceId)
@@ -203,31 +210,39 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
    * else dropped for the next list read, which reads it again in its order (the request is
    * recorded first). */
   function readTasks(instanceId: string, missionId: string, request: MissionTaskRequest): Promise<MissionTaskReadResult> {
+    request = structuredClone(request)
     const key = JSON.stringify([instanceId, missionId]), epoch = epochs.get(instanceId) ?? 0
+    const wasWanted = wanted(instanceId).includes(missionId)
     // The same request already waiting in this mission's chain is that read.
-    const signature = JSON.stringify([key, request])
+    const signature = JSON.stringify([key, epoch, request])
     const waiting = queuedReads.get(signature)
     if (waiting) return waiting
     const run = async (): Promise<MissionTaskReadResult> => {
       queuedReads.delete(signature)
       const shownMap = peek(instanceId).missions.find(value => value.id === missionId), order = shownMap?.taskPage?.order
-      if (!shownMap || !order || !fetchTasks || (epochs.get(instanceId) ?? 0) !== epoch) return "skipped"
+      if (!shownMap || !order || !fetchTasks || (epochs.get(instanceId) ?? 0) !== epoch
+        || wasWanted && !wanted(instanceId).includes(missionId)) return "skipped"
       const owned = pages.get(instanceId) ?? new Map<string, MissionTaskPageCache>()
       pages.set(instanceId, owned)
       let cache = owned.get(missionId)
       if (!cache) owned.set(missionId, cache = createTaskPageCache(order))
       else if (cache.order !== order) reorderTaskPageCache(cache, order)
       recordTaskRequest(cache, request)
+      let lifetime = taskLifetimes.get(instanceId)
+      if (!lifetime) taskLifetimes.set(instanceId, lifetime = new AbortController())
+      const current = () => (epochs.get(instanceId) ?? 0) === epoch && pages.get(instanceId)?.get(missionId) === cache
+        && peek(instanceId).projectID === shownMap.projectID && peek(instanceId).missions.some(map => map.id === missionId && map.taskPage?.order === order)
+        && (!wasWanted || wanted(instanceId).includes(missionId))
       tally(instanceId, missionId, 1)
       publishPages(instanceId)
       try {
-        const response = await fetchTasks(instanceId, missionId, { ...request, order })
-        if ((epochs.get(instanceId) ?? 0) !== epoch) return "skipped"
+        const response = await fetchTasks(instanceId, missionId, { ...request, order }, { projectID: shownMap.projectID, current, signal: lifetime.signal })
+        if (!current()) return "skipped"
         if (!response.available) throw new Error("Missions are unavailable")
-        const current = peek(instanceId).missions.find(value => value.id === missionId)
+        const latest = peek(instanceId).missions.find(value => value.id === missionId)
         // Another order, or a map no longer listed: the next list read shows the map in its
         // order and reads these rows again.
-        if ("refused" in response || response.taskPage.order !== current?.taskPage?.order || pages.get(instanceId)?.get(missionId) !== cache
+        if ("refused" in response || response.taskPage.order !== latest?.taskPage?.order || pages.get(instanceId)?.get(missionId) !== cache
           || cache.order !== response.taskPage.order) {
           if (!("refused" in response) || response.refused === "order-changed") void refresh(instanceId)
           return "reordered"
@@ -239,8 +254,9 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
       } catch (error) {
         // A failure keeps the rows shown and parks the read, its failure shown until a read
         // answers it; an explicit read further or a later revision tries again.
-        if ((epochs.get(instanceId) ?? 0) !== epoch) return "skipped"
-        failTaskRequest(cache, request, shownMap.revision, error instanceof Error ? error.message : String(error))
+        if (!current()) return "skipped"
+        failTaskRequest(cache, request, shownMap.revision, error instanceof Error ? error.message : String(error),
+          error instanceof MissionTaskPageReadError ? error.reason : undefined)
         return "failed"
       } finally {
         if ((epochs.get(instanceId) ?? 0) === epoch) { tally(instanceId, missionId, -1); publishPages(instanceId) }
@@ -303,9 +319,20 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
     },
     refresh,
     loadTasks: (instanceId, missionId, request) => readTasks(instanceId, missionId, request),
+    invalidateTasks: instanceId => {
+      if (!pages.has(instanceId)) return
+      epochs.set(instanceId, (epochs.get(instanceId) ?? 0) + 1)
+      taskLifetimes.get(instanceId)?.abort()
+      taskLifetimes.delete(instanceId)
+      for (const cache of pages.get(instanceId)?.values() ?? []) cache.parked.clear()
+      running.delete(instanceId)
+      publishPages(instanceId)
+    },
     clear: (instanceId) => {
       generations.set(instanceId, (generations.get(instanceId) ?? 0) + 1)
       epochs.set(instanceId, (epochs.get(instanceId) ?? 0) + 1)
+      taskLifetimes.get(instanceId)?.abort()
+      taskLifetimes.delete(instanceId)
       pages.delete(instanceId)
       bases.delete(instanceId)
       running.delete(instanceId)

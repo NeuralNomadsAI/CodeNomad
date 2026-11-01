@@ -2,9 +2,15 @@ import { serverApi } from "../lib/api-client"
 import { createEventRefreshScheduler, type RefreshUrgency } from "../lib/event-refresh-scheduler"
 import { serverEvents } from "../lib/server-events"
 import { createMissionStore } from "./mission-store"
+import { instances } from "./instances"
+import { getOpenCodeInstanceGeneration } from "./opencode-data"
 
 export const missionStore = createMissionStore((instanceId, request) => serverApi.fetchMissions(instanceId, request),
-  (instanceId, missionId, request) => serverApi.fetchMissionTasks(instanceId, missionId, request))
+  (instanceId, missionId, request, scope) => {
+    const origin = instances().get(instanceId), client = origin?.client, folder = origin?.folder, generation = getOpenCodeInstanceGeneration(instanceId)
+    return serverApi.fetchMissionTasks(instanceId, missionId, request, { ...scope, current: () => scope.current()
+      && instances().get(instanceId)?.client === client && instances().get(instanceId)?.folder === folder && getOpenCodeInstanceGeneration(instanceId) === generation })
+  })
 
 // Every native status change of a large running family is an invalidation:
 // activity revalidates at a bounded rate, journal changes promptly.
@@ -52,15 +58,18 @@ function scheduleRefresh(instanceId: string, urgency: RefreshUrgency): void {
 serverEvents.on("instance.event", (event) => {
   if (event.type !== "instance.event") return
   const urgent = isMissionChangedEvent(event.event) || event.event.type === "plugin.updated"
+  if (event.event.type === "plugin.updated") missionStore.invalidateTasks(event.instanceId)
   if (urgent || isMissionActivityEvent(event.event)) scheduleRefresh(event.instanceId, urgent ? "urgent" : "activity")
 })
 
 serverEvents.on("instance.eventStatus", (event) => {
   if (event.type !== "instance.eventStatus" || event.status !== "connected") return
+  missionStore.invalidateTasks(event.instanceId)
   scheduleRefresh(event.instanceId, "urgent")
 })
 
 serverEvents.onOpen(() => {
+  for (const instanceId of missionStore.trackedInstanceIds()) missionStore.invalidateTasks(instanceId)
   for (const instanceId of missionStore.demandedInstanceIds()) scheduleRefresh(instanceId, "urgent")
 })
 

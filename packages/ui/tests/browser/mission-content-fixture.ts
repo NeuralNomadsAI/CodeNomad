@@ -3,6 +3,7 @@ import type { MissionMap, MissionPanelMap } from "../../../server/src/api-types"
 import { missionContentRequestSchema, readMissionContent } from "../../../server/src/missions/mission-content"
 import { compactMissionMap, missionTaskPage, missionTaskRequestSchema } from "../../../server/src/missions/mission-compact-map"
 import { isFullMissionMap } from "../../../server/src/missions/mission-panel-map"
+import { missionPanelPage, missionPanelPageRequestSchema } from "../../../server/src/missions/mission-panel-page"
 
 /** The full maps `panelMissions` compacted last, one per mission. */
 const listed = new Map<string, MissionMap>()
@@ -48,9 +49,19 @@ export function olderPluginMap(full: MissionMap): MissionPanelMap {
   return { ...header, tasks, reports: full.reports.map(report => reports.get(report.id)!) } as MissionPanelMap
 }
 
-/** The task route (`GET …/missions/:missionID/tasks`) answered from a fixture's full maps,
- * paged as the plugin pages them (`missionTaskPage`); undefined for any other path. */
-export function missionTaskFixture(url: string, method: string, values: readonly MissionMap[], projectID = "project") {
+/** Task display sources (panelPage POST and task GET) over the fixture's full maps,
+ * using the real task projection and byte paginator; undefined for any other source. */
+export function missionTaskFixture(url: string, method: string, values: readonly MissionMap[], projectID = "project", body?: string | null) {
+  if (method === "POST" && new URL(url).pathname.endsWith("/missions/panel-page")) {
+    const parsed = missionPanelPageRequestSchema.safeParse(JSON.parse(body ?? "null"))
+    if (!parsed.success || parsed.data.source !== "tasks") return undefined
+    const request = parsed.data, mission = values.find(value => value.id === request.task.missionID)
+    if (!mission) return { available: false, reason: "mission-not-found" }
+    const page = missionTaskPage(mission, request.task)
+    if (request.task.order !== undefined && request.task.order !== page.taskPage.order) return { available: false, reason: "changed" }
+    return missionPanelPage({ source: "tasks", projectID: mission.projectID, missionID: mission.id, revision: mission.revision,
+      discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }, [page], request.cursor)
+  }
   const parsed = new URL(url), match = /\/missions\/([^/]+)\/tasks$/.exec(parsed.pathname)
   if (!match || method !== "GET") return undefined
   const query = parsed.searchParams, list = (name: string) => query.has(name) ? query.get(name)!.split(",").filter(Boolean) : undefined
@@ -67,6 +78,17 @@ export function missionTaskFixture(url: string, method: string, values: readonly
     : { ...base, revision: mission.revision, ...page }
 }
 
+/** Existing semantic-selector assertions keep the same order/window/names, while
+ * wire assertions inspect the actual POST body separately. */
+export function missionTaskQuery(request: { url(): string; postData(): string | null }): string {
+  const body = request.postData()
+  if (!body) return new URL(request.url()).search
+  const task = JSON.parse(body).task, query = new URLSearchParams()
+  for (const key of ["order", "offset", "attention"]) if (task[key] !== undefined) query.set(key, String(task[key]))
+  for (const key of ["keys", "ids", "reportIds"]) if (task[key]) query.set(key === "reportIds" ? "reports" : key, task[key].join(","))
+  return `?${query}`
+}
+
 /** Serves the content route on `page` from `values()`, the fixture's full maps (registered
  * last, so it answers first). */
 export async function routeMissionContent(page: Page, values: () => readonly MissionMap[], projectID = "project") {
@@ -76,12 +98,12 @@ export async function routeMissionContent(page: Page, values: () => readonly Mis
   })
 }
 
-/** Serves the task route on `page` from `values()`, the fixture's full maps (registered
- * last, so it answers first); `requests` records each read's query. */
+/** Serves the task panelPage source from `values()`, the fixture's full maps (registered
+ * last, so it answers first); `requests` records each logical selector as a query. */
 export async function routeMissionTasks(page: Page, values: () => readonly MissionMap[], requests: string[] = [], projectID = "project") {
-  await page.route("**/missions/*/tasks**", route => {
-    const request = route.request(), json = missionTaskFixture(request.url(), request.method(), values(), projectID)
-    if (json) requests.push(new URL(request.url()).search)
+  await page.route("**/missions/panel-page", route => {
+    const request = route.request(), json = missionTaskFixture(request.url(), request.method(), values(), projectID, request.postData())
+    if (json) requests.push(missionTaskQuery(request))
     return json ? route.fulfill({ json }) : route.fallback()
   })
 }

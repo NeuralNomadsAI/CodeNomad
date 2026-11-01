@@ -49,6 +49,8 @@ El gráfico incluye trabajo completado y retirado. Retirar una tarea no detiene 
 
 Un plan grande muestra una página de sus tareas: las 50 primeras en orden de dependencias y hasta 20 que requieren atención, como bloqueos, fallos y los resultados más recientes. Cada tramo de tareas no cargadas aparece como **N tareas no mostradas**; **Mostrar más** carga allí las 50 siguientes. Cuando más tareas requieren atención de las que caben en la página, **N tareas más requieren atención** da los recuentos de la misión por tipo y **Mostrarlas** carga esas tareas. Un trazo discontinuo marca una dependencia o una tarea dependiente no mostrada, y un enlace de dependencia en el lector de una tarea carga primero su tarea. El lector de una tarea muestra sus resultados más recientes; **N resultados anteriores no mostrados** ofrece **Mostrar todo**, que carga todo su historial. Cuando no se puede cargar una tarea o un informe, el lector lo indica; **Intentar de nuevo** lo carga de nuevo.
 
+Las páginas de tareas aparecen solo cuando se han recibido por completo. Si falla o cambia una lectura, se conservan las últimas tareas mostradas. Si la lista cambia durante la lectura, usa **Actualizar** y después **Volver a intentar**; la página se lee de nuevo desde el principio. Una parte que falta nunca demuestra que una tarea o solicitud esté ausente, y reintentar una lectura no inicia trabajo. Si el plugin de Misiones no puede proporcionar la página, vuelve a intentarlo tras reconectar o recargar el plugin.
+
 ### Colores y misiones interrumpidas {#status-colours}
 
 Las marcas de las misiones, los iconos de las tareas y el chevrón de la lista usan los colores de la lista de sesiones: el color solo muestra lo que te necesita ahora.

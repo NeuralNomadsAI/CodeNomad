@@ -77,6 +77,7 @@ export const missionsPanelMessages = {
   "missionsPanel.tasks.omitted.other": "{count} 个任务未显示",
   "missionsPanel.tasks.showMore": "显示更多",
   "missionsPanel.tasks.readFailed": "无法读取这些任务。",
+  "missionsPanel.tasks.readChanged": "读取期间任务列表已更改。请刷新后重试。",
   "missionsPanel.task.omittedDependencies.one": "{count} 个依赖未显示",
   "missionsPanel.task.omittedDependencies.other": "{count} 个依赖未显示",
   "missionsPanel.task.omittedDependents.one": "{count} 个后续任务未显示",
