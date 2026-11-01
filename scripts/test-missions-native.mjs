@@ -752,6 +752,16 @@ try {
   // byte-bounded slices, independent of the current UI's list contract.
   const directPanel = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage({ source: "mission", missionID: wide.id }, { location })
   assert.equal(directPanel.available, true, JSON.stringify(directPanel))
+  const activityContext = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage({ source: "activity", missionID: wide.id }, { location })
+  assert.deepEqual([activityContext.available, activityContext.phase], [true, "context"])
+  const livePanel = await bridge.inject({ method: "POST", url: `${missionURL}/panel-page`, payload: { source: "activity", missionID: wide.id } })
+  assert.ok(livePanel.rawPayload.length <= 65_536)
+  const liveObservation = livePanel.json()
+  assert.deepEqual([liveObservation.available, liveObservation.phase, liveObservation.page.next], [true, "observed", undefined])
+  const liveActors = JSON.parse(liveObservation.page.pieces[0].text)
+  assert.deepEqual([liveActors.context.actorPage.total, liveActors.activity.actors.length], [12, 12])
+  const markContext = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage({ source: "marks" }, { location })
+  assert.deepEqual([markContext.available, markContext.phase], [true, "context"])
   assert.deepEqual(await client.rpc(invocation).panelShape({ available: false, reason: "damaged" }, { location }), { available: false, reason: "damaged" })
   for (const invalid of [{ available: true, projectID: wideMap.projectID, source: "summaries" }, { available: false },
     { ...directPanel, page: {} }, { ...directPanel, available: "true" }]) {
@@ -917,8 +927,13 @@ try {
         assert.deepEqual([rpc.discardedEvents, rpc.controlUnavailable, rpc.notificationUnavailable, rpc.cleanupUnavailable], [1, true, true, true])
         assert.ok(response.rawPayload.length <= 65_536)
       }
+      const damagedLive = await bridge.inject({ method: "POST", url: `${missionURL}/panel-page`, payload: { source: "activity", missionID: panelID } })
+      const damagedObservation = damagedLive.json()
+      assert.deepEqual([damagedObservation.available, damagedObservation.phase, damagedObservation.discardedEvents,
+        damagedObservation.controlUnavailable, damagedObservation.notificationUnavailable, damagedObservation.cleanupUnavailable], [true, "observed", 1, true, true, true])
+      assert.ok(damagedLive.rawPayload.length <= 65_536)
       database.prepare("UPDATE kv SET value=? WHERE key=?").run("{}", creationKey)
-      for (const input of panelRequests) {
+      for (const input of [...panelRequests, { source: "activity", missionID: panelID }]) {
         const rpc = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage(input, { location })
         const response = await bridge.inject({ method: "POST", url: `${missionURL}/panel-page`, payload: input })
         assert.deepEqual(rpc, { available: false, reason: "damaged" })

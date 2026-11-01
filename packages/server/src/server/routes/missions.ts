@@ -6,7 +6,8 @@ import type { MissionActivityProjection, MissionList, MissionListResponse, Missi
   MissionRead, MissionReadResponse, MissionSnapshot, MissionUnavailableReason } from "../../missions/model"
 import { compactMissionMap, compactMissionReads, missionTaskPage, missionTaskRequestSchema } from "../../missions/mission-compact-map"
 import { MISSION_TASK_PAGE, type MissionTaskPageResponse, type MissionTaskPageResult } from "../../missions/mission-panel-map"
-import { projectMissionActivity, type MissionActivityInput } from "../../missions/activity"
+import { projectMissionActivity, type MissionActivityInput, type MissionObservedRequests } from "../../missions/activity"
+import { MissionPanelObservationError, readMissionPanelObservation } from "../../missions/mission-panel-observation"
 import { MISSION_LIST_MAX_INCLUDE } from "../../missions/mission-summary"
 import { missionContentRequestSchema, type MissionContentResponse, type MissionContentResult } from "../../missions/mission-content"
 import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
@@ -80,7 +81,12 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
   app.post<{ Params: { id: string } }>("/api/workspaces/:id/missions/panel-page", { bodyLimit: MISSION_PANEL_REQUEST_BYTES }, async (request, reply) => {
     const input = missionPanelPageRequestSchema.safeParse(request.body)
     if (!input.success) return reply.code(400).send({ available: false, reason: "invalid-request" })
-    return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign }) => {
+    return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign, observe, observationCurrent }) => {
+      if (input.data.source === "activity" || input.data.source === "marks") {
+        try { return await readMissionPanelObservation(input.data, {
+          projectID, read: value => rpc.panelPage(value, call), observe: (value, requests) => observe(value, requests), current: observationCurrent,
+        }) } catch (error) { if (error instanceof MissionPanelObservationError) return foreign(); throw error }
+      }
       const result: unknown = await rpc.panelPage(input.data, call)
       if (!isMissionPanelPageResult(result) || missionPanelBytes(result) > MISSION_PANEL_PAGE_BYTES) return foreign()
       const missionID = input.data.source === "tasks" ? input.data.task.missionID : input.data.source === "mission" ? input.data.missionID : undefined
@@ -261,7 +267,8 @@ interface MissionPluginRead {
   /** A response naming another project: logged, answered 502 plugin-unavailable. */
   foreign(): MissionListUnavailableResponse
   /** Display activity of these maps' actors, fenced by this read's view and connection. */
-  observe(read: MissionActivityInput): Promise<MissionActivityProjection>
+  observe(read: MissionActivityInput, requests?: (value: MissionObservedRequests) => void): Promise<MissionActivityProjection>
+  observationCurrent(): boolean
 }
 
 /** The read routes' shared path to the owned Location's active plugin. */
@@ -297,27 +304,29 @@ async function readMissionPlugin<T>(request: FastifyRequest<{ Params: { id: stri
     // after registration. The reviewed typed call is the RPC capability check.
     if (plugin?.state.status === "failed") return unavailable("plugin-failed")
     if (!plugin || plugin.state.status !== "active") return unavailable("plugin-unavailable")
+    let observationCurrent = () => false
     return await read({
       rpc: missionRpc(client), call: { location, ...options }, projectID: resolved.project.id,
+      observationCurrent: () => observationCurrent(),
       foreign: () => {
         request.log.error({ workspaceId: workspaceID }, "Mission RPC returned a foreign project snapshot")
         reply.code(502)
         return unavailable("plugin-unavailable")
       },
-      observe: async snapshot => {
+      observe: async (snapshot, requests) => {
         const displayCurrent = await lifetime.wait(displayCapture)
         const deletionCurrent = await lifetime.wait(captureDisplayIdentities(deps.worktreeDeletionFence, deps.workspaceManager, workspaceID, [
           ownedLocation.directory, ...snapshot.missions.flatMap(mission => mission.actors.map(actor => actor.location.directory)),
         ]))
-        return projectMissionActivity({
-          client, snapshot, workspaceID,
-          ownsLocation: deps.workspaceManager.ownsLocation.bind(deps.workspaceManager),
-          isCurrent: () => {
+        observationCurrent = () => {
             if (!displayCurrent?.() || !deletionCurrent?.() || lifetime.signal.aborted
               || deps.workspaceManager.get(workspaceID) !== workspace
               || !sameLocation(deps.workspaceManager.getServiceLocation(workspaceID) ?? { directory: "" }, ownedLocation)) return false
             try { connection.assertCurrent(); return true } catch { return false }
-          },
+          }
+        return projectMissionActivity({
+          client, snapshot, workspaceID, onRequests: requests,
+          ownsLocation: deps.workspaceManager.ownsLocation.bind(deps.workspaceManager), isCurrent: observationCurrent,
         })
       },
     })

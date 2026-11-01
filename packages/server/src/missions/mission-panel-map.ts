@@ -47,6 +47,8 @@ export const MISSION_LATE_REPORT_ROWS = 1
 export const MISSION_TASK_REPORT_ROWS = 3
 /** The newest reports whose tasks a compact map pins, and the newest taskless reports it holds. */
 export const MISSION_PINNED_REPORTS = 8
+/** Actor roots observed per display call; marks share this budget across mission windows. */
+export const MISSION_ACTIVITY_ACTORS = 160
 
 /** Which tasks a compact map or a task page holds, and what the whole map has. */
 export interface MissionTaskPage {

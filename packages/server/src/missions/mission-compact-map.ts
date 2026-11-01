@@ -1,17 +1,15 @@
 import { z } from "zod"
 import { missionDecisionMaker } from "./decision-artifact"
-import { missionTaskExecutionEvidence } from "./execution-evidence"
+import { missionActorEvidence, missionTaskExecutionEvidence } from "./execution-evidence"
 import { contentDigest } from "./inspect-view"
-import { missionIsRunning } from "./lifecycle-model"
 import { describe } from "./mission-body-descriptors"
 import { MISSION_BODY_FIELDS, type MissionBodyDescriptors } from "./mission-content-wire"
 import { MISSION_BRIEFING_CONTENT, MISSION_LATE_REPORT_ROWS, MISSION_TASK_PAGE, MISSION_TASK_PINS, MISSION_TASK_REPORT_ROWS, MISSION_PINNED_REPORTS, isFullMissionMap, isFullMissionReport,
-  missionExcerpt, type MissionActorEvidence, type MissionPanelExecutionMode, type MissionPanelMap, type MissionPanelPlanChange, type MissionPanelReport,
+  missionExcerpt, type MissionPanelExecutionMode, type MissionPanelMap, type MissionPanelPlanChange, type MissionPanelReport,
   type MissionPanelTask, type MissionTaskAttention, type MissionTaskPage, type MissionTaskRequest } from "./mission-panel-map"
 import { missionObjectiveLabel } from "./mission-summary"
 import { missionTaskOrder } from "./mission-task-order"
 import type { MissionMap, MissionPlanChange, MissionReport, MissionTask, MissionTaskExecutionMode } from "./model"
-import { isCoordinatorNotificationReport } from "./native-report-provenance"
 
 type AnyMap = MissionMap | MissionPanelMap
 type AnyTask = MissionTask | MissionPanelTask
@@ -152,21 +150,6 @@ function shown(map: AnyMap, whole: Plan) {
       sequence: contentDigest(JSON.stringify(omittedAttention.map(task => task.key))) } as MissionTaskAttention }
 }
 
-/** The actors whose work all of the map's tasks say is owed: what the activity projection
- * reads from tasks, so that a page of them projects the same activity. */
-function evidence(map: AnyMap, tasks: readonly AnyTask[]): MissionActorEvidence {
-  const reportOwed = new Set<string>(), callOpen = new Set<string>()
-  // A running mission's coordinator owes its final report, unless a report's coordinator notification is pending.
-  if (missionIsRunning(map) && !map.reports.some(value => value.notificationStatus === "pending" && isCoordinatorNotificationReport(value))) reportOwed.add(map.coordinatorSessionId)
-  for (const task of tasks) {
-    if (!task.actorSessionId) continue
-    const observed = missionTaskExecutionEvidence(task)
-    if (observed.missingReport) reportOwed.add(task.actorSessionId)
-    if (observed.nativeCall === "active" || observed.nativeCall === "unknown") callOpen.add(task.actorSessionId)
-  }
-  return { reportOwed: [...reportOwed], callOpen: [...callOpen] }
-}
-
 /** `map` as the list and mission reads return it: each body field (`MISSION_BODY_FIELDS`)
  * dropped beside its descriptor, with in their place what the panel shows without
  * reading them: the objective's label, report rows with a summary excerpt and who
@@ -196,7 +179,7 @@ export function compactMissionMap(map: AnyMap): MissionPanelMap {
     ...without(change as MissionPlanChange, MISSION_BODY_FIELDS.change), bodies: described(change, MISSION_BODY_FIELDS.change),
     ...(typeof (change as MissionPlanChange).reason === "string" ? { excerpt: missionExcerpt((change as MissionPlanChange).reason!) } : {}),
   }))
-  return { ...header, tasks, reports: [...reports, ...taskless], history, actorEvidence: evidence(map, whole.ordered),
+  return { ...header, tasks, reports: [...reports, ...taskless], history, actorEvidence: missionActorEvidence(map, whole.ordered),
     taskPage: { ...whole.page, offset: 0, end: window.length, ...(pinsOmitted ? { pinsOmitted } : {}), attention } } as MissionPanelMap
 }
 

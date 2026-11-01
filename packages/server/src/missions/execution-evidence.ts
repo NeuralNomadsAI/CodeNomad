@@ -1,4 +1,7 @@
-import type { MissionNativeBinding, MissionPanelTask } from "./model"
+import type { MissionNativeBinding, MissionPanelMap, MissionPanelTask } from "./model"
+import type { MissionActorEvidence } from "./mission-panel-map"
+import { missionIsRunning } from "./lifecycle-model"
+import { isCoordinatorNotificationReport } from "./native-report-provenance"
 
 type TaskEvidence = Pick<MissionPanelTask, "status" | "actorSessionId" | "admissionId" | "nativeBinding" | "nativeExecution"
   | "report" | "lateReports" | "outstandingExecution" | "contractGeneration">
@@ -35,4 +38,20 @@ export function missionTaskExecutionEvidence(task: TaskEvidence): {
   const missingReport = hasExecution && !task.report && !task.lateReports?.length
     && (task.status === "queued" || task.status === "dispatching" || task.outstandingExecution)
   return { hasExecution, nativeCall, missingReport }
+}
+
+/** The actors whose work all of the map's tasks say is owed: what the activity projection
+ * reads from tasks, so that a page of them projects the same activity. */
+export function missionActorEvidence(map: Pick<MissionPanelMap, "status" | "runState" | "reports" | "coordinatorSessionId">,
+  tasks: readonly TaskEvidence[]): MissionActorEvidence {
+  const reportOwed = new Set<string>(), callOpen = new Set<string>()
+  // A running mission's coordinator owes its final report, unless a report's coordinator notification is pending.
+  if (missionIsRunning(map) && !map.reports.some(value => value.notificationStatus === "pending" && isCoordinatorNotificationReport(value))) reportOwed.add(map.coordinatorSessionId)
+  for (const task of tasks) {
+    if (!task.actorSessionId) continue
+    const observed = missionTaskExecutionEvidence(task)
+    if (observed.missingReport) reportOwed.add(task.actorSessionId)
+    if (observed.nativeCall === "active" || observed.nativeCall === "unknown") callOpen.add(task.actorSessionId)
+  }
+  return { reportOwed: [...reportOwed], callOpen: [...callOpen] }
 }

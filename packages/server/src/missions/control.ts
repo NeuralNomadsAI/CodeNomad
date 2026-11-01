@@ -9,6 +9,7 @@ import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
 import { compactMissionMap, missionTaskPage } from "./mission-compact-map"
 import type { MissionTaskPageResult, MissionTaskRequest } from "./mission-panel-map"
 import { missionPanelPage, type MissionPanelPageRequest, type MissionPanelPageResult } from "./mission-panel-page"
+import { activityActorWindow, missionActivityContext, MISSION_ACTIVITY_ACTORS } from "./mission-activity-context"
 import {
   MISSION_SCHEMA_VERSION,
   missionPlanChanges,
@@ -181,6 +182,13 @@ export class MissionControl {
    * The existing list/mission readers remain the current UI's compatibility contract. */
   async panelPage(request: MissionPanelPageRequest): Promise<MissionPanelPageResult> {
     const base = { projectID: this.options.project.id, source: request.source }
+    if (request.source === "marks") {
+      const value = await this.journal.readHints(hints => ({ ...hints.activity(request.missionOffset ?? 0), damage: hints.aggregate() }))
+      if (request.missionOrder !== undefined && request.missionOrder !== value.order) return { available: false, reason: "changed" }
+      return missionPanelPage({ ...base, phase: "context", discardedEvents: value.damage.discardedEvents,
+        controlUnavailable: value.damage.controlUnavailable, notificationUnavailable: value.damage.notificationUnavailable,
+        cleanupUnavailable: value.damage.cleanupUnavailable }, [{ missionPage: { order: value.order, offset: value.offset, end: value.end, total: value.total }, contexts: value.contexts }], request.cursor)
+    }
     if (request.source === "summaries" || request.source === "cleanups") {
       return this.journal.readHints(hints => {
         const aggregate = hints.aggregate()
@@ -198,6 +206,11 @@ export class MissionControl {
     if (!view.mission) return { available: false, reason: damage.discardedEvents || damage.controlUnavailable
       || damage.notificationUnavailable || damage.cleanupUnavailable ? "damaged" : "mission-not-found" }
     const mission = view.mission, header = { ...base, missionID, revision: mission.revision, ...damage }
+    if (request.source === "activity") {
+      const context = missionActivityContext(mission, damage)
+      if (request.actorOrder !== undefined && request.actorOrder !== context.actorPage.order) return { available: false, reason: "changed" }
+      return missionPanelPage({ ...header, phase: "context" }, [activityActorWindow(context, request.actorOffset ?? 0, MISSION_ACTIVITY_ACTORS)], request.cursor)
+    }
     if (request.source === "tasks") {
       const page = missionTaskPage(mission, request.task)
       if (request.task.order !== undefined && request.task.order !== page.taskPage.order) return { available: false, reason: "changed" }

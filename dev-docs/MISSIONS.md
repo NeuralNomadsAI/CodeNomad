@@ -410,8 +410,8 @@ Each finish carries the project's finish number (`mission.finished.sequence`, th
 
 `MissionControl.panelPage`, the `panelPage` RPC and `POST /api/workspaces/:id/missions/panel-page`
 provide a byte-bounded display transport alongside the `list`, `mission` and `tasks` contracts
-used by the current UI. The transport covers persisted directory and compact-map data;
-live actor activity continues through the list route's activity projection. Its schema,
+used by the current UI. The transport covers persisted directory, compact-map data and
+opt-in live actor observations (§Paged live activity). The UI keeps the list route's activity projection. Its schema,
 types, byte counter and paginator live in `missions/mission-panel-page.ts`.
 
 - Every successful body, including `available`, the envelope, escaped nested text and the
@@ -465,10 +465,87 @@ authorizes the failed page's rows. The paginator holds no retained snapshot or p
 job; it serializes and hashes the chosen collection afresh for each transfer. That work
 is linear in source size per transfer, making a full traversal approximately quadratic
 at a fixed transfer budget, and temporarily holds source rows, serialized strings and
-the joined hash input. Directory pagination performs this synchronous work inside
+the joined hash input. Summary/cleanup pagination performs this synchronous work inside
 `readHints`' project append exclusion; range pagination runs after its range observation
 releases that exclusion. Both use the native host's event-loop thread. The transfer-byte
 bound and retained-cache policy leave those source CPU, memory and append-lane costs visible.
+
+### Paged live activity
+
+`panelPage` adds two opt-in sources, with the same 16 KiB selector and 64 KiB serialized
+response limits, exact pieces and changed-content refusal:
+
+- `{source:"activity", missionID, actorOffset?, actorOrder?, cursor?}` reads one mission
+  range and selects at most 160 actor roots from its persisted actor order. Follow
+  `context.actorPage.end` as the next `actorOffset` while less than `total`, repeating its
+  `order` as `actorOrder`; a changed actor order refuses before native IO.
+- `{source:"marks", missionOffset?, missionOrder?, cursor?}` selects up to 16 missions in
+  directory order and up to 10 actors each, sharing the same 160-root observation budget.
+  Follow `missionPage.end` and repeat `missionPage.order` as `missionOrder`. Warm hints
+  require zero mission range reads, whatever the number of open/closed missions.
+  The index retains reduced persisted actor facts (`mission-activity-context.ts`):
+  session/title/location, report-owed and call-open evidence, and constant-sized family
+  task attribution. It retains neither full tasks nor reports nor live native observations.
+  Normal dirty-range refresh and the 60-second foreign-write hint contract apply.
+
+The RPC answers `phase:"context"`, with the bounded persisted input as its single JSON
+row; the HTTP route reconstructs that input, validates its root/project/window identity
+and actor/string bounds, and runs the existing `projectMissionActivity` pipeline after
+the journal lock. HTTP answers `phase:"observed"` with `observedAt`. The selected-source
+row is `MissionPanelActivityObservation` (`missions/mission-panel-observation.ts`):
+`{context,coverage,requests,activity}`; marks return
+`{missionPage,observations:[...]}` as one row. Every successful selected envelope keeps
+the range-local discarded count and all three damage flags; marks keep the hints'
+project flags, and every context retains its own range flags separately. Damaged no-map
+observations retain the `damaged` refusal. Root compact-map extension metadata remains
+available unchanged through the persisted mission/field sources.
+
+`context.actorPage` gives offset/end/total and the actor-order digest. Each actor carries
+its ID, title, saved Location, report-owed/call-open booleans and unique evidenced task
+context when known. `context.control` keeps action, graceful state, original operation
+and retry identity, pending/receipt counts, unknown-ACK count and incomplete-descendant
+receipt count. Complete actor lists, lifecycle receipts and other persisted arrays
+remain byte-paged through the mission field source. Task attribution is shared with
+the full-map family projection (`missionFamilyTaskContexts`), including ambiguous calls
+and parent conflicts. Business status/revision stay distinct from native execution.
+
+`activity` retains actor states and family evidence; `coverage` is `observed`, `partial`
+or `unknown`, never silently complete for actors outside the window. A native unknown
+actor state remains unknown even when family membership was observed. Native actor,
+32-descendant family, inbox, Shell and shared 128-ancestry budgets and ownership fences
+apply as in the existing projection. An ordinary member's declared/ordinary classification
+and task key stay unspecified when a declared actor could be outside this partial window.
+Positive native work still supports graceful-Pause/Interrupt-now presentation; an empty
+partial window cannot establish that a whole mission is idle or recovery-ready.
+
+`requests` contains real native Form/permission records with their session and observed
+actor-root association, plus `state: observed|partial|unknown`. Only roots whose fresh
+native project/Location identity passed ownership, and descendants in validated family
+evidence, contribute requests. A positive own request survives an unrelated capability
+failure. Failed request reads, uncorrelatable global requests, unknown families and actors
+outside the window prevent a claim of complete absence. Follow actor windows to reach
+off-page requests; complete per-window traversal supplies display evidence, never a
+single atomic negative observation over separately read windows. Answering and recovery
+continue through their existing native/authoritative admission paths.
+
+No observation snapshot is retained. Each outer continuation reconstructs persisted
+context and re-observes native state; `observedAt` is envelope metadata, while the digest
+pins the exact data row. Equal-content observations can continue; any changed value
+refuses `changed`, discarding the incomplete new row. There is zero automatic restart:
+consumers retain last-good display, park the failure and explicitly restart from the
+first piece (never loop on the old digest). Connection/deletion/view supersession
+refuses `observation-unavailable`. Persisted context assembly is limited to 24 MiB of
+JSON text, above the maximal escaped shape of 160 records at the existing journal string
+bounds; this bounds intermediate untrusted transfer data, never total actors/missions.
+Native request-list APIs return their Location lists whole; native call count is bounded,
+and correlated returned records remain fully traversable through the byte transport.
+
+Mark ordering/digest work and dirty-range reduction occupy the existing hints append
+lane. New mark-context byte fitting runs after that lane, and all native IO runs outside
+it. Source sorting/reconstruction and repeated native list reads still cost work on every
+continuation; large/churning request lists can be expensive or repeatedly refuse. UI
+adoption must use complete selector/window/generation identities, preserve per-window
+provenance and failed-middle-page Retry, and never promote partial evidence to absence.
 
 ### Explicit execution controls
 
