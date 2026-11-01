@@ -13,6 +13,7 @@ import { registerInstanceProxyRoutes } from "../server/http-server"
 import { WorkspaceManager, canonicalWorktreeIdentity } from "./manager"
 import { WorktreeDeletionFence } from "./worktree-session-evacuation"
 import { GitRequiredError, requireHostGit } from "./git-requirement"
+import { CODENOMAD_MISSIONS_RPC } from "../missions/rpc"
 
 test("no-Git conversations retain directory ownership, agent context and deletion fences", async t => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "codenomad-no-git-")))
@@ -35,6 +36,14 @@ test("no-Git conversations retain directory ownership, agent context and deletio
   await upstream.listen({ host: "127.0.0.1", port: 0 })
   const endpoint = { url: `http://127.0.0.1:${(upstream.server.address() as { port: number }).port}` }
   const client = {
+    rpc: (definition: unknown) => {
+      assert.equal(definition, CODENOMAD_MISSIONS_RPC)
+      return { scheduleCarrierRead: async (input: { sessionID: string }, options: { location: { directory: string } }) => {
+        assert.deepEqual(input, { sessionID: "owned" })
+        assert.deepEqual(options.location, { directory: folder })
+        throw { type: "rpc.unavailable", message: "RPC unavailable" }
+      } }
+    },
     project: { list: async () => [{ id: "fixture", canonical: repo, sandboxes: [foreign] }] },
     session: {
       get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, location: { directory: sessionID === "foreign" ? foreign : sessionID === "child" ? path.join(folder, "child") : folder } }),

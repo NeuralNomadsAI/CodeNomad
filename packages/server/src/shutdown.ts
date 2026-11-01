@@ -4,6 +4,52 @@ type ShutdownOperation = () => void | Promise<void>
 export type ServerShutdownTrigger = NodeJS.Signals | "stdin"
 export const SERVER_SHUTDOWN_COMPLETE = "CODENOMAD_SHUTDOWN_STATUS:complete"
 export const SERVER_SHUTDOWN_INCOMPLETE = "CODENOMAD_SHUTDOWN_STATUS:incomplete"
+export const STDIN_SHUTDOWN_COMMAND = "codenomad:shutdown"
+
+interface ShutdownSignalSource {
+  on: (signal: "SIGINT" | "SIGTERM", listener: () => void) => unknown
+}
+
+export function installShutdownSignalHandlers(
+  source: ShutdownSignalSource,
+  shutdown: (signal: ServerShutdownTrigger) => Promise<void>,
+): void {
+  source.on("SIGINT", () => void shutdown("SIGINT"))
+  source.on("SIGTERM", () => void shutdown("SIGTERM"))
+}
+
+interface ShutdownStdinSource {
+  on(event: "data", listener: (chunk: Buffer | string) => void): unknown
+  off?(event: "data", listener: (chunk: Buffer | string) => void): unknown
+  destroy?(): unknown
+}
+
+export function installShutdownStdinHandler(
+  source: ShutdownStdinSource,
+  shutdown: (signal: ServerShutdownTrigger) => Promise<void>,
+  handleLine?: (line: string) => boolean,
+): void {
+  let buffer = ""
+  let requested = false
+  const onData = (chunk: Buffer | string) => {
+    if (requested) return
+    buffer += chunk.toString()
+    const lines = buffer.split(/\r?\n/)
+    buffer = lines.pop() ?? ""
+    let shutdownRequested = false
+    for (const line of lines) {
+      if (line.trim() === STDIN_SHUTDOWN_COMMAND) shutdownRequested = true
+      else handleLine?.(line)
+    }
+    if (!shutdownRequested) return
+
+    requested = true
+    source.off?.("data", onData)
+    source.destroy?.()
+    void shutdown("stdin")
+  }
+  source.on("data", onData)
+}
 
 export type ServerShutdownOperations = Record<
   "stopInstanceEventBridge" | "stopSidecars" | "stopClientConnections" | "stopRemoteControl" | "stopRemoteProxySessions" | "stopWorkspaces" |
