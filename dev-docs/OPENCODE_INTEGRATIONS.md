@@ -152,8 +152,9 @@ its daemon-WSL refusal (AC-C15) belong to the host-installation route slice.
 ## UI read model
 
 `createIntegrationsStore` (`stores/integrations-store.ts`, reading through `lib/integrations-api.ts`) is the read
-model for UI surfaces that show integrations. `demand(instance, directory)` reads that Location until its release,
-whose last call aborts the read. `applyEvent(instance, type)` takes the instance's native event types:
+model for UI surfaces that show integrations. `demand(instance, directory)` reads that Location until its release;
+releasing its last demand aborts the read. A surface retains its demand across session navigation within the same
+active Location. `applyEvent(instance, type)` takes the instance's native event types:
 `rpc.neuralnomads.<app>.status_changed`/`hosts_changed`, `plugin.updated` and `config.updated` schedule one read of
 the instance's demanded Locations 300 ms after the first of them, with one trailing follow-up while a read runs;
 `refreshDemanded` re-reads after a reconnect and `clearInstance` forgets a stopped instance. It has no timer of its

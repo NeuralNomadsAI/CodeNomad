@@ -23,6 +23,7 @@ export function createIntegrationAttachment(props: {
   const available = () => props.active !== false && Boolean(props.session) && entries().some(attachable)
   const unsupported = () => response()?.integrations.some(entry => entry.family === "native" && entry.state === "ok" && entry.status?.host?.state === "unsupported")
   const identity = createMemo(() => JSON.stringify([props.instanceId, props.directory, props.session?.id, props.active !== false]))
+  const demandIdentity = createMemo(() => JSON.stringify([props.instanceId, props.directory, props.active !== false]))
   // Maps notify every reader; equality here isolates this view from other workspaces and sessions.
   const epoch = createMemo(() => integrationEpoch(props.instanceId, props.session?.id))
   const [capture, setCapture] = createSignal<Capture>()
@@ -36,11 +37,11 @@ export function createIntegrationAttachment(props: {
   let controller: AbortController | undefined
   let cancel: HTMLButtonElement | undefined
   const close = () => { controller?.abort(); setCapture(undefined); setOperation(undefined); setOutcome(undefined); setError(undefined); setOffers([]); setSelected(undefined); setPending(false) }
-  createEffect(() => {
+  createEffect(on(demandIdentity, () => {
     const instanceId = props.instanceId, directory = props.directory
     if (props.active === false || !directory) return
     onCleanup(integrations.demand(instanceId, directory))
-  })
+  }))
   createEffect(on(identity, close))
   createEffect(on(epoch, () => {
     if (!operation()) { close(); return }
