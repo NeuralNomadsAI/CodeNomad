@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { fixtureEventStream } from "./fixture-event-stream"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -140,12 +141,20 @@ test("uncertain row remount and native reconnect invalidations retain exact orig
 for (const outcome of ["rejected", "acknowledged", "unknown", "foreign-ack"] as const) {
   test(`late ${outcome} after row disposal settles only exact bookkeeping, never the newly selected view`, async () => {
     const page = await browser.newPage({ locale: "en-US" }), calls: Input[] = []
+    const events = await fixtureEventStream(url)
     let current = mission(), reads = 0, release!: () => void, submitted!: () => void
     const held = new Promise<void>(resolve => { release = resolve }), sent = new Promise<void>(resolve => { submitted = resolve })
     try {
       await page.route("**/api/**", route => route.fulfill({ json: {} }))
+      await events.route(page)
       await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
-        if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: panelMissions([current, mission("two")]), generatedAt: reads, discardedEvents: 0 } }) }
+        if (route.request().method() === "GET") {
+          reads++
+          const path = new URL(route.request().url()).pathname
+          if (path.endsWith("/scheduled")) return route.fulfill({ json: { version: 1, projectID: "fixture", schedules: [] } })
+          if (path.endsWith("/schedule")) return route.fulfill({ json: { document: null, pending: false } })
+          return route.fulfill({ json: { available: true, missions: panelMissions([current, mission("two")]), generatedAt: reads, discardedEvents: 0 } })
+        }
         calls.push(route.request().postDataJSON() as Input); submitted(); await held; current = { ...current, revision: 2 }
         return outcome === "rejected" ? route.fulfill({ status: 409, json: { code: "revision-conflict" } })
           : outcome === "unknown" ? route.fulfill({ status: 409, json: {} })
@@ -154,17 +163,21 @@ for (const outcome of ["rejected", "acknowledged", "unknown", "foreign-ack"] as 
       // Unmounting the panel disposes the dispatching toolbar; then another Mission is selected.
       await open(page); await pause(page).click(); await sent; await remount(page)
       assert.equal(await inFlight(page), true, "the remounted toolbar observes the in-flight exact intent")
-      await select(page, "two"); await tick(page)
+      // Selection schedules its own debounced list/point read. Complete that read
+      // before measuring what the old control reply does to the selected view.
+      const selectionRead = page.waitForResponse(value => new URL(value.url()).pathname.endsWith("/two/schedule"))
+      await select(page, "two"); assert.equal(await (await selectionRead).finished(), null); await tick(page)
       const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
-      release(); await response; await tick(page)
-      assert.equal(reads, before); assert.equal(await retryCount(page, "two"), 0); assert.equal(await admissible(page, "two"), true)
+      release(); assert.equal(await (await response).finished(), null); await tick(page)
+      assert.equal(await retryCount(page, "two"), 0); assert.equal(await admissible(page, "two"), true)
+      assert.equal(reads, before, "the old response adds no Mission GET, including schedule reads")
       await select(page, "one"); await settle(page)
       const unresolved = outcome === "unknown" || outcome === "foreign-ack"
       assert.equal(await retryCount(page), unresolved ? 1 : 0)
       assert.equal(await admissible(page), !unresolved); assert.equal(await check(page).count(), unresolved ? 1 : 0)
       assert.equal(calls.length, 1)
       console.info("DISPOSED exact bookkeeping", outcome, JSON.stringify(calls))
-    } finally { release(); await page.close() }
+    } finally { release(); try { await page.close() } finally { await events.close() } }
   })
 }
 

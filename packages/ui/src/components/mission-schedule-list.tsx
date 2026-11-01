@@ -53,13 +53,16 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   const refresh = () => setRevision(value => value + 1)
   const view = () => <>
     <Show when={list.error()}><p role="status" class="mission-control-stale">{t("missions.scheduleList.readFailed")}</p></Show>
+    <Show when={list.selectionError()}>{error => <p class="mission-control-stale" role="status">
+      {t(error() === "pending" ? "missions.scheduleList.uncertain" : "missions.scheduleList.readFailed")}
+    </p>}</Show>
     <Show when={list.next()}><button type="button" class="window-text-button" disabled={list.loading() || !props.active()}
       onClick={list.more}>{t("missions.scheduleList.more")}</button></Show>
     <Show when={props.selected && schedules().some(row => row.id === props.selected) ? props.selected : undefined} keyed>{id => {
       const doc = createMemo<UnifiedMissionSchedule>(previous => schedules().find(row => row.id === id) ?? previous!)
       const controls = createMissionScheduleControls({ get instanceId() { return props.instanceId }, get projectID() { return props.projectID },
         get directory() { return props.directory }, document: doc, active: props.active,
-        enabled: () => props.enabled() && !list.error(), refreshVersion: () => props.refresh + revision(), refresh,
+        enabled: () => props.enabled() && !list.error() && list.fresh(id), refreshVersion: () => props.refresh + revision(), refresh,
         onDeleted: () => props.onDeleted(id) })
       const [expanded, expand] = createSignal(false)
       const primary = () => (["pause", "resume", "play"] as const).find(action => doc().availableActions.includes(action))
@@ -69,7 +72,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
       return <section id={props.detailId} class="mission-detail mission-unified-schedule" aria-label={doc().configuration.title}>
         <MissionActionBar label={t("missionsPanel.picker.actions")} reading={expanded()} onToggleReader={() => expand(value => !value)}
           primary={primary() ? action(primary()!) : undefined} stop={action("stop")} runNow={action("run-now")}
-          onEdit={() => props.onEdit(id)} editDisabled={!props.enabled() || list.error() || !!controls.held() || controls.busy() || !doc().availableActions.includes("configure")}
+          onEdit={() => props.onEdit(id)} editDisabled={!props.enabled() || list.error() || !list.fresh(id) || !!controls.held() || controls.busy() || !doc().availableActions.includes("configure")}
           onDelete={() => void controls.act("delete")} deleteDisabled={!controls.capable("delete")}
           onOpenConversation={doc().pendingPassage ? () => props.onOpenConversation(doc().pendingPassage!.coordinatorSessionID) : undefined}
           secondary={<>
@@ -116,5 +119,5 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   const ownsSession = (sessionID: string) => schedules().some(doc => doc.id === props.selected
     && (doc.pendingPassage?.coordinatorSessionID === sessionID || doc.history.some(item => item.coordinatorSessionID === sessionID)))
   return { entries, view, refresh, ownsSession,
-    representation: (id: string) => list.error() || list.loading() ? undefined : list.rows().find(row => row.id === id)?.kind }
+    representation: (id: string) => list.error() || list.loading() || !list.fresh(id) ? undefined : list.rows().find(row => row.id === id)?.kind }
 }

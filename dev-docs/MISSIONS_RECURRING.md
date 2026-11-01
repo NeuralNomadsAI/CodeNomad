@@ -34,6 +34,14 @@ List and detail projections include the full launch policy/configuration, frozen
 one-shot/end instants, admitted/settled/successful counts, structural/template locks,
 pending passage identity and the thirty retained passage receipts.
 
+The panel publishes its loaded inventory and cursor independently of the selected
+document's point read. A partial selected receipt keeps uncertainty visible beside
+the valid inventory. Scoped retained controls keep their display and original
+request/revision for explicit read-only reconciliation. Only successfully read
+documents enable new controls or representation changes; retained display metadata
+and partial error-body receipts keep the original reconciliation available. Selection,
+scope, connection and disposal fence late selected reads, including ABA changes.
+
 List and detail also expose `observation`, `availableActions` and `blockReason`.
 Their `technical` projection exposes only the recorded current/retiring carrier
 session and calendar identifiers, role, slot, temporal generation and pending

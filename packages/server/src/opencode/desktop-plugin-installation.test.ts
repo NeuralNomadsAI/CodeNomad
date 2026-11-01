@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { createHash } from "node:crypto"
 import { lstat, mkdir, mkdtemp, open, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
+import fs from "node:fs/promises"
+import { syncBuiltinESMExports } from "node:module"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -9,6 +11,62 @@ import { installDesktopPluginPresence } from "./desktop-plugin-installation"
 import { bundleRepairSchedule } from "./desktop-plugin-artifact"
 import { DesktopPluginLifecycle } from "./desktop-plugin-lifecycle"
 import { resolveDesktopPluginPaths } from "./desktop-plugin-paths"
+
+for (const feature of ["automation", "session-pruning", "missions"] as const) for (const retire of [true, false])
+test(`${feature} shim publication after an awaited payload recheck ${retire ? "rejects a retired" : "accepts an unchanged"} connection`, async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-plugin-publish-fence-"))
+  const paths = { config: path.join(root, "config"), data: path.join(root, "data") }
+  const stops: Array<() => Promise<void>> = []
+  let resume!: () => void, paused!: () => void
+  const rechecking = new Promise<void>(resolve => { paused = resolve })
+  const resumed = new Promise<void>(resolve => { resume = resolve })
+  t.after(async () => {
+    resume()
+    t.mock.restoreAll()
+    syncBuiltinESMExports()
+    await Promise.all(stops.map(stop => stop()))
+    await rm(root, { recursive: true, force: true })
+  })
+  stops.push(await installDesktopPluginPresence(feature, Buffer.from("old"), paths))
+  const plugins = path.join(paths.config, "plugins"), entry = path.join(plugins, `codenomad-${feature}.ts`)
+  const before = await readFile(entry, "utf8"), leases = path.join(paths.data, feature, "presence")
+  const oldLeases = await readdir(leases), bundle = Buffer.from("new")
+  const payload = path.join(paths.data, feature, `${createHash("sha256").update(bundle).digest("hex")}.mjs`)
+  const original = fs.lstat
+  let intercepted = false, current = true
+  t.mock.method(fs, "lstat", async (...args: Parameters<typeof fs.lstat>) => {
+    const named = await original(...args)
+    // Only the final recheck runs with a complete temporary shim awaiting publication.
+    if (!intercepted && args[0] === payload && (await readdir(plugins)).some(name => name.endsWith(".tmp"))) {
+      intercepted = true
+      paused()
+      await resumed
+    }
+    return named
+  })
+  syncBuiltinESMExports()
+  const installing = installDesktopPluginPresence(feature, bundle, paths,
+    () => { if (!current) throw new Error("connection retired") }, undefined,
+    feature === "missions" ? Buffer.from("provider") : undefined)
+  const settled = retire ? assert.rejects(installing, /connection retired/) : installing.then(stop => { stops.push(stop) })
+  await rechecking
+  assert.equal((await readdir(leases)).length, oldLeases.length + 1)
+  assert.equal(await readFile(entry, "utf8"), before)
+  current = !retire
+  resume()
+  await settled
+  assert.deepEqual(await readFile(payload), bundle, "immutable payloads remain available")
+  assert.equal((await readdir(plugins)).filter(name => name.endsWith(".tmp")).length, 0)
+  if (retire) {
+    assert.equal(await readFile(entry, "utf8"), before, "retirement leaves the running service's shim unchanged")
+    assert.deepEqual(await readdir(leases), oldLeases, "only the retired installation's lease is removed")
+  } else {
+    assert.notEqual(await readFile(entry, "utf8"), before)
+    assert.equal((await readdir(leases)).length, oldLeases.length + 1)
+    await stops.pop()!()
+    assert.deepEqual(await readdir(leases), oldLeases)
+  }
+})
 
 test("a content-addressed Missions bundle holding other bytes is replaced before reuse", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-missions-bundle-"))

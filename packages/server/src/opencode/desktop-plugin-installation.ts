@@ -157,6 +157,7 @@ export async function installDesktopPluginPresence(
         await writeFile(temporary, source)
         assertCurrent()
         await assertBundlePath()
+        assertCurrent()
         await rename(temporary, entry)
       } finally { await rm(temporary, { force: true }) }
     }

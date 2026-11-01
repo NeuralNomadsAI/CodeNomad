@@ -6,21 +6,7 @@ import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { requiresMissionCalendar } from "../../../server/src/missions/mission-launch-kind"
-import { HttpResponseError } from "../lib/retryable-file-search"
-
-type ControlReceipt = { pending: boolean; document: { id: string; control: { requestID: string; expectedRevision: number;
-  action: string; pending: boolean } | null } | null; deleted?: boolean;
-  deletionReceipt?: { id: string; requestID: string; expectedRevision: number; deleteManagedSessions: boolean } }
-// The product intentionally answers 503 while a positively recorded request is
-// partial. Only this bounded receipt projection crosses that error boundary.
-function partialReceipt(error: unknown): ControlReceipt | undefined {
-  if (!(error instanceof HttpResponseError) || error.status !== 503 || error.code !== "schedule-pending") return
-  const body = error.body as Partial<ControlReceipt> | undefined, doc = body?.document, control = doc?.control
-  if (body?.pending !== true || typeof doc?.id !== "string" || doc.id.length > 100 || !control || typeof control.requestID !== "string" || control.requestID.length > 128
-    || !Number.isSafeInteger(control.expectedRevision) || control.expectedRevision < 0
-    || typeof control.action !== "string" || typeof control.pending !== "boolean") return
-  return { pending: true, document: { id: doc.id, control } }
-}
+import { partialMissionScheduleReceipt as partialReceipt, type MissionScheduleControlReceipt as ControlReceipt } from "../lib/mission-schedule-receipt"
 
 // Exact dispatched identities survive navigation and remount. Unresolved entries
 // never evict; the ceiling refuses another control rather than forgetting one.

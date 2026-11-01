@@ -34,7 +34,7 @@ after(async () => {
 })
 const profiles = { coordinator: { agent: "coordinator", model: { providerID: "p", id: "m" } },
   roles: { specialist: { agent: "specialist", model: { providerID: "p", id: "m" } } } }
-async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; available?: boolean; locale?: string; journalGate?: Promise<void> } = {}) {
+async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; available?: boolean; locale?: string; journalGate?: Promise<void>; outsidePage?: boolean } = {}) {
   page.setDefaultTimeout(15_000)
   const values = new Map<string, MissionJsonValue>(), posts: Record<string, any>[] = [], reads: string[] = [], errors: string[] = []
   const store = new NativeMissionDocumentStore({ get: async key => values.get(key),
@@ -44,6 +44,9 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
     watchedConversationIDs: [], launch: { timing: { kind: "every" as const, intervalMs: 900_000 }, condition: null,
       ends: { maxLaunches: 3, at: null, afterMs: null } } }
   let doc: MissionDocument | undefined = options.seed ? await store.create("msn_schedule", config, Date.now(), () => true) : undefined
+  const firstPage = options.outsidePage ? await Promise.all(Array.from({ length: 8 }, (_, i) =>
+    store.create(`aaa_${i}`, { ...config, title: `Inventory Mission ${i}` }, Date.now(), () => true))) : []
+  let outside = false
   let deleted = false, lost: string | undefined, partial: string | undefined, proof = true, enabled = options.enabled ?? true, activation: Record<string, any> | undefined
   const receipts = new Map<string, Record<string, any>>()
   function result(requestID?: string) {
@@ -56,7 +59,7 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
     const view = missionScheduleView(doc)
     if (!doc) return view
     const control = requestID ? proof && receipts.get(requestID) : [...receipts.values()].at(-1)
-    return { ...view, pending: !!requestID && (!control || !!control.pending), document: { ...view.document,
+    return { ...view, pending: requestID ? !control || !!control.pending : outside && !!control?.pending, document: { ...view.document,
       availableActions: [...view.document!.availableActions, ...([...receipts.values()].some(item => item.pending) ? ["check"] : [])],
       observation: { state: doc.firstPlayedAt === null ? "unarmed" : "known", nativeStatus: doc.firstPlayedAt === null ? null : doc.state === "running" ? "active" : "paused",
         nextDueAt: doc.state === "running" ? Date.now() + 900_000 : null, wakeCount: doc.launchedCount,
@@ -78,7 +81,9 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
         api: { available: options.available ?? true }, enabled, origin: null,
         activation: { available: options.available ?? true, targets: [{ scope: "global", path: "/private/config/opencode.jsonc" }] } } })
       if (target.endsWith("/schedule-settings")) return route.fulfill({ json: { document: missionDocumentSummary(doc!) } })
-      if (target.endsWith("/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: doc && !deleted ? [result().document] : [] } })
+      if (target.endsWith("/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project",
+        schedules: outside && !link.searchParams.has("after") ? firstPage.map(doc => missionScheduleView(doc).document) : doc && !deleted ? [result().document] : [],
+        ...(outside && !link.searchParams.has("after") ? { next: "aaa_7" } : {}) } })
       if (target.endsWith("/schedule")) {
         const value = result(link.searchParams.get("requestID") ?? undefined)
         return route.fulfill({ status: value.pending ? 503 : 200, json: { ...value, ...(value.pending ? { code: "schedule-pending" } : {}) } })
@@ -123,6 +128,7 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
   await page.waitForFunction(() => (window as any).missionFixture).catch(error => { throw new Error(`${error}\n${errors.join("\n")}`) })
   await page.evaluate(() => (window as any).missionFixture.connectCatalog())
   return { posts, reads, errors, store, get doc() { return doc! }, result,
+    set outside(value: boolean) { outside = value }, resolve: () => { for (const receipt of receipts.values()) receipt.pending = false },
     set lost(value: string | undefined) { lost = value }, set partial(value: string | undefined) { partial = value },
     set proof(value: boolean) { proof = value }, get activation() { return activation },
     set enabled(value: boolean) { enabled = value },
@@ -420,6 +426,37 @@ test("Check reconciles a positively recorded partial request and retains both id
     assert.ok(f.reads.some(value => value.includes(`requestID=${f.posts[1].requestID}`)))
     assert.ok(f.reads.some(value => value.includes(`requestID=${original.requestID}`)))
     assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("cold reopen keeps the first page, cursor and original held request when selected detail is partial 503", async () => {
+  const page = await browser.newPage(), f = await setup(page, { seed: true, outsidePage: true })
+  try {
+    await select(page); f.partial = "play"; await click(page, "Play")
+    await button(page, "Refresh saved request").waitFor()
+    const original = f.posts[0]
+    await page.evaluate(() => (window as any).missionFixture.mount(false))
+    f.outside = true
+    const pointRead = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/msn_schedule/schedule")
+      && !new URL(response.url()).searchParams.has("requestID") && response.status() === 503)
+    await page.evaluate(() => (window as any).missionFixture.mount(true))
+    await pointRead
+    await page.getByRole("button", { name: "Load more Missions", exact: true }).and(page.locator(":enabled")).waitFor()
+    await button(page, "Refresh saved request").waitFor()
+    await page.getByRole("combobox").click()
+    assert.equal(await page.getByRole("option").filter({ hasText: "Inventory Mission" }).count(), 8)
+    await page.keyboard.press("Escape")
+    assert.equal(await button(page, "Check passage").isDisabled(), true, "retained partial metadata grants no new control")
+    assert.equal(await button(page, "Stop…").isDisabled(), true)
+    await button(page, "Refresh saved request").click()
+    assert.ok(f.reads.some(url => url.includes(`requestID=${original.requestID}`)))
+    assert.deepEqual(f.posts, [original], "reopen and explicit reconciliation never replay the control")
+    f.resolve()
+    await button(page, "Refresh saved request").click()
+    await button(page, "Refresh saved request").waitFor({ state: "detached" })
+    await button(page, "Pause").and(page.locator(":enabled")).waitFor()
+    assert.equal(await page.getByRole("button", { name: "Load more Missions", exact: true }).count(), 1)
+    assert.deepEqual(f.posts, [original]); assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
 

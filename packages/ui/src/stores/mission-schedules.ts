@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import type { MissionScheduleRead } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
+import { partialMissionScheduleReceipt } from "../lib/mission-schedule-receipt"
 import { createEventRefreshScheduler } from "../lib/event-refresh-scheduler"
 import { serverEvents } from "../lib/server-events"
 import { instances } from "./instances"
@@ -26,9 +27,20 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
     generation: getOpenCodeInstanceGeneration(props.instanceId()) }), undefined,
   { equals: (a, b) => !!a && JSON.stringify([a.instance, a.project, a.directory, a.active, a.generation])
     === JSON.stringify([b.instance, b.project, b.directory, b.active, b.generation]) && a.client === b.client })
-  const [rows, setRows] = createSignal<UnifiedMissionSchedule[]>([]), [error, setError] = createSignal(false)
+  const [snapshot, setRows] = createSignal<UnifiedMissionSchedule[]>([]), [error, setError] = createSignal(false)
+  const [selectionError, setSelectionError] = createSignal<"pending" | "failed">()
+  const [fresh, setFresh] = createSignal<ReadonlySet<string>>(new Set())
   const [loading, setLoading] = createSignal(false), [next, setNext] = createSignal<string>()
-  let controller: AbortController | undefined, epoch = 0, pages = 1, trailing = false
+  let controller: AbortController | undefined, epoch = 0, selectionEpoch = 0, pages = 1, trailing = false
+  const rows = createMemo(() => {
+    const owner = binding(), collected = new Map(snapshot().map(row => [row.id, row]))
+    holdVersion()
+    for (const [key, hold] of unifiedScheduleHolds) {
+      if (key === JSON.stringify([owner.instance, owner.project, owner.directory, hold.document.id]) && !collected.has(hold.document.id))
+        collected.set(hold.document.id, hold.document)
+    }
+    return [...collected.values()]
+  })
   const read = async () => {
     const owner = binding()
     if (!owner.active || !owner.project) return
@@ -47,18 +59,31 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
         after = value.next
         if (!after) break
       }
-      const selected = props.selected()
+      const selected = props.selected(), selectedEpoch = selectionEpoch
+      const selectedCurrent = () => current() && selectedEpoch === selectionEpoch && props.selected() === selected
+      const previous = snapshot().find(row => row.id === selected && !collected.has(row.id))
+      // Inventory and its cursor are valid independently of the selected read.
+      // Keep the selected display/pointer target while its revalidation runs.
+      setRows([...collected.values(), ...(previous ? [previous] : [])]); setNext(after)
+      setFresh(new Set([...collected.keys(), ...(previous && fresh().has(previous.id) ? [previous.id] : [])])); setError(false)
       if (selected && !collected.has(selected)) {
-        const value = await serverApi.fetchMissionSchedule(owner.instance, selected, { directory: owner.directory }, abort.signal)
-        if (!current() || props.selected() !== selected) return
-        if (value.document) collected.set(selected, value.document)
+        try {
+          const value = await serverApi.fetchMissionSchedule(owner.instance, selected, { directory: owner.directory }, abort.signal)
+          if (!selectedCurrent()) return
+          if (value.document && value.document.id !== selected) throw new Error("Foreign selected schedule")
+          if (value.document) collected.set(selected, value.document)
+          setRows([...collected.values()])
+          setSelectionError(value.pending ? "pending" : undefined)
+          setFresh(previous => new Set([...previous].filter(id => id !== selected).concat(!value.pending && value.document ? [selected] : [])))
+        } catch (error) {
+          if (!selectedCurrent()) return
+          const receipt = partialMissionScheduleReceipt(error)
+          setFresh(previous => new Set([...previous].filter(id => id !== selected)))
+          setSelectionError(receipt?.document?.id === selected ? "pending" : "failed")
+        }
+      } else if (selectedCurrent()) {
+        setSelectionError(undefined)
       }
-      for (const [key, hold] of unifiedScheduleHolds) {
-        const [instance, project, directory] = JSON.parse(key)
-        if (instance === owner.instance && project === owner.project && directory === owner.directory && !collected.has(hold.document.id))
-          collected.set(hold.document.id, hold.document)
-      }
-      setRows([...collected.values()]); setNext(after); setError(false)
     } catch { if (current()) setError(true) }
     finally {
       if (controller === abort) { controller = undefined; setLoading(false) }
@@ -73,10 +98,11 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
     const scope = JSON.stringify([owner.instance, owner.project, owner.directory])
     if (scope !== displayScope) { setRows([]); setNext(undefined); pages = 1 }
     displayScope = scope
-    scheduler.cancel("list"); setError(false); setLoading(false)
+    scheduler.cancel("list"); setError(false); setSelectionError(undefined); setFresh(new Set<string>()); setLoading(false)
     if (owner.active) untrack(() => void read())
   })
   let previousDemand: string | undefined
+  createEffect(() => { props.selected(); selectionEpoch++; setSelectionError(undefined) })
   createEffect(() => {
     const demand = JSON.stringify([props.refresh(), props.selected()])
     if (previousDemand !== undefined && previousDemand !== demand) untrack(() => scheduler.schedule("list", "urgent"))
@@ -92,6 +118,6 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
   })
   const opened = serverEvents.onOpen(() => scheduler.schedule("list", "urgent"))
   onCleanup(() => { epoch++; controller?.abort(); scheduler.cancel("list"); event(); reconnect(); opened() })
-  return { rows, error, loading, next, refresh: () => scheduler.schedule("list", "urgent"),
+  return { rows, error, selectionError, fresh: (id: string) => fresh().has(id), loading, next, refresh: () => scheduler.schedule("list", "urgent"),
     more: () => { if (next() && !loading()) { pages++; scheduler.schedule("list", "urgent") } } }
 }
