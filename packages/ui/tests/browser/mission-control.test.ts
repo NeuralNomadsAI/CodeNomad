@@ -413,12 +413,12 @@ test("Inherit repairs an existing empty project experimental block and displays 
     const controls = page.locator(".mission-depth")
     await controls.getByText("OpenCode effective depth unknown", { exact: true }).waitFor()
     await controls.getByText("Project write target: fixture/opencode.jsonc", { exact: true }).waitFor()
-    await controls.getByText("Effective experimental block: fixture/opencode.jsonc", { exact: true }).waitFor()
+    await controls.getByText("OpenCode configuration file: fixture/opencode.jsonc", { exact: true }).waitFor()
     await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
     assert.equal(await controls.locator("input").inputValue(), "", "no override is set")
     await controls.getByRole("button", { name: "Inherit", exact: true }).click()
     await controls.getByText("OpenCode effective depth: 5", { exact: true }).waitFor()
-    await controls.getByText("Effective experimental block: /global/opencode.jsonc", { exact: true }).waitFor()
+    await controls.getByText("OpenCode configuration file: /global/opencode.jsonc", { exact: true }).waitFor()
     await controls.getByText("Project write target: fixture/opencode.jsonc", { exact: true }).waitFor()
     assert.equal(await controls.locator('code[title="/global/opencode.jsonc"]').getAttribute("dir"), "ltr")
     assert.deepEqual(writes, [{ location: { directory: "fixture" }, depth: null, expectation: "empty-block" }])
@@ -494,7 +494,7 @@ test("the depth editor states the nesting rule and whether General subagents can
   } finally { await page.close() }
 })
 
-test("the mission editor displays the effective scheduling block from capabilities, including an unnamed document", async () => {
+test("the mission editor displays the OpenCode configuration file only when capabilities name a path", async () => {
   const page = await browser.newPage({ locale: "en-US" }), errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   let origin: string | null = "/ancestor/.opencode/opencode.jsonc"
@@ -510,8 +510,13 @@ test("the mission editor displays the effective scheduling block from capabiliti
       await missionGeneralAction(page, "Create mission").click()
       const editor = page.locator("form.mission-editor"), scheduling = editor.locator(".mission-scheduling")
       await scheduling.locator("summary").click()
-      await scheduling.getByText(`Effective experimental block: ${origin ?? "No document path"}`, { exact: true }).waitFor()
-      if (origin) assert.equal(await scheduling.locator("code").getAttribute("dir"), "ltr")
+      if (origin) {
+        await scheduling.getByText(`OpenCode configuration file: ${origin}`, { exact: true }).waitFor()
+        assert.equal(await scheduling.locator("code").getAttribute("dir"), "ltr")
+      } else {
+        assert.equal(await scheduling.getByText(/OpenCode configuration file:/).count(), 0)
+        assert.equal(await scheduling.getByText("No document path", { exact: true }).count(), 0)
+      }
       assert.equal(await scheduling.getByText("/global/opencode.jsonc", { exact: true }).count(), 0, "an activation target never substitutes for the effective origin")
       await editor.getByRole("button", { name: "Cancel", exact: true }).click()
     }
@@ -695,16 +700,16 @@ test("depth uncertainty stays at its original Location through pending navigatio
     await openMissionSettings(page)
     const input = page.locator(".mission-depth input"), refresh = page.getByRole("button", { name: "Refresh project depth", exact: true })
     const target = page.locator(".mission-depth-path").filter({ hasText: /^Project write target:/ })
-    const origin = page.locator(".mission-depth-path").filter({ hasText: /^Effective experimental block:/ })
+    const origin = page.locator(".mission-depth-path").filter({ hasText: /^OpenCode configuration file:/ })
     await target.getByText("fixture/opencode.jsonc", { exact: true }).waitFor()
-    await origin.getByText("Effective experimental block: No document path", { exact: true }).waitFor()
+    await origin.getByText("OpenCode configuration file: No document path", { exact: true }).waitFor()
     await input.fill("2")
     await input.press("Enter"); await started
     assert.equal(await refresh.count(), 0, "no refresh while the save is still pending")
     // The open Settings section follows the project's Location while the save is still pending.
     await fixtureCall(page, "directory", "other")
     await target.getByText("other/opencode.jsonc", { exact: true }).waitFor()
-    await origin.getByText("Effective experimental block: No document path", { exact: true }).waitFor()
+    await origin.getByText("OpenCode configuration file: No document path", { exact: true }).waitFor()
     assert.equal(await input.inputValue(), "9", "the new Location cannot inherit the old dirty draft")
     release()
     await fixtureCall(page, "directory", "fixture")

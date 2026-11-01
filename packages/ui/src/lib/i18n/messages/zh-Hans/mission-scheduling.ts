@@ -1,5 +1,5 @@
 export const missionSchedulingMessages = {
-  "missions.settings.effectiveOrigin": "实际生效的实验性设置块",
+  "missions.settings.effectiveOrigin": "OpenCode 配置文件：",
   "missions.settings.noOrigin": "无文档路径",
   "missions.settings.projectTarget": "项目写入目标",
   "missions.scheduleDiagnostics.title": "技术详情",

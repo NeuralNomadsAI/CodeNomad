@@ -1,5 +1,5 @@
 export const missionSchedulingMessages = {
-  "missions.settings.effectiveOrigin": "Geçerli deneysel blok",
+  "missions.settings.effectiveOrigin": "OpenCode yapılandırma dosyası:",
   "missions.settings.noOrigin": "Belge yolu yok",
   "missions.settings.projectTarget": "Projenin yazma hedefi",
   "missions.scheduleDiagnostics.title": "Teknik ayrıntılar",

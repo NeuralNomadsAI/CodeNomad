@@ -1,5 +1,5 @@
 export const missionSchedulingMessages = {
-  "missions.settings.effectiveOrigin": "Wirksamer experimenteller Block",
+  "missions.settings.effectiveOrigin": "OpenCode-Konfigurationsdatei:",
   "missions.settings.noOrigin": "Kein Dokumentpfad",
   "missions.settings.projectTarget": "Schreibziel des Projekts",
   "missions.scheduleDiagnostics.title": "Technische Details",

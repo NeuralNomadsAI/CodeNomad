@@ -25,7 +25,10 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
     if (timing.kind === "at") return `${title} · ${date(doc.oneShotAt ?? timing.at, timing.zone)} · ${timing.zone}`
     if (timing.kind === "every" || timing.kind === "in") {
       const ms = timing.kind === "every" ? timing.intervalMs : timing.delayMs
-      return `${title} · ${ms / 60_000} ${t("missions.scheduling.minutes")}`
+      const duration = Intl.NumberFormat.supportedLocalesOf(locale()).length
+        ? new Intl.NumberFormat(locale(), { style: "unit", unit: "minute", unitDisplay: "long" }).format(ms / 60_000)
+        : `${ms / 60_000} ${t("missions.scheduling.minutes")}`
+      return `${title} · ${duration}`
     }
     if (timing.kind === "cron") return `${title} · ${timing.expression} · ${timing.zone}`
     if (timing.kind === "multi") return `${title} · ${timing.calendars.map(item => `${item.expression} (${item.zone})`).join("; ")}`

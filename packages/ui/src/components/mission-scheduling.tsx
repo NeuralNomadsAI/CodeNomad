@@ -66,8 +66,7 @@ export function MissionScheduling(props: {
       {" · "}{t(`missions.scheduling.condition.${props.draft.condition}`)}</summary>
     <p id={description} role="status">{reason() ?? t("missions.scheduling.paused")}</p>
     <Show when={props.capability === "activatable"}><p>{t("missions.scheduling.capability.activatable")}</p></Show>
-    <Show when={props.origin !== undefined}><p>{t("missions.settings.effectiveOrigin")}: {props.origin
-      ? <code dir="ltr" title={props.origin}>{props.origin}</code> : t("missions.settings.noOrigin")}</p></Show>
+    <Show when={props.origin}>{origin => <p>{t("missions.settings.effectiveOrigin")} <code dir="ltr" title={origin()}>{origin()}</code></p>}</Show>
     <Show when={retained()}>{reason => <section aria-label={t("missions.scheduling.retained.title")}>
       <p role="status">{t(`missions.scheduling.retained.${reason()}`)}</p>
       <pre dir="ltr">{JSON.stringify(props.draft.stored!.policy, null, 2)}</pre>

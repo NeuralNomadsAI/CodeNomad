@@ -1,5 +1,5 @@
 export const missionSchedulingMessages = {
-  "missions.settings.effectiveOrigin": "प्रभावकारी प्रयोगात्मक ब्लक",
+  "missions.settings.effectiveOrigin": "OpenCode कन्फिगरेसन फाइल:",
   "missions.settings.noOrigin": "कागजातको बाटो छैन",
   "missions.settings.projectTarget": "परियोजनाको लेखन लक्ष्य",
   "missions.scheduleDiagnostics.title": "प्राविधिक विवरण",

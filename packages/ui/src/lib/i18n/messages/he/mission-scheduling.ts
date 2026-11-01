@@ -1,5 +1,5 @@
 export const missionSchedulingMessages = {
-  "missions.settings.effectiveOrigin": "הבלוק הניסיוני שבתוקף",
+  "missions.settings.effectiveOrigin": "קובץ התצורה של OpenCode:",
   "missions.settings.noOrigin": "ללא נתיב מסמך",
   "missions.settings.projectTarget": "יעד הכתיבה של הפרויקט",
   "missions.scheduleDiagnostics.title": "פרטים טכניים",

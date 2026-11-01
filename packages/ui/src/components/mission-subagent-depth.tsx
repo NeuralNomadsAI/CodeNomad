@@ -142,7 +142,7 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
     <Show when={state().snapshot?.project}>{project => <p class="mission-depth-path">{t("missions.settings.projectTarget")}: <code dir="ltr" title={project().path}>{project().path}</code></p>}</Show>
     <p class="mission-depth-effective">{state().snapshot?.effectiveDepth == null ? t("missions.depth.unknown") : t("missions.depth.effective", { depth: state().snapshot!.effectiveDepth! })}</p>
     <Show when={nesting()}>{text => <p class="mission-depth-nesting">{text()}</p>}</Show>
-    <Show when={state().snapshot}>{snapshot => <p class="mission-depth-path">{t("missions.settings.effectiveOrigin")}: {snapshot().origin
+    <Show when={state().snapshot}>{snapshot => <p class="mission-depth-path">{t("missions.settings.effectiveOrigin")} {snapshot().origin
       ? <code dir="ltr" title={snapshot().origin!}>{snapshot().origin}</code> : t("missions.settings.noOrigin")}</p>}</Show>
     <label>{t("missions.depth.label")}<input type="number" step="1" min={state().snapshot?.capability?.minimum} max={state().snapshot?.capability?.maximum}
       placeholder={t("missions.depth.inherit")} aria-describedby={description} value={state().draft} disabled={disabled()} readOnly={locked()}

@@ -469,6 +469,18 @@ for (const negativeFirst of [true, false]) test(`cold reopen keeps the first pag
   } finally { await page.close() }
 })
 
+for (const [minutes, duration] of [[1, "1 minute"], [2, "2 minutes"]] as const) {
+  test(`French delay summary uses running-text units (${minutes})`, async () => {
+    const page = await browser.newPage(), f = await setup(page, { seed: true, locale: "fr" })
+    try {
+      await f.change(doc => { doc.configuration.launch.timing = { kind: "in", delayMs: minutes * 60_000 } })
+      await page.evaluate(() => (window as any).missionFixture.refresh()); await select(page)
+      await detail(page).locator("dd").first().getByText(`Une fois, dans un délai · ${duration}`, { exact: true }).waitFor()
+      assert.deepEqual(f.errors, [])
+    } finally { await page.close() }
+  })
+}
+
 for (const locale of ["en", "fr", "de", "es", "he", "ja", "ne", "ru", "tr", "zh-Hans"]) {
   test(`native schedule details stay translated and bounded at 390px (${locale})`, async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 1000 } }), f = await setup(page, { seed: true, locale })
@@ -478,6 +490,11 @@ for (const locale of ["en", "fr", "de", "es", "he", "ja", "ne", "ru", "tr", "zh-
       await page.evaluate(() => (window as any).missionFixture.panelWidth("100vw"))
       await select(page)
       await page.waitForFunction(locale => document.documentElement.lang === locale, locale)
+      const duration = new Intl.NumberFormat(locale, { style: "unit", unit: "minute", unitDisplay: "long" }).format(15)
+      const summary = await detail(page).locator("dd").first().innerText()
+      if (locale === "ne") assert.match(summary, / · (?:15|१५) मिनेट$/)
+      else assert.ok(summary.endsWith(` · ${duration}`), JSON.stringify({ summary, duration }))
+      if (locale === "fr") assert.equal(await detail(page).locator("dd").first().innerText(), "À intervalles réguliers · 15 minutes")
       const diagnostics = detail(page).locator(".mission-schedule-diagnostics")
       await diagnostics.getByRole("button").focus(); await page.keyboard.press("Enter")
       assert.equal(await diagnostics.getByRole("button").getAttribute("aria-expanded"), "true")

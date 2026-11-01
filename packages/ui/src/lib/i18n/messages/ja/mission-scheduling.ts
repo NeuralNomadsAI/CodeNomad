@@ -1,5 +1,5 @@
 export const missionSchedulingMessages = {
-  "missions.settings.effectiveOrigin": "有効な実験的設定ブロック",
+  "missions.settings.effectiveOrigin": "OpenCode 設定ファイル：",
   "missions.settings.noOrigin": "ドキュメントのパスなし",
   "missions.settings.projectTarget": "プロジェクトの書き込み先",
   "missions.scheduleDiagnostics.title": "技術詳細",
