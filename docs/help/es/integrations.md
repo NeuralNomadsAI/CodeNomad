@@ -82,7 +82,9 @@ Una acción admitida conserva su resultado o error ante cambios nativos y recone
 
 Los metadatos Q8 guardados solo ofrecen una sugerencia para volver a vincular: **Volver a vincular** aparece en el selector únicamente si coinciden integración y etiqueta y requiere confirmación explícita. La autoridad sobre el vínculo actual procede de la consulta por sesión de la integración.
 
-Plugins muestra que el catálogo no está disponible o conserva el último catálogo válido con su fecha de obtención si está obsoleto. Actualiza Plugins para reintentar. La eliminación se rechaza si hay conversaciones vinculadas o no se pueden verificar sus vínculos. Desvincúlalas en la aplicación, activa la integración si hace falta y actualiza antes de reintentar.
+Plugins muestra que el catálogo no está disponible o conserva el último catálogo válido con su fecha de obtención si está obsoleto. Actualiza Plugins para reintentar.
+
+Al quitar un plugin se muestra una advertencia con su nombre y ámbito exacto. **Cancelar** recibe el foco; **Quitar de Global/Proyecto** se habilita tras 600 ms y exige una acción explícita. Puede interrumpir la disponibilidad y las conexiones de las conversaciones que lo usan; Global también puede afectar a otros proyectos. Cancelar, dejar caducar o navegar antes del envío no cambia nada. Solo se quita la declaración confirmada; se conservan reglas, caché, archivos de la aplicación y pistas guardadas de conexión. Si cambia la configuración, selecciona y confirma de nuevo. El éxito confirma la eliminación de la declaración; el estado de ejecución sigue la recarga de OpenCode. Si se pierde la respuesta, actualiza Plugins para comprobar la configuración antes de reintentar. Reinstalar puede restaurar la disponibilidad; puede ser necesario recargar o volver a vincular y las operaciones interrumpidas podrían no reanudarse.
 
 ## Instalar o actualizar la integración de la aplicación {#application-installation}
 

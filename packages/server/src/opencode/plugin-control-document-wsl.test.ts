@@ -9,6 +9,8 @@ import {
   type WslPluginControlExecutor,
 } from "./plugin-control-document-wsl"
 import { removePluginSourceEntry } from "./plugin-source-document"
+import { PluginControls } from "./plugin-controls"
+import { PluginSources } from "./plugin-sources"
 
 describe("WSL plugin control documents", () => {
   it("keeps native paths and source permissions in WSL operations", async () => {
@@ -128,6 +130,35 @@ describe("WSL plugin control documents", () => {
   })
 
   const distro = process.env.CODENOMAD_TEST_WSL_PLUGIN_CONTROLS
+  it("binds confirmed removal to native WSL mode and retains the freshly confirmed mode", { skip: !distro }, async () => {
+    const root = `/tmp/codenomad-plugin-controls-${randomBytes(8).toString("hex")}`
+    const global = `${root}/global`, project = `${root}/project`, target = `${global}/opencode.jsonc`
+    try {
+      runWsl(distro!, `mkdir -m 700 -- "$1" && mkdir -- "$2" "$3" && printf '%s\\n' '{ "plugins": ["fixture-plugin", "-kept.id"] }' > "$4" && chmod 600 -- "$4"`, root, global, project, target)
+      const connection: any = { assertCurrent() {}, client: {
+        config: { get: async () => [{ type: "directory", path: global }, { type: "document", path: target, info: JSON.parse(runWsl(distro!, `cat -- "$1"`, target)) }] },
+        plugin: { list: async () => ({ data: [] }) },
+      } }
+      const controls = new PluginControls({ workspaceManager: {
+        get: () => ({}), getSharedServiceConnection: async () => connection,
+        getServiceDirectoryForPath: async (_id: string, directory: string) => directory === project ? project : undefined,
+        ownsLocation: async () => true, getWorktreeIdentityForPath: async () => "fixture",
+        getServicePathStyle: () => "posix", getServiceWslDistro: () => distro,
+        getHostPathForServicePath: async () => { throw new Error("WSL uses its native filesystem") },
+      } as any, worktreeDeletionFence: { enter: () => () => {} }, logger: { info() {} } as any })
+      const location = { directory: project }
+      const revision = async () => (await controls.read("w", location)).targets.find(target => target.scope === "global")!.expectedRevision!
+      const sources = new PluginSources({ documents: controls, logger: { info() {} } as any })
+      const request = { location, scope: "global" as const, target: "fixture-plugin", entryIndex: 0, expectedRevision: await revision() }
+      runWsl(distro!, `chmod 640 -- "$1"`, target)
+      await assert.rejects(sources.remove("w", request), (error: any) => error.code === "stale")
+      assert.deepEqual(JSON.parse(runWsl(distro!, `cat -- "$1"`, target)).plugins, ["fixture-plugin", "-kept.id"])
+      await sources.remove("w", { ...request, expectedRevision: await revision() })
+      assert.deepEqual(JSON.parse(runWsl(distro!, `cat -- "$1"`, target)).plugins, ["-kept.id"])
+      assert.equal(runWsl(distro!, `stat -c '%a' -- "$1"`, target).trim(), "640")
+    } finally { runWsl(distro!, `rm -rf -- "$1"`, root) }
+  })
+
   it("preserves a native 0600 mode through a real WSL replacement", { skip: !distro }, async () => {
     const root = `/tmp/codenomad-plugin-controls-${randomBytes(8).toString("hex")}`
     const target = `${root}/opencode.jsonc`

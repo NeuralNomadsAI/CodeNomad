@@ -4,7 +4,7 @@ import { isHumanAnswerProofPayload } from "../missions/human-answer"
 import { isRecurrenceProofPayload } from "../missions/recurrence-control-proof"
 
 const integrationRoute = "/api/workspaces/:id/integrations"
-const integrationRoutes = new Set([integrationRoute, ...["hosts", "binding", "attach", "detach", "install-host"].map(action => `${integrationRoute}/:integrationId/${action}`)])
+const integrationRoutes = new Set([integrationRoute, "/api/workspaces/:id/plugin-sources", ...["hosts", "binding", "attach", "detach", "install-host"].map(action => `${integrationRoute}/:integrationId/${action}`)])
 
 function integrationLogRoute(request: FastifyRequest): string | undefined {
   const route = request.routeOptions.url
@@ -16,6 +16,7 @@ function integrationLogRoute(request: FastifyRequest): string | undefined {
     try { return decodeURIComponent(part) } catch { return part }
   })
   if (parts[1] === "api" && parts[2] === "workspaces" && parts[4] === "integrations") return `${integrationRoute}/*`
+  if (parts[1] === "api" && parts[2] === "workspaces" && parts[4] === "plugin-sources") return "/api/workspaces/:id/plugin-sources/*"
 }
 
 /** Integration diagnostics contain only fixed routes and completion metadata, including rejected requests. */

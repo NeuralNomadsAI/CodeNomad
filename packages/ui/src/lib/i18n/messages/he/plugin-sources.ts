@@ -1,4 +1,7 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.sources.removeWarning": "הסרת התוסף עלולה לקטוע את זמינותו ואת החיבורים שלו בשיחות המשתמשות בו.",
+  "instanceServiceStatus.plugins.sources.removeGlobalWarning": "הפעולה עלולה להשפיע גם על שיחות בפרויקטים אחרים.",
+  "instanceServiceStatus.plugins.sources.removeRecovery": "התקנה מחדש עשויה להשיב את הזמינות; ייתכן שיידרשו טעינה או צירוף מחדש. פעולות שנקטעו עלולות שלא להתחדש.",
   "instanceServiceStatus.plugins.sources.add": "הוספת תוסף",
   "instanceServiceStatus.plugins.sources.addTitle": "הוספת תוסף",
   "instanceServiceStatus.plugins.sources.spec": "חבילה",
@@ -29,6 +32,6 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "תצורת OpenCode של {scope} פגומה. היא לא שונתה.",
   "instanceServiceStatus.plugins.sources.errors.unavailable": "תצורת {scope} אינה זמינה למיקום הזה.",
   "instanceServiceStatus.plugins.sources.errors.timeout": "OpenCode לא הגיב בזמן. דבר לא נוסף; נסו שוב.",
-  "instanceServiceStatus.plugins.sources.errors.remove": "לא ניתן היה להסיר את {name} מ-{scope}.",
+  "instanceServiceStatus.plugins.sources.errors.remove": "לא ניתן לאשר את הסרת {name} מ-{scope}. יש לרענן את התוספים ולבדוק את התצורה לפני ניסיון נוסף.",
   "instanceServiceStatus.plugins.sources.errors.removeStale": "{name} השתנה בתצורת {scope} מאז שהוצג. רעננו ונסו שוב.",
 } as const

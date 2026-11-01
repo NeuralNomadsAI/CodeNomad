@@ -35,6 +35,4 @@ export const integrationMessages = {
   "integrations.outcome.busy": "此会话已绑定到另一个打开的文档。请先在应用中断开绑定再重试。",
   "integrations.outcome.gone": "提供的连接已过期。请重新提供文档并重新打开此窗口。",
   "integrations.outcome.refused": "应用拒绝了连接。请检查其共享设置后重试。",
-  "integrations.error.attachedSessions": "拒绝移除：此集成有已连接的会话。请在应用中断开它们后重试。",
-  "integrations.error.unverified": "拒绝移除：无法验证连接。请启用集成、刷新插件后重试。",
 }

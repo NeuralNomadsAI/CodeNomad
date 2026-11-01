@@ -172,7 +172,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   const method = (init?.method ?? "GET").toUpperCase()
   const startedAt = Date.now()
-  logHttp(`${method} ${path}`)
+  const sensitive = /\/plugin-sources(?:[?/#]|$)/.test(path)
+  const logPath = sensitive ? "/api/workspaces/:id/plugin-sources" : path
+  logHttp(`${method} ${logPath}`)
 
   try {
     const response = await authenticatedFetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
@@ -180,17 +182,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       const body = await response.clone().json().catch(() => undefined)
       const code = typeof body?.code === "string" && body.code.length <= 100 ? body.code : undefined
       const message = await readErrorMessage(response)
-      logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
+      logHttp(`${method} ${logPath} -> ${response.status}`, { durationMs: Date.now() - startedAt, ...(sensitive ? {} : { error: message }) })
       throw new HttpResponseError(message || `Request failed with ${response.status}`, response.status, response.headers.get("Retry-After"), code, body)
     }
     const duration = Date.now() - startedAt
-    logHttp(`${method} ${path} -> ${response.status}`, { durationMs: duration })
+    logHttp(`${method} ${logPath} -> ${response.status}`, { durationMs: duration })
     if (response.status === 204) {
       return undefined as T
     }
     return (await response.json()) as T
   } catch (error) {
-    logHttp(`${method} ${path} failed`, { durationMs: Date.now() - startedAt, error })
+    logHttp(`${method} ${logPath} failed`, { durationMs: Date.now() - startedAt, ...(sensitive ? {} : { error }) })
     throw error
   }
 }

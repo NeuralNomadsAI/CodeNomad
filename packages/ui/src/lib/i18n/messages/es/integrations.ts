@@ -35,6 +35,4 @@ export const integrationMessages = {
   "integrations.outcome.busy": "Esta conversación ya está vinculada a otro documento abierto. Desvincúlala en la aplicación antes de reintentar.",
   "integrations.outcome.gone": "La oferta ha caducado. Vuelve a ofrecer el documento y a abrir esta ventana.",
   "integrations.outcome.refused": "La aplicación rechazó la vinculación. Comprueba sus ajustes para compartir y reintenta.",
-  "integrations.error.attachedSessions": "Eliminación rechazada: esta integración tiene conversaciones vinculadas. Desvincúlalas en la aplicación y reintenta.",
-  "integrations.error.unverified": "Eliminación rechazada: no se pudieron verificar los vínculos. Activa la integración, actualiza Plugins y reintenta.",
 }

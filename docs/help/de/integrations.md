@@ -82,7 +82,9 @@ Eine gestartete Aktion behält ihr Ergebnis oder ihren Fehler bei nativen Änder
 
 Gespeicherte Q8-Metadaten liefern ausschließlich einen Vorschlag zum erneuten Verbinden: **Erneut verbinden** erscheint im Auswahlfenster nur für ein Angebot mit gleicher Integration und Bezeichnung und erfordert eine ausdrückliche Bestätigung. Maßgeblich für die aktuelle Verbindung ist die sitzungsbezogene Abfrage der Integration.
 
-Plugins zeigt bei fehlendem Katalog einen Hinweis oder bei veraltetem Katalog den letzten gültigen Stand mit Abrufzeit. Aktualisieren Sie Plugins für einen neuen Versuch. Entfernen wird bei verbundenen Unterhaltungen oder ungeprüften Verbindungen abgelehnt. Trennen Sie sie in der Anwendung, aktivieren Sie bei Bedarf die Integration und aktualisieren Sie vor einem neuen Versuch.
+Plugins zeigt bei fehlendem Katalog einen Hinweis oder bei veraltetem Katalog den letzten gültigen Stand mit Abrufzeit. Aktualisieren Sie Plugins für einen neuen Versuch.
+
+Beim Entfernen zeigt eine Warnung Plugin und genauen Bereich. **Abbrechen** erhält den Fokus; **Aus Global/Projekt entfernen** wird nach 600 ms verfügbar und erfordert eine ausdrückliche Aktion. Das Entfernen kann Verfügbarkeit und Verbindungen verwendender Unterhaltungen unterbrechen; Global kann weitere Projekte betreffen. Abbruch, Ablauf oder Navigation vor dem Senden lassen alles unverändert. Nur die bestätigte Deklaration wird entfernt; Aktivierungsregeln, Cache, Anwendungsdateien und gespeicherte Verbindungshinweise bleiben erhalten. Änderungen der Konfiguration erfordern eine neue Auswahl und Bestätigung. Erfolg bestätigt die entfernte Deklaration; der Laufzeitstatus folgt dem Neuladen durch OpenCode. Bei verlorener Antwort zunächst Plugins aktualisieren und den tatsächlichen Zustand prüfen. Neuinstallation kann die Verfügbarkeit wiederherstellen; Neuladen oder erneutes Verbinden kann nötig sein. Unterbrochene Vorgänge werden möglicherweise nicht fortgesetzt.
 
 ## Anwendungsintegration installieren oder aktualisieren {#application-installation}
 

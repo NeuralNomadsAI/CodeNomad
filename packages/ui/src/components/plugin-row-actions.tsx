@@ -3,11 +3,12 @@ import { DropdownMenu } from "@kobalte/core/dropdown-menu"
 import { Download, Link, MoreHorizontal, PackageSearch, RefreshCw, Trash2 } from "lucide-solid"
 import type { PluginConfiguredSource, PluginControlLocation, PluginControlScope, PluginRuntimeSource } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
-import { getLogger } from "../lib/logger"
 import { showToastNotification } from "../lib/notifications"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { isPluginPackagePending, runPluginPackageAction } from "../stores/plugin-package-actions"
 import { pluginSourcesStore } from "../stores/plugin-sources"
+import { showConfirmDialog } from "../stores/alerts"
+import { serverEvents } from "../lib/server-events"
 
 type RemovableSource = PluginConfiguredSource & { scope: PluginControlScope }
 type Item =
@@ -17,7 +18,8 @@ type Item =
   | { kind: "attach" }
   | { kind: "installHost" }
 
-const log = getLogger("session")
+export const PLUGIN_SOURCE_CONFIRM_DELAY_MS = 600
+export const PLUGIN_SOURCE_CONFIRM_EXPIRY_MS = 120_000
 
 /** One compact menu per Plugins row: the native package check/update, removal of each removable
  * declaration from its scope's own document, and Refresh for sources the inventory never confirmed. */
@@ -29,16 +31,37 @@ export function PluginRowActions(props: {
   removable: readonly RemovableSource[]
   refresh?: () => void
   active?: boolean
+  consentEpoch?: number
+  sessionId?: string
   attach?: () => void | Promise<void>
   installHost?: { action: "install" | "update"; run: () => void | Promise<void> }
 }) {
   const { t } = useI18n()
   let attachAfterClose: (() => void | Promise<void>) | undefined
   let generation = 0
+  let confirmation: AbortController | undefined
+  let trigger: HTMLButtonElement | undefined
+  let surface: HTMLElement | null | undefined
+  let admittedOwner: string | undefined
+  let disposed = false
+  const presentationOwner = () => JSON.stringify([props.instanceId, props.location.directory, props.sessionId, props.active !== false])
+  const restoreFocus = () => {
+    if (trigger?.isConnected && !trigger.disabled) trigger.focus()
+    else surface?.querySelector<HTMLButtonElement>("[data-plugin-refresh]")?.focus()
+  }
+  const cancel = () => confirmation?.abort()
   const ownership = createMemo(() => JSON.stringify([props.instanceId, props.location.directory,
-    props.source?.type === "package" ? props.source.target : null, props.active !== false]))
-  createEffect(() => { ownership(); generation++ })
-  onCleanup(() => { generation++ })
+    props.sessionId, props.source?.type === "package" ? props.source.target : null, props.active !== false,
+    props.consentEpoch, props.removable]))
+  createEffect(() => { ownership(); generation++; cancel() })
+  onCleanup(serverEvents.onTransportStatus(status => { if (status === "disconnected") cancel() }))
+  onCleanup(serverEvents.on("instance.eventStatus", event => { if (event.type === "instance.eventStatus" && event.instanceId === props.instanceId) cancel() }))
+  onCleanup(() => {
+    disposed = true; generation++; cancel()
+    if (admittedOwner && (document.activeElement === trigger || document.activeElement === document.body)) queueMicrotask(() => {
+      if (surface?.isConnected && presentationOwner() === admittedOwner && props.active !== false) surface.querySelector<HTMLButtonElement>("[data-plugin-refresh]")?.focus()
+    })
+  })
   const pkg = () => props.source?.type === "package" ? props.source : undefined
   const packageBusy = () => Boolean(pkg()?.updating || (pkg() && isPluginPackagePending(props.instanceId, pkg()!.target)))
   const removing = (source: RemovableSource) => pluginSourcesStore.isRemoving(props.instanceId, props.location, source)
@@ -47,7 +70,7 @@ export function PluginRowActions(props: {
   // Stable descriptors: icons are created by the item renderer, once per rendered item.
   const items = createMemo<Item[]>(() => [
     ...(pkg() ? [{ kind: "package" as const, action: pkg()!.outdated ? "update" as const : "check" as const, target: pkg()!.target }] : []),
-    ...props.removable.map(source => ({ kind: "remove" as const, source })),
+    ...props.removable.filter(source => source.expectedRevision).map(source => ({ kind: "remove" as const, source })),
     ...(props.refresh ? [{ kind: "refresh" as const }] : []),
     ...(props.attach ? [{ kind: "attach" as const }] : []),
     ...(props.installHost ? [{ kind: "installHost" as const }] : []),
@@ -66,26 +89,39 @@ export function PluginRowActions(props: {
 
   const runPackage = (item: Extract<Item, { kind: "package" }>) => {
     if (packageBusy() || props.active === false) return
-    const captured = generation
+    const owner = presentationOwner()
     void runPluginPackageAction(props.instanceId, { ...props.location }, item.target, item.action).catch(() => {
-      if (captured === generation && props.active !== false) showToastNotification({ category: "opencode", variant: "error", message: t("settings.pluginPackages.error", { target: item.target }) })
+      if (!disposed && owner === presentationOwner()) showToastNotification({ category: "opencode", variant: "error", message: t("settings.pluginPackages.error", { target: item.target }) })
     })
   }
-  const runRemove = (source: RemovableSource) => {
-    if (removing(source) || props.active === false) return
+  const runRemove = async (source: RemovableSource) => {
+    if (removing(source) || confirmation || props.active === false || !source.expectedRevision) return
     const captured = generation
-    void pluginSourcesStore.remove(props.instanceId, { ...props.location }, source).catch(error => {
-      log.error("Failed to remove plugin source", { scope: source.scope, error })
-      if (captured !== generation || props.active === false) return
-      const code = error instanceof HttpResponseError ? error.code : undefined
+    const instanceId = props.instanceId, location = { ...props.location }, selected = { ...source }
+    const owner = ownership()
+    const feedbackOwner = presentationOwner()
+    surface = trigger?.closest<HTMLElement>(".plugin-controls")
+    confirmation = new AbortController()
+    const signal = confirmation.signal
+    const action = t("instanceServiceStatus.plugins.sources.remove", { scope: scopeLabel(source.scope) })
+    const accepted = await showConfirmDialog(t("instanceServiceStatus.plugins.sources.removeWarning"), {
+      title: `${action} — ⁨${props.name}⁩`,
+      detail: `${source.target}\n${source.scope === "global" ? t("instanceServiceStatus.plugins.sources.removeGlobalWarning") + "\n" : ""}${t("instanceServiceStatus.plugins.sources.removeRecovery")}`,
+      confirmLabel: action, variant: "warning", confirmDelayMs: PLUGIN_SOURCE_CONFIRM_DELAY_MS,
+      expiresAfterMs: PLUGIN_SOURCE_CONFIRM_EXPIRY_MS, returnFocus: () => { if (presentationOwner() === feedbackOwner) restoreFocus() },
+    }, signal)
+    confirmation = undefined
+    if (!accepted || signal.aborted || captured !== generation || ownership() !== owner) return
+    admittedOwner = feedbackOwner
+    void pluginSourcesStore.remove(instanceId, location, selected).catch(error => {
+      if (!surface?.isConnected || presentationOwner() !== feedbackOwner) return
       const stale = error instanceof HttpResponseError && error.status === 409
-      showToastNotification({ category: "opencode", variant: "error", message: t(code === "attached-sessions" ? "integrations.error.attachedSessions"
-        : code === "attachment-unverified" ? "integrations.error.unverified" : stale
+      showToastNotification({ category: "opencode", variant: "error", message: t(stale
         ? "instanceServiceStatus.plugins.sources.errors.removeStale"
         : "instanceServiceStatus.plugins.sources.errors.remove", { name: source.target, scope: scopeLabel(source.scope) }) })
     })
   }
-  const run = (item: Item) => item.kind === "package" ? runPackage(item) : item.kind === "remove" ? runRemove(item.source)
+  const run = (item: Item) => item.kind === "package" ? runPackage(item) : item.kind === "remove" ? (attachAfterClose = () => runRemove(item.source))
     : item.kind === "attach" ? (attachAfterClose = props.attach)
       : item.kind === "installHost" ? (attachAfterClose = props.installHost?.run) : props.refresh?.()
 
@@ -100,6 +136,7 @@ export function PluginRowActions(props: {
   return <Show when={items().length > 0}>
     <DropdownMenu placement="bottom-end" gutter={4}>
       <DropdownMenu.Trigger type="button" class="icon-button-compact" disabled={busy() || props.active === false}
+        ref={trigger}
         title={items().length === 1 ? [label(items()[0]!), hint(items()[0]!)].filter(Boolean).join("\n") : triggerLabel()}
         aria-label={triggerLabel()} aria-busy={busy()}>
         <Show when={items()[0]?.kind === "package"} fallback={<MoreHorizontal class="h-3.5 w-3.5" classList={{ "animate-pulse": busy() }} aria-hidden="true" />}>

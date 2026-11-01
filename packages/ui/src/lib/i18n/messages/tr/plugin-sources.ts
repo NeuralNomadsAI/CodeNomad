@@ -1,4 +1,7 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.sources.removeWarning": "Bu eklentiyi kaldırmak, onu kullanan konuşmalarda kullanılabilirliğini ve bağlantılarını kesintiye uğratabilir.",
+  "instanceServiceStatus.plugins.sources.removeGlobalWarning": "Diğer projelerdeki konuşmalar da etkilenebilir.",
+  "instanceServiceStatus.plugins.sources.removeRecovery": "Yeniden kurulum kullanılabilirliği geri getirebilir; yeniden yükleme veya bağlama gerekebilir. Kesilen işlemler devam etmeyebilir.",
   "instanceServiceStatus.plugins.sources.add": "Eklenti ekle",
   "instanceServiceStatus.plugins.sources.addTitle": "Eklenti ekle",
   "instanceServiceStatus.plugins.sources.spec": "Paket",
@@ -29,6 +32,6 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "{scope} OpenCode yapılandırması bozuk. Değiştirilmedi.",
   "instanceServiceStatus.plugins.sources.errors.unavailable": "{scope} yapılandırması bu konum için kullanılamıyor.",
   "instanceServiceStatus.plugins.sources.errors.timeout": "OpenCode zamanında yanıt vermedi. Hiçbir şey eklenmedi; yeniden deneyin.",
-  "instanceServiceStatus.plugins.sources.errors.remove": "{name}, {scope} kapsamından kaldırılamadı.",
+  "instanceServiceStatus.plugins.sources.errors.remove": "{name} eklentisinin {scope} kapsamından kaldırıldığı doğrulanamadı. Yeniden denemeden önce Eklentiler’i yenileyip yapılandırmayı kontrol edin.",
   "instanceServiceStatus.plugins.sources.errors.removeStale": "{name}, gösterildikten sonra {scope} yapılandırmasında değişti. Yenileyip yeniden deneyin.",
 } as const
