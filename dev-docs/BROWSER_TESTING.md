@@ -84,3 +84,8 @@ synthetic provider.
 - Tests that need stateful middleware (SSE feeds driven by the test, custom
   Vite transform hooks, configs that diverge from the canonical daemon
   config) keep their own server and live in the heavy tier.
+- Before pointer/keyboard selection in a Monaco diff, wait for its computed
+  diff decoration (`.line-insert` in the Git fixture), then locate the line.
+  Plain model text can paint before the worker result inserts deleted-code view
+  zones. `git-history.test.ts` holds a real worker reply and defers Monaco's
+  repaint to exercise that geometry change with native pointer checks intact.

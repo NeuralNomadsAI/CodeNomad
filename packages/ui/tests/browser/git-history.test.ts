@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { chromium, type Browser } from "playwright"
+import { chromium, type Browser, type Page } from "playwright"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
@@ -38,6 +38,14 @@ const gitFocusBoundaryInitScript = String.raw`(() => {
 })()`
 
 let cache: Awaited<ReturnType<typeof createFixtureCache>>
+
+async function clickModifiedDiffLine(page: Page) {
+  // Plain model text paints before the asynchronous diff adds its deleted-code
+  // view zones. Selecting those old coordinates can open Monaco's copy menu.
+  await page.locator(".git-diff-view .line-insert").first().waitFor()
+  await page.locator(".git-diff-view .editor.modified .view-line").filter({ hasText: 'title: "Git"' }).click()
+}
+
 test("large Changes inventories keep the reader controls responsive", async () => {
   const page = await browser.newPage({ viewport: { width: 2000, height: 1120 } })
   try {
@@ -784,6 +792,67 @@ test("real SessionView keeps its composer while file previews are fenced by sess
   } finally { await page.close() }
 })
 
+test("composer selection waits for the computed diff when its initial paint is deferred", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.addInitScript({ content: String.raw`(() => {
+    const NativeWorker = window.Worker
+    window.Worker = class extends NativeWorker {
+      constructor(...args) {
+        super(...args)
+        const requests = new Set(), post = this.postMessage.bind(this)
+        let hold = true
+        this.postMessage = (message, ...rest) => {
+          if (message?.method === "$computeDiff") requests.add(message.req)
+          return post(message, ...rest)
+        }
+        this.addEventListener("message", event => {
+          if (!hold || !requests.delete(event.data?.seq)) return
+          hold = false
+          event.stopImmediatePropagation()
+          window.releaseDiff = () => this.dispatchEvent(new MessageEvent("message", { data: event.data }))
+        }, true)
+      }
+    }
+    window.deferDiffPaint = () => {
+      const raf = window.requestAnimationFrame.bind(window), cancel = window.cancelAnimationFrame.bind(window), frames = new Map()
+      // Fault injection: keep Monaco's old DOM for 30 frames after its real
+      // worker result changes hit-test geometry, without pausing native input.
+      let id = 0, remaining = 30
+      window.requestAnimationFrame = callback => { frames.set(--id, callback); return id }
+      window.cancelAnimationFrame = handle => { if (!frames.delete(handle)) cancel(handle) }
+      const release = () => {
+        if (--remaining) { raf(release); return }
+        window.requestAnimationFrame = raf
+        window.cancelAnimationFrame = cancel
+        for (const callback of frames.values()) raf(callback)
+      }
+      raf(release)
+      window.releaseDiff()
+    }
+  })()` })
+  try {
+    await page.goto(`${url}?session=1`)
+    await page.getByRole("button", { name: /Changements/ }).click()
+    await page.getByRole("button", { name: "Aperçu du fichier · src/components/git-panel.tsx", exact: true }).click()
+    const line = page.locator(".git-diff-view .editor.modified .view-line").filter({ hasText: 'title: "Git"' })
+    await line.waitFor()
+    await page.waitForFunction(() => Boolean((window as any).releaseDiff))
+    assert.equal(await page.locator(".git-diff-view .line-insert").count(), 0, "visible model text precedes diff computation")
+    // Deliver the real worker reply while withholding Monaco's repaint. Native
+    // pointer hit testing and Playwright's captured animation frames stay live.
+    // Without the computed-diff wait, the old line opens Copy changed lines.
+    await page.evaluate(() => (window as any).deferDiffPaint())
+    await clickModifiedDiffLine(page)
+    await page.keyboard.press("Home")
+    await page.keyboard.press("Shift+End")
+    assert.equal(await page.getByRole("menuitem", { name: "Copy changed lines", exact: true }).count(), 0, "selection never opens the deleted-code menu")
+    assert.equal(await page.evaluate(() => (window as any).monaco.editor.getDiffEditors()[0].getModifiedEditor().getSelection().isEmpty()), false)
+    await page.getByRole("button", { name: "Ajouter au prompt", exact: true }).click()
+    assert.match(await page.locator(".session-view textarea.prompt-input").inputValue(), /File: src\/components\/git-panel.tsx : 3-3/)
+  } finally { await page.close() }
+})
+
 test("central diff inserts local lines and revision-qualified history into the real session composer", async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
   const errors: string[] = []
@@ -796,8 +865,7 @@ test("central diff inserts local lines and revision-qualified history into the r
     await composer.fill("Conserver ce brouillon")
     await page.getByRole("button", { name: /Changements/ }).click()
     await page.getByRole("button", { name: "Aperçu du fichier · src/components/git-panel.tsx", exact: true }).click()
-    const modifiedLine = page.locator(".git-diff-view .editor.modified .view-line").filter({ hasText: 'title: "Git"' })
-    await modifiedLine.click()
+    await clickModifiedDiffLine(page)
     await page.keyboard.press("Home")
     await page.keyboard.press("Shift+End")
     // Git status reconciliation reopens a fresh, identical target to reload the
@@ -831,7 +899,7 @@ test("central diff inserts local lines and revision-qualified history into the r
 
     // Native editor keyboard selection must keep the full range, not just the hovered line.
     await page.getByRole("button", { name: "Aperçu du fichier · src/styles/panels/git-history.css", exact: true }).click()
-    await modifiedLine.click()
+    await clickModifiedDiffLine(page)
     await page.keyboard.press("Control+Home")
     await page.keyboard.press("ArrowDown")
     await page.keyboard.press("ArrowDown")
@@ -843,7 +911,7 @@ test("central diff inserts local lines and revision-qualified history into the r
     await page.getByRole("button", { name: "Commits", exact: true }).first().click()
     await page.getByRole("button", { name: /Make Git history the starting point/ }).click()
     await page.getByRole("button", { name: "Aperçu du fichier · src/components/git-panel.tsx", exact: true }).click()
-    await modifiedLine.click()
+    await clickModifiedDiffLine(page)
     await page.keyboard.press("Home")
     await page.keyboard.press("Shift+End")
     await insert.click()
@@ -861,7 +929,7 @@ test("central diff inserts local lines and revision-qualified history into the r
     await page.getByRole("combobox", { name: "Worktree à consulter" }).selectOption("review")
     await page.getByRole("button", { name: /Changements/ }).click()
     await page.getByRole("button", { name: "Aperçu du fichier · src/components/git-panel.tsx", exact: true }).click()
-    await modifiedLine.click()
+    await clickModifiedDiffLine(page)
     await page.keyboard.press("Home")
     await page.keyboard.press("Shift+End")
     await insert.click()
