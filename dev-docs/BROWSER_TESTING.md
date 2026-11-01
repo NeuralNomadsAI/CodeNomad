@@ -92,3 +92,7 @@ synthetic provider.
   Its main-world DOM readiness probe releases the reply and repaint; a direct
   native click instead receives the reply at pointer movement and releases
   repaint on pointer-up, keeping the stale geometry through mouse-down.
+- Fixtures importing the production event transport serve `/api/events` with
+  `text/event-stream`, including when native frames enter through the real
+  dispatcher directly. Keep network-failure collectors strict for failed streams
+  and unrelated cancelled requests.

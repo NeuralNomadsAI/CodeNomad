@@ -41,6 +41,7 @@ async function setup(missing = false) {
   await page.route("**/api/**", async route => {
     const pathname = new URL(route.request().url()).pathname; requests.push(`${route.request().method()} ${pathname}`)
     const location = { directory: "/fixture" }
+    if (pathname === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
     if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission("A"), mission("B")]), generatedAt: 1, discardedEvents: 0 } })
     if (pathname.endsWith("/instance/api/session/ses_A")) {
       if (defer) { reached.release(); await hold.promise }
@@ -61,16 +62,43 @@ async function setup(missing = false) {
   })
   await page.route("**/private-preview-frame", route => route.fulfill({ contentType: "text/html", body: "<p>Private browser preview</p>" }))
   try {
-    await page.goto(url)
+    const [eventStreamResponse] = await Promise.all([
+      page.waitForResponse(response => response.request().resourceType() === "eventsource" && new URL(response.url()).pathname === "/api/events"),
+      page.goto(url),
+    ])
     // Loaded Missions enable the current-mission field (nothing is selected by default).
     await missionPickerField(page).and(page.locator(":enabled")).waitFor()
     await page.evaluate(() => window.missionCrossNavigation.coldCatalogue())
+    return { page, eventStreamResponse, errors, networkErrors, requests, hold, reached, complete, defer: () => { defer = true } }
   } catch (error) {
     if (process.env.CODENOMAD_CROSS_NAVIGATION_EVIDENCE) await writeFile(path.join(process.env.CODENOMAD_CROSS_NAVIGATION_EVIDENCE, `setup-failure-${Date.now()}.json`), JSON.stringify({ error: String(error), errors, networkErrors, requests }, null, 2))
     hold.release(); await page.close(); throw error
   }
-  return { page, errors, networkErrors, requests, hold, reached, complete, defer: () => { defer = true } }
 }
+test("shell fixture serves an event stream and still detects request cancellations and transport failures", async () => {
+  const { page, eventStreamResponse, errors, networkErrors, hold } = await setup()
+  try {
+    assert.equal(eventStreamResponse.status(), 200)
+    assert.equal(eventStreamResponse.headers()["content-type"], "text/event-stream")
+    assert.deepEqual(networkErrors, [])
+    const probe = new URL("/api/navigation-network-probe", url).href
+    await page.route(probe, route => route.abort("aborted"))
+    const failed = page.waitForEvent("requestfailed", request => request.url() === probe)
+    await page.evaluate(probe => fetch(probe).catch(() => undefined), probe)
+    await failed
+    assert.deepEqual(networkErrors, [`${probe} net::ERR_ABORTED`], "an unrelated aborted read remains a failure")
+    const streamProbe = new URL("/api/events?probe=network-failure", url).href
+    await page.route(streamProbe, route => route.abort("failed"))
+    const streamFailed = page.waitForEvent("requestfailed", request => request.url() === streamProbe)
+    await page.evaluate(streamProbe => new Promise<void>(resolve => {
+      const source = new EventSource(streamProbe)
+      source.onerror = () => { source.close(); resolve() }
+    }), streamProbe)
+    await streamFailed
+    assert.deepEqual(networkErrors, [`${probe} net::ERR_ABORTED`, `${streamProbe} net::ERR_FAILED`], "a real event-stream failure remains a failure")
+    assert.deepEqual(errors, [])
+  } finally { hold.release(); await page.close() }
+})
 async function navigate(page: Page, origin: "actor" | "reader", id = "A") {
   if (origin === "actor") return clickMissionAction(page, "Open conversation", `Objective ${id}`)
   // The overview reader belongs to the selected Mission's toolbar ("Summary" eye).
