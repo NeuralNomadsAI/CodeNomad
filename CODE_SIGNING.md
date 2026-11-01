@@ -6,7 +6,7 @@ Status: proposed policy for the SignPath Foundation application.
 
 | Role | Maintainer | Responsibilities |
 | --- | --- | --- |
-| Project owner | [Shantur Rathore (@shantur)](https://github.com/shantur) | Owns project governance, authorizes the signing integration and approves changes to signing responsibilities. |
+| Project owners | [Shantur Rathore (@shantur)](https://github.com/shantur) and [Pascal André (@pascalandr)](https://github.com/pascalandr) | Own project governance, authorize the signing integration and approve changes to signing responsibilities. |
 | Signing operator and approver | [Pascal André (@pascalandr)](https://github.com/pascalandr) | Coordinates the application, maintains the signing workflow, submits and approves release signing requests, and verifies signed artifacts before publication. |
 | Authors and reviewers | [Shantur Rathore](https://github.com/shantur) and [Pascal André](https://github.com/pascalandr) | Maintain the source and build workflows, and review contributions before they enter the release build. |
 
@@ -38,7 +38,7 @@ The attribution for releases signed through the program will be:
 5. Tauri updater signatures and checksums are generated from the final signed
    files. Release records identify the source commit and build workflow.
 
-Signing access and policy changes are reviewed by the project owner. The
+Signing access and policy changes are reviewed by the project owners. The
 operator investigates failed verifications and reported signing-policy issues.
 
 ## Privacy
