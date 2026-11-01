@@ -118,10 +118,12 @@ export default function MessagePart(props: MessagePartProps) {
     }
   }
 
-  function PastedTextDisclosure(disclosureProps: { text: string; index: number }) {
+  function PastedTextDisclosure(disclosureProps: { text: string; content?: string; index: number }) {
     const [hasExpanded, setHasExpanded] = createSignal(false)
     const [copied, setCopied] = createSignal(false)
-    const lineCount = () => getPastedTextLineCount(disclosureProps.text)
+    // A fenced paste renders its whole code block but counts and copies the code.
+    const content = () => disclosureProps.content ?? disclosureProps.text
+    const lineCount = () => getPastedTextLineCount(content())
     const lineCountLabel = () =>
       lineCount() === 1
         ? t("messagePart.pastedText.lines.one", { count: String(lineCount()) })
@@ -131,7 +133,7 @@ export default function MessagePart(props: MessagePartProps) {
     const handleCopy = async (event: MouseEvent) => {
       event.preventDefault()
       event.stopPropagation()
-      const success = await copyToClipboard(disclosureProps.text)
+      const success = await copyToClipboard(content())
       setCopied(success)
       setTimeout(() => setCopied(false), 2000)
     }
@@ -224,7 +226,7 @@ export default function MessagePart(props: MessagePartProps) {
                   <For each={segments().filter((segment) => segment.text.length > 0)}>
                     {(segment, index) =>
                       segment.kind === "pasted" ? (
-                        <PastedTextDisclosure text={segment.text} index={index()} />
+                        <PastedTextDisclosure text={segment.text} content={segment.content} index={index()} />
                       ) : (
                         <Markdown
                           part={createSegmentTextPart(segment.text, index())}

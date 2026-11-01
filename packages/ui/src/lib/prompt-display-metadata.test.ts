@@ -101,6 +101,72 @@ describe("splitPromptDisplaySections", () => {
     ])
   })
 
+  const paste = (value: string, counter = 1) => createTextAttachment(value, `pasted #${counter} (lines)`, `paste-${counter}.txt`)
+  const sections = (prompt: string, attachments: ReturnType<typeof paste>[]) => {
+    const prepared = preparePromptDisplayText(prompt, attachments)
+    return { sent: prepared.promptToSend, sections: splitPromptDisplaySections(prepared.promptToSend, prepared.displayMetadata) }
+  }
+
+  it("renders a paste typed between fences as one fenced pasted section and sends it once inside the fences", () => {
+    const result = sections("Scalar fails:\n```\n[pasted #1]\n```\nWhy?", [paste("a\nb\nc\nd")])
+
+    assert.equal(result.sent, "Scalar fails:\n```\na\nb\nc\nd\n```\nWhy?")
+    assert.deepEqual(result.sections, [
+      { kind: "inline", text: "Scalar fails:\n" },
+      { kind: "pasted", text: "```\na\nb\nc\nd\n```", content: "a\nb\nc\nd" },
+      { kind: "inline", text: "\nWhy?" },
+    ])
+  })
+
+  it("keeps language tags, tilde fences and in-fence text in the fenced section", () => {
+    const json = sections("```json\n[pasted #1]\n```", [paste('{\n  "a": 1\n}')])
+    assert.deepEqual(json.sections, [
+      { kind: "pasted", text: '```json\n{\n  "a": 1\n}\n```', content: '{\n  "a": 1\n}' },
+    ])
+
+    const tilde = sections("~~~\n// header\n[pasted #1]\n// footer\n~~~", [paste("x\ny\nz\nw")])
+    assert.deepEqual(tilde.sections, [
+      { kind: "pasted", text: "~~~\n// header\nx\ny\nz\nw\n// footer\n~~~", content: "// header\nx\ny\nz\nw\n// footer" },
+    ])
+  })
+
+  it("groups several pastes in one fence and keeps a paste outside fences on its own", () => {
+    const result = sections("[pasted #1]\n```\n[pasted #2]\n---\n[pasted #3]\n```", [
+      paste("o\nu\nt\ns", 1), paste("1\n2\n3\n4", 2), paste("5\n6\n7\n8", 3),
+    ])
+
+    assert.equal(result.sent, "o\nu\nt\ns\n```\n1\n2\n3\n4\n---\n5\n6\n7\n8\n```")
+    assert.deepEqual(result.sections, [
+      { kind: "pasted", text: "o\nu\nt\ns" },
+      { kind: "inline", text: "\n" },
+      { kind: "pasted", text: "```\n1\n2\n3\n4\n---\n5\n6\n7\n8\n```", content: "1\n2\n3\n4\n---\n5\n6\n7\n8" },
+    ])
+  })
+
+  it("runs an unclosed fence to the end and ignores fences inside pasted text", () => {
+    const unclosed = sections("Log:\n```\n[pasted #1]", [paste("l1\nl2\nl3\nl4")])
+    assert.deepEqual(unclosed.sections, [
+      { kind: "inline", text: "Log:\n" },
+      { kind: "pasted", text: "```\nl1\nl2\nl3\nl4", content: "l1\nl2\nl3\nl4" },
+    ])
+
+    const fencedPaste = "```\ncode\n```\nprose"
+    const outside = sections("Intro\n[pasted #1]\n```\nafter", [paste(fencedPaste)])
+    assert.deepEqual(outside.sections, [
+      { kind: "inline", text: "Intro\n" },
+      { kind: "pasted", text: fencedPaste },
+      { kind: "inline", text: "\n```\nafter" },
+    ])
+  })
+
+  it("leaves fences without pasted text inline", () => {
+    const result = sections("```\nown code\n```\n[pasted #1]", [paste("p\nq\nr\ns")])
+    assert.deepEqual(result.sections, [
+      { kind: "inline", text: "```\nown code\n```\n" },
+      { kind: "pasted", text: "p\nq\nr\ns" },
+    ])
+  })
+
   it("returns null when metadata no longer matches the text", () => {
     assert.equal(
       splitPromptDisplaySections("short", { segments: [{ kind: "inline", length: 10 }] }),

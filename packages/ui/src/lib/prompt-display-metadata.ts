@@ -6,6 +6,12 @@ export type PromptDisplaySegmentKind = "inline" | "pasted"
 export interface PromptDisplaySegment {
   kind: PromptDisplaySegmentKind
   text: string
+  /**
+   * Pasted text inside a fenced code block: `text` is the whole fenced block
+   * (rendered as one code block) and `content` the lines between its fences,
+   * which the pasted-text summary counts and copies.
+   */
+  content?: string
 }
 
 export interface PromptDisplaySegmentMetadata {
@@ -201,5 +207,124 @@ export function splitPromptDisplaySections(
     return null
   }
 
-  return segments
+  return groupFencedPastedSegments(segments)
+}
+
+interface FencedPasteRegion {
+  start: number
+  end: number
+  contentStart: number
+  contentEnd: number
+}
+
+// CommonMark fence lines: up to three spaces of indentation, then at least three
+// backticks or tildes; a backtick opener's info string holds no backtick.
+const FENCE_LINE_PATTERN = /^ {0,3}(`{3,}|~{3,})(.*)$/
+
+function readFenceLine(line: string): { marker: string; length: number; info: string } | null {
+  const match = FENCE_LINE_PATTERN.exec(line.endsWith("\r") ? line.slice(0, -1) : line)
+  if (!match) return null
+  return { marker: match[1][0], length: match[1].length, info: match[2] }
+}
+
+/**
+ * Finds the fenced code blocks of the joined message text that contain pasted
+ * text. Lines touching pasted text are code content, never fence lines, so a
+ * pasted segment outside a fence keeps its own rendering and the fences of
+ * pasted text inside one never split the block.
+ */
+function findFencedPasteRegions(text: string, pastedRanges: Array<{ start: number; end: number }>): FencedPasteRegion[] {
+  const regions: FencedPasteRegion[] = []
+  let open: { marker: string; length: number; start: number; contentStart: number; hasPaste: boolean } | null = null
+  let rangeIndex = 0
+  let lineStart = 0
+
+  while (lineStart <= text.length) {
+    let lineEnd = text.indexOf("\n", lineStart)
+    if (lineEnd < 0) lineEnd = text.length
+    let touchesPaste = false
+    while (rangeIndex < pastedRanges.length && pastedRanges[rangeIndex].start < lineEnd) {
+      touchesPaste = true
+      const rangeEnd = pastedRanges[rangeIndex].end
+      rangeIndex += 1
+      if (rangeEnd > lineEnd) {
+        lineEnd = text.indexOf("\n", rangeEnd)
+        if (lineEnd < 0) lineEnd = text.length
+      }
+    }
+
+    if (touchesPaste) {
+      if (open) open.hasPaste = true
+    } else {
+      const fence = readFenceLine(text.slice(lineStart, lineEnd))
+      if (!open) {
+        if (fence && !(fence.marker === "`" && fence.info.includes("`"))) {
+          open = { marker: fence.marker, length: fence.length, start: lineStart, contentStart: Math.min(lineEnd + 1, text.length), hasPaste: false }
+        }
+      } else if (fence && fence.marker === open.marker && fence.length >= open.length && fence.info.trim() === "") {
+        if (open.hasPaste) {
+          regions.push({ start: open.start, end: lineEnd, contentStart: open.contentStart, contentEnd: Math.max(open.contentStart, lineStart - 1) })
+        }
+        open = null
+      }
+    }
+
+    if (lineEnd >= text.length) break
+    lineStart = lineEnd + 1
+  }
+
+  // An unclosed fence runs to the end of the message.
+  if (open?.hasPaste) {
+    regions.push({ start: open.start, end: text.length, contentStart: open.contentStart, contentEnd: text.length })
+  }
+  return regions
+}
+
+/**
+ * Renders every fenced code block holding pasted text as one pasted section, so
+ * a paste typed between fences shows as a single code block instead of empty
+ * blocks around a separate pasted section. The message text is unchanged.
+ */
+function groupFencedPastedSegments(segments: PromptDisplaySegment[]): PromptDisplaySegment[] {
+  const pastedRanges: Array<{ start: number; end: number }> = []
+  let offset = 0
+  for (const segment of segments) {
+    if (segment.kind === "pasted") pastedRanges.push({ start: offset, end: offset + segment.text.length })
+    offset += segment.text.length
+  }
+  if (pastedRanges.length === 0) return segments
+
+  const text = segments.map((segment) => segment.text).join("")
+  const regions = findFencedPasteRegions(text, pastedRanges)
+  if (regions.length === 0) return segments
+
+  const grouped: PromptDisplaySegment[] = []
+  let regionIndex = 0
+  let segmentStart = 0
+  for (const segment of segments) {
+    const segmentEnd = segmentStart + segment.text.length
+    let cursor = segmentStart
+    while (cursor < segmentEnd) {
+      const region = regions[regionIndex]
+      if (region && cursor >= region.start) {
+        if (cursor === region.start) {
+          grouped.push({
+            kind: "pasted",
+            text: text.slice(region.start, region.end),
+            content: text.slice(region.contentStart, region.contentEnd),
+          })
+        }
+        cursor = Math.min(segmentEnd, region.end)
+        if (cursor === region.end) regionIndex += 1
+        continue
+      }
+      const stop = region ? Math.min(segmentEnd, region.start) : segmentEnd
+      const piece = text.slice(cursor, stop)
+      if (segment.kind === "inline") pushInlineSegment(grouped, piece)
+      else pushPastedSegment(grouped, piece)
+      cursor = stop
+    }
+    segmentStart = segmentEnd
+  }
+  return grouped
 }
