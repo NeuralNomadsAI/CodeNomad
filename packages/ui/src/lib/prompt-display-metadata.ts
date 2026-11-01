@@ -7,11 +7,17 @@ export interface PromptDisplaySegment {
   kind: PromptDisplaySegmentKind
   text: string
   /**
-   * Pasted text inside a fenced code block: `content` is the code between the
-   * block's fences, which the pasted-text summary counts and copies, and `text`
-   * that code re-fenced so it renders as one literal code block.
+   * Pasted text inside a fenced code block: `text` is the code between the
+   * block's fences, which renders as one literal code block (`formatFencedCode`
+   * fences each displayed window of it), and the block's opening fence.
    */
-  content?: string
+  codeFence?: PromptDisplayCodeFence
+}
+
+export interface PromptDisplayCodeFence {
+  /** The opening fence run, e.g. "```" or "~~~~". */
+  marker: string
+  info: string
 }
 
 export interface PromptDisplaySegmentMetadata {
@@ -233,11 +239,12 @@ function readFenceLine(line: string): { marker: string; length: number; info: st
 }
 
 /**
- * Re-fences grouped code for display with a fence longer than any run of its
- * marker in the code, so pasted fence lines stay literal code. The sent text is
- * unchanged.
+ * Fences a displayed window of grouped code with a fence longer than any run of
+ * its marker in that window, so pasted fence lines stay literal code. Callers
+ * bound the code first and fence only the window, so a generated fence is never
+ * cut by the display bound. The sent text is unchanged.
  */
-function renderFencedCode(marker: string, info: string, code: string): string {
+export function formatFencedCode({ marker, info }: PromptDisplayCodeFence, code: string): string {
   const char = marker[0]
   let longestRun = 0
   let run = 0
@@ -335,8 +342,11 @@ function groupFencedPastedSegments(segments: PromptDisplaySegment[]): PromptDisp
       const region = regions[regionIndex]
       if (region && cursor >= region.start) {
         if (cursor === region.start) {
-          const content = text.slice(region.contentStart, region.contentEnd)
-          grouped.push({ kind: "pasted", text: renderFencedCode(region.marker, region.info, content), content })
+          grouped.push({
+            kind: "pasted",
+            text: text.slice(region.contentStart, region.contentEnd),
+            codeFence: { marker: region.marker, info: region.info },
+          })
         }
         cursor = Math.min(segmentEnd, region.end)
         if (cursor === region.end) regionIndex += 1

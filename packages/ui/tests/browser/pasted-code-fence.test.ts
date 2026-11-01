@@ -65,6 +65,51 @@ test("a long paste typed between fences sends once inside them and renders as on
   } finally { await page.close() }
 })
 
+for (const run of ["`".repeat(20_000), "~".repeat(20_000), "`".repeat(60_000)]) {
+  test(`a ${run.length}-character ${run[0]} run in a fenced paste shows only code within the display bound`, async () => {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 900 }, locale: "en-US",
+      permissions: ["clipboard-read", "clipboard-write"] })
+    const errors: string[] = []
+    page.on("pageerror", error => errors.push(error.message))
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    try {
+      await page.goto(url)
+      await page.waitForFunction(() => Boolean((window as any).fixture))
+      const code = `first\n${run}\nlast`
+      const fence = run[0].repeat(3)
+      const input = page.locator(".prompt-input-container textarea").first()
+      await input.fill(`Run:\n${fence}\n`)
+      await input.press("End")
+      await page.evaluate(text => navigator.clipboard.writeText(text), code)
+      await input.press("Control+v")
+      await input.press("Shift+Enter")
+      await input.pressSequentially(fence)
+      await page.locator(".send-button").click()
+      await page.waitForFunction(() => (window as any).fixture.prompts.length === 1)
+      assert.equal((await page.evaluate(() => (window as any).fixture.prompts))[0].text, `Run:\n${fence}\n${code}\n${fence}`)
+
+      const message = page.locator('[data-view="message-item"]').filter({ hasText: "Run:" })
+      await message.waitFor()
+      const disclosure = message.locator("details")
+      await disclosure.locator("summary").click()
+      const codeElement = disclosure.locator("pre code")
+      await codeElement.first().waitFor()
+      assert.equal(await codeElement.count(), 1, "one code block")
+      const shown = (await codeElement.innerText()).replace(/\n$/, "")
+      if (code.length <= 50_000) {
+        assert.equal(shown, code, "the whole code, without generated fence characters")
+      } else {
+        assert.ok(shown.startsWith("first\n") && code.startsWith(shown) && shown.length >= 45_000,
+          `the bounded window shows a prefix of the code only (${shown.length} characters)`)
+        await disclosure.getByRole("button", { name: "Show all" }).click()
+        await page.waitForFunction(length => (document.querySelector("details pre code")?.textContent?.replace(/\n$/, "").length ?? 0) === length, code.length)
+        assert.equal((await codeElement.innerText()).replace(/\n$/, ""), code)
+      }
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  })
+}
+
 for (const { name, pasted, after } of [
   { name: "a paste ending in a line break keeps the closing fence typed right after it",
     pasted: Array.from({ length: 32 }, (_, index) => `row ${index + 1}`).join("\n") + "\n", after: "```\nAfter the block." },
