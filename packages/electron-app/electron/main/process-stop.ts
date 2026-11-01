@@ -101,10 +101,15 @@ async function captureProcessRows(
         "Get-CimInstance Win32_Process | ForEach-Object { '{0}|{1}|win32:{2}' -f $_.ProcessId, $_.ParentProcessId, ([datetime]$_.CreationDate).ToUniversalTime().Ticks }"],
         { encoding: "utf8", timeout: timeoutMs, windowsHide: true })
     : platform === "linux"
-      ? await runList("sh", ["-c", `boot=$(cat /proc/sys/kernel/random/boot_id) || exit 1
+      // Keep the bounded /proc scan in one shell: per-PID cat/cut/sed forks
+      // can exhaust the capture deadline on a busy host.
+      ? await runList("sh", ["-c", `IFS= read -r boot < /proc/sys/kernel/random/boot_id || exit 1
 for stat in /proc/[0-9]*/stat; do
-  line=$(cat "$stat" 2>/dev/null) || continue
-  pid=$(printf '%s\n' "$line" | cut -d' ' -f1); rest=$(printf '%s\n' "$line" | sed 's/^.*) //'); set -- $rest
+  set -f
+  line=
+  # A command name can contain newlines; read through to the numeric fields.
+  while IFS= read -r part; do line=$line$part; done < "$stat" 2>/dev/null || continue
+  pid=\${line%% *}; rest=\${line##*) }; set -- $rest
   ppid=$2; shift 19; printf '%s|%s|linux:%s:%s\n' "$pid" "$ppid" "$boot" "$1"
 done`], { encoding: "utf8", timeout: timeoutMs })
       : await runList("ps", ["-A", "-o", "pid=,ppid=,lstart="], { encoding: "utf8", timeout: timeoutMs,
