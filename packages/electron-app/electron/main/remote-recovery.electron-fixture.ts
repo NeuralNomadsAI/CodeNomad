@@ -103,14 +103,27 @@ app.whenReady().then(async () => {
     newToken: await page.executeJavaScript(attempt(tokenOf(afterReload), ["openLocalWindow"])),
   }
 
-  // 5. A renderer crash revokes the token; reloading the same URL does not restore it.
+  // 5. A renderer crash revokes the token and reloads nothing; the user's reload then shows a fresh
+  //    document whose actions work, while the crashed token stays refused.
+  let commits = 0
+  page.on("did-navigate", () => { commits++ })
   const gone = new Promise((resolve) => page.once("render-process-gone", () => resolve(undefined)))
   page.forcefullyCrashRenderer()
   await gone
-  const reloaded = new Promise((resolve) => page.once("did-finish-load", () => resolve(undefined)))
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  const commitsBeforeReload = commits
   page.reload()
-  await reloaded
-  result.afterCrash = await page.executeJavaScript(refused(tokenOf(afterReload)))
+  const afterCrash = await nextDocument(afterReload)
+  result.afterCrash = {
+    automaticReloads: commitsBeforeReload,
+    newToken: tokenOf(afterCrash) !== tokenOf(afterReload),
+    oldToken: await page.executeJavaScript(refused(tokenOf(afterReload))),
+    openLocalWindow: await page.executeJavaScript(attempt(tokenOf(afterCrash), ["openLocalWindow"])),
+  }
+  const retriesBefore = counts.retried
+  await page.executeJavaScript(`window.electronAPI.retryRemoteWindow(${JSON.stringify(tokenOf(afterCrash))}); null`)
+  await nextDocument(afterCrash)
+  result.afterCrashRetries = counts.retried - retriesBefore
   result.counts = counts
 
   writeFileSync(resultPath, JSON.stringify(result))

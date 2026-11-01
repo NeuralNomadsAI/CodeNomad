@@ -26,12 +26,23 @@ export interface RecoveryLoad {
 
 interface RecoveryPage {
   token: string
-  load: string
+  /** The load counter and token, as `isOwnLoad` reads them back from a committed URL. */
+  key: string
   retry: () => Promise<void>
-  reload: () => void
   /** The origin the host's recovery document committed with; unset until that load commits. */
   origin?: string
 }
+
+interface RecoveryWindow {
+  /** The one recovery document whose actions are authorised, once its load commits. */
+  active?: RecoveryPage
+  /** Recovery documents this window showed whose tokens were revoked (newest last, bounded). */
+  retired: string[]
+  /** Shows a fresh recovery document when the user brings back a retired one. */
+  reload: () => void
+}
+
+const RETIRED_PAGES = 16
 
 function sameToken(expected: string, actual: unknown): boolean {
   if (typeof actual !== "string" || actual.length !== expected.length) return false
@@ -43,34 +54,47 @@ function sameToken(expected: string, actual: unknown): boolean {
  * Open a local window) are authorised only for the exact document the host loaded: a fresh token per
  * load, carried in that document's fragment, and the main-frame origin its own load committed with.
  * The origin is bound once, by the first commit of that load; any later main-frame commit (another
- * page, history, a reload) or a renderer crash revokes the token, and a reload shows a fresh document.
+ * page, history, a reload) or a renderer crash revokes the token for good. Revoked documents are
+ * remembered, so when the user brings one back (native Reload, also after a crash, or history) its
+ * commit shows a fresh document with a fresh token; only such a user action reloads, never a crash.
  * A document the remote server controls never knows the token, cannot change its committed origin, and
  * a same-document History API change commits nothing.
  */
 export class RemoteRecoveryPages {
-  private readonly pages = new Map<number, RecoveryPage>()
+  private readonly windows = new Map<number, RecoveryWindow>()
   private readonly watched = new WeakSet<RecoveryContents>()
   private loads = 0
 
   /**
    * Issues the token for the recovery document the host is about to load. `reload` shows a fresh
-   * document when the authorised one is reloaded.
+   * document when the user brings back one whose token was revoked.
    */
   issue(contents: RecoveryContents, retry: () => Promise<void>, reload: () => void): RecoveryLoad {
     this.watch(contents)
     const token = randomUUID()
     const load = String(++this.loads)
-    this.pages.set(contents.id, { token, load, retry, reload })
+    const window = this.windows.get(contents.id) ?? { retired: [], reload }
+    if (window.active) this.retire(window)
+    window.reload = reload
+    window.active = { token, key: `${load}#${token}`, retry }
+    this.windows.set(contents.id, window)
     return { query: { recovery: load }, hash: `${REMOTE_UNAVAILABLE_HASH}=${token}` }
   }
 
   /** The retry of the host's recovery document, when the request comes from exactly that document. */
   authorize(request: RecoveryRequest, token: unknown): (() => Promise<void>) | undefined {
-    const page = this.pages.get(request.sender.id)
+    const page = this.windows.get(request.sender.id)?.active
     const frame = request.senderFrame
     if (!page?.origin || !frame || frame !== request.sender.mainFrame) return undefined
     if (frame.origin !== page.origin || !sameToken(page.token, token)) return undefined
     return page.retry
+  }
+
+  private retire(window: RecoveryWindow): void {
+    if (!window.active) return
+    window.retired.push(window.active.key)
+    if (window.retired.length > RETIRED_PAGES) window.retired.shift()
+    window.active = undefined
   }
 
   private watch(contents: RecoveryContents): void {
@@ -78,19 +102,23 @@ export class RemoteRecoveryPages {
     this.watched.add(contents)
     // Cross-document main-frame commits only; History API changes emit did-navigate-in-page.
     contents.on("did-navigate", (_event, url) => {
-      const page = this.pages.get(contents.id)
-      if (!page) return
-      const ownLoad = isOwnLoad(url, page)
-      if (page.origin === undefined) {
+      const window = this.windows.get(contents.id)
+      if (!window) return
+      const key = ownLoadKey(url)
+      const page = window.active
+      if (page && page.origin === undefined) {
         // Commits of earlier navigations still in flight neither bind nor revoke the pending load.
-        if (ownLoad) page.origin = contents.mainFrame.origin
+        if (key === page.key) page.origin = contents.mainFrame.origin
         return
       }
-      this.pages.delete(contents.id)
-      if (ownLoad) page.reload()
+      this.retire(window)
+      if (key !== null && window.retired.includes(key)) window.reload()
     })
-    contents.on("render-process-gone", () => this.pages.delete(contents.id))
-    contents.once("destroyed", () => this.pages.delete(contents.id))
+    contents.on("render-process-gone", () => {
+      const window = this.windows.get(contents.id)
+      if (window) this.retire(window)
+    })
+    contents.once("destroyed", () => this.windows.delete(contents.id))
   }
 }
 
@@ -122,12 +150,15 @@ export async function showRemoteUnavailable(
   }
 }
 
-function isOwnLoad(url: string, page: RecoveryPage): boolean {
+/** The `RecoveryPage.key` of a committed recovery-document URL; null for any other document. */
+function ownLoadKey(url: string): string | null {
   try {
     const parsed = new URL(url)
-    return parsed.pathname.endsWith("/loading.html") && parsed.searchParams.get("recovery") === page.load
-      && parsed.hash === `#${REMOTE_UNAVAILABLE_HASH}=${page.token}`
+    const load = parsed.searchParams.get("recovery")
+    const prefix = `#${REMOTE_UNAVAILABLE_HASH}=`
+    if (!parsed.pathname.endsWith("/loading.html") || !load || !parsed.hash.startsWith(prefix)) return null
+    return `${load}#${parsed.hash.slice(prefix.length)}`
   } catch {
-    return false
+    return null
   }
 }
