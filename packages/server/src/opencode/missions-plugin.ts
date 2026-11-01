@@ -33,6 +33,7 @@ import { parseMissionProfiles, missionProfilesSchema, validateMissionProfileCata
 import { boundedInterruption, boundedMutation, boundedRevision, compactMission, compactMissionTask, compactMissionTasks, nativeAssignment } from "../missions/tool-result"
 import { missionContentRequestSchema } from "../missions/mission-content"
 import { missionTaskRequestSchema } from "../missions/mission-compact-map"
+import { missionPanelPageRequestSchema } from "../missions/mission-panel-page"
 import { MISSION_TASK_VIEW_FIELDS, boundedInspection, boundedMissionList, boundedTaskView, inspectionContent,
   inspectionContentValue, type MissionInspectContent } from "../missions/inspect-view"
 import { InterruptReceipts } from "../missions/interrupt-receipts"
@@ -116,6 +117,7 @@ export interface MissionsPluginContext extends MissionCatalogClient {
         mission(input: unknown): Promise<unknown>
         content(input: unknown): Promise<unknown>
         tasks(input: unknown): Promise<unknown>
+        panelPage(input: unknown): Promise<unknown>
         recurrenceSnapshot(input: unknown): Promise<unknown>
         recurrenceControl(input: unknown): Promise<unknown>
         recurrenceControlStatus(input: unknown): Promise<unknown>
@@ -225,6 +227,10 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       mission: async input => JSON.parse(JSON.stringify(await control.mission(requiredText(object(input).missionID, "missionID", 100)))),
       content: async input => JSON.parse(JSON.stringify(await control.content(missionContentRequestSchema.parse(input)))),
       tasks: async input => JSON.parse(JSON.stringify(await control.tasks(missionTaskRequestSchema.parse(input)))),
+      panelPage: async input => {
+        const parsed = missionPanelPageRequestSchema.safeParse(input)
+        return parsed.success ? JSON.parse(JSON.stringify(await control.panelPage(parsed.data))) : { available: false, reason: "invalid-request" }
+      },
       // Bundled Effect entry replaces this at registration with the native
       // request-graph handlers. A Promise setup graph never has Job authority.
       recurrenceSnapshot: async () => { throw new Error("Native recurrence graph unavailable") },
@@ -272,7 +278,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     }
     rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
       snapshot: tracked(handlers.snapshot), list: tracked(handlers.list), mission: tracked(handlers.mission),
-      content: tracked(handlers.content), tasks: tracked(handlers.tasks), recurrenceSnapshot: tracked(handlers.recurrenceSnapshot),
+      content: tracked(handlers.content), tasks: tracked(handlers.tasks), panelPage: tracked(handlers.panelPage), recurrenceSnapshot: tracked(handlers.recurrenceSnapshot),
       recurrenceControl: tracked(handlers.recurrenceControl), recurrenceControlStatus: tracked(handlers.recurrenceControlStatus),
       recurrenceRunNow: tracked(handlers.recurrenceRunNow), recurrenceRunNowStatus: tracked(handlers.recurrenceRunNowStatus),
       recurrenceRead: tracked(handlers.recurrenceRead),

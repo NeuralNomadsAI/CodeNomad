@@ -747,6 +747,26 @@ try {
   // The panel's map holds a page of the tasks; the task route reads the rest in display order.
   const panelWide = widePanel.missions.find(mission => mission.id === wide.id)
   assert.deepEqual([panelWide.taskPage.total, panelWide.taskPage.end], [107, 50])
+  // Opt-in display transport over the real plugin and route: exact compact map in
+  // byte-bounded slices, independent of the current UI's list contract.
+  const directPanel = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage({ source: "mission", missionID: wide.id }, { location })
+  assert.equal(directPanel.available, true, JSON.stringify(directPanel))
+  let panelCursor
+  const panelText = []
+  do {
+    const response = await bridge.inject({ method: "POST", url: `${missionURL}/panel-page`,
+      payload: { source: "mission", missionID: wide.id, ...(panelCursor ? { cursor: panelCursor } : {}) } })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.ok(response.rawPayload.length <= 65_536, `${response.rawPayload.length} display bytes`)
+    const result = response.json()
+    assert.equal(result.available, true, response.body)
+    for (const piece of result.page.pieces) {
+      assert.equal((panelText[piece.index] ?? "").length, piece.offset)
+      panelText[piece.index] = (panelText[piece.index] ?? "") + piece.text
+    }
+    panelCursor = result.page.next
+  } while (panelCursor)
+  assert.deepEqual(JSON.parse(panelText[0]), panelWide)
   const panelKeys = panelWide.tasks.slice(0, panelWide.taskPage.end).map(value => value.key)
   for (let offset = panelWide.taskPage.end; offset < panelWide.taskPage.total;) {
     const page = (await bridge.inject({ method: "GET", url: `${missionURL}/${wide.id}/tasks?order=${encodeURIComponent(panelWide.taskPage.order)}&offset=${offset}` })).json()

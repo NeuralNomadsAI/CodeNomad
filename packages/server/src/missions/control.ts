@@ -8,6 +8,7 @@ import { readMissionContent, type MissionContentRequest, type MissionContentResu
 import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
 import { compactMissionMap, missionTaskPage } from "./mission-compact-map"
 import type { MissionTaskPageResult, MissionTaskRequest } from "./mission-panel-map"
+import { missionPanelPage, type MissionPanelPageRequest, type MissionPanelPageResult } from "./mission-panel-page"
 import {
   MISSION_SCHEMA_VERSION,
   missionPlanChanges,
@@ -173,6 +174,36 @@ export class MissionControl {
     return { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, generatedAt: (this.options.now ?? Date.now)(),
       missions, discardedEvents: hinted.aggregate.discardedEvents, cleanups: hinted.cleanups, ...damage,
       ...(summariesVersion === input.summariesVersion ? {} : { summaries: rows }), summariesVersion }
+  }
+
+  /** Opt-in byte-bounded display reads. Directory reads use only index hints, never
+   * open mission maps. Mission and task reads point-read exactly their named range.
+   * The existing list/mission readers remain the current UI's compatibility contract. */
+  async panelPage(request: MissionPanelPageRequest): Promise<MissionPanelPageResult> {
+    const base = { projectID: this.options.project.id, source: request.source }
+    if (request.source === "summaries" || request.source === "cleanups") {
+      return this.journal.readHints(hints => {
+        const aggregate = hints.aggregate()
+        return missionPanelPage({ ...base, discardedEvents: aggregate.discardedEvents,
+          controlUnavailable: aggregate.controlUnavailable, notificationUnavailable: aggregate.notificationUnavailable,
+          cleanupUnavailable: aggregate.cleanupUnavailable }, request.source === "summaries" ? hints.summaries() : hints.cleanups(), request.cursor)
+      })
+    }
+    const missionID = request.source === "tasks" ? request.task.missionID : request.missionID
+    const view = await this.journal.missionView(missionID)
+    if (!view.mission) return { available: false, reason: "mission-not-found" }
+    const mission = view.mission, header = { ...base, missionID, revision: mission.revision }
+    if (request.source === "tasks") {
+      const page = missionTaskPage(mission, request.task)
+      if (request.task.order !== undefined && request.task.order !== page.taskPage.order) return { available: false, reason: "changed" }
+      return missionPanelPage(header, [page], request.cursor)
+    }
+    const map = compactMissionMap(mission)
+    if (request.field === undefined) return missionPanelPage(header, [map], request.cursor)
+    // Own root fields only: extension metadata survives as it does in compact maps.
+    if (!Object.prototype.hasOwnProperty.call(map, request.field)) return { available: false, reason: "field-not-found" }
+    const value = (map as unknown as Record<string, unknown>)[request.field]
+    return missionPanelPage({ ...header, field: request.field }, Array.isArray(value) ? value : [value], request.cursor)
   }
 
   /** One mission's range for display reconciliation, its map compact, with its own

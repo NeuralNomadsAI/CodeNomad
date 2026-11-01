@@ -10,6 +10,7 @@ import { describeMissionBodies } from "../../missions/mission-body-descriptors"
 import { compactMissionMap } from "../../missions/mission-compact-map"
 import { FIXTURE_PROJECT, missionPluginFixture } from "../../missions/mission-plugin-fixture"
 import { missionTaskOrder } from "../../missions/mission-task-order"
+import { MISSION_PANEL_PAGE_BYTES, missionPanelPage } from "../../missions/mission-panel-page"
 
 const snapshot = {
   version: 1 as const,
@@ -31,6 +32,7 @@ function manager(options: {
   legacy?: boolean
   /** What the `mission` RPC answers. */
   missionRead?: object
+  panelRead?: object
 } = {}) {
   const calls: Array<{ method: string; value: unknown }> = []
   const plugin = options.plugin ?? "active"
@@ -68,6 +70,12 @@ function manager(options: {
           calls.push({ method: "rpc-definition", value: definition.id })
           const missing = { type: "rpc.method_not_found", message: "Unknown RPC method" }
           return {
+            panelPage: async (input: unknown, callOptions: unknown) => {
+              calls.push({ method: "panel-page", value: { input, callOptions } })
+              if (options.legacy) throw missing
+              if (options.rpcError) throw options.rpcError
+              return options.panelRead
+            },
             snapshot: async (input: unknown, callOptions: unknown) => {
               calls.push({ method: "snapshot", value: { input, callOptions } })
               if (options.rpcError) throw options.rpcError
@@ -91,6 +99,28 @@ function manager(options: {
   }
   return { calls, value: value as never }
 }
+
+test("opt-in panel pages fit the actual HTTP wire and fail bounded without legacy snapshot/list fallback", async () => {
+  const panel = missionPanelPage({ source: "summaries", projectID: "project-1" }, [{ actors: Array(3_000).fill("\u0000😀€\\\"") }])
+  for (const options of [{ panelRead: panel }, { legacy: true }, { panelRead: { ...panel, projectID: "foreign" } },
+    { panelRead: { ...panel, unexpected: "x".repeat(MISSION_PANEL_PAGE_BYTES) } }, { rpcError: new Error("bad".repeat(100_000)) }]) {
+    const f = manager(options), app = Fastify({ logger: false })
+    registerMissionRoutes(app, { workspaceManager: f.value })
+    try {
+      const reply = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: { source: "summaries" } })
+      assert.ok(reply.rawPayload.length <= MISSION_PANEL_PAGE_BYTES, `${reply.rawPayload.length} bytes`)
+      assert.deepEqual(reply.json(), options.panelRead === panel ? panel : { available: false, reason: options.rpcError ? "workspace-unavailable" : "plugin-unavailable", missions: [] })
+      assert.equal(f.calls.filter(call => ["snapshot", "list-rpc", "mission-rpc", "active"].includes(call.method)).length, 0)
+      const before = f.calls.length
+      const bad = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: { source: "summaries", field: "actors" } })
+      assert.deepEqual([bad.statusCode, bad.json()], [400, { available: false, reason: "invalid-request" }])
+      const oversized = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions/panel-page", payload: { source: "summaries", junk: "x".repeat(20_000) } })
+      assert.equal(oversized.statusCode, 413)
+      assert.ok(oversized.rawPayload.length < 1_024)
+      assert.equal(f.calls.length, before, "invalid selectors never reach the plugin")
+    } finally { await app.close() }
+  }
+})
 
 function mutationManager(options: { owns?: boolean; error?: unknown; dropProfiles?: boolean; dropTaskMode?: boolean
   pluginInactive?: boolean; noConnection?: boolean; locationError?: unknown; createError?: unknown } = {}) {
