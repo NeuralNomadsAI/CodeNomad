@@ -124,12 +124,16 @@ async function open(width = 1500, height = 850) {
   const finish = async () => {
     try { await diagnostics.check() } finally { await page.close() }
   }
+  const reload = async () => {
+    await diagnostics.drain()
+    await page.reload()
+  }
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).integrationFixture))
     await page.waitForFunction(() => document.querySelector(".session-header-expanded-actions"))
     assert.equal(await page.evaluate(() => (window as any).codenomadLogger.listLoggerNamespaces().every((entry: any) => entry.enabled)), true)
-    return { page, calls, model, diagnostics, finish }
+    return { page, calls, model, diagnostics, reload, finish }
   } catch (error) { await finish(); throw error }
 }
 async function launch(page: Page) {
@@ -934,22 +938,51 @@ for (const width of [1500, 390]) test(`AC-C12 durable binding outside overflow a
 })
 
 test("AC-C12 reload restores a live binding without Q8 or an action receipt and reads external detachment afresh", async () => {
-  const { page, model, calls, finish } = await open()
+  const { page, model, calls, reload, finish } = await open()
   try {
     model.binding = "attached"
     model.bindingLabel = "Restored scene"
-    await page.reload()
+    await reload()
     await bindingDetach(page).waitFor()
     assert.match(await bindingRow(page).innerText(), /Restored scene/)
     assert.equal(calls.filter(call => call.action === "attach").length, 0, "reload never replays attachment")
     model.binding = "none"
     const freshRead = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/binding"))
-    await page.reload()
+    await reload()
     await page.waitForFunction(() => Boolean((window as any).integrationFixture))
     await freshRead
     assert.equal(await bindingRow(page).count(), 0, "no saved UI authority survives reload")
     assert.equal(calls.filter(call => call.action === "detach").length, 0, "external detachment is a read, never a replay")
   } finally { await finish() }
+})
+
+test("diagnostic capture drains a delayed structured argument before fixture reload", async () => {
+  const { page, diagnostics, reload, finish } = await open()
+  const started = Promise.withResolvers<void>(), release = Promise.withResolvers<void>()
+  page.prependListener("console", message => {
+    if (!message.text().startsWith("delayed reload diagnostic")) return
+    const argument = message.args()[1], evaluate = argument.evaluate.bind(argument)
+    argument.evaluate = async (expression, arg) => {
+      started.resolve()
+      await release.promise
+      return evaluate(expression, arg)
+    }
+  })
+  const drain = diagnostics.drain
+  // Hold the real JSHandle until the boundary drains it, or navigation destroys its context.
+  diagnostics.drain = () => { release.resolve(); return drain() }
+  page.once("framenavigated", () => release.resolve())
+  try {
+    await page.evaluate(() => console.debug("delayed reload diagnostic", { nested: { value: "retained" }, error: new Error("retained error") }))
+    await started.promise
+    await reload()
+    await page.waitForFunction(() => Boolean((window as any).integrationFixture))
+    await diagnostics.drain()
+    const entry = diagnostics.consoleEntries.find(entry => entry.text.startsWith("delayed reload diagnostic"))!
+    assert.deepEqual((entry.args[1] as any).nested, { value: "retained" })
+    assert.equal((entry.args[1] as any).error.message, "retained error")
+    assert.match((entry.args[1] as any).error.stack, /Error: retained error/)
+  } finally { release.resolve(); await finish() }
 })
 
 test("AC-C12 pending binding reads cannot publish into another session/Location or revive revoked authority", async () => {
