@@ -142,10 +142,12 @@ test("shared arbiter refuses other extensions; 2min confirmation and 5min prepar
 })
 
 test("elapsed deadlines refuse with expired even before a delayed timer callback runs", async () => {
-  const f = fixture(); await f.open(); const plan = f.view!.planID
-  f.time.at += BUNDLES_CONFIRMATION_MS // Busy event loop: the activation races a delayed timer.
-  f.lifecycle.confirm(f.owner, plan); await flush()
-  assert.equal(f.dispatched, 0); assert.equal((f.events[0] as any).outcome, "expired")
+  for (const action of ["confirm", "cancel"] as const) {
+    const f = fixture(); await f.open(); const plan = f.view!.planID
+    f.time.at += BUNDLES_CONFIRMATION_MS // Busy event loop: the activation races a delayed timer.
+    f.lifecycle[action](f.owner, plan); await flush()
+    assert.equal(f.dispatched, 0); assert.equal((f.events[0] as any).outcome, "expired")
+  }
 })
 
 test("sliding rates survive new mounts/digests; explicit remount only resets cutoff, not budgets", async () => {

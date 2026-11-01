@@ -117,7 +117,7 @@ export class BundlesLifecycle {
 
   cancel(owner: BundlesMount, planID: string): void {
     const pending = this.active
-    if (pending?.owner === owner && pending.planID === planID && pending.phase === "confirming") this.finish(pending, "cancelled")
+    if (pending?.owner === owner && pending.planID === planID && pending.phase === "confirming") this.finish(pending, this.expired(pending) ? "expired" : "cancelled")
   }
 
   confirm(owner: BundlesMount, planID: string): void {
