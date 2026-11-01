@@ -16,31 +16,12 @@ import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { panelExtensionsApi } from "../../../src/lib/panel-extensions-api"
+import { observePanelReads } from "../panel-read-fixture"
 import { promptInputHeight } from "../../../src/components/prompt-input/height-state"
 import { markSessionListsRestored } from "./session-list-restored"
 import "../../../src/index.css"
 
-// Correlate a browser failure with the real list call's signal and rejection,
-// including cancellation while response.json() reads the body. Forward the
-// production API unchanged apart from a fixture-only request identity header.
-const panelReadOutcomes = new Map<string, Promise<boolean>>()
-const listPanels = panelExtensionsApi.list
-let panelRead = 0
-panelExtensionsApi.list = signal => {
-  const id = String(++panelRead), originalFetch = window.fetch
-  window.fetch = (input, init) => {
-    const headers = new Headers(init?.headers)
-    headers.set("x-native-family-panel-read", id)
-    return originalFetch.call(window, input, { ...init, headers })
-  }
-  try {
-    // The real API starts fetch synchronously; restore it before yielding.
-    const result = listPanels(signal)
-    panelReadOutcomes.set(id, result.then(() => false, error =>
-      signal?.aborted === true && error instanceof DOMException && error.name === "AbortError"))
-    return result
-  } finally { window.fetch = originalFetch }
-}
+const panelReadCancelled = observePanelReads(panelExtensionsApi)
 
 // Production whole-InstanceShell foundation, independent of the concurrent
 // mission-cross-navigation fixture. Native HTTP/SSE transport remains fake.
@@ -119,7 +100,7 @@ async function measureComposer() {
 function Fixture() {
   window.missionNativeFamily = {
     snapshot, emit, measureComposer,
-    panelReadCancelled: async id => await panelReadOutcomes.get(id) ?? false,
+    panelReadCancelled,
     transport: status => (serverEvents as unknown as { emitTransportStatus(status: string): void }).emitTransportStatus(status),
     statusKnown: (sessionId, known) => setSessions(previous => {
       const next = new Map(previous), catalog = new Map(next.get(id)), session = catalog.get(sessionId)
