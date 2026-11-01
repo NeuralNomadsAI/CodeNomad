@@ -46,6 +46,17 @@ export interface PluginControlDocumentLoad {
 
 export interface PluginControlDocumentReplaceOptions {
   beforeCommit?: () => void
+  /** Synchronous, idempotent authority assertion at writer admission and final dispatch. */
+  assertCurrent?: () => void
+  /** Synchronous submission observer; called only at rename/WSL commit dispatch. */
+  onDispatch?: () => void
+}
+
+export function assertPluginControlDocumentCurrent(options?: PluginControlDocumentReplaceOptions): void {
+  try { options?.assertCurrent?.() }
+  catch (error) {
+    throw new PluginControlDocumentError("OpenCode configuration replacement is no longer authorized", "filesystem", { cause: error })
+  }
 }
 
 export interface PluginControlDocumentFileSystem {
@@ -146,6 +157,7 @@ async function replaceHostDocument(
   updated: string,
   options?: PluginControlDocumentReplaceOptions,
 ): Promise<void> {
+  assertPluginControlDocumentCurrent(options)
   const directory = path.dirname(document.writePath)
   await mkdir(directory, { recursive: true })
   const temporary = `${document.writePath}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`
@@ -180,6 +192,8 @@ async function replaceHostDocument(
       throw new PluginControlDocumentError("OpenCode configuration is being updated by another process", "conflict")
     }
     try {
+      assertPluginControlDocumentCurrent(options)
+      options?.onDispatch?.()
       await rename(temporary, document.writePath)
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code

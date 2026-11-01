@@ -140,6 +140,43 @@ describe("plugin control JSONC document", () => {
     assert.equal(fs.readdirSync(path.dirname(target)).some((entry) => entry.includes("codenomad-plugin-controls.lock")), false)
   })
 
+  it("refuses writer admission before creating a missing directory or temporary file", async () => {
+    const root = temporaryDirectory()
+    const target = path.join(root, "not-created", "opencode.jsonc")
+    const document = await readPluginControlDocument(target)
+    await assert.rejects(replacePluginControlDocument(document, appendPluginControlRule(document, "acme"), {
+      assertCurrent: () => { throw new Error("revoked admission") },
+    }), (error: unknown) => error instanceof PluginControlDocumentError && error.kind === "filesystem")
+    assert.deepEqual(fs.readdirSync(root), [])
+  })
+
+  it("rechecks the revocable writer authority after the final awaited conflict and lock checks", async () => {
+    const target = temporaryFile()
+    const original = `{ "plugins": ["acme"] }\n`
+    fs.writeFileSync(target, original)
+    const document = await readPluginControlDocument(target)
+    let revoked = false, checks = 0
+    await assert.rejects(replacePluginControlDocument(document, appendPluginControlRule(document, "-acme"), {
+      assertCurrent: () => { checks++; if (revoked) throw new Error("revoked before rename") },
+      beforeCommit: () => { queueMicrotask(() => { revoked = true }) },
+    }), (error: unknown) => error instanceof PluginControlDocumentError && error.kind === "filesystem")
+    assert.equal(checks, 2, "admission and final rename each check the same authority")
+    assert.equal(fs.readFileSync(target, "utf8"), original)
+    assert.deepEqual(fs.readdirSync(path.dirname(target)), [path.basename(target)])
+  })
+
+  it("admits and commits once while the same revocable writer authority remains valid", async () => {
+    const target = temporaryFile()
+    const document = await readPluginControlDocument(target)
+    let checks = 0
+    await replacePluginControlDocument(document, appendPluginControlRule(document, "acme"), {
+      assertCurrent: () => { checks++ },
+    })
+    assert.equal(checks, 2)
+    assert.deepEqual(parse(fs.readFileSync(target, "utf8")), { plugins: ["acme"] })
+    assert.deepEqual(fs.readdirSync(path.dirname(target)), [path.basename(target)])
+  })
+
   it("rejects an external write made after the first conflict check", async () => {
     const target = temporaryFile()
     const original = `{ "plugins": ["acme"] }\n`

@@ -9,6 +9,7 @@ import {
   type WslPluginControlExecutor,
 } from "./plugin-control-document-wsl"
 import { removePluginSourceEntry } from "./plugin-source-document"
+import { NativeMutationAdmission, NativeMutationUncertainError, type NativeMutationAuthority } from "./native-mutation-authority"
 
 describe("WSL plugin control documents", () => {
   it("keeps native paths and source permissions in WSL operations", async () => {
@@ -128,7 +129,98 @@ describe("WSL plugin control documents", () => {
   })
 
   const distro = process.env.CODENOMAD_TEST_WSL_PLUGIN_CONTROLS
-  it("preserves a native 0600 mode through a real WSL replacement", { skip: !distro }, async () => {
+
+  it("refuses revoked writer admission before dispatching any WSL command", async () => {
+    const calls: string[] = []
+    const fileSystem = createWslPluginControlDocumentFileSystem("fixture-only", async (_distro, script) => {
+      calls.push(firstLine(script)); return success()
+    })
+    const document = { requestedPath: "/fixture/opencode.jsonc", writePath: "/fixture/opencode.jsonc",
+      exists: false, mode: 0o600, text: "{}\n", byteOrderMark: false, plugins: [] }
+    await assert.rejects(replacePluginControlDocument(document, appendPluginControlRule(document, "acme"), {
+      assertCurrent: () => { throw new Error("revoked admission") },
+    }, fileSystem), (error: unknown) => error instanceof PluginControlDocumentError && error.kind === "filesystem")
+    assert.deepEqual(calls, [])
+  })
+
+  it("rechecks revocable authority after WSL preparation and never dispatches a revoked commit", async () => {
+    const calls: string[] = []
+    let revoked = false, checks = 0
+    const fileSystem = createWslPluginControlDocumentFileSystem("fixture-only", async (_distro, script) => {
+      const name = firstLine(script)
+      calls.push(name)
+      if (name === "# prepare-document") revoked = true
+      return success()
+    })
+    const document = { requestedPath: "/fixture/opencode.jsonc", writePath: "/fixture/opencode.jsonc",
+      exists: false, mode: 0o600, text: "{}\n", byteOrderMark: false, plugins: [] }
+    await assert.rejects(replacePluginControlDocument(document, appendPluginControlRule(document, "acme"), {
+      assertCurrent: () => { checks++; if (revoked) throw new Error("revoked before commit dispatch") },
+    }, fileSystem), (error: unknown) => error instanceof PluginControlDocumentError && error.kind === "filesystem")
+    assert.equal(checks, 2)
+    assert.deepEqual(calls, ["# prepare-document", "# cleanup-document"])
+  })
+
+  it("classifies a failed dispatched WSL commit as uncertain without replay", async () => {
+    const calls: string[] = []
+    const fileSystem = createWslPluginControlDocumentFileSystem("fixture-only", async (_distro, script) => {
+      const name = firstLine(script)
+      calls.push(name)
+      return name === "# commit-document"
+        ? { status: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), error: new Error("connection lost") }
+        : success()
+    })
+    const admission = new NativeMutationAdmission({ revalidate: async () => {}, assertCurrent: () => {} })
+    const document = { requestedPath: "/fixture/opencode.jsonc", writePath: "/fixture/opencode.jsonc",
+      exists: false, mode: 0o600, text: "{}\n", byteOrderMark: false, plugins: [] }
+    let dispatches = 0
+    await assert.rejects(replacePluginControlDocument(document, appendPluginControlRule(document, "acme"), {
+      assertCurrent: () => admission.assertCurrent(),
+      onDispatch: () => { admission.admit(); dispatches++ },
+    }, fileSystem).catch((error) => { throw admission.failure(error) }), NativeMutationUncertainError)
+    assert.equal(dispatches, 1)
+    assert.deepEqual(calls, ["# prepare-document", "# commit-document", "# cleanup-document"])
+  })
+
+  it("refuses revoked authority after real WSL preparation without dispatch or leaked files", { skip: !distro }, async () => {
+    const root = `/tmp/codenomad-plugin-controls-${randomBytes(8).toString("hex")}`
+    const target = `${root}/opencode.jsonc`
+    try {
+      runWsl(distro!, `mkdir -m 700 -- "$1" && printf '%s\\n' '{ "plugins": [] }' > "$2" && chmod 600 -- "$2"`, root, target)
+      const original = runWsl(distro!, `base64 -- "$1"`, target)
+      const fileSystem = createWslPluginControlDocumentFileSystem(distro!)
+      const document = await readPluginControlDocument(target, fileSystem)
+      assert.equal(document.mode, 0o600)
+      const revokedError = new Error("authority revoked after preparation")
+      let revoked = false, checks = 0, dispatches = 0
+      const authority: NativeMutationAuthority = {
+        revalidate: async () => {},
+        assertCurrent: () => { checks++; if (revoked) throw revokedError },
+      }
+
+      await assert.rejects(replacePluginControlDocument(document, appendPluginControlRule(document, "-acme"), {
+        assertCurrent: () => authority.assertCurrent(),
+        beforeCommit: () => {
+          runWsl(distro!, `test -d "$1.codenomad-plugin-controls.lock" && test "$(find "$2" -maxdepth 1 -name '*.tmp' | wc -l)" = 1`, target, root)
+          revoked = true
+        },
+        onDispatch: () => { dispatches++ },
+      }, fileSystem), (error: unknown) => (
+        error instanceof PluginControlDocumentError && error.kind === "filesystem" && error.cause === revokedError
+      ))
+
+      assert.equal(revoked, true, "revocation occurs with a real prepared temporary file and held lock")
+      assert.equal(checks, 2, "admission and final commit dispatch each check the same authority")
+      assert.equal(dispatches, 0)
+      assert.equal(runWsl(distro!, `base64 -- "$1"`, target), original)
+      assert.equal(runWsl(distro!, `stat -c '%a' -- "$1"`, target).trim(), "600")
+      assert.equal(runWsl(distro!, `ls -A -- "$1"`, root), "opencode.jsonc\n")
+    } finally {
+      runWsl(distro!, `rm -rf -- "$1"`, root)
+    }
+  })
+
+  it("preserves a native 0600 mode through one authorized real WSL dispatch", { skip: !distro }, async () => {
     const root = `/tmp/codenomad-plugin-controls-${randomBytes(8).toString("hex")}`
     const target = `${root}/opencode.jsonc`
     try {
@@ -137,10 +229,17 @@ describe("WSL plugin control documents", () => {
       const document = await readPluginControlDocument(target, fileSystem)
       assert.equal(document.mode, 0o600)
 
-      await replacePluginControlDocument(document, appendPluginControlRule(document, "-acme"), undefined, fileSystem)
+      let checks = 0, dispatches = 0
+      await replacePluginControlDocument(document, appendPluginControlRule(document, "-acme"), {
+        assertCurrent: () => { checks++ },
+        onDispatch: () => { dispatches++ },
+      }, fileSystem)
 
+      assert.equal(checks, 2)
+      assert.equal(dispatches, 1)
       assert.equal(runWsl(distro!, `stat -c '%a' -- "$1"`, target).trim(), "600")
       assert.match(runWsl(distro!, `cat -- "$1"`, target), /"-acme"/)
+      assert.equal(runWsl(distro!, `ls -A -- "$1"`, root), "opencode.jsonc\n")
     } finally {
       runWsl(distro!, `rm -rf -- "$1"`, root)
     }

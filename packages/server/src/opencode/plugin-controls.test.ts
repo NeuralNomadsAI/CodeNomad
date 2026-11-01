@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url"
 import { afterEach, describe, it } from "node:test"
 import { parse } from "jsonc-parser"
 import { PluginControls, PluginControlsError } from "./plugin-controls"
+import { NativeMutationAdmission, NativeMutationUncertainError } from "./native-mutation-authority"
 
 const temporaryDirectories = new Set<string>()
 
@@ -15,6 +16,69 @@ afterEach(() => {
 })
 
 describe("OpenCode V2 plugin activation controls", () => {
+  it("revalidates activation authority after the real document queue drains", async () => {
+    const f = createFixture({ runtime: [activePlugin("known", "known-package")] })
+    const entered = deferred(), release = deferred()
+    const first = f.controls.editConfigDocument("workspace", f.location, "global", async document => {
+      entered.resolve(); await release.promise; return document.text
+    })
+    await entered.promise
+    let revoked = false, checks = 0
+    const refusal = new Error("revoked queued activation")
+    const pending = f.controls.mutate("workspace", { location: f.location, pluginId: "known", scope: "global", enabled: false }, {
+      revalidate: async () => { checks++ }, assertCurrent: () => { if (revoked) throw refusal },
+    })
+    const rejected = assert.rejects(pending, error => error === refusal)
+    assert.equal(checks, 0)
+    revoked = true
+    release.resolve()
+    await Promise.all([first, rejected])
+    assert.deepEqual(parse(fs.readFileSync(f.globalFile, "utf8")).plugins, [])
+  })
+
+  it("refuses revoked authority after an asynchronous edit and before a no-op return", async () => {
+    const f = createFixture({ globalPlugins: ["-known"], runtime: [] })
+    const before = fs.readFileSync(f.globalFile, "utf8")
+    const refusal = new Error("revoked authority")
+    let revoked = false
+    const authority = { revalidate: async () => {}, assertCurrent: () => { if (revoked) throw refusal } }
+    const entered = deferred(), release = deferred()
+    const edit = f.controls.editConfigDocument("workspace", f.location, "global", async () => {
+      entered.resolve(); await release.promise; return '{"plugins":["known"]}'
+    }, undefined, new NativeMutationAdmission(authority))
+    const rejected = assert.rejects(edit, error => error === refusal)
+    await entered.promise
+    revoked = true
+    release.resolve()
+    await rejected
+    let checks = 0
+    await assert.rejects(f.controls.mutate("workspace", { location: f.location, pluginId: "known", scope: "global", enabled: false }, {
+      revalidate: async () => { if (++checks === 2) throw refusal }, assertCurrent() {},
+    }), error => error === refusal)
+    assert.equal(checks, 2, "a no-op still requires fresh authority after reading its document")
+    assert.equal(fs.readFileSync(f.globalFile, "utf8"), before)
+    assert.deepEqual(fs.readdirSync(f.globalDirectory), ["opencode.jsonc"], "refused edits leave no writer preparation")
+    assert.equal((await f.controls.mutate("workspace", { location: f.location, pluginId: "known", scope: "global", enabled: false }, {
+      revalidate: async () => {}, assertCurrent() {},
+    })).changed, false)
+  })
+
+  it("returns typed uncertainty when authority is revoked after the host rename, preserving the write", async () => {
+    const f = createFixture({ runtime: [activePlugin("known", "known-package")] })
+    const before = fs.readFileSync(f.globalFile, "utf8")
+    await assert.rejects(f.controls.mutate("workspace", { location: f.location, pluginId: "known", scope: "global", enabled: false }, {
+      revalidate: async () => { if (await fs.promises.readFile(f.globalFile, "utf8") !== before) throw new Error("revoked after commit") },
+      assertCurrent() {},
+    }), NativeMutationUncertainError)
+    assert.deepEqual(parse(fs.readFileSync(f.globalFile, "utf8")).plugins, ["-known"])
+    assert.deepEqual(fs.readdirSync(f.globalDirectory), ["opencode.jsonc"], "owned temporary files and locks are cleaned")
+    const response = await f.controls.mutate("workspace", { location: f.location, pluginId: "known", scope: "global", enabled: true }, {
+      revalidate: async () => {}, assertCurrent() {},
+    })
+    assert.equal(response.changed, true)
+    assert.deepEqual(parse(fs.readFileSync(f.globalFile, "utf8")).plugins, ["-known", "known"])
+  })
+
   it("keeps runtime inventory separate from configured sources and ordered rules", async () => {
     const fixture = createFixture({
       globalPlugins: [{ package: "@acme/reviewer", options: { strict: true } }, "-acme.reviewer"],
@@ -625,7 +689,7 @@ describe("OpenCode V2 plugin activation controls", () => {
   it("fences a mutation again immediately before the atomic rename", async () => {
     const fixture = createFixture({
       runtime: [activePlugin("known", "known-package")],
-      assertCurrent: (count) => { if (count === 4) throw new Error("stale connection") },
+      assertCurrent: (count) => { if (count === 5) throw new Error("stale connection") },
     })
     const before = fs.readFileSync(fixture.globalFile, "utf8")
 
@@ -639,7 +703,7 @@ describe("OpenCode V2 plugin activation controls", () => {
       (error: unknown) => error instanceof PluginControlsError && error.kind === "unavailable",
     )
 
-    assert.equal(fixture.calls.assertCurrent, 4)
+    assert.equal(fixture.calls.assertCurrent, 5)
     assert.equal(fs.readFileSync(fixture.globalFile, "utf8"), before)
   })
 

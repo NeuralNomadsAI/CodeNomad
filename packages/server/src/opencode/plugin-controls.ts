@@ -32,6 +32,7 @@ import {
   PluginControlDocumentError,
 } from "./plugin-control-document"
 import { createWslPluginControlDocumentFileSystem } from "./plugin-control-document-wsl"
+import { NativeMutationAdmission, type NativeMutationAuthority } from "./native-mutation-authority"
 
 type PluginControlsWorkspaceManager = Pick<WorkspaceManager,
   | "get"
@@ -119,10 +120,12 @@ export class PluginControls {
     edit: (document: PluginControlDocument) => string | Promise<string>,
     // Aborts the daemon reads and, re-checked under the lock, the commit itself.
     signal?: AbortSignal,
+    admission?: NativeMutationAdmission,
   ): Promise<void> {
     const directory = location.directory.trim().replace(/[\\/]+$/, "").toLowerCase()
     const key = scope === "global" ? `${workspaceId}\nglobal` : `${workspaceId}\nproject\n${directory}`
     return this.serializeMutation(key, async () => {
+      await admission?.revalidate()
       const context = await this.readContext(workspaceId, location, signal)
       const target = context.targets.find(target => target.scope === scope)
       if (!target) throw new PluginControlsError("OpenCode configuration scope is unavailable", "unavailable")
@@ -133,15 +136,21 @@ export class PluginControls {
       try {
         const document = await readPluginControlDocument(target.ioPath, context.fileSystem)
         const updated = await edit(document)
+        await admission?.revalidate()
         await replacePluginControlDocument(document, updated, {
-          beforeCommit: () => { assertCurrentConnection(context.connection); signal?.throwIfAborted() },
+          assertCurrent: () => { assertCurrentConnection(context.connection); signal?.throwIfAborted(); admission?.assertCurrent() },
+          onDispatch: () => admission?.admit(),
         }, context.fileSystem)
+        signal?.throwIfAborted()
+        await admission?.revalidate()
+        signal?.throwIfAborted()
       } catch (error) { throw error instanceof PluginControlDocumentError ? mapDocumentError(error) : error }
       finally { release() }
-    })
+    }).catch(error => { throw admission?.failure(error) ?? error })
   }
 
-  mutate(workspaceId: string, request: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse> {
+  mutate(workspaceId: string, request: PluginActivationMutationRequest, authority?: NativeMutationAuthority): Promise<PluginActivationMutationResponse> {
+    const admission = new NativeMutationAdmission(authority)
     // Ordering is only required per write target. The global document is
     // daemon-wide for one workspace, so all of its global writes share one
     // queue regardless of which worktree directory requested them; project
@@ -153,6 +162,7 @@ export class PluginControls {
       ? `${workspaceId}\nglobal`
       : `${workspaceId}\nproject\n${normalizedDirectory}`
     return this.serializeMutation(tailKey, async () => {
+      await admission.revalidate()
       const context = await this.readContext(workspaceId, request.location)
       const target = context.targets.find((candidate) => candidate.scope === request.scope)
       if (!target) throw new PluginControlsError("OpenCode configuration scope is unavailable", "unavailable")
@@ -191,6 +201,7 @@ export class PluginControls {
         if (!control) throw new PluginControlsError("Plugin ID is not present in the authorized inventory", "forbidden")
 
         const desired: PluginScopeRuleState = request.enabled ? "enabled" : "disabled"
+        await admission.revalidate()
         assertCurrentConnection(context.connection)
         if (projection.noOpSafe && control[request.scope] === desired) {
           return {
@@ -206,8 +217,10 @@ export class PluginControls {
         const updated = appendPluginControlRule(document, rule)
         try {
           await replacePluginControlDocument(document, updated, {
-            beforeCommit: () => assertCurrentConnection(context.connection),
+            assertCurrent: () => { assertCurrentConnection(context.connection); admission.assertCurrent() },
+            onDispatch: () => admission.admit(),
           }, context.fileSystem)
+          await admission.revalidate()
         } catch (error) {
           throw mapDocumentError(error)
         }
@@ -222,7 +235,7 @@ export class PluginControls {
       } finally {
         release()
       }
-    })
+    }).catch(error => { throw admission.failure(error) })
   }
 
   private async readContext(workspaceId: string, input: PluginControlLocation, signal?: AbortSignal): Promise<ReadContext> {

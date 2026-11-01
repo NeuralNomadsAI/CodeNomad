@@ -34,10 +34,10 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   workspace shares the Global document). Each turn has a
   `PLUGIN_SOURCE_ADD_TIMEOUT_MS` (20 s) deadline that aborts it: daemon reads
   receive the signal (`read`, `readConfigDocuments`, `editConfigDocument`) and the
-  commit re-checks it under the lock, so the turn's own outcome is reported and
-  `timeout` (503) means nothing was written. A client that ignores the signal
-  releases the queue after a 5 s grace; the abandoned turn then fails its next
-  signal check, before any write.
+   commit re-checks it under the lock. A client that ignores the signal releases
+   the queue after a 5 s grace; cancellation fences subsequent dispatches.
+   A submitted rename or WSL commit can still complete; authority-bearing internal
+   calls retain that submission state and report an uncertain outcome on failure.
 - **Removal** requires, under the document primitive, that `plugins[entryIndex]`
   still declares `target` (a string, or an object's `package`); otherwise `stale`
   (409). The result must parse to the original minus exactly that element.
@@ -216,6 +216,57 @@ blocked write fails closed. The route never accepts a caller-provided config pat
 and refuses foreign locations, malformed runtime inventory, or IDs absent from the
 authorized runtime/configured inventory.
 
+The document writer's optional `assertCurrent` callback is a synchronous, idempotent
+authority assertion. Host writes check it before creating directories, temporary files
+or locks, then again after the final awaited content/mode and lock-owner checks, directly
+before dispatching `rename`. WSL checks it before dispatching preparation and commit.
+`PluginControls` uses it for the pinned connection and the caller's cancellation signal
+when supplied. A refusal before writer admission leaves preparation untouched; a later
+refusal cleans owned preparation while preserving the original target. An already
+dispatched native request or WSL command retains its own terminality requirements.
+
+### Internal mutation authority
+
+`opencode/native-mutation-authority.ts` defines the trusted in-process
+`NativeMutationAuthority`: bounded asynchronous `revalidate()` refreshes exact
+consent/digest, captured session/Location and target authority; synchronous,
+idempotent `assertCurrent()` checks live revocation, expiry, connection and mount
+fences. A trusted adapter must supply both from host-owned state and propagate its
+cancellation/deadline. Never construct authority from an iframe/request boolean or
+a cached successful authorization. Extension-facing mutation adapters must supply
+this context on every call; the public bundles surface exposes reads only.
+
+`PluginSources.add(..., authority?)` and `PluginControls.mutate(..., authority?)`
+revalidate inside their existing queues and after asynchronous prerequisites.
+Nested `editConfigDocument(..., signal?, admission?)` carries the same per-call
+`NativeMutationAdmission` through the document queue. The writer asserts before
+preparation and final dispatch; its synchronous `onDispatch` observer marks only
+host `rename` or WSL commit-command submission. Preparation and no-op reads keep
+the submission flag clear. Authorized adds use the already-loaded catalogue
+(`refresh: false`) so authorization cannot persist a catalogue refresh.
+
+The internal `PluginPackages.update(workspaceId, location, target, signal?, authority?)`
+uses the current owned snapshot's exact native package target and pinned connection
+for one `plugin.update`; trusted catalogue adapters derive that target themselves.
+Native package serialization occurs after this dispatch boundary. Existing UI
+package calls retain their native proxy path.
+
+One sticky admission state spans a source add's two queues, commit and deadline
+handler. Before submission, authority refusal leaves the destination unchanged;
+owned preparation is cleaned on later refusal. After submission, any failure,
+revocation or cancellation in an authority-bearing action becomes the fixed
+`NativeMutationUncertainError` (`code: "mutation-uncertain"`), never a post-effect
+409 presented as a zero-effect refusal. Revalidation also precedes success.
+Ordinary callers may omit authority and retain their existing error contract.
+Never replay an uncertain action automatically.
+
+These boundaries fence local submission. Already dispatched native requests and
+WSL commands retain their external lifetime; cancellation and queue release provide
+no rollback or terminality guarantee. External editors retain their filesystem
+race window between verification and rename. Session moves/deletions by other
+clients retain native read-then-mutate semantics. Global removal coordination
+requires its separate qualification.
+
 OpenCode watches these configuration roots. Never restart the daemon or report a
 successful file write as an active plugin: the mutation response publishes the
 durable configured state, and `config.updated` and `plugin.updated` trigger
@@ -261,6 +312,13 @@ guessed paths.
   `packages/ui/tests/browser/plugin-controls.test.ts`
 - package check/update menus, one native request per target and pending state
   across hiding: `packages/ui/tests/browser/plugin-packages.test.ts`
+- internal authority admission: `plugin-packages.test.ts`, the source/activation
+  queue tests, and `server/routes/integration-attachments.test.ts`; real native
+  package dispatch with an isolated registry and version change:
+  `node --import tsx scripts/test-plugin-packages-native.mjs <absolute-cli> --authority`.
+  Invalid authorities submit nothing; revocation after native update reports
+  uncertainty while the changed version is read back. The ordinary command
+  without `--authority` retains its package check/update probe.
 - Add window (Global default, Project warning, refusals), Installing until the
   inventory reports, version/update/ref tooltips, Remove items, the pending
   timeout with an injected clock and the GUI notice:

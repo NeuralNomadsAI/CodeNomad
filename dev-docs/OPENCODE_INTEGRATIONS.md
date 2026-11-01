@@ -190,6 +190,26 @@ machine, including a remote machine. Its outcome describes that request; applica
 attachment action establish application availability and conversation access. Never retry or replay an installation
 request after an uncertain result: check the application, then require a fresh action and confirmation if needed.
 
+### Internal mutation admission
+
+`IntegrationAttachments.attach`, `detach` and `installHost` accept an optional final
+trusted `NativeMutationAuthority` argument after `signal`. It is an in-process seam
+for the trusted bundles adapter; existing native routes retain their ordinary call
+contract. See [mutation authority](PLUGIN_CONTROLS.md#internal-mutation-authority)
+for its asynchronous revalidation and synchronous live assertion requirements.
+Never deserialize this argument from an HTTP body or frame message.
+
+Authority is revalidated after session-queue waits and asynchronous ownership,
+session and RPC prerequisites, and synchronously asserted immediately before each
+mutation RPC and metadata update. Revalidation also precedes success. One action's
+submission state covers both its binding RPC and hint write; a later failure is
+`NativeMutationUncertainError`, including timeout, revocation, invalid native output
+or a metadata failure after binding submission. A late response cannot authorize
+further writes. Cancellation may release the existing session queue while submitted
+native work still runs; callers must reconcile rather than replay. Authority-bearing
+actions use a non-refreshing catalogue read; WSL host-install refusal precedes even
+that read and installer dispatch.
+
 ## UI read model
 
 `createIntegrationsStore` (`stores/integrations-store.ts`, reading through `lib/integrations-api.ts`) is the read

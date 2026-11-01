@@ -12,6 +12,7 @@ import { registerPluginSourceRoutes } from "../server/routes/plugin-sources"
 import { catalogEntry, catalogOf } from "./integrations/catalog-fixture"
 import type { IntegrationCatalog } from "./integrations/contract"
 import { IntegrationsReader } from "./integrations/integrations"
+import { NativeMutationUncertainError, type NativeMutationAuthority } from "./native-mutation-authority"
 
 async function fixture(options: { sameScopes?: boolean; catalog?: IntegrationCatalog } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "plugin-sources-"))
@@ -58,9 +59,128 @@ async function fixture(options: { sameScopes?: boolean; catalog?: IntegrationCat
     cleanup: () => rm(root, { recursive: true, force: true }) }
 }
 
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>(accept => { resolve = accept })
+  return { promise, resolve }
+}
+
 const code = (expected: string, kind?: string) => (error: any) => error?.code === expected && (!kind || error.kind === kind)
 
 describe("plugin source mutations", () => {
+  it("revalidates authority after both the source queue and the document queue", async () => {
+    for (const queue of ["source", "document"]) {
+      const f = await fixture()
+      const entered = deferred(), release = deferred(), queued = deferred()
+      const sources = queue === "source" ? f.sources : new PluginSources({ logger: { info() {} } as any, documents: {
+        read: f.controls.read.bind(f.controls), readConfigDocuments: f.controls.readConfigDocuments.bind(f.controls),
+        editConfigDocument: (...args) => {
+          const pending = f.controls.editConfigDocument(...args)
+          queued.resolve(); return pending
+        },
+      } })
+      try {
+        await writeFile(f.globalFile, "{}")
+        const first = queue === "source"
+          ? f.sources.add("w", { location: f.location, scope: "global", spec: "first" }, {
+            revalidate: async () => { entered.resolve(); await release.promise }, assertCurrent() {},
+          })
+          : f.controls.editConfigDocument("w", f.location, "global", async document => {
+            entered.resolve(); await release.promise; return document.text
+          })
+        await entered.promise
+        let revoked = false, checks = 0
+        const refusal = new Error("revoked queued authority")
+        const authority: NativeMutationAuthority = {
+          revalidate: async () => { checks++ },
+          assertCurrent: () => { if (revoked) throw refusal },
+        }
+        const pending = sources.add("w", { location: f.location, scope: "global", spec: "revoked" }, authority)
+        if (queue === "document") { await queued.promise; assert.equal(checks, 2) }
+        else assert.equal(checks, 0, "the preceding add owns the outer queue")
+        revoked = true
+        const rejected = assert.rejects(pending, error => error === refusal)
+        release.resolve()
+        await Promise.all([first, rejected])
+        assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins ?? [], queue === "source" ? ["first"] : [])
+        await assert.rejects(readFile(f.projectFile), "refusal creates no other scope")
+      } finally { release.resolve(); await f.cleanup() }
+    }
+  })
+
+  it("propagates authority refusals and uses a non-refreshing catalogue for authorized adds", async () => {
+    const f = await fixture()
+    const reads: unknown[] = []
+    const sources = new PluginSources({ documents: f.controls, logger: { info() {} } as any,
+      catalog: { read: async options => { reads.push(options); return { state: "fresh", catalog: catalogOf() } } } })
+    try {
+      await writeFile(f.globalFile, "{}")
+      for (const reason of ["expired", "revoked", "digest", "session", "connection", "stale mount"]) {
+        const refusal = new Error(reason)
+        await assert.rejects(sources.add("w", { location: f.location, scope: "global", spec: "denied" }, {
+          revalidate: async () => { throw refusal }, assertCurrent() {},
+        }), error => error === refusal)
+        assert.equal(await readFile(f.globalFile, "utf8"), "{}", reason)
+      }
+      assert.deepEqual(reads, [], "denied authority never reaches catalogue persistence")
+      await sources.add("w", { location: f.location, scope: "global", spec: "authorized" }, { revalidate: async () => {}, assertCurrent() {} })
+      await sources.add("w", { location: f.location, scope: "global", spec: "ordinary" })
+      assert.deepEqual(reads, [{ refresh: false }, undefined])
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["authorized", "ordinary"])
+    } finally { await f.cleanup() }
+  })
+
+  it("reports deadline-grace uncertainty after a real write without replaying or undoing it", async () => {
+    const f = await fixture()
+    const committed = deferred(), release = deferred(), finished = deferred()
+    let writes = 0
+    const sources = new PluginSources({ logger: { info() {} } as any, addTimeoutMs: 500, abortGraceMs: 10,
+      documents: {
+        read: f.controls.read.bind(f.controls), readConfigDocuments: f.controls.readConfigDocuments.bind(f.controls),
+        editConfigDocument: async (...args) => {
+          // Forward the same admission to the real queue and host writer, then delay its acknowledgement.
+          try { await f.controls.editConfigDocument(...args); writes++; committed.resolve(); await release.promise }
+          finally { finished.resolve() }
+        },
+      },
+    })
+    try {
+      await writeFile(f.globalFile, "{}")
+      const pending = sources.add("w", { location: f.location, scope: "global", spec: "committed" }, { revalidate: async () => {}, assertCurrent() {} })
+      const rejected = assert.rejects(pending, NativeMutationUncertainError)
+      await committed.promise
+      await rejected
+      assert.equal(writes, 1)
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["committed"])
+    } finally { release.resolve(); await finished.promise; await f.cleanup() }
+  })
+
+  it("reports uncertainty when the deadline aborts during final asynchronous revalidation", async () => {
+    const f = await fixture()
+    let signal: AbortSignal | undefined, checks = 0
+    const sources = new PluginSources({ logger: { info() {} } as any, addTimeoutMs: 500, abortGraceMs: 1_000,
+      documents: {
+        read: (...args) => { signal = args[2]; return f.controls.read(...args) },
+        readConfigDocuments: f.controls.readConfigDocuments.bind(f.controls),
+        editConfigDocument: f.controls.editConfigDocument.bind(f.controls),
+      },
+    })
+    try {
+      await writeFile(f.globalFile, "{}")
+      await assert.rejects(sources.add("w", { location: f.location, scope: "global", spec: "committed" }, {
+        async revalidate() {
+          if (++checks !== 6) return
+          assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["committed"])
+          await new Promise<void>(resolve => {
+            if (signal!.aborted) resolve()
+            else signal!.addEventListener("abort", () => resolve(), { once: true })
+          })
+        }, assertCurrent() {},
+      }), NativeMutationUncertainError)
+      assert.equal(checks, 6)
+    } finally { await f.cleanup() }
+  })
+
   it("adds a string at the end of the chosen scope, defaulting to nothing else, and never claims activity", async () => {
     const f = await fixture()
     try {
@@ -128,9 +248,10 @@ describe("plugin source mutations", () => {
     } finally { await f.cleanup() }
   })
 
-  it("refuses an add whose OpenCode reads stall, releases the queue, and never writes it later", async () => {
+  it("refuses an add whose OpenCode reads stall, releases the queue, and never writes it later", async t => {
     const f = await fixture()
     try {
+      t.mock.timers.enable({ apis: ["setTimeout"] })
       await writeFile(f.globalFile, "{}")
       // This fake client ignores the abort signal: the grace period still releases the queue.
       const sources = new PluginSources({ documents: f.controls, logger: { info() {} } as any, addTimeoutMs: 50, abortGraceMs: 20 })
@@ -138,18 +259,20 @@ describe("plugin source mutations", () => {
       f.state.gate = new Promise<void>(resolve => { release = resolve })
       const stalled = sources.add("w", { location: f.location, scope: "global", spec: "stalled-plugin" })
       // Let the queued turn start its daemon reads before later reads stop stalling.
-      await new Promise(resolve => setTimeout(resolve, 10))
+      await new Promise(resolve => setImmediate(resolve))
       f.state.gate = undefined
       const next = sources.add("w2", { location: f.location, scope: "global", spec: "next-plugin" })
+      t.mock.timers.tick(50)
+      t.mock.timers.tick(20)
       await assert.rejects(stalled, code("timeout", "unavailable"))
       await next
       release()
-      await new Promise(resolve => setTimeout(resolve, 50))
+      await new Promise(resolve => setImmediate(resolve))
       assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["next-plugin"], "the abandoned add never writes")
     } finally { await f.cleanup() }
   })
 
-  it("re-checks an aborted signal under the lock before the document commit", async () => {
+  it("refuses an aborted edit before admitting the document writer", async () => {
     const f = await fixture()
     try {
       await writeFile(f.globalFile, "{}")
@@ -160,7 +283,7 @@ describe("plugin source mutations", () => {
         controller.abort()
         return `${document.text.trim().slice(0, -1)}"plugins": ["late"] }\n`
       }, controller.signal))
-      assert.equal(edited, true, "the abort lands after the edit, during the commit")
+      assert.equal(edited, true, "the abort lands after the in-memory edit, before writer admission")
       assert.equal(await readFile(f.globalFile, "utf8"), "{}")
     } finally { await f.cleanup() }
   })
