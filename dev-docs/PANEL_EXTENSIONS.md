@@ -352,7 +352,9 @@ and the 19.5-second deadline apply. One window-wide opening slot and a one-secon
 dispatch interval survive every remount; pending opener completion retains the slot.
 
 The opening policy parses the original raw URL and requires exact equality with
-`https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/<integration-id>`.
+one of two fixed same-ID forms under `https://github.com/NeuralNomadsAI/opencode-integrations/`:
+`blob/main/integrations/<integration-id>/plugin/README.md` or
+`tree/main/integrations/<integration-id>`. The README form is the Blender catalogue destination.
 Only the implicit HTTPS port is canonical. Never accept credentials, alternate
 hosts/ports, encodings, normalization, queries, fragments or arbitrary repository
 paths; never fetch documentation, probe redirects or synthesize fallback URLs.

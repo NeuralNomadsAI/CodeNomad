@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "integrations": [
+    {
+      "id": "blender",
+      "package": "@neuralnomads/opencode-blender",
+      "range": "^0.2",
+      "displayName": "OpenCode for Blender",
+      "family": "native",
+      "plugin": "neuralnomads.blender",
+      "rpc": "neuralnomads.blender",
+      "summary": {
+        "en": "Inspect and edit the scene open in Blender through the OpenCode Link add-on: bounded reads, atomic changes as one undo step, captures as images.",
+        "fr": "Inspecter et modifier la scène ouverte dans Blender grâce à l'extension OpenCode Link : lectures bornées, changements atomiques en un pas d'annulation, captures en images."
+      },
+      "app": { "name": "Blender", "versions": ">=5.2" },
+      "host": { "protocol": 1, "range": "^0.2.0" },
+      "docs": "https://github.com/NeuralNomadsAI/opencode-integrations/blob/main/integrations/blender/plugin/README.md",
+      "status": "preview",
+      "sources": { "git": ["github:NeuralNomadsAI/opencode-integrations#main::path:integrations/blender/plugin"] }
+    }
+  ]
+}

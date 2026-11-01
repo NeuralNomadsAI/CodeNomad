@@ -2,8 +2,29 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { isIntegrationDocsUrl } from "./bundles-docs"
 import { bundlesDocsInputSchema, bundlesDocsHostResultSchema, bundlesDocsResultSchema } from "./bundles-contract"
+import { pinnedBlenderCatalog } from "../opencode/integrations/catalog-pinned-fixture"
 
 const good = "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/blender"
+const blender = pinnedBlenderCatalog().integrations[0]!
+test("the immutable reviewed Blender catalogue README passes the same-ID opening boundary", () => {
+  assert.equal(blender.id, "blender")
+  assert(isIntegrationDocsUrl(blender.docs, blender.id))
+  assert(bundlesDocsHostResultSchema.safeParse({ outcome: "ready", url: blender.docs }).success)
+  assert(!isIntegrationDocsUrl(blender.docs, "houdini"))
+  for (const value of [
+    blender.docs.replace("/blender/", "/houdini/"), blender.docs.replace("/plugin/README.md", "/README.md"),
+    blender.docs.replace("/plugin/README.md", "/plugin/readme.md"), blender.docs.replace("/blob/", "/tree/"),
+    blender.docs.replace("/main/", "/other/"), blender.docs.replace("/plugin/", "/other/"),
+    blender.docs.replace("/opencode-integrations/", "/other-repository/"), blender.docs.replace("github.com", "evil.test"),
+    blender.docs.replace("github.com", "github.com:443"), blender.docs.replace("github.com", "github.com:444"),
+    blender.docs.replace("github.com", "user:pass@github.com"), blender.docs.replace("https:", "http:"),
+    blender.docs.replace("blender/", "%62lender/"), blender.docs.replace("README.md", "%52EADME.md"),
+    blender.docs.replace("/plugin/", "/x/../plugin/"), blender.docs.replace("/plugin/", "/x/%2e%2e/plugin/"),
+    blender.docs.replace("/plugin/", "//plugin/"), blender.docs.replace("/plugin/", "\\plugin\\"),
+    `${blender.docs}/`, `${blender.docs}?`, `${blender.docs}#`, `${blender.docs}?redirect=https://evil.test`,
+    ` ${blender.docs}`, `${blender.docs}\n`,
+  ]) assert.equal(isIntegrationDocsUrl(value, blender.id), false, value)
+})
 test("opening accepts only the raw canonical same-ID catalogue documentation URL", () => {
   assert(isIntegrationDocsUrl(good, "blender"))
   assert(!isIntegrationDocsUrl(good, "houdini"))

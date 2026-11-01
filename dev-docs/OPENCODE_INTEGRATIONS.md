@@ -347,8 +347,9 @@ Catalogue documentation opens through the fixed unpublished API 4
 `bundles.openDocs({ integration })` action under `bundles.read`. The authenticated
 parent resolves only fresh or valid stale catalogue entries through the existing
 source, with before/after consent, mount, session/Location and connection checks.
-Its raw URL must exactly match the ID-bound HTTPS GitHub path
-`/NeuralNomadsAI/opencode-integrations/tree/main/integrations/<integration-id>`;
+Its raw URL must exactly match an ID-bound HTTPS GitHub path under
+`/NeuralNomadsAI/opencode-integrations/`: `blob/main/integrations/<integration-id>/plugin/README.md`
+(the Blender catalogue destination) or `tree/main/integrations/<integration-id>`;
 only implicit port 443 is canonical, with no credentials, encoding, query or fragment.
 Only the parent receives that URL and invokes the existing external opener.
 Results are `requested`, `unavailable`, `busy` or `invalid`; `requested` describes
@@ -358,6 +359,12 @@ See [the documentation action contract](PANEL_EXTENSIONS.md#draft-integration-re
 
 ## Test fixtures
 
+- `catalog-pinned-fixture.ts` reads the full immutable reviewed catalogue in
+  `opencode/integrations/fixtures/catalog-54d6e5d.json`, checks its normalized Git blob
+  and parses the integration schema. Documentation boundary, parent opener, public
+  MessagePort/HTTP handoff and Electron/Tauri policy checks use its actual Blender
+  plugin README destination. This fixture is test-only; runtime reads retain the
+  existing catalogue source.
 - `scripts/fixtures/fake-npm-registry.mjs`: `startFakeNpmRegistry()` serves the tarballs passed to
   `publish(name, version, tarball)` (scoped names included, the last version as `latest`) and answers 404 for
   every other name. Its `url` is the `registry` option of `withProductRuntime`.

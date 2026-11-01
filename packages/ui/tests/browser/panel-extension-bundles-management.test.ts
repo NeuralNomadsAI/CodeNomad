@@ -10,6 +10,8 @@ import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { bundlesManagementServer } from "./fixtures/bundles-management-server"
+import { pinnedBlenderCatalog } from "../../../server/src/opencode/integrations/catalog-pinned-fixture"
+import { catalogEntry } from "../../../server/src/opencode/integrations/catalog-fixture"
 
 let backend: Awaited<ReturnType<typeof bundlesManagementServer>>, server: ViteDevServer
 let browser: Awaited<ReturnType<typeof chromium.launch>>, url: string
@@ -130,6 +132,41 @@ async function wait(check: () => boolean) {
   const deadline = Date.now() + 10_000
   while (!check()) { if (Date.now() >= deadline) assert.fail("backend observation timed out"); await new Promise(resolve => setTimeout(resolve, 20)) }
 }
+
+test("immutable Blender catalogue README opens through the public port, authenticated HTTP and parent handoff", async () => {
+  const h = await open(true, true, { readOnly: true }), { page } = h
+  const blender = pinnedBlenderCatalog().integrations[0]!, docs = blender.docs
+  backend.catalogEntries.push(blender, catalogEntry("houdini", { docs }))
+  try {
+    const call = (integration = "blender") => frame(page).locator("body").evaluate((_body, value) =>
+      (window as any).call("openDocs", { integration: value }), integration)
+    assert.deepEqual(await call("houdini"), { outcome: "unavailable" }, "catalogue ID cannot designate another integration's README")
+    for (const state of ["fresh", "stale"] as const) {
+      backend.state.catalogState = state
+      assert.deepEqual(await call(), { outcome: "requested" })
+      await page.waitForTimeout(1100)
+    }
+    assert.deepEqual(await page.evaluate(() => (window as any).docsOpens), Array(2).fill([docs, "_blank", "noopener,noreferrer"]))
+    for (const hostile of [docs.replace("/blender/", "/houdini/"), docs.replace("/opencode-integrations/", "/other-repository/"),
+      docs.replace("/plugin/README.md", "/README.md"), docs.replace("README.md", "readme.md"),
+      docs.replace("github.com", "evil.test"), docs.replace("github.com", "github.com:443"),
+      docs.replace("github.com", "user:pass@github.com"), docs.replace("blender/", "%62lender/"),
+      docs.replace("/plugin/", "/x/../plugin/"), `${docs}?redirect=https://evil.test`, `${docs}#`, `${docs}/`]) {
+      blender.docs = hostile
+      assert.deepEqual(await call(), { outcome: "unavailable" }, hostile)
+    }
+    blender.docs = docs
+    // An adversarial private HTTP response must also pass the parent's same-ID check.
+    await page.route("**/bundles/openDocs", route => route.fulfill({ json: { outcome: "ready", url: docs.replace("/blender/", "/houdini/") } }))
+    assert.deepEqual(await call(), { outcome: "unavailable" })
+    assert.equal(await page.evaluate(() => (window as any).docsOpens.length), 2)
+    const port = await frame(page).locator("body").evaluate(() => JSON.stringify({ dom: document.body.textContent, messages: (window as any).messages }))
+    assert(!port.includes("https:")); assert(!port.includes("mountID")); assert(!port.includes("owner"))
+    assert(backend.requests.filter(row => row.method === "openDocs").every(row =>
+      Object.keys(row.body).sort().join(",") === "integration,mountID,owner"))
+    await h.clean()
+  } finally { blender.docs = docs; await page.close() }
+})
 
 test("read-only documentation uses the real port/HTTP/owner mount and only parent canonical URL handoff", async () => {
   const h = await open(true, true, { readOnly: true }), { page } = h

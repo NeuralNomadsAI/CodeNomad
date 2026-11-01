@@ -45,6 +45,7 @@ export async function bundlesManagementServer() {
   const global = path.join(root, "global"), project = path.join(root, "project")
   await mkdir(global); await mkdir(project)
   const file = path.join(global, "opencode.jsonc"), entry = catalogEntry("fixture"), spec = `${entry.package}@${entry.range}`
+  const catalogEntries = [entry]
   const state = { current: true, owned: true, runtime: [] as any[], rpc: [] as string[], updates: [] as unknown[], packages: [] as unknown[],
     metadata: {} as Record<string, unknown>, location: project, fail: false, prepares: 0, offset: 0,
     catalogState: "fresh" as "fresh" | "stale" | "unavailable",
@@ -80,7 +81,7 @@ export async function bundlesManagementServer() {
     ownsLocation: async () => state.owned, getServiceDirectoryForPath: async (_id: string, directory: string) => directory,
     getWorktreeIdentityForPath: async () => "owned", getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",
     getServiceWslDistro: () => undefined, getHostPathForServicePath: async (_id: string, value: string) => value }
-  const catalog = { snapshot: () => ({ state: state.catalogState, catalog: catalogOf(entry) }), read: async () => catalog.snapshot() }
+  const catalog = { snapshot: () => ({ state: state.catalogState, catalog: catalogOf(...catalogEntries) }), read: async () => catalog.snapshot() }
   const logger: any = { debug() {}, trace() {}, info() {}, isLevelEnabled: () => false }
   const controls = new PluginControls({ workspaceManager: manager, worktreeDeletionFence: { enter: () => () => {} } as any, logger })
   const sources = new PluginSources({ documents: controls, catalog, logger }), packages = new PluginPackages({ controls, workspaceManager: manager })
@@ -125,7 +126,7 @@ export async function bundlesManagementServer() {
   registerPanelExtensionBundlesManagementRoutes(app, { transport })
   registerPanelExtensionBundlesRoutes(app, { store, workspaceManager: manager, catalog, integrations, attachments, budget: lifecycle.budget })
   const address = await app.listen({ host: "127.0.0.1", port: 0 })
-   return { app, address, state, requests, streamFrames, file, spec, entry, controls, sources, project,
+   return { app, address, state, requests, streamFrames, file, spec, entry, catalogEntries, controls, sources, project,
     hold: (key: string) => held.add(key), release,
     flushTerminals() { state.holdTerminal = false; for (const write of terminals.splice(0)) write() },
     async reset(installed = true, readOnly = false) {
@@ -135,6 +136,7 @@ export async function bundlesManagementServer() {
       state.host = { state: "absent", action: "install" }
       entry.range = "^0.1"
       entry.docs = catalogEntry("fixture").docs; state.catalogState = "fresh"
+      catalogEntries.splice(0, catalogEntries.length, entry)
       entry.displayName = "OpenCode for fixture"
       state.offerLabel = "Fixture window"; state.offerDocument = "Scene.blend"; state.conversation = "Work"
       state.rpc = []; state.rpcInputs = []; state.updates = []; state.packages = []; state.prepares = 0

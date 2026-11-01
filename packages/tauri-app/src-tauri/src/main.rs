@@ -2640,12 +2640,19 @@ mod menu_tests {
     #[test]
     fn remote_help_and_integration_docs_policy_opens_only_allowlisted_https_in_system_browser() {
         let mut opened = Vec::new();
+        let catalog: serde_json::Value = serde_json::from_str(include_str!("../../../server/src/opencode/integrations/fixtures/catalog-54d6e5d.json")).unwrap();
+        let docs = catalog["integrations"][0]["docs"].as_str().unwrap();
         for value in [HELP_URL, SPONSOR_URL, "https://neuralnomadsai.github.io/CodeNomad/fr/history.html#delete",
-            "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/blender"] {
+            "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/blender", docs] {
             let url = Url::parse(value).unwrap();
             assert!(open_remote_external_url(&url, |url| opened.push(url.to_string())));
         }
-        assert_eq!(opened.len(), 4);
+        assert_eq!(opened.len(), 5);
+        for value in [docs.replace("/plugin/README.md", "/README.md"), docs.replace("/opencode-integrations/", "/other/"),
+            docs.replace("github.com", "other.test"), docs.replace("blender", "%62lender"),
+            format!("{docs}?redirect=https://other.test"), format!("{docs}#"), format!("{docs}/")] {
+            assert!(!open_remote_external_url(&Url::parse(&value).unwrap(), |_| panic!("denied README destination reached opener")));
+        }
         for value in [
             "http://neuralnomadsai.github.io/CodeNomad/en/",
             "https://example.com/CodeNomad/",
@@ -2915,7 +2922,9 @@ mod menu_tests {
 
     #[test]
     fn external_navigation_allows_only_web_and_mail_urls() {
+        let catalog: serde_json::Value = serde_json::from_str(include_str!("../../../server/src/opencode/integrations/fixtures/catalog-54d6e5d.json")).unwrap();
         for value in [
+            catalog["integrations"][0]["docs"].as_str().unwrap(),
             "https://example.com",
             "http://example.com",
             "mailto:hello@example.com",

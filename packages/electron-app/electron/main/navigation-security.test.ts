@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { decideNavigation, requireHttpUrl } from "./navigation-security"
+import { pinnedBlenderCatalog } from "../../../server/src/opencode/integrations/catalog-pinned-fixture"
+import { isIntegrationDocsUrl } from "../../../server/src/panel-extensions/bundles-docs"
 
 test("remote window URLs require HTTP or HTTPS", () => {
   assert.equal(requireHttpUrl("http://localhost:3000/app", "baseUrl").protocol, "http:")
@@ -24,7 +26,9 @@ test("navigation allows registered origins and only the exact loading file", () 
 })
 
 test("canonical integration documentation stays an external destination for local and remote windows", () => {
-  const docs = "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/blender"
+  const entry = pinnedBlenderCatalog().integrations[0]!, docs = entry.docs
+  assert(isIntegrationDocsUrl(docs, entry.id))
+  assert(!isIntegrationDocsUrl(docs, "houdini"))
   for (const origins of [["http://127.0.0.1:43123"], ["https://remote.example"]]) {
     assert.equal(decideNavigation(docs, origins, "file:///fixture/loading.html"), "external")
     for (const target of ["javascript:alert(1)", "file:///private/secret", "vscode://file/private"]) {

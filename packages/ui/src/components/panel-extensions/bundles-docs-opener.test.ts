@@ -3,8 +3,9 @@ import { test } from "node:test"
 import { createBundlesDocsOpener } from "./bundles-docs-opener"
 import { openExternalUrl } from "../../lib/external-url"
 import { PanelExtensionBusyError } from "../../lib/panel-extensions-api"
+import { pinnedBlenderCatalog } from "../../../../server/src/opencode/integrations/catalog-pinned-fixture"
 
-const url = "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/blender"
+const url = pinnedBlenderCatalog().integrations[0]!.docs
 const ready = async () => ({ outcome: "ready" as const, url })
 test("single opening slot spans resolution/handoff and persistent 999/1000-ms dispatch interval", async () => {
   let at = 0, live = true, calls = 0, release!: (value: boolean) => void
@@ -29,6 +30,12 @@ test("invalid destinations, resolver failures and revoked continuations never in
   let calls = 0, live = true, resume!: () => void
   const opener = createBundlesDocsOpener(async () => { calls++; return true })
   assert.deepEqual(await opener("other", ready, () => true), { outcome: "unavailable" })
+  for (const hostile of [url.replace("/blender/", "/houdini/"), url.replace("/opencode-integrations/", "/other/"),
+    url.replace("/plugin/README.md", "/README.md"), url.replace("github.com", "evil.test"),
+    url.replace("github.com", "github.com:443"), url.replace("blender/", "%62lender/"),
+    url.replace("/plugin/", "/x/../plugin/"), `${url}?`, `${url}#`]) {
+    assert.deepEqual(await opener("blender", async () => ({ outcome: "ready", url: hostile }), () => true), { outcome: "unavailable" })
+  }
   for (const outcome of ["invalid", "unavailable", "busy"] as const) assert.deepEqual(await opener("blender", async () => ({ outcome }), () => true), { outcome })
   assert.deepEqual(await opener("blender", async () => { throw new PanelExtensionBusyError() }, () => true), { outcome: "busy" })
   assert.deepEqual(await opener("blender", async () => { throw new Error("PRIVATE_DOCS_SENTINEL") }, () => true), { outcome: "unavailable" })
