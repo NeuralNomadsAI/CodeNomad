@@ -42,6 +42,45 @@ test("five real API calls retain only two secondary slots until streams cancel",
   } finally { await page.context().close() }
 })
 
+for (const mode of ["oversize", "http-error"] as const) test(`expired ${mode} cleanup releases real API slots before deferred cancellation settles`, async () => {
+  const page = await browser.newPage(), errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  try {
+    await page.addInitScript("window.__name=f=>f"); await page.goto(url)
+    const result = await page.evaluate(async mode => {
+      const { serverApi } = await import("/src/lib/api-client.ts"), { backgroundReads } = await import("/src/lib/background-read-queue.ts")
+      const original = globalThis.fetch
+      let rejectCancel!: (error: Error) => void, starts = 0, cancels = 0, released = false
+      const cancellation = new Promise<void>((_, reject) => { rejectCancel = reject }), deadline = performance.now() + 200
+      globalThis.fetch = async () => {
+        starts++
+        return new Response(new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(65_537)) },
+          cancel() { cancels++; return cancellation } }), { status: mode === "http-error" ? 503 : 200 })
+      }
+      const calls = Array.from({ length: 3 }, () => serverApi.fetchMissionTasks("fixture", "review", { offset: 0 }, { projectID: "project", current: () => true, deadline }))
+      let markerStarted = false, startedAfterDeadline = false, startedWhileDeferred = false
+      const marker = backgroundReads.run(AbortSignal.timeout(1000), async () => {
+        markerStarted = true; startedAfterDeadline = performance.now() >= deadline; startedWhileDeferred = !released
+      }).then(() => true, () => false)
+      try {
+        const outcomes = await Promise.allSettled(calls), markerCompleted = await marker
+        return { starts, cancels, markerStarted, markerCompleted, startedAfterDeadline, startedWhileDeferred,
+          outcomes: outcomes.map(value => value.status === "rejected" ? value.reason.reason ?? value.reason.name : "published") }
+      } finally {
+        released = true; rejectCancel(new Error("late cancellation rejection"))
+        await Promise.allSettled(calls); await marker
+        await backgroundReads.run(new AbortController().signal, async () => {})
+        globalThis.fetch = original
+      }
+    }, mode)
+    assert.deepEqual(result, { starts: 2, cancels: 2, markerStarted: true, markerCompleted: true, startedAfterDeadline: true, startedWhileDeferred: true,
+      outcomes: [mode === "oversize" ? "invalid" : "unavailable", mode === "oversize" ? "invalid" : "unavailable", "TimeoutError"] })
+    // Observe the browser's late-rejection turn after teardown rejects the owned gates.
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 0)))
+    assert.deepEqual(errors, [])
+  } finally { await page.context().close() }
+})
+
 test("the real API rejects an unfinished final WebCrypto hash at its 30-second deadline", { timeout: 45_000 }, async () => {
   const page = await browser.newPage()
   page.setDefaultTimeout(36_000)

@@ -43,21 +43,22 @@ function parseTaskJSON(text: string): unknown {
   } catch { throw new MissionTaskPageReadError("invalid") }
 }
 /** Bound the actual body (whitespace included), before parsing untrusted JSON. */
-async function body(response: Response, signal: AbortSignal, budget: MissionTaskWindowBudget): Promise<unknown> {
+async function body(response: Response, signal: AbortSignal, budget: MissionTaskWindowBudget, failed: (error: unknown) => void): Promise<unknown> {
   const reader = response.body?.getReader()
   if (!reader) throw new MissionTaskPageReadError("invalid")
-  let text = "", bytes = 0
+  let text = "", bytes = 0, consumed = false, cancellation: Promise<void> | undefined
   const decoder = new TextDecoder("utf-8", { fatal: true })
   const decode = (chunk?: Uint8Array, stream = false) => {
     try { return decoder.decode(chunk, { stream }) } catch { throw new MissionTaskPageReadError("invalid") }
   }
-  const cancel = () => { void reader.cancel(signal.reason).catch(() => {}) }
-  signal.addEventListener("abort", cancel, { once: true })
+  const cancel = () => cancellation ??= reader.cancel(signal.reason)
+  const abort = () => { void cancel().catch(() => {}) }
+  signal.addEventListener("abort", abort, { once: true })
   try {
     for (;;) {
       signal.throwIfAborted()
       const next = await raceTaskRead(reader.read(), signal)
-      if (next.done) break
+      if (next.done) { consumed = true; break }
       bytes += next.value.byteLength
       if (bytes > TASK_PAGE_RESPONSE_BYTES) throw new MissionTaskPageReadError("invalid")
       budget.transfer(next.value.byteLength)
@@ -66,7 +67,12 @@ async function body(response: Response, signal: AbortSignal, budget: MissionTask
     text += decode()
     signal.throwIfAborted()
     return parseTaskJSON(text)
-  } finally { signal.removeEventListener("abort", cancel); await reader.cancel().catch(() => {}); reader.releaseLock() }
+  } catch (error) { failed(error); throw error }
+  finally {
+    signal.removeEventListener("abort", abort)
+    try { if (!consumed) await raceTaskRead(cancel(), signal).catch(() => {}) }
+    finally { reader.releaseLock() }
+  }
 }
 
 /** One deliberately requested task window or named read. Partial text lives only in
@@ -90,16 +96,23 @@ export async function readMissionTaskPage(missionID: string, task: MissionTaskRe
     assertCurrent()
     const request = JSON.stringify({ source: "tasks", task: { ...task, missionID }, ...(cursor ? { cursor } : {}) })
     if (new TextEncoder().encode(request).length > TASK_PAGE_REQUEST_BYTES) throw new MissionTaskPageReadError("invalid")
+    let failure: { error: unknown } | undefined
+    const failed = (error: unknown) => { failure ??= { error } }
     const transfer = async () => {
       assertCurrent()
       const response = await input.exchange(request)
       try {
         assertCurrent()
         if (!response.ok) throw new MissionTaskPageReadError("unavailable")
-        return await body(response, signal, budget)
-      } finally { await response.body?.cancel().catch(() => {}) }
+        return await body(response, signal, budget, failed)
+      } catch (error) { failed(error); throw error }
+      finally {
+        if (response.body && !response.bodyUsed) await raceTaskRead(response.body.cancel(), signal).catch(() => {})
+      }
     }
-    const value = await raceTaskRead(input.runTransfer ? input.runTransfer(transfer) : transfer(), signal)
+    let value: unknown
+    try { value = await raceTaskRead(input.runTransfer ? input.runTransfer(transfer) : transfer(), signal) }
+    catch (error) { throw failure ? failure.error : error } // cleanup expiry/rejection never replaces the read's original failure
     assertCurrent()
     if (value && typeof value === "object" && "available" in value && value.available === false) {
       const refusal = refusalSchema.safeParse(value)

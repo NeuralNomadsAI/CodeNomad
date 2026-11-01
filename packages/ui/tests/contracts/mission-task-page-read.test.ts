@@ -94,6 +94,43 @@ test("every slice retains the admitted selector even if its caller edits the req
   assert.ok(offsets.length > 1); assert.deepEqual([...new Set(offsets)], [50])
 })
 
+for (const mode of ["oversize", "http-error"] as const) test(`deferred ${mode} cancellation cannot retain API queue slots past the task lifetime`, async () => {
+  const { serverApi } = await import("../../src/lib/api-client")
+  const { backgroundReads } = await import("../../src/lib/background-read-queue")
+  const original = globalThis.fetch
+  let rejectCancel!: (error: Error) => void, starts = 0, cancels = 0, released = false
+  const cancellation = new Promise<void>((_, reject) => { rejectCancel = reject })
+  const keepAlive = setTimeout(() => {}, 3000) // native AbortSignal timers are unref'ed in Node
+  const deadline = performance.now() + 200
+  globalThis.fetch = async () => {
+    starts++
+    return new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new Uint8Array(65_537)) },
+      cancel() { cancels++; return cancellation },
+    }), { status: mode === "http-error" ? 503 : 200 })
+  }
+  const calls = Array.from({ length: 3 }, () => serverApi.fetchMissionTasks("fixture", map.id, { offset: 0 }, { ...scope, deadline }))
+  let markerStarted = false, startedAfterDeadline = false, startedWhileDeferred = false
+  const marker = backgroundReads.run(AbortSignal.timeout(1000), async () => {
+    markerStarted = true; startedAfterDeadline = performance.now() >= deadline; startedWhileDeferred = !released
+  }).then(() => true, () => false)
+  try {
+    const outcomes = await Promise.allSettled(calls)
+    assert.equal(await marker, true, "unrelated queued work starts without resolving the deferred cancels")
+    assert.deepEqual({ starts, cancels, markerStarted, startedAfterDeadline, startedWhileDeferred },
+      { starts: 2, cancels: 2, markerStarted: true, startedAfterDeadline: true, startedWhileDeferred: true })
+    assert.ok(outcomes.every(value => value.status === "rejected"), "no stale row is published")
+    for (const outcome of outcomes.slice(0, 2)) {
+      assert.equal(outcome.status === "rejected" && outcome.reason.reason, mode === "oversize" ? "invalid" : "unavailable", "cleanup preserves the original failure")
+    }
+  } finally {
+    released = true; rejectCancel(new Error("late cancellation rejection"))
+    await Promise.allSettled(calls); await marker
+    await backgroundReads.run(new AbortController().signal, async () => {})
+    clearTimeout(keepAlive); globalThis.fetch = original
+  }
+})
+
 test("correctly hashed wrong selectors, inconsistent counters, foreign reports and invalid nested rows are refused", async t => {
   const full = structuredClone(map)
   full.reports = [120, 121].map(index => ({ id: `rep${index}`, taskKey: `t${index}`, sessionId: "coordinator", outcome: "completed", summary: "Result", evidence: [], next: [], createdAt: 1 }))

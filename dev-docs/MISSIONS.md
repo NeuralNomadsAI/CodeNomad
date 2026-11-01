@@ -465,7 +465,10 @@ header, and hash-verified before publication. The actual response body is capped
 slot through stream consumption or cancellation, then releases it before the next
 transfer. One 30-second deadline begins at store admission, including the serialized
 mission queue and secondary queue, and covers stream reads, hashing, validation and
-publication. Async hashing is raced with abort; synchronous work rechecks the monotonic
+publication. Error cancellation also shares that lifetime: expiry releases its slot,
+observes late cleanup rejection and preserves the original read failure. Consumed bodies
+skip cancellation; a reader's pending cancellation is reused rather than requested twice.
+Async hashing is raced with abort; synchronous work rechecks the monotonic
 deadline before publication. Deadline failure parks a failed read; superseded ownership
 returns `skipped`, which the reader shows with Retry rather than absence.
 Partial text lives only for that operation. A failure parks the selector beside last-good rows; explicit Retry
