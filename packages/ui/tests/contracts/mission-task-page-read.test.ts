@@ -94,7 +94,7 @@ test("every slice retains the admitted selector even if its caller edits the req
   assert.ok(offsets.length > 1); assert.deepEqual([...new Set(offsets)], [50])
 })
 
-for (const mode of ["oversize", "http-error"] as const) test(`deferred ${mode} cancellation cannot retain API queue slots past the task lifetime`, async () => {
+for (const mode of ["oversize", "http-error"] as const) test(`deferred ${mode} cancellation cannot retain API queue slots past the task lifetime`, async t => {
   const { serverApi } = await import("../../src/lib/api-client")
   const { backgroundReads } = await import("../../src/lib/background-read-queue")
   const original = globalThis.fetch
@@ -102,8 +102,10 @@ for (const mode of ["oversize", "http-error"] as const) test(`deferred ${mode} c
   const cancellation = new Promise<void>((_, reject) => { rejectCancel = reject })
   const keepAlive = setTimeout(() => {}, 3000) // native AbortSignal timers are unref'ed in Node
   const deadline = performance.now() + 200
-  globalThis.fetch = async () => {
+  const dispatched: Array<{ at: number; aborted: boolean }> = []
+  globalThis.fetch = async (_input, init) => {
     starts++
+    dispatched.push({ at: performance.now(), aborted: init?.signal?.aborted === true })
     return new Response(new ReadableStream({
       start(controller) { controller.enqueue(new Uint8Array(65_537)) },
       cancel() { cancels++; return cancellation },
@@ -117,8 +119,12 @@ for (const mode of ["oversize", "http-error"] as const) test(`deferred ${mode} c
   try {
     const outcomes = await Promise.allSettled(calls)
     assert.equal(await marker, true, "unrelated queued work starts without resolving the deferred cancels")
-    assert.deepEqual({ starts, cancels, markerStarted, startedAfterDeadline, startedWhileDeferred },
-      { starts: 2, cancels: 2, markerStarted: true, startedAfterDeadline: true, startedWhileDeferred: true })
+    t.diagnostic(JSON.stringify({ deadline, dispatched, starts, cancels }))
+    assert.ok(starts >= 2 && starts <= 3)
+    assert.equal(cancels, starts)
+    assert.ok(dispatched.every(read => !read.aborted && read.at < deadline), "native timer rounding never permits a transfer after its original deadline")
+    assert.deepEqual({ markerStarted, startedAfterDeadline, startedWhileDeferred },
+      { markerStarted: true, startedAfterDeadline: true, startedWhileDeferred: true })
     assert.ok(outcomes.every(value => value.status === "rejected"), "no stale row is published")
     for (const outcome of outcomes.slice(0, 2)) {
       assert.equal(outcome.status === "rejected" && outcome.reason.reason, mode === "oversize" ? "invalid" : "unavailable", "cleanup preserves the original failure")

@@ -3,13 +3,14 @@ import test from "node:test"
 import { fixture } from "../../../server/src/missions/journal-history-fixture"
 import { parseMissionEvent, missionFinishCounterKey } from "../../../server/src/missions/journal"
 import { contentDigest } from "../../../server/src/missions/content-digest"
+import { cleanupReceiptID } from "../../../server/src/missions/cleanup-projection"
 import { readMissionPanelWindow, readMissionTaskPage } from "../../src/lib/mission-task-page-read"
 import { createMissionPanelInventory } from "../../src/stores/mission-panel-inventory"
 import type { MissionPanelPageRequest } from "../../../server/src/missions/mission-panel-wire"
 import { missionPanelHeader } from "../../../server/src/missions/mission-panel-header"
 import { missionPanelWindow, missionPanelPage, missionPanelTextWindow } from "../../../server/src/missions/mission-panel-page"
 import { missionLifecycleSource } from "../../src/stores/mission-lifecycle-intents"
-import { missionFinishedSeen } from "../../src/stores/mission-view-state"
+import { missionFinishedSeen, markMissionsFinishedSeen } from "../../src/stores/mission-view-state"
 import { panelCleanupSchema, panelHistorySchema } from "../../src/lib/mission-panel-schema"
 import { preparationFixture, scheduledPreparation } from "../../../server/src/missions/mission-preparation-test-fixture"
 import { missionActivityContext } from "../../../server/src/missions/mission-activity-context"
@@ -52,6 +53,114 @@ test("the actual 120-mission first window verifies alone, with zero warm ranges 
   assert.notEqual(next.envelope.window!.order, answer.envelope.window!.order)
   await assert.rejects(f.read({ source: "summaries", window: { offset: 50, order: answer.envelope.window!.order } }), { reason: "changed" })
   t.diagnostic(`first window ${f.bodies[0]} bytes; 1 transfer; 50/120 summaries; 0 warm source entries; 0 maps`)
+})
+
+for (const source of ["summaries", "cleanups"] as const) test(`passive ${source} first-window validation retains a failed middle across an unseen-tail order change`, async () => {
+  const f = seeded()
+  if (source === "cleanups") for (let index = 0; index < 120; index++) {
+    await f.journal.append({ version: 1, projectID: f.project.id, missionID: `msn_${index}`, id: "evt_deleted", type: "mission.deleted",
+      requestID: `delete-${index}`, expectedRevision: 1, deleteManagedSessions: true,
+      cleanupTargets: [{ sessionID: `ses_pending_${index}`, location: f.project.location }], createdAt: 1000 - index })
+  }
+  let fail = true
+  const requests: MissionPanelPageRequest[] = []
+  const store = createMissionPanelInventory({ scope: () => `tail-${source}`, tasks: async () => { throw Error("No task fallback") },
+    read: (_instance, selector, scope) => readMissionPanelWindow(selector, { ...scope, runTransfer: read => read(), exchange: async body => {
+      const request = JSON.parse(body); requests.push(request)
+      if (request.source === source && request.window?.offset === 50 && fail) throw Error("Middle transport failure")
+      return f.exchange(body)
+    } }) })
+  try {
+    store.setDemand("fixture", true); await store.ensure("fixture"); await store.more("fixture", source)
+    assert.equal(store.progress("fixture", source).failure, "failed")
+    if (source === "summaries") await f.control.update({ missionID: "msn_119", requestID: "tail-edit", expectedRevision: 1, objective: "Moved unseen tail" })
+    else await f.journal.append({ version: 1, projectID: f.project.id, missionID: "msn_119", id: cleanupReceiptID("evt_deleted", "ses_pending_119"), type: "mission.session-cleaned",
+      deletionID: "evt_deleted", sessionID: "ses_pending_119", outcome: "removed", createdAt: 2000 })
+    const before = requests.length
+    await store.refresh("fixture", false)
+    assert.equal(store.progress("fixture", source).failure, "changed")
+    assert.equal(store.progress("fixture", source).loaded, 50)
+    if (source === "summaries") assert.equal(store.state("fixture").summaries.length, 51, "retained display includes the moved tail, separate from the current prefix")
+    assert.ok(requests.slice(before).every(request => request.source !== source || request.window?.offset === 0))
+    fail = false; await store.more("fixture", source, true)
+    assert.equal(store.progress("fixture", source).failure, undefined)
+    assert.deepEqual(requests.filter(request => request.source === source).at(-1)?.window, { offset: 0 })
+    await store.more("fixture", source)
+    assert.equal(store.progress("fixture", source).loaded, 100)
+  } finally { store.clear("fixture") }
+})
+
+for (const part of ["receipts", "pending"] as const) for (const text of [false, true]) test(`lifecycle ${part} ${text ? "raw" : "structured"} lane invalidates by owning control and retries the exact part`, async () => {
+  const f = fixture(126403), control = f.control(), requests: MissionPanelPageRequest[] = []
+  const exchange = async (body: string) => { const request = JSON.parse(body); requests.push(request); return new Response(JSON.stringify(await control.panelPage(request))) }
+  let map = (await control.create({ requestID: "create-parts", objective: "Parts", template: "custom", prepared: true })).mission
+  map = (await control.lifecycle({ missionID: map.id, expectedRevision: map.revision, requestID: "start-old", action: "start" })).mission
+  const store = createMissionPanelInventory({ scope: () => `control-${part}-${text}`, tasks: (_i, id, task, scope) => readMissionTaskPage(id, task, { ...scope, exchange }),
+    read: (_i, selector, scope) => selector.source === "activity" || selector.source === "marks" ? Promise.reject(Error("Native unknown"))
+      : readMissionPanelWindow(selector, { ...scope, exchange, runTransfer: read => read() }) })
+  const key = `${text ? "text" : "field"}:${map.id}:control:${part}`
+  try {
+    store.setDemand("fixture", true); store.want("fixture", "selected", map.id); await store.ensure("fixture"); await store.more("fixture", key)
+    assert.equal(store.progress("fixture", key).failure, undefined)
+    map = (await control.lifecycle({ missionID: map.id, expectedRevision: map.revision, requestID: "pause-new", action: "pause" })).mission
+    await store.refresh("fixture", false)
+    assert.equal(store.state("fixture").missions[0].panelControl?.requestID, "pause-new")
+    assert.equal(store.progress("fixture", key).failure, "changed")
+    await store.more("fixture", key, true)
+    assert.equal(store.progress("fixture", key).failure, undefined)
+    const exact = requests.filter(request => request.source === "mission" && request.field === "control").at(-1)!
+    assert.deepEqual(exact, { source: "mission", missionID: map.id, field: "control", ...(text ? { text: true } : {}), part, window: { offset: 0 } })
+    assert.deepEqual(text ? JSON.parse(store.fieldText("fixture", map.id, `control:${part}`, 0)!) : store.fieldValues("fixture", map.id, `control:${part}`), JSON.parse(JSON.stringify(map.control![part])))
+  } finally { store.clear("fixture") }
+})
+
+test("real bounded discovery bridges the existing folder completion record before seeding the project key", async () => {
+  const f = fixture(126401), control = f.control(), completed = []
+  for (let index = 1; index <= 3; index++) {
+    const map = (await control.create({ requestID: `finished-${index}`, objective: `Finished ${index}`, template: "custom" })).mission
+    completed.push((await control.report(map.coordinatorSessionId, { missionID: map.id, outcome: "completed", summary: "Done", evidence: [], next: [], final: true })).mission)
+  }
+  const folder = "/old-folder-real-inventory", scope = JSON.stringify([folder, f.project.id])
+  markMissionsFinishedSeen(folder, [], completed.slice(0, 1)); markMissionsFinishedSeen(folder, [completed[2].id], completed)
+  const store = createMissionPanelInventory({ scope: () => folder, tasks: async () => { throw Error("No task fallback") }, read: (_i, selector, scope) =>
+    selector.source === "activity" || selector.source === "marks" ? Promise.reject(Error("Unknown native state")) : readMissionPanelWindow(selector, { ...scope,
+      runTransfer: read => read(), exchange: async body => new Response(JSON.stringify(await control.panelPage(JSON.parse(body)))) }) })
+  try {
+    store.setDemand("fixture", true); await store.ensure("fixture")
+    assert.deepEqual(completed.map(row => row.finishSequence), [1, 2, 3])
+    assert.deepEqual(completed.map(row => missionFinishedSeen(scope, row)), [true, false, true])
+  } finally { store.clear("fixture") }
+})
+
+for (const [wire, status, reason] of [[{ available: false, reason: "changed" }, "error", undefined], [{ available: false, reason: "damaged" }, "error", undefined],
+  [{ available: false, reason: "plugin-failed", missions: ["malformed"] }, "error", undefined], [undefined, "error", undefined]] as const)
+  test(`bounded failures keep malformed, transport and ${wire?.reason ?? "network"} separate from unavailable guidance`, async () => {
+    const store = createMissionPanelInventory({ scope: () => "failure-causes", tasks: async () => { throw Error("No tasks") }, read: (_i, selector, scope) => readMissionPanelWindow(selector, {
+      ...scope, runTransfer: read => read(), exchange: async () => { if (!wire) throw new TypeError("Network failure"); return new Response(JSON.stringify(wire)) } }) })
+    try {
+      store.setDemand("fixture", true); await store.ensure("fixture")
+      assert.equal(store.state("fixture").status, status); assert.equal(store.state("fixture").reason, reason)
+      assert.match(store.state("fixture").error!, new RegExp(wire?.reason === "changed" || wire?.reason === "damaged" ? wire.reason : wire ? "invalid" : "Network failure"))
+    } finally { store.clear("fixture") }
+  })
+
+for (const reason of ["host-unavailable", "plugin-unavailable", "plugin-failed", "workspace-unavailable"] as const) test(`adopted bounded owner preserves ${reason} and last-good display`, async () => {
+  const f = seeded(), requests: MissionPanelPageRequest[] = []
+  let unavailable = true
+  const store = createMissionPanelInventory({ scope: () => reason, tasks: async () => { throw Error("No task fallback") },
+    read: (_i, selector, scope) => readMissionPanelWindow(selector, { ...scope, runTransfer: read => read(), exchange: async body => {
+      requests.push(JSON.parse(body)); return unavailable ? new Response(JSON.stringify({ available: false, reason, missions: [] })) : f.exchange(body)
+    } }) })
+  try {
+    store.setDemand("fixture", true); await store.ensure("fixture")
+    assert.equal(store.state("fixture").status, "unavailable"); assert.equal(store.state("fixture").reason, reason)
+    unavailable = false; await store.refresh("fixture"); const good = store.state("fixture").summaries
+    assert.equal(good.length, 50)
+    unavailable = true; await store.refresh("fixture", false)
+    assert.equal(store.state("fixture").status, "unavailable"); assert.equal(store.state("fixture").reason, reason)
+    assert.deepEqual(store.state("fixture").summaries, good)
+    assert.ok(requests.every(request => request.source === "summaries" || request.source === "cleanups" || request.source === "marks"))
+  } finally { store.clear("fixture") }
 })
 
 test("a 601-actor selected header is bounded independently of the complete map and exact wide extensions stay readable", async t => {
@@ -357,19 +466,25 @@ for (const poison of ["id", "projectID", "coordinator"] as const) test(`a correc
   store.clear("fixture")
 })
 
-for (const status of [200, 503]) test(`actual inventory API releases deferred ${status} cleanup slots at the logical deadline`, async () => {
+for (const status of [200, 503]) test(`actual inventory API releases deferred ${status} cleanup slots at the logical deadline`, async t => {
   const { serverApi } = await import("../../src/lib/api-client"), { backgroundReads } = await import("../../src/lib/background-read-queue")
   const original = globalThis.fetch
   let reject!: (error: Error) => void, cancelled = 0, starts = 0, released = false
   const gate = new Promise<void>((_, rejectGate) => { reject = rejectGate }), keepAlive = setTimeout(() => {}, 3000), deadline = performance.now() + 150
-  globalThis.fetch = async () => { starts++; return new Response(new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(65537)) }, cancel() { cancelled++; return gate } }), { status }) }
+  const dispatched: Array<{ at: number; aborted: boolean }> = []
+  globalThis.fetch = async (_input, init) => { starts++; dispatched.push({ at: performance.now(), aborted: init?.signal?.aborted === true }); return new Response(new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(65537)) }, cancel() { cancelled++; return gate } }), { status }) }
   const calls = Array.from({ length: 3 }, () => serverApi.fetchMissionPanel("fixture", { source: "summaries", window: { offset: 0 } }, { current: () => true, deadline }))
   let markerBeforeRelease = false
   const marker = backgroundReads.run(AbortSignal.timeout(1000), async () => { markerBeforeRelease = !released && performance.now() >= deadline }).then(() => true, () => false)
   try {
     const results = await Promise.allSettled(calls)
     assert.equal(await marker, true); assert.equal(markerBeforeRelease, true)
-    assert.deepEqual([starts, cancelled], [2, 2])
+    t.diagnostic(JSON.stringify({ deadline, dispatched, starts, cancelled }))
+    // Independent native timers can release a slot just before the absolute
+    // deadline. A third dispatch is valid only while its own admission is live.
+    assert.ok(starts >= 2 && starts <= 3)
+    assert.equal(cancelled, starts)
+    assert.ok(dispatched.every(read => !read.aborted && read.at < deadline), "no queued transfer starts at/after its original deadline")
     assert.ok(results.every(result => result.status === "rejected"))
   } finally {
     released = true; reject(new Error("Late inventory cancel rejection"))

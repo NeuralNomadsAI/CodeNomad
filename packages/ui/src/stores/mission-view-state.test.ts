@@ -75,6 +75,14 @@ async function projectControls() {
 }
 
 if (reload) {
+  if (process.env.MISSION_UPGRADE_CHECK) test("a partial folder upgrade retains undiscovered positive exceptions across reload", () => {
+    const { folder, scope, rows } = JSON.parse(process.env.MISSION_UPGRADE_CHECK!)
+    assert.deepEqual(rows.map((row: ReturnType<typeof completion>) => missionFinishedSeen(scope, row)), [true, false, true])
+    seedMissionFinishedSeen(scope, 99, folder, rows.slice(1))
+    assert.deepEqual(rows.map((row: ReturnType<typeof completion>) => missionFinishedSeen(scope, row)), [true, false, true])
+    seedMissionFinishedSeen(scope, 100, folder, rows)
+    assert.equal(missionFinishedSeen(scope, { id: "later", finishSequence: 4 }), false)
+  })
   if (process.env.MISSION_SEEN_EXPECTED) test("a fresh window keeps every seen completion and every unseen one, and the newest toggled sections", () => {
     assert.deepEqual(seen(listed), JSON.parse(process.env.MISSION_SEEN_EXPECTED!))
     assert.equal(missionFinishedSeen("project", completion(6_000)), false, "a later completion starts unseen")
@@ -90,6 +98,22 @@ if (reload) {
     assert.equal(missionProjectView("unknown-playbook").reader, undefined)
   })
 } else {
+  test("folder completion upgrade keeps boundary and pending positives through partial discovery and reload", () => {
+    const folder = "old-folder-upgrade", scope = JSON.stringify([folder, "project"]), rows = range(0, 3)
+    markMissionsFinishedSeen(folder, [], rows.slice(0, 1))
+    markMissionsFinishedSeen(folder, [rows[2].id], rows)
+    seedMissionFinishedSeen(scope, 3, folder, rows.slice(0, 1))
+    assert.equal(missionFinishedSeen(scope, rows[1]), false, "new key must inherit the old unopened boundary")
+    assert.equal(missionFinishedSeen(scope, rows[2]), true, "pending ID evidence stays seen before its exact row is discovered")
+    reloadWith({ MISSION_UPGRADE_CHECK: JSON.stringify({ folder, scope, rows }) })
+    seedMissionFinishedSeen(scope, 30, folder, rows.slice(1))
+    assert.deepEqual(rows.map(row => missionFinishedSeen(scope, row)), [true, false, true])
+    reloadWith({ MISSION_UPGRADE_CHECK: JSON.stringify({ folder, scope, rows }) })
+    const same = "same-key-positive-upgrade"
+    markMissionsFinishedSeen(same, [], rows.slice(0, 1)); markMissionsFinishedSeen(same, [rows[2].id], rows)
+    seedMissionFinishedSeen(same, 3, undefined, rows)
+    assert.deepEqual(rows.map(row => missionFinishedSeen(same, row)), [true, false, true])
+  })
   test("partial inventory seeds once from the durable finish boundary and never marks an undiscovered new finish seen", () => {
     const old = { id: "old", finishSequence: 1 }, deleted = { id: "deleted", finishSequence: 2 }, fresh = { id: "fresh", finishSequence: 3 }, shown = { id: "shown", finishSequence: 4 }
     seedMissionFinishedSeen("partial", 2)

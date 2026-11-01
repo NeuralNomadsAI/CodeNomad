@@ -13,6 +13,7 @@ import { createFixtureShutdown } from "./fixture-shutdown"
 import { clickMissionAction, missionPickerField, selectMission, toggleMissionOverview } from "./mission-actions"
 import type {} from "./fixtures/mission-navigation"
 import { panelMissions } from "./mission-content-fixture"
+import { collectMissionReadFailures, MISSION_READ_HEADER } from "./mission-read-observation-fixture"
 
 let server: ViteDevServer, browser: Browser, url: string
 const ownedHTTP = { listeningAt: 0, closedAt: 0, accepted: 0, open: 0, peak: 0, requests: 0, unfinished: 0, finished: 0, closedResponses: 0,
@@ -85,11 +86,12 @@ async function reportSetupFailure(record: { droppedPackets: number; failures: un
     })])
   } finally { clearTimeout(timer); abort.abort() }
 }
-async function setup(missing = false) {
+async function setup(missing = false, holdSchedule = false) {
   const page = await browser.newPage({ locale: "en-US" }), errors: string[] = [], networkErrors: string[] = [], requests: string[] = []
-  let recurrenceDemandRetired = false
-  const cancelledRecurrenceReads: string[] = []
+  const missionReads = collectMissionReadFailures(page, url)
+  const cancelledRecurrenceReads = missionReads.cancelled
   const held = gate(), reached = gate(), completed = gate()
+  const scheduleHeld = gate(), scheduleReached = gate()
   const traffic = Object.fromEntries(["document", "lucide", "api", "optimized", "other"].map(category =>
     [category, { started: 0, current: 0, peak: 0, finished: 0, failed: 0 }]))
   const failures: { at: number; origin: string; path: string; type: string; error: string }[] = []
@@ -114,13 +116,7 @@ async function setup(missing = false) {
   page.on("requestfailed", request => terminal(request, true))
   page.on("pageerror", error => errors.push(error.message))
   page.on("requestfailed", request => {
-    const error = `${request.url()} ${request.failure()?.errorText}`, own = ownedRequest(request.url())
-    // Only these explicit view retirements cancel the exact read-only list GET.
-    // Preserve raw failure diagnostics and all actor/read/navigation failures.
-    if (request.method() === "POST" && request.failure()?.errorText === "net::ERR_ABORTED" && own?.path.endsWith("/missions/panel-page")) cancelledRecurrenceReads.push(error)
-    else if (recurrenceDemandRetired && request.method() === "GET" && request.failure()?.errorText === "net::ERR_ABORTED"
-      && own && /^\/api\/workspaces\/(fixture|replacement)\/missions\/(recurrence|scheduled)$/.test(own.path)) cancelledRecurrenceReads.push(error)
-    else networkErrors.push(error)
+    missionReads.record(request, networkErrors)
   })
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
@@ -129,6 +125,10 @@ async function setup(missing = false) {
     requests.push(`${route.request().method()} ${pathname}`)
     if (pathname === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
     if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
+    if (pathname.endsWith("/missions/A/schedule") && holdSchedule) {
+      scheduleReached.release(); await scheduleHeld.promise
+      await route.fulfill({ json: {} }); return
+    }
     if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission("A"), mission("B")]), generatedAt: 1, discardedEvents: 0 } })
     if (pathname.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project",
       projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] } })
@@ -165,13 +165,39 @@ async function setup(missing = false) {
     finally { held.release(); try { await page.close() } catch { /* Preserve original error even if cleanup fails. */ } failedSetupHeld = undefined }
     throw error
   }
-  return { page, held, reached, completed, errors, networkErrors, requests, cancelledRecurrenceReads,
-    retireRecurrenceDemand: () => { recurrenceDemandRetired = true } }
+  return { page, held, reached, completed, errors, networkErrors, requests, cancelledRecurrenceReads, scheduleHeld, scheduleReached, missionReads }
 }
 async function read(page: Page, id: string) {
   // The overview reader belongs to the selected Mission's toolbar ("Summary" eye).
   await toggleMissionOverview(page, `Objective ${id}`)
 }
+
+test("same-URL schedule network aborts and missing, unknown or reused identities remain failures", async t => {
+  const state = await setup(), { page, networkErrors, missionReads } = state
+  const endpoint = new URL("/api/workspaces/fixture/missions/A/schedule?directory=%2Ffixture", url).href
+  let observedId = ""
+  page.on("request", request => { if (request.url() === endpoint && request.headers()[MISSION_READ_HEADER]) observedId = request.headers()[MISSION_READ_HEADER] })
+  await page.route("**/missions/A/schedule?*", route => route.abort("aborted"))
+  try {
+    const network = await page.evaluate(() => window.fixtureScheduleNetworkProbe())
+    assert.deepEqual(network, { aborted: false, error: "TypeError" })
+    await settled(page); await missionReads.drain()
+    assert.equal(networkErrors.length, 1, "an actual API network abort has no originating aborted signal")
+    const reused = observedId
+    assert.ok(reused)
+    for (const id of [undefined, "unknown-read", reused]) {
+      const failed = page.waitForEvent("requestfailed", request => request.url() === endpoint)
+      await page.evaluate(async ({ endpoint, id, header }) => {
+        await fetch(endpoint, { headers: id ? { [header]: id } : {} }).catch(() => {})
+      }, { endpoint, id, header: MISSION_READ_HEADER })
+      await failed; await missionReads.drain()
+    }
+    assert.equal(networkErrors.length, 4)
+    assert.equal(missionReads.cancelled.filter(read => read.failure.startsWith(endpoint + " ")).length, 0)
+    assert.equal(missionReads.raw.filter(read => read.startsWith(endpoint + " ")).length, 4)
+    t.diagnostic(JSON.stringify({ sameURLFailures: networkErrors, raw: missionReads.raw, correlatedCancellations: missionReads.cancelled }))
+  } finally { state.held.release(); state.scheduleHeld.release(); await page.close() }
+})
 async function actor(page: Page, id: string) {
   await clickMissionAction(page, "Open conversation", `Objective ${id}`)
 }
@@ -182,13 +208,14 @@ async function settled(page: Page) {
 }
 type Change = "reader" | "actor" | "selection" | "instance" | "instance-aba" | "directory-aba" | "project-aba" | "inactive-aba" | "remount" | "editor"
 for (const origin of ["actor", "reader"] as const) for (const change of ["reader", "actor", "selection", "instance", "instance-aba", "directory-aba", "project-aba", "inactive-aba", "remount", "editor"] as const) {
-  test(`deferred ${origin} A respects newer ${change}`, async () => {
-    const state = await setup(), { page, held, reached, completed, errors, networkErrors, requests } = state
+  test(`deferred ${origin} A respects newer ${change}`, async t => {
+    const holdSchedule = origin === "actor" && (change === "instance-aba" || change === "remount")
+    const state = await setup(false, holdSchedule), { page, held, reached, completed, errors, networkErrors, requests } = state
     try {
       if (origin === "reader") await page.evaluate(() => window.missionNavigation.clearActive())
       await (origin === "actor" ? actor(page, "A") : read(page, "A"))
       await reached.promise
-      if (["instance", "instance-aba", "directory-aba", "project-aba", "inactive-aba", "remount"].includes(change)) state.retireRecurrenceDemand()
+      if (holdSchedule) await state.scheduleReached.promise
       if (change.startsWith("instance")) {
         await page.evaluate(() => window.missionNavigation.instance("replacement"))
         if (change.endsWith("aba")) await page.evaluate(() => window.missionNavigation.instance("fixture"))
@@ -201,6 +228,7 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["reader
       } else if (change === "remount") {
         await page.evaluate(() => window.missionNavigation.mount(false)); await page.evaluate(() => window.missionNavigation.mount(true))
       }
+      state.scheduleHeld.release()
       if (change === "selection") await selectMission(page, "Objective B")
       else if (change === "actor") {
         // Let B's newer navigation land before capturing the state the stale A must keep.
@@ -214,6 +242,9 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["reader
       await page.evaluate(() => window.missionNavigation.created("ses_A"))
       held.release(); await completed.promise; await settled(page)
       const after = await page.evaluate(() => window.missionNavigation.snapshot())
+      await state.missionReads.drain()
+      if (holdSchedule) assert.ok(state.cancelledRecurrenceReads.some(read => read.failure.includes("/missions/A/schedule?")), "the exact held point read has its own aborted-signal/AbortError receipt")
+      t.diagnostic(JSON.stringify({ raw: state.missionReads.raw, correlatedCancellations: state.missionReads.cancelled, failures: networkErrors }))
       if (process.env.CODENOMAD_NAVIGATION_EVIDENCE) {
         await writeFile(path.join(process.env.CODENOMAD_NAVIGATION_EVIDENCE, `${origin}-${change}.json`), JSON.stringify({ before, after, errors, networkErrors, cancelledRecurrenceReads: state.cancelledRecurrenceReads, requests }, null, 2))
         await page.screenshot({ path: path.join(process.env.CODENOMAD_NAVIGATION_EVIDENCE, `${origin}-${change}.png`) })
@@ -223,12 +254,12 @@ for (const origin of ["actor", "reader"] as const) for (const change of ["reader
       assert.equal(await page.getByRole("alert").count(), 0)
       assert.deepEqual(errors, []); assert.deepEqual(networkErrors, [])
       assert.ok(requests.every(request => request.startsWith("GET ")), "navigation is read-only")
-    } finally { held.release(); await page.close() }
+    } finally { held.release(); state.scheduleHeld.release(); await page.close() }
   })
 }
 
 test("current reader without active session opens coordinator then installs its own reader", async () => {
-  const { page, held, reached, completed, errors, networkErrors } = await setup()
+  const { page, held, reached, completed, errors, networkErrors, missionReads } = await setup()
   try {
     await page.evaluate(() => window.missionNavigation.clearActive())
     await read(page, "A"); await reached.promise
@@ -236,6 +267,7 @@ test("current reader without active session opens coordinator then installs its 
     await page.waitForFunction(() => window.missionNavigation.snapshot().view.reader?.missionId === "A")
     const after = await page.evaluate(() => window.missionNavigation.snapshot())
     assert.equal(after.selectedSession, "ses_A"); assert.deepEqual(JSON.parse(JSON.stringify(after.view.reader)), { missionId: "A", kind: "overview" }); assert.equal(after.reveals, 2)
+    await missionReads.drain()
     assert.deepEqual(errors, []); assert.deepEqual(networkErrors, [])
   } finally { held.release(); await page.close() }
 })

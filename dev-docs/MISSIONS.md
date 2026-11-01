@@ -697,6 +697,8 @@ last-good header for a later selection. Task-source versions suppress unrelated 
 task rereads. Actors, all compact reports, history and claims use independently selected
 field windows. Lifecycle receipt/pending collections use `field:"control"` with
 `part:"receipts"|"pending"`; lifecycle identity and counts stay in compact control.
+Field lanes retain the root field and part separately; the owning root descriptor
+invalidates structured and raw part windows together, and Retry preserves the exact part.
 The selected mission reads its unified document projection. `document`, boolean cleanup
 `documentPending` and history `requestID` retain their exact shapes; scheduling editors
 keep their descriptor-pinned bodies/content reads. Snapshot/admission, internal and
@@ -727,6 +729,16 @@ project's persisted completion watermark once, including deleted/purged finishes
 counter gaps. Later pages and refreshes preserve the initial boundary; separately shown
 new completions are recorded without advancing over unseen/unloaded ones. Exact cleanup
 retry reconciliation retains its single-mission read and immutable request/revision/option.
+
+Project-scoped completion records inherit an existing folder record before durable-counter
+seeding. Saved whole-inventory watermarks retain their unseen boundary; undiscovered
+hashed-ID positives persist separately across reloads until exact discovered rows supply
+their finish sequences. Passive first-window validation retains a failed middle selector;
+an obsolete collection order marks that failure changed until an explicit restart succeeds.
+
+Fixed host, plugin and workspace unavailable refusals retain their typed cause through
+the bounded owner and its localized unavailable guidance. Last-good display survives;
+malformed data, transport failures, changed orders and damaged ranges keep distinct errors.
 
 The inventory consumer (`stores/mission-panel-inventory.ts`) uses the task consumer's
 slot-owning response/cancel boundary and UTF-16LE SHA-256. Logical character ceilings are

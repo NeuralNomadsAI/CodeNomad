@@ -1,5 +1,6 @@
 import { createSignal, untrack } from "solid-js"
 import type { MissionListResponse, MissionPanelMap, MissionSummary, MissionActivityProjection } from "../../../server/src/api-types"
+import type { MissionUnavailableReason } from "../../../server/src/missions/model"
 import type { MissionPanelPageRequest, MissionPanelPage } from "../../../server/src/missions/mission-panel-wire"
 import type { MissionTaskFetch } from "./mission-store"
 import { createMissionStore, type MissionDisplayResponse } from "./mission-store"
@@ -15,6 +16,7 @@ type Window = NonNullable<MissionPanelPage["window"]>
 export interface MissionPanelProgress { loading: boolean; loaded: number; total?: number; more: boolean; failure?: "changed" | "failed" }
 interface Page { values: unknown[]; window: Window; revision?: number; observedAt?: number; serial: number; epoch: number; cycle: number }
 interface Lane { pages: Map<number, Page>; loading: boolean; cycle: number; failed?: { selector: Selector; changed: boolean }; pending?: Promise<void>
+  field?: Pick<Extract<Selector, { source: "mission" }>, "missionID" | "field" | "part" | "text">
   pendingSelector?: string; pendingCurrent?: () => boolean; failures: Map<string, { selector: Selector; changed: boolean }>
   inventoryRows?: Map<string, { value: unknown; revision: number; serial: number; epoch: number }> }
 interface Entry {
@@ -23,7 +25,7 @@ interface Entry {
   missionOwners: Map<string, AbortController>
   refreshDeadline?: number
   headerReads: Map<string, { owner: AbortController; promise: Promise<void>; trailing: boolean }>
-  headerErrors: Map<string, { revision: number; reason: "changed" | "failed" }>; missing: Set<string>
+  headerErrors: Map<string, { revision: number; reason: "changed" | "failed"; unavailableReason?: MissionUnavailableReason }>; missing: Set<string>
   originCurrent?: () => boolean
 }
 export function createMissionPanelInventory(input: {
@@ -142,10 +144,12 @@ export function createMissionPanelInventory(input: {
           .filter(member => member.kind !== undefined).map(member => [member.sessionId, { ...member, kind: member.kind! }])).values()] } }
     }) }
   }
-  async function readLane(instanceId: string, key: string, selector: Selector, parent?: MissionPanelReadScope): Promise<void> {
+  async function readLane(instanceId: string, key: string, selector: Selector, parent?: MissionPanelReadScope, restart = false): Promise<void> {
     const own = entry(instanceId), target = lane(own, key)
+    if (selector.source === "mission") target.field = { missionID: selector.missionID, field: selector.field, part: selector.part, text: selector.text }
+    const superseded = restart ? new Map(target.failures) : undefined
     const signature = JSON.stringify([selector.source, "missionID" in selector ? selector.missionID : null, selector.source === "mission" ? [selector.field, selector.part, selector.text] : null, offsetOf(selector), orderOf(selector)]), waiting = target.pending
-    if (waiting && target.pendingSelector === signature && target.pendingCurrent?.()) return waiting
+    if (!restart && waiting && target.pendingSelector === signature && target.pendingCurrent?.()) return waiting
     const serial = ++readSerial
     const ownLife = scope(instanceId, own, selector.source === "mission" || selector.source === "activity" ? selector.missionID : undefined)
     const life = parent ? { ...ownLife, deadline: Math.min(ownLife.deadline!, parent.deadline!), signal: AbortSignal.any([ownLife.signal!, parent.signal!]), current: () => ownLife.current() && parent.current() } : ownLife
@@ -219,8 +223,8 @@ export function createMissionPanelInventory(input: {
         }
         assertTaskReadLive(life.signal, life.deadline)
         if (!life.current()) return
-        if (selector.source === "summaries" && own.baseline !== undefined && !own.seeded) {
-          seedMissionFinishedSeen(JSON.stringify([input.scope(instanceId), own.projectID]), own.baseline)
+        if (selector.source === "summaries" && own.baseline !== undefined) {
+          seedMissionFinishedSeen(JSON.stringify([input.scope(instanceId), own.projectID]), own.baseline, input.scope(instanceId), rows as MissionSummary[])
           own.seeded = true
         }
         if (selector.source === "marks" || selector.source === "activity") for (const row of rows) observationOwner.set(row as object, { epoch: own.epoch, cycle, lane: key, offset: window.offset })
@@ -257,7 +261,8 @@ export function createMissionPanelInventory(input: {
         for (const [id, failure] of target.failures) if (offsetOf(failure.selector) === window.offset && (orderOf(failure.selector) === undefined || orderOf(failure.selector) === window.order)) target.failures.delete(id)
         if (window.offset === 0) for (const [id, failure] of target.failures) {
           const oldOrder = orderOf(failure.selector)
-          if (failure.changed || oldOrder !== undefined && oldOrder !== window.order) target.failures.delete(id)
+          if (superseded?.get(id) === failure) target.failures.delete(id)
+          else if (oldOrder !== undefined && oldOrder !== window.order) failure.changed = true
         }
         target.failed = target.failures.values().next().value
       } catch (error) {
@@ -297,10 +302,10 @@ export function createMissionPanelInventory(input: {
     } else map.taskPage = header.tasks.page
     assertTaskReadLive(life.signal, life.deadline)
     if (!life.current()) throw new DOMException("Obsolete mission owner", "AbortError")
-    for (const [key, target] of own.lanes) if (key.startsWith(`field:${id}:`) || key.startsWith(`text:${id}:`)) {
-      const field = key.slice(key.indexOf(":", key.indexOf(":") + 1) + 1), before = previous?.header.collections[field], after = header.collections[field]
+    for (const target of own.lanes.values()) if (target.field?.missionID === id && target.field.field) {
+      const field = target.field.field, before = previous?.header.collections[field], after = header.collections[field]
       if (before && after && before.digest !== after.digest && target.pages.size) {
-        const selector: Selector = { source: "mission", missionID: id, field, ...(key.startsWith("text:") ? { text: true } : {}), window: { offset: 0 } }
+        const selector: Selector = { source: "mission", ...target.field, window: { offset: 0 } }
         target.failures.set(`header:${after.digest}`, { selector, changed: true }); target.failed = target.failures.values().next().value
       }
     }
@@ -345,9 +350,10 @@ export function createMissionPanelInventory(input: {
       if (key === "summaries" || key === "cleanups") selector = { source: key, window: { offset, order } }
       else if (key === "marks") selector = { source: "marks", missionOffset: offset, missionOrder: order }
       else if (key.startsWith("activity:")) selector = { source: "activity", missionID: key.slice(9), actorOffset: offset, actorOrder: order }
+      else if (target.field) selector = { source: "mission", ...target.field, window: { offset, order } }
       else { const [kind, id, field, part] = key.split(":"); selector = { source: "mission", missionID: id, field, ...(kind === "text" ? { text: true as const } : {}), ...(part === "receipts" || part === "pending" ? { part } : {}), window: { offset, order } } }
     }
-    await readLane(instanceId, key, selector).catch(() => {})
+    await readLane(instanceId, key, selector, undefined, retry && offsetOf(selector) === 0 && orderOf(selector) === undefined).catch(() => {})
   }
   const stop = (own: Entry) => {
     if (own.panel || [...own.owners.values()].some(item => item.reader)) return
@@ -383,7 +389,8 @@ export function createMissionPanelInventory(input: {
           publishHeaders(instanceId, own, life.deadline!)
         } while (job.trailing && life.current())
       } catch (error) {
-        if (life.current()) own.headerErrors.set(id, { revision: row?.revision ?? -1, reason: error instanceof MissionTaskPageReadError && error.reason === "changed" ? "changed" : "failed" })
+        if (life.current()) own.headerErrors.set(id, { revision: row?.revision ?? -1, reason: error instanceof MissionTaskPageReadError && error.reason === "changed" ? "changed" : "failed",
+          unavailableReason: error instanceof MissionTaskPageReadError ? error.unavailableReason : undefined })
       } finally { if (own.headerReads.get(id) === job) own.headerReads.delete(id); changed() }
     }
     own.headerReads.set(id, job); job.promise = Promise.resolve().then(run)
@@ -428,7 +435,8 @@ export function createMissionPanelInventory(input: {
         return actors === map.actors && reports === map.reports && history === map.history ? map : { ...map, actors, reports, history }
       })
       const failed = [...own.owners.values()].some(owner => own.headerErrors.has(owner.id))
-      return { ...shown, ...(failed ? { status: "error" as const } : {}), missions, summaries: summaryRows(own, missions), activity: activity(own),
+      const unavailable = [...own.owners.values()].map(owner => own.headerErrors.get(owner.id)?.unavailableReason).find(Boolean)
+      return { ...shown, ...(shown.status === "unavailable" ? {} : unavailable ? { status: "unavailable" as const, reason: unavailable, error: undefined } : failed ? { status: "error" as const } : {}), missions, summaries: summaryRows(own, missions), activity: activity(own),
         cleanups: values(own, "cleanups") as typeof shown.cleanups, cleanupUnavailable: Boolean(own.lanes.get("cleanups")?.failed) }
     },
     setDemand: (instanceId: string, demanded: boolean) => { const own = entry(instanceId); own.panel = demanded; if (!demanded) stop(own); base.setDemand(instanceId, demanded) },

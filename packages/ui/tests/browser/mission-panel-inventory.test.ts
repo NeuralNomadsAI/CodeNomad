@@ -58,10 +58,12 @@ async function open() {
   page.on("pageerror", error => errors.push(error.message)); page.setDefaultTimeout(15000)
   await page.addInitScript("Object.assign(window,{__name:f=>f,__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})")
   let failMiddle: false | "summaries" | "cleanups" = false
+  let unavailable: string | undefined
   await page.route("**/api/**", async route => {
     const request = route.request(), path = new URL(request.url()).pathname
     if (path.endsWith("/missions/panel-page")) {
       const input = request.postDataJSON(); requests.push(input)
+      if (unavailable) return route.fulfill({ json: { available: false, reason: unavailable, missions: [] } })
       if (failMiddle === input.source && input.window?.offset === 50) return route.fulfill({ status: 503, json: {} })
       const response = await app.inject({ method: "POST", url: "/api/workspaces/workspace/missions/panel-page", payload: input })
       bytes.push(response.rawPayload.length); return route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body })
@@ -78,8 +80,25 @@ async function open() {
   await page.goto(url)
   await page.waitForFunction(async () => (await import("/src/stores/missions.ts")).missionStore.state("fixture").status === "ready")
   return { page, requests, prefixes, native, bytes, mutations, errors, fail: (value: boolean | "cleanups") => { failMiddle = value === true ? "summaries" : value },
+    unavailable: (reason: string) => { unavailable = reason },
     close: async () => { await page.context().close(); await app.close(); await plugin.dispose() } }
 }
+
+for (const [reason, detail] of [["host-unavailable", "host"], ["plugin-unavailable", "plugin"], ["plugin-failed", "pluginFailed"], ["workspace-unavailable", "workspace"]])
+  test(`bounded panel renders localized unavailable guidance for ${reason} while retaining its last good inventory`, async () => {
+    const f = await open()
+    try {
+      const before = await f.page.evaluate(async () => (await import("/src/stores/missions.ts")).missionStore.state("fixture").summaries)
+      f.unavailable(reason)
+      await f.page.evaluate(async () => (await import("/src/stores/missions.ts")).missionStore.refresh("fixture", false))
+      const state = await f.page.evaluate(async () => (await import("/src/stores/missions.ts")).missionStore.state("fixture"))
+      assert.equal(state.status, "unavailable"); assert.equal(state.reason, reason)
+      assert.deepEqual(state.summaries, before)
+      const localized = await f.page.evaluate(detail => (window as any).missionFixture.text(`missions.control.unavailable.${detail}`), detail)
+      await f.page.getByText(localized, { exact: true }).waitFor()
+      assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
+    } finally { await f.close() }
+  })
 
 test("actual picker discovers a bounded first inventory without maps, traverses/retries the middle, and reads an exact selected target outside it", async t => {
   const f = await open()

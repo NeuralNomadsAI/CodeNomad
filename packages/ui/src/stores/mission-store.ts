@@ -231,8 +231,9 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
       // A failed read stays parked: only new demand, an invalidation or an explicit retry reads again.
       update(instanceId, {
         ...previous,
-        status: "error",
-        error: error instanceof Error ? error.message : String(error),
+        status: error instanceof MissionTaskPageReadError && error.unavailableReason ? "unavailable" : "error",
+        reason: error instanceof MissionTaskPageReadError ? error.unavailableReason : undefined,
+        error: error instanceof MissionTaskPageReadError && error.unavailableReason ? undefined : error instanceof Error ? error.message : String(error),
       })
     } finally {
       if (generations.get(instanceId) === generation) requested.delete(instanceId)

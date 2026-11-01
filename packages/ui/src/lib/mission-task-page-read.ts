@@ -123,7 +123,7 @@ export async function readMissionTaskPage(missionID: string, task: MissionTaskRe
       if (!refusal.success) throw new MissionTaskPageReadError("invalid")
       const reason = refusal.data.reason
       throw new MissionTaskPageReadError(reason === "changed" || reason === "damaged" ? reason
-        : reason === "invalid-cursor" || reason === "invalid-request" ? "invalid" : "unavailable")
+        : reason === "invalid-cursor" || reason === "invalid-request" ? "invalid" : "unavailable", "missions" in refusal.data ? refusal.data.reason : undefined)
     }
     const decoded = envelopeSchema.safeParse(value)
     if (!decoded.success) throw new MissionTaskPageReadError("invalid")
@@ -199,7 +199,7 @@ export async function readMissionPanelWindow(selector: Exclude<MissionPanelPageR
       if (!refusal.success) throw new MissionTaskPageReadError("invalid")
       if (refusal.data.reason === "mission-not-found") throw new MissionPanelMissingError()
       throw new MissionTaskPageReadError(refusal.data.reason === "changed" || refusal.data.reason === "damaged" ? refusal.data.reason
-        : refusal.data.reason === "invalid-cursor" || refusal.data.reason === "invalid-request" ? "invalid" : "unavailable")
+        : refusal.data.reason === "invalid-cursor" || refusal.data.reason === "invalid-request" ? "invalid" : "unavailable", "missions" in refusal.data ? refusal.data.reason : undefined)
     }
     const parsed = panelEnvelope.safeParse(value)
     if (!parsed.success) throw new MissionTaskPageReadError("invalid")
