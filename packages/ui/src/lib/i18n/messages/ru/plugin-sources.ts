@@ -23,6 +23,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.localPath": "Локальные пути нельзя добавить здесь. Укажите их в файле конфигурации OpenCode.",
   "instanceServiceStatus.plugins.sources.errors.pluginId": "Это ID плагина или правило активации, а не пакет.",
   "instanceServiceStatus.plugins.sources.errors.duplicate": "Этот пакет уже объявлен в конфигурации OpenCode, которая действует здесь.",
+  "instanceServiceStatus.plugins.sources.errors.globalOnly": "Эта интеграция работает только из конфигурации {global}. Выберите {global}.",
   "instanceServiceStatus.plugins.sources.errors.forbidden": "Этому рабочему пространству нельзя изменять конфигурацию {scope}.",
   "instanceServiceStatus.plugins.sources.errors.conflict": "Конфигурация {scope} изменилась во время сохранения. Попробуйте ещё раз.",
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "Конфигурация OpenCode {scope} повреждена. Она не изменена.",

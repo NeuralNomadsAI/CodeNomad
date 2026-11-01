@@ -53,6 +53,7 @@ import { RemoteDeviceRegistry } from "./remote-control/devices"
 import { RemoteControlManager } from "./remote-control/manager"
 import { RemoteControlOwnerLease } from "./remote-control/owner-lease"
 import { WorktreeDeletionFence } from "./workspaces/worktree-session-evacuation"
+import { IntegrationCatalogSource } from "./opencode/integrations/catalog"
 
 const require = createRequire(import.meta.url)
 
@@ -591,6 +592,7 @@ async function main() {
     automationBridgeToken: automationBridge.token,
     worktreeDeletionFence,
     missionsHost,
+    integrationCatalog: new IntegrationCatalogSource({ stateFile: path.join(configDir, "integrations-catalog.json"), logger }),
   }
 
   // HTTP always starts: besides an explicit --http it carries the loopback bridge

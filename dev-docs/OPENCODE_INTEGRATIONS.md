@@ -50,6 +50,67 @@ an integration error (`{ ok: false, error: "non-conforming" }`), never trusted o
 value is never echoed. `contract.test.ts` checks that every sample the pattern-free definitions accept but the
 specification refuses is refused by the reader.
 
+## Catalog
+
+`opencode/integrations/catalog.ts` (`IntegrationCatalogSource`, one per backend, shared by every listener) reads the
+reviewed catalog from `INTEGRATION_CATALOG_RELEASES_URL`, the only remote source: the GitHub release list of
+`NeuralNomadsAI/opencode-integrations`, never its "latest" release. The newest published `catalog-v<n>` release
+(highest `n`; drafts, prereleases and other tags ignored) gives the `catalog.json` asset, downloaded through the API
+origin only. The list is read newest first, following `Link: rel="next"` on the API origin up to
+`INTEGRATION_CATALOG_MAX_PAGES` (5) pages of 100 until a page holds a catalog release. Each page is read within
+1 MiB, the asset within 256 KiB (the transfer is cancelled past it), the whole refresh within 10 s; the asset must be
+UTF-8 JSON within `integrationCatalogSchema`.
+
+- Two reads within 30 s (`INTEGRATION_CATALOG_CACHE_MS`) share one remote request, whatever its outcome, and a
+  refresh runs alone, so an older answer never replaces a newer one. The first list page is requested with
+  `If-None-Match`; an unchanged list reuses the selected release. The catalog is downloaded again only for a new
+  revision: release tag, asset ID and asset update time (a re-uploaded asset is a new revision).
+- Requests are unauthenticated (60 per hour per address, 304 answers included). A 403 or 429 rate-limit answer
+  defers the next refresh to its `retry-after` or `x-ratelimit-reset` time (at most one hour), while the last valid
+  catalog is served as `stale`.
+- `fresh`: the last read succeeded. `stale`: it failed (unreachable, refused status, oversized, not JSON, outside the
+  schema, no catalog release) and the last valid catalog is served with its `fetchedAt`. `unavailable`: no valid
+  catalog is known, with an empty list. No catalog is bundled; the last valid one persists in
+  `integrations-catalog.json` of CodeNomad's configuration folder. Failures are logged by reason only.
+
+## Recognition and state
+
+`opencode/integrations/recognition.ts` recognises a configured integration from the authoritative plugin snapshot
+(`PluginControls.read`), enabled or not, without reading OpenCode's cache. A source is the catalog integration `X`
+when its registry package (or the target of an `npm:` alias) is `X.package`, when the runtime loaded it as
+`X.plugin`, or when its spec starts with a prefix of `X.sources.git`; an exact `-X.plugin` rule also designates it,
+since `plugin.list` omits disabled plugins. A source that designates two integrations, or that loaded under another
+plugin ID, is ambiguous.
+
+`GET /api/workspaces/:id/integrations?directory=[&workspaceID=]` (`server/routes/integrations.ts`,
+`IntegrationsReader`) answers every catalog entry for an owned Location, without the catalog's `plugin`, `rpc`,
+`sources` and `package`, with one `state` (`IntegrationRuntimeState`):
+
+- `absent` (not configured), `inactive` (configured, not loaded: disabled or not installed yet), `failed`;
+- for a loaded one, the fixed `status` method under the catalog's RPC ID, at most 4 calls in flight and 8 s each
+  (`INTEGRATION_STATUS_*`): `unsupported` (`rpc.unavailable`, `rpc.method_not_found`), `unknown` (timeout or
+  another failure; the route still answers), `non-conforming` (ambiguous source, `rpc.invalid_output`, an output
+  `readIntegrationRpcOutput` refuses, a marker mismatch, meaning another integration `id` or `family`, or a
+  path-like `appVersion`: separator, drive letter or `~`, `looksLikePath`), or `ok` with the projected
+  `host`, `connection` and `notices`.
+
+The query is strict, so a client never names an RPC ID or method. Ownership is checked by the plugin snapshot read,
+then again with `assertCurrent` after the calls (403, or 503 for a replaced connection).
+
+Adding a plugin source (`opencode/plugin-sources.ts`) uses the same catalog: a recognised `native` integration is
+refused in Project (`global-only`, D18), and specs of one recognised integration, or of one whose plugin already
+loaded, are duplicates whatever their form (registry or Git). With the catalog unavailable nothing is recognised.
+
+`createIntegrationsStore` (`stores/integrations-store.ts`, reading through `lib/integrations-api.ts`) is the read
+model for UI surfaces that show integrations. `demand(instance, directory)` reads that Location until its release,
+whose last call aborts the read. `applyEvent(instance, type)` takes the instance's native event types:
+`rpc.neuralnomads.<app>.status_changed`/`hosts_changed`, `plugin.updated` and `config.updated` schedule one read of
+the instance's demanded Locations 300 ms after the first of them, with one trailing follow-up while a read runs;
+`refreshDemanded` re-reads after a reconnect and `clearInstance` forgets a stopped instance. It has no timer of its
+own. A surface that mounts it forwards its instance's `instance.event`, reconnection and `workspace.stopped`
+events, like `stores/session-goal.ts`. The event relay delivers an integration event only when it is published in a
+Location the workspace owns.
+
 ## Test fixtures
 
 - `scripts/fixtures/fake-npm-registry.mjs`: `startFakeNpmRegistry()` serves the tarballs passed to
@@ -82,6 +143,16 @@ Commands:
 
 - `node --import tsx --test packages/server/src/opencode/integrations/contract.test.ts`
 - `node --import tsx --test scripts/fixtures/fake-integration/fake-integration.test.mjs`
+- `node --import tsx --test packages/server/src/opencode/integrations/catalog.test.ts` (local release server:
+  selection, 30 s cache, conditional list, refusals keeping the previous catalog, persistence, re-uploaded asset,
+  later pages, rate-limit wait, timeout),
+  `recognition.test.ts` (three ways, ambiguity, every state, timeout and concurrency), `server/routes/integrations.test.ts`
+  and `packages/ui/src/stores/integrations-store.test.ts` (event coalescing, no polling).
+  `catalog-fixture.ts` builds conforming catalog entries and plugin snapshots.
+- `node --import tsx scripts/test-integrations-recognition-native.mjs <absolute-cli>`: the fake integration loaded
+  (`ok`), its marker-mismatch variant (`non-conforming`), a third disabled by its exact rule (`inactive`, recognised)
+  and an absent entry, against a real daemon; only loaded integrations are called, under catalog RPC IDs; a
+  Project add of a native integration and a second spec of a loaded one are refused without writing.
 - `node --import tsx scripts/test-integration-fixtures-native.mjs <absolute-cli>`: installs the fake package and
   its marker-mismatch variant through the fake registry, checks every output against `contract.ts`, runs the
   Python client against the fixture's own registration (advertise, attach, detach, withdraw), checks that its
@@ -97,6 +168,10 @@ Commands:
 - Keep `contract.ts` equal to the vendored JSON Schemas. A stricter server check (for example refusing
   path-like strings) belongs to the code that projects a status, never to the contract schemas.
 - The RPC ID of an integration comes from the catalog on the server, never from a client.
+- Read the catalog only through `IntegrationCatalogSource`; never add another remote URL, a bundled catalog or a
+  timer that refreshes it. Integration displays read on demand and on events, never by polling.
+- Never gate an integration call on `features.rpc`: OpenCode does not report it for plugins that register their RPC
+  in `setup`. The native RPC error decides `unsupported`.
 - Never expose or log a host port, token, `script_handle`, `binding_key` or `offer_key`; leak tests use
   `FAKE_INTEGRATION_SENTINELS` and the fake host's `leaky` mode.
 - Every lease, expiry or rate window takes an injectable clock (`now`), so tests move time instead of waiting.

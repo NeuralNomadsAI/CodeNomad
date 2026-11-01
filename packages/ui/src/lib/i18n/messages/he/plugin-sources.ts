@@ -23,6 +23,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.localPath": "אי אפשר להוסיף כאן נתיבים מקומיים. הגדירו אותם בקובץ התצורה של OpenCode.",
   "instanceServiceStatus.plugins.sources.errors.pluginId": "זהו מזהה תוסף או כלל הפעלה, לא חבילה.",
   "instanceServiceStatus.plugins.sources.errors.duplicate": "החבילה הזו כבר מוגדרת בתצורת OpenCode שחלה כאן.",
+  "instanceServiceStatus.plugins.sources.errors.globalOnly": "השילוב הזה פועל רק מתצורת {global}. בחרו {global}.",
   "instanceServiceStatus.plugins.sources.errors.forbidden": "לסביבת העבודה הזו אין הרשאה לשנות את תצורת {scope}.",
   "instanceServiceStatus.plugins.sources.errors.conflict": "תצורת {scope} השתנתה בזמן השמירה. נסו שוב.",
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "תצורת OpenCode של {scope} פגומה. היא לא שונתה.",

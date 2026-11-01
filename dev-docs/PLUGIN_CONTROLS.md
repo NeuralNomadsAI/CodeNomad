@@ -13,7 +13,7 @@ CodeNomad writes the declaration and OpenCode resolves, installs and loads it.
 one string entry at the end of the scope's `plugins`; `DELETE` (`{ location,
 scope, target, entryIndex }`) removes one entry. Both routes are strict, map
 errors like the activation route and add a stable `code` (`invalid-spec`,
-`local-path`, `plugin-id`, `duplicate`, `stale`, `timeout`).
+`local-path`, `plugin-id`, `duplicate`, `stale`, `timeout`, `global-only`).
 
 - **Accepted specs** match OpenCode's own `plugin add`: registry versions, ranges,
   tags and `npm:` aliases, and remote Git specs, parsed with `npm-package-arg`.
@@ -46,6 +46,10 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   whenever the folder is opened and that GUI parts load only from Global. Whether
   a package has GUI parts (`features.gui`) is known only once OpenCode has loaded
   it, so a Project-declared GUI package is flagged in its tooltip afterwards.
+  An OpenCode integration the reviewed catalog recognises
+  ([OPENCODE_INTEGRATIONS.md](OPENCODE_INTEGRATIONS.md#recognition-and-state)) is
+  known before installation: a `native` one is refused in Project
+  (`global-only`, 422), and two specs of one integration are duplicates.
 - **States**: the response publishes only the durable configured state
   (`reloadPending`). A just-added spec is `pending` (busy row, **Installing**)
   until `plugin.list` reports its exact target, which turns it into an ordinary

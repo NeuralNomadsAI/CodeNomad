@@ -49,6 +49,8 @@ Bir eklentiyi kaldırmak için adının yanındaki menüyü açıp **Genel kapsa
 
 Eklentinin kodu OpenCode içinde sizin izinlerinizle çalışır. Bir **Proje** girdisi, o klasör OpenCode'da her açıldığında çalışır ve OpenCode masaüstü uygulaması bölümleri olan paketler bunları yalnızca **Genel** kapsamdan yükler; böyle bir paket başka yerde bildirildiğinde araç ipucu bunu belirtir. Yerel yollar, yapılandırma değişkenleri ve eklenti kimlikleri burada reddedilir: yerel eklentileri yapılandırma dosyasında bildirin. Bu Location için geçerli bir yapılandırmada zaten bildirilmiş bir paket, sürümü, aralığı veya biçimi ne olursa olsun reddedilir.
 
+İncelenmiş katalogdaki bir OpenCode entegrasyonu (örneğin Blender entegrasyonu) kurulmadan önce tanınır. Bir uygulamanın içinde parçası olan entegrasyon yalnızca **Genel** kapsamına eklenir: onun için **Proje** reddedilir. Kayıt defteri paketi ve Git derlemeleri tek paket sayılır; zaten tanımlı veya yüklü bir entegrasyonun ikinci bir biçimini eklemek reddedilir.
+
 Bir eklentinin sürümünü, **Güncelleme mevcut** bilgisini ve başarısız bir kurulumda hatayı OpenCode günlüğündeki referansıyla görmek için adının üzerine gelin veya odaklanın. OpenCode'un iki dakika sonra hâlâ bildirmediği bir satır, **Plugin denetimlerini yenile** işlemiyle birlikte **Onaylanmadı** gösterir: eklenti devre dışı olabilir veya kurulumu hiç tamamlanmamış olabilir (bkz. [Sorun giderme](troubleshooting.md#providers-and-addons)).
 
 ## Becerileri ekleyin {#skills}
