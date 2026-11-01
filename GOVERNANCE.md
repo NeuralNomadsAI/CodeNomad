@@ -1,6 +1,6 @@
 # CodeNomad Governance
 
-CodeNomad is an open-source project of the [NeuralNomadsAI](https://github.com/NeuralNomadsAI) GitHub organization, released under the [MIT license](LICENSE).
+CodeNomad is an open-source project of the [NeuralNomadsAI](https://github.com/NeuralNomadsAI) GitHub organization, released under the [MIT license](LICENSE). Each contributor keeps the copyright of their contributions and publishes them under that license; the license's copyright notice names them together as the CodeNomad contributors.
 
 ## Maintainers
 
