@@ -3,17 +3,18 @@ import { isSessionNotFoundError, type LocationRef, type OpenCodeClient, type She
 import { locationRequestOptions, sameLocation } from "../opencode/compatibility/location"
 import type { MissionActivityProjection, MissionPanelMap, MissionSnapshot } from "./model"
 import { MAX_MISSION_DESCENDANTS, observeActiveDescendant, readNativeMissionFamilyTree, type NativeMissionFamilyTree } from "./native-session-family"
-import { projectMissionFamily } from "./mission-family-projection"
+import { projectMissionFamily, type MissionFamilyContext } from "./mission-family-projection"
 import { runningMissionShellRelation } from "./native-shell-correlation"
 import { missionTaskExecutionEvidence } from "./execution-evidence"
 import { missionIsRunning } from "./lifecycle-model"
 import { isCoordinatorNotificationReport } from "./native-report-provenance"
+import { MISSION_ACTIVITY_ACTORS } from "./mission-panel-map"
 
 // Native reads per refresh stay bounded however many missions a project keeps and
 // actors a mission has: running, then other active missions' actors are observed
 // first, then the most recently updated. Beyond the budget, actors waiting on an
 // answer, then those with open work, come first; the rest read as unknown.
-const MAX_PROJECTED_ACTORS = 160
+const MAX_PROJECTED_ACTORS = MISSION_ACTIVITY_ACTORS
 const MAX_FAMILY_READS = 2 * (MAX_MISSION_DESCENDANTS + 1) * MAX_PROJECTED_ACTORS
 const MAX_FAMILY_SESSIONS = (MAX_MISSION_DESCENDANTS + 1) * MAX_PROJECTED_ACTORS
 const READ_CONCURRENCY = 4
@@ -25,6 +26,7 @@ const ANCESTRY_READS = 128
 type OwnsLocation = (workspaceID: string, location: LocationRef, client: OpenCodeClient) => Promise<boolean>
 
 interface ActorRead {
+  owned?: true
   session?: Awaited<ReturnType<OpenCodeClient["session"]["get"]>>
   inbox?: Awaited<ReturnType<OpenCodeClient["session"]["inbox"]["list"]>>
   family?: Set<string>
@@ -39,14 +41,21 @@ interface ActorRead {
 
 interface LocationRead {
   shells: ShellInfo[]
-  forms: Array<{ sessionID: string }>
-  permissions: Array<{ sessionID: string }>
+  forms: Awaited<ReturnType<OpenCodeClient["form"]["list"]>>["data"]
+  permissions: Awaited<ReturnType<OpenCodeClient["permission"]["request"]["list"]>>["data"]
+  formsObserved: boolean
+  permissionsObserved: boolean
   failed: boolean
 }
 
 /** The maps a display read returns (compact, or a snapshot's) and their project. */
+export type MissionActivityMission = MissionFamilyContext & Pick<MissionPanelMap,
+  "id" | "status" | "runState" | "controlUnavailable" | "coordinatorSessionId" | "reports" | "actorEvidence"> & {
+    control?: Pick<NonNullable<MissionPanelMap["control"]>, "action" | "graceful">
+  }
 export type MissionActivityInput = Pick<MissionSnapshot, "projectID"> & Partial<Omit<MissionSnapshot, "projectID" | "missions">>
-  & { missions: readonly MissionPanelMap[] }
+  & { missions: readonly MissionActivityMission[] }
+export interface MissionObservedRequests extends LocationRead { location: LocationRef; ownedActors: string[] }
 
 /**
  * Builds a bounded, display-only reconciliation of a Mission snapshot with current
@@ -61,6 +70,8 @@ export async function projectMissionActivity(input: {
    * identity in the route. Omission preserves legacy actor display only. */
   isCurrent?: () => boolean
   now?: () => number
+  /** Opt-in attention evidence, emitted only after the observation fence, for owned roots. */
+  onRequests?: (value: MissionObservedRequests) => void
 }): Promise<MissionActivityProjection> {
   const unknownProjection = (): MissionActivityProjection => ({
     generatedAt: (input.now ?? Date.now)(),
@@ -81,9 +92,9 @@ export async function projectMissionActivity(input: {
   // The snapshot is ordered by most recent update; a stable sort puts running missions
   // first, with gracefully paused ones whose steps may still be finishing (the panel
   // offers Interrupt now only while it observes them), then the other active ones.
-  const pausing = (mission: MissionPanelMap) => mission.status === "active" && !mission.controlUnavailable
+  const pausing = (mission: MissionActivityMission) => mission.status === "active" && !mission.controlUnavailable
     && mission.runState === "paused" && mission.control?.action === "pause" && Boolean(mission.control.graceful)
-  const rank = (mission: MissionPanelMap) => missionIsRunning(mission) || pausing(mission) ? 2 : mission.status === "active" ? 1 : 0
+  const rank = (mission: MissionActivityMission) => missionIsRunning(mission) || pausing(mission) ? 2 : mission.status === "active" ? 1 : 0
   const missions = [...input.snapshot.missions].sort((left, right) => rank(right) - rank(left))
   const occurrences = missions.flatMap(mission => mission.actors.map(actor => ({ mission, actor })))
   const actorIDs = [...new Set(occurrences.map(({ actor }) => actor.sessionId))]
@@ -123,6 +134,8 @@ export async function projectMissionActivity(input: {
       shells: shells.ok ? shells.value.data : [],
       forms: forms.ok ? forms.value.data : [],
       permissions: permissions.ok ? permissions.value.data : [],
+      formsObserved: forms.ok && forms.value.location.directory === location.directory,
+      permissionsObserved: permissions.ok && permissions.value.location.directory === location.directory,
       failed,
     })
   }
@@ -184,6 +197,7 @@ export async function projectMissionActivity(input: {
       return
     }
     authorizedLocations.set(locationKey(read.session.location), read.session.location)
+    read.owned = true
     const family = await settle(() => readNativeMissionFamilyTree(input.client, read.session!, signal, { assertCurrent,
       consumeRead: () => { if (++familyReads > MAX_FAMILY_READS) throw new Error("Mission family read budget exceeded") } }))
     if (!family.ok) { read.failed = true; read.familyFailed = true; return }
@@ -300,6 +314,11 @@ export async function projectMissionActivity(input: {
     })),
   }
   try { assertCurrent() } catch { return unknownProjection() }
+  for (const [key, location] of authorizedLocations) {
+    const resources = locationReads.get(key)
+    if (resources) input.onRequests?.({ ...resources, location, ownedActors: [...actorReads].filter(([, read]) => read.owned
+      && read.session && locationKey(read.session.location) === key).map(([id]) => id) })
+  }
   return projection
 }
 

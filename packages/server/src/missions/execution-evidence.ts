@@ -1,3 +1,4 @@
+// Shared with the UI: keep runtime dependencies browser-pure.
 import type { MissionNativeBinding, MissionPanelTask } from "./model"
 
 type TaskEvidence = Pick<MissionPanelTask, "status" | "actorSessionId" | "admissionId" | "nativeBinding" | "nativeExecution"

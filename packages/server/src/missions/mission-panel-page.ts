@@ -17,6 +17,9 @@ export const missionPanelPageRequestSchema = z.discriminatedUnion("source", [
   z.object({ source: z.literal("mission"), missionID: z.string().min(1).max(100),
     field: z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(64).optional(), cursor: missionPanelCursorSchema.optional() }).strict(),
   z.object({ source: z.literal("tasks"), task: missionTaskRequestSchema, cursor: missionPanelCursorSchema.optional() }).strict(),
+  z.object({ source: z.literal("activity"), missionID: z.string().min(1).max(100), actorOffset: number.optional(),
+    actorOrder: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional(), cursor: missionPanelCursorSchema.optional() }).strict(),
+  z.object({ source: z.literal("marks"), missionOffset: number.optional(), missionOrder: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional(), cursor: missionPanelCursorSchema.optional() }).strict(),
 ]).refine(value => Buffer.byteLength(JSON.stringify(value)) <= MISSION_PANEL_REQUEST_BYTES, "Mission panel selector exceeds its byte budget")
 
 export type MissionPanelPageRequest = z.infer<typeof missionPanelPageRequestSchema>
@@ -32,13 +35,15 @@ export interface MissionPanelPage {
   missionID?: string
   field?: string
   revision?: number
+  phase?: "context" | "observed"
+  observedAt?: number
   discardedEvents?: number
   controlUnavailable?: boolean
   notificationUnavailable?: boolean
   cleanupUnavailable?: boolean
   page: { digest: string; total: number; pieces: MissionPanelPiece[]; next?: MissionPanelCursor }
 }
-export type MissionPanelPageFailure = { available: false; reason: "invalid-request" | "changed" | "mission-not-found" | "field-not-found" | "invalid-cursor" | "damaged" }
+export type MissionPanelPageFailure = { available: false; reason: "invalid-request" | "changed" | "mission-not-found" | "field-not-found" | "invalid-cursor" | "damaged" | "observation-unavailable" }
 export type MissionPanelPageResult = MissionPanelPage | MissionPanelPageFailure
 
 /** UTF-8 bytes on the wire, including JSON escaping and every nested field. */
@@ -91,7 +96,8 @@ const cursor = { type: "object", properties: { digest: { type: "string", minLeng
   required: ["digest", "index", "offset"], additionalProperties: false } as const
 export const missionPanelPageInputSchema = {
   type: "object", properties: {
-    source: { type: "string", enum: ["summaries", "cleanups", "mission", "tasks"] }, cursor,
+    source: { type: "string", enum: ["summaries", "cleanups", "mission", "tasks", "activity", "marks"] }, cursor, actorOffset: count, missionOffset: count,
+    actorOrder: { type: "string", minLength: 43, maxLength: 43 }, missionOrder: { type: "string", minLength: 43, maxLength: 43 },
     missionID: { type: "string", minLength: 1, maxLength: 100 }, field: { type: "string", minLength: 1, maxLength: 64 },
     task: { type: "object", properties: { missionID: { type: "string", minLength: 1, maxLength: 100 },
       order: { type: "string", maxLength: 64 }, offset: count, attention: count,
@@ -107,8 +113,9 @@ export const missionPanelPageOutputSchema = {
   // this is the portable native JSON-Schema form consumed by OpenCode.
   oneOf: [{ type: "object", properties: {
     available: { type: "boolean", const: true }, version: { type: "integer", const: 1 }, projectID: { type: "string", maxLength: 240 },
-    source: { type: "string", enum: ["summaries", "cleanups", "mission", "tasks"] }, missionID: { type: "string", maxLength: 100 },
+    source: { type: "string", enum: ["summaries", "cleanups", "mission", "tasks", "activity", "marks"] }, missionID: { type: "string", maxLength: 100 },
     field: { type: "string", maxLength: 64 }, revision: count, discardedEvents: count,
+    phase: { type: "string", enum: ["context", "observed"] }, observedAt: { type: "number" },
     controlUnavailable: { type: "boolean" }, notificationUnavailable: { type: "boolean" }, cleanupUnavailable: { type: "boolean" },
     page: { type: "object", properties: { digest: { type: "string", minLength: 43, maxLength: 43 }, total: count, next: cursor,
       pieces: { type: "array", maxItems: MISSION_PANEL_PAGE_ROWS, items: { type: "object", properties: {
@@ -117,7 +124,7 @@ export const missionPanelPageOutputSchema = {
     }, required: ["digest", "total", "pieces"], additionalProperties: false },
   }, required: ["available", "version", "projectID", "source", "page"], additionalProperties: false },
   { type: "object", properties: { available: { type: "boolean", const: false },
-    reason: { type: "string", enum: ["invalid-request", "changed", "mission-not-found", "field-not-found", "invalid-cursor", "damaged"] },
+    reason: { type: "string", enum: ["invalid-request", "changed", "mission-not-found", "field-not-found", "invalid-cursor", "damaged", "observation-unavailable"] },
   }, required: ["available", "reason"], additionalProperties: false }],
 } as const
 
