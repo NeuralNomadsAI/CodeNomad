@@ -19,6 +19,8 @@ interface Dependencies {
   getLocalWindows(): LifecycleWindow[]
   getAllWindows(): BrowserWindow[]
   isSupportWindow?(window: BrowserWindow): boolean
+  /** Hidden windows a `--connect-server` launch owns: they never keep CodeNomad alive. */
+  isLaunchWindow?(window: BrowserWindow): boolean
   flushSupportWindows?(): Promise<void>
   removeWindowState(id: string): Promise<boolean>
   getAllowedRendererOrigins(window: BrowserWindow): string[]
@@ -61,7 +63,8 @@ export class MultiwindowLifecycle {
           this.dependencies.app.quit()
           return
         }
-        await this.flushWindow(record)
+        // A hidden launch window holds no user state: dispose it even when its renderer never started.
+        if (!this.dependencies.isLaunchWindow?.(record.window)) await this.flushWindow(record)
         if (record.persisted !== false && !await this.dependencies.removeWindowState(record.id)) {
           closing = false
           this.pendingWindowCloses.delete(record.window)
@@ -82,7 +85,7 @@ export class MultiwindowLifecycle {
   attachSupportWindow(window: BrowserWindow): void {
     window.on("close", (event) => {
       if (event.defaultPrevented || this.exitAllowed || this.dependencies.getAllWindows().some((candidate) => candidate !== window
-        && !candidate.isDestroyed() && !this.dependencies.isSupportWindow?.(candidate))) return
+        && !candidate.isDestroyed() && !this.dependencies.isSupportWindow?.(candidate) && !this.dependencies.isLaunchWindow?.(candidate))) return
       event.preventDefault()
       if (!this.shutdown) this.dependencies.app.quit()
     })
@@ -123,11 +126,12 @@ export class MultiwindowLifecycle {
   }
 
   private hasOtherApplicationWindow(window: BrowserWindow, localId: string): boolean {
+    const isLaunchWindow = (candidate: BrowserWindow) => this.dependencies.isLaunchWindow?.(candidate) ?? false
     return this.dependencies.getLocalWindows().some((candidate) => candidate.id !== localId
-      && !candidate.window.isDestroyed() && !this.pendingWindowCloses.has(candidate.window))
+      && !candidate.window.isDestroyed() && !this.pendingWindowCloses.has(candidate.window) && !isLaunchWindow(candidate.window))
       || this.dependencies.getAllWindows().some((candidate) => candidate !== window
         && !candidate.isDestroyed() && !this.pendingWindowCloses.has(candidate)
-        && !this.dependencies.isSupportWindow?.(candidate))
+        && !this.dependencies.isSupportWindow?.(candidate) && !isLaunchWindow(candidate))
   }
 
   private startShutdown(preparedFlush?: Promise<void>): Promise<void> {
@@ -154,8 +158,11 @@ export class MultiwindowLifecycle {
   }
 
   private flushLocalWindows(): Promise<void> {
+    // A hidden launch window holds no state to preserve, and its pending connection ends with the app.
     return Promise.all([
-      ...this.dependencies.getLocalWindows().map((record) => this.flushWindow(record)),
+      ...this.dependencies.getLocalWindows()
+        .filter((record) => !this.dependencies.isLaunchWindow?.(record.window))
+        .map((record) => this.flushWindow(record)),
       this.dependencies.flushSupportWindows?.(),
     ]).then(() => undefined)
   }

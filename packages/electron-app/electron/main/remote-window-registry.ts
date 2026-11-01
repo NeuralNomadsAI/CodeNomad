@@ -52,6 +52,28 @@ export class RemoteWindowRegistry {
   }
 }
 
+/**
+ * Loads a newly created remote window. A failed first load shows the loading screen, or, when the
+ * caller requires the page (a launch connection), destroys the window and rejects so it can fall back.
+ */
+export async function loadNewRemoteWindow(
+  window: Pick<BrowserWindow, "destroy" | "isDestroyed">,
+  navigate: () => Promise<void>,
+  showLoading: () => Promise<void>,
+  requireLoad: boolean,
+): Promise<void> {
+  try {
+    await navigate()
+  } catch (error) {
+    if (requireLoad) {
+      if (!window.isDestroyed()) window.destroy()
+      throw error
+    }
+    console.warn("[electron] failed to load remote window; showing loading screen", error)
+    await showLoading()
+  }
+}
+
 interface RemoteNavigationAuthority {
   generation: number
   trustedOrigins: Set<string>
