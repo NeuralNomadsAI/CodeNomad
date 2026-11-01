@@ -5,7 +5,7 @@ import { render } from "solid-js/web"
 // The loading screen is always dark (loading.html): the white hexagon.
 import logoUrl from "../../images/CodeNomad-Logo-OnDark.svg"
 import { tGlobal } from "../../lib/i18n"
-import { isRemoteUnavailablePage } from "../../lib/native/remote-unavailable"
+import { remoteUnavailableToken } from "../../lib/native/remote-unavailable"
 import { runtimeEnv, isTauriHost } from "../../lib/runtime-env"
 import { RemoteUnavailable } from "./remote-unavailable"
 import "../../index.css"
@@ -116,7 +116,7 @@ function LoadingApp() {
           {(key) => <p class="loading-status">{tGlobal(key())}</p>}
         </Show>
       </div>
-      <Show when={!remoteUnavailable} fallback={<RemoteUnavailable />}>
+      <Show when={!recoveryToken} fallback={<RemoteUnavailable token={recoveryToken!} />}>
         <div class="loading-card">
           <div class="loading-row">
             <div class="spinner" aria-hidden="true" />
@@ -135,7 +135,7 @@ function LoadingApp() {
 }
 
 // An Electron remote window shows this page when its server could not be loaded.
-const remoteUnavailable = runtimeEnv.windowContext === "remote" && isRemoteUnavailablePage(window.location.href)
+const recoveryToken = runtimeEnv.windowContext === "remote" ? remoteUnavailableToken(window.location.href) : null
 
 const root = document.getElementById("loading-root")
 

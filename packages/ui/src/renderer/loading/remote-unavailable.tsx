@@ -2,22 +2,25 @@ import { createSignal } from "solid-js"
 import { tGlobal } from "../../lib/i18n"
 
 interface RemoteRecoveryAPI {
-  retryRemoteWindow?: () => Promise<unknown>
-  openLocalWindow?: () => Promise<unknown>
+  retryRemoteWindow?: (token: string) => Promise<unknown>
+  openLocalWindow?: (token: string) => Promise<unknown>
 }
 
 function recoveryApi(): RemoteRecoveryAPI {
   return (window as Window & { electronAPI?: RemoteRecoveryAPI }).electronAPI ?? {}
 }
 
-/** What an Electron remote window shows when its server could not be loaded: never a page without a way back. */
-export function RemoteUnavailable() {
+/**
+ * What an Electron remote window shows when its server could not be loaded: never a page without a way
+ * back. `token` is the one the host issued for this document; it authorises the native actions.
+ */
+export function RemoteUnavailable(props: { token: string }) {
   const [busy, setBusy] = createSignal(false)
-  const run = async (action: (() => Promise<unknown>) | undefined) => {
+  const run = async (action: ((token: string) => Promise<unknown>) | undefined) => {
     if (!action || busy()) return
     setBusy(true)
     try {
-      await action()
+      await action(props.token)
     } catch {
       /* the host keeps this page when the action fails */
     } finally {

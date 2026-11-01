@@ -312,7 +312,8 @@ jobs:
         env:
           CODENOMAD_TEST_ZSH: /bin/zsh
         run: |
-          npm run test:native --workspace @neuralnomads/codenomad-electron-app
+          # A display for the tests that drive real Electron IPC (remote-recovery.test.ts).
+          xvfb-run -a npm run test:native --workspace @neuralnomads/codenomad-electron-app
           node --import tsx --test packages/electron-app/electron/main/view-menu.test.ts
 
       - name: Test changed runnable UI behavior

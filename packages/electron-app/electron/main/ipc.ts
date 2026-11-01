@@ -19,8 +19,11 @@ interface CliIPCDependencies {
   getAllowedOrigins(window: BrowserWindow): string[]
   openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean; requireLoad?: boolean }): Promise<void>
   newWindow(): Promise<unknown>
-  /** The retry of a remote window showing its unavailable-server page; undefined for any other sender. */
-  resolveRemoteRecovery(sender: IpcMainInvokeEvent["sender"]): (() => Promise<void>) | undefined
+  /**
+   * The retry of the unavailable-server document the host loaded in a remote window, when `token` and
+   * the sender's committed main frame are exactly that document's; undefined for any other request.
+   */
+  resolveRemoteRecovery(event: IpcMainInvokeEvent, token: unknown): (() => Promise<void>) | undefined
   openLocalWindow(): Promise<unknown>
   nextFolder(windowId: string): string | null
   acknowledgeFolder(windowId: string, folder: string, opened: boolean): void
@@ -84,9 +87,9 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     validateMainFrame(event, window, dependencies.getAllowedOrigins(window))
     return window
   }
-  const remoteRecovery = (event: IpcMainInvokeEvent): (() => Promise<void>) => {
-    const retry = dependencies.resolveRemoteRecovery(event.sender)
-    if (!retry || event.senderFrame !== event.sender.mainFrame) throw new Error("Remote recovery is limited to the unavailable-server page")
+  const remoteRecovery = (event: IpcMainInvokeEvent, token: unknown): (() => Promise<void>) => {
+    const retry = dependencies.resolveRemoteRecovery(event, token)
+    if (!retry) throw new Error("Remote recovery is limited to the unavailable-server page")
     return retry
   }
   const updateWakeLock = (): boolean => {
@@ -236,8 +239,12 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     await dependencies.openRemoteWindow(payload)
     return { ok: true }
   })
-  ipcMain.handle("remote:retry", async (event) => { await remoteRecovery(event)(); return { ok: true } })
-  ipcMain.handle("remote:openLocalWindow", async (event) => { remoteRecovery(event); await dependencies.openLocalWindow(); return { ok: true } })
+  ipcMain.handle("remote:retry", async (event, token: unknown) => { await remoteRecovery(event, token)(); return { ok: true } })
+  ipcMain.handle("remote:openLocalWindow", async (event, token: unknown) => {
+    remoteRecovery(event, token)
+    await dependencies.openLocalWindow()
+    return { ok: true }
+  })
   ipcMain.handle("notifications:show", async (event, payload: { title?: unknown; body?: unknown }): Promise<{ ok: boolean; reason?: string }> => {
     anyTrusted(event)
     if (!Notification.isSupported()) return { ok: false, reason: "unsupported" }

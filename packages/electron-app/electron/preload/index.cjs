@@ -103,9 +103,9 @@ const remoteElectronAPI = {
   setWakeLock: localElectronAPI.setWakeLock,
   showNotification: localElectronAPI.showNotification,
   setNotificationBadge: localElectronAPI.setNotificationBadge,
-  // Honoured only from the unavailable-server page the host shows when the server cannot be loaded.
-  retryRemoteWindow: () => ipcRenderer.invoke("remote:retry"),
-  openLocalWindow: () => ipcRenderer.invoke("remote:openLocalWindow"),
+  // Honoured only from the unavailable-server document the host loaded, with the token it issued for it.
+  retryRemoteWindow: (token) => ipcRenderer.invoke("remote:retry", token),
+  openLocalWindow: (token) => ipcRenderer.invoke("remote:openLocalWindow", token),
 }
 
 const preferencesElectronAPI = {
