@@ -10,6 +10,8 @@ Three independent notions:
 
 OpenCode sessions and messages live in the shared OpenCode daemon and are the same in every profile. Server configuration (`CLI_CONFIG`, default `~/.config/codenomad/config.yaml`) is also independent of the profile; a non-default config file gets its own scope.
 
+**Keep OpenCode running** is shared by the native service, with its manifest and artifacts outside data profiles; changing or deleting a profile preserves this preference and its supervision ([runtime setup](OPENCODE_RUNTIME_SETUP.md#service-supervision-primitives-and-native-adapters)).
+
 ## Selecting a profile
 
 Precedence, evaluated by both Electron (`electron/main/data-profile.ts`) and Tauri (`src-tauri/src/data_profile.rs`) before any profile path, singleton or WebView storage is fixed:

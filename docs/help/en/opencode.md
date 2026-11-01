@@ -23,7 +23,7 @@ The installed executable and the running service can have different versions. Co
 | Recommended | OpenCode **2.2.5** | Qualified target, distinct from the technical minimum. |
 | Unverified | A newer or custom version not fully validated | Not rejected merely for being untested; the connected service's actual API contracts are checked. |
 
-The required session, permission, Form, inbox and session-environment contracts must also be available. An executable version alone does not prove that the connected service supports them. If setup reports an unsupported running service, select/install a supported CLI and use the explicit shared-service restart when ready.
+The connected service must expose the required session, permission, Form, inbox and session-environment contracts. Native Mission scheduling also checks the schedule APIs, plugin/provider bundle and effective `experimental.schedules` setting. Availability follows those consumed capabilities, including on compatible future versions. If setup reports an unsupported running service, select/install a supported CLI and use the explicit shared-service restart when ready.
 
 ## Host, WSL and shared-service scope {#execution-host}
 
@@ -41,7 +41,7 @@ Turning it off removes supervision while OpenCode continues running and will no 
 
 **Running · supervision active** requires an active OS supervisor and a healthy OpenCode service. **Installed · service starting**, **Installing or removing supervision…** and **Supervision failed** describe different states. A responding OpenCode service alone leaves supervision unconfirmed. Failure details show the cause, last attempt, supervisor retry and OS recovery safety check when known. **Check supervision status** only reads; **Retry supervision** explicitly repairs the requested setup. An unconfirmed action retains its original request; **Retry original action** resends only that exact action. A changed revision is refreshed for review rather than overwritten.
 
-Windows, macOS and WSL start after login. WSL requires localhost forwarding for the selected distribution. On native Linux, enabling lingering starts **all enabled user services** before login and keeps them after logout. Turning supervision off restores lingering only when CodeNomad enabled it and no other supervision needs it; personal lingering settings are preserved. Deferred restoration stays visible with **Retry supervision**. If Linux requires permission, authorize on the execution host and retry; the requested preference remains saved. Sleep and hibernation remain OS-controlled. Unavailable or unsupported execution hosts show a disabled control with an explanation.
+Windows, macOS and WSL start after login. WSL requires localhost forwarding for the selected distribution. On native Linux, enabling lingering starts **all enabled user services** before login and keeps them after logout. Turning supervision off restores lingering only when CodeNomad enabled it and no other supervision needs it; personal lingering settings are preserved. If restoring lingering could stop the released OpenCode processes while no user session is open, restoration is deferred and remains visible with **Retry supervision**. Retry once a user session is open or the released OpenCode processes have exited, allowing safe restoration. If Linux requires permission, authorize on the execution host and retry; the requested preference remains saved. Sleep and hibernation remain OS-controlled. Unavailable or unsupported execution hosts show a disabled control with an explanation.
 
 ## Update, restart or reload {#maintenance}
 
@@ -53,7 +53,7 @@ Windows, macOS and WSL start after login. WSL requires localhost forwarding for 
 | Action | Scope and effect | Safe recovery |
 | --- | --- | --- |
 | Update CLI | Changes the supported installed executable; does not implicitly restart the running daemon. | Check both installed and running versions after a failure; retry explicitly only after resolving the error. |
-| Restart service | Replaces the shared process and interrupts active work in all connected OpenCode clients; session history remains. | Reconnect and inspect conversations and scheduled Missions; a restart is not automatic continuation. |
+| Restart service | Replaces the shared process and interrupts active work in all connected OpenCode clients; session history remains. | Healthy running native Mission schedules recover automatically; inspect pending passages and any pause/error/uncertainty. Existing daily entries require Resume. Inspect one-time conversations and their recovery controls separately; see [Missions](missions.md#lifetime). |
 | Reload OpenCode configuration | Keeps the process but rebuilds **every loaded Location** for all clients. Cancels pending permissions/Forms and closes terminals/background commands; active work may be interrupted. | Recheck resources and pending work after reload. Do not repeat a prompt or mutation merely because its reply was lost. |
 
 Use **Reload OpenCode configuration**, under **Troubleshooting** when the running service supports it, explicitly when a saved configuration or installed plugin remains unavailable and the disruption is acceptable. It is not a harmless display refresh. CodeNomad will not use an older selected CLI to downgrade a newer running daemon.

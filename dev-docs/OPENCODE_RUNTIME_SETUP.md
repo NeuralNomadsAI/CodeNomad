@@ -20,6 +20,14 @@ never upgrade or restart a user's service.
   separately from an untested version. Optional configuration reload follows
   its own route presence. Never probe support with a write.
 
+Scheduled Missions additionally require the consumed Schedule contract and enabled
+`experimental.schedules` in the discovered global configuration and effective whole
+Location block. Targeted, confirmed activation and exact read-back are described in
+[Missions](MISSIONS.md) and [native contracts](MISSIONS_NATIVE_CONTRACTS.md).
+Missing APIs, explicit OFF, a masking block, failed activation or missing exact
+calendar registration keep the schedule paused or in an explained error state.
+Immediate unconditional Play follows its own admission path.
+
 ## Setup and recovery
 
 Startup recovery and Preferences share `OpenCodeSetupPanel` and its store, but

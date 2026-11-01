@@ -45,7 +45,7 @@ These are instructions. What an agent can actually do is decided by OpenCode's p
 
 ### Questions to you {#questions}
 
-Only the coordinator asks you questions. Tasks and their helpers return theirs to the conversation that launched them, with the options, evidence, consequences, reversibility and a recommendation, and keep working on what does not depend on the answer. The coordinator first settles what it can and groups the remaining questions into one form under **Needs you**; [Questions and decisions](missions.md#questions) explains what it asks and how decisions are labelled. Every coordinator, one-time or daily, and every task assignment carries this rule as an instruction; Exploration adds the decision checks [below](#wayfinder-checks).
+Only the coordinator asks you questions. Tasks and their helpers return theirs to the conversation that launched them, with the options, evidence, consequences, reversibility and a recommendation, and keep working on what does not depend on the answer. The coordinator first settles what it can and groups the remaining questions into one form under **Needs you**; [Questions and decisions](missions.md#questions) explains what it asks and how decisions are labelled. Every coordinator, one-time or scheduled, and every task assignment carries this rule as an instruction; Exploration adds the decision checks [below](#wayfinder-checks).
 
 Answer in the interruption dock (**Answer** under **Needs you**): only that counts as your answer. A reply typed in the chat is an ordinary message.
 
@@ -53,7 +53,7 @@ Answer in the interruption dock (**Answer** under **Needs you**): only that coun
 
 The coordinator is told to publish a briefing after its initial plan, after each task it settles, whenever it starts waiting for you and before its final report; see [Briefings and update requests](missions.md#briefings). Briefings, task summaries and the final report are written for you: in your language, a few short sentences, outcome first, with identifiers and commands kept in the evidence.
 
-The final report states what was delivered, what remains and what needs your decision. A one-time mission finishes only as completed: when nothing can proceed without you, the coordinator asks you and waits instead of failing, and only you stop a mission. A daily run can also finish as failed.
+The final report states what was delivered, what remains and what needs your decision. A one-time mission finishes only as completed: when nothing can proceed without you, the coordinator asks you and waits instead of failing, and only you stop a mission. A scheduled passage can also finish as failed.
 
 ### What CodeNomad checks in every mission {#common-checks}
 
@@ -177,7 +177,7 @@ It never writes your answer itself or presents its own decision as yours. Where 
 - Only the five Exploration roles are accepted.
 - A decision task completes only with the coordinator's own decision or your answer. A coordinator decision states the question, the decision and its rationale, and is never recorded as your answer.
 - Your answer counts only when you gave it in CodeNomad's interface. CodeNomad binds it to a task by the question's tag: the question was asked from the coordinator's conversation, its text ends with that task's tag and names no other decision, it was answered after the task was declared, and it has not settled another decision. Each question of a batched form binds on its own; a question naming two decisions settles neither. An answer to a question asked from the decision task's own conversation is also accepted.
-- A task's own report cannot claim who decided. Before a mission or daily run finishes as completed, CodeNomad checks every completed decision again, tags included.
+- A task's own report cannot claim who decided. Before a mission or scheduled passage finishes as completed, CodeNomad checks every completed decision again, tags included.
 - These checks apply with **Native subagents**. With **Independent sessions**, decision workers report their briefs themselves and the coordinator records each outcome in the notes, stating who decided; CodeNomad does not verify it.
 
 Instructions only: when a choice counts as cheap to reverse, the quality of briefs and research, and keeping to planning.

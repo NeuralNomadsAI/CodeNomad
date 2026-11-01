@@ -30,6 +30,13 @@ undergo authenticated contract recognition; missing canonical APIs, session
 environment or the replay shape give a concrete reason. OpenCode reads older
 stored data.
 
+Missions schedules qualify the consumed Schedule API, effective
+`experimental.schedules` flag and retained plugin/provider bundle independently
+of general runtime admission: [native contracts](MISSIONS_NATIVE_CONTRACTS.md#schedule-integration-qualification)
+and [transport](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md). Recognition uses the
+consumed capabilities, including on future versions. Schedule delivery qualification
+uses the recommended 2.2.5 runtime; keep results in PR/CI evidence.
+
 ### Native Codex subscription usage
 
 Beyond the usage rules in [PROVIDER_ACCOUNTS.md](PROVIDER_ACCOUNTS.md):

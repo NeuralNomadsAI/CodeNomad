@@ -1,11 +1,51 @@
-# Recurring Missions — native qualification fixture
+# Daily Mission documents — native qualification fixture
 
-`scripts/test-recurring-simple-native.mjs` qualifies the acceptance journeys of
+`scripts/test-recurring-simple-native.mjs` qualifies the daily-document acceptance journeys of
 [`MISSIONS_RECURRING.md`](MISSIONS_RECURRING.md) against a real
 isolated OpenCode service and the shipped Missions bundle. That document defines
 the journeys; this one maps them to fixture letters and describes the fixture.
 
-## Run
+## Unified native schedules and supervision
+
+Unified documents use the separate protocols in
+[schedule transport](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#native-document-composition-and-packaging), with
+their [consumed native contracts](MISSIONS_NATIVE_CONTRACTS.md#schedule-integration-qualification).
+Run only against owned isolated runtimes and fresh scratch directories:
+
+```sh
+node scripts/test-native-schedule-foundation.mjs <absolute-cli> <fresh-scratch>
+node --import tsx scripts/test-native-mission-schedule-product.mjs <absolute-cli> <fresh-scratch> --parent-ready --kinds=at,in
+node scripts/test-missions-terminal-native.mjs <absolute-isolated-cli>
+```
+
+The product fixture's `--parent-ready` requires the coordinator's explicit final-ready
+handoff. Its `--kinds=every --natural-every` exercises the real minimum 15-minute
+interval. Foundation cold-missing runtime/provider modes verify automatic no-client
+Location wake and original calendar identity after restart; controlled-maintenance
+checks automatic local compaction, retained phase/end and zero provider HTTP calls.
+Product checks cover authenticated paused creation, activation/control receipts,
+backend closure and managed-service restart. Terminal checks require original-input
+correlation and whole-family/background-delivery quiescence before settlement.
+
+OS qualification commands and host boundaries live in
+[runtime setup](OPENCODE_RUNTIME_SETUP.md#service-supervision-primitives-and-native-adapters):
+`node --import tsx scripts/test-service-supervision-windows-native.mjs <absolute-cli>`,
+`node --import tsx scripts/test-service-supervision-wsl-native.mjs <output-directory>`,
+and the explicitly bundled Linux/macOS native scripts and phases described there.
+Check foreground hosting, health/ownership, actual exit before relaunch, OFF survival
+and adoption, login/reboot boundaries, and safe owned-linger restoration separately.
+Desktop packaging and host-login gates require their own evidence.
+
+UI qualification uses the real Solid/HTTP fixtures under
+`packages/ui/tests/browser/` with `npm run test:browser --workspace @codenomad/ui`:
+verify Create/Edit H9 locks, explicit activation, uncertain original receipts,
+pagination, diagnostics, carrier links and supervision status across locales.
+Read-only native capture replay uses
+`npm run qualify:browser:native-mission-replay --workspace @codenomad/ui` with the
+captured run's `NATIVE_MISSION_CAPTURE` and its own `NATIVE_MISSION_OUTPUT`.
+Keep observed results and unexecuted platform gates in delivery evidence.
+
+## Daily fixture run
 
 ```powershell
 npm run build:missions --workspace packages/server
