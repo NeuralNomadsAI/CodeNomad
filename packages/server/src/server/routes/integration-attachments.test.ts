@@ -23,13 +23,19 @@ function harness(options: {
   controlsError?: unknown
   family?: "native" | "api"
   active?: boolean
+  ambiguous?: boolean
+  wslDistro?: string
+  hostPlatform?: NodeJS.Platform
+  hostEnv?: NodeJS.ProcessEnv
+  readKernelVersion?: () => Promise<string>
+  onControls?: () => void | Promise<void>
   catalogEmpty?: boolean
   updateError?: boolean
 } = {}) {
   const state = { current: true, owned: true, directory: "/work", workspaceID: undefined as string | undefined,
     missing: false, gets: 0, metadata: { unrelated: { nested: true }, "codenomad.other": "keep" } as Record<string, any> }
   const calls: Array<{ rpcID: string; method: string; input: unknown; location: unknown }> = []
-  const trace: string[] = [], writes: unknown[] = [], logs: string[] = []
+  const trace: string[] = [], writes: unknown[] = [], logs: string[] = [], catalogReads: unknown[] = []
   const client = {
     session: {
       get: async ({ sessionID }: { sessionID: string }) => {
@@ -57,38 +63,146 @@ function harness(options: {
     } },
   }
   const snapshot = () => pluginSnapshot({
-    sources: [{ target: "@neuralnomads/opencode-fixture", scope: "global", entryIndex: 0, hasOptions: false, pluginId: "neuralnomads.fixture" }],
-    runtime: options.active === false ? [] : [{ key: "fixture", id: "neuralnomads.fixture", features: {},
+    sources: [{ target: "@neuralnomads/opencode-fixture", scope: "global", entryIndex: 0, hasOptions: false, pluginId: options.ambiguous ? "neuralnomads.other" : "neuralnomads.fixture" }],
+    runtime: options.active === false ? [] : [{ key: "fixture", id: options.ambiguous ? "neuralnomads.other" : "neuralnomads.fixture", features: {},
       source: { type: "package", target: "@neuralnomads/opencode-fixture", version: "0.1.0" }, state: { status: "active" } }],
   })
   const attachments = new IntegrationAttachments({
-    controls: { read: async () => { if (options.controlsError) throw options.controlsError; return snapshot() } },
-    catalog: { read: async () => ({ state: "fresh", catalog: options.catalogEmpty ? catalogOf() : catalogOf(catalogEntry("fixture", { family: options.family ?? "native" })) }) },
+    controls: { read: async () => { await options.onControls?.(); if (options.controlsError) throw options.controlsError; return snapshot() } },
+    catalog: { read: async input => { catalogReads.push(input); return { state: "fresh", catalog: options.catalogEmpty ? catalogOf() : catalogOf(catalogEntry("fixture", { family: options.family ?? "native" })) } } },
     workspaceManager: {
       getSharedServiceConnection: async () => ({ client, assertCurrent: () => { if (!state.current) throw new Error(secret) } }) as never,
       ownsLocation: async () => state.owned,
+      getServiceWslDistro: () => options.wslDistro,
     },
     timeoutMs: options.timeoutMs ?? 1_000,
     now: () => 123456789,
+    hostPlatform: options.hostPlatform ?? "win32",
+    hostEnv: options.hostEnv,
+    readKernelVersion: options.readKernelVersion,
   })
   const logger = pino({ level: "trace" }, { write: (line: string) => { logs.push(line) } })
   const app = Fastify({ logger: false })
   registerRequestLogging(app, logger)
   app.addHook("onRequest", async request => { request.log = logger })
   registerIntegrationAttachmentRoutes(app, { attachments })
-  const request = async (action: "hosts" | "attach" | "detach", payload?: Record<string, unknown>, query = "directory=%2Fwork", integration = "fixture") => {
+  const request = async (action: "hosts" | "attach" | "detach" | "install-host", payload?: Record<string, unknown>, query = "directory=%2Fwork", integration = "fixture") => {
     const response = await app.inject({
     method: action === "hosts" ? "GET" : "POST", url: `/api/workspaces/w/integrations/${integration}/${action}?${query}`,
-    ...(action === "hosts" ? {} : { payload: payload ?? (action === "attach" ? { offerID: offer.offerID, sessionID: "ses_fixture" } : { sessionID: "ses_fixture" }) }),
+    ...(action === "hosts" ? {} : { payload: payload ?? (action === "install-host" ? {} : action === "attach" ? { offerID: offer.offerID, sessionID: "ses_fixture" } : { sessionID: "ses_fixture" }) }),
     })
     assert.equal(logs.join("").includes(secret), false, "actual trace/debug/route logs contain no sentinel")
     assert.equal(logs.some(line => JSON.parse(line).msg === "HTTP request payload"), true, "actual trace completion was captured")
     return response
   }
-  return { app, attachments, state, calls, trace, writes, logs, request }
+  return { app, attachments, state, calls, trace, writes, logs, request, catalogReads }
 }
 
 describe("integration attachment routes (real service and schemas)", () => {
+  it("AC-C15 validates installation output then projects only outcomes, with one fixed catalogue call and no session IO", async t => {
+    for (const outcome of ["installed", "updated", "unchanged", "refused", "failed"]) {
+      const f = harness({ outputs: { installHost: { outcome, detail: "Safe explanation", token: secret, script_handle: secret } } })
+      t.after(() => f.app.close())
+      const response = await f.request("install-host")
+      assert.equal(response.statusCode, 200)
+      assert.equal(response.headers["cache-control"], "no-store")
+      assert.deepEqual(response.json(), { outcome })
+      assert.deepEqual(f.calls.map(call => [call.rpcID, call.method, call.input, call.location]), [
+        ["neuralnomads.fixture", "status", {}, { directory: "/work" }],
+        ["neuralnomads.fixture", "installHost", { target: "default" }, { directory: "/work" }],
+      ])
+      assert.deepEqual(f.catalogReads, [{ refresh: false }], "installation never refreshes/persists the catalogue")
+      assert.equal(f.state.gets, 0)
+      assert.equal(f.writes.length, 0)
+      assert.equal(JSON.stringify([response.body, f.logs]).includes(secret), false)
+    }
+  })
+
+  it("AC-C15 refuses malformed input and known WSL before any catalogue, RPC or metadata effects", async t => {
+    const invalid = harness()
+    t.after(() => invalid.app.close())
+    for (const body of [{ target: "default" }, { path: secret }, { sessionID: "ses_fixture" }, { rpcID: secret }, { method: "installHost" }]) {
+      assert.equal((await invalid.request("install-host", body)).statusCode, 400)
+    }
+    assert.equal((await invalid.app.inject({ method: "POST", url: "/api/workspaces/w/integrations/fixture/install-host?directory=%2Fwork" })).statusCode, 400)
+    assert.equal((await invalid.request("install-host", {}, "directory=%2Fwork&method=installHost")).statusCode, 400)
+    assert.equal(invalid.calls.length, 0)
+    assert.equal(invalid.catalogReads.length, 0)
+    for (const options of [
+      { wslDistro: "Ubuntu" },
+      { hostPlatform: "linux" as const, hostEnv: { WSL_DISTRO_NAME: "Ubuntu" } },
+      { hostPlatform: "linux" as const, hostEnv: { WSL_DISTRO_NAME: "" } },
+      { hostPlatform: "linux" as const, hostEnv: {}, readKernelVersion: async () => "Linux version Microsoft-standard-WSL2" },
+    ]) {
+      const f = harness(options)
+      t.after(() => f.app.close())
+      // Default status would be a live compatible offer; it cannot bypass the separate WSL check.
+      assert.equal((await f.request("install-host")).statusCode, 409)
+      assert.equal(f.catalogReads.length, 0)
+      assert.equal(f.calls.length, 0)
+      assert.equal(f.writes.length, 0)
+      assert.equal(f.state.gets, 0)
+    }
+  })
+
+  it("AC-C15 refuses unknown, ambiguous, inactive, foreign or superseded targets before installing", async t => {
+    for (const [options, expected] of [[{ catalogEmpty: true }, 404], [{ ambiguous: true }, 502], [{ active: false }, 409],
+      [{ family: "api" as const }, 409], [{ outputs: { status: { ...status(), host: { state: "unsupported" } } } }, 409],
+      [{ controlsError: new PluginControlsError(secret, "forbidden") }, 403]] as const) {
+      const f = harness(options)
+      t.after(() => f.app.close())
+      assert.equal((await f.request("install-host")).statusCode, expected)
+      assert.equal(f.calls.some(call => call.method === "installHost"), false)
+    }
+    for (const change of ["ownership", "connection"] as const) {
+      let f!: ReturnType<typeof harness>
+      f = harness({ onRpc: method => {
+        if (method !== "status") return
+        if (change === "ownership") f.state.owned = false
+        else f.state.current = false
+      } })
+      t.after(() => f.app.close())
+      assert.equal((await f.request("install-host")).statusCode, change === "ownership" ? 403 : 503)
+      assert.equal(f.calls.some(call => call.method === "installHost"), false)
+    }
+  })
+
+  it("AC-C15 rejects every malformed full output and sanitizes installer failures", async t => {
+    for (const output of [{ outcome: secret }, { outcome: "installed", detail: 12 }, { outcome: "installed", detail: "x".repeat(301) },
+      { outcome: "installed", detail: "C:private" }, { outcome: "failed", detail: "in /private/directory" }, { outcome: "installed", detail: "bad\nvalue" }]) {
+      const f = harness({ outputs: { installHost: output } })
+      t.after(() => f.app.close())
+      const response = await f.request("install-host")
+      assert.equal(response.statusCode, 502)
+      assert.equal(JSON.stringify([response.body, f.logs]).includes(secret), false)
+    }
+    const f = harness({ rpc: method => {
+      if (method === "status") return status()
+      throw Object.assign(new Error(secret), { cause: new Error(secret), input: secret })
+    } })
+    t.after(() => f.app.close())
+    assert.equal((await f.request("install-host")).statusCode, 503)
+    assert.equal(f.calls.filter(call => call.method === "installHost").length, 1, "never replay installation")
+  })
+
+  it("AC-C15 fences cancellation and timeout while authorization is still pending", async t => {
+    for (const cancellation of ["abort", "timeout"]) {
+      let release!: () => void, started!: () => void
+      const entered = new Promise<void>(resolve => { started = resolve })
+      const f = harness({ timeoutMs: 30, onControls: () => { started(); return new Promise<void>(resolve => { release = resolve }) } })
+      t.after(() => f.app.close())
+      const controller = new AbortController()
+      const result = f.attachments.installHost("w", "fixture", { directory: "/work" }, controller.signal)
+      await entered
+      if (cancellation === "abort") controller.abort()
+      await assert.rejects(result, { code: "unavailable" })
+      release()
+      await new Promise(resolve => setImmediate(resolve))
+      assert.equal(f.calls.length, 0)
+      assert.equal(f.writes.length, 0)
+    }
+  })
+
   it("projects opaque offers, calls only the catalog RPC, and strips unknown secret fields", async t => {
     const f = harness({ outputs: { hosts: { offers: [{ ...offer, port: secret, token: secret, script_handle: secret, binding_key: secret, offer_key: secret }], token: secret } } })
     t.after(() => f.app.close())

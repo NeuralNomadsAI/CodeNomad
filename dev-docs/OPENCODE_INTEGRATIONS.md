@@ -151,8 +151,31 @@ inactive/unsupported status, ambiguity or read failure gives `attachment-unverif
 The count is read under the configuration mutation queue's pinned connection, whose authority is checked again
 at commit, independently of session metadata. An external attachment after the read remains a coordination limit.
 Contract 1 provides an aggregate binding count;
-safe detach-all removal (AC-C14) requires an integration-owned binding enumeration contract. Host installation and
-its daemon-WSL refusal (AC-C15) belong to the host-installation route slice.
+safe detach-all removal requires an integration-owned binding enumeration contract.
+
+### Application installation
+
+`POST /api/workspaces/:id/integrations/:integrationId/install-host?directory=` in
+`server/routes/integration-attachments.ts` requires the strict body `{}` and returns only
+`{ outcome: "installed" | "updated" | "unchanged" | "refused" | "failed" }`. `IntegrationAttachments.installHost`
+uses the owned Location's fresh plugin snapshot to recognise one active native integration and derives its RPC ID
+from the reviewed catalog. It validates `status`, then calls the fixed `installHost` method with
+`{ target: "default" }`. Every output passes through `readIntegrationRpcOutput` in full, including optional detail,
+before projecting the outcome; raw detail and native errors must never reach HTTP responses or logs. Installation
+uses the pinned connection, ownership checks, cancellation and bounded deadline of the attachment service.
+Its catalog read uses `read({ refresh: false })`: the catalog already loaded by the UI read demand or persisted
+on disk, with network refresh and persistence excluded from installation authorization. An unavailable catalog
+refuses recognition until the normal read surface has loaded it.
+
+WSL is refused unconditionally with `unsupported` before catalog reads that can persist a refresh, installer RPCs
+or installation writes. The refusal covers a selected WSL service distro and a Linux backend running inside WSL,
+detected through `WSL_DISTRO_NAME` or the Microsoft kernel marker. Failure to establish the Linux kernel identity
+fails closed. A mirrored compatible application offer must never bypass this check.
+
+Installation is Location-scoped and works independently of sessions and offers. The installer acts on the OpenCode
+machine, including a remote machine. Its outcome describes that request; application status and a separate explicit
+attachment action establish application availability and conversation access. Never retry or replay an installation
+request after an uncertain result: check the application, then require a fresh action and confirmation if needed.
 
 ## UI read model
 
@@ -176,6 +199,16 @@ Plugins shows an unavailable catalog or the last
 valid catalog's fetch time. Saved Q8 hints offer confirmed reattachment only for matching integration and label.
 Action receipts describe the completed request. A durable live-binding indicator requires an integration-owned
 per-session binding read.
+
+The existing Plugins row menu also offers **Install application integration…** or **Update application integration…**
+only for its exact `configuredSources` association and a fresh active native integration reporting
+`host.action: "install" | "update"`. `components/integration-host-installation.ts` owns the trusted shared
+confirmation: application name, integration package version and the OpenCode-machine warning, with Cancel initially
+focused. The captured instance, Location, session-navigation identity, action, version and integration epoch fence
+consent. Navigation, reconnects and relevant native invalidations cancel pending confirmation; dispatch rechecks the
+captured identity. An admitted request runs once, and receipts use only the projected outcome or a localized fixed
+error. Uncertain errors require checking the application before a fresh action. UI strings live in each locale's
+`integrations.ts`, and public instructions in `docs/help/<locale>/integrations.md#application-installation`.
 
 ## Test fixtures
 
@@ -223,6 +256,9 @@ Commands:
   packages/server/src/opencode/plugin-sources.test.ts`: real route/service checks for strict inputs, ownership and
   connection changes, missing/moved sessions, full output validation, path refusal, sanitized failures, bounded
   calls, exact Q8 metadata preservation/removal and removal's verified-zero guard with unchanged files on refusal.
+  Installation qualification covers the strict empty body, catalog-derived fixed `installHost({ target: "default" })`,
+  full output validation with outcome-only projection, sessionless calls and unconditional WSL refusal before catalog
+  persistence or installer calls, including a mirrored compatible offer.
 - `node --import tsx --test packages/server/src/server/__tests__/integration-request-logging.test.ts`: actual
   Fastify completion hooks and Pino capture at debug/trace, rejected/malformed paths, query/body values and keys,
   native error data, concurrent requests and error recovery, with positive ordinary-route diagnostics checks.
@@ -230,6 +266,9 @@ Commands:
   all renderer logger namespaces enabled. Every console level's text and structured arguments, nested Error
   messages/stacks and page errors are captured before navigation and sentinel-scanned before teardown. Adversarial
   HTTP/JSON/transport failures exercise read, hosts, attach, detach, retry and late navigation.
+  Installation qualification exercises the existing row's source association and fresh `host.action`, sessionless
+  visibility, Cancel-first shared confirmation with machine/package-version text, preconsent navigation/event fences,
+  all projected outcomes, unsupported WSL and uncertain errors without automatic replay.
 - `node --import tsx scripts/test-integrations-attachments-native.mjs <absolute-cli> [pilot-checkout] [blender-executable]`:
   OpenCode 2.2.5 with actual Fastify attachment/read/SSE routes, native sessions and metadata, a loopback
   `IntegrationCatalogSource`, and the real relay feeding `createIntegrationsStore` through SSE. Checks a 60-second
@@ -239,6 +278,12 @@ Commands:
    HTTP, native and relayed events, SSE, metadata and fixture logs, including the production debug/trace completion
    logger and an adversarial opaque session ID.
   Every child uses the fixture environment. Manual AC-B4 has its own acceptance run.
+- `node --import tsx scripts/test-integrations-host-install-native.mjs <absolute-cli> [integration-checkout]`:
+  actual Fastify installation route and OpenCode 2.2.5 RPCs using the real built integration kit. Environment and
+  kernel WSL detections run with and without authenticated validated offers; selected/backend WSL refuses before
+  catalog or native RPC reads. Mirrored-offer kit refusals preserve every protected fixture file, including the
+  preloaded catalog. A Linux positive control invokes exactly one installer callback and private sentinel write.
+  HTTP, native events, raw SSE and debug/trace logs are sentinel-scanned; every child has a private fixture environment.
 - `node --import tsx scripts/test-integration-fixtures-native.mjs <absolute-cli>`: installs the fake package and
   its marker-mismatch variant through the fake registry, checks every output against `contract.ts`, runs the
   Python client against the fixture's own registration (advertise, attach, detach, withdraw), checks that its

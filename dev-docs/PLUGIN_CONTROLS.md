@@ -47,6 +47,10 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   conforming `attachedSessions: 0`; positive counts and unavailable authority
   refuse removal with 409 before editing. The integration's aggregate RPC count
   is the authority ([attachment safety](OPENCODE_INTEGRATIONS.md#removal-safety-and-host-installation)).
+  The same associated row offers application install/update only when a fresh active native integration reports
+  `host.action`. It uses the shared Cancel-first machine/package-version confirmation and the sessionless,
+  outcome-only installation route ([application installation](OPENCODE_INTEGRATIONS.md#application-installation)).
+  WSL is refused before catalog persistence or installer calls; uncertain requests must never be replayed.
 - **Scope**: Global is the default. Project shows a warning that the entry runs
   whenever the folder is opened and that GUI parts load only from Global. Whether
   a package has GUI parts (`features.gui`) is known only once OpenCode has loaded

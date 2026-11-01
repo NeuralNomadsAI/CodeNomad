@@ -53,17 +53,24 @@ export function showAlertDialog(message: string, options?: Omit<AlertDialogState
   })
 }
 
-export function showConfirmDialog(message: string, options?: Omit<AlertDialogState, "message">): Promise<boolean> {
+export function showConfirmDialog(message: string, options?: Omit<AlertDialogState, "message">, signal?: AbortSignal): Promise<boolean> {
   const activeElement = typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null
   activeElement?.blur()
 
   return new Promise<boolean>((resolve) => {
-    replaceAlertDialog({
+    if (signal?.aborted) { resolve(false); return }
+    const cancel = () => {
+      if (alertDialogState() === owned) dismissAlertDialog()
+      owned.resolve?.(false)
+    }
+    const owned: AlertDialogState = {
       type: "confirm",
       message,
       ...options,
-      resolve,
-    })
+      resolve: value => { signal?.removeEventListener("abort", cancel); resolve(value) },
+    }
+    signal?.addEventListener("abort", cancel, { once: true })
+    replaceAlertDialog(owned)
   })
 }
 

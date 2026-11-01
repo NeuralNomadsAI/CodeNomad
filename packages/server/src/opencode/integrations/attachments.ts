@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises"
 import type { PluginControlLocation } from "../../api-types"
 import type { IntegrationAttachmentHint, IntegrationAttachRequest, IntegrationDetachRequest, IntegrationHostsResponse } from "../../integration-types"
 import { INTEGRATION_ATTACHMENT_METADATA_KEY } from "../../integration-types"
@@ -11,6 +12,7 @@ import { recognizeIntegrations } from "./recognition"
 import { looksLikePath } from "./status"
 
 export const INTEGRATION_ATTACHMENT_TIMEOUT_MS = 8_000
+const INTEGRATION_HOST_DETECTION_TIMEOUT_MS = 1_000
 export type IntegrationAttachmentErrorCode = "invalid" | "not-found" | "forbidden" | "inactive" | "unsupported" | "non-conforming" | "unavailable"
 
 /** Only fixed, content-free failures cross the HTTP boundary, including native session failures. */
@@ -20,19 +22,40 @@ export class IntegrationAttachmentError extends Error {
 
 export interface IntegrationAttachmentsDeps {
   controls: Pick<PluginControls, "read">
-  workspaceManager: Pick<WorkspaceManager, "getSharedServiceConnection" | "ownsLocation">
+  workspaceManager: Pick<WorkspaceManager, "getSharedServiceConnection" | "ownsLocation"> & Partial<Pick<WorkspaceManager, "getServiceWslDistro">>
   catalog: Pick<IntegrationCatalogSource, "read">
   now?: () => number
   timeoutMs?: number
+  hostPlatform?: NodeJS.Platform
+  hostEnv?: NodeJS.ProcessEnv
+  readKernelVersion?: () => Promise<string>
 }
 
 type Context = { workspaceId: string; location: PluginControlLocation; entry: IntegrationCatalogEntry; connection: ServiceConnection; signal: AbortSignal }
-type Method = "status" | "hosts" | "attachHost" | "detachHost"
+type Method = "status" | "hosts" | "attachHost" | "detachHost" | "installHost"
 
 /** Fixed catalog RPCs for an owned Location; Q8 stores a reattach hint, with live state owned by the plugin. */
 export class IntegrationAttachments {
   private readonly sessions = new Map<string, Promise<unknown>>()
   constructor(private readonly deps: IntegrationAttachmentsDeps) {}
+
+  async installHost(workspaceId: string, integrationId: string, location: PluginControlLocation, signal?: AbortSignal) {
+    // Refuse before catalog.read(), which can persist a refresh. A mirrored offer never authorizes installation.
+    if (this.deps.workspaceManager.getServiceWslDistro?.(workspaceId)) throw new IntegrationAttachmentError("unsupported")
+    if ((this.deps.hostPlatform ?? process.platform) === "linux") {
+      if ((this.deps.hostEnv ?? process.env).WSL_DISTRO_NAME !== undefined) throw new IntegrationAttachmentError("unsupported")
+      let version: string
+      try { version = await (this.deps.readKernelVersion ?? (() => readFile("/proc/version", { encoding: "utf8", signal: AbortSignal.timeout(INTEGRATION_HOST_DETECTION_TIMEOUT_MS) })))() }
+      catch { throw new IntegrationAttachmentError("unavailable") }
+      if (/microsoft/i.test(version)) throw new IntegrationAttachmentError("unsupported")
+    }
+    return this.run(workspaceId, integrationId, location, signal, async context => {
+      await this.status(context)
+      const result = await this.call(context, "installHost", { target: "default" })
+      if (result.detail !== undefined && looksLikePath(result.detail)) throw new IntegrationAttachmentError("non-conforming")
+      return { outcome: result.outcome }
+    }, true)
+  }
 
   hosts(workspaceId: string, integrationId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<IntegrationHostsResponse> {
     return this.run(workspaceId, integrationId, location, signal, async context => {
@@ -84,7 +107,7 @@ export class IntegrationAttachments {
   }
 
   private async run<T>(workspaceId: string, integrationId: string, location: PluginControlLocation, outer: AbortSignal | undefined,
-    operation: (context: Context) => Promise<T>): Promise<T> {
+    operation: (context: Context) => Promise<T>, readOnlyCatalog = false): Promise<T> {
     if (!/^[a-z][a-z0-9-]{0,31}$/.test(integrationId) || location.workspaceID !== undefined
       || !location.directory || location.directory.length > 32_768 || /\p{Cc}/u.test(location.directory)) throw new IntegrationAttachmentError("invalid")
     const timeout = AbortSignal.timeout(this.deps.timeoutMs ?? INTEGRATION_ATTACHMENT_TIMEOUT_MS)
@@ -97,7 +120,7 @@ export class IntegrationAttachments {
       const work = async () => {
         const connection = await this.deps.workspaceManager.getSharedServiceConnection(workspaceId)
         if (!connection) throw new IntegrationAttachmentError("unavailable")
-        const [snapshot, catalog] = await Promise.all([this.deps.controls.read(workspaceId, location, signal), this.deps.catalog.read()])
+        const [snapshot, catalog] = await Promise.all([this.deps.controls.read(workspaceId, location, signal), this.deps.catalog.read(readOnlyCatalog ? { refresh: false } : undefined)])
         const recognition = recognizeIntegrations(catalog.catalog, snapshot).find(item => item.entry.id === integrationId)
         if (!recognition) throw new IntegrationAttachmentError("not-found")
         if (recognition.entry.family !== "native") throw new IntegrationAttachmentError("unsupported")

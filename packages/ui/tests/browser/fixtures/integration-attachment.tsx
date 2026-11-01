@@ -3,7 +3,7 @@ import { createSignal, Show } from "solid-js"
 import { render } from "solid-js/web"
 import { PluginActivationControls } from "../../../src/components/plugin-activation-controls"
 import { ConfigProvider } from "../../../src/stores/preferences"
-import { I18nProvider } from "../../../src/lib/i18n"
+import { I18nProvider, tGlobal } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { activeSessionId, sessions, setSessions } from "../../../src/stores/session-state"
 import { serverApi } from "../../../src/lib/api-client"
@@ -14,6 +14,9 @@ import { getToastHistory } from "../../../src/lib/notifications"
 const id = "header-windows"
 const [plugins, setPlugins] = createSignal(false)
 const [directory, setDirectory] = createSignal("/repo")
+const [active, setActive] = createSignal(true)
+const [sessionless, setSessionless] = createSignal(false)
+const [pluginInstance, setPluginInstance] = createSignal(id)
 let stoppedRelease: (() => void) | undefined
 const root = document.createElement("div")
 document.body.append(root)
@@ -26,8 +29,8 @@ serverApi.getPluginControls = async () => ({ location: { directory: directory() 
 })
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <Show when={plugins()}><div style={{ position: "fixed", top: "80px", left: "10px", width: "360px", "z-index": 100, background: "var(--surface-canvas)" }}>
-    <PluginActivationControls instanceId={id} location={{ directory: directory() }}
-      session={sessions().get(id)?.get(activeSessionId().get(id) ?? "")} />
+    <PluginActivationControls instanceId={pluginInstance()} location={{ directory: directory() }}
+      active={active()} session={sessionless() ? undefined : sessions().get(id)?.get(activeSessionId().get(id) ?? "")} />
   </div></Show>
 </ThemeProvider></I18nProvider></ConfigProvider>, root)
 const dispatch = (type: string, data: unknown = {}, instanceId = id) => (serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId,
@@ -35,12 +38,16 @@ const dispatch = (type: string, data: unknown = {}, instanceId = id) => (serverE
 ;(window as any).integrationFixture = {
   plugins: setPlugins,
   directory: setDirectory,
+  active: setActive,
+  sessionless: setSessionless,
+  instance: setPluginInstance,
+  installLabel: () => tGlobal("integrations.installHost.install"),
   event: dispatch,
   burst: () => { for (let index = 0; index < 10; index++) dispatch("rpc.neuralnomads.blender.hosts_changed") },
   reconnect: () => (serverEvents as any).dispatchBatch([{ type: "instance.eventStatus", instanceId: id, status: "connected" }]),
   open: () => { for (const handler of (serverEvents as any).openHandlers) handler() },
   demandStopped: () => { stoppedRelease = integrations.demand("integration-stopped", "/repo") },
-  stop: () => { (serverEvents as any).dispatchBatch([{ type: "workspace.stopped", workspaceId: "integration-stopped" }]); stoppedRelease?.() },
+  stop: (workspaceId = "integration-stopped") => { (serverEvents as any).dispatchBatch([{ type: "workspace.stopped", workspaceId }]); stoppedRelease?.() },
   snapshot: () => integrations.state("integration-stopped", "/repo").status,
   toasts: getToastHistory,
   hint: (integration: string, label: string) => setSessions(previous => {

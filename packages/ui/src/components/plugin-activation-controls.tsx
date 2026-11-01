@@ -21,6 +21,7 @@ import { PluginSourceAdd } from "./plugin-source-add"
 import "../stores/plugin-controls-events"
 import { createIntegrationAttachment } from "./integration-attachment"
 import { integrations } from "../stores/integrations"
+import { createIntegrationHostInstallation } from "./integration-host-installation"
 
 interface PluginActivationControlsProps {
   instanceId: string
@@ -48,6 +49,14 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   const catalogUnavailable = () => {
     const value = attachment.state()
     return value.status === "error" || (value.status === "ready" && value.refreshError) || attachment.response()?.catalog.state === "unavailable"
+  }
+  const installation = createIntegrationHostInstallation({
+    get instanceId() { return props.instanceId }, get directory() { return directory() },
+    get sessionId() { return props.session?.id }, get active() { return props.active }, entries: attachment.entries,
+  })
+  const installFor = (sources: readonly (PluginConfiguredSource & { scope: PluginControlScope })[]) => {
+    const entry = integrationFor(sources), action = entry && installation.action(entry.id)
+    return entry && action ? { action, run: () => installation.open(entry.id) } : undefined
   }
   const integrationFor = (sources: readonly (PluginConfiguredSource & { scope: PluginControlScope })[]) => attachment.entries().find(entry =>
     entry.configuredSources.some(association => sources.some(source => source.scope === association.scope && source.entryIndex === association.entryIndex)))
@@ -263,7 +272,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
             <Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content>
           </Tooltip.Portal>
         </Tooltip><PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={pluginId}
-          source={control()?.runtime?.source} removable={removable()} active={props.active} attach={attachFor(removable())} /></div>
+          source={control()?.runtime?.source} removable={removable()} active={props.active} attach={attachFor(removable())} installHost={installFor(removable())} /></div>
         {renderSwitch("global")}
         {renderSwitch("project")}
       </div>
@@ -291,7 +300,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           <Tooltip.Portal><Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content></Tooltip.Portal>
         </Tooltip>
         <PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} source={entry()?.source}
-          removable={removable()} active={props.active} attach={attachFor(removable())} />
+          removable={removable()} active={props.active} attach={attachFor(removable())} installHost={installFor(removable())} />
       </div>
     </div>
   }
@@ -321,7 +330,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           </span>
         </Show>
         <PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} removable={removable()}
-          refresh={state() === "unconfirmed" ? refresh : undefined} active={props.active} attach={attachFor(removable())} />
+          refresh={state() === "unconfirmed" ? refresh : undefined} active={props.active} attach={attachFor(removable())} installHost={installFor(removable())} />
       </div>
     </div>
   }

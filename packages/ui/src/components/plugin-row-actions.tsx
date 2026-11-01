@@ -15,6 +15,7 @@ type Item =
   | { kind: "remove"; source: RemovableSource }
   | { kind: "refresh" }
   | { kind: "attach" }
+  | { kind: "installHost" }
 
 const log = getLogger("session")
 
@@ -29,6 +30,7 @@ export function PluginRowActions(props: {
   refresh?: () => void
   active?: boolean
   attach?: () => void | Promise<void>
+  installHost?: { action: "install" | "update"; run: () => void | Promise<void> }
 }) {
   const { t } = useI18n()
   let attachAfterClose: (() => void | Promise<void>) | undefined
@@ -48,11 +50,13 @@ export function PluginRowActions(props: {
     ...props.removable.map(source => ({ kind: "remove" as const, source })),
     ...(props.refresh ? [{ kind: "refresh" as const }] : []),
     ...(props.attach ? [{ kind: "attach" as const }] : []),
+    ...(props.installHost ? [{ kind: "installHost" as const }] : []),
   ])
   const packageLabel = (item: Extract<Item, { kind: "package" }>) => t(`settings.pluginPackages.${item.action}`, { target: item.target })
   const label = (item: Item) => item.kind === "package" ? packageLabel(item)
     : item.kind === "remove" ? t("instanceServiceStatus.plugins.sources.remove", { scope: scopeLabel(item.source.scope) })
-      : t(item.kind === "attach" ? "integrations.attach" : "instanceServiceStatus.plugins.refresh")
+      : item.kind === "installHost" ? t(`integrations.installHost.${props.installHost?.action ?? "install"}`)
+        : t(item.kind === "attach" ? "integrations.attach" : "instanceServiceStatus.plugins.refresh")
   const hint = (item: Item) => item.kind === "package" ? t("settings.pluginPackages.shared")
     : item.kind === "remove" ? `${item.source.target}\n${item.source.path ?? ""}` : undefined
   const triggerLabel = () => {
@@ -82,13 +86,15 @@ export function PluginRowActions(props: {
     })
   }
   const run = (item: Item) => item.kind === "package" ? runPackage(item) : item.kind === "remove" ? runRemove(item.source)
-    : item.kind === "attach" ? (attachAfterClose = props.attach) : props.refresh?.()
+    : item.kind === "attach" ? (attachAfterClose = props.attach)
+      : item.kind === "installHost" ? (attachAfterClose = props.installHost?.run) : props.refresh?.()
 
   const icon = (item: Item, pulse = false) => item.kind === "package"
     ? (item.action === "update"
       ? <Download class="h-3.5 w-3.5" classList={{ "animate-pulse": pulse }} aria-hidden="true" />
       : <PackageSearch class="h-3.5 w-3.5" classList={{ "animate-pulse": pulse }} aria-hidden="true" />)
     : item.kind === "remove" ? <Trash2 class="h-3.5 w-3.5" aria-hidden="true" />
+      : item.kind === "installHost" ? <Download class="h-3.5 w-3.5" aria-hidden="true" />
       : item.kind === "attach" ? <Link class="h-3.5 w-3.5" aria-hidden="true" /> : <RefreshCw class="h-3.5 w-3.5" aria-hidden="true" />
 
   return <Show when={items().length > 0}>

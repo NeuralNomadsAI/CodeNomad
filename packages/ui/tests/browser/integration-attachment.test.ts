@@ -67,24 +67,25 @@ async function failResponse(route: Route, kind: FailureKind) {
   if (kind === "raw-http-error") return route.fulfill({ status: 503, contentType: "text/plain", body })
   return route.fulfill({ status: 503, json: { code: FAKE_INTEGRATION_SENTINELS.bindingKey, error: privateHost } })
 }
-async function open(width = 1500) {
-  const page = await browser.newPage({ viewport: { width, height: 850 } })
+async function open(width = 1500, height = 850) {
+  const page = await browser.newPage({ viewport: { width, height } })
   page.setDefaultTimeout(20_000)
   const diagnostics = captureDiagnostics(page)
   // lib/logger has namespace switches rather than a separate severity threshold: enable all of them at boot.
   await page.addInitScript(() => localStorage.setItem("opencode:logger:namespaces", JSON.stringify(["sse", "api", "session", "actions", "foreground-refresh", "scroll"])))
-  const calls: Array<{ action: string; directory: string | null; body: any }> = []
+  const calls: Array<{ action: string; directory: string | null; body: any; method?: string }> = []
   const model = { state: "ok", offers: 1, family: "native", host: "ok", catalog: "fresh", association: 4, outcome: "attached", detachOutcome: "detached", removeCode: "", hold: undefined as Route | undefined, holdHosts: false, holdAttach: false, holdDetach: false,
-    failure: undefined as { action: "read" | "hosts" | "attach" | "detach"; kind: FailureKind } | undefined }
+    hostAction: undefined as "install" | "update" | undefined, associationScope: "global", version: "1.0.0", installOutcome: "installed", holdInstall: false,
+    failure: undefined as { action: "read" | "hosts" | "attach" | "detach" | "install-host"; kind: FailureKind } | undefined }
   await page.route("**/api/**", async route => {
     const request = route.request(), parsed = new URL(request.url())
     if (parsed.pathname.endsWith("/plugin-sources") && request.method() === "DELETE" && model.removeCode) {
       return route.fulfill({ status: 409, json: { code: model.removeCode, error: "Removal refused" } })
     }
-    const match = parsed.pathname.match(/\/integrations(?:\/blender\/(hosts|attach|detach))?$/)
+    const match = parsed.pathname.match(/\/integrations(?:\/blender\/(hosts|attach|detach|install-host))?$/)
     if (!match) return route.fulfill({ json: {} })
     const action = match[1] ?? "read"
-    calls.push({ action, directory: parsed.searchParams.get("directory"), body: request.postDataJSON() })
+    calls.push({ action, directory: parsed.searchParams.get("directory"), body: request.postDataJSON(), ...(action === "install-host" ? { method: request.method() } : {}) })
     if (model.failure?.action === action) return failResponse(route, model.failure.kind)
     if (action === "hosts") {
       if (model.holdHosts) { model.hold = route; return }
@@ -92,11 +93,15 @@ async function open(width = 1500) {
     }
     if (action === "attach" && model.holdAttach) { model.hold = route; return }
     if (action === "detach" && model.holdDetach) { model.hold = route; return }
+    if (action === "install-host") {
+      if (model.holdInstall) { model.hold = route; return }
+      return route.fulfill({ json: { outcome: model.installOutcome } })
+    }
     if (action === "attach" || action === "detach") return route.fulfill({ json: { outcome: action === "detach" ? model.detachOutcome : model.outcome } })
     return route.fulfill({ json: { location: { directory: "/repo" }, catalog: { state: model.catalog, fetchedAt: "2026-11-01T12:00:00Z" }, integrations: [{
       id: "blender", displayName: "OpenCode for Blender", app: { name: "Blender", versions: ">=5.2" }, family: model.family,
-      configured: true, configuredSources: [{ scope: "global", entryIndex: model.association }], scopes: ["global"], state: model.state,
-      status: { host: { state: model.host }, connection: { offers: model.offers, attachedSessions: 42, state: "attached" }, version: "1.0.0" },
+      configured: true, configuredSources: [{ scope: model.associationScope, entryIndex: model.association }], scopes: ["global"], state: model.state,
+      status: { host: { state: model.host, ...(model.hostAction ? { action: model.hostAction } : {}) }, connection: { offers: model.offers, attachedSessions: 42, state: "attached" }, version: model.version },
     }] } })
   })
   const finish = async () => {
@@ -131,6 +136,231 @@ async function held(model: { hold?: Route }) {
   model.hold = undefined
   return route
 }
+const installLabel = "Install application integration…"
+const updateLabel = "Update application integration…"
+const pluginRow = (page: Page) => page.locator('[data-plugin-id="neuralnomads.blender"]')
+async function refreshInstallation(page: Page) {
+  await call(page, "event", "rpc.neuralnomads.blender.status_changed")
+  await page.waitForTimeout(450)
+}
+async function installationMenu(page: Page) {
+  await pluginRow(page).getByRole("button").click()
+}
+async function launchInstallation(page: Page, name = installLabel) {
+  await installationMenu(page)
+  await page.getByRole("menuitem", { name, exact: true }).click()
+  const dialog = page.getByRole("dialog", { name, exact: true })
+  await dialog.waitFor()
+  return dialog
+}
+async function installationReady(page: Page, model: { host: string; hostAction?: "install" | "update"; offers: number }) {
+  Object.assign(model, { host: "absent", hostAction: "install", offers: 0 })
+  await call(page, "plugins", true)
+  await refreshInstallation(page)
+}
+async function nextToast(page: Page, count: number) {
+  await page.waitForFunction(count => (window as any).integrationFixture.toasts().length > count, count)
+  return (await call(page, "toasts"))[0]
+}
+
+test("AC-C15 install/update uses exact source association and fresh active native status, without a session or offers", async () => {
+  const { page, model, calls, finish } = await open()
+  try {
+    await call(page, "sessionless", true)
+    await installationReady(page, model)
+    for (const variation of [
+      { association: 99 }, { association: 4, associationScope: "project" },
+      { associationScope: "global", state: "inactive" }, { state: "ok", family: "api" },
+      { family: "native", host: "unknown" }, { host: "unsupported" },
+      { host: "absent", hostAction: undefined }, { hostAction: "install", version: "" },
+    ]) {
+      Object.assign(model, variation)
+      await refreshInstallation(page)
+      await installationMenu(page)
+      assert.equal(await page.getByRole("menuitem", { name: /^(Install|Update) application integration/ }).count(), 0)
+      await page.keyboard.press("Escape")
+    }
+    model.version = "1.2.3"
+    for (const [host, hostAction, name] of [["absent", "install", installLabel], ["outdated", "update", updateLabel]] as const) {
+      Object.assign(model, { host, hostAction })
+      await refreshInstallation(page)
+      const dialog = await launchInstallation(page, name)
+      assert.match(await dialog.innerText(), /Blender.*integration package version 1\.2\.3/s)
+      assert.match(await dialog.innerText(), /machine where OpenCode runs.*remote/s)
+      assert.match(await dialog.innerText(), /Installation does not attach a conversation/)
+      await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
+    }
+    assert.equal(calls.some(call => ["hosts", "attach", "detach", "install-host"].includes(call.action)), false)
+  } finally { await finish() }
+})
+
+for (const [width, height, locale] of [[1500, 850, "en"], [390, 850, "en"], [390, 480, "en"], [390, 850, "he"]] as const)
+test(`AC-C15 shared confirmation ${width}x${height} ${locale}: Cancel focus/ring and Enter/Cancel/Escape/backdrop never install`, async () => {
+    const { page, model, calls, finish } = await open(width, height)
+    try {
+      await installationReady(page, model)
+      if (locale === "he") {
+        await shell(page, "setLocale", "he")
+        await page.waitForFunction(() => document.documentElement.dir === "rtl"
+          && (window as any).integrationFixture.installLabel() !== "Install application integration…")
+      }
+      // Use the real translated row action and shared buttons for the Hebrew pass.
+      const name = await call(page, "installLabel")
+      for (const dismissal of ["Enter", "Cancel", "Escape", "backdrop"]) {
+        const dialog = await launchInstallation(page, name)
+        const cancel = dialog.locator("button.button-secondary")
+        await page.waitForFunction(() => {
+          const button = document.querySelector('.alert-dialog button.button-secondary')
+          if (button !== document.activeElement || !button) return false
+          const style = getComputedStyle(button)
+          return style.outlineStyle !== "none" && style.outlineWidth !== "0px" && style.boxShadow !== "none"
+        })
+        assert.equal(await dialog.locator("button.button-primary").count(), 1)
+        const box = await dialog.boundingBox()
+        assert.ok(box && box.x >= 0 && box.y >= 0 && box.x + box.width <= width && box.y + box.height <= height, `${locale} confirmation fits ${width}x${height}`)
+        if (dismissal === "Cancel") await cancel.click()
+        else if (dismissal === "backdrop") await page.mouse.click(width - 2, height - 2)
+        else await page.keyboard.press(dismissal)
+        await dialog.waitFor({ state: "hidden" })
+        assert.equal(calls.filter(call => call.action === "install-host").length, 0)
+      }
+    } finally { await finish() }
+})
+
+const installInvalidations: Array<[string, (page: Page) => Promise<unknown>]> = [
+  ["session navigation", async page => { await shell(page, "addSession", "other"); await shell(page, "selectSession", "other") }],
+  ["Location navigation", page => call(page, "directory", "/other-repo")],
+  ["instance navigation", page => call(page, "instance", "other-workspace")],
+  ["surface hiding", page => call(page, "plugins", false)],
+  ["inactive surface", page => call(page, "active", false)],
+  ...["plugin.updated", "config.updated", "rpc.neuralnomads.blender.status_changed"].map(type => [type, (page: Page) => call(page, "event", type)] as [string, (page: Page) => Promise<unknown>]),
+  ["session invalidation", page => call(page, "event", "session.updated", { sessionID: "session" })],
+  ["reconnect", page => call(page, "reconnect")],
+  ["stream open", page => call(page, "open")],
+  ["workspace stop", page => call(page, "stop", "installation-only")],
+]
+for (const [name, invalidate] of installInvalidations) test(`AC-C15 ${name} revokes preconsent without installer dispatch`, async () => {
+  const { page, model, calls, finish } = await open()
+  try {
+    // Stop the real Plugins demand without removing the unrelated imported shell's instance.
+    if (name === "workspace stop") await call(page, "instance", "installation-only")
+    await installationReady(page, model)
+    const dialog = await launchInstallation(page)
+    await invalidate(page)
+    await dialog.waitFor({ state: "hidden", timeout: 3000 })
+    await page.keyboard.press("Enter")
+    assert.equal(calls.filter(call => call.action === "install-host").length, 0)
+  } finally { await finish() }
+})
+
+test("AC-C15 unrelated instance events retain consent; each projected outcome posts exactly one empty body to its captured Location", async () => {
+  const { page, model, calls, finish } = await open()
+  try {
+    await installationReady(page, model)
+    await call(page, "directory", "/installation-repo")
+    await page.waitForTimeout(450)
+    for (const outcome of ["installed", "updated", "unchanged", "refused", "failed"]) {
+      model.installOutcome = outcome
+      const dialog = await launchInstallation(page)
+      await call(page, "event", "plugin.updated", {}, "other-workspace")
+      await call(page, "event", "rpc.neuralnomads.blender.status_changed", {}, "other-workspace")
+      assert.equal(await dialog.isVisible(), true)
+      const before = (await call(page, "toasts")).length
+      await dialog.getByRole("button", { name: installLabel, exact: true }).click()
+      const toast = await nextToast(page, before)
+      assert.match(toast.message, new RegExp(outcome === "unchanged" ? "already up to date" : outcome))
+      assert.equal(toast.variant, ["refused", "failed"].includes(outcome) ? "error" : "success")
+      assertNoSentinels({ toast, dom: await page.locator("body").innerText() }, sentinelOptions, "installer result")
+    }
+    assert.deepEqual(calls.filter(call => call.action === "install-host"), Array.from({ length: 5 }, () => ({ action: "install-host", directory: "/installation-repo", body: {}, method: "POST" })))
+    assert.equal(calls.some(call => ["hosts", "attach", "detach"].includes(call.action)), false)
+  } finally { await finish() }
+})
+
+test("AC-C15 unsupported WSL hides installation while mirrored compatible status still handles route refusal safely", async () => {
+  const { page, model, calls, finish } = await open()
+  try {
+    await installationReady(page, model)
+    model.host = "unsupported"
+    await refreshInstallation(page)
+    await page.locator(".plugin-controls").getByText(/including unsupported WSL/).waitFor()
+    await installationMenu(page)
+    assert.equal(await page.getByRole("menuitem", { name: installLabel, exact: true }).count(), 0)
+    await page.keyboard.press("Escape")
+    assert.equal(calls.filter(call => call.action === "install-host").length, 0)
+    model.host = "absent"
+    await refreshInstallation(page)
+    model.holdInstall = true
+    const dialog = await launchInstallation(page)
+    const before = (await call(page, "toasts")).length
+    await dialog.getByRole("button", { name: installLabel, exact: true }).click()
+    await (await held(model)).fulfill({ status: 422, json: { code: "unsupported", error: privateHost } })
+    const toast = await nextToast(page, before)
+    assert.match(toast.message, /including WSL/)
+    assert.equal(toast.variant, "error")
+    assertNoSentinels({ toast, dom: await page.locator("body").innerText() }, sentinelOptions, "WSL refusal")
+    assert.equal(calls.filter(call => call.action === "install-host").length, 1)
+  } finally { await finish() }
+})
+
+for (const name of ["session navigation", "surface hiding"] as const) test(`AC-C15 held successful installation after ${name} never publishes wrong-view feedback or retries`, async () => {
+  const { page, model, calls, finish } = await open()
+  try {
+    await installationReady(page, model)
+    model.holdInstall = true
+    const dialog = await launchInstallation(page)
+    const before = (await call(page, "toasts")).length
+    await dialog.getByRole("button", { name: installLabel, exact: true }).click()
+    const request = await held(model)
+    // A pending installer cannot offer a second invocation in the same row.
+    await installationMenu(page)
+    assert.equal(await page.getByRole("menuitem", { name: installLabel, exact: true }).count(), 0)
+    await page.keyboard.press("Escape")
+    await installInvalidations.find(([value]) => value === name)![1](page)
+    await request.fulfill({ json: { outcome: "installed" } })
+    await page.waitForTimeout(200)
+    assert.equal((await call(page, "toasts")).length, before, "an admitted result stays owned by its original live view")
+    assert.equal(calls.filter(call => call.action === "install-host").length, 1)
+  } finally { await finish() }
+})
+
+for (const kind of [...failureKinds, "invalid-outcome"] as const) test(`AC-C15 installer ${kind} is confidential, never replayed, and late navigation receives no feedback`, async () => {
+  const { page, model, calls, finish } = await open()
+  try {
+    await installationReady(page, model)
+    if (kind === "invalid-outcome") model.installOutcome = FAKE_INTEGRATION_SENTINELS.token
+    else model.failure = { action: "install-host", kind }
+    const dialog = await launchInstallation(page)
+    const before = (await call(page, "toasts")).length
+    await dialog.getByRole("button", { name: installLabel, exact: true }).click()
+    const toast = await nextToast(page, before)
+    assert.match(toast.message, /outcome is uncertain.*Do not repeat.*Check the application/s)
+    assert.equal(toast.variant, "error")
+    assertNoSentinels({ toast, dom: await page.locator("body").innerText() }, sentinelOptions, "installer failure")
+    await echoes(page)
+    await call(page, "event", "plugin.updated")
+    await call(page, "event", "config.updated")
+    await call(page, "reconnect")
+    await call(page, "open")
+    await page.waitForTimeout(650)
+    assert.equal(calls.filter(call => call.action === "install-host").length, 1, "native refresh never retries an uncertain installation")
+    model.failure = undefined
+    model.holdInstall = true
+    const fresh = await launchInstallation(page)
+    await fresh.getByRole("button", { name: installLabel, exact: true }).click()
+    const late = await held(model)
+    const toastCount = (await call(page, "toasts")).length
+    await shell(page, "addSession", "other")
+    await shell(page, "selectSession", "other")
+    if (kind === "invalid-outcome") await late.fulfill({ json: { outcome: FAKE_INTEGRATION_SENTINELS.token, detail: privateHost } })
+    else await failResponse(late, kind)
+    await page.waitForTimeout(150)
+    assert.equal((await call(page, "toasts")).length, toastCount, "late failures never publish into another conversation")
+    assertNoSentinels(await page.locator("body").innerText(), sentinelOptions, "late installer failure")
+    assert.equal(calls.filter(call => call.action === "install-host").length, 2, "a fresh explicit confirmation is the only second dispatch")
+  } finally { await finish() }
+})
+
 test("diagnostic capture detects sentinel text, structured arguments and Error stacks at every console level before navigation", async () => {
   const page = await browser.newPage()
   const diagnostics = captureDiagnostics(page)

@@ -59,6 +59,7 @@ export type IntegrationAttachRequest = import("./opencode/integrations/contract"
 export type IntegrationAttachResponse = import("./opencode/integrations/contract").IntegrationRpcValue<"attachHost.output">
 export type IntegrationDetachRequest = import("./opencode/integrations/contract").IntegrationRpcValue<"detachHost.input">
 export type IntegrationDetachResponse = import("./opencode/integrations/contract").IntegrationRpcValue<"detachHost.output">
+export type IntegrationInstallHostResponse = Pick<import("./opencode/integrations/contract").IntegrationRpcValue<"installHost.output">, "outcome">
 /** Persisted reattach hint only; the integration owns current bindings. */
 export interface IntegrationAttachmentHint { integration: string; label: string; attachedAt: number }
 export const INTEGRATION_ATTACHMENT_METADATA_KEY = "codenomad.integrationAttachment"

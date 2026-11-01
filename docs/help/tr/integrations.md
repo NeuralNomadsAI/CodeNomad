@@ -79,3 +79,15 @@ Belgeyi uygulamanın entegrasyonundan sunun, ardından konuşma başlığında (
 Kabul edilmiş işlemin sonucu veya hatası, hedef konuşma görüntülenirken yerel değişikliklerde ve yeniden bağlantılarda korunur. Başarı, **Bu konuşmanın bağlantısını kes** seçeneği sunan yerel bir işlem kaydıdır; bağlantı zaten kesilmişse de güvenlidir. Bağlantı kesme de yerel tamamlanma kaydı gösterir. Gezinme kayıtları kapatır. Bu sözleşme konuşma başına mevcut bağlantıyı okumaya izin vermez. Kayıtlı meta veriler yalnızca ipucudur: yeniden bağlama, seçicide ancak aynı entegrasyon ve etikete sahip teklif varsa görünür ve yeniden onay gerektirir. Diğer istemciler bağlantıları değiştirebilir. Yeniden açtıktan sonra mevcut bağlantıyı uygulamanın kontrollerinden kesin.
 
 Eklentiler, katalog kullanılamadığında bir bildirim veya eskiyse alınma zamanı ile son geçerli kataloğu gösterir. Yeniden denemek için yenileyin. Bağlı konuşmalar varsa veya bağlantılar doğrulanamıyorsa kaldırma reddedilir. Uygulamada bağlantıları kesin, gerekirse entegrasyonu etkinleştirin, sonra yenileyip yeniden deneyin.
+
+## Uygulama entegrasyonunu kurun veya güncelleyin {#application-installation}
+
+**Durum → Eklentiler** içinde entegrasyonun kendi satırının menüsünü açıp **Uygulama entegrasyonunu kur…** veya **Uygulama entegrasyonunu güncelle…** seçeneğini kullanın. İşlem, etkin bir yerel entegrasyonun güncel durumu kurulum veya güncelleme istediğinde görünür. Konuşma veya sunulan belge olmadan da kullanılabilir.
+
+Onay, uygulamayı ve yükleyiciyi sağlayan **entegrasyon paketinin sürümünü** belirtir. İkisini ve makine uyarısını denetleyin: kurulum OpenCode'un çalıştığı makinede yapılır; bu uzak bir makine olabilir. İlk odak **İptal** üzerindedir. Devam etmek için açıkça onaylayın. Onaydan önce proje, Location veya konuşma değiştirmek, yeniden bağlanmak ya da ilgili yerel değişiklikleri almak bekleyen onayı iptal eder; güncel ayrıntıları incelemek için işlemi yeniden açın.
+
+WSL, açık bir uygulama uyumlu görünse bile uygulama içine kurulumu her zaman reddeder. Uygulamayı desteklenen bir makinede açın.
+
+Sonuç, entegrasyonun kurulduğunu, güncellendiğini, zaten güncel olduğunu, reddedildiğini veya başarısız olduğunu bildirir. Kurulum veya güncellemeden sonra uygulamayı açıp entegrasyonunu denetleyin; konuşmayı [Açık bir uygulamayı bağla](#application-attachment) ile ayrıca bağlayın. Kurulum başarısı yükleyici isteğinin sonucunu anlatır; çalışan uygulamanın kullanılabilirliği uygulamanın durumundan anlaşılır.
+
+İstekler asla otomatik olarak yeniden denenmez. Ret veya başarısızlıktan sonra yeni bir işlem seçmeden önce uygulamayı kontrol edin. Bir hata sonucu belirsiz bırakırsa o isteği tekrarlamayın: önce uygulamayı inceleyin, ardından gerekirse yeni bir işlem ve onay başlatın.

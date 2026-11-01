@@ -79,3 +79,15 @@ Offer a document from the application's integration, then select **Attach an ope
 An admitted action keeps its result or error through native changes and reconnects while the target conversation stays displayed. Its success message is a local action receipt with **Detach this conversation**, which is safe even if already detached. Detach also shows a local completion receipt. Navigation dismisses these receipts. Current per-conversation bindings cannot be read with this integration contract. Saved metadata is only a reattach hint: **Reattach** appears in the picker only for an offer with the same integration and label, and still requires confirmation. Other clients may change bindings. To detach an existing binding after reopening, use the application's controls.
 
 Plugins shows **Integration catalog unavailable** when no catalog can be read, or the last valid catalog with its fetch time when stale. Refresh Plugins to retry. Removal is refused while conversations are attached or their attachments cannot be verified; detach them in the application, enable the integration if needed, then refresh and retry.
+
+## Install or update the application integration {#application-installation}
+
+In **Status → Plugins**, open the menu of the integration's own row and choose **Install application integration…** or **Update application integration…**. The action appears when a fresh status from an active native integration requests installation or update. It is available without a conversation or an offered document.
+
+The confirmation names the application and the **integration package version** supplying the installer. Check both and the machine warning: installation runs on the machine where OpenCode runs, which may be remote. **Cancel** has initial focus. Confirm explicitly to proceed. Changing project, Location or conversation, reconnecting, or receiving relevant native changes before confirmation cancels the pending approval; open the action again to review fresh details.
+
+WSL always refuses application installation, even when an open application appears compatible. Open the application on a supported machine.
+
+The result reports that the integration was installed, updated, already up to date, refused or failed. For installation or update, open the application and check its integration; attach a conversation separately using [Attach an open application](#application-attachment). Installation success describes the installer request; live application availability comes from the application's status.
+
+Requests are never retried automatically. After a refusal or failure, check the application before choosing a new action. If an error leaves the outcome uncertain, never repeat that request: inspect the application first, then start a fresh action and confirmation if needed.

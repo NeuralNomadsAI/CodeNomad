@@ -79,3 +79,15 @@ Proposez un document depuis l’intégration de l’application, puis choisissez
 Une action admise conserve son résultat ou son erreur malgré les changements natifs et les reconnexions tant que la conversation cible reste affichée. La réussite est un reçu d’action local proposant **Détacher cette conversation**, utilisable même si elle est déjà détachée. Le détachement affiche aussi un reçu local. La navigation ferme ces reçus. Ce contrat ne permet pas de lire les liaisons actuelles par conversation. La métadonnée sauvegardée sert seulement d’indice : **Rattacher** apparaît dans le sélecteur uniquement pour une offre de même intégration et de même étiquette, avec une nouvelle confirmation. D’autres clients peuvent modifier les liaisons. Après réouverture, utilisez les commandes de l’application pour détacher une liaison existante.
 
 Plugins affiche **Catalogue d’intégrations indisponible** si aucun catalogue n’est lisible, ou le dernier catalogue valide avec son heure de récupération s’il est périmé. Actualisez Plugins pour réessayer. Le retrait est refusé si des conversations sont attachées ou si les liaisons sont invérifiables ; détachez-les dans l’application, activez l’intégration si nécessaire, puis actualisez et réessayez.
+
+## Installer ou mettre à jour l’intégration de l’application {#application-installation}
+
+Dans **Statut → Plugins**, ouvrez le menu de la ligne de l’intégration et choisissez **Installer l’intégration de l’application…** ou **Mettre à jour l’intégration de l’application…**. L’action apparaît lorsqu’un état récent d’une intégration native active demande une installation ou une mise à jour. Elle est disponible sans conversation ni document proposé.
+
+La confirmation indique l’application et la **version du paquet d’intégration** qui fournit l’installateur. Vérifiez ces informations et l’avertissement sur la machine : l’installation a lieu sur la machine où tourne OpenCode, qui peut être distante. **Annuler** reçoit le focus initial. Confirmez explicitement pour continuer. Changer de projet, de Location ou de conversation, se reconnecter ou recevoir un changement natif pertinent avant la confirmation annule l’accord en attente ; rouvrez l’action pour examiner les informations à jour.
+
+WSL refuse toujours l’installation dans l’application, même si une application ouverte semble compatible. Ouvrez l’application sur une machine compatible.
+
+Le résultat indique une installation, une mise à jour, une intégration déjà à jour, un refus ou un échec. Après une installation ou une mise à jour, ouvrez l’application et vérifiez son intégration ; attachez une conversation séparément avec [Attacher une application ouverte](#application-attachment). La réussite décrit la requête d’installation ; la disponibilité de l’application vient de son état.
+
+Les requêtes ne sont jamais relancées automatiquement. Après un refus ou un échec, vérifiez l’application avant de choisir une nouvelle action. Si une erreur rend le résultat incertain, ne répétez jamais cette requête : examinez d’abord l’application, puis lancez une nouvelle action avec confirmation si nécessaire.

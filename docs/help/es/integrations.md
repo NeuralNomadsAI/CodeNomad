@@ -79,3 +79,15 @@ Ofrece un documento desde la integración de la aplicación y elige **Vincular u
 Una acción admitida conserva su resultado o error ante cambios nativos y reconexiones mientras siga visible la conversación de destino. El éxito es un recibo local con **Desvincular esta conversación**, seguro aunque ya esté desvinculada. La desvinculación también muestra un recibo local. Al navegar se cierran estos recibos. Este contrato no permite consultar los vínculos actuales por conversación. Los metadatos guardados son solo una pista: **Volver a vincular** aparece en el selector únicamente si coinciden integración y etiqueta y requiere confirmación. Otros clientes pueden cambiar los vínculos. Tras reabrir, usa los controles de la aplicación para desvincular uno existente.
 
 Plugins muestra que el catálogo no está disponible o conserva el último catálogo válido con su fecha de obtención si está obsoleto. Actualiza Plugins para reintentar. La eliminación se rechaza si hay conversaciones vinculadas o no se pueden verificar sus vínculos. Desvincúlalas en la aplicación, activa la integración si hace falta y actualiza antes de reintentar.
+
+## Instalar o actualizar la integración de la aplicación {#application-installation}
+
+En **Estado → Plugins**, abre el menú de la propia fila de la integración y elige **Instalar la integración de la aplicación…** o **Actualizar la integración de la aplicación…**. La acción aparece cuando un estado reciente de una integración nativa activa solicita instalar o actualizar. Está disponible sin una conversación ni un documento ofrecido.
+
+La confirmación indica la aplicación y la **versión del paquete de integración** que proporciona el instalador. Comprueba ambos datos y la advertencia sobre el equipo: la instalación se ejecuta en el equipo donde se ejecuta OpenCode, que puede ser remoto. **Cancelar** recibe el foco inicial. Confirma explícitamente para continuar. Cambiar de proyecto, Location o conversación, reconectar o recibir cambios nativos relevantes antes de confirmar cancela la aprobación pendiente; vuelve a abrir la acción para revisar los datos actualizados.
+
+WSL siempre rechaza la instalación en la aplicación, aunque una aplicación abierta parezca compatible. Abre la aplicación en un equipo compatible.
+
+El resultado indica instalación, actualización, versión ya actualizada, rechazo o fallo. Tras instalar o actualizar, abre la aplicación y comprueba su integración; vincula una conversación por separado mediante [Vincular una aplicación abierta](#application-attachment). El éxito describe la solicitud de instalación; la disponibilidad de la aplicación procede de su estado.
+
+Las solicitudes nunca se reintentan automáticamente. Tras un rechazo o fallo, comprueba la aplicación antes de elegir una nueva acción. Si un error deja el resultado incierto, nunca repitas esa solicitud: inspecciona primero la aplicación e inicia una nueva acción con confirmación si hace falta.
