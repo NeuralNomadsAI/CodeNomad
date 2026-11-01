@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { constants, type Stats } from "node:fs"
+import { constants, type BigIntStats } from "node:fs"
 import { lstat, open, rename, rm, rmdir, writeFile } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
 
@@ -15,34 +15,63 @@ function errorCode(error: unknown): string | undefined {
 }
 
 async function lstatOrUndefined(file: string) {
-  return lstat(file).catch((error: NodeJS.ErrnoException) => {
+  return lstat(file, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined
     throw error
   })
 }
 
-/** The identity of one regular file holding exactly `bundle`, read through one handle. */
-async function verifiedBundle(plugin: string, bundle: Uint8Array, hash: string): Promise<{ dev: number; ino: number } | undefined> {
-  // Links (including Windows junctions) and directories are never opened or followed.
-  const before = await lstatOrUndefined(plugin)
-  if (!before?.isFile()) return undefined
-  const handle = await open(plugin, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch((error: NodeJS.ErrnoException) => {
+type BundleIdentity = { dev: bigint; ino: bigint }
+
+function singleFile(info: BigIntStats | undefined): info is BigIntStats {
+  return Boolean(info?.isFile() && !info.isSymbolicLink() && info.nlink === 1n)
+}
+
+async function openBundle(plugin: string) {
+  return open(plugin, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT" || error.code === "ELOOP" || error.code === "EISDIR") return undefined
     throw error
   })
-  if (!handle) return undefined
+}
+
+async function matchesIdentity(plugin: string, named: BigIntStats, identity: BundleIdentity): Promise<boolean> {
+  if (!singleFile(named) || identity.ino === 0n || named.ino !== identity.ino) return false
+  if (process.platform === "win32" && identity.dev === 0n) return false
+  if (named.dev === identity.dev) return true
+  // Some Windows/libuv path stats omit the volume while fstat supplies it. Keep
+  // device verification: independently open the name and compare both handle IDs.
+  if (process.platform !== "win32" || named.dev !== 0n) return false
+  const probe = await openBundle(plugin)
+  if (!probe) return false
   try {
-    const info = await handle.stat(), named = await lstatOrUndefined(plugin)
-    if (!named || !info.isFile() || !named.isFile() || named.isSymbolicLink() || info.nlink !== 1
-      || info.dev !== named.dev || info.ino !== named.ino || info.size !== bundle.byteLength) return undefined
+    const held = await probe.stat({ bigint: true }), after = await lstatOrUndefined(plugin)
+    return singleFile(held) && held.dev === identity.dev && held.ino === identity.ino && held.size === named.size
+      && singleFile(after) && after.ino === identity.ino && after.size === named.size
+      && (after.dev === 0n || after.dev === identity.dev)
+  } finally { await probe.close() }
+}
+
+/** The identity of one regular file holding exactly `bundle`, read through one handle. */
+async function verifiedBundle(plugin: string, bundle: Uint8Array, hash: string, reject: (reason: string) => undefined): Promise<BundleIdentity | undefined> {
+  // Links (including Windows junctions) and directories are never opened or followed.
+  const before = await lstatOrUndefined(plugin)
+  if (!singleFile(before)) return reject("payload missing or not a single regular file")
+  const handle = await openBundle(plugin)
+  if (!handle) return reject("payload disappeared or became a link")
+  try {
+    const info = await handle.stat({ bigint: true }), named = await lstatOrUndefined(plugin)
+    if (!singleFile(info) || !singleFile(named)) return reject("payload is not a single regular file")
+    if (info.size !== BigInt(bundle.byteLength) || named.size !== info.size) return reject("payload size differs from bundle")
+    if (!await matchesIdentity(plugin, named, info)) return reject("payload device or inode differs from open handle")
     const actual = createHash("sha256"), chunk = Buffer.alloc(64 * 1024)
     for (let offset = 0; offset < bundle.byteLength;) {
       const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, bundle.byteLength - offset), offset)
-      if (!bytesRead) return undefined
+      if (!bytesRead) return reject("payload ended before bundle length")
       actual.update(chunk.subarray(0, bytesRead))
       offset += bytesRead
     }
-    if (actual.digest("hex") !== hash || (await handle.read(chunk, 0, 1, bundle.byteLength)).bytesRead) return undefined
+    if (actual.digest("hex") !== hash) return reject("payload SHA-256 differs from bundle")
+    if ((await handle.read(chunk, 0, 1, bundle.byteLength)).bytesRead) return reject("payload has trailing bytes")
     return { dev: info.dev, ino: info.ino }
   } finally { await handle.close() }
 }
@@ -59,7 +88,7 @@ export const bundleRepairSchedule: { beforeLinkRemoval?: (plugin: string) => Pro
  * verifies what is there now. An ordinary directory is never removed.
  */
 async function publishBundle(plugin: string, bundle: Uint8Array) {
-  const refuseDirectory = (named: Stats | undefined) => {
+  const refuseDirectory = (named: BigIntStats | undefined) => {
     if (named?.isDirectory()) {
       throw new Error(`Managed plugin bundle path is a directory, which CodeNomad never removes: ${plugin}. Delete it, then reconnect.`)
     }
@@ -93,17 +122,19 @@ async function publishBundle(plugin: string, bundle: Uint8Array) {
 export async function installDesktopPluginArtifact(plugin: string, bundle: Uint8Array, hash: string, assertCurrent: () => void = () => {}) {
   // A payload is only ever published whole, by renaming a complete temporary copy.
   // Transient Windows locks back off within the bounded passes; other failures are final.
-  let identity: { dev: number; ino: number } | undefined
+  let identity: BundleIdentity | undefined
   let failure: unknown
+  let reason = "payload unavailable"
+  const verify = () => verifiedBundle(plugin, bundle, hash, detail => { reason = detail; return undefined })
   for (const wait of BUNDLE_REPAIR_DELAYS_MS) {
     if (wait) await delay(wait, undefined, { ref: false })
     assertCurrent()
     try {
-      identity = await verifiedBundle(plugin, bundle, hash)
+      identity = await verify()
       if (identity) break
       assertCurrent()
       await publishBundle(plugin, bundle)
-      identity = await verifiedBundle(plugin, bundle, hash)
+      identity = await verify()
       if (identity) break
     } catch (error) {
       if (!TRANSIENT_LOCK_CODES.has(errorCode(error) ?? "")) throw error
@@ -112,15 +143,15 @@ export async function installDesktopPluginArtifact(plugin: string, bundle: Uint8
   }
   if (!identity) {
     // The server compiles against a library without `Error.cause`.
-    throw Object.assign(new Error(`Managed plugin bundle differs from its digest and could not be replaced: ${plugin}. `
-      + "Stop other CodeNomad servers using this OpenCode configuration, or delete that file, then reconnect."), { cause: failure })
+    throw Object.assign(new Error(`Managed plugin bundle could not be verified or replaced (${reason}): ${plugin}. `
+      + "Check filesystem access and other CodeNomad servers using this OpenCode configuration, then reconnect."), { cause: failure })
   }
   return async () => {
-    const named = await lstat(plugin)
-    if (named.isFile() && !named.isSymbolicLink() && named.nlink === 1 && named.size === bundle.byteLength
+    const named = await lstat(plugin, { bigint: true })
+    if (singleFile(named) && named.size === BigInt(bundle.byteLength)
       && named.dev === identity!.dev && named.ino === identity!.ino) return
     // Another installer may have published the same bytes meanwhile.
-    identity = await verifiedBundle(plugin, bundle, hash)
-    if (!identity) throw new Error(`Managed plugin bundle changed while it was being installed: ${plugin}`)
+    identity = await verify()
+    if (!identity) throw new Error(`Managed plugin bundle changed while it was being installed (${reason}): ${plugin}`)
   }
 }
