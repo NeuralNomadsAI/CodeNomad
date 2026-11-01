@@ -318,12 +318,20 @@ workspace matches and ranked search with three diverse hits and exact two-sessio
 provenance. Pure ranking tests cover Unicode terms, frequency weights, phrase
 bonuses, diversity, dates and cap formatting. Synthetic SQLite/filesystem tests cover
 physical clone/worktree ownership, unknown identities and adversarial large-row
-first-yield responsiveness, tool-heavy rarity ranking, exact control/Unicode
+yield progress, tool-heavy rarity ranking, exact control/Unicode
 escape decoding and IDF isolation from unknown projections. The native fixture also checks dotted-capital-I and
 mixed-accent/Kelvin/long-s scalar matching, plus large-row bypass reporting.
 Synthetic SQLite tests cover scope,
 prefilter supersets and selectivity, multiline rarity ranking, bounded materialization, cancellation, yielding and time/candidate
 caps; registration tests exercise the tool, RPC, storage challenge and caller fences.
+
+The ignored-tool-metadata regression uses real SQLite rows and event-loop turns,
+advancing a controlled slice clock after each classification and body read. It
+asserts a turn before the next row when the 40 ms slice expires, streaming within
+a chunk, and prose-only JavaScript decode sizes below 64 KiB on 12.7 MB stored
+rows. Single-row SQLite projection and technical JSON decoding finish before a
+yield; their elapsed cost is machine/load-dependent and is measured separately.
+
 The parent fixture also checks active-generation refusal and
 pre-compaction discovery. Never point it at a user's DB or shared daemon; report
 native Windows, browser rendering and other platforms as separate validation claims.
