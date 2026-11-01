@@ -18,12 +18,14 @@ function integrationLogRoute(request: FastifyRequest): string | undefined {
   const parts = pathname.replace(/^\/+/, "/").split("/").map(part => {
     try { return decodeURIComponent(part) } catch { return part }
   })
-  if (parts[1] === "api" && parts[2] === "workspaces" && parts[4] === "integrations") return `${integrationRoute}/*`
   // Treat encoded separators and repeated slashes as confidential too, even when routing
   // rejects them. Only fixed templates may describe this namespace in a log.
   const segments = parts.flatMap(part => part.split(/[\\/;?#]/)).filter(Boolean)
   if (segments[0] === "api" && segments[1] === "panel-extensions" && segments.slice(2).includes("bundles")) return `${bundlesRoute}/*`
-  if (parts[1] === "api" && parts[2] === "workspaces" && parts[4] === "plugin-sources") return "/api/workspaces/:id/plugin-sources/*"
+  if (segments[0] === "api" && segments[1] === "workspaces") {
+    if (segments.slice(2).includes("integrations")) return `${integrationRoute}/*`
+    if (segments.slice(2).includes("plugin-sources")) return "/api/workspaces/:id/plugin-sources/*"
+  }
 }
 
 /** Integration diagnostics contain only fixed routes and completion metadata, including rejected requests. */

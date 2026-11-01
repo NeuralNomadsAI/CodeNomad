@@ -120,6 +120,25 @@ for (const level of ["debug", "trace"] as const) {
     for (const record of payloads) for (const key of ["params", "query", "body", "err"]) assert.equal(key in record, false)
   })
 
+  test(`${level}: malformed confidential namespaces keep raw URLs and source bodies private`, async t => {
+    const f = harness(level)
+    t.after(() => f.app.close())
+    for (const namespace of ["plugin-sources", "integrations"] as const) {
+      for (const prefix of ["/api//workspaces/w/", "/api/workspaces//w/", "/api/workspaces%2Fw/", "/api/workspaces%5Cw/"]) {
+        const response = await f.app.inject({ method: "DELETE", url: `${prefix}${namespace}?directory=${secret}`, payload: {
+          location: { directory: secret }, scope: "global", target: secret, entryIndex: 0, expectedRevision: "a".repeat(64),
+        } })
+        assert.equal(response.statusCode, 404)
+        f.check()
+      }
+    }
+    const records = f.records().filter(record => record.msg.startsWith("HTTP request"))
+    for (const record of records) {
+      assert.match(record.url, /^\/api\/workspaces\/:id\/(plugin-sources|integrations)\/\*$/)
+      for (const key of ["params", "query", "body", "err"]) assert.equal(key in record, false)
+    }
+  })
+
   test(`${level}: logger reentry keeps safe ordinary diagnostics across concurrent refusals and recovery`, async t => {
     const f = harness(level)
     t.after(() => f.app.close())

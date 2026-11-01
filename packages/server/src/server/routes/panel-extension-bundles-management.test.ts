@@ -155,7 +155,7 @@ test("strict bodies reject authority widening, inherited methods, private contro
       { owner: a.owner, mountID, method: "detach", input: { integration: "blender", userActivation: true } },
     ]) assert.equal((await h.post("manage", payload)).statusCode, 400)
     assert.deepEqual((await h.post("manage", { owner: a.owner, mountID, method: "detach", input: { integration: "blender" } })).json(), { outcome: "invalid" })
-    assert.deepEqual((await h.post("manage", { owner: a.owner, mountID, method: "request", input: { action: "remove", integration: "blender", scope: "global" } })).json(), { outcome: "invalid" })
+    assert.deepEqual((await h.post("manage", { owner: a.owner, mountID, method: "request", input: { action: "remove", integration: "blender", scope: "project" } })).json(), { outcome: "invalid" })
     assert.equal((await h.post("control", { owner: a.owner, mountID, command: "userRemount", explicit: true })).statusCode, 400)
     assert.equal((await h.post("control", { owner: a.owner, mountID, command: "dispose" }, "another-session")).statusCode, 503)
     assert.equal(h.state().prepared, 0)
@@ -201,6 +201,7 @@ test("mount timeout disposes its lease and cannot create a late mount", async ()
 const safeMethods: Array<{ name: string; method: string; input: Record<string, unknown>; action: BundlesAction }> = [
   { name: "install", method: "request", input: { action: "install", integration: "blender", scope: "global" }, action: { action: "install", integration: "blender", scope: "global" } },
   { name: "update", method: "request", input: { action: "update", integration: "blender", scope: "global" }, action: { action: "update", integration: "blender", scope: "global" } },
+  { name: "remove", method: "request", input: { action: "remove", integration: "blender", scope: "global" }, action: { action: "remove", integration: "blender", scope: "global" } },
   { name: "enable", method: "setActive", input: { integration: "blender", scope: "global", enabled: true }, action: { action: "setActive", integration: "blender", scope: "global", active: true } },
   { name: "disable", method: "setActive", input: { integration: "blender", scope: "global", enabled: false }, action: { action: "setActive", integration: "blender", scope: "global", active: false } },
   { name: "installHost", method: "installHost", input: { integration: "blender" }, action: { action: "installHost", integration: "blender" } },
@@ -280,14 +281,14 @@ test("dispose authenticates only the original exact owner/mount and releases a s
   }
 })
 
-test("remove/detach refusals consume the same sliding budget; successful safe requests are debited exactly once", async () => {
+test("Project-native removal/detach refusals consume the same sliding budget; successful safe requests are debited exactly once", async () => {
   const h = await harness()
   try {
     const a = await h.open()
     let mounted = (await h.post("mount", { owner: a.owner, digest, instanceId: "instance", sessionID: "ses_test" })).json()
     for (let i = 0; i < 9; i++) {
       const denied = i % 2 ? { method: "detach", input: { integration: "blender" } }
-        : { method: "request", input: { action: "remove", integration: "blender", scope: "global" } }
+        : { method: "request", input: { action: "remove", integration: "blender", scope: "project" } }
       assert.deepEqual((await h.post("manage", { owner: a.owner, ...mounted, ...denied })).json(), { outcome: "invalid" })
     }
     assert.equal((await h.post("manage", { owner: a.owner, ...mounted, method: "installHost", input: { integration: "blender" } })).json().outcome, "confirming")
