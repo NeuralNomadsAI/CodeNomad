@@ -222,6 +222,24 @@ const running = { ...selected, state: "running" as const, availableActions: ["pa
 const confirmed = (hold: ReturnType<typeof setup>["hold"]): MissionScheduleRead => ({ pending: false,
   document: { ...running, control: { action: hold.action, requestID: hold.requestID, expectedRevision: hold.expectedRevision, pending: false } } })
 
+test("a native pre-write refusal releases only the matching UI control and keeps Stop available", async () => {
+  for (const exact of [true, false]) {
+    const h = setup(false), c = controlsFor(h), doc = { ...selected, availableActions: ["play", "stop"] as typeof selected.availableActions }
+    try {
+      fixture.detail = async () => ({ pending: false, document: doc })
+      await until(() => h.store.fresh(selected.id) && c.controls()?.capability() === "available")
+      fixture.control = async (_instance, id, input) => {
+        throw new HttpResponseError("refused", 409, null, "schedule-refused", { pending: false,
+          refusal: { missionID: id, action: input.action, requestID: exact ? input.requestID : "different_request", expectedRevision: input.expectedRevision } })
+      }
+      await c.controls()!.act("play")
+      assert.equal(holds.has(key()), !exact)
+      assert.equal(c.controls()!.capable("stop"), exact)
+      assert.equal(c.calls.deleted, 0)
+    } finally { c.dispose(); h.dispose() }
+  }
+})
+
 for (const negativeFirst of [false, true]) test(`${negativeFirst ? "negative then positive" : "FIRST positive"} cold receipt refreshes the real store after its selected controller disposes`, async () => {
   const h = setup(), c = controlsFor(h), requests: string[] = []
   try {

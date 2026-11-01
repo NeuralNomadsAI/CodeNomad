@@ -4,6 +4,14 @@ export type MissionScheduleControlReceipt = { pending: boolean; document: { id: 
   action: string; pending: boolean } | null } | null; deleted?: boolean;
   deletionReceipt?: { id: string; requestID: string; expectedRevision: number; deleteManagedSessions: boolean } }
 
+export function refusedMissionScheduleReceipt(error: unknown, request: { requestID: string; expectedRevision: number; action: string }, missionID?: string) {
+  if (!(error instanceof HttpResponseError) || error.status !== 409 || error.code !== "schedule-refused") return false
+  const body = error.body as { pending?: unknown; refusal?: { missionID?: unknown; requestID?: unknown; expectedRevision?: unknown; action?: unknown } } | undefined
+  const refusal = body?.refusal
+  return body?.pending === false && typeof refusal?.missionID === "string" && (!missionID || refusal.missionID === missionID)
+    && refusal.requestID === request.requestID && refusal.expectedRevision === request.expectedRevision && refusal.action === request.action
+}
+
 // A partial response proves only this receipt, never the freshness of its display
 // document or permission to mutate it.
 export function partialMissionScheduleReceipt(error: unknown): MissionScheduleControlReceipt | undefined {

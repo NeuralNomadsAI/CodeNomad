@@ -7,7 +7,7 @@ import { showConfirmDialog } from "../stores/alerts"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { instances } from "../stores/instances"
 import { requiresMissionCalendar } from "../../../server/src/missions/mission-launch-kind"
-import { partialMissionScheduleReceipt as partialReceipt, type MissionScheduleControlReceipt as ControlReceipt } from "../lib/mission-schedule-receipt"
+import { partialMissionScheduleReceipt as partialReceipt, refusedMissionScheduleReceipt, type MissionScheduleControlReceipt as ControlReceipt } from "../lib/mission-schedule-receipt"
 
 // Exact dispatched identities survive navigation and remount. Unresolved entries
 // never evict; the ceiling refuses another control rather than forgetting one.
@@ -52,13 +52,13 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
       onCleanup(() => abort.abort())
     })
   })
-  const settle = (key: string, hold: Hold, current: () => boolean) => {
+  const settle = (key: string, hold: Hold, current: () => boolean, applied = true) => {
     if (holds.get(key) !== hold) return
     // The hold can be the selected row's sole display owner. Schedule its parent's
     // fresh read and deletion callback before publication disposes this controller.
     batch(() => {
       holds.delete(key)
-      if (current()) { props.refresh(); if (hold.action === "delete") props.onDeleted() }
+      if (current()) { props.refresh(); if (applied && hold.action === "delete") props.onDeleted() }
       bump()
     })
   }
@@ -156,7 +156,13 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
       if (!previous && exactMissionScheduleControl(result, request, original.id)) settle(key, request, current)
       else if (current()) await receipt(key, request, current)
       if (current()) props.refresh()
-    } catch { if (current() && !dispatched) setFeedback("missions.scheduleList.readFailed") }
+    } catch (error) {
+      if (dispatched?.phase === "control" && refusedMissionScheduleReceipt(error, dispatched, original.id) && holds.get(key) === dispatched) {
+        if (dispatched.original) { holds.set(key, dispatched.original); bump() }
+        else settle(key, dispatched, current, false)
+        if (current()) setFeedback("missions.scheduleList.conflict")
+      } else if (current() && !dispatched) setFeedback("missions.scheduleList.readFailed")
+    }
     finally { if (current()) { setBusy(false); props.refresh() } }
   }
   const label = (action: Action) => t(action === "delete" ? "missionsPanel.picker.delete" : action === "run-now" ? "missionsPanel.action.runNow"

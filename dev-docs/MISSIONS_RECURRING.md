@@ -67,6 +67,15 @@ profile source, request ID and document revision through the existing signed bri
 `scheduleRead({missionID,requestID})` reads an exact retained control receipt;
 missing or evicted proof stays unknown. Passive reads send no controls.
 
+Serialized calendar validation returns an identity/payload-bound refusal for an
+expired first-Play date or a revision conflict before its first write. The initial
+dispatch's exact refusal releases its backend and UI holds with a conflict response;
+lost replies and applied partial controls retain uncertainty. An explicit Check or
+original-request retry of a positively read partial control may use a retired
+connection's replacement after revalidating the same owner, physical checkout,
+Location, profile and exact partial receipt. It acquires fresh physical admission
+before retiring the old permit and preserves the original request ID and revision.
+
 `GET /api/workspaces/:id/missions/scheduled/requests/:requestID` reads an exact
 creation receipt when the HTTP response containing the document ID was lost.
 It uses the retained physical permit, or derives the document ID from the acquired

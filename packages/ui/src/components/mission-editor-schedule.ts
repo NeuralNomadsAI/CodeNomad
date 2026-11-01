@@ -1,5 +1,6 @@
 import { createEffect, createSignal, onCleanup, untrack } from "solid-js"
 import type { MissionPanelMap, MissionScheduleRead } from "../../../server/src/api-types"
+import { refusedMissionScheduleReceipt } from "../lib/mission-schedule-receipt"
 import { serverApi } from "../lib/api-client"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { MissionMutationError } from "../lib/mission-mutation"
@@ -171,6 +172,11 @@ export function createMissionEditorScheduling(props: {
       if (current()) props.onSaved(undefined, result.document?.id)
       return "saved" as const
     } catch (error) {
+      if (refusedMissionScheduleReceipt(error, request, request.missionID)) {
+        releaseMissionScheduleEditor(scope, requestID)
+        if (current()) setConflict(true)
+        return "conflict" as const
+      }
       if (error instanceof HttpResponseError && (error.code === "schedule-input-invalid" || error.code === "schedule-human-required")) {
         releaseMissionScheduleEditor(scope, requestID); throw error
       }

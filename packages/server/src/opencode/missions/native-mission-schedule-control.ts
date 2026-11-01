@@ -13,7 +13,7 @@ import { acquireNativeScheduledActorTransport, scheduledActorCalendarBarrier } f
 import { acquireNativeScheduledPassageRuntime } from "./native-scheduled-passage-runtime"
 import { nativeImmediatePlayPassage, nativeMissionScheduleResult } from "./native-mission-schedule-result"
 import { immediateMissionControlReceipts, prepareNativeImmediateMissionControl } from "./native-mission-schedule-immediate"
-import { nativeScheduleOwnerControlReceipt } from "./native-schedule-owner"
+import { NativeScheduleControlRefusal, nativeScheduleOwnerControlReceipt, type NativeScheduleOwnerControl } from "./native-schedule-owner"
 import { finishMissionDocumentDeletion } from "../../missions/mission-document-deletion"
 import type { MissionNativeRunner } from "./native-service-adapter"
 import { configureNativeMissionPreparation } from "./native-mission-preparation"
@@ -115,9 +115,17 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
     installation = acquired.installation
   }
   const { owner } = yield* acquireNativeMissionScheduleOwner(ctx, doc, run, current, installation, profileSource)
+  const prepare = (input: NativeScheduleOwnerControl) => owner.prepareControl(input).catch(error => {
+    if (error instanceof NativeScheduleControlRefusal) return error
+    throw error
+  })
   const interruption = action === "pause" || action === "stop" || action === "delete"
-  if (interruption) doc = yield* Effect.tryPromise(() => owner.prepareInterruption({ missionID, requestID, expectedRevision,
-    action, deleteManagedSessions: request.deleteManagedSessions }))
+  if (interruption) {
+    const prepared = yield* Effect.tryPromise(() => prepare({ missionID, requestID, expectedRevision,
+      action, deleteManagedSessions: request.deleteManagedSessions }))
+    if (prepared instanceof NativeScheduleControlRefusal) return { document: null, pending: false, refusal: prepared.refusal }
+    doc = prepared
+  }
   if (interruption) admitControl(doc)
   // A durable interruption closes admission before either external branch. Actor
   // capability failure must still let the calendar owner attempt its own cleanup.
@@ -135,8 +143,10 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
   }
   else {
     if (!interruption) {
-      doc = yield* Effect.tryPromise(() => owner.prepareControl({ missionID, requestID, expectedRevision,
+      const prepared = yield* Effect.tryPromise(() => prepare({ missionID, requestID, expectedRevision,
         action, configuration: request.configuration, deleteManagedSessions: request.deleteManagedSessions }))
+      if (prepared instanceof NativeScheduleControlRefusal) return { document: null, pending: false, refusal: prepared.refusal }
+      doc = prepared
       admitControl(doc)
       doc = yield* Effect.tryPromise(() => owner.reconcile(missionID))
     }

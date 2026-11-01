@@ -5,7 +5,7 @@ import path from "node:path"
 import test from "node:test"
 import Fastify from "fastify"
 import { canonicalScope } from "../../host-lifetime/protocol"
-import { missionScheduleRequestSchema, type MissionScheduleRequest } from "../../missions/mission-schedule-contract"
+import { missionSchedulePayloadDigest, missionScheduleRequestSchema, type MissionScheduleRequest } from "../../missions/mission-schedule-contract"
 import { signNativeRecurrenceControl } from "../../missions/recurrence-control-proof"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { registerMissionScheduled } from "./mission-scheduled"
@@ -185,6 +185,22 @@ test("lost RPC ACK never resends on GET/repeat; explicit Check settles only the 
   await deletion.done
 })
 
+test("exact native pre-write refusals release only their own hold and leave Check/Stop available", async t => {
+  for (const reason of ["date-passed", "revision-conflict"] as const) {
+    const f = await fixture(t)
+    f.state.write = async input => ({ document: null, pending: false, refusal: { missionID: input.missionID,
+      requestID: input.requestID, action: input.action, expectedRevision: input.expectedRevision,
+      payloadDigest: missionSchedulePayloadDigest(input), reason } })
+    const refused = await f.post()
+    assert.equal(refused.statusCode, 409); assert.equal(refused.json().code, "schedule-refused"); assert.equal(refused.json().pending, false)
+    assert.equal(scheduledMissionHold(f.fence, "msn_owned"), undefined)
+    f.state.write = async input => f.result(input)
+    for (const action of ["check", "stop"])
+      assert.equal((await f.post({ ...control, action, requestID: `after_refusal_${action}` })).statusCode, 200)
+    await f.deleting().done
+  }
+})
+
 test("explicit partial retry uses the original permit and tuple, including while deletion waits", async t => {
   const f = await fixture(t)
   f.state.write = async input => f.result(input, true)
@@ -253,18 +269,31 @@ test("uncertain Check and missing original proof preserve the original binding a
   await deletion.done
 })
 
-test("retired-connection permit permits positive settlement reads but rejects a Check mutation", async t => {
-  const f = await fixture(t)
-  f.state.write = async input => f.result(input, true)
-  await f.post()
-  const original = f.state.writes[0]
-  f.replace()
-  f.state.read = async () => f.result(original, true)
-  assert.equal((await f.post({ action: "check", requestID: "replacement_check", expectedRevision: 3 })).statusCode, 503)
-  assert.equal(f.state.writes.length, 1); assert.equal(f.state.entries, 1)
-  assert.ok(scheduledMissionHold(f.fence, original.missionID))
-  f.state.read = async () => f.result(original)
-  assert.equal((await f.get()).statusCode, 200)
+test("retired-connection partial Pause permits explicit Check or exact retry after fresh physical admission", async t => {
+  for (const retry of [false, true]) {
+    const f = await fixture(t), pause = { ...control, action: "pause" }
+    f.state.write = async input => f.result(input, true)
+    await f.post(pause)
+    const original = f.state.writes[0], hold = scheduledMissionHold(f.fence, original.missionID)!, binding = hold.binding
+    const connection = f.replace()
+    let completed = false
+    f.state.read = async () => f.result(original, !completed)
+    assert.equal((await f.get()).statusCode, 503)
+    assert.equal(f.state.writes.length, 1)
+    f.state.write = async input => {
+      assert.equal(f.state.entries, 2); assert.equal(hold.connection, connection); assert.equal(hold.binding, binding)
+      assert.equal(input.requestID, retry ? original.requestID : "replacement_check")
+      assert.equal(input.expectedRevision, retry ? original.expectedRevision : 3)
+      completed = true
+      return f.result(input)
+    }
+    const checked = await f.post(retry ? { ...pause, retry: true } : { action: "check", requestID: "replacement_check", expectedRevision: 3 })
+    assert.equal(checked.statusCode, 200)
+    assert.equal(checked.json().document.control.requestID, original.requestID)
+    assert.equal(scheduledMissionHold(f.fence, original.missionID), undefined)
+    assert.equal(f.state.writes.length, 2)
+    await f.deleting().done
+  }
 })
 
 test("replacement settlement requires a retired connection and the same workspace/project/physical checkout", async t => {

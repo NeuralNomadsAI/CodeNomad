@@ -7,7 +7,7 @@ import { missionDocumentChanges } from "../../missions/mission-document-state"
 import { nativeScheduleCarrierLookupKey, NATIVE_SCHEDULE_CARRIER_MARKER, readNativeScheduleCarrierOwnership,
   claimNativeScheduleCarrierWake, closeNativeScheduleCarrierClaimLocked, readNativeScheduleCarrierBinding } from "./native-schedule-carrier-binding"
 import { readNativeScheduleAuxiliaryWakeBinding } from "./native-schedule-owner-bindings"
-import { missionCalendarOwnerReady, nativeScheduleOwnerControlReceipt } from "./native-schedule-owner"
+import { NativeScheduleControlRefusal, missionCalendarOwnerReady, nativeScheduleOwnerControlReceipt } from "./native-schedule-owner"
 import { ownerFixture } from "./native-schedule-owner-test-fixture"
 
 test("Play persists ownership before carrier, acknowledges auxiliary first, and replay creates nothing", async t => {
@@ -24,6 +24,22 @@ test("Play persists ownership before carrier, acknowledges auxiliary first, and 
   await f.owner.control(input)
   assert.equal(f.calls.length, count)
   await assert.rejects(f.owner.control({ ...input, configuration: { ...doc.configuration, objective: "changed" } }), /request conflict/)
+})
+
+test("expired first Play and stale revision return identity-bound refusals before any publication or native effect", async t => {
+  const at = Date.now() + 60_000, f = await ownerFixture(t, { kind: "at", at, zone: "UTC" }), before = await f.read()
+  f.advance(120_000)
+  for (const [expectedRevision, reason] of [[before.revision, "date-passed"], [before.revision - 1, "revision-conflict"]] as const) {
+    const input = { missionID: before.id, requestID: `refused_${reason}`, expectedRevision, action: "play" as const }
+    await assert.rejects(f.owner.prepareControl(input), error => {
+      assert(error instanceof NativeScheduleControlRefusal)
+      assert.equal(error.refusal.reason, reason)
+      assert.equal(error.refusal.missionID, input.missionID); assert.equal(error.refusal.requestID, input.requestID)
+      assert.equal(error.refusal.expectedRevision, expectedRevision); assert.equal(error.refusal.action, input.action)
+      return true
+    })
+    assert.deepEqual(await f.read(), before); assert.deepEqual(f.calls, [])
+  }
 })
 
 test("delayed auxiliary creation preserves Play origin and the inclusive first-interval end for every and in", async t => {

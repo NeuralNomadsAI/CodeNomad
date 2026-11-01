@@ -40,6 +40,10 @@ export const missionScheduleID = (projectID: string, canonical: string, requestI
   `msn_${stableToken(canonicalAuthority([projectID, canonical, requestID]), 40)}`
 export const missionSchedulePayloadDigest = (input: Pick<MissionScheduleRequest, "configuration" | "deleteManagedSessions">) =>
   stableToken(canonicalAuthority(input.configuration ?? { deleteManagedSessions: input.deleteManagedSessions ?? false }), 64)
+export const missionScheduleRefusalSchema = z.object({ missionID: documentID, requestID: documentID,
+  expectedRevision: documentCounter, action: z.enum(missionScheduleActions), payloadDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  reason: z.enum(["revision-conflict", "date-passed"]),
+}).strict()
 
 const text = { type: "string" } as const
 const counter = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } as const
@@ -100,6 +104,10 @@ const summary = { ...missionDocumentSummaryWire, properties: { ...missionDocumen
    "kind", "oneShotAt", "slotEndsAt", "successfulCount", "checks", "pendingPassage", "latestResult", "history", "observation", "availableActions", "blockReason", "technical"] } as const
 const result = { type: "object", properties: { document: { ...summary, type: ["object", "null"] },
   deleted: { type: "boolean" }, pending: { type: "boolean" },
+  refusal: { type: "object", properties: { missionID: text, requestID: text, expectedRevision: counter,
+    action: { type: "string", enum: missionScheduleActions }, payloadDigest: text,
+    reason: { type: "string", enum: ["revision-conflict", "date-passed"] } },
+    required: ["missionID", "requestID", "expectedRevision", "action", "payloadDigest", "reason"], additionalProperties: false },
   deletionReceipt: { type: "object", properties: { id: text, requestID: text, expectedRevision: counter, deleteManagedSessions: { type: "boolean" } },
     required: ["id", "requestID", "expectedRevision", "deleteManagedSessions"], additionalProperties: false },
 }, required: ["document", "pending"], additionalProperties: false } as const

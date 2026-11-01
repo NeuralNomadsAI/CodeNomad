@@ -3,6 +3,8 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import type { MissionScheduleAction } from "../../missions/mission-schedule-contract"
 import { sameLocation } from "../../opencode/compatibility/location"
 import type { RecurrenceHoldOwner } from "./mission-recurrence-holds"
+import { missionScheduleRefusalSchema } from "../../missions/mission-schedule-contract"
+import { missionCreationDigest } from "./mission-creation-holds"
 
 export type ScheduledHoldBinding = {
   missionID: string; workspaceID: string; requestID: string; action: MissionScheduleAction; expectedRevision: number; digest: string
@@ -18,10 +20,19 @@ export class ScheduledHoldError extends Error {
   constructor(readonly status: 409 | 503, message: string) { super(message) }
 }
 const current = (connection: ServiceConnection) => { try { connection.assertCurrent(); return true } catch { return false } }
+export function exactScheduledRefusal(binding: ScheduledHoldBinding, raw: unknown) {
+  const result = raw as { pending?: unknown; refusal?: unknown } | null, parsed = missionScheduleRefusalSchema.safeParse(result?.refusal)
+  if (result?.pending !== false || !parsed.success) return false
+  const refusal = parsed.data
+  return refusal.missionID === binding.missionID && refusal.requestID === binding.requestID && refusal.action === binding.action
+    && refusal.expectedRevision === binding.expectedRevision
+    && missionCreationDigest([refusal.requestID, refusal.expectedRevision, refusal.action, refusal.payloadDigest]) === binding.digest
+}
 function record(binding: ScheduledHoldBinding, release: () => void, drop: () => void) {
   const original = Object.freeze({ ...binding, owner: Object.freeze({ ...binding.owner }),
     location: Object.freeze({ ...binding.location }), base: Object.freeze({ ...binding.base }) })
-  let active = true, busy = false, dispatched = false
+  let active = true, busy = false, dispatched = false, retried = false
+  let connection = original.connection, releasePermit = release
   const bound = (fresh: ScheduledHoldBinding) => {
     fresh.connection.assertCurrent()
     if (!active || fresh.missionID !== original.missionID || fresh.workspaceID !== original.workspaceID
@@ -30,7 +41,7 @@ function record(binding: ScheduledHoldBinding, release: () => void, drop: () => 
       || fresh.profile !== original.profile || fresh.configYamlPath !== original.configYamlPath || fresh.executionHost !== original.executionHost
       || !sameLocation(fresh.location, original.location) || !sameLocation(fresh.base, original.base)
       || fresh.requestID !== original.requestID || fresh.action !== original.action || fresh.expectedRevision !== original.expectedRevision
-      || fresh.digest !== original.digest || fresh.connection !== original.connection && current(original.connection))
+      || fresh.digest !== original.digest || fresh.connection !== connection && current(connection))
       throw new ScheduledHoldError(409, "Held Mission schedule scope differs")
   }
   const exact = (raw: unknown) => {
@@ -44,29 +55,40 @@ function record(binding: ScheduledHoldBinding, release: () => void, drop: () => 
   }
   return {
     binding: original,
+    get connection() { return connection },
     get busy() { return busy || !dispatched },
     get preparing() { return !dispatched },
     assertBound: bound,
     dispatch() {
       if (!active || busy) throw new ScheduledHoldError(503, "Mission schedule request is in flight")
-      original.connection.assertCurrent(); busy = true; dispatched = true
+      connection.assertCurrent(); busy = true; dispatched = true
     },
-    retry(fresh: ScheduledHoldBinding, raw: unknown) {
+    retry(fresh: ScheduledHoldBinding, raw: unknown, freshRelease?: () => void) {
       bound(fresh)
-      if (busy || fresh.connection !== original.connection || !exact(raw) || (raw as Receipt).pending !== true)
+      if (busy || !exact(raw) || (raw as Receipt).pending !== true || fresh.connection !== connection && !freshRelease)
         throw new ScheduledHoldError(503, "Exact partial Mission schedule receipt unavailable")
-      busy = true
+      if (fresh.connection !== connection) {
+        const previous = releasePermit
+        releasePermit = freshRelease!; connection = fresh.connection
+        previous()
+      }
+      busy = true; retried = true
+    },
+    refuse(fresh: ScheduledHoldBinding, raw: unknown) {
+      bound(fresh)
+      if (!dispatched || !busy || retried || !exactScheduledRefusal(original, raw)) return false
+      active = false; busy = false; drop(); releasePermit(); return true
     },
     settle(fresh: ScheduledHoldBinding, raw: unknown) {
       bound(fresh)
       if (!dispatched || !exact(raw) || (raw as Receipt).pending !== false
         || !(original.action === "delete" && (raw as Receipt).document === null && (raw as Receipt).deletionReceipt)
           && (raw as Receipt).document?.control?.pending !== false) return false
-      active = false; busy = false; drop(); release(); return true
+      active = false; busy = false; drop(); releasePermit(); return true
     },
     dispose() {
       busy = false
-      if (active && !dispatched) { active = false; drop(); release() }
+      if (active && !dispatched) { active = false; drop(); releasePermit() }
     },
   }
 }

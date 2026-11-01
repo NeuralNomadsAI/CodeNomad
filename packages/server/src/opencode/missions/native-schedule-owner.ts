@@ -5,6 +5,7 @@ import { missionCalendarPlans, MISSION_RECONCILIATION_INTERVAL_MS } from "../../
 import { assertMissionCalendarPlacement, captureMissionCalendarPlacement } from "../../missions/mission-calendar-placement"
 import { missionLaunchLimit, requiresMissionCalendar, missionConfigurationSchema } from "../../missions/launch-policy"
 import { stableToken } from "../../missions/receipt-identity"
+import { missionSchedulePayloadDigest } from "../../missions/mission-schedule-contract"
 import { MISSION_SCHEDULE_CARRIER_SESSION_PREFIX } from "../../missions/mission-schedule-carrier-identity"
 import type { MissionConfiguration } from "../../missions/launch-policy"
 import type { MissionCalendar, MissionDocument, MissionSourceCheckpoint } from "../../missions/mission-document"
@@ -28,6 +29,15 @@ export type NativeScheduleOwnerOptions = { store: NativeMissionDocumentStore; na
   recordTextEdit?: (locked: NativeMissionDocumentStore, document: MissionDocument, publish: boolean) => Promise<boolean>;
   sources?: (document: MissionDocument, locked: NativeMissionDocumentStore) => Promise<{ checkpoints: MissionSourceCheckpoint[]; current(): true; revalidate?(): Promise<void> }> }
 export type NativeSchedulePendingResumeProof = { passageID: string; messageID: string; coordinatorSessionID: string; current(): true }
+/** Emitted only by serialized validation before this control's first write. */
+export class NativeScheduleControlRefusal extends Error {
+  readonly refusal
+  constructor(input: NativeScheduleOwnerControl, reason: "revision-conflict" | "date-passed") {
+    super(reason === "revision-conflict" ? "Mission document revision conflict" : "Mission date has passed")
+    this.refusal = { missionID: input.missionID, requestID: input.requestID, expectedRevision: input.expectedRevision,
+      action: input.action, payloadDigest: missionSchedulePayloadDigest(input), reason }
+  }
+}
 const same = (a: unknown, b: unknown) => canonicalAuthority(a) === canonicalAuthority(b)
 const target = (doc: MissionDocument, descriptor: MissionCalendarOwnerSlot) => ({ missionID: doc.id, descriptor })
 const calendarForSlot = (doc: MissionDocument, slot: MissionCalendarOwnerSlot): MissionCalendar => {
@@ -116,7 +126,7 @@ export class NativeScheduleCalendarOwner {
         return replay.pending && processAfterCommit ? this.process(locked, doc) : doc
       }
       if (previous?.textEdit && input.action !== "check") throw new Error("Original Mission passage text edit unresolved")
-      if (doc.revision !== input.expectedRevision) throw new Error("Mission document revision conflict")
+      if (doc.revision !== input.expectedRevision) throw new NativeScheduleControlRefusal(input, "revision-conflict")
       if (input.action === "configure" && doc.firstPlayedAt === null && input.configuration && !requiresMissionCalendar(input.configuration.launch)) {
         const configuration = missionConfigurationSchema.parse(input.configuration), now = this.now()
         return locked.change(doc.id, doc.revision, this.options.current, value => {
@@ -194,6 +204,8 @@ export class NativeScheduleCalendarOwner {
       }
       doc = await locked.change(doc.id, doc.revision, () => { locked.assertActive(); sources?.current(); if (resumeProof) assertSynchronousAuthorityGuard(resumeProof.current, "policy-unqualified"); return this.options.current() }, value => {
         const old = value.calendarOwner
+        if (input.action === "play" && value.firstPlayedAt === null && value.configuration.launch.timing.kind === "at"
+          && value.configuration.launch.timing.at <= now) throw new NativeScheduleControlRefusal(input, "date-passed")
         if (input.action === "play" && value.firstPlayedAt === null) missionDocumentChanges.play(value, syncID, now, sources?.checkpoints ?? input.checkpoints ?? [])
         else if (["play", "resume"].includes(input.action)) {
           if (value.state === "stopped" || value.state === "finished" && !resumeProof || value.deletion || value.pending && !resumeProof || value.synchronization)

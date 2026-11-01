@@ -3,7 +3,7 @@ import { realpath } from "node:fs/promises"
 import type { FastifyInstance } from "fastify"
 import { z } from "zod"
 import { missionConfigurationSchema, requiresMissionCalendar } from "../../missions/launch-policy"
-import { missionScheduleActions, missionScheduleID, missionSchedulePayloadDigest } from "../../missions/mission-schedule-contract"
+import { missionScheduleActions, missionScheduleID, missionSchedulePayloadDigest, missionScheduleRefusalSchema } from "../../missions/mission-schedule-contract"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { physical } from "../../missions/physical-path"
@@ -15,7 +15,7 @@ import { prepareMissionMapMutation, MissionMapMutationError } from "./mission-ma
 import { recurrenceHumanSession } from "./mission-recurrence-proof"
 import { readRecurrenceHoldOwner } from "./mission-recurrence-holds"
 import { missionCreationDigest } from "./mission-creation-holds"
-import { holdScheduledMission, scheduledMissionHold, scheduledMissionCreationHold, ScheduledHoldError,
+import { holdScheduledMission, scheduledMissionHold, scheduledMissionCreationHold, exactScheduledRefusal, ScheduledHoldError,
   type ScheduledHoldBinding } from "./mission-scheduled-holds"
 import type { registerMissionRecurrenceCreate } from "./mission-recurrence-create"
 import type { WorkspaceManager } from "../../workspaces/manager"
@@ -40,12 +40,12 @@ const body = z.object({ requestID: id, expectedRevision: z.number().int().nonneg
 }).strict().refine(value => ["create", "configure"].includes(value.action) === !!value.configuration
   && (value.deleteManagedSessions === undefined || value.action === "delete") && (value.action !== "create" || value.expectedRevision === 0)
   && !(value.action === "create" && value.configuration && !requiresMissionCalendar(value.configuration.launch)))
-const resultSchema = z.object({ pending: z.boolean(), deleted: z.boolean().optional(), document: z.object({ id,
+const resultSchema = z.object({ pending: z.boolean(), deleted: z.boolean().optional(), refusal: missionScheduleRefusalSchema.optional(), document: z.object({ id,
   control: z.object({ requestID: id, expectedRevision: z.number().int().nonnegative().safe(), action: z.enum(missionScheduleActions), pending: z.boolean() }).strict().nullable(),
 }).passthrough().nullable() }).passthrough()
 
-/** Physical permits survive unknown native outcomes. Reads can settle only an
- * exact positive original receipt; they never retry a mutation or arm work. */
+/** Physical permits survive unknown native outcomes. Exact completed receipts or
+ * proven initial pre-write refusals settle them; reads never retry or arm work. */
 export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
   for (const method of ["GET", "POST"] as const) for (const creating of [false, true]) {
     app.route({ method, url: creating ? method === "POST" ? "/api/workspaces/:id/missions/scheduled"
@@ -125,7 +125,11 @@ export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
                 ? { configDigest: missionSchedulePayloadDigest({ configuration, deleteManagedSessions: value.deleteManagedSessions }) } : {}) }
             const proof = { ...identity, digest: recurrenceControlRequestDigest(identity) }
             if (held!.preparing) held!.dispatch()
-            else { held!.retry(binding, retryReceipt); ownsHold = true }
+            else {
+              if (held!.connection !== owned.connection) retain!(release => { held!.retry(binding, retryReceipt, release) })
+              else held!.retry(binding, retryReceipt)
+              ownsHold = true
+            }
             const { signal: _observerSignal, ...nativeOptions } = options
             const raw = await rpc.scheduleControl({ missionID, requestID: value.requestID, expectedRevision: value.expectedRevision,
               action: value.action, ...(configuration ? { configuration } : {}),
@@ -133,6 +137,11 @@ export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
               ...(value.retry ? { retry: true } : {}), transport: { ...proof, proof: signNativeRecurrenceControl(proof, deps.bridgeToken) } }, nativeOptions)
             await owned.refresh(); check(owned)
             let result = resultSchema.parse(raw)
+            if (result.refusal) {
+              if (exactScheduledRefusal(requested, result) && (checking || !value.retry && held!.refuse(binding, result)))
+                return reply.code(409).send({ ...result, missionID, error: "Mission schedule action refused", code: "schedule-refused" })
+              return pending(result)
+            }
             if (checking) {
               // Check adopts/reconciles the saved intent. Its own ACK cannot
               // settle the original permit: reread that exact original receipt.
@@ -178,8 +187,17 @@ export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
             await owned.refresh(); check(owned)
             const binding = { ...existing.binding, connection }
             if (existing.settle(binding, retryReceipt)) return retryReceipt
-            if (value?.action === "check" && value.requestID !== existing.binding.requestID) return await effect(owned, rpc, options)
-            if (value?.retry && value.action !== "check") return await effect(owned, rpc, options)
+            if (value?.action === "check" && value.requestID !== existing.binding.requestID || value?.retry && value.action !== "check") {
+              if (existing.connection === connection) return await effect(owned, rpc, options)
+              // A retired connection's permit remains held until a fresh physical
+              // admission and the exact partial receipt authorize original-intent retry.
+              const fresh = await prepareMissionMapMutation({ manager, fence: deps.worktreeDeletionFence, workspaceID: selected.data.id,
+                directory: location.directory, signal: lifetime.signal, wait: lifetime.wait })
+              return await fresh.run((rpc, options) => {
+                if (fresh.connection !== connection) throw new ScheduledHoldError(503, "Mission schedule connection changed after partial read")
+                return effect(fresh, rpc, options, fresh.retain)
+              })
+            }
             return pending(retryReceipt as object)
           }
           const owned = await prepareMissionMapMutation({ manager, fence: deps.worktreeDeletionFence, workspaceID: selected.data.id,
