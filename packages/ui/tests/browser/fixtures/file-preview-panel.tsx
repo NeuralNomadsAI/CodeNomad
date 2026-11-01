@@ -3,6 +3,7 @@
 import { render } from "solid-js/web"
 import InstanceShell from "../../../src/components/instance/instance-shell2"
 import { RIGHT_PANEL_TAB_STORAGE_KEY } from "../../../src/components/instance/shell/storage"
+import { FILES_PANEL_MODE_KEY } from "../../../src/components/instance/shell/right-panel/files-panel-state"
 import { initializeClientState, writeClientLayoutValue } from "../../../src/stores/client-state"
 import { seedRestoredSessionSelection, setSessionPage, setSessions, setMessagesLoaded } from "../../../src/stores/session-state"
 import type { Session } from "../../../src/types/session"
@@ -19,8 +20,21 @@ import { markSessionListsRestored } from "./session-list-restored"
 
 await initializeClientState()
 writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, "files")
+if (new URLSearchParams(location.search).has("changes")) writeClientLayoutValue(FILES_PANEL_MODE_KEY, "changes")
 const id = "file-preview-panel", scope = "/fixture", client = sdkManager.createClient(id, `/workspaces/${id}/instance`, () => true)
 const reads: string[] = []
+const gitReads = { status: 0, diff: 0 }
+serverApi.fetchWorktreeGitStatus = async () => {
+  gitReads.status++
+  return [{ path: "src/app.ts", originalPath: null, stagedStatus: null, stagedAdditions: 0, stagedDeletions: 0,
+    unstagedStatus: "modified", unstagedAdditions: 1, unstagedDeletions: 1 }] as any
+}
+serverApi.fetchWorktreeGitDiff = async (_id, _slug, input) => {
+  gitReads.diff++
+  return { path: input.path, scope: input.scope, isBinary: false,
+    before: Array.from({ length: 400 }, (_, line) => `export const line${line} = ${line}`).join("\n"),
+    after: Array.from({ length: 400 }, (_, line) => `export const line${line} = ${line} + 1`).join("\n") } as any
+}
 serverApi.listWorkspaceFiles = async () => [{ name: "README.md", path: "README.md", type: "file" as const }] as any
 serverApi.previewWorkspaceFile = async (_id, path) => {
   reads.push(path)
@@ -39,9 +53,10 @@ markSessionListsRestored(id)
 setMessagesLoaded(previous => new Map(previous).set(id, new Set(conversations.map(session => session.id))))
 await ensureWorktreesLoaded(id)
 
-window.filePreviewPanel = { target: () => getFilePreview(id)?.path ?? null, reads: () => [...reads] }
+window.filePreviewPanel = { target: () => getFilePreview(id)?.path ?? null, scope: () => getFilePreview(id)?.scope ?? null,
+  reads: () => [...reads], gitReads: () => ({ ...gitReads }) }
 declare global {
-  interface Window { filePreviewPanel: { target(): string | null; reads(): string[] } }
+  interface Window { filePreviewPanel: { target(): string | null; scope(): string | null; reads(): string[]; gitReads(): { status: number; diff: number } } }
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <div style={{ height: "100vh", display: "flex", "flex-direction": "column" }}>

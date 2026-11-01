@@ -83,7 +83,8 @@ that lifetime (`instance/shell/file-preview-lifetime.ts`): it closes the reader
 on a session or session-worktree change, the removal of the target's worktree
 and shell disposal. The right panel only opens readers and never closes one by
 unmounting, so hiding, docking or floating it (toggle, lost room, Escape) keeps
-the mounted reader, its draft and position. Opening the browser
+the mounted reader, its draft and position. A remounted Changes view revalidates
+its status and rereads the open local diff into the same editor and model. Opening the browser
 preview replaces the file reader; opening a file returns the browser to chat mode.
 Cancelling or hiding a view fences pending reads. Workspace/local-diff readers
 refresh on filesystem invalidation, while commit contents remain immutable.
@@ -169,8 +170,10 @@ opaque device/inode identity distinct from mtime.
 - `workspaces/file-watches.test.ts`: real host file operations, replacement,
   physical containment, bounded handles and disposal/admission fencing.
 - `tests/browser/file-preview-panel.test.ts`: the real instance shell keeps the
-  same mounted reader, without a reread, while the right panel is hidden, loses
-  its room or floats, and still closes it on a conversation change.
+  same mounted Workspace reader, without a reread, while the right panel is
+  hidden, loses its room or floats, and still closes it on a conversation
+  change; showing Changes again rereads the open diff once into the same Monaco
+  editor and model, keeping selection and scroll.
 - `tests/browser/workspace-file-refresh.test.ts`: real filesystem changes through
   the watcher, shared event bus and SSE into the real Workspace tree; create,
   rename, unlink and nested files appear without F5, while idle/hidden/collapsed
