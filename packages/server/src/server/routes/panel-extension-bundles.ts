@@ -8,8 +8,9 @@ import { bundlesCatalogResultSchema, bundlesStateResultSchema, bundlesHostsResul
   type BundlesStateResult } from "../../panel-extensions/bundles-contract"
 import { readLocationRef, sameLocation } from "../../opencode/compatibility/location"
 import { createPanelExtensionRoute, PanelRouteRefused, type PanelRouteContext } from "./panel-extension-route"
+import { BundlesBudget } from "../../panel-extensions/bundles-budget"
 
-export const BUNDLES_READS_PER_MINUTE = 60, BUNDLES_RATE_WINDOW_MS = 60_000
+export { BUNDLES_READS_PER_MINUTE, BUNDLES_RATE_WINDOW_MS } from "../../panel-extensions/bundles-budget"
 export interface PanelExtensionBundlesDeps {
   store: PanelExtensionStore
   workspaceManager: Pick<WorkspaceManager, "getSharedServiceConnection" | "ownsLocation">
@@ -18,22 +19,15 @@ export interface PanelExtensionBundlesDeps {
   attachments: Pick<IntegrationAttachments, "hosts" | "bindingRead">
   now?: () => number
   routeBudgetMs?: number
+  budget?: BundlesBudget
 }
 
 /** Fixed read-only facade over the shared native services; no iframe-selected native authority. */
 export function registerPanelExtensionBundlesRoutes(app: FastifyInstance, deps: PanelExtensionBundlesDeps) {
   const route = createPanelExtensionRoute(app, deps), manager = deps.workspaceManager
-  const reads = new Map<string, number[]>(), now = deps.now ?? Date.now
+  const budget = deps.budget ?? new BundlesBudget(deps.now)
   const admit = (id: string) => {
-    const at = now()
-    // Rate history survives only this window, including for packages removed meanwhile.
-    for (const [key, times] of reads) {
-      const live = times.filter(time => time > at - BUNDLES_RATE_WINDOW_MS)
-      if (live.length) reads.set(key, live); else reads.delete(key)
-    }
-    const times = reads.get(id) ?? []
-    if (times.length >= BUNDLES_READS_PER_MINUTE) throw new PanelRouteRefused(429)
-    times.push(at); reads.set(id, times)
+    if (!budget.take(id, "read")) throw new PanelRouteRefused(429)
   }
   const owned = async (instanceId: string, sessionID: string, context: PanelRouteContext) => {
     const connection = await manager.getSharedServiceConnection(instanceId)

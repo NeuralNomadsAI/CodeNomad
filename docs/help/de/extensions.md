@@ -56,7 +56,7 @@ Jeder Ersatz widerruft die Aktivierung in allen Projekten, selbst bei unverände
 | `opencode.designAgent` | Fügt OpenCode den Design-Agenten von CodeNomad und seine Bild-Skills hinzu, solange diese Erweiterung aktiviert ist. |
 | `panel.preferences` | Die eigenen Einstellungen dieses Panels speichern. |
 | `bundles.read` (Entwurf) | Den Katalog der OpenCode-Integrationen, ihren Zustand in diesem Projekt und verfügbare geöffnete Anwendungen lesen. |
-| `bundles.manage` (benötigt `bundles.read`) | Im Entwurf reserviert; Teil A ist schreibgeschützt, ohne verfügbare Verwaltungsänderungen. |
+| `bundles.manage` (benötigt `bundles.read`) | Im Entwurf reserviert. Die öffentliche Integrationsbrücke liest Katalog, Zustand und Anwendungsangebote. |
 
 Die Integrationsbrücke im Entwurf bietet ausschließlich Katalog, Zustand, verfügbare Anwendungen und Änderungsbenachrichtigungen. Verbindungsinformationen betreffen allein die angezeigte Unterhaltung. Die reservierte Verwaltungsberechtigung beschreibt Anfragen mit Bestätigung durch den Host; globales Entfernen erfordert ausdrückliche globale Zustimmung zum Trennen von Unterhaltungen anderer Projekte. Prüfen Sie diesen Umfang auch bei einem Paket, das diese reservierte Berechtigung deklariert.
 

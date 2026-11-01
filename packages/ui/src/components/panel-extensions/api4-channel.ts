@@ -245,7 +245,7 @@ export function useApi4Channel(props: {
       if (!current() || controller.signal.aborted || (capability === "bundles" && !bundlesCurrent())) throw new Error("Stale")
       // Host actions that remove the frame (navigation, closing the phone panel) wait one
       // task, so the frame handles its answer first. Only host functions, never a string.
-      if (answer({ result }) && typeof after === "function") setTimeout(() => after(), 0)
+      if (answer({ result }) && typeof after === "function") setTimeout(() => { if (current()) after() }, 0)
     } catch (error) {
       answer({ error: capability === "bundles" && error instanceof PanelExtensionBusyError ? "busy" : true })
     }

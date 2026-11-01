@@ -1,4 +1,13 @@
 export const integrationMessages = {
+  "integrations.confirmation.title": "אישור שינוי בשילוב",
+  "integrations.confirmation.install": "התקנה",
+  "integrations.confirmation.update": "עדכון",
+  "integrations.confirmation.remove": "הסרה",
+  "integrations.confirmation.enable": "הפעלה",
+  "integrations.confirmation.disable": "השבתה",
+  "integrations.confirmation.installHost": "התקנת שילוב היישום",
+  "integrations.confirmation.attach": "חיבור היישום",
+  "integrations.confirmation.machine": "השינוי חל במחשב שבו OpenCode פועל, שעשוי להיות מחשב מרוחק.",
   "integrations.installHost.install": "התקנת האינטגרציה של היישום…",
   "integrations.installHost.update": "עדכון האינטגרציה של היישום…",
   "integrations.installHost.warning": "להתקין את האינטגרציה עבור {app} מתוך חבילת האינטגרציה בגרסה {version}?",

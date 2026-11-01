@@ -1,4 +1,13 @@
 export const integrationMessages = {
+  "integrations.confirmation.title": "确认集成更改",
+  "integrations.confirmation.install": "安装",
+  "integrations.confirmation.update": "更新",
+  "integrations.confirmation.remove": "移除",
+  "integrations.confirmation.enable": "启用",
+  "integrations.confirmation.disable": "禁用",
+  "integrations.confirmation.installHost": "安装应用集成",
+  "integrations.confirmation.attach": "连接应用",
+  "integrations.confirmation.machine": "此更改将应用于运行 OpenCode 的计算机，该计算机可能位于远程。",
   "integrations.installHost.install": "安装应用集成…",
   "integrations.installHost.update": "更新应用集成…",
   "integrations.installHost.warning": "是否使用集成包版本 {version} 为 {app} 安装应用集成？",

@@ -286,9 +286,11 @@ The read budget is 60 calls per extension in a sliding minute, four in flight an
 the fifth in-flight call and HTTP 429 report `busy`. Integration/plugin/configuration and exact-session events
 and reconnects coalesce over 300 ms into `{ kind: "state" }` notifications. Navigation, moves/deletion,
 disconnect and unmount invalidate old reads; never poll. `bundles.manage` requires `bundles.read` in the
-manifest and remains reserved in the draft; the current slice A exposes read methods only. Its installation
+manifest and remains reserved in the public draft bridge. Its installation
 sentence includes explicit global consent for detaching other projects' conversations during Global removal.
 See [Panel extensions](PANEL_EXTENSIONS.md#draft-integration-reads) for the boundary.
+The trusted internal confirmation lifecycle and revocable store leases are described in
+[Internal integration confirmation lifecycle](PANEL_EXTENSIONS.md#internal-integration-confirmation-lifecycle).
 The vendored source remains `54d6e5d0f4c22e74d228822fcaaa0912818a8b46`, draft 0.2, spec 0, RPC contract 1.
 
 ## Test fixtures

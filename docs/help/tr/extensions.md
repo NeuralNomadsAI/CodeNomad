@@ -56,7 +56,7 @@ Paketin her değiştirilmesi, izin listesi değişmese bile tüm projelerde etki
 | `opencode.designAgent` | Bu uzantı etkinken CodeNomad'in Design ajanını ve görsel becerilerini OpenCode'a ekler. |
 | `panel.preferences` | Bu panelin kendi ayarlarını hatırlamak. |
 | `bundles.read` (taslak) | OpenCode entegrasyon kataloğunu, bu projedeki durumlarını ve kullanılabilir açık uygulamaları okumak. |
-| `bundles.manage` (`bundles.read` gerektirir) | Taslakta ayrılmıştır; A dilimi salt okunurdur, yönetim değişiklikleri kullanılamaz. |
+| `bundles.manage` (`bundles.read` gerektirir) | Taslakta ayrılmıştır. Genel entegrasyon köprüsü katalog, durum ve uygulama tekliflerini okumayı sağlar. |
 
 Taslak entegrasyon köprüsü yalnızca katalog, durum, kullanılabilir uygulamalar ve değişiklik bildirimlerini sunar. Bağlantı bilgisi yalnızca görüntülenen konuşmayla ilgilidir. Ayrılmış yönetim izni, ana bilgisayarın onayını gerektiren istekleri tanımlar; Genel kapsamdan kaldırarak diğer projelerdeki konuşmaların bağlantısını kesmek için açık genel onay gerekir. Bu ayrılmış izni bildiren bir paket için de bu kapsamı inceleyin.
 

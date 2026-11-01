@@ -56,7 +56,7 @@ Every replacement revokes activation across all projects, even if the permission
 | `opencode.designAgent` | Adds CodeNomad's Design agent and its image skills to OpenCode while this extension is enabled. |
 | `panel.preferences` | Remember this panel's own settings. |
 | `bundles.read` (draft) | Read the OpenCode integrations catalogue, their state in this project and available open applications. |
-| `bundles.manage` (requires `bundles.read`) | Reserved in the draft; slice A is read-only, with no management mutation available. |
+| `bundles.manage` (requires `bundles.read`) | Reserved in the draft. The public integrations bridge provides catalogue, state and application-offer reads. |
 
 The draft integrations bridge exposes only catalogue, state, available applications and change notifications. Attachment information concerns the displayed conversation alone. The reserved management permission describes requests requiring host confirmation; Global removal requires explicit global consent for detaching conversations in other projects. Review this scope even for a package that declares this reserved permission.
 

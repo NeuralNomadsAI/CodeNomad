@@ -242,7 +242,7 @@ exact package before and after IO. Never add a permission registry, generic RPC 
 | `opencode.designAgent` | none | while enabled, this backend's leases request the Design agent (`opencode/design/demand.ts`) |
 | `panel.preferences` | `preferences.get()`, `preferences.set(object)` | the server profile's store, per extension |
 | `bundles.read` (draft) | `bundles.catalog()`, `bundles.state()`, `bundles.hosts({ integration })`, `bundles.onChanged(listener)` | the conversation captured by the mounted host; fixed integration readers and exact-session `bindingRead` |
-| `bundles.manage` (requires `bundles.read`) | reserved in the draft; current slice A exposes the read methods only | management consent sentence reviewed at installation |
+| `bundles.manage` (requires `bundles.read`) | reserved in the draft; public methods are reads | management consent sentence reviewed at installation; internal confirmation lifecycle below |
 
 ```js
 const status = await codenomad.images.status()
@@ -339,7 +339,7 @@ exfiltrate them like API 2 bytes, which the install sentence and the help state.
 
 `bundles.read` defines `codenomad.bundles` through the API 4 MessageChannel.
 The current draft surface consists of `catalog()`, `state()`, `hosts({ integration })`
-and `onChanged(listener)`. `bundles.manage` is reserved; slice A is read-only.
+and `onChanged(listener)`. `bundles.manage` is reserved in the public bridge.
 Installation shows both permissions' full consent sentences when declared, including
 the management sentence's explicit global consent for detaching other projects'
 conversations during Global removal. Each manifest permission is unique and belongs
@@ -388,6 +388,60 @@ events plus reconnects coalesce into `{ kind: "state" }` invalidations over 300 
 Readers refresh on demand and notifications; never poll. The integration contract
 pin remains draft 0.2, spec 0, RPC contract 1, as recorded in
 `opencode/integrations/vendor/VENDORED.json`.
+
+### Internal integration confirmation lifecycle
+
+`panel-extensions/bundles-lifecycle.ts` owns a backend/profile's in-memory confirmation
+arbiter. All its mounts and windows share that instance and its `BundlesBudget`; the read
+routes accept the same budget. The public frame object and route dispatcher expose reads.
+Operation-specific preparation and dispatch enter only through trusted in-process callbacks.
+
+- `mount()` mints an opaque mount identity and combines mount disposal with the consent
+  lease's abort signal. `PanelExtensionStore.captureMutationAuthority()` authorizes the
+  exact enabled digest and `bundles.manage`; installation, activation and removal revoke
+  existing leases synchronously at write admission. Preferences preserve the lease.
+- `request()` reserves the shared slot synchronously and returns an ACK and `afterAck`.
+  ACKs are `{ outcome: "confirming", requestID }`, `{ outcome: "busy" }` or
+  `{ outcome: "invalid" }`. The trusted renderer's `acknowledgeBundlesRequest()` posts
+  the ACK before scheduling preparation. The human wait has its own lifetime; every
+  API 4 channel request retains its 19.5-second deadline.
+- The trusted builder supplies the server-derived instance, exact session/Location,
+  connection, integration, scope, catalogue range and exact document digest. Its fresh
+  `readTarget()` must re-read every binding. Plans copy those values, remain in memory,
+  use separate cryptographic 128-bit request/plan IDs, expire in five minutes and are
+  consumed synchronously before the first dispatch await. Confirmation uses the exact
+  owner object and plan ID. Never deserialize a builder, authority or display payload
+  from author data.
+- `BundlesConfirmationView` uses Kobalte's modal focus trap and shared `.window-*`
+  primitives, initially focuses Cancel, and displays the trusted action, integration,
+  version, scope, conversation, document and execution-machine warning. Both the button
+  and lifecycle handler enforce 600 ms from display. An unanswered view expires after
+  two minutes. Its owner closes it on consent revocation or mount disposal.
+- The callback receives genuine `NativeMutationAuthority`: asynchronous revalidation
+  reads consent and the complete captured target, and synchronous assertions enforce
+  live disposal/revocation/expiry at dispatch. The callback calls `submitted()` exactly
+  at native transmission while retaining that authority across subsequent prerequisites.
+  `confirmed` means admitted transmission; actual state follows authoritative reads.
+  A refusal emits `failed`. Cancellation and expiry have their own outcomes. Each accepted
+  request emits one terminal event on its captured port, independently of 300-ms state
+  invalidations. Submitted work requires reconciliation and fresh consent for a fresh action.
+- Sliding budgets are 60 reads and 10 management attempts per extension per minute,
+  independent of digest and mount. The channel and bridge keep their shared four-call cap.
+  Three cancellations/expirations in 60 seconds trigger five minutes of management `busy`.
+  `resetCutoffForUserRemount()` is reserved to a trusted explicit user-remount action;
+  automatic mounts preserve strikes/cutoff and every remount preserves rate history.
+
+The adapter acceptance boundary includes synchronization of SCR §4.4's direct-detach
+rule with AC-C5/AC-E2's blanket confirmation wording. Native Global removal retains its
+separate ownership/domain/coordination qualification gate. Native operation builders,
+transport-owned mount revocation and explicit-user-remount wiring belong to adapter delivery.
+
+Checks: `bundles-lifecycle.test.ts` exercises live store leases, target conflicts, expiry,
+quota/cutoff boundaries and revocation across awaits. `tests/browser/bundles-confirmation.test.ts`
+uses the actual Solid modal, document bridge, MessagePort and channel with a parent-only
+admission driver: ACK ordering, 30-second human wait, guarded activation, terminal events,
+state coalescing and disposed/revoked owners. Public raw-management rejection stays covered
+by `panel-extension-bundles.test.ts`.
 
 ### Sandbox
 
