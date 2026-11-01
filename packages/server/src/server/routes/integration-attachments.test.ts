@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import Fastify from "fastify"
+import pino from "pino"
+import { registerRequestLogging } from "../request-logging"
 import { IntegrationAttachments } from "../../opencode/integrations/attachments"
 import { INTEGRATION_ATTACHMENT_METADATA_KEY as key } from "../../integration-types"
 import { catalogEntry, catalogOf, pluginSnapshot } from "../../opencode/integrations/catalog-fixture"
@@ -69,12 +71,20 @@ function harness(options: {
     timeoutMs: options.timeoutMs ?? 1_000,
     now: () => 123456789,
   })
-  const app = Fastify({ logger: { stream: { write: (line: string) => { logs.push(line) } } } })
+  const logger = pino({ level: "trace" }, { write: (line: string) => { logs.push(line) } })
+  const app = Fastify({ logger: false })
+  registerRequestLogging(app, logger)
+  app.addHook("onRequest", async request => { request.log = logger })
   registerIntegrationAttachmentRoutes(app, { attachments })
-  const request = (action: "hosts" | "attach" | "detach", payload?: Record<string, unknown>, query = "directory=%2Fwork", integration = "fixture") => app.inject({
+  const request = async (action: "hosts" | "attach" | "detach", payload?: Record<string, unknown>, query = "directory=%2Fwork", integration = "fixture") => {
+    const response = await app.inject({
     method: action === "hosts" ? "GET" : "POST", url: `/api/workspaces/w/integrations/${integration}/${action}?${query}`,
     ...(action === "hosts" ? {} : { payload: payload ?? (action === "attach" ? { offerID: offer.offerID, sessionID: "ses_fixture" } : { sessionID: "ses_fixture" }) }),
-  })
+    })
+    assert.equal(logs.join("").includes(secret), false, "actual trace/debug/route logs contain no sentinel")
+    assert.equal(logs.some(line => JSON.parse(line).msg === "HTTP request payload"), true, "actual trace completion was captured")
+    return response
+  }
   return { app, attachments, state, calls, trace, writes, logs, request }
 }
 
@@ -282,5 +292,6 @@ describe("integration attachment routes (real service and schemas)", () => {
     await new Promise(resolve => setImmediate(resolve))
     assert.equal(f.writes.length, 1, "only the later detach wrote metadata")
     assert.equal(key in f.state.metadata, false)
+    assert.equal(f.logs.join("").includes(secret), false, "late completion logs contain no sentinel")
   })
 })

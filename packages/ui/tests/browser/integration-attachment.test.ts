@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { chromium, type Browser, type Page, type Route } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { assertNoSentinels, FAKE_INTEGRATION_SENTINELS, findSentinels } from "../../../../scripts/fixtures/fake-integration/index.mjs"
 
 let browser: Browser, url: string
 const screenshots = process.env.CODENOMAD_ATTACHMENT_SCREENSHOTS
@@ -20,12 +21,61 @@ after(async () => { await browser?.close() })
 const label = "Attach an open application…"
 const call = (page: Page, method: string, ...args: unknown[]) => page.evaluate(([name, values]) => (window as any).integrationFixture[name as string](...(values as unknown[])), [method, args] as const)
 const shell = (page: Page, method: string, ...args: unknown[]) => page.evaluate(([name, values]) => (window as any).fixture[name as string](...(values as unknown[])), [method, args] as const)
+const sentinelPort = 49179
+const privateHost = { ...FAKE_INTEGRATION_SENTINELS, port: sentinelPort }
+const sentinelOptions = { port: sentinelPort }
+const failureKinds = ["malformed-json", "raw-http-error", "json-http-error", "network-error"] as const
+type FailureKind = typeof failureKinds[number]
+
+function captureDiagnostics(page: Page) {
+  const consoleEntries: Array<{ type: string; text: string; args: unknown[] }> = []
+  const pageErrors: Array<{ message: string; stack?: string }> = []
+  const pending: Promise<void>[] = []
+  let serializationFailures = 0
+  // Register before navigation, and keep every level, including debug/trace and browser network errors.
+  page.on("console", message => {
+    const entry = { type: message.type(), text: message.text(), args: [] as unknown[] }
+    consoleEntries.push(entry)
+    pending.push(Promise.all(message.args().map(argument => argument.evaluate(value =>
+      JSON.parse(JSON.stringify(value, (_key, item) => item instanceof Error
+        ? { ...item, name: item.name, message: item.message, stack: item.stack } : item) ?? "null"),
+    ))).then(args => { entry.args = args }, () => { serializationFailures++ }))
+  })
+  page.on("pageerror", error => pageErrors.push({ message: error.message, stack: error.stack }))
+  const drain = async () => {
+    for (let offset = 0; offset < pending.length;) {
+      const batch = pending.slice(offset)
+      offset += batch.length
+      await Promise.all(batch)
+    }
+    assert.equal(serializationFailures, 0, "every console argument was serialized before teardown")
+  }
+  return { consoleEntries, pageErrors, drain, async check() {
+    await drain()
+    // The helper reports sentinel names only, never the secret-bearing diagnostic or Error.
+    assertNoSentinels({ consoleEntries, pageErrors }, sentinelOptions, "renderer diagnostics")
+    assert.equal(pageErrors.length, 0, "the real renderer raised no uncaught exceptions")
+    assert.ok(consoleEntries.some(entry => entry.text.includes("session.messages")), "enabled renderer loggers emitted real HTTP/session diagnostics")
+    assert.ok(consoleEntries.some(entry => entry.args.some(value => value && typeof value === "object")), "structured renderer diagnostics were observed")
+  } }
+}
+
+async function failResponse(route: Route, kind: FailureKind) {
+  if (kind === "network-error") return route.abort("connectionfailed")
+  const body = JSON.stringify(privateHost)
+  if (kind === "malformed-json") return route.fulfill({ contentType: "application/json", body: `{invalid:${body}` })
+  if (kind === "raw-http-error") return route.fulfill({ status: 503, contentType: "text/plain", body })
+  return route.fulfill({ status: 503, json: { code: FAKE_INTEGRATION_SENTINELS.bindingKey, error: privateHost } })
+}
 async function open(width = 1500) {
   const page = await browser.newPage({ viewport: { width, height: 850 } })
   page.setDefaultTimeout(20_000)
-  const errors: string[] = [], calls: Array<{ action: string; directory: string | null; body: any }> = []
-  page.on("pageerror", error => errors.push(error.message))
-  const model = { state: "ok", offers: 1, family: "native", host: "ok", catalog: "fresh", association: 4, outcome: "attached", detachOutcome: "detached", removeCode: "", hold: undefined as Route | undefined, holdHosts: false, holdAttach: false, holdDetach: false }
+  const diagnostics = captureDiagnostics(page)
+  // lib/logger has namespace switches rather than a separate severity threshold: enable all of them at boot.
+  await page.addInitScript(() => localStorage.setItem("opencode:logger:namespaces", JSON.stringify(["sse", "api", "session", "actions", "foreground-refresh", "scroll"])))
+  const calls: Array<{ action: string; directory: string | null; body: any }> = []
+  const model = { state: "ok", offers: 1, family: "native", host: "ok", catalog: "fresh", association: 4, outcome: "attached", detachOutcome: "detached", removeCode: "", hold: undefined as Route | undefined, holdHosts: false, holdAttach: false, holdDetach: false,
+    failure: undefined as { action: "read" | "hosts" | "attach" | "detach"; kind: FailureKind } | undefined }
   await page.route("**/api/**", async route => {
     const request = route.request(), parsed = new URL(request.url())
     if (parsed.pathname.endsWith("/plugin-sources") && request.method() === "DELETE" && model.removeCode) {
@@ -35,6 +85,7 @@ async function open(width = 1500) {
     if (!match) return route.fulfill({ json: {} })
     const action = match[1] ?? "read"
     calls.push({ action, directory: parsed.searchParams.get("directory"), body: request.postDataJSON() })
+    if (model.failure?.action === action) return failResponse(route, model.failure.kind)
     if (action === "hosts") {
       if (model.holdHosts) { model.hold = route; return }
       return route.fulfill({ json: { offers: [{ offerID: "offer-1", label: "Scene", document: "Scene.blend", protocol: "ok" }] } })
@@ -48,10 +99,16 @@ async function open(width = 1500) {
       status: { host: { state: model.host }, connection: { offers: model.offers, attachedSessions: 42, state: "attached" }, version: "1.0.0" },
     }] } })
   })
-  await page.goto(url)
-  await page.waitForFunction(() => Boolean((window as any).integrationFixture))
-  await page.waitForFunction(() => document.querySelector(".session-header-expanded-actions"))
-  return { page, calls, model, errors }
+  const finish = async () => {
+    try { await diagnostics.check() } finally { await page.close() }
+  }
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).integrationFixture))
+    await page.waitForFunction(() => document.querySelector(".session-header-expanded-actions"))
+    assert.equal(await page.evaluate(() => (window as any).codenomadLogger.listLoggerNamespaces().every((entry: any) => entry.enabled)), true)
+    return { page, calls, model, diagnostics, finish }
+  } catch (error) { await finish(); throw error }
 }
 async function launch(page: Page) {
   const inline = page.locator(".session-header-expanded-actions").getByRole("button", { name: label, exact: true })
@@ -74,9 +131,42 @@ async function held(model: { hold?: Route }) {
   model.hold = undefined
   return route
 }
+test("diagnostic capture detects sentinel text, structured arguments and Error stacks at every console level before navigation", async () => {
+  const page = await browser.newPage()
+  const diagnostics = captureDiagnostics(page)
+  try {
+    await page.addInitScript(host => {
+      const error = new Error(host.token)
+      error.stack += JSON.stringify(host)
+      for (const level of ["debug", "log", "info", "warn", "error", "trace"] as const) {
+        console[level](`capture self-check ${host.scriptHandle}`, { nested: host, error }, error)
+      }
+      setTimeout(() => { throw error }, 0)
+    }, privateHost)
+    const uncaught = page.waitForEvent("pageerror")
+    await page.goto("data:text/html,<title>Diagnostic collector self-check</title>")
+    await uncaught
+    await diagnostics.drain()
+    for (const type of ["debug", "log", "info", "warning", "error", "trace"]) {
+      const entry = diagnostics.consoleEntries.find(entry => entry.type === type)
+      assert.ok(entry, `captured console level ${type}`)
+      assert.ok(findSentinels(entry.text, sentinelOptions).includes("scriptHandle"), "console text was captured")
+      assert.deepEqual(findSentinels(entry.args, sentinelOptions).sort(), Object.keys(privateHost).sort(), "nested console arguments retain every sentinel for scanning")
+      assert.deepEqual(findSentinels((entry.args[1] as any).error, sentinelOptions).sort(), Object.keys(privateHost).sort(), "Errors nested inside structured arguments retain their message and stack")
+    }
+    assert.deepEqual(findSentinels(diagnostics.pageErrors[0].message, sentinelOptions), ["token"], "uncaught messages are captured")
+    assert.deepEqual(findSentinels(diagnostics.pageErrors[0].stack, sentinelOptions).sort(), Object.keys(privateHost).sort(), "uncaught stacks are captured")
+    assert.deepEqual(findSentinels(diagnostics.pageErrors, sentinelOptions).sort(), Object.keys(privateHost).sort(), "uncaught message and stack are both scanned")
+    assert.throws(() => assertNoSentinels(diagnostics.consoleEntries, sentinelOptions, "intentional capture self-check"), error => {
+      // The negative control must fail without reproducing any secret in the runner's own output.
+      assertNoSentinels(String(error), sentinelOptions, "leak assertion output")
+      return true
+    })
+  } finally { try { await diagnostics.drain() } finally { await page.close() } }
+})
 test("real shell wide and narrow entries use a Cancel-focused trusted picker, exact Q8 matching, attach and local detach", async () => {
   for (const width of [1500, 390]) {
-    const { page, calls, errors } = await open(width)
+    const { page, calls, finish } = await open(width)
     try {
       await call(page, "hint", "other", "Scene")
       await launch(page)
@@ -106,12 +196,11 @@ test("real shell wide and narrow entries use a Cancel-focused trusted picker, ex
       await dialog.getByText(/Detach request completed here/).waitFor()
       await dialog.getByRole("button", { name: "OK", exact: true }).click()
       assert.deepEqual(calls.find(call => call.action === "detach")?.body, { sessionID: "session" })
-      assert.deepEqual(errors, [])
-    } finally { await page.close() }
+    } finally { await finish() }
   }
 })
 test("native dispatcher coalesces events, reconciles reconnect/open, forgets stopped workspaces and never polls", async () => {
-  const { page, calls, errors } = await open()
+  const { page, calls, finish } = await open()
   try {
     await page.locator(".session-header-expanded-actions").getByRole("button", { name: label, exact: true }).waitFor()
     const reads = () => calls.filter(call => call.action === "read").length
@@ -142,11 +231,10 @@ test("native dispatcher coalesces events, reconciles reconnect/open, forgets sto
     assert.equal(await call(page, "snapshot"), "ready")
     await call(page, "stop")
     assert.equal(await call(page, "snapshot"), "loading")
-    assert.deepEqual(errors, [])
-  } finally { await page.close() }
+  } finally { await finish() }
 })
 test("late hosts cannot retarget another conversation; busy/gone/refused remain actionable without replay", async () => {
-  const { page, calls, model, errors } = await open()
+  const { page, calls, model, finish } = await open()
   try {
     model.holdHosts = true
     await launch(page)
@@ -179,11 +267,10 @@ test("late hosts cannot retarget another conversation; busy/gone/refused remain 
     await page.waitForTimeout(100)
     assert.equal(await page.getByText(/This is a local observation/).count(), 0, "late mutation feedback never belongs to another session")
     assert.equal(calls.filter(call => call.action === "attach").at(-1)?.body.sessionID, "other")
-    assert.deepEqual(errors, [])
-  } finally { await page.close() }
+  } finally { await finish() }
 })
 test("Plugins uses safe source association, displays catalog staleness, and unsupported WSL never reads hosts", async () => {
-  const { page, calls, model, errors } = await open()
+  const { page, calls, model, finish } = await open()
   try {
     await call(page, "plugins", true)
     const row = page.locator('[data-plugin-id="neuralnomads.blender"]')
@@ -221,11 +308,10 @@ test("Plugins uses safe source association, displays catalog staleness, and unsu
     await page.keyboard.press("Escape")
     await page.waitForTimeout(400)
     assert.equal(calls.filter(call => call.action === "hosts").length, hostsBefore)
-    assert.deepEqual(errors, [])
-  } finally { await page.close() }
+  } finally { await finish() }
 })
 test("aggregate bindings and saved hints never enable attachment without active native offers", async () => {
-  const { page, calls, model, errors } = await open()
+  const { page, calls, model, finish } = await open()
   try {
     await call(page, "hint", "blender", "Scene")
     for (const variation of [{ state: "inactive" }, { state: "ok", family: "api" }, { family: "native", offers: 0 }]) {
@@ -235,11 +321,10 @@ test("aggregate bindings and saved hints never enable attachment without active 
       assert.equal(await page.locator(".session-header-expanded-actions").getByRole("button", { name: label, exact: true }).count(), 0)
     }
     assert.equal(calls.filter(call => call.action === "hosts" || call.action === "attach").length, 0)
-    assert.deepEqual(errors, [])
-  } finally { await page.close() }
+  } finally { await finish() }
 })
 test("unrelated workspace and other-session native events preserve the picker and its explicit selection", async () => {
-  const { page, calls, errors } = await open()
+  const { page, calls, finish } = await open()
   try {
     await launch(page)
     const dialog = page.getByRole("dialog", { name: label })
@@ -255,12 +340,11 @@ test("unrelated workspace and other-session native events preserve the picker an
     await call(page, "event", "session.updated", { sessionID: "session" })
     await dialog.waitFor({ state: "hidden" })
     assert.equal(calls.filter(call => call.action === "attach").length, 0, "a relevant pre-admission update expires the selection without consent")
-    assert.deepEqual(errors, [])
-  } finally { await page.close() }
+  } finally { await finish() }
 })
 test("native echoes before and after attach and detach HTTP responses retain scoped local action receipts", async () => {
   for (const detachOutcome of ["detached", "none"]) {
-    const { page, calls, model, errors } = await open()
+    const { page, calls, model, finish } = await open()
     try {
       model.holdAttach = true
       model.holdDetach = true
@@ -297,12 +381,11 @@ test("native echoes before and after attach and detach HTTP responses retain sco
       await shell(page, "addSession", "other")
       await shell(page, "selectSession", "other")
       await dialog.waitFor({ state: "hidden" })
-      assert.deepEqual(errors, [])
-    } finally { await page.close() }
+    } finally { await finish() }
   }
 })
 test("native echoes retain refused outcomes and transport errors, including a usable safe detach retry", async () => {
-  const { page, calls, model, errors } = await open()
+  const { page, calls, model, finish } = await open()
   try {
     model.holdAttach = true
     model.holdDetach = true
@@ -337,6 +420,92 @@ test("native echoes retain refused outcomes and transport errors, including a us
     await dialog.getByRole("button", { name: "Detach this conversation", exact: true }).click()
     await (await held(model)).fulfill({ json: { outcome: "none" } })
     await dialog.getByText(/Detach request completed here/).waitFor()
-    assert.deepEqual(errors, [])
-  } finally { await page.close() }
+  } finally { await finish() }
+})
+
+for (const kind of failureKinds) test(`renderer confidentiality across ${kind}, native echoes, explicit retry and late navigation`, async () => {
+  const { page, calls, model, diagnostics, finish } = await open()
+  const count = (action: string) => calls.filter(call => call.action === action).length
+  const header = page.locator(".session-header-expanded-actions").getByRole("button", { name: label, exact: true })
+  const dialog = page.getByRole("dialog", { name: label })
+  const alert = dialog.getByRole("alert").filter({ hasText: /\S/ })
+  try {
+    await header.waitFor()
+    const reads = count("read")
+    model.failure = { action: "read", kind }
+    const failedRead = page.waitForEvent(kind === "network-error" ? "requestfailed" : "requestfinished", {
+      predicate: request => new URL(request.url()).pathname.endsWith("/integrations"),
+    })
+    await call(page, "reconnect")
+    await failedRead
+    await page.waitForTimeout(100)
+    assert.equal(count("read"), reads + 1)
+    assert.equal(await header.count(), 0, "failed reads revoke stale attachment authority")
+    model.failure = undefined
+    await call(page, "reconnect")
+    await header.waitFor()
+
+    model.failure = { action: "hosts", kind }
+    await launch(page)
+    await alert.waitFor()
+    assertNoSentinels(await dialog.innerText(), sentinelOptions, "hosts failure display")
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
+    await echoes(page)
+    await call(page, "reconnect")
+    await header.waitFor()
+    assert.equal(count("hosts"), 1, "closing and native refresh never replay a failed hosts request")
+    assert.equal(count("attach"), 0)
+
+    model.failure = { action: "attach", kind }
+    await launch(page)
+    await dialog.getByRole("button", { name: /Blender.*Scene/ }).click()
+    await dialog.getByRole("button", { name: "Confirm attachment", exact: true }).click()
+    await alert.waitFor()
+    assertNoSentinels(await dialog.innerText(), sentinelOptions, "attach failure display")
+    const attachMessage = await alert.innerText()
+    await echoes(page)
+    await call(page, "reconnect")
+    await page.waitForTimeout(100)
+    assert.equal(await alert.innerText() === attachMessage, true, "native echoes retain the safe failure message")
+    assert.equal(count("attach"), 1, "failed attachment is never replayed")
+    assert.equal(count("detach"), 0)
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
+
+    model.failure = undefined
+    await launch(page)
+    await dialog.getByRole("button", { name: /Blender.*Scene/ }).click()
+    await dialog.getByRole("button", { name: "Confirm attachment", exact: true }).click()
+    const detach = dialog.getByRole("button", { name: "Detach this conversation", exact: true })
+    await detach.waitFor()
+    model.failure = { action: "detach", kind }
+    await detach.click()
+    await alert.waitFor()
+    assertNoSentinels(await dialog.innerText(), sentinelOptions, "detach failure display")
+    await echoes(page)
+    await call(page, "reconnect")
+    await page.waitForTimeout(100)
+    assert.equal(await detach.isEnabled(), true, "safe detach remains explicitly retryable")
+    assert.equal(count("detach"), 1, "native refresh never replays failed detach")
+    model.failure = undefined
+    model.detachOutcome = "none"
+    await detach.click()
+    await dialog.getByText(/Detach request completed here/).waitFor()
+    assert.equal(count("detach"), 2, "only the explicit click retries detach")
+    await dialog.getByRole("button", { name: "OK", exact: true }).click()
+
+    model.holdAttach = true
+    await launch(page)
+    await dialog.getByRole("button", { name: /Blender.*Scene/ }).click()
+    await dialog.getByRole("button", { name: "Confirm attachment", exact: true }).click()
+    const late = await held(model)
+    await shell(page, "addSession", "other")
+    await shell(page, "selectSession", "other")
+    await dialog.waitFor({ state: "hidden" })
+    await failResponse(late, kind)
+    await page.waitForTimeout(100)
+    assert.equal(await dialog.count(), 0, "late failures never publish into the next conversation")
+    assert.equal(count("attach"), 3, "navigation never replays an admitted mutation")
+    await diagnostics.drain()
+    assert.ok(diagnostics.consoleEntries.some(entry => entry.text.includes("event batch")), "the real native dispatcher emitted safe SSE diagnostics")
+  } finally { await finish() }
 })

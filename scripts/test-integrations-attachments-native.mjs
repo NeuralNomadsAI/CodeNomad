@@ -28,6 +28,7 @@ import { INTEGRATION_ATTACHMENT_METADATA_KEY as Q8 } from "../packages/server/sr
 import { registerIntegrationRoutes } from "../packages/server/src/server/routes/integrations.ts"
 import { registerIntegrationAttachmentRoutes } from "../packages/server/src/server/routes/integration-attachments.ts"
 import { registerEventRoutes } from "../packages/server/src/server/routes/events.ts"
+import { registerRequestLogging } from "../packages/server/src/server/request-logging.ts"
 import { createIntegrationsStore, isIntegrationRefreshEvent } from "../packages/ui/src/stores/integrations-store.ts"
 
 const pilot = path.resolve(process.argv[3] ?? "D:/opencode_bundles-work/opencode-integrations")
@@ -148,6 +149,7 @@ try {
     const connections = new ClientConnectionManager(logger)
     // Like the product, disable Fastify's URL logging. Capture the route's own content-free warnings.
     const app = Fastify({ logger: false })
+    registerRequestLogging(app, logger)
     app.addHook("onRequest", async request => { request.log = logger })
     registerIntegrationRoutes(app, { integrations: reader })
     registerIntegrationAttachmentRoutes(app, { attachments })
@@ -349,6 +351,8 @@ try {
       check(relayed, "relayed events")
       check(sseEvents, "SSE")
       check(logs, "route/relay/SSE logs")
+      for (const level of ["debug", "trace"]) assert(logs.some(entry => entry.level === level
+        && entry.args[1] === (level === "debug" ? "HTTP request completed" : "HTTP request payload")), `${level} HTTP completion logging is exercised`)
       console.log("PASS no fake token/port/script_handle/offer_key/binding_key sentinel in HTTP, native/relay/EventBus/SSE, logs or Q8")
       console.log("NOT RUN: deferred manual AC-B4")
     } finally {

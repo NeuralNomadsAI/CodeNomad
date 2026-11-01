@@ -122,6 +122,11 @@ Location's plugin snapshot. The server derives its RPC ID from the catalog and c
 `readIntegrationRpcOutput`; display labels, document names and application versions also pass `looksLikePath`.
 Unknown output fields are stripped. Failures expose only fixed codes, including in logs.
 
+`server/request-logging.ts` projects integration requests to fixed route templates at debug and trace levels.
+Completion diagnostics keep the method, status and duration; the integration namespace uses a fixed fallback
+for unmatched or malformed requests. Never log integration request paths, parameters, query/body values or raw
+errors. Route warnings use fixed codes or numeric status. Other routes retain their existing diagnostics.
+
 Before and after each session-scoped RPC and metadata write, native `session.get` must return the exact session in
 the exact requested canonical Location. Another owned worktree still fails this equality check. Workspace
 ownership and the pinned connection's `assertCurrent` are checked around IO and at dispatch; superseded work
@@ -218,13 +223,21 @@ Commands:
   packages/server/src/opencode/plugin-sources.test.ts`: real route/service checks for strict inputs, ownership and
   connection changes, missing/moved sessions, full output validation, path refusal, sanitized failures, bounded
   calls, exact Q8 metadata preservation/removal and removal's verified-zero guard with unchanged files on refusal.
+- `node --import tsx --test packages/server/src/server/__tests__/integration-request-logging.test.ts`: actual
+  Fastify completion hooks and Pino capture at debug/trace, rejected/malformed paths, query/body values and keys,
+  native error data, concurrent requests and error recovery, with positive ordinary-route diagnostics checks.
+- `packages/ui/tests/browser/integration-attachment.test.ts`: real Solid entry points and native dispatcher with
+  all renderer logger namespaces enabled. Every console level's text and structured arguments, nested Error
+  messages/stacks and page errors are captured before navigation and sentinel-scanned before teardown. Adversarial
+  HTTP/JSON/transport failures exercise read, hosts, attach, detach, retry and late navigation.
 - `node --import tsx scripts/test-integrations-attachments-native.mjs <absolute-cli> [pilot-checkout] [blender-executable]`:
   OpenCode 2.2.5 with actual Fastify attachment/read/SSE routes, native sessions and metadata, a loopback
   `IntegrationCatalogSource`, and the real relay feeding `createIntegrationsStore` through SSE. Checks a 60-second
   event-free demand and ten native plugin events inside 300 ms, strict inputs and cross-Location refusals. The
   Blender pilot includes `2a3d1b0`, uses its existing built plugin and add-on installer, and runs `serve.py` with
   factory startup, private resources, an explicit fixture config directory and registration. Sentinel scans cover
-  HTTP, native and relayed events, SSE, metadata and fixture logs, including an adversarial opaque session ID.
+   HTTP, native and relayed events, SSE, metadata and fixture logs, including the production debug/trace completion
+   logger and an adversarial opaque session ID.
   Every child uses the fixture environment. Manual AC-B4 has its own acceptance run.
 - `node --import tsx scripts/test-integration-fixtures-native.mjs <absolute-cli>`: installs the fake package and
   its marker-mismatch variant through the fake registry, checks every output against `contract.ts`, runs the
