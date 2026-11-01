@@ -72,6 +72,25 @@ fn new_window_admission_ignores_hidden_launch_windows() {
 }
 
 #[test]
+fn only_a_user_window_closing_beside_another_one_forgets_its_saved_state() {
+    let windows = LocalWindows::default();
+    let (first, second) = {
+        let mut registry = windows.registry.lock().unwrap();
+        // A hidden launch window and remote windows never count: they hold no local state.
+        registry.add_window(id(99), false, true).unwrap();
+        (
+            registry.add(id(1), true).unwrap().label,
+            registry.add(id(2), true).unwrap().label,
+        )
+    };
+    assert!(windows.has_other_user_window(&first, |_| false));
+    // The other one is already closing: this is the last local window, which keeps its state.
+    assert!(!windows.has_other_user_window(&first, |label| label == second));
+    windows.remove_runtime(&second);
+    assert!(!windows.has_other_user_window(&first, |_| false));
+}
+
+#[test]
 fn connect_only_launches_defer_the_preferences_restore_until_a_normal_start() {
     let windows = LocalWindows::default();
     assert!(!windows.startup_restore_deferred());

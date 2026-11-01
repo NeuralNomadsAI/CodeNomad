@@ -3,6 +3,11 @@ export const loadingScreenMessages = {
   "loadingScreen.status.issue": "Ein Problem ist aufgetreten",
   "loadingScreen.actions.showAnother": "Noch eine anzeigen",
   "loadingScreen.errors.missingRoot": "Lade-Root-Element nicht gefunden",
+  "loadingScreen.remoteUnavailable.title": "Dieser Server ist nicht erreichbar",
+  "loadingScreen.remoteUnavailable.message": "CodeNomad konnte diesen Server nicht laden. Prüfe, ob er läuft und erreichbar ist, und versuche es erneut.",
+  "loadingScreen.remoteUnavailable.retry": "Erneut versuchen",
+  "loadingScreen.remoteUnavailable.openLocal": "Lokales Fenster öffnen",
+  "loadingScreen.remoteUnavailable.close": "Fenster schließen",
 
   "loadingScreen.phrases.neurons": "KI-Neuronen werden aufgewärmt...",
   "loadingScreen.phrases.daydreaming": "Die KI wird vom Tagträumen abgehalten...",

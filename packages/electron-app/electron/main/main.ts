@@ -37,6 +37,7 @@ import { forwardOpenerStartupState, runStartupStateCommandInWindow, startupState
 import { resolveProfileRoots } from "./data-profile-cleanup"
 import { setupDataProfileCleanupIPC } from "./data-profile-cleanup-ipc"
 import { openExternalWithFeedback } from "./open-external"
+import { RemoteRecoveryPages, showRemoteUnavailable } from "./remote-recovery"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
@@ -178,6 +179,8 @@ function runPrimary(firstIntent: LaunchIntent) {
     request.on("error", (error) => console.warn("[electron] failed to clean up remote proxy session", sessionId, error))
     request.end()
   })
+  // The unavailable-server documents the host loads in remote windows whose server could not be loaded.
+  const remoteRecovery = new RemoteRecoveryPages()
   const preferencesWindows = new PreferencesWindowRegistry()
   // A connect-only launch restores the saved Preferences window only if it falls back to a normal start.
   const preferencesRestore = new DeferredRestore(clientState.preferences, isConnectOnlyLaunch(firstIntent))
@@ -422,6 +425,9 @@ function runPrimary(firstIntent: LaunchIntent) {
   setupCliIPC(cli, {
     resolveLocal: (sender) => registry.resolve(sender), resolvePreferences: (sender) => preferencesWindows.resolve(sender), getAllowedOrigins,
     openRemoteWindow, newWindow: () => intentQueue.enqueue({ newWindow: true, folders: [] }),
+    // Only the unavailable-server document the host loaded may ask for these: the server's own pages never can.
+    resolveRemoteRecovery: (event, token) => remoteWindows.resolve(event.sender) ? remoteRecovery.authorize(event, token) : undefined,
+    openLocalWindow: () => intentQueue.enqueue({ newWindow: false, folders: [] }),
     nextFolder: (id) => registry.nextFolder(id), acknowledgeFolder: (id, folder, opened) => registry.acknowledgeFolder(id, folder, opened),
     nextConnection: (id) => registry.nextConnection(id),
     acknowledgeConnection: (id, target, failure, handOff) => {
@@ -589,13 +595,9 @@ function runPrimary(firstIntent: LaunchIntent) {
       setupNavigationGuards(window, undefined, getAllowedOrigins, getLoadingUrl)
       lifecycle.attachSupportWindow(window)
       window.on("closed", () => { remoteOrigins.delete(nativeWindowId); insecureOrigins.delete(webContentsId) })
-      await loadNewRemoteWindow(window,
-        () => navigateRemoteWindow(window, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify),
-        async () => {
-          const loading = loadingTarget()
-          await (loading.url ? window.loadURL(loading.url) : window.loadFile(loading.file!))
-        },
-        payload.requireLoad === true)
+      const navigate = () => navigateRemoteWindow(window, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify)
+      const showUnavailable = () => showRemoteUnavailable(remoteRecovery, window, loadingTarget(), navigate)
+      await loadNewRemoteWindow(window, navigate, showUnavailable, payload.requireLoad === true)
       launchWindows.delete(window)
       if (!window.isDestroyed() && !window.isVisible()) window.show()
     })

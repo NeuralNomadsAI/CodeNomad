@@ -31,7 +31,7 @@ test("closing one local window removes only its V3 record and leaves backend run
   assert.deepEqual(calls, ["prevent", "renderer:one", "native:one", "remove:one", "close:one"])
 })
 
-test("closing the sole local window while a support window remains removes its V3 record", async () => {
+test("closing the last local window beside a remote window keeps its V3 record for the next local window", async () => {
   const calls: string[] = []
   const local = windowRecord("local", calls)
   const remote = { isDestroyed: () => false }
@@ -44,7 +44,29 @@ test("closing the sole local window while a support window remains removes its V
   lifecycle.attach(local)
   local.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
   await tick()
-  assert.deepEqual(calls, ["prevent", "renderer:local", "native:local", "remove:local", "close:local"])
+  // The remote window stays open; New Window, a later launch or the next start reopens this one.
+  assert.deepEqual(calls, ["prevent", "renderer:local", "native:local", "close:local"])
+})
+
+test("a local window on the sign-in page closes without waiting for a renderer that is not there", async () => {
+  const calls: string[] = []
+  const stuck = windowRecord("stuck", calls)
+  const other = windowRecord("other", calls)
+  ;(stuck.window as unknown as { webContents: unknown }).webContents = {
+    isDestroyed: () => false, getURL: () => "http://localhost/login",
+    executeJavaScript: async () => { throw new Error("Renderer client-state flush callback is unavailable") },
+  }
+  const local = [stuck, other]
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true } as never, cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => local, getAllWindows: () => local.map((record) => record.window),
+    removeWindowState: async (id) => { calls.push(`remove:${id}`); return true }, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attach(stuck)
+  stuck.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  await tick()
+  assert.deepEqual(calls, ["prevent", "native:stuck", "remove:stuck", "close:stuck"])
 })
 
 test("Preferences does not turn the final local close into a destructive window removal", async () => {

@@ -3,6 +3,11 @@ export const loadingScreenMessages = {
   "loadingScreen.status.issue": "遇到问题",
   "loadingScreen.actions.showAnother": "换一句",
   "loadingScreen.errors.missingRoot": "未找到加载根元素",
+  "loadingScreen.remoteUnavailable.title": "无法连接到此服务器",
+  "loadingScreen.remoteUnavailable.message": "CodeNomad 无法加载此服务器。请确认它正在运行且可以访问，然后重试。",
+  "loadingScreen.remoteUnavailable.retry": "重试",
+  "loadingScreen.remoteUnavailable.openLocal": "打开本地窗口",
+  "loadingScreen.remoteUnavailable.close": "关闭窗口",
 
   "loadingScreen.phrases.neurons": "正在热身 AI 神经元…",
   "loadingScreen.phrases.daydreaming": "正在劝 AI 别再走神…",

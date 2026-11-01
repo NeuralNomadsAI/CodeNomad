@@ -462,6 +462,19 @@ impl LocalWindows {
             .collect()
     }
 
+    /// Whether a user window other than `closing` stays open, ignoring those already closing. The
+    /// last one keeps its saved state beside remote windows, as when it quits CodeNomad: the next
+    /// local window (New Window, a later launch or the next start) reopens it.
+    pub(crate) fn has_other_user_window(
+        &self,
+        closing: &str,
+        is_closing: impl Fn(&str) -> bool,
+    ) -> bool {
+        self.user_window_labels()
+            .iter()
+            .any(|label| label != closing && !is_closing(label))
+    }
+
     pub(crate) fn is_connect_only(&self, label: &str) -> bool {
         self.record(label).is_some_and(|record| record.connect_only)
     }
@@ -689,6 +702,18 @@ fn build_local_window(
         return Err(error);
     }
     if let Some(target) = app.state::<LocalWindows>().backend_target() {
+        let cookie = app
+            .state::<crate::AppState>()
+            .manager
+            .ready_local_access()
+            .and_then(|access| access.session_cookie_for(&target));
+        if let Some(cookie) = cookie {
+            if let Err(error) = window.set_cookie(cookie) {
+                eprintln!(
+                    "[tauri] failed to sign a new local window in to the local server: {error}"
+                );
+            }
+        }
         navigate_window(app, &record.label, &target, NavigationKind::Cli);
     }
     Ok(record)

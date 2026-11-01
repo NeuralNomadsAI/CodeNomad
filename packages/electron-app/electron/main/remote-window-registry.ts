@@ -53,13 +53,14 @@ export class RemoteWindowRegistry {
 }
 
 /**
- * Loads a newly created remote window. A failed first load shows the loading screen, or, when the
- * caller requires the page (a launch connection), destroys the window and rejects so it can fall back.
+ * Loads a newly created remote window. A failed first load shows the unavailable-server page (Try again,
+ * Open a local window, Close window), or, when the caller requires the page (a launch connection),
+ * destroys the window and rejects so it can fall back.
  */
 export async function loadNewRemoteWindow(
   window: Pick<BrowserWindow, "destroy" | "isDestroyed">,
   navigate: () => Promise<void>,
-  showLoading: () => Promise<void>,
+  showUnavailable: () => Promise<void>,
   requireLoad: boolean,
 ): Promise<void> {
   try {
@@ -69,8 +70,8 @@ export async function loadNewRemoteWindow(
       if (!window.isDestroyed()) window.destroy()
       throw error
     }
-    console.warn("[electron] failed to load remote window; showing loading screen", error)
-    await showLoading()
+    console.warn("[electron] failed to load remote window; showing the unavailable-server page", error)
+    await showUnavailable()
   }
 }
 
