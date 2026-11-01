@@ -3,7 +3,11 @@ import test from "node:test"
 
 import { parseDelegateInput, parseInspectInput, parseReportInput, parseReviseInput, setupMissionsPlugin } from "./missions-plugin"
 import { buildAssignmentPrompt } from "../missions/recipes"
-import type { MissionMap } from "../missions/model"
+import type { MissionJsonValue, MissionMap } from "../missions/model"
+import type { MissionsPluginContext } from "./missions-plugin"
+import type { NativeMissionSession } from "../missions/control-types"
+import { NativeMissionDocumentStore, type MissionDocumentStorage } from "../missions/mission-document-store"
+import { canonicalAuthority } from "../missions/authority-protocol"
 
 test("validates the compact mission tool contracts", () => {
   for (const template of ["custom", "debug", "wayfinder", "delivery", "compare"] as const) {
@@ -236,6 +240,83 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   await assert.rejects(inspect.execute({}, {
     sessionID: "ses_coordinator", id: "stale-tool", progress: async () => {},
   }), /no longer available/)
+})
+
+for (const workspaceID of [undefined, "workspace-1"]) {
+  test(`RPC create persists the fallback location with workspaceID ${workspaceID ?? "absent"}`, async () => {
+    const values = new Map<string, MissionJsonValue>(), sessions = new Map<string, NativeMissionSession>()
+    const nativeMutations = { create: 0, prompt: 0, synthetic: 0 }
+    const location = { directory: "/repo", ...(workspaceID === undefined ? {} : { workspaceID }) }
+    const storage: MissionsPluginContext["storage"] & MissionDocumentStorage = {
+      get: async key => structuredClone(values.get(key)),
+      set: async (key, value) => { values.set(key, structuredClone(value)) },
+      remove: async key => { values.delete(key) },
+      scan: async ({ prefix }) => ({ entries: [...values].filter(([key]) => key.startsWith(prefix)).map(([key, value]) => ({ key, value })) }),
+      compareAndSet: async (key, value, expected, current) => {
+        current()
+        assert.equal((values.get(key) as { revision: number } | undefined)?.revision ?? null, expected)
+        values.set(key, structuredClone(value))
+      },
+    }
+    const documents = new NativeMissionDocumentStore(storage, "project-1", "/repo")
+    let create: Parameters<MissionsPluginContext["rpc"]["register"]>[1]["create"] | undefined
+    const cleanup = await setupMissionsPlugin({
+      location: { ...location, project: { id: "project-1", canonical: "/repo" } }, storage,
+      session: {
+        get: async ({ sessionID }: { sessionID: string }) => {
+          const session = sessions.get(sessionID)
+          if (!session) throw new Error("Session not found")
+          return session
+        },
+        create: async (input: Parameters<MissionsPluginContext["session"]["create"]>[0]) => {
+          nativeMutations.create++
+          const session = { ...input, projectID: "project-1" }
+          sessions.set(session.id, session)
+          return session
+        },
+        prompt: async () => { nativeMutations.prompt++; assert.fail("Creation must never prompt") },
+        synthetic: async () => { nativeMutations.synthetic++; assert.fail("Creation must never resume") },
+      },
+      rpc: { register: async (_definition: unknown, handlers: { create: NonNullable<typeof create> }) => {
+        create = handlers.create
+        return { dispose: async () => {}, events: { emit: async () => {} } }
+      } },
+    } as never, undefined, undefined, undefined, undefined, false, undefined, use => use(documents))
+    try {
+      const context = { error: () => assert.fail("Valid creation must succeed") }
+      const input = { requestID: "fallback-create", objective: "Keep this conversation", template: "custom" }
+      for (const invalid of [{ directory: "" }, { directory: "/repo", workspaceID: "" }]) {
+        await assert.rejects(create!({ ...input, expectedCoordinatorLocation: invalid }, context), /Invalid location/)
+      }
+      assert.equal(values.size, 0)
+      assert.deepEqual(nativeMutations, { create: 0, prompt: 0, synthetic: 0 })
+      const first = await create!(input, context) as { mission: MissionMap }
+      assert.equal(first.mission.runState, "prepared")
+      assert.equal(first.mission.document?.state, "paused")
+      assert.deepEqual(first.mission.actors.map(actor => actor.location), [location])
+      const stored = await documents.read(first.mission.id)
+      assert.ok(stored && !("deletedAt" in stored))
+      assert.deepEqual(stored.oneTime?.location, location)
+      assert.equal(stored.state, "paused")
+      assert.equal(stored.firstPlayedAt, null)
+      assert.equal(stored.oneTime?.firstPlay, null)
+      assert.deepEqual(JSON.parse(canonicalAuthority(stored)).oneTime.location, location)
+      const beforeReplay = structuredClone([...values])
+      assert.deepEqual(await create!(input, context), first)
+      assert.deepEqual([...values], beforeReplay)
+      assert.equal(sessions.size, 1)
+      assert.deepEqual(nativeMutations, { create: 1, prompt: 0, synthetic: 0 })
+    } finally { await cleanup() }
+  })
+}
+
+test("invalid plugin locations are refused before registration", async () => {
+  for (const location of [{ directory: "" }, { directory: "/repo", workspaceID: "" }]) {
+    await assert.rejects(setupMissionsPlugin({
+      location: { ...location, project: { id: "project-1", canonical: "/repo" } }, storage: {},
+      rpc: { register: async () => assert.fail("Invalid location must never register") },
+    } as never), /Invalid location/)
+  }
 })
 
 test("failed presence activation disposes partial registrations and fences captured tools", async () => {
