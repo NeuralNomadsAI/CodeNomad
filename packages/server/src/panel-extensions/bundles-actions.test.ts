@@ -703,7 +703,7 @@ test("confirmation strings contain only bounded safe display fields", async () =
 
 test("management attach completes under controlled session latency with bounded reads", { timeout: 25_000 }, async t => {
   const f = await fixture(true), ready = deferred(), done = deferred(), frames: any[] = []
-  let now = 0, measuring = false, sessions = 0, leases = 0, targets = 0, elapsed = 0, failure: unknown
+  let now = 0, measuring = false, sessions = 0, mountChecks = 0, targets = 0, elapsed = 0, failure: unknown
   const get = f.context.connection.client.session.get
   f.context.connection.client.session.get = (async (...args: any[]) => {
     if (measuring) { sessions++; await delay(10, undefined, { signal: args[1]?.signal }) }
@@ -713,8 +713,10 @@ test("management attach completes under controlled session latency with bounded 
   const transport = new BundlesTransport({ lifecycle, eventBus: new EventBus(), workspaceManager: f.manager, catalog: f.catalog,
     auth: { getSessionFromRequest: () => ({ sessionId: "human", username: "human" }) },
     store: { async captureReadAuthority() { return { canManage: true, signal: f.abort.signal,
-      assertCurrent: () => f.abort.signal.throwIfAborted(), async revalidate() { if (measuring) leases++; f.abort.signal.throwIfAborted() }, dispose() {} } } },
+      assertCurrent: () => f.abort.signal.throwIfAborted(), async revalidate() { f.abort.signal.throwIfAborted() }, dispose() {} } } },
     actions: { accepts: action => f.actions.accepts(action), async prepare(context, action, signal) {
+      const revalidate = context.authority.revalidate.bind(context.authority)
+      context.authority.revalidate = async () => { if (measuring) mountChecks++; return revalidate() }
       const prepared = await f.actions.prepare(context, action, signal)
       return { ...prepared, async readTarget(signal) { if (measuring) targets++; return prepared.readTarget(signal) },
         async dispatch(...args) {
@@ -737,11 +739,11 @@ test("management attach completes under controlled session latency with bounded 
     await transport.control(request, extension, { ...mounted, command: "displayed", planID: view.planID }); now = 600
     f.state.rpc.length = 0
     await transport.control(request, extension, { ...mounted, command: "confirm", planID: view.planID }); await done.promise
-    t.diagnostic(JSON.stringify({ elapsed: Math.round(elapsed), targets, mountChecks: leases / 2, sessions,
+    t.diagnostic(JSON.stringify({ elapsed: Math.round(elapsed), targets, mountChecks, sessions,
       attach: f.state.rpc.filter(method => method === "attachHost").length, q8: f.state.updates.length }))
     assert.equal(failure, undefined, "Actual dispatch completes within the unchanged default eight-second service deadline")
     assert.ok(elapsed < 8_000); assert.ok(targets <= 40, `target reads: ${targets}`)
-    assert.ok(leases / 2 <= 200, `mount checks: ${leases / 2}`); assert.ok(sessions <= 260, `session reads: ${sessions}`)
+    assert.ok(mountChecks <= 200, `mount checks: ${mountChecks}`); assert.ok(sessions <= 260, `session reads: ${sessions}`)
     assert.equal(f.state.rpc.filter(method => method === "attachHost").length, 1); assert.equal(f.state.updates.length, 1)
     assert.equal(f.state.metadata.unrelated, true)
     await assert.rejects(transport.control(request, extension, { ...mounted, command: "confirm", planID: view.planID }))
