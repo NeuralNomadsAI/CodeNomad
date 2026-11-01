@@ -8,7 +8,7 @@ export type MissionSchedulingSourceLists = Partial<Record<SelectedSource, readon
 const conditions = ["none", "schedule-success", "branch-commits", "mission-completed", "conversation-message", "files-changed"] as const
 
 export function MissionSchedulingSources(props: { draft: MissionSchedulingDraft; sources: MissionSchedulingSourceLists
-  onChange: (patch: Partial<MissionSchedulingDraft>) => void }) {
+  onChange: (patch: Partial<MissionSchedulingDraft>) => void; errorID?: string }) {
   const { t } = useI18n()
   const choices = () => props.sources[props.draft.condition as SelectedSource]
   return <>
@@ -17,7 +17,7 @@ export function MissionSchedulingSources(props: { draft: MissionSchedulingDraft;
       <For each={conditions}>{kind => <option value={kind}>{t(`missions.scheduling.condition.${kind}`)}</option>}</For>
     </select></label>
     <Show when={props.draft.condition === "files-changed"} fallback={<Show when={props.draft.condition !== "none"}>
-      <label>{t("missions.scheduling.source")}<select aria-label={t("missions.scheduling.source")} disabled={!choices()} value={props.draft.source}
+      <label>{t("missions.scheduling.source")}<select aria-label={t("missions.scheduling.source")} aria-invalid={!!props.errorID} aria-describedby={props.errorID} disabled={!choices()} value={props.draft.source}
         onChange={event => props.onChange({ source: event.currentTarget.value })}>
         <option value="" selected={!props.draft.source}>{t("missions.scheduling.chooseSource")}</option>
         <Show when={props.draft.source && !choices()?.some(item => item.id === props.draft.source)}>
@@ -27,7 +27,7 @@ export function MissionSchedulingSources(props: { draft: MissionSchedulingDraft;
       </select></label>
       <Show when={!choices()}><p role="status">{t("missions.scheduling.sourcesUnavailable")}</p></Show>
     </Show>}>
-      <label>{t("missions.scheduling.files")}<textarea rows={3} value={props.draft.files} maxLength={64 * 1024}
+      <label>{t("missions.scheduling.files")}<textarea rows={3} aria-invalid={!!props.errorID} aria-describedby={props.errorID} value={props.draft.files} maxLength={64 * 1024}
         onInput={event => props.onChange({ files: event.currentTarget.value })} /></label><p>{t("missions.scheduling.filesHint")}</p>
     </Show>
   </>

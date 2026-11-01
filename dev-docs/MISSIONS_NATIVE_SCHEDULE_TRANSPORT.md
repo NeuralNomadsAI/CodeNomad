@@ -196,15 +196,18 @@ guard. Keep required Core work in the current invocation and join it before grap
 release.
 
 Native compaction checkpoints and restart notices project as user-role model
-messages. A bounded public native `session.context` read classifies completed
-compactions and synthetic messages carrying native `metadata.notice:"restart"`.
+messages. The invocation reader point-reads only referenced non-wake IDs from
+the current model context to classify completed compactions and synthetics
+carrying native `metadata.notice:"restart"`. Classification and deterministic
+wake proofs share 128 reads and 1 MiB per invocation; SQL restricts each message
+to 256 KiB and the remaining byte budget before transferring its body.
 The model-context selector ignores their exact IDs only when schedule metadata is
 absent and the ID is outside the current deterministic wake namespace. Prose and
 description matching supply no classification. New scheduled users keep
 their exact metadata and are point-read again by the RPC receiver. Automatic
 compaction can also serialize the current wake into the checkpoint: when context
 has no candidate, the hook first asks read-only `status` for the next deterministic
-native message. Only a positive exact-message hint permits attempting its original
+native message, including when the checkpoint has no model-facing ID. Only a positive exact-message hint permits attempting its original
 claim; an existing hold still refuses dispatch. The mutation rereads the message.
 
 `buildNativeScheduleFoundation` in

@@ -133,7 +133,7 @@ Exact request receipts remain point reads through `scheduleRead`.
 | Schedule HTTP contract | `experimental.schedule.create/list/get/pause/resume/delete`, `{data:Info}`, session-filtered list, delete 204 | `opencode/native-schedule-capability.ts` recognizes the consumed request/response shapes read-only. Read `experimental.schedules` independently from the highest-priority whole native block. Never create probe schedules. |
 | Plugin Session facade | get/create/prompt/synthetic/interrupt/context | Prefer facade methods when they expose the required operation. Preserve exact session/message IDs and fixed profiles at admission. Use bounded point/page reads for source coverage. |
 | Session/AISDK hooks | prompt/context/title/compaction/language | Context admission requires the exact durable user message and schedule correlation. Title/compaction/language carry only local technical work. Treat metadata as correlation within service privileges. |
-| Native context messages | `session.context` → native `SessionMessage.Info[]`; synthetic `metadata.notice:"restart"` | Bounded native IDs classify restart notices before model-facing wake extraction. Schedule-bearing or deterministic wake IDs retain strict validation; notice prose supplies no authority. |
+| Native context message classification | Exact `session_message` point reads of IDs referenced by the current model context; synthetic `metadata.notice:"restart"` | Classification and deterministic wake proofs share 128 reads/1 MiB per invocation; SQL caps each body at 256 KiB and the remaining budget before transfer. Schedule-bearing or deterministic wake IDs retain strict validation; notice prose supplies no authority. |
 
 The HTTP create payload accepts optional `when` and condition keys `if`/`until`.
 Missions supplies its validated timing and fixed prompt; source conditions stay in
@@ -248,7 +248,9 @@ originals. It sends read-only native HTTP
 preflight before claiming. `ready` includes complete fan-in coverage; a signed
 eight-second receipt freezes its cutoff. One outer deadline covers status and
 wake. An already dispatched exact identity or an unconsumed uncertain claim stays
-status-only. Native compaction hints are classified by exact public context IDs.
+status-only. Native compaction hints are classified by exact referenced IDs with
+bounded SQL point reads; an absent candidate checks the next deterministic wake
+directly, including a checkpoint without a model-facing ID.
 
 Each wake/status receiver has its own `nativeInvocation` and full HTTP graph.
 It verifies saved registration/own process/incarnation, physical placement,
@@ -456,6 +458,11 @@ origins and immutable throughout that pending identity. Pending/archive replay
 requires the original request ID and exact saved revision; a missing saved
 revision preserves unknown identity. The 30-result retention bound applies to
 these receipts.
+The committed manual reservation invokes its original control's `admitControl`
+under document exclusion before the first reconciliation. This exact pending or
+archive proves the request/revision without manufacturing a calendar receipt;
+ownership checks and the original 95-second deadline stay active past admission's
+30-second freshness window.
 
 ### Scheduled actor lifecycle
 
@@ -467,6 +474,10 @@ that CAS. `admitControl` validates the committed request/action/revision/payload
 receipt, then its execution retains Location, physical-root and ownership checks
 under the RPC's shared 95-second deadline. The passage's MissionControl attempts interruption
 from that exact current intent, then calendar reconciliation proceeds independently.
+Native journal/document reads share the actor lifecycle's 85-second cancellation
+budget, including each checkpoint's narrower signal, with finalizers joined before
+interruption can advance to the root. Adopted calendars require the owned fixed
+prompt and absent native `if`/`until` conditions on every Info projection.
 Start/Resume require completed calendar controls. MissionControl supplies its
 existing request/operation, frozen targets and receipts under document exclusion
 followed by the project writer. Actor callbacks

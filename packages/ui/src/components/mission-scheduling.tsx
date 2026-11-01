@@ -11,6 +11,7 @@ export type MissionSchedulingLock = "uncertain" | "passage" | "launched-once" | 
 export function MissionScheduling(props: {
   draft: MissionSchedulingDraft; directory?: string; sources: MissionSchedulingSourceLists
   capability: "available" | "activatable" | "missing" | "loading"
+  origin?: string | null
   lockReason?: MissionSchedulingLock | null; disabled?: boolean
   /** A frozen prospective Play instant, rather than a ticking browser clock. */
   anchorAt: number
@@ -58,11 +59,15 @@ export function MissionScheduling(props: {
   const weekdays = () => new Intl.DateTimeFormat(locale(), { weekday: "long", timeZone: "UTC" })
   const reason = () => props.lockReason ? t(`missions.scheduling.lock.${props.lockReason}`)
     : unavailable() ? t(`missions.scheduling.capability.${props.capability}`) : undefined
+  const fieldError = (...fields: string[]) => ({ "aria-invalid": fields.includes(result().error ?? ""),
+    "aria-describedby": fields.includes(result().error ?? "") ? errorID : undefined })
   return <details ref={disclosure} class="mission-scheduling mission-profile-optional">
     <summary>{t("missions.scheduling.title")} · {t(retained() ? "missions.scheduling.retained.title" : `missions.scheduling.frequency.${props.draft.frequency}`)}
       {" · "}{t(`missions.scheduling.condition.${props.draft.condition}`)}</summary>
     <p id={description} role="status">{reason() ?? t("missions.scheduling.paused")}</p>
     <Show when={props.capability === "activatable"}><p>{t("missions.scheduling.capability.activatable")}</p></Show>
+    <Show when={props.origin !== undefined}><p>{t("missions.settings.effectiveOrigin")}: {props.origin
+      ? <code dir="ltr" title={props.origin}>{props.origin}</code> : t("missions.settings.noOrigin")}</p></Show>
     <Show when={retained()}>{reason => <section aria-label={t("missions.scheduling.retained.title")}>
       <p role="status">{t(`missions.scheduling.retained.${reason()}`)}</p>
       <pre dir="ltr">{JSON.stringify(props.draft.stored!.policy, null, 2)}</pre>
@@ -71,17 +76,17 @@ export function MissionScheduling(props: {
     </section>}</Show>
     <Show when={!retained()}><fieldset disabled={locked()} aria-describedby={result().error ? `${description} ${errorID}` : description} aria-invalid={!!result().error}>
       <label>{t("missions.scheduling.frequency")}
-        <select aria-label={t("missions.scheduling.frequency")} value={props.draft.frequency} onChange={event => patch({ frequency: event.currentTarget.value as MissionSchedulingDraft["frequency"] })}>
+        <select aria-label={t("missions.scheduling.frequency")} {...fieldError("empty", "capability")} value={props.draft.frequency} onChange={event => patch({ frequency: event.currentTarget.value as MissionSchedulingDraft["frequency"] })}>
           <For each={missionFrequencies}>{value => <option value={value} disabled={unavailable() && value !== "immediate"}>{t(`missions.scheduling.frequency.${value}`)}</option>}</For>
         </select>
       </label>
       <fieldset disabled={unavailable()}>
         <Show when={props.draft.frequency === "at"}><label>{t("missions.scheduling.date")}
-          <input type="datetime-local" value={props.draft.date} onInput={event => patch({ date: event.currentTarget.value })} />
+          <input type="datetime-local" {...fieldError("date")} value={props.draft.date} onInput={event => patch({ date: event.currentTarget.value })} />
         </label></Show>
         <Show when={props.draft.frequency === "in" || props.draft.frequency === "every"}>
           <div class="mission-scheduling-row">
-            <label>{t("missions.scheduling.amount")}<input type="number" min="1" step="1" value={props.draft.amount} onInput={event => patch({ amount: event.currentTarget.value })} /></label>
+            <label>{t("missions.scheduling.amount")}<input type="number" min="1" step="1" {...fieldError("interval")} value={props.draft.amount} onInput={event => patch({ amount: event.currentTarget.value })} /></label>
             <label>{t("missions.scheduling.unit")}<select aria-label={t("missions.scheduling.unit")} value={props.draft.unit} onChange={event => patch({ unit: event.currentTarget.value as "minutes" | "hours" })}>
               <For each={["minutes", "hours"] as const}>{unit => <option value={unit}>{t(`missions.scheduling.${unit}`)}</option>}</For>
             </select></label>
@@ -91,7 +96,7 @@ export function MissionScheduling(props: {
         <Show when={timed()}>
           <Index each={props.draft.frequency === "multi" ? props.draft.times : props.draft.times.slice(0, 1)}>{(time, index) =>
             <div class="mission-scheduling-row"><label>{t("missions.scheduling.time", { number: index + 1 })}
-              <input type="time" value={time()} onInput={event => patch({ times: props.draft.times.map((value, item) => item === index ? event.currentTarget.value : value) })} />
+              <input type="time" {...fieldError("times")} value={time()} onInput={event => patch({ times: props.draft.times.map((value, item) => item === index ? event.currentTarget.value : value) })} />
             </label><Show when={props.draft.frequency === "multi" && props.draft.times.length > 1}>
               <button type="button" class="window-text-button" aria-label={t("missions.scheduling.removeTime", { number: index + 1 })}
                 onClick={() => patch({ times: props.draft.times.filter((_, item) => item !== index) })}>{t("missions.scheduling.remove")}</button>
@@ -102,25 +107,25 @@ export function MissionScheduling(props: {
             <p>{t("missions.scheduling.multiHint")}</p></Show>
         </Show>
         <Show when={props.draft.frequency === "weekly"}><div class="mission-scheduling-days" role="group" aria-label={t("missions.scheduling.days")}>
-          <For each={[1, 2, 3, 4, 5, 6, 0]}>{day => <label><input type="checkbox" checked={props.draft.days.includes(day)}
+          <For each={[1, 2, 3, 4, 5, 6, 0]}>{day => <label><input type="checkbox" {...fieldError("days")} checked={props.draft.days.includes(day)}
             onChange={event => patch({ days: event.currentTarget.checked ? [...props.draft.days, day] : props.draft.days.filter(value => value !== day) })} />
             {weekdays().format(Date.UTC(2026, 10, 1 + day))}</label>}</For>
         </div></Show>
-        <Show when={props.draft.frequency === "monthly"}><label>{t("missions.scheduling.monthDay")}<input type="number" min="1" max="31" step="1"
+        <Show when={props.draft.frequency === "monthly"}><label>{t("missions.scheduling.monthDay")}<input type="number" min="1" max="31" step="1" {...fieldError("monthDay")}
           value={props.draft.monthDay} onInput={event => patch({ monthDay: event.currentTarget.value })} /></label><p>{t("missions.scheduling.monthHint")}</p></Show>
-        <Show when={props.draft.frequency === "cron"}><label>{t("missions.scheduling.cron")}<input maxLength={512} value={props.draft.expression}
+        <Show when={props.draft.frequency === "cron"}><label>{t("missions.scheduling.cron")}<input maxLength={512} {...fieldError("cron")} value={props.draft.expression}
           onInput={event => patch({ expression: event.currentTarget.value })} /></label><p>{t("missions.scheduling.cronHint")}</p></Show>
-        <MissionSchedulingSources draft={props.draft} sources={props.sources} onChange={patch} />
+        <MissionSchedulingSources draft={props.draft} sources={props.sources} onChange={patch} errorID={result().error === "source" ? errorID : undefined} />
         <Show when={dated()}>
           <label>{t("missions.scheduling.zone")}<input maxLength={100} value={props.draft.zone} list={zoneList}
-            aria-invalid={result().error === "zone"} aria-describedby={result().error === "zone" ? errorID : undefined}
+            {...fieldError("zone")}
             onInput={event => patch({ zone: event.currentTarget.value })} /></label>
           <datalist id={zoneList}><For each={zones}>{zone => <option value={zone} />}</For></datalist>
-          <label>{t("missions.scheduling.endAt")}<input type="datetime-local" value={props.draft.endAt} onInput={event => patch({ endAt: event.currentTarget.value })} /></label>
-          <label>{t("missions.scheduling.endAfter")}<input type="number" min="1" step="1" value={props.draft.endAfter} onInput={event => patch({ endAfter: event.currentTarget.value })} /></label>
+          <label>{t("missions.scheduling.endAt")}<input type="datetime-local" {...fieldError("end")} value={props.draft.endAt} onInput={event => patch({ endAt: event.currentTarget.value })} /></label>
+          <label>{t("missions.scheduling.endAfter")}<input type="number" min="1" step="1" {...fieldError("end")} value={props.draft.endAfter} onInput={event => patch({ endAfter: event.currentTarget.value })} /></label>
           <p>{t("missions.scheduling.endHint")}</p>
           <Show when={recurring()} fallback={<p>{t("missions.scheduling.onceLimit")}</p>}>
-            <label>{t("missions.scheduling.maxLaunches")}<input type="number" min="1" step="1" value={props.draft.maxLaunches}
+            <label>{t("missions.scheduling.maxLaunches")}<input type="number" min="1" step="1" {...fieldError("end")} value={props.draft.maxLaunches}
               onInput={event => patch({ maxLaunches: event.currentTarget.value })} /></label><p>{t("missions.scheduling.quotaHint")}</p>
           </Show>
         </Show>

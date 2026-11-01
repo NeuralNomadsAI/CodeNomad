@@ -94,6 +94,46 @@ test("manual walk cancellation joins the native fiber finalizer before attemptin
   assert.equal(f.active.size, 0)
 })
 
+for (const kind of ["get", "scan"] as const) test(`lifecycle deadline cancels and joins native ${kind} authority reads`, async t => {
+  const f = await fixture(t), lifecycle = new AbortController(), timeout = AbortSignal.timeout
+  t.mock.method(AbortSignal, "timeout", (milliseconds: number) => milliseconds === 85_000 ? lifecycle.signal : timeout(milliseconds))
+  const request = await f.prepare("pause")
+  let entered = false, completed = false, joined = false
+  f.state.storageEffect = read => read !== kind ? Effect.void : Effect.gen(function* () {
+    entered = true; lifecycle.abort()
+    // Finite fallback also makes the unfixed implementation fail without hanging.
+    yield* Effect.sleep(50); completed = true
+  }).pipe(Effect.ensuring(Effect.gen(function* () { yield* Effect.sleep(15); joined = true })))
+  await assert.rejects(f.invoke(() => f.control.lifecycle(request)), /retry the remaining native controls/)
+  assert.equal(entered, true); assert.equal(completed, false); assert.equal(joined, true)
+  assert.deepEqual(f.calls, [])
+})
+
+for (const kind of ["get", "scan"] as const) test(`walk cancellation joins checkpoint ${kind} reads before the root interrupt`, async t => {
+  const f = await fixture(t), walk = new AbortController(), timeout = AbortSignal.timeout
+  t.mock.method(AbortSignal, "timeout", (milliseconds: number) => milliseconds > 49_000 && milliseconds <= 50_000 ? walk.signal : timeout(milliseconds))
+  let reads = 0, entered = false, completed = false, joined = false
+  f.state.beforeFetch = () => {
+    f.state.beforeFetch = () => {}
+    f.state.storageEffect = read => {
+      // First checkpoint is the shared level check; second is the per-effect check.
+      if (read !== kind || ++reads !== 2) return Effect.void
+      f.state.storageEffect = undefined
+      return Effect.gen(function* () {
+        entered = true; walk.abort()
+        yield* Effect.sleep(50); completed = true
+      }).pipe(Effect.ensuring(Effect.gen(function* () { yield* Effect.sleep(15); joined = true })))
+    }
+  }
+  f.state.beforeInterrupt = () => { assert.equal(joined, true, "native reads must finish cancellation before root control") }
+  const request = await f.prepare("pause"), result = await f.invoke(() => f.control.lifecycle(request))
+  assert.equal(entered, true); assert.equal(completed, false); assert.equal(joined, true)
+  assert.ok(f.calls.some(call => call.kind === "interrupt" && call.id === f.coordinatorID))
+  const ack = result.mission.control!.receipts![0].nativeAcknowledgement!
+  assert.equal(ack.disposition, "interrupt-observed")
+  if (ack.disposition === "interrupt-observed") assert.equal(ack.descendants!.complete, false)
+})
+
 for (const action of ["pause", "stop"] as const) test(`runtime-shaped ${action} selects the passage identity before real actor transport and calendar effects`, async t => {
   const calendar = await ownerFixture(t)
   await calendar.control("play")

@@ -6,23 +6,27 @@ import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { missionLaunchPolicySchema } from "../../../server/src/missions/launch-policy"
+import { fixtureEventStream } from "./fixture-event-stream"
 
 let browser: Browser, url: string
+let events: Awaited<ReturnType<typeof fixtureEventStream>>
 const captures = path.join(process.env.LOCALAPPDATA || process.env.TEMP!, "codenomad-agent-scratch", "issue-926", "impl", "ui-final")
 before(async () => {
   url = (await borrowFixture({ name: "mission-scheduling", routes: [{ path: "/scheduling", html:
     '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body,#root{min-height:100%;margin:0;background:var(--surface-canvas)}</style></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-scheduling.tsx"></script></body></html>' }] })).url
+  events = await fixtureEventStream(url)
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
   await mkdir(captures, { recursive: true })
 })
-after(async () => { await browser?.close() })
+after(async () => { try { await browser?.close() } finally { await events?.close() } })
 async function setup(query = "") {
   const page = await browser.newPage({ viewport: { width: 440, height: 1000 }, locale: "en-US" })
   page.setDefaultTimeout(15_000); page.setDefaultNavigationTimeout(60_000)
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await events.route(page)
   const theme = query.includes("light") ? "light" : "dark"
   await page.route("**/api/storage/state/ui", route => route.fulfill({ json: { theme, colorScheme: theme === "light" ? "porcelain" : "mist" } }))
   await page.goto(url + query)
@@ -34,6 +38,37 @@ async function setup(query = "") {
 const policy = (page: Page) => page.evaluate(() => (window as any).schedulingFixture.policy())
 const patch = (page: Page, value: object) => page.evaluate(value => (window as any).schedulingFixture.change(value), value)
 const times = (page: Page) => page.locator(".mission-scheduling-preview time").evaluateAll(items => items.map(item => item.getAttribute("datetime")))
+
+test("keyboard disclosure and invalid fields expose their exact translated error to assistive technology", async () => {
+  const { page, errors } = await setup()
+  try {
+    const summary = page.locator(".mission-scheduling > summary")
+    await summary.focus(); await page.keyboard.press("Enter")
+    assert.equal(await page.locator(".mission-scheduling").getAttribute("open"), null)
+    await page.keyboard.press("Space")
+    assert.equal(await page.locator(".mission-scheduling").getAttribute("open"), "")
+    const base = { frequency: "every", zone: "UTC", amount: "15", times: ["09:00"], days: [1], monthDay: "1",
+      expression: "0 9 * * *", condition: "none", source: "", files: "", endAt: "", endAfter: "", maxLaunches: "" }
+    for (const [change, label] of [
+      [{ amount: "14" }, "Duration"], [{ frequency: "at", date: "" }, "Date and time in the saved time zone"],
+      [{ frequency: "daily", times: [""] }, "Time 1"], [{ frequency: "monthly", monthDay: "32" }, "Day of month"],
+      [{ frequency: "cron", expression: "invalid" }, "Cron expression"], [{ zone: "invalid" }, "Saved time zone (IANA)"],
+      [{ maxLaunches: "0" }, "Maximum launched passages"], [{ condition: "files-changed", files: "../outside" }, "Relative file paths (one per line)"],
+      [{ condition: "conversation-message", source: "" }, "Source in this project"],
+    ] as const) {
+      await patch(page, { ...base, ...change })
+      const field = page.getByLabel(label, { exact: true })
+      assert.equal(await field.getAttribute("aria-invalid"), "true", label)
+      await field.focus()
+      assert.equal(await field.evaluate(element => element === document.activeElement), true, label)
+      assert.equal(await field.getAttribute("aria-describedby"), await page.getByRole("alert").getAttribute("id"), label)
+    }
+    await patch(page, base)
+    assert.equal(await page.getByRole("alert").count(), 0)
+    assert.equal(await page.getByLabel("Duration", { exact: true }).getAttribute("aria-invalid"), "false")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
 
 test("scheduling defaults folded, has all frequencies, normalizes arbitrary minutes and refuses a ninth time", async () => {
   const { page, errors } = await setup()

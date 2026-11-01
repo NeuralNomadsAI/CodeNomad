@@ -78,6 +78,11 @@ const summary = { ...missionDocumentSummaryWire, properties: { ...missionDocumen
     timeGeneration: counter, kind: { type: "string", enum: ["check", "launch"] } },
     required: ["state", "nativeStatus", "nextDueAt", "wakeCount", "timeGeneration", "kind"], additionalProperties: false },
   availableActions: { type: "array", maxItems: 8, uniqueItems: true, items: { type: "string", enum: missionScheduleActions.filter(action => action !== "create") } },
+  technical: { type: "object", properties: { cleanupPending: { type: "boolean" }, carriers: { type: "array", maxItems: 18,
+    items: { type: "object", properties: { role: { type: "string", enum: ["principal", "reconciliation"] }, slot: counter, timeGeneration: counter,
+      sessionID: text, scheduleID: { type: ["string", "null"] }, retiring: { type: "boolean" }, cleanupPending: { type: "boolean" } },
+    required: ["role", "slot", "timeGeneration", "sessionID", "scheduleID", "retiring", "cleanupPending"], additionalProperties: false } } },
+    required: ["cleanupPending", "carriers"], additionalProperties: false },
   blockReason: { type: ["string", "null"], enum: ["deleting", "synchronizing", "failed", "ended-without-report", "unknown", "native-uncertain", "ambiguous-create", "wake-unresolved", "claim-held", "cleanup-pending", null] },
   oneShotAt: { type: ["integer", "null"], minimum: 0 }, slotEndsAt: { type: ["integer", "null"], minimum: 0 }, successfulCount: counter,
   checks: { type: ["object", "null"], properties: { count: counter, since: counter }, required: ["count", "since"], additionalProperties: false },
@@ -92,7 +97,7 @@ const summary = { ...missionDocumentSummaryWire, properties: { ...missionDocumen
   control: { type: ["object", "null"], properties: { requestID: text, expectedRevision: counter, action: text, pending: { type: "boolean" } },
     required: ["requestID", "expectedRevision", "action", "pending"], additionalProperties: false },
 }, required: [...missionDocumentSummaryWire.required, "id", "configuration", "remaining", "settledCount", "blocked", "edit", "control",
-   "kind", "oneShotAt", "slotEndsAt", "successfulCount", "checks", "pendingPassage", "latestResult", "history", "observation", "availableActions", "blockReason"] } as const
+   "kind", "oneShotAt", "slotEndsAt", "successfulCount", "checks", "pendingPassage", "latestResult", "history", "observation", "availableActions", "blockReason", "technical"] } as const
 const result = { type: "object", properties: { document: { ...summary, type: ["object", "null"] },
   deleted: { type: "boolean" }, pending: { type: "boolean" },
   deletionReceipt: { type: "object", properties: { id: text, requestID: text, expectedRevision: counter, deleteManagedSessions: { type: "boolean" } },

@@ -35,6 +35,14 @@ one-shot/end instants, admitted/settled/successful counts, structural/template l
 pending passage identity and the thirty retained passage receipts.
 
 List and detail also expose `observation`, `availableActions` and `blockReason`.
+Their `technical` projection exposes only the recorded current/retiring carrier
+session and calendar identifiers, role, slot, temporal generation and pending
+cleanup. It derives these from the same document read, including attempted
+creation and deletion still awaiting reconciliation. Installation paths, provider
+descriptors and profile environment stay private. The collapsed **Technical
+details** disclosure keeps these conversations read-only, with the principal-wake
+counter scoped to its current temporal generation. Source checks and business
+launches retain their separate counters.
 The native display adapter reads at most eight exact principal rows, validates
 their adopted mapping and checks the document revision again after I/O. Missing,
 foreign, partial or retired reads project `unknown`. `nextDueAt` is the earliest
@@ -134,6 +142,14 @@ mutation takes the document exclusion before the existing journal writer. Native
 permissions, original message identities and whole-family H11 settlement apply.
 Technical carriers use the reserved `ses_cn_schedule_` namespace, local provider,
 local title/compaction hooks and authoritative ordinary-input guards.
+Ordinary sidebar browsing/search and both Mission conversation-source pickers
+exclude this namespace through the shared carrier-identity predicate; native
+observations remain available to ownership and reconciliation readers.
+Technical turns keep native model-selection events/statistics while making zero
+provider HTTP requests. Their compaction preserves the carrier/calendar identity
+and bounds processed context. Persisted native messages and events follow native
+retention and may grow until explicit terminal cleanup; the thirty Mission result
+receipts have their own independent bound.
 
 Implementation contracts and isolated qualification commands:
 [native contracts](MISSIONS_NATIVE_CONTRACTS.md) and

@@ -486,7 +486,7 @@ export function MissionEditor(props: {
       </Show>
     </details>
     <MissionScheduling draft={schedule.scheduling()} directory={schedule.directory()} sources={sourceChoices.sources()}
-      capability={schedule.capability()} lockReason={structuralReason()} disabled={structuralLocked()}
+      capability={schedule.capability()} origin={schedule.origin()} lockReason={structuralReason()} disabled={structuralLocked()}
       persisted={schedule.document()?.firstPlayedAt != null ? { firstPlayedAt: schedule.document()!.firstPlayedAt!,
         oneShotAt: schedule.document()!.oneShotAt, slotEndsAt: schedule.document()!.slotEndsAt,
         nextDueAt: schedule.document()!.observation.nextDueAt, launchedCount: schedule.document()!.launchedCount } : undefined}

@@ -360,6 +360,9 @@ content reads pinned to the display map's body descriptors. Plan-change reads na
 the original revision and compare its accepted text; unified receipt confirmation
 also compares the document with those exact journal bodies. Missing or changed
 content retains the hold. Calendar-owned editor prefill uses the schedule read.
+Editor reads and the body display cache share only the pure wire-slice validator
+(`lib/mission-content-slice.ts`); editor receipt checks fetch their own exact,
+descriptor-pinned content independently of the display cache.
 For a journal-bound preparation, an exact positive partial receipt exposes **Try again**.
 That explicit action rereads the original receipt and resumes only its retained
 configure request, payload and revision. Remounts retain uncertainty and require
@@ -844,6 +847,10 @@ block selects the native depth default unless it also holds a depth. Native
 settings refuse simultaneous JSON/JSONC files in one layer. The schedule
 capability reader independently recognizes the consumed API shapes and reads the
 effective Location flag and its block origin through the acquired connection.
+The depth snapshot exposes that selected block's document path as `origin`,
+including when its missing depth selects the native default. The editor displays
+the effective block separately from its project write target; Scheduling displays
+the acquired capability read's effective block too.
 `node --import tsx scripts/test-subagent-depth-settings-native.mjs <absolute-isolated-opencode-cli>`
 (also in the latest-runtime CI job) qualifies this against a private runtime: depth
 capability, JSONC save/reset preserving comments and siblings, Global image storage

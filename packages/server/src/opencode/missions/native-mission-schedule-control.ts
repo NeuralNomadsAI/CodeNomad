@@ -127,7 +127,7 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
     interruption ? Effect.succeed(undefined) : Effect.failCause(cause)))
   let actorPending = false
   if (action === "run-now") {
-    yield* Effect.tryPromise(() => runtime!.runNow({ ...entry, requestID, expectedRevision }))
+    yield* Effect.tryPromise(() => runtime!.runNow({ ...entry, requestID, expectedRevision, reserved: admitControl }))
     // Paused calendars stay paused while the reservation makes its auxiliary
     // necessary. Reconcile that observer, then admit only the reserved original.
     yield* Effect.tryPromise(() => owner.reconcile(missionID))

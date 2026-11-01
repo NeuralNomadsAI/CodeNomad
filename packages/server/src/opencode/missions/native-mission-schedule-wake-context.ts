@@ -82,9 +82,8 @@ export function nativeMissionScheduleWakeContext(ctx: Plugin.Context, event: Ses
       scheduleID = [...ids][0]
     }
     const mapping = { missionID: original.id, generation: original.timeGeneration, sessionID: event.sessionID, scheduleID }
-    const window = yield* ctx.session.context({ sessionID: event.sessionID })
-    if (window.length > 128 || Buffer.byteLength(JSON.stringify(window)) > 1024 * 1024) throw new Error("schedule-context-coverage")
-    const candidates = nativeScheduleCarrierWakes(mapping, calendar?.highWater ?? 0, event.messages, nativeScheduleCarrierNonWakeMessageIDs(window))
+    const nonWakes = yield* Effect.promise(() => reader.nonWakeMessages(mapping, event.messages))
+    const candidates = nativeScheduleCarrierWakes(mapping, calendar?.highWater ?? 0, event.messages, nativeScheduleCarrierNonWakeMessageIDs(nonWakes))
     const next = calendar?.highWater ?? 0
     const candidate = candidates[0] ?? { ...mapping, run: next + 1, messageID: `msg_${scheduleID}_${next + 1}` }
     yield* Effect.tryPromise(async () => {

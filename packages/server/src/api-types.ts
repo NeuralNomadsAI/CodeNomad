@@ -490,6 +490,8 @@ export interface SubagentDepthSnapshot {
   /** OpenCode's General subagent per its resolved rules: `effect` of launching another General subagent,
    * and `hidden` when OpenCode removes the subagent tool from General (a blanket denial last); `null` when unknown. */
   nesting: { effect: SubagentNestingEffect; hidden?: true } | null
+  /** Document selecting the whole effective `experimental` block, including when depth uses its native default. */
+  origin: string | null
   /** `emptyExperimental`: the project holds an `experimental` object without properties, which
    * hides every inherited experimental setting; Inherit removes it. `nestingSkipped`: the override saved only
    * the depth, because the project's General block cannot take the nesting rule without rewriting its value. */

@@ -12,16 +12,18 @@ import { NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
 import { NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
 
 async function facade(t: test.TestContext, availability: (state: { enabled: boolean; closed: boolean }) => Effect.Effect<void>) {
-  const state: { enabled: boolean; closed: boolean; row?: string; runCount?: number } = { enabled: true, closed: false }, created: any[] = []
+  const state: { enabled: boolean; closed: boolean; row?: string; runCount?: number; condition?: Partial<Pick<Schedule.Info, "if" | "until">> } = { enabled: true, closed: false }, created: any[] = []
   const directory = path.resolve("native-calendar-scope-unit-only")
   const location = Schema.decodeUnknownSync(Location.Info)({ directory, project: { id: "project", directory, canonical: directory } })
   const selected: NativeScheduleCalendarTarget = { missionID: "calendar_scope", descriptor: { role: "principal", slot: 0, timeGeneration: 1,
     sessionID: `ses_cn_schedule_${"a".repeat(40)}`, name: "cm_scope", when: { type: "every", every: "900000 millis", tz: "UTC" }, endsAt: null,
     creation: "attempted", scheduleID: null, ambiguous: [], anchorAt: 1 } }
   const info = (input: any) => Schema.decodeUnknownSync(Schedule.Info)({ id: "sch_scope", sessionID: input.sessionID, name: input.name,
-    when: input.when, tz: "UTC", action: input.action, status: "active", runCount: input.runCount ?? 0, time: { created: 1, updated: 1 } })
+    when: input.when, tz: "UTC", action: input.action, status: "active", runCount: input.runCount ?? 0, time: { created: 1, updated: 1 }, ...state.condition })
   const schedules = { create: (input: unknown) => Effect.sync(() => { created.push(structuredClone(input)); return info(input) }),
-    list: () => Effect.succeed([]), get: () => state.runCount === undefined ? Effect.fail({ _tag: "Schedule.NotFoundError" }) : Effect.succeed(info({
+    list: () => Effect.succeed(state.runCount === undefined ? [] : [info({ sessionID: selected.descriptor.sessionID, name: selected.descriptor.name,
+      when: selected.descriptor.when, action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, runCount: state.runCount })]),
+    get: () => state.runCount === undefined ? Effect.fail({ _tag: "Schedule.NotFoundError" }) : Effect.succeed(info({
       sessionID: selected.descriptor.sessionID, name: selected.descriptor.name, when: selected.descriptor.when,
       action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, runCount: state.runCount })), pause: () => Effect.die("unexpected pause"),
     resume: () => Effect.die("unexpected resume"), remove: () => Effect.void, enabled: () => Effect.succeed(state.enabled) }
@@ -82,3 +84,17 @@ test("prepared wake ACK decodes encoded native SQL timestamps and keeps partial 
   f.state.runCount = 1; f.state.row = undefined
   assert.equal(await f.native.wakeAcknowledged(f.selected, wake, () => true), false)
 })
+
+for (const mode of ["if", "until"] as const) for (const condition of [{ type: "code" as const, code: "return true" }, { type: "shell" as const, run: "echo true" }])
+  test(`native ${mode}/${condition.type} conditions reject an otherwise exact calendar before adoption or effects`, async t => {
+    const f = await facade(t, () => Effect.void), current = () => true as const
+    f.state.runCount = 0
+    assert.equal((await f.native.list(f.selected, current)).length, 1)
+    assert.equal((await f.native.get(f.selected, "sch_scope", current))!.id, "sch_scope")
+    f.state.condition = { [mode]: condition }
+    await assert.rejects(f.native.list(f.selected, current), /Info differs/)
+    await assert.rejects(f.native.get(f.selected, "sch_scope", current), /Info differs/)
+    for (const action of ["pause", "resume", "remove"] as const)
+      await assert.rejects(f.native[action](f.selected, "sch_scope", current), /Info differs/)
+    await assert.rejects(f.native.create(f.selected, current), /Info differs/)
+  })

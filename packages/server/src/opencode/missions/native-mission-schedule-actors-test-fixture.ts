@@ -75,9 +75,11 @@ export async function actorFixture(t: test.TestContext, calendar?: Awaited<Retur
   add(coordinatorID); add("ses_child", coordinatorID); add("ses_grandchild", "ses_child")
   const state = { stuck: "", late: false, lostCancel: false, malformedInterrupt: false, live: true,
     beforeInterrupt: () => {}, beforeFetch: (() => {}) as () => void | Promise<void>,
+    storageEffect: undefined as ((kind: "get" | "scan") => Effect.Effect<void, unknown>) | undefined,
     interruptEffect: undefined as ((sessionID: string) => Effect.Effect<void, unknown>) | undefined }
   const ctx = { location, storage: {
-    get: (key: string) => Effect.promise(() => storage.get(key)), scan: (input: any) => Effect.promise(() => storage.scan(input)),
+    get: (key: string) => Effect.gen(function* () { if (state.storageEffect) yield* state.storageEffect("get"); return yield* Effect.promise(() => storage.get(key)) }),
+    scan: (input: any) => Effect.gen(function* () { if (state.storageEffect) yield* state.storageEffect("scan"); return yield* Effect.promise(() => storage.scan(input)) }),
   }, session: {
     get: ({ sessionID }: { sessionID: string }) => Effect.sync(() => {
       if (!sessions.has(sessionID)) throw Object.assign(new Error("Missing actor"), { _tag: "SessionNotFoundError", sessionID })

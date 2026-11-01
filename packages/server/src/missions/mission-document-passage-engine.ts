@@ -148,7 +148,7 @@ export class MissionDocumentPassageEngine {
     })
   }
 
-  runNow(input: { missionID: string; requestID: string; expectedRevision: number }): Promise<DocumentPassageResult> {
+  runNow(input: { missionID: string; requestID: string; expectedRevision: number; reserved?: (doc: MissionDocument) => true }): Promise<DocumentPassageResult> {
     return this.store.withExclusion(async locked => {
       const doc = await this.read(locked, input.missionID)
       if (!doc || doc.oneTime && !doc.dormantJournal || doc.preparation?.pending) throw new Error("Scheduled document unavailable")
@@ -156,12 +156,14 @@ export class MissionDocumentPassageEngine {
       if (doc.pending?.origin.kind === "manual" && doc.pending.origin.requestID === input.requestID) {
         if (doc.pending.manualExpectedRevision === undefined) throw new Error("Manual passage request identity unknown")
         if (doc.pending.manualExpectedRevision !== input.expectedRevision) throw new Error("Manual passage request conflict")
+        input.reserved?.(doc)
         return this.reconcileLocked(locked, doc.id)
       }
       const receipt = doc.history.find(item => item.origin.kind === "manual" && item.origin.requestID === input.requestID)
       if (receipt) {
         if (receipt.manualExpectedRevision === undefined) throw new Error("Manual passage request identity unknown")
         if (receipt.manualExpectedRevision !== input.expectedRevision) throw new Error("Manual passage request conflict")
+        input.reserved?.(doc)
         return "settled"
       }
       if (doc.revision !== input.expectedRevision || doc.pending || doc.deletion || doc.blocked || doc.synchronization
@@ -170,7 +172,7 @@ export class MissionDocumentPassageEngine {
       if (maximum !== null && doc.launchedCount >= maximum) throw new Error("Mission launch budget exhausted")
       const snapshot = await this.ports.snapshot(doc)
       snapshot.current()
-      await this.change(locked, doc, next => {
+      const reserved = await this.change(locked, doc, next => {
         this.recordCheck(next)
         // The owner validates/persists the paused manual control. The temporary
         // state exists only inside this atomic reservation, never arms a calendar.
@@ -181,6 +183,8 @@ export class MissionDocumentPassageEngine {
         next.pending!.manualAllowed = true
         next.state = state
       }, snapshot.current, snapshot.revalidate)
+      // Promote the exact committed manual request before any native reconciliation.
+      input.reserved?.(reserved)
       return this.reconcileLocked(locked, doc.id)
     })
   }

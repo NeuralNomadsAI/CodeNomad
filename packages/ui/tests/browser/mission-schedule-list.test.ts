@@ -119,7 +119,7 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
   })
   const stream = page.waitForResponse(response => response.headers()["content-type"] === "text/event-stream")
   await page.goto(url)
-  await stream
+  await stream.catch(error => { throw new Error(`${error}\n${errors.join("\n")}`) })
   await page.waitForFunction(() => (window as any).missionFixture).catch(error => { throw new Error(`${error}\n${errors.join("\n")}`) })
   await page.evaluate(() => (window as any).missionFixture.connectCatalog())
   return { posts, reads, errors, store, get doc() { return doc! }, result,
@@ -131,6 +131,9 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
     } }
 }
 const detail = (page: Page) => page.locator(".mission-unified-schedule")
+const technicalCalendars = () => (["principal", "reconciliation"] as const).map((role, slot) => ({ role, slot: role === "principal" ? slot : 0,
+  timeGeneration: 1, scheduleID: `sch_${role}_${"a".repeat(90)}`, sessionID: `ses_cn_schedule_${role}_${"b".repeat(90)}`,
+  highWater: 2, pendingWake: null, wakePreparing: null }))
 const button = (page: Page, name: string) => detail(page).getByRole("button", { name, exact: true })
 async function select(page: Page) {
   await page.getByRole("combobox").click()
@@ -293,6 +296,27 @@ test("event-only details distinguish checks from launches and explain an unknown
   } finally { await page.close() }
 })
 
+test("technical diagnostics expose carrier roles and pending cleanup read-only, folded and keyboard accessible", async () => {
+  const page = await browser.newPage(), f = await setup(page, { seed: true })
+  try {
+    await f.change(doc => {
+      doc.firstPlayedAt = Date.now(); doc.state = "stopped"; doc.calendars = technicalCalendars()
+      doc.deletion = { requestID: "delete_cleanup", expectedRevision: doc.revision, requestedAt: Date.now(), deleteManagedSessions: false }
+    })
+    await page.evaluate(() => (window as any).missionFixture.refresh()); await select(page)
+    const diagnostics = detail(page).locator(".mission-schedule-diagnostics"), toggle = diagnostics.getByRole("button")
+    assert.equal(await toggle.getAttribute("aria-expanded"), "false")
+    await toggle.focus(); await page.keyboard.press("Enter")
+    assert.equal(await toggle.getAttribute("aria-expanded"), "true")
+    assert.match(await diagnostics.innerText(), /Principal carrier 1[\s\S]*Reconciliation carrier/)
+    assert.match(await diagnostics.innerText(), /Cleanup awaiting reconciliation/)
+    assert.match(await diagnostics.innerText(), /without provider HTTP requests[\s\S]*30 retained Mission results/)
+    assert.equal(await diagnostics.getByRole("button").count(), 1, "no composer or native-session mutation action")
+    assert.equal(await diagnostics.locator("code").count(), 4)
+    assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
 for (const alreadyReading of [false, true]) test(`a passive list refresh between pointer-down and pointer-up preserves the exact Start click (${alreadyReading ? "read already in flight" : "fresh read"})`, { timeout: 60_000 }, async () => {
   let releaseJournal!: () => void
   const journalGate = new Promise<void>(resolve => { releaseJournal = resolve })
@@ -403,9 +427,15 @@ for (const locale of ["en", "fr", "de", "es", "he", "ja", "ne", "ru", "tr", "zh-
   test(`native schedule details stay translated and bounded at 390px (${locale})`, async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 1000 } }), f = await setup(page, { seed: true, locale })
     try {
+      await f.change(doc => { doc.firstPlayedAt = Date.now(); doc.calendars = technicalCalendars() })
+      await page.evaluate(() => (window as any).missionFixture.refresh())
       await page.evaluate(() => (window as any).missionFixture.panelWidth("100vw"))
       await select(page)
       await page.waitForFunction(locale => document.documentElement.lang === locale, locale)
+      const diagnostics = detail(page).locator(".mission-schedule-diagnostics")
+      await diagnostics.getByRole("button").focus(); await page.keyboard.press("Enter")
+      assert.equal(await diagnostics.getByRole("button").getAttribute("aria-expanded"), "true")
+      assert.equal(await diagnostics.locator("code").count(), 4)
       assert.equal(await detail(page).locator("dt").count(), 9)
       assert.equal((await detail(page).innerText()).includes("missions."), false)
       const width = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))

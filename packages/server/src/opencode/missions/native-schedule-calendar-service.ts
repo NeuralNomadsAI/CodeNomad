@@ -121,6 +121,7 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
   const project = (info: Schedule.Info): NativeScheduleCalendarInfo => {
     const time = (value: DateTime.Utc | undefined) => value === undefined ? null : DateTime.toEpochMillis(value)
     if (!info.sessionID || !info.name || info.action.type !== "prompt" || info.action.prompt !== NATIVE_SCHEDULE_CARRIER_SIGNAL
+      || info.if !== undefined || info.until !== undefined
       || !Number.isSafeInteger(info.runCount) || info.runCount < 0) throw new Error("Native calendar Info differs")
     return { id: info.id, sessionID: info.sessionID, name: info.name, when: info.when as MissionCalendarWhen,
       status: info.status, nextDueAt: time(info.nextDueAt), endsAt: time(info.endsAt), runCount: info.runCount, remainingRuns: info.remainingRuns ?? null,

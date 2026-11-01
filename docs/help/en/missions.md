@@ -160,6 +160,8 @@ Creation time also bounds eligible daily work; starting a new schedule is not pe
 
 ## Lifetime and service restarts {#lifetime}
 
+For a native schedule, expand **Technical details** to identify its **Principal carrier** and **Reconciliation carrier**, their native calendars and any **Cleanup awaiting reconciliation**. These technical conversations have no composer action and stay out of ordinary conversation/source pickers. Technical wakes, titles and compaction use the local model without provider HTTP requests; native events/statistics can still include them, while actual passages keep their ordinary model costs. Compaction bounds the processed context with the same conversation/calendar identity. Stored native messages and events can grow until explicit cleanup of a finished schedule; the 30 retained Mission results are separate. The depth control and **Scheduling** show the **Effective experimental block** document; the depth control labels its **Project write target** separately.
+
 | Component | What closing it means |
 | --- | --- |
 | CodeNomad project tab | Closes the project in CodeNomad; native sessions continue in OpenCode. Reopen the project to find them again. |

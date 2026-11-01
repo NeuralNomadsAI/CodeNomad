@@ -6,6 +6,7 @@ import { decodeMissionSchedulingPolicy } from "./mission-scheduling-decode"
 import { createMissionScheduleControls } from "./mission-schedule-controls"
 import { MissionActionBar } from "./mission-action-bar"
 import { missionLaunchLimit } from "../../../server/src/missions/mission-launch-kind"
+import { MissionScheduleDiagnostics } from "./mission-schedule-diagnostics"
 
 export function createMissionScheduleList(props: { instanceId: string; projectID?: string; directory: string;
   active: () => boolean; enabled: () => boolean; refresh: number; selected?: string; detailId: string;
@@ -108,6 +109,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
             <button type="button" class="window-text-button" onClick={() => props.onOpenConversation(item.coordinatorSessionID)}>{t("missionsPanel.action.openConversation")}</button>
           </li>}</For></ol></Show>
         </section>
+        <MissionScheduleDiagnostics document={doc()} />
       </section>
     }}</Show>
   </>

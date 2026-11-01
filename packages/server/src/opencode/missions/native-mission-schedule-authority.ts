@@ -34,8 +34,12 @@ export function nativeMissionScheduleControlExecution(request: MissionScheduleRe
   return { signal, current, admitControl: (document: MissionDocument): true => {
     signal.throwIfAborted(); ownership()
     const receipt = nativeScheduleOwnerControlReceipt(document, requestID)
-    if (document.id !== missionID || !receipt || receipt.requestID !== requestID || receipt.expectedRevision !== expectedRevision
-      || receipt.action !== action || receipt.fingerprint !== fingerprint) throw new Error("Mission control admission proof differs")
+    const manual = action === "run-now" && [document.pending, ...document.history]
+      .find(item => item?.origin.kind === "manual" && item.origin.requestID === requestID)
+    const exact = action === "run-now" ? manual && manual.manualExpectedRevision === expectedRevision && document.revision > expectedRevision
+      : receipt && receipt.requestID === requestID && receipt.expectedRevision === expectedRevision
+        && receipt.action === action && receipt.fingerprint === fingerprint
+    if (document.id !== missionID || !exact) throw new Error("Mission control admission proof differs")
     admitted = true
     return current()
   } }

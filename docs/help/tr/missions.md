@@ -160,6 +160,8 @@ Oluşturulma zamanı da uygun günlük işleri sınırlar; yeni bir zamanlamayı
 
 ## Çalışma ömrü ve hizmet yeniden başlatmaları {#lifetime}
 
+Yerel bir zamanlamada **Teknik ayrıntılar** bölümünü genişleterek **Ana taşıyıcı** ve **Uzlaştırma taşıyıcısı** bilgilerini, bunların yerel takvimlerini ve varsa **Temizlik uzlaştırma bekliyor** durumunu görebilirsiniz. Bu teknik konuşmalarda mesaj yazma eylemi bulunmaz ve bunlar olağan konuşma ve kaynak seçicilerinde görünmez. Teknik uyanmalar, başlıklar ve bağlam sıkıştırma, sağlayıcılara HTTP isteği göndermeden yerel modeli kullanır; yerel olaylar ve istatistikler bunları yine de içerebilir, ancak gerçek geçişlerin olağan model maliyetleri korunur. Bağlam sıkıştırma, konuşma ve takvim kimliğini koruyarak işlenen bağlamı sınırlar. Saklanan yerel mesajlar ve olaylar, tamamlanmış bir zamanlama açıkça temizlenene kadar birikebilir; saklanan 30 Mission sonucu ayrıdır. Derinlik denetimi ve **Zamanlama**, **Geçerli deneysel blok** belgesini gösterir; derinlik denetimi **Projenin yazma hedefi** bilgisini ayrıca belirtir.
+
 | Bileşen | Kapatılması ne anlama gelir |
 | --- | --- |
 | CodeNomad proje sekmesi | Projeyi CodeNomad'de kapatır; yerel işler OpenCode'da devam eder ve projeyi yeniden açtığınızda konuşmalar bulunur. |

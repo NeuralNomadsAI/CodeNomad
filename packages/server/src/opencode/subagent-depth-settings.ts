@@ -100,6 +100,7 @@ export class SubagentDepthSettings {
     const projectDepth = project ? depth(readNativeSetting(project.document, keys)) : null
     return { location: context.location, capability: context.capability, effectiveDepth,
       nesting: effect ? { effect, ...(nestingToolHidden(context.rules!, ignoreCase) ? { hidden: true as const } : {}) } : null,
+      origin: experimental?.type === "document" ? experimental.path ?? null : null,
       project: project ? { path: project.path, depth: projectDepth,
         expectation: nativeSettingExpectation(project.document),
         ...(projectDepth !== null && nestingRuleSkipped(project.document) ? { nestingSkipped: true as const } : {}),

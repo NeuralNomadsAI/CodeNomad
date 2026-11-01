@@ -10,3 +10,5 @@
 .mission-schedule-instructions { white-space: pre-wrap; overflow-wrap: anywhere; }
 .mission-unified-schedule h3 { font-size: var(--font-size-sm); }
 .mission-unified-schedule .mission-past-runs li { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
+.mission-schedule-diagnostics { overflow-wrap: anywhere; }
+.mission-schedule-diagnostics ul { padding-inline-start: var(--space-lg); }

@@ -5,6 +5,7 @@ import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { buildProjectSessionListOptions } from "../stores/session-list-options"
 import type { MissionSchedulingDraft } from "./mission-scheduling-data"
 import type { MissionSchedulingSourceLists } from "./mission-scheduling-sources"
+import { isReservedMissionScheduleSessionID } from "../../../server/src/missions/mission-schedule-carrier-identity"
 
 /** One explicitly requested source page, fenced to its native project/location.
  * More pages require the user's button; source reads never arm work. */
@@ -35,7 +36,7 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
       if (kind === "conversation-message") {
         const page = await getRootClient(props.instanceId).session.list(buildProjectSessionListOptions(after ? { cursor: after } : { directory }), { signal })
         if (page.data.length > 200) throw new Error("Oversized source page")
-        return { rows: page.data.filter(row => !row.id.startsWith("ses_cn_schedule_")).map(row => ({ id: row.id, label: row.title || row.id })), next: page.cursor?.next }
+        return { rows: page.data.filter(row => !isReservedMissionScheduleSessionID(row.id)).map(row => ({ id: row.id, label: row.title || row.id })), next: page.cursor?.next }
       }
       if (kind === "branch-commits") {
         const page = await serverApi.fetchLocalGitBranches(props.instanceId, directory, signal)

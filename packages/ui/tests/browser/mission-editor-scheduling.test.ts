@@ -5,6 +5,7 @@ import path from "node:path"
 import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { fixtureEventStream } from "./fixture-event-stream"
 import { NativeMissionDocumentStore } from "../../../server/src/missions/mission-document-store"
 import { missionScheduleView } from "../../../server/src/missions/mission-schedule-view"
 import type { MissionDocument } from "../../../server/src/missions/mission-document"
@@ -14,13 +15,15 @@ import { missionContentFixture, panelMissions } from "./mission-content-fixture"
 import type {} from "./fixtures/mission-editor-scheduling"
 
 let browser: Browser, url: string
+let events: Awaited<ReturnType<typeof fixtureEventStream>>
 before(async () => {
   const fixture = await borrowFixture({ name: "mission-editor-scheduling", routes: [{ path: "/editor",
     html: '<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body,#root{margin:0;min-height:100%;background:var(--surface-canvas)}</style></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-editor-scheduling.tsx"></script></body></html>' }] })
-  url = fixture.url; browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  url = fixture.url; events = await fixtureEventStream(url)
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close() })
+after(async () => { try { await browser?.close() } finally { await events?.close() } })
 const profiles = { coordinator: { agent: "coordinator", model: { providerID: "p", id: "m", variant: "precise" } },
   roles: { specialist: { agent: "specialist", model: { providerID: "p", id: "m", variant: "fast" } } } }
 const objective = "What should the mission do?"
@@ -44,6 +47,7 @@ async function setup(page: Page, available = true, locale = "en", theme = "dark"
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await events.route(page)
   await page.route("**/api/storage/config/ui", route => route.fulfill({ json: { settings: {
     missionProfileDefaults: [{ template: "custom", profiles }], locale } } }))
   await page.route("**/api/storage/state/ui", route => route.fulfill({ json: { theme, colorScheme: theme === "light" ? "porcelain" : "mist" } }))

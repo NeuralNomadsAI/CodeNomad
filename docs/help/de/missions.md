@@ -160,6 +160,8 @@ Auch die Erstellungszeit begrenzt zulässige tägliche Arbeit; der Start eines n
 
 ## Lebensdauer und Dienstneustarts {#lifetime}
 
+Klappen Sie bei einem nativen Zeitplan **Technische Details** auf, um seinen **Hauptträger** und **Abgleichträger**, deren native Kalender und eine etwaige Meldung **Bereinigung wartet auf Abgleich** zu sehen. Diese technischen Unterhaltungen bieten keine Aktion zur Nachrichteneingabe und erscheinen nicht in den üblichen Unterhaltungs- und Quellenauswahlen. Technische Aktivierungen, Titel und Kompaktierung nutzen das lokale Modell ohne HTTP-Anfragen an Anbieter; native Ereignisse und Statistiken können sie dennoch enthalten, während tatsächliche Durchläufe ihre üblichen Modellkosten behalten. Kompaktierung begrenzt den verarbeiteten Kontext bei gleichbleibender Identität der Unterhaltung und des Kalenders. Gespeicherte native Nachrichten und Ereignisse können bis zur ausdrücklichen Bereinigung eines beendeten Zeitplans anwachsen; die 30 aufbewahrten Mission-Ergebnisse sind davon getrennt. Die Tiefeneinstellung und **Zeitplanung** zeigen das Dokument unter **Wirksamer experimenteller Block**; die Tiefeneinstellung kennzeichnet das **Schreibziel des Projekts** separat.
+
 | Komponente | Bedeutung des Schließens |
 | --- | --- |
 | CodeNomad-Projekt-Tab | Schließt das Projekt in CodeNomad; native Sitzungen laufen in OpenCode weiter. Öffnen Sie das Projekt erneut, um sie wiederzufinden. |

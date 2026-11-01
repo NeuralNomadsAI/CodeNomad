@@ -58,6 +58,7 @@ test("owned depth editing preserves JSONC, inherited settings and original draft
     registerSubagentDepthSettingsRoutes(app, settings)
     const snapshot = await settings.read("w", location)
     assert.equal(snapshot.effectiveDepth, null, "the project's own experimental block hides the global depth, as natively")
+    assert.equal(snapshot.origin, projectFile, "the whole block decides the origin even without a depth key")
     assert.equal(snapshot.project?.depth, null)
     assert.equal(snapshot.project?.path, projectFile)
     await settings.update("w", location, 0, snapshot.project!.expectation)
@@ -108,6 +109,7 @@ test("owned depth editing preserves JSONC, inherited settings and original draft
     assert.match(repaired, /keep me/)
     const inherited = await settings.read("w", location)
     assert.equal(inherited.effectiveDepth, 2)
+    assert.equal(inherited.origin, globalFile)
     assert.equal(inherited.project?.emptyExperimental, undefined)
     await settings.update("w", location, 3, inherited.project!.expectation)
     await settings.update("w", location, null, (await settings.read("w", location)).project!.expectation)
@@ -115,12 +117,14 @@ test("owned depth editing preserves JSONC, inherited settings and original draft
     await writeFile(globalFile, "{}")
     await writeFile(projectFile, "{}")
     assert.equal((await settings.read("w", location)).effectiveDepth, null, "missing default stays unknown")
+    assert.equal((await settings.read("w", location)).origin, null)
     await writeFile(globalFile, '{"experimental":{"schedules":true,"subagent_depth":2}}')
     await settings.update("w", location, 3, (await settings.read("w", location)).project!.expectation)
     assert.deepEqual(parse(await readFile(projectFile, "utf8")).experimental, { schedules: true, subagent_depth: 3 })
     await settings.update("w", location, null, (await settings.read("w", location)).project!.expectation)
     assert.deepEqual(parse(await readFile(projectFile, "utf8")).experimental, { schedules: true })
     assert.equal((await settings.read("w", location)).effectiveDepth, null, "remaining schedules block selects the native depth default")
+    assert.equal((await settings.read("w", location)).origin, projectFile, "removing depth preserves the schedules block's origin")
     await writeFile(projectFile, '{"experimental":{"schedules":false}}')
     await settings.update("w", location, 0, (await settings.read("w", location)).project!.expectation)
     assert.deepEqual(parse(await readFile(projectFile, "utf8")).experimental, { schedules: false, subagent_depth: 0 })
@@ -324,6 +328,23 @@ test("a General denial scoped to General leaves the tool, so the snapshot does n
   await writeFile(globalFile, JSON.stringify({ permissions: [rule("subagent", "*", "allow"), rule("subagent", "general", "deny")] }))
   assert.deepEqual(await nesting(), { effect: "deny" })
 }))
+test("depth origin follows the effective native block, including ancestor, pathless and default selections", async () => {
+  const global = { type: "document", path: "/global/opencode.jsonc", info: { experimental: { subagent_depth: 8 } } }
+  for (const [entries, expectedOrigin, expectedDepth] of [
+    [[], null, 1],
+    [[global], global.path, 8],
+    [[global, { type: "document", path: "/ancestor/.opencode/opencode.jsonc", info: { experimental: { schedules: true } } }], "/ancestor/.opencode/opencode.jsonc", 1],
+    [[global, { type: "document", info: { experimental: { subagent_depth: 0 } } }], null, 0],
+  ] as const) {
+    const settings = new SubagentDepthSettings({ readConfigDocuments: async () => ({ location: { directory: "/project" }, entries, documents: [] }) } as any,
+      { getServicePathStyle: () => "posix", getSharedServiceConnection: async () => ({ assertCurrent: () => {}, endpoint: { url: "http://127.0.0.1:1234" },
+        fetch: async () => Response.json(contract({ type: "integer", minimum: 0, default: 1 })) }) } as any)
+    const snapshot = await settings.read("w", { directory: "/project" })
+    assert.equal(snapshot.origin, expectedOrigin)
+    assert.equal(snapshot.effectiveDepth, expectedDepth)
+    assert.equal(snapshot.project, null, "effective origin is independent of an editable project target")
+  }
+})
 
 test("Inherit removes a block left with only the Global image storage, only when that is certain", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "subagent-depth-media-"))

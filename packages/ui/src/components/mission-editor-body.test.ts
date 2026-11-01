@@ -49,7 +49,7 @@ test("editor refuses a foreign body or a different digest even at offset zero", 
       else result.content.digest = "another_digest"
     }
     return { available: true, ...result }
-  }), /unavailable|changed/)
+  }), /unavailable|changed|Invalid/)
 })
 
 test("maps from a plugin without descriptors keep their inline inputs", async () => {

@@ -82,11 +82,6 @@ export const acquireNativeScheduledActorTransport = Effect.fn("missions.acquireS
   guard()
   if (!endpoint || endpoint.url !== identity.url) throw new Error("Scheduled actor service differs")
   const headers = Service.headers(endpoint)
-  const storage: MissionStorage = {
-    get: key => run(ctx.storage.get(key)) as ReturnType<MissionStorage["get"]>,
-    scan: input => run(ctx.storage.scan(input)) as ReturnType<MissionStorage["scan"]>,
-    set: async () => { throw new Error("Scheduled actor authority is read-only") },
-  }
   const lifecycle: Lifecycle = async (coordinatorID, input) => {
     const signal = AbortSignal.any([retired.signal, AbortSignal.timeout(85_000)])
     const live = () => { signal.throwIfAborted(); return guard() }
@@ -100,6 +95,12 @@ export const acquireNativeScheduledActorTransport = Effect.fn("missions.acquireS
         return Effect.sync(() => combined.removeEventListener("abort", abort))
       })))
     }
+    const storageFor = (callSignal?: AbortSignal): MissionStorage => ({
+      get: key => invoke(Effect.suspend(() => { live(); return ctx.storage.get(key) }), callSignal) as ReturnType<MissionStorage["get"]>,
+      scan: input => invoke(Effect.suspend(() => { live(); return ctx.storage.scan(input) }), callSignal) as ReturnType<MissionStorage["scan"]>,
+      set: async () => { throw new Error("Scheduled actor authority is read-only") },
+    })
+    const storage = storageFor()
     const get = async (id: string, callSignal?: AbortSignal): Promise<SessionInfo> => {
       live()
       const session = await invoke(Effect.suspend(() => { live(); return ctx.session.get({ sessionID: Session.ID.make(id) }) }), callSignal)
@@ -111,9 +112,9 @@ export const acquireNativeScheduledActorTransport = Effect.fn("missions.acquireS
       if (input.recurrence) throw new Error("Foreign recurrence control")
       const coordinator = await get(coordinatorID), ownerID = marker(coordinator)?.document?.missionID
       if (typeof ownerID !== "string") throw new Error("Scheduled actor owner missing")
-      const readDocument = async () => {
+      const readDocument = async (callSignal?: AbortSignal) => {
         live()
-        const doc = parseMissionDocument(await storage.get(nativeScheduleDocumentKey(ctx, ownerID)), {
+        const doc = parseMissionDocument(await storageFor(callSignal).get(nativeScheduleDocumentKey(ctx, ownerID)), {
           id: ownerID, projectID: location.project.id, projectCanonical: location.project.canonical,
         })
         live()
@@ -151,9 +152,9 @@ export const acquireNativeScheduledActorTransport = Effect.fn("missions.acquireS
           throw new Error("Scheduled actor calendar barrier missing")
         assertMissionCalendarPlacement(fresh.calendarOwner!.placement, frozen.roots)
       }
-      const checkOperation = async () => {
-        documentCurrent(await readDocument())
-        const snapshot = await passage.journal.snapshot(), fresh = snapshot.missions[0]
+      const checkOperation = async (callSignal?: AbortSignal) => {
+        documentCurrent(await readDocument(callSignal))
+        const snapshot = await missionDocumentPassage(storageFor(callSignal), doc, live).journal.snapshot(), fresh = snapshot.missions[0]
         live()
         if (snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.missions.length !== 1 || !fresh
           || fresh.id !== mission.id || fresh.coordinatorSessionId !== coordinatorID || fresh.runState !== expectedState
@@ -205,7 +206,7 @@ export const acquireNativeScheduledActorTransport = Effect.fn("missions.acquireS
       }
       const checkpoint = async (callSignal?: AbortSignal) => {
         callSignal?.throwIfAborted()
-        await checkOperation()
+        await checkOperation(callSignal)
         for (const [id, metadata] of [[coordinatorID, coordinator.metadata], [target.sessionID, selected.metadata]] as const) {
           if (!isDeepStrictEqual((await root(id, callSignal)).metadata, metadata)) throw new Error("Scheduled actor metadata changed")
         }

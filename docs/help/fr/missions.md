@@ -160,6 +160,8 @@ La date de création limite aussi les jours admissibles ; démarrer un nouveau p
 
 ## Durée de vie et redémarrages du service {#lifetime}
 
+Pour une programmation native, développez **Détails techniques** pour identifier son **Porteur principal** et son **Porteur de réconciliation**, leurs calendriers natifs et tout **Nettoyage en attente de réconciliation**. Ces conversations techniques n'ont pas d'action de composition et restent absentes des sélecteurs ordinaires de conversations et de sources. Les réveils techniques, les titres et la compaction utilisent le modèle local sans requêtes HTTP vers les fournisseurs ; les événements et statistiques natifs peuvent quand même les inclure, tandis que les passages effectifs conservent leurs coûts de modèle habituels. La compaction borne le contexte traité en conservant l'identité de la conversation et du calendrier. Les messages et événements natifs stockés peuvent s'accumuler jusqu'au nettoyage explicite d'une programmation terminée ; les 30 résultats de Mission conservés sont distincts. Le réglage de profondeur et **Programmation** affichent le document du **Bloc expérimental effectif** ; le réglage de profondeur indique séparément sa **Cible d’écriture du projet**.
+
 | Composant | Ce que signifie sa fermeture |
 | --- | --- |
 | Onglet de projet CodeNomad | Ferme le projet dans CodeNomad ; les sessions natives continuent dans OpenCode. Rouvrez le projet pour les retrouver. |

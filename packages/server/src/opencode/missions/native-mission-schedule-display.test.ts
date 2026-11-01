@@ -31,6 +31,29 @@ test("display reads only the exact principal rows, merges native dates and scope
   const validate = new Ajv().compile(missionScheduleRpcMethods.scheduleRead.output)
   assert.equal(validate(view), true, JSON.stringify(validate.errors))
   assert.doesNotMatch(JSON.stringify(view), /registrationFile|configYamlPath|sha256/)
+  assert.deepEqual(view.document!.technical.carriers.map(item => [item.role, item.sessionID, item.scheduleID]),
+    doc.calendarOwner!.slots.map(item => [item.role, item.sessionID, item.scheduleID]))
+  assert.equal(view.document!.technical.cleanupPending, false)
+})
+
+test("diagnostics retain attempted and retiring carrier roles with cleanup uncertainty, without private installation data", async t => {
+  const f = await ownerFixture(t), doc = await f.control("play")
+  const retired = { descriptor: structuredClone(doc.calendarOwner!.slots[0]), highWater: 2,
+    scheduleRemoved: true, sessionRemoved: false, indexRemoved: false }
+  doc.calendarOwner!.retired = [retired]
+  doc.calendarOwner!.slots[0].creation = "attempted"
+  doc.calendarOwner!.slots[0].scheduleID = null
+  const view = missionScheduleView(doc).document!
+  assert.equal(view.technical.carriers[0].scheduleID, null, "attempted creation keeps its original carrier visible")
+  assert.equal(view.technical.cleanupPending, true)
+  assert.deepEqual(view.technical.carriers.at(-1), { role: retired.descriptor.role, slot: retired.descriptor.slot,
+    timeGeneration: retired.descriptor.timeGeneration, sessionID: retired.descriptor.sessionID,
+    scheduleID: retired.descriptor.scheduleID, retiring: true, cleanupPending: true })
+  assert.doesNotMatch(JSON.stringify(view.technical), /registrationFile|configYamlPath|sha256|provider|installation/)
+  retired.sessionRemoved = retired.indexRemoved = true
+  assert.equal(missionScheduleView(doc).document!.technical.cleanupPending, false)
+  doc.deletion = { requestID: "delete_diagnostic", expectedRevision: doc.revision, requestedAt: f.now, deleteManagedSessions: false }
+  assert.equal(missionScheduleView(doc).document!.technical.cleanupPending, true, "full document remains until deletion reconciles")
 })
 
 test("missing, foreign, partial, retired and revision-racing native observations stay entirely unknown", async t => {

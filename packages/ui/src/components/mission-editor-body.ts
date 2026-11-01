@@ -1,6 +1,7 @@
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import { isFullMissionMap } from "../../../server/src/missions/mission-panel-map"
 import { missionBodyDescriptor, type MissionContentResponse, type MissionContentSelector } from "../../../server/src/missions/mission-content-wire"
+import { validMissionContentSlice } from "../lib/mission-content-slice"
 
 type Selector = Extract<MissionContentSelector, { kind: "mission" | "change" }>
 
@@ -14,14 +15,11 @@ export async function readMissionEditorBody(mission: MissionPanelMap, selector: 
   let offset = 0, text = "", json = false
   do {
     const response = await fetch({ ...selector, offset, digest: expected.digest })
-    if (!response.available || !("content" in response) || response.projectID !== mission.projectID || response.missionID !== mission.id) {
+    if (!response.available || !("content" in response) || response.version !== 1 || response.projectID !== mission.projectID || response.missionID !== mission.id) {
       throw new Error("Mission body unavailable")
     }
-    const slice = response.content
-    if (slice.kind !== selector.kind || slice.field !== selector.field || selector.kind === "change" && slice.change !== selector.change
-      || slice.digest !== expected.digest || slice.characters !== expected.characters || slice.offset !== offset
-      || typeof slice.text !== "string" || offset + slice.text.length !== (slice.next ?? slice.characters)
-      || slice.next !== undefined && (slice.next <= offset || slice.next >= slice.characters)
+    const slice = validMissionContentSlice(selector, { offset, digest: expected.digest }, response.content)
+    if (slice.characters !== expected.characters
       || offset > 0 && json !== (slice.json === true)) throw new Error("Mission body changed")
     json = slice.json === true; text += slice.text
     if (slice.next === undefined) return json ? JSON.parse(text) : text

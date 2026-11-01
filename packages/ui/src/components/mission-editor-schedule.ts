@@ -31,6 +31,7 @@ export function createMissionEditorScheduling(props: {
   const [retryable, setRetryable] = createSignal(false)
   const [refresh, setRefresh] = createSignal(0)
   const [capability, setCapability] = createSignal<"loading" | "missing" | "activatable" | "available">("loading")
+  const [origin, setOrigin] = createSignal<string | null>()
   const [directory, setDirectory] = createSignal(props.draft?.scheduleDocument?.configuration.roots[0]?.directory)
   const adopt = (doc: Document) => {
     if (!directory()) setDirectory(doc.configuration.roots[0]?.directory)
@@ -47,9 +48,11 @@ export function createMissionEditorScheduling(props: {
     const current = () => currentView() && !controller.signal.aborted
       && generation === getOpenCodeInstanceGeneration(props.instanceId)
     setCapability("loading")
+    setOrigin(undefined)
     void serverApi.fetchMissionScheduleCapability(props.instanceId, props.directory, signal).then(value => {
       if (!current()) return
       if (value.location?.directory) setDirectory(value.location.directory)
+      setOrigin(value.origin)
       setCapability(value.api?.available ? value.enabled ? "available" : value.activation?.available ? "activatable" : "missing" : "missing")
     }).catch(() => { if (current()) setCapability("missing") })
     if (unified && target) {
@@ -233,6 +236,6 @@ export function createMissionEditorScheduling(props: {
     } catch { /* The original request remains held through any uncertain retry. */ }
     finally { if (current()) setReading(false) }
   }
-  return { unified, document, journal, scheduling, setScheduling, anchorAt, previousDraft, ready, failed, conflict, reading, capability, directory,
+  return { unified, document, journal, scheduling, setScheduling, anchorAt, previousDraft, ready, failed, conflict, reading, capability, origin, directory,
     held, save, saveJournalEdit, reconcile, reload, retryable, retryPreparation, retryRead: () => setRefresh(value => value + 1) }
 }

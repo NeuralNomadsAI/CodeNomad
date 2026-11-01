@@ -160,6 +160,8 @@ La fecha de creación también limita el trabajo diario elegible; iniciar una pr
 
 ## Duración y reinicios del servicio {#lifetime}
 
+En una programación nativa, despliega **Detalles técnicos** para identificar su **Portador principal** y su **Portador de reconciliación**, sus calendarios nativos y cualquier **Limpieza pendiente de reconciliación**. Estas conversaciones técnicas no ofrecen una acción de composición y quedan fuera de los selectores habituales de conversaciones y fuentes. Las activaciones técnicas, los títulos y la compactación usan el modelo local sin solicitudes HTTP a los proveedores; los eventos y estadísticas nativos aún pueden incluirlos, mientras que las pasadas reales mantienen sus costes de modelo habituales. La compactación limita el contexto procesado y conserva la identidad de la conversación y del calendario. Los mensajes y eventos nativos almacenados pueden acumularse hasta la limpieza explícita de una programación terminada; los 30 resultados de Mission conservados son independientes. El control de profundidad y **Programación** muestran el documento del **Bloque experimental efectivo**; el control de profundidad indica por separado su **Destino de escritura del proyecto**.
+
 | Componente | Qué significa cerrarlo |
 | --- | --- |
 | Pestaña de proyecto de CodeNomad | Cierra el proyecto en CodeNomad; las sesiones nativas siguen en OpenCode. Vuelve a abrir el proyecto para encontrarlas. |
