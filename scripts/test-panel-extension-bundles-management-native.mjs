@@ -19,6 +19,8 @@ import { fixtureEnvironment, withProductRuntime, writeFixtureServiceRegistration
 import { stopFixtureChild } from "./native-fixture-guards.mjs"
 import { writeFakeIntegrationPackage, startFakeHost, assertNoSentinels } from "./fixtures/fake-integration/index.mjs"
 import { startFakeNpmRegistry } from "./fixtures/fake-npm-registry.mjs"
+import { startOfferRenewal, findConfirmation } from "./fixtures/bundles-management.mjs"
+import { recognizeIntegrations } from "../packages/server/src/opencode/integrations/recognition.ts"
 import { PluginControls } from "../packages/server/src/opencode/plugin-controls.ts"
 import { PluginSources } from "../packages/server/src/opencode/plugin-sources.ts"
 import { PluginPackages } from "../packages/server/src/opencode/plugin-packages.ts"
@@ -45,7 +47,8 @@ import { InstanceEventBridge } from "../packages/server/src/workspaces/instance-
 import { nativeEventConnections } from "../packages/server/src/workspaces/opencode-service.ts"
 
 const installationOnly = process.argv.includes("--installation-state")
-const [cli, checkout, blender] = process.argv.slice(2).filter(value => value !== "--installation-state")
+const authorityLatency = process.argv.includes("--authority-latency")
+const [cli, checkout, blender] = process.argv.slice(2).filter(value => value !== "--installation-state" && value !== "--authority-latency")
 assert(cli && path.isAbsolute(cli) && await stat(cli).then(x => x.isFile(), () => false), "Pass an existing absolute private CLI executable")
 assert.equal(Boolean(checkout), Boolean(blender), "Supply both the integration checkout and Blender executable, or neither")
 const pin = "54d6e5d0f4c22e74d228822fcaaa0912818a8b46"
@@ -132,9 +135,23 @@ try {
     const calls = [], updates = [], logs = [], native = [], relayed = [], projected = [], dispatches = []
     const logger = pino({ level: "trace" }, { write: line => logs.push(line) })
     let selectedWsl, uncertainUpdate = false, preparations = 0, catalogReads = 0, removals = 0, skew = 0
+    let activeTrace, uncertainBinding = false, uncertainHint = false
     const connection = { ...original, client: { ...client,
-      rpc: { ...client.rpc, call: (request, options) => {
-        calls.push({ method: request.method, rpcID: request.rpcID, input: request.input }); return client.rpc.call(request, options)
+      session: { ...client.session, get: async (request, options) => {
+        if (activeTrace) activeTrace.sessions++
+        if (authorityLatency && activeTrace?.action === "attach") await delay(10, undefined, { signal: options?.signal })
+        return client.session.get(request, options)
+      }, update: async (request, options) => {
+        if (activeTrace) activeTrace.q8++
+        const result = await client.session.update(request, options)
+        if (uncertainHint && activeTrace?.action === "attach") throw new Error("Private response lost after actual Q8 write")
+        return result
+      } },
+      rpc: { ...client.rpc, call: async (request, options) => {
+        calls.push({ method: request.method, rpcID: request.rpcID, input: request.input })
+        const result = await client.rpc.call(request, options)
+        if (uncertainBinding && request.method === "attachHost") throw new Error("Private response lost after actual binding write")
+        return result
       } }, plugin: { ...client.plugin, update: async (request, options) => {
         updates.push(request); const value = await client.plugin.update(request, options)
         if (uncertainUpdate) throw new Error("Private transport uncertainty after actual native update")
@@ -179,12 +196,26 @@ try {
     }
     const packages = new PluginPackages({ controls, workspaceManager: manager })
     const actions = new BundlesActions({ workspaceManager: manager, catalog, controls, sources, packages, attachments })
+    const measuredAuthorities = new WeakSet()
     const observedActions = { accepts: action => actions.accepts(action), prepare: async (...args) => {
       preparations++
+      const mountAuthority = args[0].authority
+      if (!measuredAuthorities.has(mountAuthority)) {
+        measuredAuthorities.add(mountAuthority)
+        const revalidate = mountAuthority.revalidate.bind(mountAuthority)
+        mountAuthority.revalidate = async () => { if (activeTrace) activeTrace.mountChecks++; return revalidate() }
+      }
       const prepared = await actions.prepare(...args)
-      return { ...prepared, dispatch: async (...dispatchArgs) => {
-        const trace = { action: args[1].action, done: false, error: undefined }; dispatches.push(trace)
-        try { return await prepared.dispatch(...dispatchArgs) } catch (error) { trace.error = error; throw error } finally { trace.done = true }
+      return { ...prepared, readTarget: async signal => { if (activeTrace) activeTrace.targets++; return prepared.readTarget(signal) }, dispatch: async (...dispatchArgs) => {
+        const trace = { action: args[1].action, done: false, error: undefined, sessions: 0, mountChecks: 0, targets: 0, q8: 0, phases: [] }; dispatches.push(trace)
+        const start = performance.now(); activeTrace = trace
+        const authority = dispatchArgs[0], revalidate = authority.revalidate.bind(authority)
+        dispatchArgs[0] = { ...authority, revalidate: async () => { trace.phases.push("authority"); return revalidate() } }
+        try { return await prepared.dispatch(...dispatchArgs) } catch (error) { trace.error = error; throw error } finally {
+          trace.elapsed = Math.round(performance.now() - start); trace.done = true; activeTrace = undefined
+          if (trace.action === "attach") console.log(`Attach measurement: ${JSON.stringify({ elapsed: trace.elapsed, targets: trace.targets,
+            mountChecks: trace.mountChecks, sessions: trace.sessions, fullChecks: trace.phases.length, q8: trace.q8, uncertain: trace.error instanceof NativeMutationUncertainError })}`)
+        }
       } }
     } }
     const store = new PanelExtensionStore(path.join(root, "panel-extensions"))
@@ -208,7 +239,7 @@ try {
     registerEventRoutes(app, { eventBus: bus, connectionManager: connections, logger, registerClient: () => () => {}, bundlesTransport: transport })
     const base = await app.listen({ host: "127.0.0.1", port: 0 })
     const lanes = []
-    let blenderChild, blenderStopped, blenderOutput = ""
+    let blenderChild, blenderStopped, blenderOutput = "", stopRenewal
     const post = async (method, body, expected = 200, sessionCookie = cookie) => {
       const response = await fetch(`${base}/api/panel-extensions/${pkg.manifest.id}/bundles/${method}`, { method: "POST",
         headers: { "content-type": "application/json", cookie: sessionCookie }, body: JSON.stringify(body), signal: AbortSignal.timeout(20_000) })
@@ -255,7 +286,7 @@ try {
     const manage = (mounted, method, input, sessionCookie = cookie) => post("manage", { ...mounted, method, input }, 200, sessionCookie)
     const control = (mounted, command, fields = {}, sessionCookie = cookie) => post("control", { ...mounted, command, ...fields }, 200, sessionCookie)
     const terminal = (lane, requestID) => until("private request terminal", () => lane.events.find(event => event.change?.requestID === requestID)?.change)
-    const plan = (lane, requestID) => until("private confirmation", () => lane.events.find(event => event.view?.requestID === requestID)?.view)
+    const plan = (lane, requestID) => until("private confirmation", () => findConfirmation(lane.events, requestID))
     const begin = async (mounted, lane, method, input) => {
       const before = preparations, eventCount = lane.events.length
       const ack = await manage(mounted, method, input); assert.equal(ack.outcome, "confirming"); secrets.add(ack.requestID)
@@ -318,13 +349,20 @@ try {
       assert(parse(await readFile(configFile, "utf8")).plugins.includes("@neuralnomads/opencode-fixture@^0.1"), "Installed source is the catalogue range, never frame-selected")
       console.log("PASS B install: real HTTP ACK/start/guard/confirm, catalog-derived range, native registry load 0.1.0")
 
-      await execute(mounted, owner, "setActive", { integration: "fixture", scope: "global", enabled: false })
-       await runtime("0.1.0", false)
-       const disabled = (await read("state")).integrations.find(item => item.id === "fixture")
-       assert.deepEqual(disabled.plugin, { declared: true, runtime: "unloaded" })
-       assert.equal(disabled.activation.effective, "disabled")
-      await execute(mounted, owner, "setActive", { integration: "fixture", scope: "global", enabled: true })
-      await runtime("0.1.0")
+      const activation = async version => {
+        await execute(mounted, owner, "setActive", { integration: "fixture", scope: "global", enabled: false })
+        await runtime(version, false)
+        const disabled = (await read("state")).integrations.find(item => item.id === "fixture")
+        assert.deepEqual(disabled.plugin, { declared: true, runtime: "unloaded" })
+        assert.equal(disabled.activation.effective, "disabled")
+        await execute(mounted, owner, "setActive", { integration: "fixture", scope: "global", enabled: true })
+        await runtime(version)
+        console.log(`PASS B disable/enable native reload at ${version}`)
+        return disabled
+      }
+      // Qualify reinstallation before generating retained activation rules. Rule-only
+      // install eligibility has its own product defect; removal must preserve those rules.
+      const disabled = installationOnly ? await activation("0.1.0") : undefined
       const next = laterPackage.get("0.1.1"); registry.publish(next.name, "0.1.1", next.bytes)
       const exact = (await runtime("0.1.0")).source.target
       await execute(mounted, owner, "request", requestInput("update")); await runtime("0.1.1")
@@ -335,7 +373,7 @@ try {
       // Installed fixture payload with a closed application has unknown availability.
       assert.deepEqual((await read("state")).integrations.find(item => item.id === "fixture").status.host,
         { state: "unknown", expectedRange: "^0.1.0" })
-       console.log("PASS B disable/enable native reload, exact-target package.update to 0.1.1, one installHost(default) with actual status read-back")
+       console.log("PASS B exact-target package.update to 0.1.1, one installHost(default) with actual status read-back")
        if (installationOnly) {
          check([empty, observed, disabled, logs, relayed], "installation-state HTTP/events/logs")
          await scanLogs(root)
@@ -343,7 +381,7 @@ try {
          return
        }
 
-      assert.equal((await rpc("fixture", "advertise", host.advertiseInput())).outcome, "accepted")
+      stopRenewal = await startOfferRenewal(input => rpc("fixture", "advertise", input), host.advertiseInput())
       const offers = await read("hosts", { integration: "fixture" }); assert.equal(offers.offers.length, 1)
       // Real foreign-only attachment before the displayed-session attach proves exact binding projection.
       assert.equal((await rpc("fixture", "attachHost", { offerID: offers.offers[0].offerID, sessionID: foreign.id }, foreignLocation.directory)).outcome, "attached")
@@ -361,6 +399,25 @@ try {
       assert.equal(calls.length, beforeInvalid.calls); assert.equal(removals, beforeInvalid.removals)
       assert.equal(await readFile(configFile, "utf8"), beforeInvalid.config)
       console.log("PASS B attach: real binding/Q8 read-back with unrelated metadata; foreign-only binding stays none; public detach invalid with zero native RPC/removal")
+
+      for (const stage of ["binding", "hint"]) {
+        const before = calls.filter(call => call.method === "attachHost").length
+        uncertainBinding = stage === "binding"; uncertainHint = stage === "hint"
+        const ack = await begin(mounted, owner, "attach", { integration: "fixture", offerID: offers.offers[0].offerID })
+        const view = await plan(owner, ack.requestID)
+        assert.equal((await approve(mounted, owner, view)).outcome, "confirmed", "Submission receipt retains its exact meaning")
+        const trace = dispatches.at(-1)
+        assert(trace.error instanceof NativeMutationUncertainError)
+        assert.equal(trace.q8, stage === "binding" ? 0 : 1)
+        assert.equal(calls.filter(call => call.method === "attachHost").length, before + 1)
+        assert.equal((await attachments.bindingRead("fixture", "fixture", location, { sessionID: session.id })).state, "attached")
+        assert.equal((await client.session.get({ sessionID: session.id })).metadata[Q8].integration, "fixture")
+        await post("control", { ...mounted, command: "confirm", planID: view.planID }, 409); await delay(100)
+        assert.equal(calls.filter(call => call.method === "attachHost").length, before + 1, "Ambiguous attachment is never replayed")
+        assert.equal(trace.q8, stage === "binding" ? 0 : 1, "Already-written metadata is never duplicated")
+        uncertainBinding = false; uncertainHint = false; skew += 61_000
+      }
+      console.log("PASS B uncertain attachment: actual binding and Q8 writes with lost responses remain uncertain, authoritative facts reconciled, no continuation after binding loss and no replay/duplicate hint")
 
       // Cancellation and the backend-wide arbiter operate through actual owner HTTP/SSE.
       const cancelAck = await begin(mounted, owner, "setActive", { integration: "fixture", scope: "global", enabled: false })
@@ -446,6 +503,7 @@ try {
       } else console.log("GAP B real Blender pilot omitted: supply integration checkout and executable; fake host install/attach only")
 
       // D25: same authenticated mount/plan lane, actual source service, no binding/status gate.
+      await stopRenewal(); stopRenewal = undefined
       skew += 61_000
       const cacheCanary = path.join(env.XDG_CACHE_HOME, "d25-keep"), appCanary = path.join(root, "application-keep")
       await mkdir(env.XDG_CACHE_HOME, { recursive: true })
@@ -483,13 +541,20 @@ try {
       assert.equal(await readFile(cacheCanary, "utf8"), "PRIVATE_CACHE_KEEP"); assert.equal(await readFile(appCanary, "utf8"), "PRIVATE_APPLICATION_KEEP")
       uncertainRemoval = false; skew += 61_000
       // A new explicit action and consent installs again; this is separate from the lost removal request.
-      await until("native configuration sees the removed source", async () => !(await controls.read("fixture", location)).configured.sources.some(source => source.target === exact))
+      await until("native declaration and recognition/runtime observe removal", async () => {
+        const snapshot = await controls.read("fixture", location)
+        const recognized = recognizeIntegrations(catalog.snapshot().catalog, snapshot).find(item => item.entry.id === "fixture")
+        return !snapshot.configured.sources.some(source => source.target === exact) && recognized?.ways.length === 0 && !recognized.runtime
+      })
       await execute(mounted, owner, "request", requestInput("install")); await runtime("0.1.2")
+      await activation("0.1.2")
       const removeCalls = calls.length
       const removedView = await execute(mounted, owner, "request", requestInput("remove"))
       assert.equal(removedView.action, "remove"); assert.equal(removedView.scope, "global")
       assert.equal(calls.length, removeCalls)
       assert(!parse(await readFile(configFile, "utf8")).plugins.some(entry => (typeof entry === "string" ? entry : entry.package) === exact))
+      assert(parse(await readFile(configFile, "utf8")).plugins.includes("-neuralnomads.fixture"))
+      assert(parse(await readFile(configFile, "utf8")).plugins.includes("neuralnomads.fixture"))
       assert.deepEqual((await client.session.get({ sessionID: session.id })).metadata, beforeMetadata)
       assert.deepEqual((await client.session.get({ sessionID: foreign.id })).metadata, beforeForeign)
       assert.equal(await readFile(cacheCanary, "utf8"), "PRIVATE_CACHE_KEEP"); assert.equal(await readFile(appCanary, "utf8"), "PRIVATE_APPLICATION_KEEP")
@@ -519,6 +584,7 @@ try {
         foreignPrivateEvents: outsider.events.length, projectionCount: projected.length, registryRequests: registry.requested.length }, null, 2))
       console.log("PASS B confidentiality: two real authenticated SSE owners; zero foreign private views/results; extension HTTP/changes, Q8, DEBUG/TRACE and relay scanned")
     } finally {
+      try { await stopRenewal?.() } finally {
       if (blenderChild) {
         await writeFile(path.join(root, "stop-blender"), "stop")
         await stopFixtureChild(blenderChild, blenderStopped)
@@ -528,9 +594,10 @@ try {
       transport.dispose(); bridge.shutdown(); unsubscribe(); connections.shutdown()
       await Promise.all(lanes.map(lane => lane.task)); await app.close()
       catalogServer.closeAllConnections(); await new Promise(resolve => catalogServer.close(resolve))
+      }
     }
   }, { registry: registry.url })
   await scanLogs(fixtureRoot)
   console.log("PASS B fixture daemon/backend/Blender logs: host sentinels and private owner/mount/plan/request identities absent")
-  console.log("GAPS B: renderer focus/MessagePort acceptance, full desktop mutation/privacy, real Blender installer, backend-kernel WSL variants and dispatched cancellation terminality remain separate; manual GUI/B4 gates retained")
+  console.log("GAPS B: rule-only reinstall eligibility after disable/enable/remove remains a separate product defect; renderer focus/MessagePort acceptance, full desktop mutation/privacy, real Blender installer, backend-kernel WSL variants and dispatched cancellation terminality remain separate; manual GUI/B4 gates retained")
 } finally { await host.close(); await registry.close() }
