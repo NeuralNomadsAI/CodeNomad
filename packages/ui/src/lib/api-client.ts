@@ -732,6 +732,17 @@ export const serverApi = {
   fetchMission(instanceId: string, missionId: string): Promise<MissionReadResponse> {
     return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`)
   },
+  /** More of one mission's tasks for display: a window of its display order or tasks by name;
+   * it shares the secondary read budget. */
+  fetchMissionTasks(instanceId: string, missionId: string, input: import("../../../server/src/missions/mission-panel-map").MissionTaskRequest):
+    Promise<import("../../../server/src/missions/mission-panel-map").MissionTaskPageResponse> {
+    const params = new URLSearchParams()
+    if (input.order) params.set("order", input.order)
+    if (input.offset !== undefined) params.set("offset", String(input.offset))
+    if (input.attention !== undefined) params.set("attention", String(input.attention))
+    for (const [name, values] of [["keys", input.keys], ["ids", input.ids], ["reports", input.reportIds]] as const) if (values?.length) params.set(name, values.join(","))
+    return secondaryRead(undefined, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/tasks?${params}`))
+  },
   /** One slice of a mission body, for display only; it shares the secondary read budget. */
   fetchMissionContent(instanceId: string, missionId: string, input: Omit<import("../../../server/src/missions/mission-content-wire").MissionContentRequest, "missionID">,
     signal: AbortSignal): Promise<import("../../../server/src/missions/mission-content-wire").MissionContentResponse> {

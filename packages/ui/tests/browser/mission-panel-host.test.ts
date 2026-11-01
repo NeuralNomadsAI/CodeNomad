@@ -5,6 +5,7 @@ import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type BrowserContextOptions, type Page } from "playwright"
 import type { MissionMap, MissionTask } from "../../../server/src/api-types"
+import { MISSION_TASK_PAGE } from "../../../server/src/missions/mission-panel-map"
 import { missionPickerExpander, missionPickerField, missionPopupOption, missionDetail, missionGeneralAction, inlineMissionEntry, selectMission, selectedMissionTitle } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 
@@ -65,7 +66,9 @@ test("a long mission's task group fills the panel to the window bottom with a si
     try {
       const detail = await selectMission(f.page, "Long migration")
       const flow = detail.locator(".mission-tree .mission-flow")
-      await flow.locator(".mission-tree-node").nth(TASKS - 1).waitFor({ state: "attached" })
+      // The map's page of rows, then the gap of the tasks it does not hold, read further on request.
+      await flow.locator(".mission-tree-gap").waitFor({ state: "attached" })
+      assert.equal(await flow.locator(".mission-tree-node").count(), MISSION_TASK_PAGE)
       assert.equal(await detail.locator(".mission-tree .mission-disclosure-trigger small").innerText(), String(TASKS), "the group shows its task count")
       assert.equal(await scrolls(f.page, ".mission-tree .mission-flow"), true, `the task list scrolls at ${viewport.height}px`)
       assert.equal(await scrolls(f.page, "#tab-body"), false, `no host scrollbar at ${viewport.height}px`)
@@ -78,8 +81,8 @@ test("a long mission's task group fills the panel to the window bottom with a si
       const gap = detailBox.y + detailBox.height - (flowBox.y + flowBox.height)
       assert(gap >= 0 && gap <= 16, `the task list fills the remaining height at ${viewport.height}px (gap ${gap})`)
       assert(flowBox.height >= 100, `the task list keeps a usable height at ${viewport.height}px`)
-      // The last task is reachable by scrolling the task list only.
-      const last = flow.locator(".mission-tree-node").nth(TASKS - 1)
+      // The list's end (the gap and its read further) is reachable by scrolling the task list only.
+      const last = flow.locator(".mission-tree-list > li").last()
       await last.scrollIntoViewIfNeeded()
       assert.equal(await f.page.locator("#tab-body").evaluate(element => element.scrollTop), 0)
       assert(await flow.evaluate(element => element.scrollTop) > 0)

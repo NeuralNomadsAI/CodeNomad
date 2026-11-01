@@ -47,6 +47,8 @@ Rehber koordinasyona yön verir; OpenCode izinlerini aşmaz veya başarıyı gar
 
 Grafik tamamlanan ve plandan çıkarılan işleri de içerir. Bir görevi plandan çıkarmak konuşmasını kendiliğinden durdurmaz. Tek seferlik bir görevde koordinatör, OpenCode alt ajanı olarak başlattığı ve plandan çıkarılan bir görevin konuşmalarını diğer görevlere dokunmadan ayrıca durdurabilir. **Sürüyor**, görevin yaşam döngüsü durumudur; koordinatörün o anda çalıştığının kanıtı değildir. Ayrıntılı metin paneldeki görev listesinde değil, merkezi okuyucudadır; **Teknik ayrıntılar** altında kimlikler ve istenen yürütme bilgileri kapalı tutulur.
 
+Büyük bir plan, görevlerinin bir sayfasını gösterir: bağımlılık sırasına göre ilk 50 görev ve engeller, hatalar ve en yeni sonuçlar gibi ilgi gerektiren en fazla 20 görev. Yüklenmemiş her görev dizisi **N görev gösterilmiyor** olarak görünür; **Daha fazla göster** oradan sonraki 50 görevi yükler. Sayfanın tutabileceğinden fazla görev ilgi beklediğinde **N görev daha ilgi bekliyor** görevin türe göre sayılarını verir, **Göster** de bu görevleri yükler. Kesikli kısa bir çizgi gösterilmeyen bir bağımlılığı veya bağımlı görevi işaretler; bir görevin okuyucusundaki bağımlılık bağlantısı önce o görevi yükler. Bir görevin okuyucusu en yeni sonuçlarını gösterir; **N önceki sonuç gösterilmiyor**, tüm geçmişi yükleyen **Tümünü göster** seçeneğini sunar. Bir görev veya rapor yüklenemediğinde okuyucu bunu belirtir; **Tekrar dene** onu yeniden yükler.
+
 ### Renkler ve kesintiye uğrayan görevler {#status-colours}
 
 Görev işaretleri, görev düğümü simgeleri ve listenin oku oturum listesinin renklerini kullanır: renk yalnızca şu anda size ihtiyaç duyan şeyi gösterir.

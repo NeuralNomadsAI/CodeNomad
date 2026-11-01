@@ -6,17 +6,23 @@ import { serverEvents } from "../lib/server-events"
 import { instances } from "./instances"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { createMissionContentStore, type MissionBodyConsumer, type MissionBodyRef, type MissionBodyState } from "./mission-content-store"
+import { missionBodyRevision, missionHistoryMark } from "./mission-task-pages"
 
 export const missionContent = createMissionContentStore((ref, query, signal) =>
   serverApi.fetchMissionContent(ref.instanceId, ref.missionID, { ...ref.selector, ...query }, signal))
 
-/** A body a reader shows, the revision of the map it was chosen from and that map's
- * descriptor of it (absent when the map names no such body). */
-export interface MissionBodySource { ref: MissionBodyRef; revision: number; descriptor?: MissionBodyDescriptor }
+/** A body a reader shows, the revision its descriptor is expected at, that descriptor
+ * (absent when the map names no such body) and, for a body no descriptor describes, the
+ * mark its owner's metadata gives it (`missionHistoryMark`). */
+export interface MissionBodySource { ref: MissionBodyRef; revision: number; descriptor?: MissionBodyDescriptor; mark?: string }
 
+/** The body at `selector` as `mission` describes it: at the map's revision, or at the
+ * revision of the page that answered its owner row (`missionBodyRevision`), so an answer
+ * older than that page never stands for its descriptor. */
 export function missionBodySource(instanceId: string, mission: MissionPanelMap, selector: MissionContentSelector): MissionBodySource {
-  const descriptor = missionBodyDescriptor(mission, selector)
-  return { ref: { instanceId, projectID: mission.projectID, missionID: mission.id, selector }, revision: mission.revision, ...(descriptor ? { descriptor } : {}) }
+  const descriptor = missionBodyDescriptor(mission, selector), mark = missionHistoryMark(mission, selector)
+  return { ref: { instanceId, projectID: mission.projectID, missionID: mission.id, selector }, revision: missionBodyRevision(mission, selector),
+    ...(descriptor ? { descriptor } : {}), ...(mark ? { mark } : {}) }
 }
 
 
@@ -41,14 +47,14 @@ export function useMissionBody(source: () => MissionBodySource | undefined, need
     const value = binding()
     if (!value) { setConsumer(undefined); return }
     const [identity, ref] = JSON.parse(value) as [string, MissionBodyRef]
-    const handle = untrack(() => missionContent.use(ref, identity))
+    const handle = untrack(() => missionContent.use(ref, identity, source()?.mark))
     setConsumer(() => handle)
     onCleanup(() => handle.release())
   })
   createEffect(() => { const handle = consumer(), characters = need(); if (handle) untrack(() => handle.need(characters)) })
   createEffect(() => {
     const handle = consumer(), value = source()
-    if (handle) untrack(() => handle.expect(value?.descriptor, value?.revision))
+    if (handle) untrack(() => { handle.version(value?.mark); handle.expect(value?.descriptor, value?.revision) })
   })
   return {
     state: (): MissionBodyState => consumer()?.state() ?? { status: "loading" },

@@ -24,8 +24,6 @@ const available = (objective: string): MissionListResponse => ({
     actors: [],
     tasks: [],
     reports: [],
-    frontier: [],
-    claims: [],
     createdAt: 1,
     updatedAt: 1,
     revision: 1,

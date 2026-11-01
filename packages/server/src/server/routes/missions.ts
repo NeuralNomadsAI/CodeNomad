@@ -4,7 +4,8 @@ import { z } from "zod"
 import type { OpenCodeClient } from "@opencode/client"
 import type { MissionActivityProjection, MissionList, MissionListResponse, MissionListUnavailableResponse, MissionMap, MissionPanelMap,
   MissionRead, MissionReadResponse, MissionSnapshot, MissionUnavailableReason } from "../../missions/model"
-import { compactMissionMap, compactMissionReads } from "../../missions/mission-compact-map"
+import { compactMissionMap, compactMissionReads, missionTaskPage, missionTaskRequestSchema } from "../../missions/mission-compact-map"
+import { MISSION_TASK_PAGE, type MissionTaskPageResponse, type MissionTaskPageResult } from "../../missions/mission-panel-map"
 import { projectMissionActivity, type MissionActivityInput } from "../../missions/activity"
 import { MISSION_LIST_MAX_INCLUDE } from "../../missions/mission-summary"
 import { missionContentRequestSchema, type MissionContentResponse, type MissionContentResult } from "../../missions/mission-content"
@@ -54,6 +55,12 @@ const ContentQuerySchema = z.object({
   kind: z.string().max(16), field: z.string().max(64), taskKey: z.string().max(64).optional(), reportId: z.string().max(240).optional(),
   change: IntegerQuery.optional(), digest: z.string().max(43).optional(), offset: IntegerQuery,
 }).strict()
+// A task request's window, attention window or names, comma-separated (`missionTaskRequestSchema` checks the rest).
+const NameList = z.string().max(MISSION_TASK_PAGE * 241).transform(value => value.split(",").filter(Boolean))
+const TaskQuerySchema = z.object({
+  order: z.string().max(64).optional(), offset: IntegerQuery.optional(), attention: IntegerQuery.optional(),
+  keys: NameList.optional(), ids: NameList.optional(), reports: NameList.optional(),
+}).strict().transform(({ reports, ...value }) => ({ ...value, ...(reports ? { reportIds: reports } : {}) }))
 const RequestID = z.string().trim().min(1).max(128)
 const UpdateSchema = z.object({
   objective: z.string().trim().min(1).max(20_000), notes: z.string().max(20_000).optional(),
@@ -110,6 +117,33 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
     if (!input?.success) return reply.code(400).send({ error: "Invalid mission content request" })
     return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign }): Promise<MissionContentResponse> => {
       const result = await rpc.content(input.data, call) as MissionContentResult
+      if (result.projectID !== projectID || result.missionID !== input.data.missionID) return foreign()
+      return { available: true, ...result }
+    })
+  })
+
+  // More of one map's tasks for display, a page at a time (`MissionControl.tasks`); never
+  // authority. A plugin without `tasks` answers from its single-mission read, paged here.
+  app.get<{ Params: { id: string; missionID: string }; Querystring: Record<string, unknown> }>("/api/workspaces/:id/missions/:missionID/tasks", async (request, reply) => {
+    const params = MissionReadParamsSchema.safeParse(request.params)
+    const query = TaskQuerySchema.safeParse(request.query ?? {})
+    const input = params.success && query.success ? missionTaskRequestSchema.safeParse({ missionID: params.data.missionID, ...query.data }) : undefined
+    if (!input?.success) return reply.code(400).send({ error: "Invalid mission task request" })
+    return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign }): Promise<MissionTaskPageResponse> => {
+      let result: MissionTaskPageResult
+      try { result = await rpc.tasks(input.data, call) as MissionTaskPageResult }
+      catch (error) {
+        if (!isMissingMethod(error)) throw error
+        const read = await rpc.mission({ missionID: input.data.missionID }, call) as MissionRead
+        if (read.projectID !== projectID) return foreign()
+        const base = { version: read.version, projectID: read.projectID, missionID: input.data.missionID }
+        if (!read.mission) result = { ...base, refused: "mission-not-found" }
+        else {
+          const page = missionTaskPage(read.mission, input.data)
+          result = input.data.order !== undefined && input.data.order !== page.taskPage.order
+            ? { ...base, revision: read.mission.revision, refused: "order-changed" } : { ...base, revision: read.mission.revision, ...page }
+        }
+      }
       if (result.projectID !== projectID || result.missionID !== input.data.missionID) return foreign()
       return { available: true, ...result }
     })

@@ -7,7 +7,8 @@ import { MAX_PROJECTED_CLEANUPS, missionCleanupSchema } from "./cleanup-projecti
 import { MISSION_TITLE_MAX } from "./mission-title"
 import { MISSION_LIST_MAX_INCLUDE, MISSION_SUMMARY_OBJECTIVE, missionSummarySchema } from "./mission-summary"
 import { MISSION_BODY_FIELDS } from "./mission-content-wire"
-import { MISSION_BRIEFING_CONTENT, MISSION_EXCERPT_MAX } from "./mission-panel-map"
+import { MISSION_BRIEFING_CONTENT, MISSION_EXCERPT_MAX, MISSION_LATE_REPORT_ROWS, MISSION_PINNED_REPORTS, MISSION_TASK_PAGE, MISSION_TASK_PINS,
+  MISSION_TASK_REPORT_ROWS } from "./mission-panel-map"
 import { missionBriefingResponsesSchema, missionBriefingSnapshotSchema } from "./briefing"
 import { taskExecutionModeRpcSchema, taskGenerationSchema, nativeTaskBindingSchema, nativeTaskExecutionSchema, nativeCallBindingSchema } from "./native-wire-schema"
 import { recurrenceCurrentContentWire } from "./recurrence-current"
@@ -193,11 +194,31 @@ const executionModeRow = { oneOf: [nativeMode, {
   required: [...unlisted(independentMode.required, ["explanation"]), "excerpt"],
 }] } as const
 const taskSchema = mission.properties.tasks.items
+const count = { type: "integer", minimum: 0 } as const
 const taskRow = {
   ...taskSchema,
   properties: { ...omit(taskSchema.properties, MISSION_BODY_FIELDS.task), bodies, executionMode: executionModeRow, report: reportRow,
-    lateReports: { type: "array", items: reportRow } },
-  required: [...unlisted(taskSchema.required, MISSION_BODY_FIELDS.task), "bodies"],
+    lateReports: { type: "array", maxItems: MISSION_LATE_REPORT_ROWS, items: reportRow }, lateReportCount: count,
+    nativeExecution: { ...nativeTaskExecutionSchema, properties: omit(nativeTaskExecutionSchema.properties, ["observations"]) },
+    order: count, dependents: count, reportCount: count },
+  required: [...unlisted(taskSchema.required, MISSION_BODY_FIELDS.task), "bodies", "order", "dependents"],
+} as const
+const attention = {
+  type: "object", properties: {
+    counts: { type: "object", properties: { notifications: count, blocked: count, failed: count, recovery: count },
+      required: ["notifications", "blocked", "failed", "recovery"], additionalProperties: false },
+    omitted: count, offset: count, end: count, sequence: { type: "string", minLength: 1, maxLength: 64 },
+    keys: { type: "array", maxItems: MISSION_TASK_PAGE, items: { type: "string", minLength: 1, maxLength: 64 } },
+  }, required: ["counts", "omitted", "sequence"], additionalProperties: false,
+} as const
+const taskPage = {
+  type: "object", properties: {
+    order: { type: "string", minLength: 1, maxLength: 64 }, offset: count, end: count, total: count, reports: count, pinsOmitted: count,
+    counts: { type: "object", additionalProperties: count }, attention,
+  }, required: ["order", "offset", "end", "total", "counts", "reports"], additionalProperties: false,
+} as const
+const actorEvidence = {
+  type: "object", properties: { reportOwed: stringArray, callOpen: stringArray }, required: ["reportOwed", "callOpen"], additionalProperties: false,
 } as const
 const changeSchema = mission.properties.history.items
 const changeRow = {
@@ -211,12 +232,13 @@ const briefingIdentity = {
 const compactMission = {
   ...mission,
   properties: {
-    ...omit(mission.properties, [...MISSION_BODY_FIELDS.mission, "tasks", "reports", "history"]), bodies,
+    ...omit(mission.properties, [...MISSION_BODY_FIELDS.mission, "tasks", "reports", "history", "frontier", "claims"]), bodies,
     excerpt: { type: "string", maxLength: 2 * MISSION_SUMMARY_OBJECTIVE }, briefing: briefingIdentity,
-    tasks: { type: "array", items: taskRow }, reports: { type: "array", items: reportRow },
-    history: { ...mission.properties.history, items: changeRow },
+    tasks: { type: "array", maxItems: MISSION_TASK_PAGE + MISSION_TASK_PINS, items: taskRow },
+    reports: { type: "array", maxItems: (MISSION_TASK_PAGE + MISSION_TASK_PINS) * MISSION_TASK_REPORT_ROWS + MISSION_PINNED_REPORTS, items: reportRow },
+    history: { ...mission.properties.history, items: changeRow }, taskPage, actorEvidence,
   },
-  required: [...unlisted(mission.required, MISSION_BODY_FIELDS.mission), "excerpt", "bodies"],
+  required: [...unlisted(mission.required, [...MISSION_BODY_FIELDS.mission, "frontier", "claims"]), "excerpt", "bodies", "taskPage", "actorEvidence"],
 } as const
 
 const mutationMissionResult = {
@@ -385,6 +407,23 @@ export const CODENOMAD_MISSIONS_RPC = {
           text: { type: "string" }, next: { type: "integer", minimum: 1 } },
           required: ["kind", "field", "digest", "offset", "characters", "text"], additionalProperties: false },
         refused: { type: "string", enum: ["mission-not-found", "content-not-found", "content-changed"] },
+      }, required: ["version", "projectID", "missionID"], additionalProperties: false },
+    },
+    // More of one map's tasks for display (`MissionControl.tasks`): a window of its display
+    // order or of its omitted tasks needing action, or tasks by key, ID or report;
+    // `missionTaskRequestSchema` checks the combination and the names' total.
+    tasks: {
+      input: { type: "object", properties: {
+        missionID: { type: "string", minLength: 1, maxLength: 100 }, order: taskPage.properties.order, offset: count, attention: count,
+        keys: { type: "array", maxItems: MISSION_TASK_PAGE, items: { type: "string", minLength: 1, maxLength: 64 } },
+        ids: { type: "array", maxItems: MISSION_TASK_PAGE, items: { type: "string", minLength: 1, maxLength: 240 } },
+        reportIds: { type: "array", maxItems: MISSION_TASK_PAGE, items: { type: "string", minLength: 1, maxLength: 240 } },
+      }, required: ["missionID"], additionalProperties: false },
+      output: { type: "object", properties: {
+        version: { type: "integer", const: 1 }, projectID: { type: "string" }, missionID: { type: "string" }, revision: { type: "integer", minimum: 1 },
+        taskPage, tasks: { type: "array", maxItems: MISSION_TASK_PAGE, items: taskRow },
+        reports: { type: "array", maxItems: MISSION_TASK_PAGE * (MISSION_TASK_REPORT_ROWS + 1), items: reportRow },
+        refused: { type: "string", enum: ["mission-not-found", "order-changed"] },
       }, required: ["version", "projectID", "missionID"], additionalProperties: false },
     },
     create: {
