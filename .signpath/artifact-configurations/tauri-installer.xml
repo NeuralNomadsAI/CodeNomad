@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SignPath artifact configuration "tauri-installer": the Tauri NSIS installer,
+     which is both the Windows download and the in-app updater payload. The
+     submitted GitHub artifact is a ZIP holding only this file. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="CodeNomad-Tauri-windows-x64-${version}.exe" product-name="CodeNomad" product-version="${version}">
+      <authenticode-sign description="CodeNomad" description-url="https://github.com/NeuralNomadsAI/CodeNomad" />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

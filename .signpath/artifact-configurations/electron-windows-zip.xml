@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SignPath artifact configuration "electron-windows-zip": the portable Electron
+     ZIP. Only CodeNomad.exe is ours; the Electron/Chromium libraries and the
+     OpenJS-signed node.exe are left untouched. The submitted GitHub artifact is
+     a ZIP holding only the Electron ZIP. electron-builder writes the numeric
+     Windows form of the version (major.minor.patch.0) as the product version. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+    <parameter name="productVersion" required="true" />
+  </parameters>
+  <zip-file>
+    <zip-file path="CodeNomad-Electron-windows-x64-${version}.zip">
+      <pe-file path="CodeNomad.exe" product-name="CodeNomad" product-version="${productVersion}">
+        <authenticode-sign description="CodeNomad" description-url="https://github.com/NeuralNomadsAI/CodeNomad" />
+      </pe-file>
+    </zip-file>
+  </zip-file>
+</artifact-configuration>

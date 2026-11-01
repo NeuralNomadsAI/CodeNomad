@@ -1,0 +1,30 @@
+name: SignPath Test Signing
+
+# Builds every platform like a PR build and signs the Windows artifacts with
+# the SignPath test certificate. Nothing is published: the signed files are
+# kept as run artifacts for inspection.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (branch, tag, or SHA) to build; defaults to the selected branch. It must contain the signing steps"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-and-upload.yml
+    with:
+      ref: ${{ inputs.ref }}
+      upload: false
+      upload_actions_artifacts: true
+      actions_artifacts_retention_days: 7
+      actions_artifacts_name_prefix: signpath-test-${{ github.run_id }}-
+      set_versions: false
+      windows_signing_policy: test-signing
+    secrets: inherit
