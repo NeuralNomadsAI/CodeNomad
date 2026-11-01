@@ -38,19 +38,19 @@ export function BundlesConfirmationView(props: { view: BundlesConfirmation;
         onOpenAutoFocus={event => { event.preventDefault(); cancel?.focus() }}
         onCloseAutoFocus={event => { event.preventDefault(); if (returnFocus?.isConnected) returnFocus.focus() }}>
         <div class="window-header"><Title class="window-title">{t("integrations.confirmation.title")}</Title></div>
-        <div class="window-body space-y-2">
+        <Description as="div" class="window-body space-y-2">
           <p><bdi>{t(`integrations.confirmation.${props.view.action}`)}</bdi>: <bdi>{props.view.integration}</bdi> — <bdi>{props.view.version}</bdi></p>
           <p>{t(`instanceServiceStatus.plugins.scope.${props.view.scope}`)}</p>
           <p>{t("integrations.conversation")} <bdi>{props.view.conversation}</bdi></p>
           <Show when={props.view.document}><p>{t("integrations.application")}: <bdi>{props.view.document}</bdi></p></Show>
-          <Description>{t("integrations.confirmation.machine")}</Description>
+          <p>{t("integrations.confirmation.machine")}</p>
           <Show when={props.view.action === "attach"}><p>{t("integrations.warning")}</p></Show>
           <Show when={props.view.action === "remove"}>
             <p>{t("instanceServiceStatus.plugins.sources.removeWarning")}</p>
             <Show when={props.view.scope === "global"}><p>{t("instanceServiceStatus.plugins.sources.removeGlobalWarning")}</p></Show>
             <p>{t("instanceServiceStatus.plugins.sources.removeRecovery")}</p>
           </Show>
-        </div>
+        </Description>
         <div class="window-footer">
           <button ref={cancel} type="button" class="button-secondary" onClick={dismiss}>{t("alertDialog.actions.cancel")}</button>
           <button type="button" class="button-primary" disabled={!ready()} onClick={() => {

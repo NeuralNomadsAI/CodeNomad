@@ -380,6 +380,10 @@ test("removal public port needs trusted Global warning and confirmation; exact s
     assert.ok(text.includes("Remove: OpenCode for fixture")); assert.ok(text.includes("Global"))
     assert.ok(text.includes("may interrupt its availability and connections"))
     assert.ok(text.includes("conversations in other projects")); assert.ok(text.includes("Reinstalling may restore"))
+    const accessibleDescription = await dialog.evaluate(element => (element.getAttribute("aria-describedby") ?? "").split(/\s+/)
+      .map(id => document.getElementById(id)?.textContent ?? "").join(" "))
+    for (const essential of ["OpenCode for fixture", "Global", "may interrupt its availability and connections",
+      "conversations in other projects", "Reinstalling may restore"]) assert.ok(accessibleDescription.includes(essential), essential)
     assert.ok(!text.includes("PRIVATE_")); assert.ok(!text.includes(backend.spec))
     assert.equal(await page.getByRole("button", { name: "Cancel", exact: true }).evaluate(el => el === document.activeElement), true)
     await page.setViewportSize({ width: 360, height: 380 })
