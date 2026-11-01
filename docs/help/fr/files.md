@@ -30,7 +30,7 @@ L’enregistrement écrit le fichier réel dans la copie parcourue, y compris un
 
 Les brouillons source modifiés restent en mémoire du moteur de rendu par instance de projet, répertoire et chemin lorsque les lecteurs sont fermés ou changés. Les actualisations du système de fichiers ne les remplacent pas silencieusement. Ce n’est pas un stockage durable : enregistrez ou copiez les modifications importantes avant de redémarrer/recharger le client. Les échecs de lecture/écriture conservent le brouillon. **Actualiser** explicitement avertit avant d’abandonner les modifications non enregistrées.
 
-Fermer le lecteur avec son bouton de fermeture final revient à la conversation ; la zone de saisie reste disponible sous le lecteur. Changer de session/worktree efface le lecteur sélectionné, sans promettre d’enregistrer son brouillon. Ouvrir un aperçu navigateur remplace le lecteur ; ouvrir un fichier remet cette vue en mode chat.
+Fermer le lecteur avec son bouton de fermeture final revient à la conversation ; la zone de saisie reste disponible sous le lecteur. Masquer le volet avec **Volet droit**, ou une fenêtre trop étroite pour lui, laisse le lecteur ouvert avec la largeur libérée ; réafficher le volet le conserve tel quel. Changer de session/worktree efface le lecteur sélectionné, sans promettre d’enregistrer son brouillon. Ouvrir un aperçu navigateur remplace le lecteur ; ouvrir un fichier remet cette vue en mode chat.
 
 ## Aperçus bornés et en lecture seule {#preview-limits}
 

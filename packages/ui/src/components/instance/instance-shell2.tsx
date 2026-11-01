@@ -46,6 +46,7 @@ import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
 import { registerViewMenuPanels } from "../../lib/native/view-menu"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
+import { useFilePreviewLifetime } from "./shell/file-preview-lifetime"
 import ShellPanelToggle from "./shell/ShellPanelToggle"
 import { useSessionNavigationHistory } from "./shell/useSessionNavigationHistory"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
@@ -168,6 +169,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   } = useInstanceSessionContext({
     instanceId: () => props.instance.id,
   })
+  useFilePreviewLifetime(props.instance.id, activeSessionIdForInstance)
 
   // Shell ownership keeps partially answered requests alive as session panes change.
   const [interruptionExpanded, setInterruptionExpanded] = createSignal(false)

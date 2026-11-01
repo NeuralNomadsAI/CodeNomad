@@ -1,10 +1,11 @@
-import { createEffect, createMemo, createSignal, lazy, on, onCleanup, type Accessor } from "solid-js"
+import { createEffect, createMemo, createSignal, lazy, on, type Accessor } from "solid-js"
 import type { Instance } from "../../../../types/instance"
 import type { Session } from "../../../../types/session"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { RightPanelTab } from "./types"
 import type { RightPanelCustomization, RightPanelSectionModule } from "./registry"
-import { getDefaultWorktreeSlug, getWorktreeSlugForSession, getWorktrees, getGitRepoStatus } from "../../../../stores/worktrees"
+import { getWorktrees, getGitRepoStatus } from "../../../../stores/worktrees"
+import { sessionWorktreeSlug } from "../file-preview-lifetime"
 import { closeFilePreview, openFilePreview, type FilePreviewTarget } from "../../../../stores/files-preview"
 import { getSessionPreview, showSessionChat } from "../../../../stores/session-previews"
 import { useGitChanges } from "./useGitChanges"
@@ -42,23 +43,15 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
   const [mode, setMode] = createSignal<FilesPanelMode>(readStoredEnum(FILES_PANEL_MODE_KEY, ["workspace", "changes", "history"] as const) ?? "workspace")
   createEffect(() => writeClientLayoutValue(FILES_PANEL_MODE_KEY, mode()))
   const [browsedWorktree, setBrowsedWorktree] = createSignal<string | null>(null)
-  const sessionWorktree = createMemo(() => {
-    const sessionId = options.activeSessionId()
-    return sessionId && sessionId !== "info" ? getWorktreeSlugForSession(options.instanceId, sessionId) : getDefaultWorktreeSlug(options.instanceId)
-  })
-  createEffect(on(() => `${options.activeSessionId()}:${sessionWorktree()}`, () => {
-    setBrowsedWorktree(null)
-    closeFilePreview(options.instanceId)
-  }))
+  // The open file reader outlives this panel (useFilePreviewLifetime); only the
+  // browsed worktree is panel state.
+  const sessionWorktree = createMemo(() => sessionWorktreeSlug(options.instanceId, options.activeSessionId()))
+  createEffect(on(() => `${options.activeSessionId()}:${sessionWorktree()}`, () => setBrowsedWorktree(null)))
   const slug = createMemo(() => browsedWorktree() ?? sessionWorktree())
   const worktrees = createMemo(() => getWorktrees(options.instanceId))
   const worktree = createMemo(() => worktrees().find(entry => entry.slug === slug()))
   createEffect(() => {
-    // A removed browsed worktree must never silently turn into a root-file read.
-    if (browsedWorktree() && worktrees().length && !worktree()) {
-      setBrowsedWorktree(null)
-      closeFilePreview(options.instanceId)
-    }
+    if (browsedWorktree() && worktrees().length && !worktree()) setBrowsedWorktree(null)
   })
   const active = () => options.isActive() && options.rightPanelTab() === "files"
   // A known non-repository keeps Changes/Commits reachable for their Initialize
@@ -80,7 +73,6 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
     if (preview) showSessionChat(preview.storageKey)
     openFilePreview(options.instanceId, { ...file, sessionId, slug: slug(), directory: directory(), serviceDirectory: worktree()?.serviceDirectory })
   }
-  onCleanup(() => closeFilePreview(options.instanceId))
   return createCoreRightPanelModule({
     renderFilesTab: () => <LazyFilesPanel t={options.t} git={git} history={history} tree={tree} gitAvailable={gitAvailable()} gitInit={gitInit} mode={mode()} onModeChange={setMode}
       instanceId={options.instanceId} worktrees={worktrees()} slug={slug()} directory={worktree()?.directory ?? options.instance.folder}

@@ -30,7 +30,7 @@ Guardar escribe el archivo real en la copia de trabajo explorada, incluido un wo
 
 Los borradores de código fuente modificados se conservan en la memoria del renderer por instancia de proyecto, directorio y ruta cuando se cierran o cambian los lectores. Las actualizaciones del sistema de archivos no los reemplazan silenciosamente. No es almacenamiento duradero de archivos: guarda o copia las ediciones importantes antes de reiniciar/recargar el cliente. Los fallos de lectura/escritura conservan el borrador. **Actualizar** explícitamente advierte antes de descartar ediciones sin guardar.
 
-Cerrar el lector con su botón de cierre final devuelve a la conversación; el editor de mensajes permanece disponible debajo del lector. Cambiar de sesión/worktree borra el lector seleccionado, lo que no implica que se guarde su borrador. Abrir una vista previa de navegador reemplaza el lector; abrir un archivo devuelve esa vista al modo de chat.
+Cerrar el lector con su botón de cierre final devuelve a la conversación; el editor de mensajes permanece disponible debajo del lector. Ocultar el panel con **Panel derecho**, o una ventana demasiado estrecha para él, deja el lector abierto con el ancho liberado; volver a mostrar el panel lo conserva tal cual. Cambiar de sesión/worktree borra el lector seleccionado, lo que no implica que se guarde su borrador. Abrir una vista previa de navegador reemplaza el lector; abrir un archivo devuelve esa vista al modo de chat.
 
 ## Vistas previas de solo lectura y acotadas {#preview-limits}
 
