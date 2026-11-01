@@ -217,6 +217,8 @@ native echoes. WSL-unsupported status shows help.
 Plugins shows an unavailable catalog or the last
 valid catalog's fetch time. Saved Q8 hints offer confirmed reattachment only for matching integration and label.
 Action receipts describe the completed request.
+Cancelling attachment or application installation restores the captured visible, enabled opener while its
+owning view, conversation and integration context remain current. Navigation, invalidation and view disposal revoke restoration.
 
 `createIntegrationBindingsStore` (`stores/integration-bindings-store.ts`) shares reads for the exact instance,
 Location, session and native integration shown by the conversation header or its Plugins picker. The header keeps

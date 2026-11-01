@@ -226,7 +226,9 @@ test(`AC-C15 shared confirmation ${width}x${height} ${locale}: Cancel focus/ring
       // Use the real translated row action and shared buttons for the Hebrew pass.
       const name = await call(page, "installLabel")
       for (const dismissal of ["Enter", "Cancel", "Escape", "backdrop"]) {
+        const opener = await pluginRow(page).getByRole("button").elementHandle()
         const dialog = await launchInstallation(page, name)
+        await call(page, "event", "plugin.updated", {}, "other-workspace")
         const cancel = dialog.locator("button.button-secondary")
         await page.waitForFunction(() => {
           const button = document.querySelector('.alert-dialog button.button-secondary')
@@ -241,6 +243,7 @@ test(`AC-C15 shared confirmation ${width}x${height} ${locale}: Cancel focus/ring
         else if (dismissal === "backdrop") await page.mouse.click(width - 2, height - 2)
         else await page.keyboard.press(dismissal)
         await dialog.waitFor({ state: "hidden" })
+        await page.waitForFunction(element => element === document.activeElement, opener)
         assert.equal(calls.filter(call => call.action === "install-host").length, 0)
       }
     } finally { await finish() }
@@ -248,6 +251,7 @@ test(`AC-C15 shared confirmation ${width}x${height} ${locale}: Cancel focus/ring
 
 const installInvalidations: Array<[string, (page: Page) => Promise<unknown>]> = [
   ["session navigation", async page => { await shell(page, "addSession", "other"); await shell(page, "selectSession", "other") }],
+  ["session roundtrip", async page => { await shell(page, "addSession", "other"); await shell(page, "selectSession", "other"); await shell(page, "selectSession", "session") }],
   ["Location navigation", page => call(page, "directory", "/other-repo")],
   ["instance navigation", page => call(page, "instance", "other-workspace")],
   ["surface hiding", page => call(page, "plugins", false)],
@@ -264,9 +268,12 @@ for (const [name, invalidate] of installInvalidations) test(`AC-C15 ${name} revo
     // Stop the real Plugins demand without removing the unrelated imported shell's instance.
     if (name === "workspace stop") await call(page, "instance", "installation-only")
     await installationReady(page, model)
+    const opener = await pluginRow(page).getByRole("button").elementHandle()
     const dialog = await launchInstallation(page)
     await invalidate(page)
     await dialog.waitFor({ state: "hidden", timeout: 3000 })
+    await page.waitForTimeout(100)
+    assert.equal(await opener!.evaluate(element => element === document.activeElement), false, "revoked consent never restores a stale opener")
     await page.keyboard.press("Enter")
     assert.equal(calls.filter(call => call.action === "install-host").length, 0)
   } finally { await finish() }
@@ -412,6 +419,104 @@ test("diagnostic capture detects sentinel text, structured arguments and Error s
       return true
     })
   } finally { try { await diagnostics.drain() } finally { await page.close() } }
+})
+for (const width of [1500, 390]) for (const entry of ["header", "plugins"])
+test(`attachment cancellation returns to its exact ${entry} opener at ${width}px`, async () => {
+  const { page, calls, finish } = await open(width)
+  try {
+    if (entry === "plugins") await call(page, "plugins", true)
+    for (const dismissal of ["Enter", "Cancel", "Escape"]) {
+      const opener = entry === "plugins" ? pluginRow(page).getByRole("button")
+        : page.locator('.session-header-expanded-actions button[aria-label="Attach an open application…"]:visible, .session-header-actions-menu:visible').first()
+      await opener.waitFor()
+      const actual = await opener.elementHandle()
+      if (entry === "plugins") {
+        await opener.click()
+        await page.getByRole("menuitem", { name: label, exact: true }).click()
+      } else await launch(page)
+      const dialog = page.getByRole("dialog", { name: label })
+      const cancel = dialog.getByRole("button", { name: "Cancel", exact: true })
+      await call(page, "event", "plugin.updated", {}, "other-workspace")
+      await page.waitForFunction(() => document.querySelector('.integration-attachment .button-secondary') === document.activeElement)
+      if (dismissal === "Cancel") await cancel.click()
+      else await page.keyboard.press(dismissal)
+      await dialog.waitFor({ state: "hidden" })
+      await page.waitForFunction(element => element === document.activeElement, actual)
+    }
+    assert.equal(calls.some(call => ["attach", "detach", "install-host"].includes(call.action)), false)
+  } finally { await finish() }
+})
+for (const width of [1500, 390]) for (const entry of ["header", "plugins"])
+test(`attachment ${entry} restoration is fenced by navigation, invalidation and visibility at ${width}px`, async () => {
+  for (const change of ["navigation", "roundtrip", "event", "hidden", "disabled", "detached"]) {
+    const { page, finish } = await open(width)
+    try {
+      if (entry === "plugins") await call(page, "plugins", true)
+      const trigger = entry === "plugins" ? pluginRow(page).getByRole("button")
+        : page.locator('.session-header-expanded-actions button[aria-label="Attach an open application…"]:visible, .session-header-actions-menu:visible').first()
+      await trigger.waitFor()
+      const opener = await trigger.elementHandle()
+      if (entry === "plugins") {
+        await trigger.click()
+        await page.getByRole("menuitem", { name: label, exact: true }).click()
+      } else await launch(page)
+      const dialog = page.getByRole("dialog", { name: label })
+      await dialog.waitFor()
+      if (change === "navigation" || change === "roundtrip") {
+        await shell(page, "addSession", "other")
+        await shell(page, "selectSession", "other")
+        if (change === "roundtrip") await shell(page, "selectSession", "session")
+      } else if (change === "event") await call(page, "event", "rpc.neuralnomads.blender.status_changed")
+      else {
+        await opener!.evaluate((element, change) => {
+          if (change === "hidden") (element as HTMLElement).style.visibility = "hidden"
+          else if (change === "disabled") (element as HTMLButtonElement).disabled = true
+          else element.remove()
+        }, change)
+        await page.keyboard.press("Escape")
+      }
+      await dialog.waitFor({ state: "hidden" })
+      await page.waitForTimeout(100)
+      assert.equal(await opener!.evaluate(element => element === document.activeElement), false, `${change} must not restore stale focus`)
+    } finally { await finish() }
+  }
+})
+for (const width of [1500, 390]) test(`installation never restores a hidden, disabled or detached opener at ${width}px`, async () => {
+  for (const change of ["hidden", "disabled", "detached"]) {
+    const { page, model, finish } = await open(width)
+    try {
+      await installationReady(page, model)
+      const opener = await pluginRow(page).getByRole("button").elementHandle()
+      const dialog = await launchInstallation(page)
+      await opener!.evaluate((element, change) => {
+        if (change === "hidden") (element as HTMLElement).style.display = "none"
+        else if (change === "disabled") (element as HTMLButtonElement).disabled = true
+        else element.remove()
+      }, change)
+      await page.keyboard.press("Escape")
+      await dialog.waitFor({ state: "hidden" })
+      await page.waitForTimeout(100)
+      assert.equal(await opener!.evaluate(element => element === document.activeElement), false)
+    } finally { await finish() }
+  }
+})
+for (const action of ["attachment", "installation"]) test(`${action} changed integration digest suppresses opener restoration`, async () => {
+  const { page, model, finish } = await open()
+  try {
+    if (action === "installation") await installationReady(page, model)
+    const opener = await (action === "installation" ? pluginRow(page).getByRole("button")
+      : page.locator('.session-header-expanded-actions button[aria-label="Attach an open application…"]')).elementHandle()
+    if (action === "installation") await launchInstallation(page)
+    else await launch(page)
+    model.version = "9.9.9"
+    // Change the read model without an epoch event, exercising the captured digest independently.
+    await call(page, "refresh")
+    const dialog = page.getByRole("dialog")
+    if (action === "attachment") await page.keyboard.press("Escape")
+    await dialog.waitFor({ state: "hidden" })
+    await page.waitForTimeout(100)
+    assert.equal(await opener!.evaluate(element => element === document.activeElement), false)
+  } finally { await finish() }
 })
 test("real shell wide and narrow entries use a Cancel-focused trusted picker, exact Q8 matching, attach and local detach", async () => {
   for (const width of [1500, 390]) {

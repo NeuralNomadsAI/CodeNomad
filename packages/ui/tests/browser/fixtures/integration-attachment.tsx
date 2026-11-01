@@ -37,6 +37,7 @@ const dispatch = (type: string, data: unknown = {}, instanceId = id) => (serverE
   event: { id: `integration-${Date.now()}`, created: Date.now(), type, data, location: { directory: directory() } } }])
 ;(window as any).integrationFixture = {
   plugins: setPlugins,
+  refresh: () => integrations.refreshDemanded(id),
   directory: setDirectory,
   active: setActive,
   sessionless: setSessionless,

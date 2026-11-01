@@ -21,11 +21,12 @@ export function createIntegrationHostInstallation(props: {
   const signature = (id: string) => JSON.stringify(eligible(id))
   let confirmation: AbortController | undefined
   let disposed = false
+  let focusGeneration = 0
   let target: { id: string; identity: string; epoch: string; signature: string } | undefined
   const cancel = () => { confirmation?.abort(); confirmation = undefined; target = undefined }
   createEffect(() => {
     const owner = identity(), generation = epoch(), entries = props.entries()
-    if (target && (target.identity !== owner || target.epoch !== generation || target.signature !== signature(target.id))) cancel()
+    if (target && (target.identity !== owner || target.epoch !== generation || target.signature !== signature(target.id))) { focusGeneration++; cancel() }
     void entries
   })
   onCleanup(() => { disposed = true; cancel() })
@@ -34,6 +35,8 @@ export function createIntegrationHostInstallation(props: {
     if (!entry || pending() || confirmation) return
     const instanceId = props.instanceId, directory = props.directory, owner = identity()
     const captured = { id, identity: owner, epoch: epoch(), signature: signature(id) }
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
+    const generation = ++focusGeneration
     target = captured
     confirmation = new AbortController()
     const signal = confirmation.signal
@@ -41,6 +44,10 @@ export function createIntegrationHostInstallation(props: {
     const accepted = await showConfirmDialog(t("integrations.installHost.warning", { app: entry.app.name, version: entry.status!.version }), {
       title: t(`integrations.installHost.${action}`), detail: t("integrations.installHost.machine"),
       confirmLabel: t(`integrations.installHost.${action}`), variant: "warning",
+      returnFocus: () => {
+        if (!disposed && generation === focusGeneration && identity() === owner && epoch() === captured.epoch && signature(id) === captured.signature
+          && opener?.isConnected && opener.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }) && !opener.closest('[inert], [aria-hidden="true"]') && !opener.matches(":disabled")) opener.focus({ preventScroll: true })
+      },
     }, signal)
     const current = accepted && !signal.aborted && target === captured && identity() === owner
       && epoch() === captured.epoch && signature(id) === captured.signature

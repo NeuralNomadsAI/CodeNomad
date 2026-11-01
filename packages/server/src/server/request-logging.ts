@@ -11,7 +11,7 @@ function integrationLogRoute(request: FastifyRequest): string | undefined {
   if (route && integrationRoutes.has(route)) return route
   // Rejects and malformed parameters may have no matched route. Decode segments independently so
   // a bad escape in a caller-owned ID cannot disable the namespace's confidentiality policy.
-  const pathname = request.url.split(/[?;#]/, 1)[0].replace(/^[a-z]+:\/\/[^/]*/i, "")
+  const pathname = request.url.split(/[?#]/, 1)[0].replace(/^[a-z]+:\/\/[^/]*/i, "")
   const parts = pathname.replace(/^\/+/, "/").split("/").map(part => {
     try { return decodeURIComponent(part) } catch { return part }
   })
