@@ -30,7 +30,7 @@ Save writes the actual file in the browsed checkout, including a linked worktree
 
 Dirty source drafts are retained in renderer memory by project instance, directory and path when readers are closed or switched. Filesystem refreshes do not silently replace them. This is not durable file storage: save or copy important edits before restarting/reloading the client. Read/write failures retain the draft. Explicit **Refresh** warns before discarding unsaved edits.
 
-Closing the reader with its trailing close button returns to the conversation; the composer remains available below the reader. Changing session/worktree clears the selected reader, not a promise to save its draft. Opening a browser preview replaces the reader; opening a file returns that view to chat mode.
+Closing the reader with its trailing close button returns to the conversation; the composer remains available below the reader. Hiding the panel with **Right panel**, or a window too narrow for it, leaves the reader open with the freed width; showing the panel again keeps it as it was. Changing session/worktree clears the selected reader, not a promise to save its draft. Opening a browser preview replaces the reader; opening a file returns that view to chat mode.
 
 ## Read-only and bounded previews {#preview-limits}
 

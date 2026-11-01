@@ -30,7 +30,7 @@ Speichern schreibt die tatsächliche Datei im durchsuchten Checkout einschließl
 
 Ungespeicherte Quelltextentwürfe bleiben beim Schließen oder Wechseln von Leseansichten im Renderer-Speicher nach Projektinstanz, Verzeichnis und Pfad erhalten. Dateisystemaktualisierungen ersetzen sie nicht stillschweigend. Dies ist kein dauerhafter Dateispeicher: Speichern oder kopieren Sie wichtige Änderungen vor einem Client-Neustart/Neuladen. Lese-/Schreibfehler behalten den Entwurf. Explizites **Aktualisieren** warnt vor dem Verwerfen ungespeicherter Änderungen.
 
-Das Schließen der Leseansicht über die abschließende Schließen-Schaltfläche führt zur Unterhaltung zurück; das Eingabefeld bleibt darunter verfügbar. Ein Sitzungs-/Worktree-Wechsel leert die ausgewählte Leseansicht und garantiert kein Speichern ihres Entwurfs. Eine Browser-Vorschau ersetzt die Leseansicht; eine Datei zu öffnen setzt diese Ansicht auf Chat-Modus zurück.
+Das Schließen der Leseansicht über die abschließende Schließen-Schaltfläche führt zur Unterhaltung zurück; das Eingabefeld bleibt darunter verfügbar. Wird die Seitenleiste mit **Rechte Seitenleiste** ausgeblendet oder ist das Fenster zu schmal für sie, bleibt die Leseansicht mit der frei gewordenen Breite geöffnet; erneutes Einblenden lässt sie unverändert. Ein Sitzungs-/Worktree-Wechsel leert die ausgewählte Leseansicht und garantiert kein Speichern ihres Entwurfs. Eine Browser-Vorschau ersetzt die Leseansicht; eine Datei zu öffnen setzt diese Ansicht auf Chat-Modus zurück.
 
 ## Schreibgeschützte und begrenzte Vorschauen {#preview-limits}
 
