@@ -19,6 +19,9 @@ interface CliIPCDependencies {
   getAllowedOrigins(window: BrowserWindow): string[]
   openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean; requireLoad?: boolean }): Promise<void>
   newWindow(): Promise<unknown>
+  /** The retry of a remote window showing its unavailable-server page; undefined for any other sender. */
+  resolveRemoteRecovery(sender: IpcMainInvokeEvent["sender"]): (() => Promise<void>) | undefined
+  openLocalWindow(): Promise<unknown>
   nextFolder(windowId: string): string | null
   acknowledgeFolder(windowId: string, folder: string, opened: boolean): void
   nextConnection(windowId: string): { target: string; failure?: string; hidden: boolean } | null
@@ -80,6 +83,11 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     if (!window) throw new Error("Native operation requires a window")
     validateMainFrame(event, window, dependencies.getAllowedOrigins(window))
     return window
+  }
+  const remoteRecovery = (event: IpcMainInvokeEvent): (() => Promise<void>) => {
+    const retry = dependencies.resolveRemoteRecovery(event.sender)
+    if (!retry || event.senderFrame !== event.sender.mainFrame) throw new Error("Remote recovery is limited to the unavailable-server page")
+    return retry
   }
   const updateWakeLock = (): boolean => {
     if (wakeLockWindows.size > 0) {
@@ -228,6 +236,8 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     await dependencies.openRemoteWindow(payload)
     return { ok: true }
   })
+  ipcMain.handle("remote:retry", async (event) => { await remoteRecovery(event)(); return { ok: true } })
+  ipcMain.handle("remote:openLocalWindow", async (event) => { remoteRecovery(event); await dependencies.openLocalWindow(); return { ok: true } })
   ipcMain.handle("notifications:show", async (event, payload: { title?: unknown; body?: unknown }): Promise<{ ok: boolean; reason?: string }> => {
     anyTrusted(event)
     if (!Notification.isSupported()) return { ok: false, reason: "unsupported" }

@@ -5,7 +5,9 @@ import { render } from "solid-js/web"
 // The loading screen is always dark (loading.html): the white hexagon.
 import logoUrl from "../../images/CodeNomad-Logo-OnDark.svg"
 import { tGlobal } from "../../lib/i18n"
+import { isRemoteUnavailablePage } from "../../lib/native/remote-unavailable"
 import { runtimeEnv, isTauriHost } from "../../lib/runtime-env"
+import { RemoteUnavailable } from "./remote-unavailable"
 import "../../index.css"
 import "./loading.css"
 
@@ -114,21 +116,26 @@ function LoadingApp() {
           {(key) => <p class="loading-status">{tGlobal(key())}</p>}
         </Show>
       </div>
-      <div class="loading-card">
-        <div class="loading-row">
-          <div class="spinner" aria-hidden="true" />
-          <span>{tGlobal(phraseKey())}</span>
+      <Show when={!remoteUnavailable} fallback={<RemoteUnavailable />}>
+        <div class="loading-card">
+          <div class="loading-row">
+            <div class="spinner" aria-hidden="true" />
+            <span>{tGlobal(phraseKey())}</span>
+          </div>
+          <div class="phrase-controls">
+            <button type="button" onClick={changePhrase}>
+              {tGlobal("loadingScreen.actions.showAnother")}
+            </button>
+          </div>
+          {error() && <div class="loading-error">{error()}</div>}
         </div>
-        <div class="phrase-controls">
-          <button type="button" onClick={changePhrase}>
-            {tGlobal("loadingScreen.actions.showAnother")}
-          </button>
-        </div>
-        {error() && <div class="loading-error">{error()}</div>}
-      </div>
+      </Show>
     </div>
   )
 }
+
+// An Electron remote window shows this page when its server could not be loaded.
+const remoteUnavailable = runtimeEnv.windowContext === "remote" && isRemoteUnavailablePage(window.location.href)
 
 const root = document.getElementById("loading-root")
 

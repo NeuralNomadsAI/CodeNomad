@@ -3,6 +3,11 @@ export const loadingScreenMessages = {
   "loadingScreen.status.issue": "Un problème est survenu",
   "loadingScreen.actions.showAnother": "En afficher un autre",
   "loadingScreen.errors.missingRoot": "Élément racine de chargement introuvable",
+  "loadingScreen.remoteUnavailable.title": "Ce serveur est injoignable",
+  "loadingScreen.remoteUnavailable.message": "CodeNomad n'a pas pu charger ce serveur. Vérifiez qu'il fonctionne et qu'il est joignable, puis réessayez.",
+  "loadingScreen.remoteUnavailable.retry": "Réessayer",
+  "loadingScreen.remoteUnavailable.openLocal": "Ouvrir une fenêtre locale",
+  "loadingScreen.remoteUnavailable.close": "Fermer la fenêtre",
 
   "loadingScreen.phrases.neurons": "Réchauffage des neurones de l'IA…",
   "loadingScreen.phrases.daydreaming": "On convainc l'IA d'arrêter de rêvasser…",

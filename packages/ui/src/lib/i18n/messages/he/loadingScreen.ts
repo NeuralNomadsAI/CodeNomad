@@ -3,6 +3,11 @@ export const loadingScreenMessages = {
   "loadingScreen.status.issue": "נתקלנו בבעיה",
   "loadingScreen.actions.showAnother": "הצג עוד",
   "loadingScreen.errors.missingRoot": "אלמנט השורש לטעינה לא נמצא",
+  "loadingScreen.remoteUnavailable.title": "לא ניתן להגיע לשרת הזה",
+  "loadingScreen.remoteUnavailable.message": "CodeNomad לא הצליח לטעון את השרת הזה. ודאו שהוא פועל ונגיש, ונסו שוב.",
+  "loadingScreen.remoteUnavailable.retry": "נסו שוב",
+  "loadingScreen.remoteUnavailable.openLocal": "פתיחת חלון מקומי",
+  "loadingScreen.remoteUnavailable.close": "סגירת החלון",
 
   "loadingScreen.phrases.neurons": "מחמם את הנוירונים של ה-AI…",
   "loadingScreen.phrases.daydreaming": "משכנע את ה-AI להפסיק לחלום בהקיץ…",
