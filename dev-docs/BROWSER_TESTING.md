@@ -89,3 +89,6 @@ synthetic provider.
   Plain model text can paint before the worker result inserts deleted-code view
   zones. `git-history.test.ts` holds a real worker reply and defers Monaco's
   repaint to exercise that geometry change with native pointer checks intact.
+  Its main-world DOM readiness probe releases the reply and repaint; a direct
+  native click instead receives the reply at pointer movement and releases
+  repaint on pointer-up, keeping the stale geometry through mouse-down.

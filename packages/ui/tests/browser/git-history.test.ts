@@ -42,7 +42,7 @@ let cache: Awaited<ReturnType<typeof createFixtureCache>>
 async function clickModifiedDiffLine(page: Page) {
   // Plain model text paints before the asynchronous diff adds its deleted-code
   // view zones. Selecting those old coordinates can open Monaco's copy menu.
-  await page.locator(".git-diff-view .line-insert").first().waitFor()
+  await page.waitForFunction(() => document.querySelector(".git-diff-view .line-insert"))
   await page.locator(".git-diff-view .editor.modified .view-line").filter({ hasText: 'title: "Git"' }).click()
 }
 
@@ -816,19 +816,43 @@ test("composer selection waits for the computed diff when its initial paint is d
     }
     window.deferDiffPaint = () => {
       const raf = window.requestAnimationFrame.bind(window), cancel = window.cancelAnimationFrame.bind(window), frames = new Map()
-      // Fault injection: keep Monaco's old DOM for 30 frames after its real
-      // worker result changes hit-test geometry, without pausing native input.
-      let id = 0, remaining = 30
+      const query = document.querySelector
+      let id = 0, released = false
       window.requestAnimationFrame = callback => { frames.set(--id, callback); return id }
       window.cancelAnimationFrame = handle => { if (!frames.delete(handle)) cancel(handle) }
-      const release = () => {
-        if (--remaining) { raf(release); return }
+      const release = boundary => {
+        if (released) return
+        released = true
+        window.diffPaintReleaseBoundary = boundary
+        document.querySelector = query
+        document.removeEventListener("pointermove", onPointerMove, true)
+        document.removeEventListener("pointerup", onPointerUp, true)
         window.requestAnimationFrame = raf
         window.cancelAnimationFrame = cancel
         for (const callback of frames.values()) raf(callback)
       }
-      raf(release)
-      window.releaseDiff()
+      // The main-world readiness probe releases painting before it can see
+      // the real decoration. Without that probe, keep stale DOM through the
+      // native mouse-down that opens Monaco's deleted-code menu.
+      document.querySelector = function(selector) {
+        if (selector === ".git-diff-view .line-insert") {
+          deliver()
+          release("readiness")
+        }
+        return query.call(this, selector)
+      }
+      let delivered = false
+      const deliver = () => {
+        if (delivered) return
+        delivered = true
+        window.releaseDiff()
+      }
+      // With no readiness wait, deliver only after Playwright has measured
+      // and scrolled the old line, at its real pointer movement to that point.
+      const onPointerMove = () => deliver()
+      const onPointerUp = () => release("pointerup")
+      document.addEventListener("pointermove", onPointerMove, true)
+      document.addEventListener("pointerup", onPointerUp, true)
     }
   })()` })
   try {
@@ -839,14 +863,15 @@ test("composer selection waits for the computed diff when its initial paint is d
     await line.waitFor()
     await page.waitForFunction(() => Boolean((window as any).releaseDiff))
     assert.equal(await page.locator(".git-diff-view .line-insert").count(), 0, "visible model text precedes diff computation")
-    // Deliver the real worker reply while withholding Monaco's repaint. Native
-    // pointer hit testing and Playwright's captured animation frames stay live.
-    // Without the computed-diff wait, the old line opens Copy changed lines.
+    // Arm reply delivery at the readiness probe or native pointer movement;
+    // keep stale DOM until the probe or native pointer-up releases painting.
+    // Native hit testing and Playwright's actionability frames stay live.
     await page.evaluate(() => (window as any).deferDiffPaint())
     await clickModifiedDiffLine(page)
     await page.keyboard.press("Home")
     await page.keyboard.press("Shift+End")
     assert.equal(await page.getByRole("menuitem", { name: "Copy changed lines", exact: true }).count(), 0, "selection never opens the deleted-code menu")
+    assert.equal(await page.evaluate(() => (window as any).diffPaintReleaseBoundary), "readiness")
     assert.equal(await page.evaluate(() => (window as any).monaco.editor.getDiffEditors()[0].getModifiedEditor().getSelection().isEmpty()), false)
     await page.getByRole("button", { name: "Ajouter au prompt", exact: true }).click()
     assert.match(await page.locator(".session-view textarea.prompt-input").inputValue(), /File: src\/components\/git-panel.tsx : 3-3/)
