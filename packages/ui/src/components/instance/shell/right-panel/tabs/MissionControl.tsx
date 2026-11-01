@@ -298,9 +298,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       status: [stateText, mark === "permission" ? props.t("missionsPanel.task.input") : "",
         missionRelativeTime(value.updatedAt, locale())].filter(Boolean).join(" · ") }
   }))
+  // The saved Mission ID survives ownership conversion in another window, including
+  // cold restoration. Point-read that selection; absence never triggers an inventory scan.
+  const unifiedSelection = () => selectedScheduled() ?? (selectedSchedule() ? undefined : selectedMissionId())
   const scheduled = createMissionScheduleList({ get instanceId() { return props.instanceId }, get directory() { return scope() },
     get projectID() { return projectID() }, active: visible, enabled: () => !editor(), get refresh() { return recurrenceRefresh() },
-    get selected() { return selectedScheduled() }, detailId, onEdit: id => openEditor({ kind: "edit", scheduleID: id }),
+    get selected() { return unifiedSelection() }, detailId, onEdit: id => openEditor({ kind: "edit", scheduleID: id }),
     onDeleted: id => { if (selectedScheduled() === id) updateMissionProjectView(scope(), { selectedScheduled: undefined }) },
     onOpenConversation: id => void (async () => {
       const view = captureView(), selected = selectedScheduled(), instanceId = props.instanceId
@@ -315,6 +318,16 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         props.onRevealConversation?.()
       } catch { if (current()) setNavigationError(true) }
     })() })
+  createEffect(() => {
+    const id = unifiedSelection()
+    if (!visible() || editor() || !id) return
+    const representation = scheduled.representation(id)
+    if (representation === "one-time" && selectedScheduled() === id) selectMission(id)
+    else if (representation === "schedule" && selectedScheduled() !== id) {
+      intent++
+      updateMissionProjectView(scope(), { selected: undefined, selectedRecurrence: undefined, selectedScheduled: id })
+    }
+  })
   const pickerEntries = () => {
     const unified = scheduled.entries(), ids = new Set(unified.map(row => row.key.slice("scheduled:".length)))
     return [...missionEntries().filter(row => !ids.has(row.key.slice("mission:".length))), ...recurrence.entries(), ...unified]
@@ -483,7 +496,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       </Switch></Show>
       <Show when={state().cleanupUnavailable}><p class="mission-control-stale" role="alert">{props.t("missions.cleanup.error.unconfirmed")}</p></Show>
       <Show when={cleanupPending()}><MissionCleanupPanel instanceId={props.instanceId} cleanups={state().cleanups ?? []}
-        disabled={Boolean(editor()) || state().status !== "ready" || Boolean(state().cleanupUnavailable)} active={props.isActive?.() ?? true}
+        disabled={Boolean(editor()) || !["ready", "loading"].includes(state().status) || Boolean(state().cleanupUnavailable)} active={props.isActive?.() ?? true}
         refresh={() => missionStore.refresh(props.instanceId)} /></Show>
     </section>
   )

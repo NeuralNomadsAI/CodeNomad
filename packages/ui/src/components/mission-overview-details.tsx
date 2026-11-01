@@ -58,7 +58,7 @@ export function MissionOverviewDetails(props: {
     </Show>
     <Show when={cleanups().length}>
       <MissionCleanupPanel instanceId={props.instanceId} cleanups={cleanups()} active
-        disabled={missionStore.state(props.instanceId).status !== "ready" || Boolean(missionStore.state(props.instanceId).cleanupUnavailable)}
+        disabled={!["ready", "loading"].includes(missionStore.state(props.instanceId).status) || Boolean(missionStore.state(props.instanceId).cleanupUnavailable)}
         refresh={() => missionStore.refresh(props.instanceId)} />
     </Show>
     <details class="mission-report-technical"><summary>{t("missionsPanel.technical")}</summary>

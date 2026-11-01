@@ -56,3 +56,23 @@ test("maps from a plugin without descriptors keep their inline inputs", async ()
   const mission = map()
   assert.equal(await readMissionEditorBody(mission, selector, async () => { throw new Error("Unexpected read") }), mission.objective)
 })
+
+test("editor receipt reads keep their exact request and bodies when the panel holds only a task window", async () => {
+  const mission = map()
+  mission.tasks = Array.from({ length: 75 }, (_, index) => ({ id: `tsk_${index}`, key: `work-${index}`, title: `Work ${index}`,
+    brief: `Brief ${index}`, role: "specialist", status: "ready", blockedBy: [], outstandingExecution: false, createdAt: 1, updatedAt: 1 }))
+  mission.history[0].addedTaskKeys = mission.tasks.map(task => task.key)
+  const shown = compact(mission), calls: unknown[] = []
+  assert.equal(shown.tasks.length, 50)
+  assert.equal(shown.taskPage?.total, 75)
+  assert.equal(shown.history[0].requestID, "edit_original")
+  assert.equal("addedTaskKeys" in shown.history[0], false)
+  const fetch = async (query: Parameters<Parameters<typeof readMissionEditorBody>[2]>[0]) => {
+    calls.push(query)
+    return { available: true as const, ...readMissionContent(mission.projectID, { ...query, missionID: mission.id }, mission) }
+  }
+  assert.deepEqual(await readMissionEditorBody(shown, { kind: "change", change: 2, field: "objective" }, fetch), mission.history[0].objective)
+  assert.equal(await readMissionEditorBody(shown, selector, fetch), mission.objective)
+  assert.equal(calls.length, 2, "only exact text reads, independent of absent task rows")
+  assert.equal(mission.tasks.length, 75, "the full source remains intact")
+})

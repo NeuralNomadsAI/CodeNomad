@@ -31,9 +31,9 @@ export const missionScheduleActivationWire = { type: "object", properties: { req
 
 export const missionDocumentSummaryWire = { type: "object", properties: { revision: counter, configurationGeneration: counter, timeGeneration: counter,
   state: { type: "string", enum: ["paused", "running", "stopped", "finished"] }, firstPlayedAt: nullableTime, launchedCount: counter,
-  everCreatedTask: { type: "boolean" }, launch: missionLaunchPolicyWire,
+  everCreatedTask: { type: "boolean" }, dormant: { const: true }, launch: missionLaunchPolicyWire,
   firstPlay: { type: ["object", "null"], properties: { requestID: text, expectedRevision: counter, operationID: text, messageID: text,
-    requestedAt: counter, admittedAt: nullableTime }, required: ["requestID", "expectedRevision", "operationID", "messageID", "requestedAt", "admittedAt"], additionalProperties: false },
+    requestedAt: counter, admittedAt: nullableTime, inputDigest: { type: "string", minLength: 64, maxLength: 64 } }, required: ["requestID", "expectedRevision", "operationID", "messageID", "requestedAt", "admittedAt"], additionalProperties: false },
   scheduleActivation: { ...missionScheduleActivationWire, type: ["object", "null"] },
   deletion: { type: ["object", "null"], properties: { requestID: text, expectedRevision: counter, deleteManagedSessions: { type: "boolean" }, requestedAt: counter },
     required: ["requestID", "expectedRevision", "deleteManagedSessions", "requestedAt"], additionalProperties: false },

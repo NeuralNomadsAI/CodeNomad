@@ -4,6 +4,7 @@ import path from "node:path"
 import { mkdir } from "node:fs/promises"
 import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
+import { fixtureEventStream } from "./fixture-event-stream"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { preparationFixture, scheduledPreparation, followedPreparationFixture } from "../../../server/src/missions/mission-preparation-test-fixture"
 import { ownerFixture } from "../../../server/src/opencode/missions/native-schedule-owner-test-fixture"
@@ -11,12 +12,14 @@ import { missionScheduleView } from "../../../server/src/missions/mission-schedu
 import type {} from "./fixtures/mission-editor-scheduling"
 
 let browser: Browser, url: string
+let events: Awaited<ReturnType<typeof fixtureEventStream>>
 before(async () => {
   const fixture = await borrowFixture({ name: "mission-editor-scheduling", routes: [{ path: "/editor",
     html: '<html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-editor-scheduling.tsx"></script></body></html>' }] })
-  url = fixture.url; browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined }); armFixtureNavigationBudget(browser)
+  url = fixture.url; events = await fixtureEventStream(url)
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined }); armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close() })
+after(async () => { try { await browser?.close() } finally { await events?.close() } })
 async function setup(page: Page, lose = false, calendar?: Awaited<ReturnType<typeof ownerFixture>>) {
   const directory = calendar?.directory ?? "/fixture"
   const f = await followedPreparationFixture(directory), writes: Record<string, any>[] = [], errors: string[] = []
@@ -26,6 +29,7 @@ async function setup(page: Page, lose = false, calendar?: Awaited<ReturnType<typ
   page.setDefaultTimeout(15000)
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await events.route(page)
   await page.route("**/api/storage/config/ui", route => route.fulfill({ json: { settings: { locale: "en" } } }))
   await page.route("**/workspaces/fixture/instance/api/agent**", route => route.fulfill({ json: { data: [{ id: "coordinator", mode: "all" }] } }))
   await page.route("**/workspaces/fixture/instance/api/model**", route => route.fulfill({ json: { data: [

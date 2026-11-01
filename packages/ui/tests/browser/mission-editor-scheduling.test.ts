@@ -35,14 +35,16 @@ async function createDocument() {
     launch: { timing: { kind: "cron", expression: "0 05 09 1,15 * *", zone: "Europe/Paris" }, condition: null,
       ends: { at: null, afterMs: null, maxLaunches: 10 } } }, Date.now(), () => true)
 }
-async function setup(page: Page, available = true, locale = "en", theme = "dark") {
+async function setup(page: Page, available = true, locale = "en", theme = "dark", taskCount = 0) {
   page.setDefaultTimeout(15_000)
   const errors: string[] = [], posts: Array<Record<string, any>> = [], reads: URL[] = []
   let doc = await createDocument(), lose = false, proof = true, contentProof = true, original: Record<string, any> | undefined
   let journal: MissionMap = { version: 1, id: "msn_fixture", projectID: "project", projectCanonical: "/fixture",
     title: "Stored title", objective: "Stored instructions", notes: "Stored notes", template: "custom", status: "active", runState: "prepared",
     coordinatorSessionId: "ses_coordinator", revision: 1, createdAt: 1, updatedAt: 1, history: [], historyTruncated: false,
-    frontier: [], claims: [], actors: [], tasks: [], reports: [] }
+    frontier: [], claims: [], actors: [], tasks: Array.from({ length: taskCount }, (_, index) => ({
+      id: `tsk_${index}`, key: `work-${index}`, title: `Work ${index}`, brief: `Brief ${index}`, role: "specialist", status: "ready",
+      blockedBy: [], outstandingExecution: false, createdAt: 1, updatedAt: 1 })), reports: [] }
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
@@ -234,8 +236,8 @@ test("H9 locks structural fields during a passage, with reasons, while keeping i
   } finally { await page.close() }
 })
 
-test("a journal edit with a lost ACK keeps the original request until its exact history receipt is read", async () => {
-  const page = await browser.newPage(), f = await setup(page)
+for (const taskCount of [0, 75]) test(`a journal edit with ${taskCount} tasks and a lost ACK keeps the original request until its exact history receipt is read`, async () => {
+  const page = await browser.newPage(), f = await setup(page, true, "en", "dark", taskCount)
   try {
     await page.evaluate(() => window.schedulingEditor.journal()); await ready(page)
     await form(page).getByLabel(objective, { exact: true }).fill("Original journal edit")
@@ -262,10 +264,18 @@ test("a journal edit with a lost ACK keeps the original request until its exact 
     await missingContent
     assert.deepEqual(await page.evaluate(() => window.schedulingEditor.held()), held, "a descriptor without its exact content keeps the hold")
     f.contentProof = true
+    const exactReceipt = page.waitForResponse(response => response.request().method() === "GET"
+      && new URL(response.url()).pathname === "/api/workspaces/fixture/missions/msn_fixture")
     await form(page).getByRole("button", { name: "Refresh saved request", exact: true }).click()
     await form(page).waitFor({ state: "detached" })
+    const { mission } = await (await exactReceipt).json()
+    assert.equal(mission.history[0].requestID, f.posts[0].requestId)
+    assert.equal(mission.taskPage.total, taskCount)
+    assert.equal(mission.tasks.length, Math.min(taskCount, 50))
+    assert.equal("objective" in mission.history[0], false)
     assert.equal(f.posts.length, 1); assert.deepEqual(f.errors, [])
     assert.ok(f.reads.some(read => read.pathname.endsWith("/content") && read.searchParams.get("kind") === "change"))
+    assert.equal(f.reads.some(read => read.pathname.endsWith("/tasks")), false, "receipt reconciliation never loads missing task rows")
   } finally { await page.close() }
 })
 
