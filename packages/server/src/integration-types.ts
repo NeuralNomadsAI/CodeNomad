@@ -32,6 +32,8 @@ export interface IntegrationView {
   configured: boolean
   /** Writable scopes that declare it or a rule for its plugin. */
   scopes: PluginControlScope[]
+  /** Safe correlation to writable plugin-source rows; paths, targets and plugin IDs stay server-side. */
+  configuredSources: Array<{ scope: PluginControlScope; entryIndex: number }>
   /** Installed package version, when the runtime loaded it. */
   version?: string
   outdated?: true
@@ -51,3 +53,12 @@ export interface IntegrationsResponse {
   catalog: { state: IntegrationCatalogState; fetchedAt?: string }
   integrations: IntegrationView[]
 }
+
+export type IntegrationHostsResponse = import("./opencode/integrations/contract").IntegrationRpcValue<"hosts.output">
+export type IntegrationAttachRequest = import("./opencode/integrations/contract").IntegrationRpcValue<"attachHost.input">
+export type IntegrationAttachResponse = import("./opencode/integrations/contract").IntegrationRpcValue<"attachHost.output">
+export type IntegrationDetachRequest = import("./opencode/integrations/contract").IntegrationRpcValue<"detachHost.input">
+export type IntegrationDetachResponse = import("./opencode/integrations/contract").IntegrationRpcValue<"detachHost.output">
+/** Persisted reattach hint only; the integration owns current bindings. */
+export interface IntegrationAttachmentHint { integration: string; label: string; attachedAt: number }
+export const INTEGRATION_ATTACHMENT_METADATA_KEY = "codenomad.integrationAttachment"

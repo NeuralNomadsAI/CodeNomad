@@ -60,6 +60,10 @@ export class IntegrationsReader {
           catalogStatus: entry.status,
           configured: recognition.ways.length > 0,
           scopes,
+          configuredSources: recognition.sources.flatMap(source =>
+            (source.scope === "global" || source.scope === "project")
+              && snapshot.targets.some(target => target.scope === source.scope && target.path === source.path)
+              ? [{ scope: source.scope, entryIndex: source.entryIndex }] : []),
           ...(source?.type === "package" && source.version ? { version: source.version } : {}),
           ...(source?.type === "package" && source.outdated ? { outdated: true as const } : {}),
           state: read.state,

@@ -116,7 +116,7 @@ export class PluginControls {
     workspaceId: string,
     location: PluginControlLocation,
     scope: PluginControlScope,
-    edit: (document: PluginControlDocument) => string,
+    edit: (document: PluginControlDocument) => string | Promise<string>,
     // Aborts the daemon reads and, re-checked under the lock, the commit itself.
     signal?: AbortSignal,
   ): Promise<void> {
@@ -132,7 +132,7 @@ export class PluginControls {
       if (!release) throw new PluginControlsError("Worktree deletion is in progress", "conflict")
       try {
         const document = await readPluginControlDocument(target.ioPath, context.fileSystem)
-        const updated = edit(document)
+        const updated = await edit(document)
         await replacePluginControlDocument(document, updated, {
           beforeCommit: () => { assertCurrentConnection(context.connection); signal?.throwIfAborted() },
         }, context.fileSystem)

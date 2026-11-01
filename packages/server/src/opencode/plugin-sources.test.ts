@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
+import { pathToFileURL } from "node:url"
 import Fastify from "fastify"
 import { parse } from "jsonc-parser"
 import { PluginControls } from "./plugin-controls"
@@ -10,6 +11,7 @@ import { PluginSources } from "./plugin-sources"
 import { registerPluginSourceRoutes } from "../server/routes/plugin-sources"
 import { catalogEntry, catalogOf } from "./integrations/catalog-fixture"
 import type { IntegrationCatalog } from "./integrations/contract"
+import { IntegrationsReader } from "./integrations/integrations"
 
 async function fixture(options: { sameScopes?: boolean; catalog?: IntegrationCatalog } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "plugin-sources-"))
@@ -19,7 +21,8 @@ async function fixture(options: { sameScopes?: boolean; catalog?: IntegrationCat
   await mkdir(project, { recursive: true })
   const globalFile = path.join(global, "opencode.jsonc")
   const projectFile = path.join(project, ".opencode", "opencode.jsonc")
-  const state = { runtime: [] as unknown[], hideProject: false, current: true, gate: undefined as Promise<void> | undefined }
+  const state = { runtime: [] as unknown[], hideProject: false, current: true, gate: undefined as Promise<void> | undefined,
+    rpcOutput: undefined as unknown, rpcError: undefined as unknown, rpcCalls: [] as string[] }
   const documentEntry = async (file: string) => readFile(file, "utf8").then(text => [{ type: "document", path: file, info: parse(text) }], () => [])
   const connection: any = {
     assertCurrent: () => { if (!state.current) throw new Error("replaced connection") },
@@ -30,6 +33,11 @@ async function fixture(options: { sameScopes?: boolean; catalog?: IntegrationCat
           ...(options.sameScopes || state.hideProject ? [] : await documentEntry(projectFile))]
       } },
       plugin: { list: async () => ({ data: state.runtime }) },
+      rpc: { call: async ({ method }: { method: string }) => {
+        state.rpcCalls.push(method)
+        if (state.rpcError) throw state.rpcError
+        return { output: state.rpcOutput }
+      } },
     },
   }
   const manager: any = {
@@ -44,7 +52,8 @@ async function fixture(options: { sameScopes?: boolean; catalog?: IntegrationCat
   }
   const controls = new PluginControls({ workspaceManager: manager, worktreeDeletionFence: { enter: () => () => {} }, logger: { info() {} } as any })
   const catalog = options.catalog && { read: async () => ({ state: "fresh" as const, catalog: options.catalog! }) }
-  const sources = new PluginSources({ documents: controls, logger: { info() {} } as any, catalog })
+  const integrations = catalog && new IntegrationsReader({ controls, workspaceManager: manager, catalog })
+  const sources = new PluginSources({ documents: controls, logger: { info() {} } as any, catalog, integrations })
   return { root, globalFile, projectFile, project, state, controls, sources, location: { directory: project },
     cleanup: () => rm(root, { recursive: true, force: true }) }
 }
@@ -180,6 +189,98 @@ describe("plugin source mutations", () => {
       assert.deepEqual(response, { scope: "global", spec: "fixture-plugin", reloadPending: true })
       assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["keep", "-fixture.package"])
       await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", target: "fixture-plugin", entryIndex: 1 }), code("stale"))
+    } finally { await f.cleanup() }
+  })
+
+  it("fails attached integration removal closed at the central source route, and permits only a verified zero", async () => {
+    const f = await fixture({ catalog: catalogOf(catalogEntry("fixture")) })
+    const app = Fastify()
+    registerPluginSourceRoutes(app, { sources: f.sources })
+    try {
+      const target = "@neuralnomads/opencode-fixture"
+      const original = JSON.stringify({ plugins: [target, "-neuralnomads.fixture"], keep: true })
+      await writeFile(f.globalFile, original)
+      f.state.runtime = [{ id: "neuralnomads.fixture", source: { type: "package", target, version: "0.1.0" }, features: {}, state: { status: "active" } }]
+      const status = (attachedSessions?: number) => ({ contract: 1, integration: { id: "fixture", version: "0.1.0", family: "native", spec: 0 },
+        host: { state: "ok" }, connection: { state: "attached", ...(attachedSessions === undefined ? {} : { attachedSessions }) } })
+      const remove = () => app.inject({ method: "DELETE", url: "/api/workspaces/w/plugin-sources", payload: { location: f.location, scope: "global", target, entryIndex: 0 } })
+      f.state.rpcOutput = status(2)
+      assert.deepEqual((await remove()).json(), { error: "Integration removal requires verified detached sessions", code: "attached-sessions" })
+      assert.equal(await readFile(f.globalFile, "utf8"), original)
+      for (const output of [status(), { ...status(0), integration: { ...status(0).integration, id: "mismatch" } }, { invalid: "SECRET_SENTINEL" }]) {
+        f.state.rpcOutput = output
+        const response = await remove()
+        assert.equal(response.statusCode, 409)
+        assert.equal(response.json().code, "attachment-unverified")
+        assert.equal(response.body.includes("SECRET_SENTINEL"), false)
+        assert.equal(await readFile(f.globalFile, "utf8"), original)
+      }
+      f.state.rpcError = new Error("SECRET_SENTINEL")
+      assert.equal((await remove()).json().code, "attachment-unverified")
+      assert.equal(await readFile(f.globalFile, "utf8"), original)
+      f.state.rpcError = undefined
+      f.state.rpcOutput = status(0)
+      assert.equal((await remove()).statusCode, 200)
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")), { plugins: ["-neuralnomads.fixture"], keep: true })
+      assert.ok(f.state.rpcCalls.length > 0)
+      assert.ok(f.state.rpcCalls.every(method => method === "status"), "never invents binding enumeration or detach-all")
+    } finally { await app.close(); await f.cleanup() }
+  })
+
+  it("protects local native sources recognised by plugin ID and refuses removal without status authority", async () => {
+    const f = await fixture({ catalog: catalogOf(catalogEntry("fixture")) })
+    try {
+      const localPath = path.join(f.root, "builds", "fixture", "index.js")
+      const target = pathToFileURL(localPath).href
+      const original = JSON.stringify({ plugins: [target] })
+      await writeFile(f.globalFile, original)
+      f.state.runtime = [{ id: "neuralnomads.fixture", source: { type: "local", path: localPath }, features: {}, state: { status: "active" } }]
+      f.state.rpcOutput = { contract: 1, integration: { id: "fixture", version: "0.1.0", family: "native", spec: 0 }, connection: { state: "attached", attachedSessions: 1 } }
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", target, entryIndex: 0 }), code("attached-sessions"))
+      const noReader = new PluginSources({ documents: f.controls, logger: { info() {} } as any,
+        catalog: { read: async () => ({ state: "fresh", catalog: catalogOf(catalogEntry("fixture")) }) } })
+      await assert.rejects(noReader.remove("w", { location: f.location, scope: "global", target, entryIndex: 0 }), code("attachment-unverified"))
+      assert.equal(await readFile(f.globalFile, "utf8"), original)
+    } finally { await f.cleanup() }
+  })
+
+  it("reads removal authority after queued edits and keeps the edit connection pinned through commit", async () => {
+    const catalog = catalogOf(catalogEntry("fixture"))
+    const f = await fixture({ catalog })
+    const target = "@neuralnomads/opencode-fixture"
+    const original = JSON.stringify({ plugins: [target] })
+    try {
+      await writeFile(f.globalFile, original)
+      f.state.runtime = [{ id: "neuralnomads.fixture", source: { type: "package", target, version: "0.1.0" }, features: {}, state: { status: "active" } }]
+      const output = (attachedSessions: number) => ({ contract: 1, integration: { id: "fixture", version: "0.1.0", family: "native", spec: 0 },
+        connection: { state: "attached", attachedSessions } })
+      f.state.rpcOutput = output(0)
+      let enter!: () => void, release!: () => void
+      const entered = new Promise<void>(resolve => { enter = resolve })
+      const gate = new Promise<void>(resolve => { release = resolve })
+      const firstEdit = f.controls.editConfigDocument("w", f.location, "global", async document => {
+        enter(); await gate; return document.text
+      })
+      await entered
+      const removal = f.sources.remove("w", { location: f.location, scope: "global", target, entryIndex: 0 })
+      assert.equal(f.state.rpcCalls.length, 0, "no preflight authority is taken outside the edit queue")
+      f.state.rpcOutput = output(1)
+      release()
+      await firstEdit
+      await assert.rejects(removal, code("attached-sessions"))
+      assert.equal(await readFile(f.globalFile, "utf8"), original)
+
+      const sources = new PluginSources({ documents: f.controls, logger: { info() {} } as any,
+        catalog: { read: async () => ({ state: "fresh", catalog }) },
+        integrations: { read: async () => {
+          f.state.current = false
+          return { location: f.location, catalog: { state: "fresh" }, integrations: [
+            { id: "fixture", state: "ok", status: { connection: { attachedSessions: 0 } } },
+          ] } as any
+        } },
+      })
+      await assert.rejects(sources.remove("w", { location: f.location, scope: "global", target, entryIndex: 0 }))
+      assert.equal(await readFile(f.globalFile, "utf8"), original, "a verified zero from a superseded edit connection cannot commit")
     } finally { await f.cleanup() }
   })
 

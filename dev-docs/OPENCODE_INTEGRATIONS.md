@@ -101,15 +101,75 @@ Adding a plugin source (`opencode/plugin-sources.ts`) uses the same catalog: a r
 refused in Project (`global-only`, D18), and specs of one recognised integration, or of one whose plugin already
 loaded, are duplicates whatever their form (registry or Git). With the catalog unavailable nothing is recognised.
 
+`IntegrationView.configuredSources` associates an integration with its writable plugin-source rows by `scope` and
+`entryIndex` only. The source must belong to that scope's exact write target; inherited declarations stay read-only.
+
+## Application attachment
+
+`opencode/integrations/attachments.ts` owns the native attachment actions. The authenticated workspace routes in
+`server/routes/integration-attachments.ts` expose:
+
+- `GET /api/workspaces/:id/integrations/:integrationId/hosts?directory=` → `{ offers }`;
+- `POST /api/workspaces/:id/integrations/:integrationId/attach?directory=` with `{ offerID, sessionID }` →
+  `{ outcome: "attached" | "busy" | "gone" | "refused" }`;
+- `POST /api/workspaces/:id/integrations/:integrationId/detach?directory=` with `{ sessionID }` →
+  `{ outcome: "detached" | "none" }`.
+
+The query and bodies are strict. Native session IDs require the `ses` prefix before any native IO. The integration must be native, recognised unambiguously and active in the owned
+Location's plugin snapshot. The server derives its RPC ID from the catalog and calls only the fixed methods
+`status`, `hosts`, `attachHost` and `detachHost`. Hosts and attach check the status marker and refuse an
+`unsupported` host. Detach remains usable when the application has gone. Every RPC output passes through
+`readIntegrationRpcOutput`; display labels, document names and application versions also pass `looksLikePath`.
+Unknown output fields are stripped. Failures expose only fixed codes, including in logs.
+
+Before and after each session-scoped RPC and metadata write, native `session.get` must return the exact session in
+the exact requested canonical Location. Another owned worktree still fails this equality check. Workspace
+ownership and the pinned connection's `assertCurrent` are checked around IO and at dispatch; superseded work
+fails closed. An action has one `INTEGRATION_ATTACHMENT_TIMEOUT_MS` (8 s) deadline, propagated to native reads and
+mutations; expired continuations check cancellation before further dispatch. Reads and mutations have `no-store`.
+Shared route types live in `integration-types.ts`.
+
+After an `attached` outcome, the session's `metadata["codenomad.integrationAttachment"]` is exactly
+`{ integration, label, attachedAt }`: catalog ID, offer's `label` for reattach matching and Unix milliseconds.
+The server reads the session afresh immediately before native `session.update`, whose whole metadata object
+replaces the stored object, retaining all unrelated keys from that read. Attach and detach serialize per session
+within the backend. Both `detached` and `none` remove the hint. Q8 is a display hint for a confirmed reattach to a
+matching integration and label; the plugin's live bindings retain authority. Concurrent writers in other clients
+share native whole-object replacement semantics.
+
+### Removal safety and host installation
+
+Every source removal goes through the central `PluginSources.remove` guard (`integrations/removal.ts`). For a
+recognised native source, including a local source correlated by runtime plugin ID, removal requires a fresh,
+conforming status with `attachedSessions: 0`. A positive count gives `attached-sessions` (409); missing authority,
+inactive/unsupported status, ambiguity or read failure gives `attachment-unverified` (409), preserving the config.
+The count is read under the configuration mutation queue's pinned connection, whose authority is checked again
+at commit, independently of session metadata. An external attachment after the read remains a coordination limit.
+Contract 1 provides an aggregate binding count;
+safe detach-all removal (AC-C14) requires an integration-owned binding enumeration contract. Host installation and
+its daemon-WSL refusal (AC-C15) belong to the host-installation route slice.
+
+## UI read model
+
 `createIntegrationsStore` (`stores/integrations-store.ts`, reading through `lib/integrations-api.ts`) is the read
 model for UI surfaces that show integrations. `demand(instance, directory)` reads that Location until its release,
 whose last call aborts the read. `applyEvent(instance, type)` takes the instance's native event types:
 `rpc.neuralnomads.<app>.status_changed`/`hosts_changed`, `plugin.updated` and `config.updated` schedule one read of
 the instance's demanded Locations 300 ms after the first of them, with one trailing follow-up while a read runs;
 `refreshDemanded` re-reads after a reconnect and `clearInstance` forgets a stopped instance. It has no timer of its
-own. A surface that mounts it forwards its instance's `instance.event`, reconnection and `workspace.stopped`
-events, like `stores/session-goal.ts`. The event relay delivers an integration event only when it is published in a
-Location the workspace owns.
+own. `stores/integrations.ts` owns the production singleton and forwards `instance.event`, reconnect, stream-open
+and workspace-stop notifications. The event relay projects only the two payload-free integration notifications,
+retaining the native Location for ownership routing and dropping plugin-authored envelope fields.
+
+The conversation header (wide and overflow layouts) and each associated Plugins row offer a trusted application
+picker. The picker initially focuses Cancel, names its captured target conversation and the daemon machine, and
+requires explicit selection and confirmation. Navigation discards the captured target; reconnect and relevant
+native invalidations discard offers. Admitted action receipts remain readable for their unchanged target across
+native echoes, with an explicit safe Detach action after a successful attach. WSL-unsupported status shows help.
+Plugins shows an unavailable catalog or the last
+valid catalog's fetch time. Saved Q8 hints offer confirmed reattachment only for matching integration and label.
+Action receipts describe the completed request. A durable live-binding indicator requires an integration-owned
+per-session binding read.
 
 ## Test fixtures
 
@@ -153,6 +213,18 @@ Commands:
   (`ok`), its marker-mismatch variant (`non-conforming`), a third disabled by its exact rule (`inactive`, recognised)
   and an absent entry, against a real daemon; only loaded integrations are called, under catalog RPC IDs; a
   Project add of a native integration and a second spec of a loaded one are refused without writing.
+- `node --import tsx --test packages/server/src/server/routes/integration-attachments.test.ts
+  packages/server/src/opencode/plugin-sources.test.ts`: real route/service checks for strict inputs, ownership and
+  connection changes, missing/moved sessions, full output validation, path refusal, sanitized failures, bounded
+  calls, exact Q8 metadata preservation/removal and removal's verified-zero guard with unchanged files on refusal.
+- `node --import tsx scripts/test-integrations-attachments-native.mjs <absolute-cli> [pilot-checkout] [blender-executable]`:
+  OpenCode 2.2.5 with actual Fastify attachment/read/SSE routes, native sessions and metadata, a loopback
+  `IntegrationCatalogSource`, and the real relay feeding `createIntegrationsStore` through SSE. Checks a 60-second
+  event-free demand and ten native plugin events inside 300 ms, strict inputs and cross-Location refusals. The
+  Blender pilot includes `2a3d1b0`, uses its existing built plugin and add-on installer, and runs `serve.py` with
+  factory startup, private resources, an explicit fixture config directory and registration. Sentinel scans cover
+  HTTP, native and relayed events, SSE, metadata and fixture logs, including an adversarial opaque session ID.
+  Every child uses the fixture environment. Manual AC-B4 has its own acceptance run.
 - `node --import tsx scripts/test-integration-fixtures-native.mjs <absolute-cli>`: installs the fake package and
   its marker-mismatch variant through the fake registry, checks every output against `contract.ts`, runs the
   Python client against the fixture's own registration (advertise, attach, detach, withdraw), checks that its

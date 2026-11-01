@@ -19,11 +19,14 @@ import { pluginSourcesStore, removableSources } from "../stores/plugin-sources"
 import { PluginRowActions } from "./plugin-row-actions"
 import { PluginSourceAdd } from "./plugin-source-add"
 import "../stores/plugin-controls-events"
+import { createIntegrationAttachment } from "./integration-attachment"
+import { integrations } from "../stores/integrations"
 
 interface PluginActivationControlsProps {
   instanceId: string
   location: PluginControlLocation
   active?: boolean
+  session?: { id: string; title?: string; metadata?: Record<string, unknown> }
 }
 
 const log = getLogger("session")
@@ -38,6 +41,20 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   const globalLabelId = `plugin-controls-${createUniqueId()}-global`
   const projectLabelId = `plugin-controls-${createUniqueId()}-project`
   const directory = createMemo(() => props.location.directory)
+  const attachment = createIntegrationAttachment({
+    get instanceId() { return props.instanceId }, get directory() { return directory() },
+    get session() { return props.session }, get active() { return props.active },
+  })
+  const catalogUnavailable = () => {
+    const value = attachment.state()
+    return value.status === "error" || (value.status === "ready" && value.refreshError) || attachment.response()?.catalog.state === "unavailable"
+  }
+  const integrationFor = (sources: readonly (PluginConfiguredSource & { scope: PluginControlScope })[]) => attachment.entries().find(entry =>
+    entry.configuredSources.some(association => sources.some(source => source.scope === association.scope && source.entryIndex === association.entryIndex)))
+  const attachFor = (sources: readonly (PluginConfiguredSource & { scope: PluginControlScope })[]) => {
+    const entry = integrationFor(sources)
+    return entry && attachment.canAttach(entry.id) ? () => attachment.open(entry.id) : undefined
+  }
   let cachedLocation: PluginControlLocation | undefined
   const requestLocation = (): PluginControlLocation => {
     if (!cachedLocation || cachedLocation.directory !== directory()) {
@@ -164,7 +181,10 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   const declarationsFor = (matches: (source: PluginConfiguredSource) => boolean) => (
     snapshot()?.configured.sources.filter(matches) ?? []
   )
-  const refresh = () => void pluginControlsCache.load(props.instanceId, requestLocation(), { force: true })
+  const refresh = () => {
+    void pluginControlsCache.load(props.instanceId, requestLocation(), { force: true })
+    void integrations.refreshDemanded(props.instanceId)
+  }
 
   const renderControl = (pluginId: string) => {
     // Key rows by ID, but read every displayed value from the current snapshot.
@@ -243,7 +263,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
             <Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content>
           </Tooltip.Portal>
         </Tooltip><PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={pluginId}
-          source={control()?.runtime?.source} removable={removable()} active={props.active} /></div>
+          source={control()?.runtime?.source} removable={removable()} active={props.active} attach={attachFor(removable())} /></div>
         {renderSwitch("global")}
         {renderSwitch("project")}
       </div>
@@ -271,7 +291,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           <Tooltip.Portal><Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content></Tooltip.Portal>
         </Tooltip>
         <PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} source={entry()?.source}
-          removable={removable()} active={props.active} />
+          removable={removable()} active={props.active} attach={attachFor(removable())} />
       </div>
     </div>
   }
@@ -301,7 +321,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           </span>
         </Show>
         <PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} removable={removable()}
-          refresh={state() === "unconfirmed" ? refresh : undefined} active={props.active} />
+          refresh={state() === "unconfirmed" ? refresh : undefined} active={props.active} attach={attachFor(removable())} />
       </div>
     </div>
   }
@@ -314,6 +334,14 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       <Show when={snapshot() && !snapshot()?.targets.some((target) => target.scope === "project")}>
         <span id={noticeId} class="sr-only">{t("instanceServiceStatus.plugins.scope.unavailable")}</span>
       </Show>
+      <Show when={catalogUnavailable()}>
+        <p class="right-panel-empty-text" role="status">{t("integrations.catalogUnavailable")}</p>
+      </Show>
+      <Show when={attachment.response()?.catalog.state === "stale"}>
+        <p class="right-panel-empty-text" role="status">{t("integrations.catalogStale", { fetchedAt: attachment.response()?.catalog.fetchedAt ?? "" })}</p>
+      </Show>
+      <Show when={attachment.unsupported()}><p class="right-panel-empty-text">{t("integrations.unsupported")}</p></Show>
+      {attachment.picker()}
 
       <div class="plugin-controls-header">
         <div class="plugin-controls-header-actions">

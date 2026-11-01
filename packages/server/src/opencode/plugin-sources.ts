@@ -17,6 +17,8 @@ import {
 } from "./plugin-source-document"
 import type { IntegrationCatalogSource } from "./integrations/catalog"
 import { integrationsForSpec } from "./integrations/recognition"
+import type { IntegrationsReader } from "./integrations/integrations"
+import { checkIntegrationRemoval } from "./integrations/removal"
 
 export class PluginSourcesError extends PluginControlsError {
   constructor(message: string, kind: PluginControlsErrorKind, readonly code: PluginSourceErrorCode) {
@@ -42,7 +44,7 @@ export class PluginSources {
   // One queue for the whole server: the Global document is shared by every workspace.
   private addTail: Promise<void> = Promise.resolve()
 
-  constructor(private readonly options: { documents: Documents; logger: Logger; catalog?: Catalog; addTimeoutMs?: number; abortGraceMs?: number }) {}
+  constructor(private readonly options: { documents: Documents; logger: Logger; catalog?: Catalog; integrations?: Pick<IntegrationsReader, "read">; addTimeoutMs?: number; abortGraceMs?: number }) {}
 
   add(workspaceId: string, request: PluginSourceAddRequest): Promise<PluginSourceMutationResponse> {
     try {
@@ -116,7 +118,11 @@ export class PluginSources {
 
   async remove(workspaceId: string, request: PluginSourceRemoveRequest): Promise<PluginSourceMutationResponse> {
     const { scope, target, entryIndex } = request
-    await this.options.documents.editConfigDocument(workspaceId, request.location, scope, document => {
+    await this.options.documents.editConfigDocument(workspaceId, request.location, scope, async document => {
+      // Read binding authority under the mutation queue's pinned connection. The shared primitive
+      // rechecks that connection at commit, including across these asynchronous native reads.
+      const blocked = await checkIntegrationRemoval(this.options, workspaceId, request)
+      if (blocked) throw new PluginSourcesError("Integration removal requires verified detached sessions", "conflict", blocked)
       try {
         return removePluginSourceEntry(document, entryIndex, target)
       } catch (error) {

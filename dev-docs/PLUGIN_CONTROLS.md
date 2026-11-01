@@ -13,7 +13,8 @@ CodeNomad writes the declaration and OpenCode resolves, installs and loads it.
 one string entry at the end of the scope's `plugins`; `DELETE` (`{ location,
 scope, target, entryIndex }`) removes one entry. Both routes are strict, map
 errors like the activation route and add a stable `code` (`invalid-spec`,
-`local-path`, `plugin-id`, `duplicate`, `stale`, `timeout`, `global-only`).
+`local-path`, `plugin-id`, `duplicate`, `stale`, `timeout`, `global-only`,
+`attached-sessions`, `attachment-unverified`).
 
 - **Accepted specs** match OpenCode's own `plugin add`: registry versions, ranges,
   tags and `npm:` aliases, and remote Git specs, parsed with `npm-package-arg`.
@@ -42,6 +43,10 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   (409). The result must parse to the original minus exactly that element.
   Activation rules (`id`/`-id`) are left in place, and OpenCode's package cache is
   never touched.
+  A catalog-recognised native integration additionally requires a fresh,
+  conforming `attachedSessions: 0`; positive counts and unavailable authority
+  refuse removal with 409 before editing. The integration's aggregate RPC count
+  is the authority ([attachment safety](OPENCODE_INTEGRATIONS.md#removal-safety-and-host-installation)).
 - **Scope**: Global is the default. Project shows a warning that the entry runs
   whenever the folder is opened and that GUI parts load only from Global. Whether
   a package has GUI parts (`features.gui`) is known only once OpenCode has loaded
@@ -146,9 +151,10 @@ commands without a generic metadata round-trip.
 
 `packages/server/src/opencode/plugin-control-document.ts` owns the file
 operation. Activation rules and source declarations use the same primitive:
-source add/remove runs through `PluginControls.editConfigDocument`, whose
+source add/remove runs through `PluginControls.editConfigDocument`, whose awaited
 callback edits the freshly read document (`plugin-source-document.ts` holds the
-spec validation, package identity and removal edit).
+spec validation, package identity and removal edit). Attachment authority is read
+inside that queue; the pinned connection is rechecked before committing its edit.
 
 1. Read at most 4 MiB and require valid UTF-8 JSON/JSONC with one array-valued
    `plugins` key.
