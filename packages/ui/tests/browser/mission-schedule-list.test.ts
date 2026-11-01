@@ -429,8 +429,9 @@ test("Check reconciles a positively recorded partial request and retains both id
   } finally { await page.close() }
 })
 
-test("cold reopen keeps the first page, cursor and original held request when selected detail is partial 503", async () => {
+for (const negativeFirst of [true, false]) test(`cold reopen keeps the first page, cursor and original held request when selected detail is partial 503 (${negativeFirst ? "negative then positive" : "FIRST positive receipt"})`, async () => {
   const page = await browser.newPage(), f = await setup(page, { seed: true, outsidePage: true })
+  const originalRevision = f.doc.revision
   try {
     await select(page); f.partial = "play"; await click(page, "Play")
     await button(page, "Refresh saved request").waitFor()
@@ -448,13 +449,21 @@ test("cold reopen keeps the first page, cursor and original held request when se
     await page.keyboard.press("Escape")
     assert.equal(await button(page, "Check passage").isDisabled(), true, "retained partial metadata grants no new control")
     assert.equal(await button(page, "Stop…").isDisabled(), true)
-    await button(page, "Refresh saved request").click()
-    assert.ok(f.reads.some(url => url.includes(`requestID=${original.requestID}`)))
-    assert.deepEqual(f.posts, [original], "reopen and explicit reconciliation never replay the control")
+    if (negativeFirst) {
+      await button(page, "Refresh saved request").click()
+      assert.ok(f.reads.some(url => url.includes(`requestID=${original.requestID}`)))
+      assert.deepEqual(f.posts, [original], "reopen and explicit reconciliation never replay the control")
+    }
+    const before = f.reads.length
     f.resolve()
     await button(page, "Refresh saved request").click()
     await button(page, "Refresh saved request").waitFor({ state: "detached" })
     await button(page, "Pause").and(page.locator(":enabled")).waitFor()
+    const confirmedReads = f.reads.slice(before).map(value => new URL(value))
+    assert.equal(confirmedReads.filter(value => value.searchParams.get("requestID") === original.requestID).length, 1)
+    assert.ok(confirmedReads.some(value => value.pathname.endsWith("/msn_schedule/schedule") && !value.searchParams.has("requestID")),
+      "controls are restored by a fresh document read, never by retained partial display or receipt metadata")
+    assert.equal(original.expectedRevision, originalRevision); assert.equal(typeof original.requestID, "string")
     assert.equal(await page.getByRole("button", { name: "Load more Missions", exact: true }).count(), 1)
     assert.deepEqual(f.posts, [original]); assert.deepEqual(f.errors, [])
   } finally { await page.close() }

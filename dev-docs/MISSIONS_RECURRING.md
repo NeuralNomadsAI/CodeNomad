@@ -41,6 +41,10 @@ request/revision for explicit read-only reconciliation. Only successfully read
 documents enable new controls or representation changes; retained display metadata
 and partial error-body receipts keep the original reconciliation available. Selection,
 scope, connection and disposal fence late selected reads, including ABA changes.
+Exact control settlement schedules the still-current parent's fresh read and deletion
+callback before releasing a selected hold's display owner. Late confirmations release
+only their matching hold; chained receipt reads and activation continuations retain
+their original view and connection fences.
 
 List and detail also expose `observation`, `availableActions` and `blockReason`.
 Their `technical` projection exposes only the recorded current/retiring carrier

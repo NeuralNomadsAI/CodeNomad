@@ -1,10 +1,11 @@
-import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
+import { batch, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import { unifiedScheduleHolds as holds, unifiedScheduleHold, changedUnifiedScheduleHolds as bump,
   type UnifiedMissionSchedule, type UnifiedScheduleAction as Action, type UnifiedScheduleHold as Hold } from "../stores/mission-schedules"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
+import { instances } from "../stores/instances"
 import { requiresMissionCalendar } from "../../../server/src/missions/mission-launch-kind"
 import { partialMissionScheduleReceipt as partialReceipt, type MissionScheduleControlReceipt as ControlReceipt } from "../lib/mission-schedule-receipt"
 
@@ -30,12 +31,14 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
   onCleanup(() => { alive = false })
   const held = () => unifiedScheduleHold(identity())
   const [capability, setCapability] = createSignal<"loading" | "available" | "activatable" | "missing">("loading")
+  const capabilityOwner = createMemo(() => ({ key: identity(), active: props.active(),
+    client: instances().get(props.instanceId)?.client, generation: getOpenCodeInstanceGeneration(props.instanceId) }), undefined,
+    { equals: (a, b) => !!a && a.key === b.key && a.active === b.active && a.client === b.client && a.generation === b.generation })
   const capture = () => {
-    const key = identity(), generation = getOpenCodeInstanceGeneration(props.instanceId)
-    return () => alive && props.active() && identity() === key && getOpenCodeInstanceGeneration(props.instanceId) === generation
+    const owner = capabilityOwner()
+    return () => alive && props.active() && capabilityOwner() === owner
   }
-  const capabilityOwner = createMemo(() => JSON.stringify([identity(), props.active(), getOpenCodeInstanceGeneration(props.instanceId)]))
-  let previousOwner: string | undefined
+  let previousOwner: ReturnType<typeof capabilityOwner> | undefined
   createEffect(() => {
     const owner = capabilityOwner(); props.refreshVersion()
     untrack(() => {
@@ -49,23 +52,29 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
       onCleanup(() => abort.abort())
     })
   })
-  const settle = (key: string, hold: Hold) => {
+  const settle = (key: string, hold: Hold, current: () => boolean) => {
     if (holds.get(key) !== hold) return
-    holds.delete(key); bump()
-    if (hold.action === "delete" && key === identity() && alive && props.active()) props.onDeleted()
+    // The hold can be the selected row's sole display owner. Schedule its parent's
+    // fresh read and deletion callback before publication disposes this controller.
+    batch(() => {
+      holds.delete(key)
+      if (current()) { props.refresh(); if (hold.action === "delete") props.onDeleted() }
+      bump()
+    })
   }
   const capable = (action: Action) => props.active() && props.enabled() && !busy() && props.document().availableActions.includes(action)
      && (!requiresMissionCalendar(props.document().configuration.launch) || !["play", "resume", "run-now"].includes(action)
        || capability() === "available" || action !== "run-now" && capability() === "activatable")
     && (!held() || action === "check" && held()!.phase === "control" && held()!.partial && !held()!.original)
-  async function receipt(key: string, hold: Hold) {
+  async function receipt(key: string, hold: Hold, current: () => boolean) {
     const doc = props.document(), result = await serverApi.fetchMissionSchedule(props.instanceId, doc.id,
       { directory: props.directory, requestID: hold.requestID }).catch(error => {
         const result = partialReceipt(error); if (result) return result; throw error
       })
     if (exactMissionScheduleControl(result, hold, doc.id)) {
-      if (hold.original) { holds.set(key, hold.original); bump(); await receipt(key, hold.original) }
-      else settle(key, hold)
+      if (holds.get(key) !== hold) return
+      if (hold.original) { holds.set(key, hold.original); bump(); if (current()) await receipt(key, hold.original, current) }
+      else settle(key, hold, current)
     }
     else if (holds.get(key) === hold) {
       const control = result.document?.control
@@ -83,8 +92,8 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
         const { document } = await serverApi.missionScheduleSettings(props.instanceId, props.document().id,
           { requestID: hold.requestID, expectedDocumentRevision: hold.expectedRevision })
         const proof = document.scheduleActivation
-        if (proof?.requestID === hold.requestID && proof.expectedRevision === hold.expectedRevision && proof.state === "ready") settle(key, hold)
-      } else await receipt(key, hold)
+        if (proof?.requestID === hold.requestID && proof.expectedRevision === hold.expectedRevision && proof.state === "ready") settle(key, hold, current)
+      } else await receipt(key, hold, current)
       if (current()) props.refresh()
     } catch { /* Negative or failed reads preserve the original identity. */ }
     finally { if (current()) setBusy(false) }
@@ -128,7 +137,7 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
             { requestID: activation.requestID, expectedDocumentRevision: revision }, true)
           const proof = value.document.scheduleActivation
           if (proof?.requestID !== activation.requestID || proof.expectedRevision !== revision || proof.state !== "ready") return
-          settle(key, activation); dispatched = undefined
+          settle(key, activation, current); dispatched = undefined
           if (!current()) return
           revision = value.document.revision
         }
@@ -144,9 +153,8 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
         expectedRevision: revision, directory: props.directory, ...(action === "delete" ? { deleteManagedSessions: false } : {}) }).catch(error => {
           const result = partialReceipt(error); if (result) return result; throw error
         })
-      if (previous) await receipt(key, request)
-      else if (exactMissionScheduleControl(result, request, original.id)) settle(key, request)
-      else await receipt(key, request)
+      if (!previous && exactMissionScheduleControl(result, request, original.id)) settle(key, request, current)
+      else if (current()) await receipt(key, request, current)
       if (current()) props.refresh()
     } catch { if (current() && !dispatched) setFeedback("missions.scheduleList.readFailed") }
     finally { if (current()) { setBusy(false); props.refresh() } }
