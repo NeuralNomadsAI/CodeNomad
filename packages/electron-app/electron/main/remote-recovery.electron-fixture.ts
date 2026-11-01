@@ -5,7 +5,7 @@ import http from "node:http"
 import type { AddressInfo } from "node:net"
 import { join } from "node:path"
 import { setupCliIPC } from "./ipc"
-import { RemoteRecoveryPages } from "./remote-recovery"
+import { RemoteRecoveryPages, showRemoteUnavailable } from "./remote-recovery"
 import { RemoteWindowRegistry } from "./remote-window-registry"
 
 const [scratch, resultPath, preloadPath] = process.argv.slice(-3)
@@ -26,21 +26,25 @@ setupCliIPC({} as never, {
   browserController: {} as never,
 })
 
-const server = http.createServer((_request, response) => {
+// "/" is the server's own document; "/no-content" answers 204, so a retry commits no document.
+const server = http.createServer((request, response) => {
+  if (request.url === "/no-content") { response.writeHead(204); response.end(); return }
   response.writeHead(200, { "Content-Type": "text/html" })
   response.end("<!doctype html><title>Remote server</title><body>Remote-controlled content</body>")
 })
 
-// Runs in the page: both recovery actions with `token`, reporting which ones the host refused.
-const attempt = (token: string | null) => `(async () => {
+// Runs in the page: each named recovery action with `token`, reporting which ones the host refused.
+const attempt = (token: string | null, names = ["openLocalWindow", "retryRemoteWindow"]) => `(async () => {
   const results = {}
-  for (const name of ["openLocalWindow", "retryRemoteWindow"]) {
+  for (const name of ${JSON.stringify(names)}) {
     try { await window.electronAPI[name](${JSON.stringify(token)}); results[name] = "allowed" } catch { results[name] = "refused" }
   }
   return results
 })()`
+const tokenOf = (url: string) => new URL(url).hash.split("=")[1] ?? null
+const refused = (token: string | null) => attempt(token)
 
-const timer = setTimeout(() => { writeFileSync(resultPath, JSON.stringify({ error: "timeout" })); app.exit(2) }, 25_000)
+const timer = setTimeout(() => { writeFileSync(resultPath, JSON.stringify({ error: "timeout" })); app.exit(2) }, 40_000)
 
 app.whenReady().then(async () => {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
@@ -54,23 +58,59 @@ app.whenReady().then(async () => {
   remoteWindows.register("server", window)
   const page = window.webContents
   const result: Record<string, unknown> = {}
+  const navigate = async () => { counts.retried++; await window.loadURL(`${remoteUrl}no-content`) }
+  const show = () => showRemoteUnavailable(recovery, window, { file: loadingFile }, navigate)
+  // Waits until another document than `previous` has finished loading.
+  const nextDocument = async (previous: string) => {
+    for (let waited = 0; waited < 10_000; waited += 50) {
+      if (page.getURL() !== previous && !page.isLoading()) return page.getURL()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    throw new Error(`no new document after ${previous}`)
+  }
 
   // 1. The remote server's own document pretends to be the recovery page.
   await window.loadURL(remoteUrl)
-  result.spoofWithoutToken = await page.executeJavaScript(`history.replaceState(null, "", "/loading.html#remote-unavailable=guess"); ${attempt("guess")}`)
+  result.spoofWithoutToken = await page.executeJavaScript(`history.replaceState(null, "", "/loading.html#remote-unavailable=guess"); ${refused("guess")}`)
 
-  // 2. The host's own recovery document, with the token it issued and with another one.
-  let retried = false
-  const fragment = recovery.issue(page, async () => { counts.retried++; retried = true })
-  const token = fragment.slice(fragment.indexOf("=") + 1)
-  await window.loadFile(loadingFile, { hash: fragment })
-  result.hostWrongToken = await page.executeJavaScript(attempt("not-the-token"))
-  result.hostDocument = await page.executeJavaScript(attempt(token))
-  result.retried = retried
+  // 2. The host's recovery document; Try again reaches a 204, which commits nothing.
+  await show()
+  const first = page.getURL()
+  result.hostWrongToken = await page.executeJavaScript(refused("not-the-token"))
+  await page.executeJavaScript(`window.__firstDocument = true; window.electronAPI.retryRemoteWindow(${JSON.stringify(tokenOf(first))}); null`)
+  const second = await nextDocument(first)
+  result.afterFailedRetry = {
+    newDocument: await page.executeJavaScript("window.__firstDocument !== true"),
+    newToken: tokenOf(second) !== tokenOf(first),
+    oldToken: await page.executeJavaScript(attempt(tokenOf(first), ["openLocalWindow"])),
+    openLocalWindow: await page.executeJavaScript(attempt(tokenOf(second), ["openLocalWindow"])),
+  }
+  await page.executeJavaScript(`window.electronAPI.retryRemoteWindow(${JSON.stringify(tokenOf(second))}); null`)
+  const third = await nextDocument(second)
+  result.countsAfterRetries = { ...counts }
 
-  // 3. Back on the server's document, even the leaked real token in a spoofed URL is refused.
+  // 3. Leaving for the server's document revokes the token, even replayed in a spoofed URL.
   await window.loadURL(remoteUrl)
-  result.spoofWithRevokedToken = await page.executeJavaScript(`history.replaceState(null, "", "/loading.html#${fragment}"); ${attempt(token)}`)
+  result.spoofWithRevokedToken = await page.executeJavaScript(`history.replaceState(null, "", ${JSON.stringify(new URL(third).pathname + new URL(third).search + new URL(third).hash)}); ${refused(tokenOf(third))}`)
+
+  // 4. Reloading the recovery document revokes its token and shows a fresh document.
+  await show()
+  const beforeReload = page.getURL()
+  page.reload()
+  const afterReload = await nextDocument(beforeReload)
+  result.afterReload = {
+    oldToken: await page.executeJavaScript(attempt(tokenOf(beforeReload), ["openLocalWindow"])),
+    newToken: await page.executeJavaScript(attempt(tokenOf(afterReload), ["openLocalWindow"])),
+  }
+
+  // 5. A renderer crash revokes the token; reloading the same URL does not restore it.
+  const gone = new Promise((resolve) => page.once("render-process-gone", () => resolve(undefined)))
+  page.forcefullyCrashRenderer()
+  await gone
+  const reloaded = new Promise((resolve) => page.once("did-finish-load", () => resolve(undefined)))
+  page.reload()
+  await reloaded
+  result.afterCrash = await page.executeJavaScript(refused(tokenOf(afterReload)))
   result.counts = counts
 
   writeFileSync(resultPath, JSON.stringify(result))

@@ -37,7 +37,7 @@ import { forwardOpenerStartupState, runStartupStateCommandInWindow, startupState
 import { resolveProfileRoots } from "./data-profile-cleanup"
 import { setupDataProfileCleanupIPC } from "./data-profile-cleanup-ipc"
 import { openExternalWithFeedback } from "./open-external"
-import { RemoteRecoveryPages } from "./remote-recovery"
+import { RemoteRecoveryPages, showRemoteUnavailable } from "./remote-recovery"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
@@ -596,16 +596,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       lifecycle.attachSupportWindow(window)
       window.on("closed", () => { remoteOrigins.delete(nativeWindowId); insecureOrigins.delete(webContentsId) })
       const navigate = () => navigateRemoteWindow(window, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify)
-      const showUnavailable = async (): Promise<void> => {
-        const fragment = remoteRecovery.issue(window.webContents, async () => {
-          try { await navigate() } catch (error) {
-            console.warn("[electron] remote window retry failed", error)
-            await showUnavailable()
-          }
-        })
-        const loading = loadingTarget()
-        await (loading.url ? window.loadURL(`${loading.url}#${fragment}`) : window.loadFile(loading.file!, { hash: fragment }))
-      }
+      const showUnavailable = () => showRemoteUnavailable(remoteRecovery, window, loadingTarget(), navigate)
       await loadNewRemoteWindow(window, navigate, showUnavailable, payload.requireLoad === true)
       launchWindows.delete(window)
       if (!window.isDestroyed() && !window.isVisible()) window.show()

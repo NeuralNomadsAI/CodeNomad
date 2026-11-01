@@ -37,11 +37,19 @@ test("only the host's own unavailable-server document reaches the remote recover
     // A remote document rewriting its URL with the History API stays the remote document.
     assert.deepEqual(result.spoofWithoutToken, refused)
     assert.deepEqual(result.hostWrongToken, refused)
-    assert.deepEqual(result.hostDocument, { openLocalWindow: "allowed", retryRemoteWindow: "allowed" })
-    assert.equal(result.retried, true)
+    // A Try again that commits no document (HTTP 204) shows a fresh recovery document with a new
+    // token, whose actions still work exactly once each; the previous token is gone.
+    assert.deepEqual(result.afterFailedRetry, {
+      newDocument: true, newToken: true,
+      oldToken: { openLocalWindow: "refused" }, openLocalWindow: { openLocalWindow: "allowed" },
+    })
+    assert.deepEqual(result.countsAfterRetries, { opened: 1, retried: 2 })
     // Leaving the recovery document revokes its token, and the server's origin never qualifies.
     assert.deepEqual(result.spoofWithRevokedToken, refused)
-    assert.deepEqual(result.counts, { opened: 1, retried: 1 })
+    // A reload revokes the token and the host shows a fresh document; a crash revokes it for good.
+    assert.deepEqual(result.afterReload, { oldToken: { openLocalWindow: "refused" }, newToken: { openLocalWindow: "allowed" } })
+    assert.deepEqual(result.afterCrash, refused)
+    assert.deepEqual(result.counts, { opened: 2, retried: 2 })
   } finally {
     rmSync(scratch, { recursive: true, force: true })
   }
