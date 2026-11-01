@@ -29,11 +29,22 @@ import type { AuthManager } from "../../auth/manager"
 import type { RemoteControlManager } from "../../remote-control/manager"
 import { MISSION_PANEL_PAGE_BYTES, MISSION_PANEL_REQUEST_BYTES, isMissionPanelPageResult, missionPanelBytes,
   missionPanelPageRequestSchema } from "../../missions/mission-panel-page"
+import { registerMissionScheduleActivation } from "./mission-schedule-activation"
+import { registerMissionScheduled } from "./mission-scheduled"
+import type { NativeScheduleSettingsActivation } from "../../opencode/native-schedule-settings-activation"
+import type { ServiceSupervisionSettings } from "../../host-lifetime/service-supervision-service"
+import { recurrenceHumanSession } from "./mission-recurrence-proof"
+import { registerMissionScheduleList } from "./mission-schedule-list"
+import type { NativeScheduleCapabilityReader } from "../../opencode/native-schedule-capability"
 
 interface MissionRouteDeps {
+  scheduleCapability?: Pick<NativeScheduleCapabilityReader, "read">
+  supervision?: Pick<ServiceSupervisionSettings, "missionPlay">
+  scheduleSettingsActivation?: Pick<NativeScheduleSettingsActivation, "prepare" | "apply">
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"
     | "getSharedServiceConnection" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath"
     | "getHostPathForServicePath" | "getServiceWslDistro">
+    & Partial<Pick<WorkspaceManager, "getServicePathStyle">>
   worktreeDeletionFence?: WorktreeDeletionFence
   settings?: Pick<SettingsService, "getProfileScope"> & Partial<Pick<SettingsService, "configYamlPathForAuthority">>
   auth?: Pick<AuthManager, "isAuthEnabled" | "getSessionFromRequest">
@@ -72,6 +83,9 @@ const UpdateSchema = z.object({
 const DeleteSchema = z.object({ expectedRevision: z.number().int().positive(), requestId: RequestID, deleteManagedSessions: z.boolean().optional() }).strict()
 
 export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDeps): void {
+  registerMissionScheduleList(app, deps)
+  registerMissionScheduleActivation(app, deps)
+  registerMissionScheduled(app, deps)
   registerMissionRecurrenceSnapshot(app, deps)
   registerMissionRecurrenceCreate(app, deps)
   registerMissionRecurrenceCurrent(app, deps)
@@ -233,10 +247,24 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
       graceful: z.literal(true).optional() }).strict().refine(value => !value.graceful || value.action === "pause").safeParse(request.body)
     const params = z.object({ id: z.string().trim().min(1).max(200), missionID: z.string().trim().min(1).max(100) }).safeParse(request.params)
     if (!parsed.success || !params.success) return reply.code(400).send({ error: "Invalid mission control request" })
+    const human = deps.auth && recurrenceHumanSession(request, { auth: deps.auth, remoteDevices: deps.remoteDevices })
+    if (parsed.data.action === "start" && deps.supervision && !human)
+      return reply.code(401).send({ error: "Human authentication required" })
     return mutate(request, reply, deps, params.data.id, async (rpc, options) => await rpc.lifecycle({
       missionID: params.data.missionID, requestID: parsed.data.requestId, action: parsed.data.action, expectedRevision: parsed.data.expectedRevision,
       ...(parsed.data.graceful ? { graceful: true } : {}),
-    }, options) as { mission: MissionMap })
+    }, options) as { mission: MissionMap }, async owned => {
+      if (parsed.data.action === "start" && deps.supervision) {
+        if (!human) throw new Error("Human authentication required")
+        const connection = owned.connection
+        await deps.supervision.missionPlay(connection, parsed.data.requestId, () => {
+          owned.current()
+          if (recurrenceHumanSession(request, { auth: deps.auth!, remoteDevices: deps.remoteDevices })?.sessionId !== human.sessionId)
+            throw new Error("Mission principal changed")
+        })
+        await owned.refresh(); owned.current()
+      }
+    })
   })
 
   app.delete<{ Params: { id: string; missionID: string } }>("/api/workspaces/:id/missions/:missionID", async (request, reply) => {
@@ -337,12 +365,13 @@ async function readMissionPlugin<T>(request: FastifyRequest<{ Params: { id: stri
 }
 
 async function mutate(request: FastifyRequest, reply: FastifyReply, deps: MissionRouteDeps, workspaceID: string,
-  call: Parameters<Awaited<ReturnType<typeof prepareMissionMapMutation>>["run"]>[0]) {
+  call: Parameters<Awaited<ReturnType<typeof prepareMissionMapMutation>>["run"]>[0],
+  before?: (owned: Awaited<ReturnType<typeof prepareMissionMapMutation>>) => Promise<void>) {
   const lifetime = requestAdmission(request, reply)
   try {
     const prepared = await prepareMissionMapMutation({ manager: deps.workspaceManager, fence: deps.worktreeDeletionFence,
       workspaceID, signal: lifetime.signal, wait: lifetime.wait })
-    return await prepared.run(call)
+    return await prepared.run(async (rpc, options) => { await before?.(prepared); return call(rpc, options) })
   } catch (error) {
     if (error instanceof MissionMapMutationError) return reply.code(error.status).send({ error: error.message })
     return mutationError(reply, error)

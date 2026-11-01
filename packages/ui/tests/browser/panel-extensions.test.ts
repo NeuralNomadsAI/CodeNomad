@@ -9,6 +9,8 @@ import { chromium, type Browser, type Page } from "playwright"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { observeHeaderFixture } from "./header-fixture-diagnostics"
+import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import Fastify from "fastify"
@@ -88,6 +90,8 @@ after(async () => { await browser?.close(); await server?.close(); await app.clo
 
 async function page(locale = "en-US", drawer = false) {
   const page = await browser.newPage({ locale })
+  const observer = observeHeaderFixture(page, "extensionFixture")
+  await observer.install()
   page.on("pageerror", error => console.error("Extension fixture:", error.message))
   let uiState: Record<string, unknown> = {}
   await page.addInitScript(() => {
@@ -103,8 +107,16 @@ async function page(locale = "en-US", drawer = false) {
     if (pathname.includes("/settings/")) return route.fulfill({ json: { locale: "en" } })
     return route.fulfill({ json: { entries: [], files: [], records: [], messages: [], data: [], outline: [] } })
   })
-  await page.goto(`${url}${drawer ? "?drawer=1" : ""}`)
-  await page.waitForFunction(() => Boolean((window as any).extensionFixture))
+  try {
+    await runWithDiagnosticCleanup({
+      run: async () => {
+        await page.goto(`${url}${drawer ? "?drawer=1" : ""}`, { waitUntil: "domcontentloaded" })
+        await page.waitForFunction(() => Boolean((window as any).extensionFixture))
+      },
+      diagnose: () => observer.diagnose(message => console.error(message)),
+      cleanup: () => observer.detach(),
+    })
+  } catch (error) { await page.close().catch(() => undefined); throw error }
   return page
 }
 async function changed(page: Page) { await page.evaluate(() => (window as any).extensionFixture.changed()) }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
+import { fixtureEventStream } from "./fixture-event-stream"
 import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap, MissionPanelMap, MissionReport, MissionTask } from "../../../server/src/api-types"
 import { compactMissionMap } from "../../../server/src/missions/mission-compact-map"
@@ -12,6 +13,7 @@ import { missionContentFixture, missionTaskFixture, missionTaskQuery, olderPlugi
 // Real MissionControl and reader over a compact map that holds a page of its tasks:
 // the tree's gaps, the graph's omitted edges, reads further and Needs you beyond the page.
 let browser: Browser, url: string
+let events: Awaited<ReturnType<typeof fixtureEventStream>>
 before(async () => {
   const fixture = await borrowFixture({
     name: "mission-task-pages",
@@ -19,11 +21,11 @@ before(async () => {
       { path: "/mission-task-pages", html: "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"></head><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-control.tsx\"></script></body></html>" },
     ],
   })
-  url = fixture.url
+  url = fixture.url; events = await fixtureEventStream(url)
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close() })
+after(async () => { try { await browser?.close() } finally { await events?.close() } })
 
 /** 120 tasks in 12 chains of 10: `t{10g+p}` waits on `t{10g+p-1}`, so the display order takes
  * every chain's p-th task in round p (position 12p+g). The last task reported a blockage,
@@ -70,6 +72,7 @@ async function open(value: MissionMap, activity: Array<{ sessionId: string; stat
       projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] }) })
     return route.fulfill({ json: {} })
   })
+  await events.route(page)
   await page.goto(url)
   await page.evaluate(async id => {
     ;(window as any).missionFixture.connectCatalog()

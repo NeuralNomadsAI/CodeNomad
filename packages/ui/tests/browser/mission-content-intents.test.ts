@@ -4,17 +4,19 @@ import { chromium, type Browser, type Page, type Route } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
+import { fixtureEventStream } from "./fixture-event-stream"
 import { panelMissions, missionContentFixture } from "./mission-content-fixture"
 
 let browser: Browser, url: string
+let events: Awaited<ReturnType<typeof fixtureEventStream>>
 before(async () => {
   const fixture = await borrowFixture({ name: "mission-content-intents", routes: [{ path: "/mission-content-intents",
     html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-editor-lifetime.tsx\"></script></body></html>" }] })
-  url = fixture.url
+  url = fixture.url; events = await fixtureEventStream(url)
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close() })
+after(async () => { try { await browser?.close() } finally { await events?.close() } })
 
 function mission(revision: number, objective: string, notes?: string): MissionMap {
   return { version: 1, id: "msn_intent", projectID: "project", projectCanonical: "/fixture", title: "Intent mission", objective, ...(notes === undefined ? {} : { notes }),
@@ -55,6 +57,7 @@ async function panel(options: { list: () => MissionMap; content: () => MissionMa
       project: { path: "/fixture/.opencode/opencode.jsonc", depth: null, expectation: "e" } } })
     return route.fulfill({ json: {} })
   })
+  await events.route(page)
   await page.goto(url, { timeout: 60_000 })
   await page.evaluate(async () => {
     const instances = "/src/stores/instances.ts", view = "/src/stores/mission-view-state.ts"

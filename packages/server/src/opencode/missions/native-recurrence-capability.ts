@@ -1,10 +1,12 @@
 import { Context, Effect, Option, Predicate } from "effect"
 import { acquireMissionNativeService } from "./native-service-adapter"
+import { qualifyNativePassageStorage } from "./native-passage-observation"
 
 /** Read-only qualification of the actual service graph consumed by the reviewed
  * due callback. No timers, Job starts, keys or database writes on discovery. */
 export const qualifyNativeRecurrenceControl = Effect.fn("missions.qualifyRecurrenceControl")(function* () {
   yield* Effect.scoped(acquireMissionNativeService())
+  yield* qualifyNativePassageStorage()
   const job = yield* Effect.serviceOption(Context.Service<never, unknown>("@opencode/Job"))
   const locations = yield* Effect.serviceOption(Context.Service<never, unknown>("@opencode/example/LocationServiceMap"))
   const database = yield* Effect.serviceOption(Context.Service<never, unknown>("@opencode/storage/Database"))

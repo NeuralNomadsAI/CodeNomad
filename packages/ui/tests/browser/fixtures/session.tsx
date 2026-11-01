@@ -24,7 +24,7 @@ const nativeMessages: any[] = []
 const nativeInbox: any[] = []
 const model = { providerID: "fixture", id: "fixture" }
 const emit = (type: string, data: any) => (sseManager as any).handleEvent(instanceId, {
-  id: `ev_${++time}`, type, created: time, location: { directory: "/fixture" },
+  id: `evt_${++time}`, type, created: time, location: { directory: "/fixture" },
   data: { sessionID: sessionId, ...data },
 })
 const client: any = {

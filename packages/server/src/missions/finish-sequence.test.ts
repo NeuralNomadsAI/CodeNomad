@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { MissionJournal, missionFinishCounterKey, type MissionStorage } from "./journal"
 import type { MissionEvent, MissionJsonValue } from "./model"
+import { isolatedMissionPassageJournal } from "./mission-document-passage-storage"
 
 function fixture(isolated = false) {
   const values = new Map<string, MissionJsonValue>()
@@ -54,4 +55,17 @@ test("a damaged finish counter refuses the finish; isolated passages draw no num
   assert.equal((await isolated.journal.appendFinish(isolated.finished("msn_aaa")) as { sequence?: number }).sequence, undefined)
   assert.equal(isolated.values.has(missionFinishCounterKey(isolated.journal.projectToken)), false)
   assert.equal((await isolated.journal.snapshot()).missions[0].finishSequence, undefined)
+})
+
+test("a unified scheduled passage finishes in its isolated journal without accessing the ordinary project's finish counter", async () => {
+  const f = fixture()
+  const passage = isolatedMissionPassageJournal(f.storage, { projectID: "project", projectCanonical: "/repo", ownerID: "schedule",
+    passageID: "passage", storagePrefix: "codenomad-missions/documents-v1" }, () => true)
+  await passage.journal.append(f.created(passage.missionID))
+  await passage.journal.appendFinish(f.finished(passage.missionID))
+  assert.equal((await passage.journal.missionView(passage.missionID)).mission?.finishSequence, undefined)
+  const counter = missionFinishCounterKey(passage.journal.projectToken)
+  assert.equal(f.values.has(counter), false)
+  await assert.rejects(passage.storage.get(counter), /Passage journal scope conflict/)
+  await assert.rejects(passage.storage.set(counter, { version: 1, projectID: "project", finishes: 1 }), /Passage journal scope conflict/)
 })

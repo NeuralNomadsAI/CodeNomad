@@ -14,11 +14,13 @@ export class MissionMapMutationError extends Error {
 
 /** Update/control/delete/recovery follow creation's workspace authority: the
  * fenced shared connection, the owned service directory and a worktree-deletion
- * permit held from admission until the single native RPC settles. Every
+ * permit held until the awaited operation settles or transferred to its exact
+ * scheduled-request hold. Every
  * asynchronous read is followed by a fresh workspace/connection/location check
  * before dispatch. Nothing here retries a mutation or falls back to another route. */
 export async function prepareMissionMapMutation(input: {
   manager: MissionMapMutationManager; fence?: WorktreeDeletionFence; workspaceID: string
+  directory?: string
   signal: AbortSignal; wait?<T>(operation: Promise<T>): Promise<T>
 }) {
   const { manager, workspaceID, signal } = input
@@ -39,10 +41,14 @@ export async function prepareMissionMapMutation(input: {
       throw new MissionMapMutationError(409, "Mission workspace changed")
     }
   }
-  if (!await wait(manager.ownsLocation(workspaceID, base, client, signal))) {
+  if (input.directory !== undefined && (!input.directory || input.directory.length > 4096 || input.directory.includes("\0"))) {
+    throw new MissionMapMutationError(403, "Mission directory is invalid")
+  }
+  const requested = input.directory ? { directory: input.directory } : base
+  if (!await wait(manager.ownsLocation(workspaceID, requested, client, signal))) {
     throw new MissionMapMutationError(403, "Mission directory does not belong to workspace")
   }
-  const directory = await wait(manager.getServiceDirectoryForPath(workspaceID, base.directory))
+  const directory = await wait(manager.getServiceDirectoryForPath(workspaceID, requested.directory))
   if (!directory) throw new MissionMapMutationError(503, "Mission plugin unavailable")
   const location = { directory }, options = { location, ...locationRequestOptions(location) }
   try {
@@ -67,9 +73,24 @@ export async function prepareMissionMapMutation(input: {
   }
   const missions = client.rpc(CODENOMAD_MISSIONS_RPC)
   let claimed = false
+  let retained = false
   return {
-    /** Exactly one native call. The permit stays held until it settles; its
-     * outcome is never raced against request cancellation or retried. */
+    client,
+    connection,
+    workspace,
+    base,
+    location,
+    current: unchanged,
+    async refresh() { await admission.assertCurrent(); unchanged() },
+    /** Transfer this exact permit to a synchronous scheduled-request hold.
+     * A failed registration leaves ordinary run/finally ownership unchanged. */
+    retain(register: (release: () => void) => undefined) {
+      if (!claimed || retained) throw new Error("Mission permit retention unavailable")
+      register(admission.release)
+      retained = true
+    },
+    /** One owned operation. Multi-phase callers refresh authority before each
+     * RPC; the permit stays held until completion and mutations are never raced. */
     async run<T>(call: (rpc: typeof missions, rpcOptions: typeof options) => Promise<T>): Promise<T> {
       if (claimed) throw new Error("Mission mutation already dispatched")
       claimed = true
@@ -77,7 +98,7 @@ export async function prepareMissionMapMutation(input: {
         try { await admission.assertCurrent(); unchanged() }
         catch { throw new MissionMapMutationError(409, "Mission workspace changed") }
         return await call(missions, options)
-      } finally { admission.release() }
+      } finally { if (!retained) admission.release() }
     },
   }
 }

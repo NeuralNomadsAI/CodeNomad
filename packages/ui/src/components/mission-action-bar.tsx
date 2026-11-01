@@ -1,4 +1,4 @@
-import { Show, type JSX } from "solid-js"
+import { Show, createMemo, type JSX } from "solid-js"
 import { ArrowUpRight, Eye, FastForward, Pause, Pencil, Play, RefreshCw, Square, Trash2 } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import type { MissionPrimaryAction } from "./mission-lifecycle-controls"
@@ -23,13 +23,15 @@ export function MissionActionBar(props: {
   runNow?: MissionPrimaryAction; secondary?: JSX.Element; feedback?: JSX.Element
 }) {
   const { t } = useI18n()
+  // A refreshed action object must keep the SVG beneath an already-held pointer.
+  const primaryKey = createMemo(() => props.primary?.key)
   const primaryLabel = () => props.primary ? props.primary.ariaLabel ?? props.primary.label : t("missionsPanel.action.start")
   const stopLabel = () => props.stop ? props.stop.ariaLabel ?? props.stop.label : t("missions.control.run.stop")
   return <>
     <div class="mission-action-bar" role="toolbar" aria-label={props.label}>
       <button type="button" class="mission-control-icon-button" aria-label={primaryLabel()} title={primaryLabel()}
         disabled={!props.primary || props.primary.disabled} onClick={() => void props.primary?.onSelect()}>
-        {primaryIcon(props.primary?.key)}
+        {primaryIcon(primaryKey())}
       </button>
       <button type="button" class="mission-control-icon-button" aria-label={stopLabel()} title={stopLabel()}
         disabled={!props.stop || props.stop.disabled} onClick={() => void props.stop?.onSelect()}>

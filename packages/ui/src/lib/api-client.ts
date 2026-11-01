@@ -287,6 +287,10 @@ export const serverApi = {
     return request<WorktreeListResponse>(`/api/workspaces/${encodeURIComponent(id)}/worktrees${fresh ? "?fresh=true" : ""}`)
   },
 
+  fetchLocalGitBranches(id: string, directory: string, signal?: AbortSignal): Promise<{ branches: string[] }> {
+    return request(`/api/workspaces/${encodeURIComponent(id)}/git-branches?${new URLSearchParams({ directory })}`, { signal })
+  },
+
   createWorktree(id: string, payload: WorktreeCreateRequest): Promise<{ slug: string; directory: string; branch?: string }> {
     return request<{ slug: string; directory: string; branch?: string }>(`/api/workspaces/${encodeURIComponent(id)}/worktrees`, {
       method: "POST",
@@ -655,6 +659,13 @@ export const serverApi = {
   fetchOpenCodeUpdateStatus(options: { recheck?: boolean } = {}): Promise<OpenCodeUpdateStatus> {
     return request<OpenCodeUpdateStatus>(options.recheck ? "/api/opencode/update?recheck=1" : "/api/opencode/update")
   },
+  getServiceSupervision(options: { serviceKey?: string; requestID?: string } = {}): Promise<import("../../../server/src/api-types").SupervisionSettingsResponse> {
+    const query = new URLSearchParams(options).toString()
+    return request(`/api/opencode/supervision${query ? `?${query}` : ""}`)
+  },
+  controlServiceSupervision(input: import("../../../server/src/api-types").SupervisionSettingsControl): Promise<import("../../../server/src/api-types").SupervisionSettingsResponse> {
+    return request("/api/opencode/supervision", { method: "POST", body: JSON.stringify(input) })
+  },
   updateOpenCode(options: { replaceLegacy?: { path: string; version: string } } = {}): Promise<OpenCodeUpdateResponse> {
     return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST",
       body: JSON.stringify(options.replaceLegacy ? { replaceLegacy: { path: options.replaceLegacy.path, version: options.replaceLegacy.version } } : {}) })
@@ -761,6 +772,37 @@ export const serverApi = {
   /** This backend's playbook definitions, as its Missions prompts are built from them. */
   fetchMissionPlaybooks(taskMode: import("../../../server/src/missions/task-execution-mode").MissionTaskMode): Promise<import("../../../server/src/missions/playbook-details").MissionPlaybookDetails> {
     return request(`/api/missions/playbooks?taskMode=${encodeURIComponent(taskMode)}`)
+  },
+  fetchMissionSchedules(instanceId: string, input: { after?: string; limit?: number; directory?: string } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleList> {
+    const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
+    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/scheduled?${query}`, { signal }))
+  },
+  fetchMissionScheduleCapability(instanceId: string, directory?: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleCapability> {
+    const query = new URLSearchParams(directory === undefined ? {} : { directory })
+    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/scheduled/capabilities?${query}`, { signal }))
+  },
+  fetchMissionSchedule(instanceId: string, missionID: string, input: { directory?: string; requestID?: string } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
+    const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined) as [string, string][])
+    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionID)}/schedule?${query}`, { signal }))
+  },
+  fetchMissionScheduleCreation(instanceId: string, requestID: string, directory?: string): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
+    const query = new URLSearchParams(directory === undefined ? {} : { directory })
+    return secondaryRead(undefined, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/scheduled/requests/${encodeURIComponent(requestID)}?${query}`))
+  },
+  saveMissionSchedule(instanceId: string, input: import("../stores/mission-schedule-editor-holds").MissionScheduleEditorRequest): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
+    const { missionID, ...body } = input
+    const target = missionID ? `${encodeURIComponent(missionID)}/schedule` : "scheduled"
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${target}`, { method: "POST", body: JSON.stringify(body) })
+  },
+  controlMissionSchedule(instanceId: string, missionID: string, input: { action: "play" | "resume" | "pause" | "stop" | "check" | "run-now" | "delete";
+    requestID: string; expectedRevision: number; directory?: string; deleteManagedSessions?: boolean }): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionID)}/schedule`, {
+      method: "POST", body: JSON.stringify(input) })
+  },
+  missionScheduleSettings(instanceId: string, missionID: string, input: { requestID: string; expectedDocumentRevision: number }, apply = false): Promise<{ document: import("../../../server/src/missions/mission-document-one-time").MissionDocumentSummary }> {
+    const url = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionID)}/schedule-settings`
+    return apply ? request(url, { method: "POST", body: JSON.stringify(input) })
+      : secondaryRead(undefined, () => request(`${url}?${new URLSearchParams({ requestID: input.requestID, expectedDocumentRevision: String(input.expectedDocumentRevision) })}`))
   },
   /** The same read, with the full map, from the authoritative full snapshot, for admitting an application-authored prompt. */
   fetchMissionAdmission(instanceId: string, missionId: string): Promise<MissionReadResponse<MissionMap>> {
@@ -892,7 +934,6 @@ function buildClientEventsUrl(identity: { clientId: string; connectionId: string
   if (EVENTS_URL.startsWith("http://") || EVENTS_URL.startsWith("https://")) {
     return url.toString()
   }
-
   return `${url.pathname}${url.search}`
 }
 

@@ -103,3 +103,11 @@ synthetic provider.
   cancellations. Same-URL network aborts and missing, unknown or reused identities
   remain failures. Hold a controller-owned read across a native SSE open to
   exercise supersession with the navigation ownership assertions intact.
+- Fixtures consuming EventSource serve a persistent `text/event-stream` response
+  and let the real connection close with its page. Never answer that path with
+  the generic JSON fallback. Composer bootstrap awaits DOM readiness and its
+  explicit rendered-fixture signal; stream headers are observed before navigation.
+- A fixture entry with top-level asynchronous restoration exposes its ready signal
+  after instance registration. Tests await that signal before connecting its native
+  client: the document load event can precede module continuation, and a later
+  `addInstance` publishes the fixture's initial client value.

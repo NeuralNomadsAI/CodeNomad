@@ -8,9 +8,12 @@ import { ThemeProvider, useTheme } from "../../../src/lib/theme"
 import { serverEvents } from "../../../src/lib/server-events"
 import "../../../src/index.css"
 
+;(window as any).__headerFixtureBoot?.mark("modules-evaluated")
+
 function Fixture() {
   const { t } = useI18n()
   const theme = useTheme()
+  ;(window as any).__headerFixtureBoot?.mark("fixture-created")
   const [instanceId, setInstanceId] = createSignal("first"), [sessionId, setSessionId] = createSignal("session-a")
   const [active, setActive] = createSignal(true)
   const floating = new URL(location.href).searchParams.has("drawer")
@@ -38,3 +41,4 @@ function Fixture() {
   </div>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+;(window as any).__headerFixtureBoot?.mark("rendered")

@@ -1,0 +1,14 @@
+.mission-schedule-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: var(--space-xs) var(--space-sm);
+  margin: var(--space-sm) 0;
+  font-size: var(--font-size-xs);
+}
+.mission-schedule-facts dt { color: var(--text-secondary); }
+.mission-schedule-facts dd { margin: 0; overflow-wrap: anywhere; }
+.mission-schedule-instructions { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mission-unified-schedule h3 { font-size: var(--font-size-sm); }
+.mission-unified-schedule .mission-past-runs li { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
+.mission-schedule-diagnostics { overflow-wrap: anywhere; }
+.mission-schedule-diagnostics ul { padding-inline-start: var(--space-lg); }

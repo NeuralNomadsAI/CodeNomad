@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { cleanupReceiptID, hasInvalidCleanupHistory, projectMissionCleanups } from "./cleanup-projection"
+import { cleanupReceiptID, documentCleanupReceiptID, hasInvalidCleanupHistory, projectMissionCleanups } from "./cleanup-projection"
 import { parseMissionEvent } from "./journal"
 import type { MissionEvent } from "./model"
+import { planDeletionPurge } from "./journal-purge"
 
 function events(id: string, time: number): MissionEvent[] {
   const base = { version: 1 as const, missionID: id, projectID: "project", createdAt: time }
@@ -48,4 +49,30 @@ test("unrelated receipts do not settle immutable targets and unknown reason meta
     type: "mission.session-cleaned", deletionID: "evt_deleted", sessionID: "ses_actor", outcome: "retained", reason: "future-unknown" })
   assert.equal(receipt?.type, "mission.session-cleaned")
   if (receipt?.type === "mission.session-cleaned") assert.equal(receipt.reason, undefined)
+})
+
+test("document compaction has an independent exact receipt; malformed or unrelated completion never settles it", () => {
+  const history = events("msn_document", 1).map((event, index) => ({ ...event, createdAt: index + 1 }))
+  const deletion = history.find(event => event.type === "mission.deleted")!
+  assert.equal(deletion.type, "mission.deleted")
+  if (deletion.type !== "mission.deleted") return
+  deletion.documentCleanup = true
+  deletion.cleanupTargets = []
+  const receipt: MissionEvent = { version: 1, id: documentCleanupReceiptID(deletion.id), missionID: deletion.missionID,
+    projectID: deletion.projectID, createdAt: 4, type: "mission.document-cleaned", deletionID: deletion.id }
+  assert.deepEqual(parseMissionEvent(deletion), deletion)
+  assert.deepEqual(parseMissionEvent(receipt), receipt)
+  assert.equal(parseMissionEvent({ ...deletion, documentCleanup: false }), undefined)
+  assert.equal(parseMissionEvent({ ...receipt, deletionID: undefined }), undefined)
+  assert.equal(projectMissionCleanups(history)[0].pending, 0)
+  assert.equal(projectMissionCleanups(history)[0].documentPending, true)
+  assert.equal(planDeletionPurge(history, 0).length, 0)
+  for (const invalid of [{ ...receipt, id: "evt_wrong" }, { ...receipt, projectID: "foreign" },
+    { ...receipt, missionID: "msn_other" }, { ...receipt, deletionID: "evt_other" }]) {
+    assert.equal(projectMissionCleanups([...history, invalid])[0].documentPending, true)
+    assert.equal(hasInvalidCleanupHistory([...history, invalid]), true)
+  }
+  assert.equal(projectMissionCleanups([...history, receipt])[0].documentPending, false)
+  assert.equal(hasInvalidCleanupHistory([...history, receipt]), false)
+  assert.equal(planDeletionPurge([...history, receipt], 0).length, 1)
 })

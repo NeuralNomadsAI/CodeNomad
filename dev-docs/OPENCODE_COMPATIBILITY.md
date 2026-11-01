@@ -12,7 +12,7 @@ view; release notes are at [opencode.ai/changelog](https://opencode.ai/changelog
 per-version sections here.
 
 Minimum runtime **2.2.3**, recommended **2.2.5** (`runtime-support.ts`), with
-**2.1.0** client/plugin pins. The minimum carries the image tool contract of
+**2.2.3** client/schema/plugin pins. The minimum carries the image tool contract of
 upstream [#60258](https://github.com/anomalyco/opencode/pull/60258), consumed by
 the Images gallery, the Design agent and skills and the Images settings: one
 name, `experimental_image_generate`, for the tool, its permission action, its job
@@ -21,7 +21,7 @@ type and its completion notices' `metadata.source` (`IMAGE_TOOL` in
 model is available unless `experimental.image_generate` is `false`
 (`image-settings.ts` reads it that way). Notices wrap their text in
 `<image id="…" state="…">`; the gallery reads the `Saved image: <path> (` line.
-The minimum also provides the replay contract (below) consumed by the pinned 2.1
+The minimum also provides the replay contract (below) consumed by the pinned
 reducer and Code Mode JavaScript run-to-completion, whose regression
 `scripts/test-codemode-jobs-native.mjs` runs in CI against minimum and latest.
 Daemons below the minimum are refused with `native_contract`. Plugins share the
@@ -29,6 +29,13 @@ host Effect 4.0.6/Schema runtime. Unlisted/prerelease/custom/future labels
 undergo authenticated contract recognition; missing canonical APIs, session
 environment or the replay shape give a concrete reason. OpenCode reads older
 stored data.
+
+Missions schedules qualify the consumed Schedule API, effective
+`experimental.schedules` flag and retained plugin/provider bundle independently
+of general runtime admission: [native contracts](MISSIONS_NATIVE_CONTRACTS.md#schedule-integration-qualification)
+and [transport](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md). Recognition uses the
+consumed capabilities, including on future versions. Schedule delivery qualification
+uses the recommended 2.2.5 runtime; keep results in PR/CI evidence.
 
 ### Native Codex subscription usage
 
@@ -76,6 +83,22 @@ reply the goal reviewer rejects, pausing the goal) runs in the minimum/latest CI
 
 - Generated client URLs keep their `baseUrl` prefix and pass through unchanged;
   scheduling classifies API paths relative to the proxy prefix.
+- The generated `experimental.session` methods and their `session` aliases use
+  identical experimental wire routes for instructions, wait, log, import/export
+  and stats. Stateless `experimental.generate.text` uses
+  `/api/experimental/generate/text`; side questions use the separate session
+  generation API. New client domains retain the proxy's explicit allowlist.
+- The Solid reducer derives projected message IDs with
+  `Session.Message.ID.fromEvent`: event fixtures must use native `evt_` IDs,
+  producing `msg_` rows. Catalogue invalidations refresh only previously read
+  resources; an active-session snapshot also fetches missing running-session
+  metadata. Tool-file omission is opt-in; transcript and pruning reads preserve
+  their full native projection.
+- Service discovery/header construction, RPC envelopes, `SessionLegacy`, Form
+  and Permission read codecs keep their consumed contracts. The private loaded
+  Location map canonicalizes path flavor and trailing separators; pending
+  recovery retains its existing-only leases and identity checks. Plugin setup
+  remains activation-scoped; native services are acquired in the request graph.
 - The proxy allowlist stays closed to pairing (`/api/pair`, `/auth/connect/*`),
   credential export/creation (`/api/credential`) and experimental voice
   (`/api/experimental/voice/session`); a runtime update never widens it or
@@ -89,7 +112,9 @@ reply the goal reviewer rejects, pausing the goal) runs in the minimum/latest CI
   `session.environment` applies independently.
 - Plugin bundles externalize Effect and the plugin SDK because two Effect
   runtimes cannot share one native fiber and host Schema APIs differ across
-  releases. Test hosts that spread the Promise plugin context must declare the
+  releases. Local plugin directories with a package name and `exports` resolve
+  their entrypoints through that manifest (`session-pruning/package.test.ts`).
+  Test hosts that spread the Promise plugin context must declare the
   `credential` domain. `%ProgramData%\opencode` is discovered after the global
   plugin root that `config.get` consumers take first; native fixtures redirect
   `ProgramData`. Package-install fixtures pass `withProductRuntime`'s `registry`
@@ -164,9 +189,16 @@ mutation fences and settlement tombstones stay essential.
 
 ## Agent conventions
 
+All managed bundle payloads (automation, session-pruning, Missions runtime and
+Missions carrier provider) share `opencode/desktop-plugin-artifact.ts` for digest
+verification, atomic repair and bounded lock retries. Provisioning verifies both
+Missions payloads before publishing its shim or lease. Failures flow through the
+shared provisioning error deduplication and pending-request recovery notice.
+
 - Desktop automation and pruning provisioning follows the authenticated OpenCode connection and its `config.get` global discovery directory, including reconnects. Replacing a connection aborts its in-flight provisioning: `opencode/desktop-plugin-provisioning.ts` logs that at debug as superseded (the new connection provisions again) and keeps errors for failures on the current connection, logging each distinct failure once with its consequence and repeats at debug until a provisioning succeeds. Bundle payloads are content-addressed (`<sha256>.mjs`) and shared by every backend of the namespace: `opencode/desktop-plugin-installation.ts` publishes one only by renaming a complete temporary copy, and replaces a name that holds other bytes or is not one regular file (an earlier write cut short, a link) the same way before the entry may point at it, so concurrent installers never read a partial payload and a damaged one never blocks later connections. Never derive a running daemon's roots from backend/startup environment or CLI `debug paths`. OpenCode watches the entire discovery root recursively: keep changing presence leases outside it, in the sibling `.codenomad/<root-hash>/` namespace. Retain existing outside-root storage; migrate inside-root storage while reading older backends' leases without writing there. WSL translates the daemon-reported paths through the selected distro only for filesystem access. Verify heartbeat stability with the isolated native automation fixture.
 - Plugins register only at their next presence check, so a backend's first plugin RPC could arrive before registration and be refused. Followers acknowledge a lease with a `<lease>.ready` marker (current namespace only) once every follower of that directory in the native process has observed it while registered; routes calling bundled-plugin RPCs await `workspaceManager.desktopPluginsReady()` before reading or authorizing the session, so ownership checks and deletion-fence entry stay adjacent (bounded to 5 s, never rejects). The bound is paid in full only when no marker can arrive: no Location loaded yet, or pre-marker plugin copies still loaded after an upgrade. Do not replace this ordering with retries of refused reads.
 - The Design agent and skills follow backend leases, never a command or RPC. A backend requests them while an installed, enabled panel extension declares `opencode.designAgent` (`opencode/design/demand.ts`, refreshed on every extension-store change). `DesktopPluginLifecycle.setLeaseContent` writes the request (`{"version":1,"design":true}`, or an empty lease) into every session-pruning lease the backend retains, one per configuration namespace, and each new installation starts from it. Writes happen only when the request changes, through a temporary name outside the lease pattern and a rename, serialized with the heartbeat so a removed lease is never resurrected; a failed write retries at the next heartbeat. The shared presence observation (`desktop-plugin-presence.ts`, versioned process key) reads at most 256 bytes of each live lease: empty, unreadable, oversized or unknown-version leases request nothing, and Design is wanted while any live lease of the plugin's presence directories requests it, so one backend's expiry withdraws only its own request. The session-pruning plugin registers its agent and skill transforms once in its `effect`, before `followPresence` (`opencode/design/register.ts`), with content conditioned on a Location-local flag; reconciliation at the presence interval only flips the flag and calls `agent.reload()` and `skill.reload()` on an actual change, and the content loads on the first request. Never register these transforms from presence, an RPC or a command: a late registration bypasses the user's permission rules and overrides the user's own `design` agent or `design-*` skills, which always win. A runtime without agent or skill transforms gets no Design agent. `opencode/design/status.ts` classifies a Location's `GET /api/agent`: `present` when the prompt starts with the content mark, `user` otherwise, or `absent`. Validate with `opencode/design/*.test.ts` and `scripts/test-design-activation-native.mjs` (build the pruning bundle first); that fixture enables project discovery, so outside CI it refuses to run under the user's home unless `CODENOMAD_NATIVE_FIXTURE_PARENT` names a parent outside it.
 - The shared native event relay consumes upstream events before slow routing I/O. Preserve per-session/PTY/Shell and per-recipient FIFO, validated full-location ownership, invalidation/connection/workspace fences and bounded-backlog reconnect recovery. When an ownership lookup still fails after its retry, the relay evicts that cache entry and pulses that recipient's status alone (`error` with `event routing failed`, then `connected`), so its clients run their reconnect reconciliation (one pass per instance, with later requests coalesced into one trailing pass, `ui/src/lib/trailing-resync.ts`). Pulses are leading and trailing, at most every 5 s, doubling to 60 s while failures persist. Never fail the shared subscription for one recipient's lookup: that resyncs every instance. A slow recipient must not block another or the shared SDK subscriber. Validate with the relay regressions and isolated native location fixture.
 - Native OpenCode plugins share `packages/server/scripts/native-plugin-build.mjs`: never embed Effect or the public plugin SDK into daemon-loaded bundles (version boundaries: Qualification policy above). Keep backend-side OpenTunnel isolation separate, and run the bundle regression plus isolated plugin-runtime/pruning/automation/Missions fixtures when changing this boundary.
 - The Design agent and skills exist once, as native OpenCode files in `packages/server/src/opencode/design/opencode/` (`agents/design.md`, `skills/design-*/SKILL.md`, `NOTICE.md`, `LICENSE-APACHE-2.0.txt`), which also work unchanged when copied into a project's `.opencode/` or the global OpenCode configuration folder; the public help links this folder for that use (`docs/help/<locale>/extensions.md#design-without-codenomad`), so moving it means updating those links. Each file keeps its licence notice in frontmatter comments and its references inside its own body: never add sibling files, CLI or form protocols, URLs or brand names (`design/content.test.ts` checks them, with the attribution of each adapted file). `design/content.ts` embeds the files as text through the build's `.md` loader and parses them strictly: bundles call `loadDesignContent()`; `tsx` cannot import `.md`, so checkout code and tests read the files and call `parseDesignContent()`. The agent prompt starts with `codenomad-design-content: <DESIGN_CONTENT_VERSION>`; raise the version whenever the skill, direction or recipe identifiers change. Validate content changes with that test, the self-contained bundle test in `native-plugin-build.test.mjs` and `scripts/test-design-content-native.mjs`. That native test enables project discovery, which walks every ancestor directory: outside CI it refuses to run under the user's home unless `CODENOMAD_NATIVE_FIXTURE_PARENT` names a parent outside it.
+- Missions provisioning installs `provider.mjs` as a separate content-addressed local provider beside its content-addressed runtime. The managed shim supplies native absolute `{provider:{file,sha256},runtime:{file,sha256}}` paths as the factory's second argument; WSL translation applies only to backend filesystem I/O. Lease release and upgrades retain both payloads for native carrier recovery. Registration paths are acquired during arming in the current native RPC graph by `missions/native-schedule-installation.ts`, from the own-process record under native Global state and current ServerInfo URLs, then authenticated with exact-file public Service discovery.

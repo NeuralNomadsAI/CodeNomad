@@ -192,7 +192,7 @@ test("range damage survives whole-map, field and task reads through real control
 })
 
 function mutationManager(options: { owns?: boolean; error?: unknown; dropProfiles?: boolean; dropTaskMode?: boolean
-  pluginInactive?: boolean; noConnection?: boolean; locationError?: unknown; createError?: unknown } = {}) {
+  pluginInactive?: boolean; noConnection?: boolean; locationError?: unknown; createError?: unknown; unsupportedDocuments?: boolean } = {}) {
   const calls: Array<{ method: string; value: unknown }> = []
   const workspace = { id: "workspace-1" }
   const value = {
@@ -218,6 +218,7 @@ function mutationManager(options: { owns?: boolean; error?: unknown; dropProfile
       rpc: (definition: { id: string }) => {
         calls.push({ method: "rpc", value: definition.id })
         return {
+          documentCapabilities: async () => { if (options.unsupportedDocuments) throw new Error("rpc.method_not_found"); return { version: 1 } },
           create: async (input: any, rpcOptions: unknown) => {
             calls.push({ method: "create", value: { input, rpcOptions } })
             if (options.createError) throw options.createError
@@ -255,6 +256,18 @@ function mutationManager(options: { owns?: boolean; error?: unknown; dropProfile
   }
   return { calls, value: value as never }
 }
+
+test("creation refuses a plugin without unified-document capability before create RPC or any native effect", async () => {
+  const fake = mutationManager({ unsupportedDocuments: true }), app = Fastify({ logger: false })
+  registerMissionRoutes(app, { workspaceManager: fake.value, worktreeDeletionFence: new WorktreeDeletionFence() })
+  try {
+    const response = await app.inject({ method: "POST", url: "/api/workspaces/workspace-1/missions",
+      payload: { requestId: "original", objective: "Work", template: "custom" } })
+    assert.equal(response.statusCode, 503)
+    assert.equal(response.json().code, "creation-unavailable")
+    assert.equal(fake.calls.filter(call => call.method === "create").length, 0)
+  } finally { await app.close() }
+})
 
 test("brokers only the reviewed mission list RPC at the owned workspace location", async () => {
   const fake = manager()

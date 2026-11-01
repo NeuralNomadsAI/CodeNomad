@@ -17,6 +17,8 @@ import { recurrencePassageReadWire } from "./recurrence-reader-contract"
 import { recurrenceScheduleChangedSchema } from "./recurrence-events"
 import { recurrenceNativeControlWire, recurrenceSnapshotOutput, recurrenceControlStatusWire, recurrenceControlRequestWire } from "./recurrence-control-contract"
 import { RECURRENCE_RUN_NOW_STATUS_INPUT, RECURRENCE_RUN_NOW_STATUS_REQUEST, RECURRENCE_RUN_NOW_OUTPUT } from "./recurrence-manual-rpc"
+import { missionDocumentSummaryWire, missionScheduleActivationWire } from "./mission-document-wire"
+import { missionScheduleRpcMethods } from "./mission-schedule-contract"
 
 export const CODENOMAD_MISSIONS_RPC_ID = "codenomad.missions"
 export const CODENOMAD_MISSIONS_CHANGED_EVENT = `rpc.${CODENOMAD_MISSIONS_RPC_ID}.changed`
@@ -70,6 +72,7 @@ const mission = {
   type: "object",
   properties: {
     version: { type: "number", const: 1 },
+    document: missionDocumentSummaryWire,
     id: { type: "string" },
     projectID: { type: "string" },
     projectCanonical: { type: "string" },
@@ -149,6 +152,7 @@ const mission = {
           objective: { type: "object", properties: { before: { type: "string" }, after: { type: "string" } }, required: ["before", "after"], additionalProperties: false },
           notes: { type: "object", properties: { before: { type: "string" }, after: { type: "string" } }, additionalProperties: false },
           addedTaskKeys: stringArray,
+          requestID: { type: "string" },
           retiredTasks: { type: "array", items: { type: "object", properties: { taskKey: { type: "string" }, replacementTaskKey: { type: "string" } }, required: ["taskKey"], additionalProperties: false } },
           dependencyUpdates: { type: "array", items: { type: "object", properties: { taskKey: { type: "string" }, before: stringArray, after: stringArray }, required: ["taskKey", "before", "after"], additionalProperties: false } },
           createdAt: { type: "number" },
@@ -271,6 +275,19 @@ const snapshotProperties = {
 export const CODENOMAD_MISSIONS_RPC = {
   id: CODENOMAD_MISSIONS_RPC_ID,
   methods: {
+    ...missionScheduleRpcMethods,
+    documentCapabilities: {
+      input: { type: "object", properties: {}, additionalProperties: false },
+      output: { type: "object", properties: { version: { type: "integer", const: 1 } }, required: ["version"], additionalProperties: false },
+    },
+    documentActivation: {
+      input: { type: "object", properties: { missionID: { type: "string", minLength: 3, maxLength: 100 }, requestID,
+        expectedRevision: { type: "integer", minimum: 0 }, action: { type: "string", enum: ["read", "prepare", "attempting", "acknowledged", "ready", "failed"] },
+        authority: { type: "string" }, targets: missionScheduleActivationWire.properties.targets, scope: { type: "string", enum: ["global", "project"] },
+        resultDigest: { type: "string" }, effectiveOrigin: { type: ["string", "null"] }, errorCode: { type: "string" } },
+        required: ["missionID", "requestID", "expectedRevision", "action"], additionalProperties: false },
+      output: { type: "object", properties: { document: missionDocumentSummaryWire }, required: ["document"], additionalProperties: false },
+    },
     recurrenceControl: {
       input: { type: "object", properties: { sessionID: { type: "string", minLength: 1, maxLength: 256 },
         workspaceID: { type: "string", minLength: 1, maxLength: 200 }, requestID,

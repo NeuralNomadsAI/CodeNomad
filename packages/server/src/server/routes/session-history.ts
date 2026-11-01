@@ -8,6 +8,7 @@ import { PRUNING_RPC_ID } from "../../opencode/session-pruning/contract"
 import { historyQuerySchema, historyNativeResultSchema, pruneBatchSchema, pruneBatchResultSchema } from "../../opencode/session-pruning/history-contract"
 import { historyDirectories, ownedHistorySessions } from "./session-history-scope"
 import { registerRankedHistoryRoute } from "./session-history-ranked"
+import { assertOrdinaryMissionScheduleSession } from "../mission-schedule-input-guard"
 
 export interface HistoryRouteDeps {
   workspaceManager: Pick<WorkspaceManager, "getSharedServiceClient" | "ownsLocation" | "getWorktreeIdentityForPath" | "getServiceLocation" | "getWorktrees" | "desktopPluginsReady">
@@ -85,6 +86,7 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
     const release = deps.worktreeDeletionFence.enter([identity])
     if (!release) return reply.code(409).send({ error: "Worktree deletion is in progress" })
     try {
+      await assertOrdinaryMissionScheduleSession(client, session)
       const result = await client.rpc.call({ rpcID: PRUNING_RPC_ID, method: "pruneBatch", input,
         location: { directory: session.location.directory } },
       { ...locationRequestOptions(readLocationRef(session.location)), signal: AbortSignal.timeout(30_000) })

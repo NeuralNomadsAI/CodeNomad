@@ -1,6 +1,7 @@
 import path from "node:path"
 import type { LocationGetOutput, LocationRef, OpenCodeClient, SessionInfo } from "@opencode/client"
 import { locationRequestOptions, moveSessionToLocation, readLocationRef } from "../opencode/compatibility/location"
+import { assertOrdinaryMissionScheduleSession, MissionScheduleInputError } from "../server/mission-schedule-input-guard"
 
 const SESSION_PAGE_LIMIT = 500
 const MAX_SESSION_PAGES = 1000
@@ -130,6 +131,7 @@ export async function moveProjectSessionFamily(params: {
     const target = await resolveProjectLocation(context, params.targetDirectory, params.resolveExactDirectory)
     const move = async () => {
       await assertInactive(context.client, family[1])
+      for (const session of family[1]) await assertOrdinaryMissionScheduleSession(context.client, session)
       if (params.validateTarget && !await params.validateTarget()) {
         throw new ProjectSessionError("Worktree changed before the session move", 409)
       }
@@ -173,6 +175,7 @@ export async function removeProjectWorktree(params: {
       )
       for (const family of families) assertWorkspaceFamily(family, context.workspaceID)
       await assertInactive(context.client, families.flat())
+      for (const session of families.flat()) await assertOrdinaryMissionScheduleSession(context.client, session)
       await params.validateBeforeRemove?.(context.project.id)
       const original = new Map(families.flat().map((session) => [session.id, session.location]))
       const moved: string[] = []
@@ -437,6 +440,7 @@ function isWindowsPath(value: string): boolean {
 
 function asProjectError(error: unknown, fallback: string): ProjectSessionError {
   if (error instanceof ProjectSessionError) return error
+  if (error instanceof MissionScheduleInputError) return new ProjectSessionError(error.message, error.statusCode)
   return new ProjectSessionError(error instanceof Error ? error.message : fallback, 502)
 }
 

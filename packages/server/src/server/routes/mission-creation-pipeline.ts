@@ -78,6 +78,10 @@ export async function prepareMissionCreation(input: {
   if (!inventory.data.some(entry => entry.id === CODENOMAD_MISSIONS_RPC_ID && entry.state.status === "active")) {
     throw new MissionCreationPreparationError(503, "Mission plugin unavailable")
   }
+  try {
+    const capability = await wait(client.rpc(CODENOMAD_MISSIONS_RPC).documentCapabilities({}, { location, ...locationRequestOptions(location), signal }))
+    z.object({ version: z.literal(1) }).strict().parse(capability)
+  } catch { throw new MissionCreationPreparationError(503, "Unified Mission documents unavailable") }
   signal.throwIfAborted(); connection.assertCurrent()
   const locations = [location]
   if (request.coordinatorSessionId) {

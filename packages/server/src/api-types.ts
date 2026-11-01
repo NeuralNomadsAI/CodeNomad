@@ -11,6 +11,16 @@ export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionConte
 export type { ForgeRepository, ForgeWorkItem, ForgeWorkItemKind, ForgeWorkItemsResult } from "./panel-extensions/contract"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
 export type { MissionRecurrenceReadPage } from "./missions/recurrence-reader-contract"
+export type { MissionScheduleList } from "./missions/mission-schedule-list"
+export type { MissionScheduleRead } from "./missions/mission-schedule-view"
+export interface MissionScheduleCapability {
+  location: PluginControlLocation
+  api: { available: true } | { available: false; reason: "missing-api" | "incompatible-contract" }
+  enabled: boolean
+  origin: string | null
+  activation: { available: true; targets: Array<{ path: string; scope: "global" | "project" }> }
+    | { available: false; reason: string; targets: [] }
+}
 
 export type {
   MissionActor,
@@ -480,6 +490,8 @@ export interface SubagentDepthSnapshot {
   /** OpenCode's General subagent per its resolved rules: `effect` of launching another General subagent,
    * and `hidden` when OpenCode removes the subagent tool from General (a blanket denial last); `null` when unknown. */
   nesting: { effect: SubagentNestingEffect; hidden?: true } | null
+  /** Document selecting the whole effective `experimental` block, including when depth uses its native default. */
+  origin: string | null
   /** `emptyExperimental`: the project holds an `experimental` object without properties, which
    * hides every inherited experimental setting; Inherit removes it. `nestingSkipped`: the override saved only
    * the depth, because the project's General block cannot take the nesting rule without rewriting its value. */
@@ -946,3 +958,4 @@ export interface ServiceUsageSnapshot {
   connection?: string
   stats: import("@opencode/client").SessionStatsInfo
 }
+export type { SupervisionSettingsResponse, SupervisionSettingsControl } from "./host-lifetime/service-supervision-service"

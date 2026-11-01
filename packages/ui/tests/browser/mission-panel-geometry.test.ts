@@ -3,6 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
+import { fixtureEventStream } from "./fixture-event-stream"
 import { chromium, type Browser, type BrowserContextOptions, type Page } from "playwright"
 import type { MissionMap, MissionTask } from "../../../server/src/api-types"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
@@ -13,6 +14,7 @@ import { panelMissions, routeMissionTasks } from "./mission-content-fixture"
 // Real MissionControl with the full stylesheet: single-scroller policy on short
 // layouts, measured dependency rail endpoints and native picker key semantics.
 let browser: Browser, url: string
+let events: Awaited<ReturnType<typeof fixtureEventStream>>
 before(async () => {
   const fixture = await borrowFixture({
       name: "mission-panel-geometry",
@@ -20,11 +22,11 @@ before(async () => {
         { path: "/mission-geometry", html: "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"></head><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-control.tsx\"></script></body></html>" },
       ],
     })
-  url = fixture.url
+  url = fixture.url; events = await fixtureEventStream(url)
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); })
+after(async () => { try { await browser?.close() } finally { await events?.close() } })
 
 const task = (key: string, blockedBy: string[] = [], status: MissionTask["status"] = "queued"): MissionTask => ({ id: `task-${key}`, key, title: `Task ${key}`,
   brief: `Brief ${key}`, role: "worker", status, blockedBy, outstandingExecution: false, createdAt: 1, updatedAt: 1 })
@@ -47,11 +49,13 @@ async function open(context: BrowserContextOptions, missions: MissionMap[], sele
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => {
     const path = new URL(route.request().url()).pathname
+    if (path.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(missions), generatedAt: 1, discardedEvents: 0 } })
     if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project",
       projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] }) })
     return route.fulfill({ json: {} })
   })
+  await events.route(page)
   await page.goto(url)
   await page.evaluate(async ({ selected, view }) => {
     if (view.rtl) document.documentElement.dir = "rtl"

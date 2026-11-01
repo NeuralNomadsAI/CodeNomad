@@ -100,7 +100,10 @@ test("compaction keeps every field but the bodies, unknown ones included, and le
     const readout = { ...full.tasks[0].report!, delivery: "coordinator-readout" as const, futureReportField: true,
       artifact: { kind: "decision", decidedBy: "coordinator", question: "Which?", decision: "This", rationale: "Because" } }
     const late = { ...readout, id: "rep_late", taskKey: "second", late: true, summary: body("Late") }
-    const map = { ...structuredClone(full), template: "wayfinder" as const, document: { id: "doc_1", revision: 4 }, futureScalar: 7,
+    const document: NonNullable<MissionMap["document"]> = { revision: 4, configurationGeneration: 2, timeGeneration: 1,
+      state: "paused", firstPlayedAt: null, launchedCount: 0, firstPlay: null, scheduleActivation: null, everCreatedTask: false,
+      launch: { timing: { kind: "immediate" }, condition: null, ends: { at: null, afterMs: null, maxLaunches: null } } }
+    const map = { ...structuredClone(full), template: "wayfinder" as const, document, futureScalar: 7,
       tasks: [{ ...full.tasks[0], role: "decision", report: readout, futureTaskField: "kept" },
         { ...full.tasks[1], executionMode: { kind: "independent" as const, reason: "playbook" as const, explanation: body("Explanation", 1_000) }, lateReports: [late] }],
       reports: [readout, late], history: full.history.map(change => ({ ...change, requestID: `req_${change.revision}` })) } as MissionMap
@@ -120,7 +123,7 @@ test("compaction keeps every field but the bodies, unknown ones included, and le
     map.reports.forEach((report, index) => kept(report, compact.reports[index], MISSION_BODY_FIELDS.report, `report ${report.id}`))
     map.history.forEach((change, index) => kept(change, compact.history[index], MISSION_BODY_FIELDS.change, `change ${change.revision}`))
     assert.deepEqual([(compact as unknown as { document: unknown }).document, compact.history.map(change => (change as unknown as { requestID: string }).requestID)],
-      [{ id: "doc_1", revision: 4 }, map.history.map(change => `req_${change.revision}`)])
+      [document, map.history.map(change => `req_${change.revision}`)])
     // Rows in place of the mixed bodies, each with its place in the display order.
     assert.deepEqual(row("second").executionMode, { kind: "independent", reason: "playbook", excerpt: missionExcerpt(body("Explanation", 1_000)) })
     assert.deepEqual(compact.tasks.map(task => [task.key, task.order, task.dependents]), [["first", 0, 1], ["second", 1, 0]])

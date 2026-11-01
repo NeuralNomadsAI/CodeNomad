@@ -3,6 +3,7 @@ import { messageTargetSchema, PRUNING_RPC_ID, prunePreviewSchema, pruneRequestSc
 import { locationRequestOptions, readLocationRef } from "../../opencode/compatibility/location"
 import { registerSessionHistoryRoutes, type HistoryRouteDeps } from "./session-history"
 import { registerSessionNavigationRoutes } from "./session-navigation"
+import { assertOrdinaryMissionScheduleSession } from "../mission-schedule-input-guard"
 
 export function registerSessionPruningRoutes(app: FastifyInstance, deps: HistoryRouteDeps): void {
   registerSessionHistoryRoutes(app, deps)
@@ -24,6 +25,7 @@ export function registerSessionPruningRoutes(app: FastifyInstance, deps: History
       const release = deps.worktreeDeletionFence.enter([identity])
       if (!release) return reply.code(409).send({ error: "Worktree deletion is in progress" })
       try {
+        if (method === "prune") await assertOrdinaryMissionScheduleSession(client, session)
         // Narrow broker only: callers cannot choose RPC ID, method, location,
         // database filename, SQL, or replacement content. Generic RPC stays blocked.
         const result = await client.rpc.call({

@@ -1,5 +1,6 @@
 import { createSignal, type Accessor, type Setter } from "solid-js"
-import type { MissionBodyDescriptor, MissionContentResponse, MissionContentSelector, MissionContentSlice } from "../../../server/src/missions/mission-content-wire"
+import type { MissionBodyDescriptor, MissionContentResponse, MissionContentSelector } from "../../../server/src/missions/mission-content-wire"
+import { validMissionContentSlice } from "../lib/mission-content-slice"
 
 /** One mission body: the mission it belongs to, where, and its selector. */
 export interface MissionBodyRef { instanceId: string; projectID: string; missionID: string; selector: MissionContentSelector }
@@ -154,7 +155,7 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
       settle(undefined, response.revision)
       return
     }
-    const slice = valid(entry.ref.selector, query, response.content)
+    const slice = validMissionContentSlice(entry.ref.selector, query, response.content)
     if (!Number.isSafeInteger(response.revision)) throw new Error("Invalid mission content")
     const revision = response.revision!
     entry.answered = Math.max(entry.answered ?? 0, revision)
@@ -313,18 +314,4 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     retainedBytes: () => [...entries.values()].filter(entry => !entry.consumers.size)
       .reduce((total, entry) => total + 2 * ((entry.display?.text.length ?? 0) + (entry.pending?.text.length ?? 0)), 0),
   }
-}
-
-/** The slice, when it is exactly the one this read asked for. */
-function valid(selector: MissionContentSelector, query: { digest?: string; offset: number }, slice: MissionContentSlice | undefined): MissionContentSlice {
-  const identity = (value: MissionContentSlice) => value.kind === selector.kind && value.field === selector.field
-    && value.taskKey === ("taskKey" in selector ? selector.taskKey : undefined)
-    && value.reportId === ("reportId" in selector ? selector.reportId : undefined)
-    && value.change === ("change" in selector ? selector.change : undefined)
-  if (!slice || typeof slice.text !== "string" || typeof slice.digest !== "string" || !identity(slice)
-    || slice.offset !== query.offset || query.digest !== undefined && slice.digest !== query.digest
-    || !Number.isSafeInteger(slice.characters) || slice.offset + slice.text.length > slice.characters
-    || (slice.next === undefined ? slice.offset + slice.text.length !== slice.characters
-      : slice.next !== slice.offset + slice.text.length || slice.next >= slice.characters || !slice.text.length)) throw new Error("Invalid mission content slice")
-  return slice
 }

@@ -63,6 +63,7 @@ async function harness(phase: Phase, nativePreflight = false) {
   const endpoint = `http://127.0.0.1:${upstreamAddress.port}`
   const native = OpenCode.make({ baseUrl: endpoint, fetch: createRuntimeFetch({ url: endpoint }) })
   const client = {
+    rpc: () => ({ scheduleCarrierRead: async () => ({ owned: false }) }),
     session: {
       get: async ({ sessionID }: { sessionID: string }, options?: { signal?: AbortSignal }) => {
         calls.session++

@@ -153,7 +153,13 @@ test("real RightPanel ignores late rejection after row disposal in a newly selec
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
-      if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: panelMissions([mission("one"), mission("two")]), generatedAt: reads, discardedEvents: 0 } }) }
+      if (route.request().method() === "GET") {
+        reads++
+        const path = new URL(route.request().url()).pathname
+        if (path.endsWith("/scheduled")) return route.fulfill({ json: { version: 1, projectID: "fixture", schedules: [] } })
+        if (path.endsWith("/schedule")) return route.fulfill({ json: { document: null, pending: false } })
+        return route.fulfill({ json: { available: true, missions: panelMissions([mission("one"), mission("two")]), generatedAt: reads, discardedEvents: 0 } })
+      }
       calls.push(route.request().postDataJSON() as Input); submitted(); await held
       return route.fulfill({ status: 409, json: { code: "revision-conflict" } })
     })
@@ -161,11 +167,14 @@ test("real RightPanel ignores late rejection after row disposal in a newly selec
     await pause(page).click(); await sent
     // Unmounting the panel disposes the dispatching toolbar; then another Mission is selected.
     await fixture(page, "mount", false); await missionDetail(page).waitFor({ state: "detached" }); await fixture(page, "mount", true)
+    // Complete selection's deferred list/point read before measuring the old control reply.
+    const selectionRead = page.waitForResponse(value => new URL(value.url()).pathname.endsWith("/two/schedule"))
     await selectMission(page, "Lifecycle two")
+    assert.equal(await (await selectionRead).finished(), null)
     await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready")
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
-    release(); await response
+    release(); assert.equal(await (await response).finished(), null)
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     assert.equal(reads, before, "disposed-row completion must not refresh the new context")
     for (const title of ["Lifecycle one", "Lifecycle two"]) {

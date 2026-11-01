@@ -17,6 +17,7 @@ import { EventBus } from "../events/bus"
 import { registerWorkspaceRoutes } from "./routes/workspaces"
 import { registerTemporaryWorkspaceRoutes } from "./routes/temporary-workspaces"
 import { syncSessionGitContext } from "../workspaces/session-git-context"
+import { assertOrdinaryMissionScheduleBody, assertOrdinaryMissionScheduleSession, MissionScheduleInputError } from "./mission-schedule-input-guard"
 import { readGitStatus } from "../workspaces/git-requirement"
 import { registerSettingsRoutes } from "./routes/settings"
 import { registerFilesystemRoutes } from "./routes/filesystem"
@@ -66,6 +67,10 @@ import { ServiceUsage } from "../opencode/service-usage"
 import { registerServiceUsageRoutes } from "./routes/service-usage"
 import { registerWebSearchSettingsRoutes } from "./routes/websearch-settings"
 import { SubagentDepthSettings } from "../opencode/subagent-depth-settings"
+import { NativeScheduleSettingsActivation } from "../opencode/native-schedule-settings-activation"
+import { NativeScheduleCapabilityReader } from "../opencode/native-schedule-capability"
+import { createServiceSupervisionSettings } from "../host-lifetime/service-supervision-resolver"
+import { registerServiceSupervisionRoutes } from "./routes/service-supervision"
 import { registerSubagentDepthSettingsRoutes } from "./routes/subagent-depth-settings"
 import { ImageSettings } from "../opencode/image-settings"
 import { registerImageSettingsRoutes } from "./routes/image-settings"
@@ -90,7 +95,7 @@ import { PREVIEW_SANDBOX_FLAGS } from "../previews/sandbox"
 import { parsePreviewUpgradePath } from "../previews/upgrade-path"
 import { forwardRuntimeRequest } from "../opencode/compatibility/proxy"
 import { requestAdmission } from "./request-admission"
-import { LOCATION_CONTEXT_HEADER, locationRequestOptions, readLocationContext } from "../opencode/compatibility/location"
+import { LOCATION_CONTEXT_HEADER, locationRequestOptions, readLocationContext, readLocationRef, sameLocation } from "../opencode/compatibility/location"
 import { DEFERRED_MEDIA_HEADER, deferToolMedia, wantsDeferredMedia } from "../opencode/session-media"
 import { decodeSessionListScope, prepareLocationImport, readRequestLocations, type SessionListScope } from "../opencode/compatibility/proxy-locations"
 import type { RemoteProxySessionManager } from "./remote-proxy"
@@ -354,13 +359,15 @@ export function createHttpServer(deps: HttpServerDeps) {
   const imageSettings = new ImageSettings(configurationControls, deps.workspaceManager)
   registerImageSettingsRoutes(app, imageSettings)
   registerServiceUsageRoutes(app, new ServiceUsage(deps.workspaceManager, deps.settings))
-  registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
+  const supervision = createServiceSupervisionSettings(deps.settings, deps.workspaceManager)
+  registerServiceSupervisionRoutes(app, { service: supervision, auth: deps.authManager, remoteDevices: deps.remoteControlManager })
+  registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, publishSupervisionTarget: () => supervision.selectBinary() })
   const accounts = new ProviderAccountsService(deps.settings)
   const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts)
   app.addHook("onClose", async () => stopQuotaObserver())
   registerProviderAccountsRoutes(app, { accounts, workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerOpenCodeUpdateRoutes(app, {
-    service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager),
+    service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager, supervision),
     logger: apiLogger,
   })
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
@@ -400,10 +407,13 @@ export function createHttpServer(deps: HttpServerDeps) {
   app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings,
+    supervision,
+    scheduleSettingsActivation: new NativeScheduleSettingsActivation(configurationControls, deps.workspaceManager),
+    scheduleCapability: new NativeScheduleCapabilityReader(configurationControls, deps.workspaceManager),
     auth: deps.authManager, bridgeToken: deps.automationBridgeToken, remoteDevices: deps.remoteControlManager,
     missionsHost: deps.missionsHost })
   registerMissionRecurrenceControl(app, { auth: deps.authManager, manager: deps.workspaceManager,
-    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence, remoteDevices: deps.remoteControlManager })
+    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence, remoteDevices: deps.remoteControlManager, supervision })
   registerMissionRecurrenceControlStatus(app, { auth: deps.authManager, manager: deps.workspaceManager, fence: worktreeDeletionFence,
     remoteDevices: deps.remoteControlManager })
   registerMissionRecurrenceManual(app, { auth: deps.authManager, manager: deps.workspaceManager,
@@ -509,6 +519,7 @@ export interface InstanceProxyWorkspaceManager {
   getServicePathForPath?(id: string, candidate: string): Promise<string | undefined>
   getSharedServiceClient(): Promise<OpenCodeClient>
   getSessionEnvironment(id: string, signal?: AbortSignal): Promise<Record<string, string>>
+  desktopPluginsReady?(): Promise<void>
   ownsLocation(id: string, location: LocationRef, client?: OpenCodeClient, signal?: AbortSignal): ReturnType<WorkspaceManager["ownsLocation"]>
   ownsDirectory(id: string, directory: string): Promise<boolean>
   ownsPath(id: string, candidate: string): Promise<boolean>
@@ -803,6 +814,17 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     return
   }
 
+  const ordinarySessionMutation = request.method !== "GET" && request.method !== "HEAD"
+    && /^\/api\/(?:experimental\/)?session(?:\/|$)/.test(pathname)
+    && !isGlobalFormAction(pathname, request.method)
+  if (ordinarySessionMutation) {
+    try { assertOrdinaryMissionScheduleBody(request.body, pathname.replace(/\/+$/, "") === "/api/experimental/session/import") }
+    catch (error) {
+      if (error instanceof MissionScheduleInputError) return reply.code(error.statusCode).send({ error: error.message })
+      throw error
+    }
+  }
+
   // Native parent creation ignores the supplied location and inherits the
   // parent's authority. It is not part of CodeNomad's root-create contract.
   if (request.method === "POST" && pathname.replace(/\/+$/, "") === "/api/session") {
@@ -1061,30 +1083,39 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
   }
 
   const sessionId = getSessionRouteId(pathname)
+  const sessionInput = promptBody as { id?: unknown; info?: { id?: unknown } } | undefined
+  const suppliedSessionId = pathname.replace(/\/+$/, "") === "/api/session" ? sessionInput?.id : sessionInput?.info?.id
+  if (ordinarySessionMutation && (sessionId || typeof suppliedSessionId === "string")) {
+    await wait(Promise.resolve(workspaceManager.desktopPluginsReady?.()))
+  }
   let authorizedSessionDirectory: string | undefined
-  if (sessionId && !isGlobalFormAction(pathname, request.method)) {
+  let authorizedSession: Awaited<ReturnType<OpenCodeClient["session"]["get"]>> | undefined
+  const targetSessionId = sessionId && !isGlobalFormAction(pathname, request.method) ? sessionId
+    : ordinarySessionMutation && typeof suppliedSessionId === "string" && suppliedSessionId ? suppliedSessionId : undefined
+  if (targetSessionId) {
     let session
     try {
-      session = await wait((await clientForRequest()).session.get({ sessionID: sessionId }, { signal }))
+      session = await wait((await clientForRequest()).session.get({ sessionID: targetSessionId }, { signal }))
     } catch (error) {
       if (isInvalidRequestError(error)) {
         reply.code(400).send({ error: "Invalid session ID" })
         return
       }
-      if (isSessionNotFoundError(error)) {
+      if (isSessionNotFoundError(error) && sessionId) {
         // Parent-chain hydration must distinguish a missing session from a
         // transport/authorization failure. Retain only the native public shape.
         reply.code(404).send({ _tag: "SessionNotFoundError", sessionID: sessionId, message: "Session not found" })
         return
       }
-      throw error
+      if (!isSessionNotFoundError(error)) throw error
     }
-    if (!(await wait(workspaceManager.ownsLocation(workspaceId, session.location, await clientForRequest(), signal)))) {
+    if (session && !(await wait(workspaceManager.ownsLocation(workspaceId, session.location, await clientForRequest(), signal)))) {
       reply.code(403).send({ error: "Session does not belong to workspace" })
       return
     }
-    authorizedSessionDirectory = session.location.directory
-    if (request.method !== "GET" && request.method !== "HEAD") {
+    authorizedSessionDirectory = session?.location.directory
+    authorizedSession = session
+    if (session && request.method !== "GET" && request.method !== "HEAD") {
       const sessionWorktree = await wait(workspaceManager.getWorktreeIdentityForPath(workspaceId, session.location.directory))
       if (!sessionWorktree) {
         reply.code(403).send({ error: "Session does not belong to workspace" })
@@ -1128,6 +1159,35 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
 
   try {
     connection?.assertCurrent()
+    if (ordinarySessionMutation) {
+      try {
+        const client = await clientForRequest()
+        const current = () => { signal.throwIfAborted(); connection?.assertCurrent() }
+        const guard = async (session: NonNullable<typeof authorizedSession>) => {
+          await wait(assertOrdinaryMissionScheduleSession(client, session, { signal, current }))
+          const fresh = await wait(client.session.get({ sessionID: session.id }, { signal }))
+          current()
+          if (fresh.id !== session.id || !sameLocation(readLocationRef(fresh.location), readLocationRef(session.location))
+            || !await wait(workspaceManager.ownsLocation(workspaceId, fresh.location, client, signal))) {
+            throw new MissionScheduleInputError(403)
+          }
+          assertOrdinaryMissionScheduleBody({ metadata: fresh.metadata })
+        }
+        if (authorizedSession) await guard(authorizedSession)
+        else if (targetSessionId) {
+          // A supplied create/import ID absent natively still needs the exact
+          // durable reverse-mapping read in the admitted project.
+          await wait(assertOrdinaryMissionScheduleSession(client, { id: targetSessionId, location: runtimeLocation }, { signal, current }))
+        }
+        current()
+      } catch (error) {
+        if (error instanceof MissionScheduleInputError) {
+          releaseMutation?.()
+          return reply.code(error.statusCode).send({ error: error.message })
+        }
+        throw error
+      }
+    }
     const formReply = request.method === "POST" && pathname.match(/^\/api\/session\/[^/]+\/form\/([^/]+)\/reply\/?$/)
     if (formReply && sessionId && sessionId !== "global" && connection && args.humanAnswers
       && request.headers[HUMAN_ANSWER_HEADER] === "1") {

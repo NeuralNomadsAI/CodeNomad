@@ -333,3 +333,26 @@ test("clearing an instance fences a read further still running", async () => {
   await read
   assert.equal(keys(store).length, 50, "the earlier read never publishes")
 })
+
+test("task pages retain whole document, original editor request and document-only cleanup metadata", async () => {
+  const value = plan(120), response = listed(value)
+  assert.ok(response.available)
+  const map = response.missions[0]
+  map.document = { revision: 4, configurationGeneration: 2, timeGeneration: 1, state: "paused", firstPlayedAt: null,
+    launchedCount: 0, everCreatedTask: false, firstPlay: null, scheduleActivation: null,
+    launch: { timing: { kind: "immediate" }, condition: null, ends: { at: null, afterMs: null, maxLaunches: null } } }
+  map.history = [{ revision: 2, source: "user", requestID: "original_edit", createdAt: 2,
+    bodies: { objective: { characters: 20, digest: "original_digest" } } }]
+  response.cleanups = [{ missionID: "msn_deleted", deletionID: "evt_deleted", requestID: "original_delete", expectedRevision: 3,
+    deleteManagedSessions: false, objective: "Deleted", removed: 0, retained: 0, pending: 0, documentPending: true, reasons: [], createdAt: 3 }]
+  const before = structuredClone(response), store = createMissionStore(async () => response, pages(() => value, []))
+  store.want("instance-1", "reader", map.id)
+  await store.ensure("instance-1")
+  assert.equal(await store.loadTasks("instance-1", map.id, { offset: 50 }), "read")
+  const shown = store.state("instance-1")
+  assert.equal(shown.missions[0].tasks.length, 100)
+  assert.deepEqual(shown.missions[0].document, before.missions[0].document)
+  assert.deepEqual(shown.missions[0].history, before.missions[0].history)
+  assert.deepEqual(shown.cleanups, before.cleanups)
+  assert.deepEqual(response, before, "display merging leaves the source map intact")
+})

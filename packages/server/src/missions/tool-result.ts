@@ -3,6 +3,31 @@ import { WAYFINDER_DECISION_REQUIREMENT, buildAssignmentPrompt } from "./recipes
 import { decisionQuestionTag } from "./decision-question-tag"
 import { boundedResult, contentText, withinInspectBound } from "./inspect-view"
 import type { MissionTaskInterruption } from "./coordinator-actions"
+import { MissionControlError } from "./control-error"
+
+export type MissionMutationMethod = "delegate" | "declare" | "revise" | "report" | "reportNative" | "briefing"
+/** The bridge carries the already fitted model result, including its exact reads/pages. */
+export type MissionToolResult = { toolResult: Record<string, unknown> }
+type MutationValue = { mission: MissionMap; disposition?: string; taskKey?: string; contract?: { taskKey: string; generation: number } }
+type MutationInput = { taskKey?: string; addTasks?: Array<{ taskKey: string }>; retireTasks?: Array<{ taskKey: string }>;
+  dependencyUpdates?: Array<{ taskKey: string }> }
+
+/** Shared by ordinary tools and the scheduled RPC receiver, before serialization. */
+export function missionMutationToolResult(method: MissionMutationMethod, input: MutationInput, result: MutationValue | MissionToolResult): Record<string, unknown> {
+  if ("toolResult" in result) return result.toolResult
+  const { mission } = result
+  if (method === "revise") return boundedRevision(mission, [...input.addTasks ?? [], ...input.retireTasks ?? [],
+    ...input.dependencyUpdates ?? []].map(task => task.taskKey))
+  if (method === "briefing") return boundedMutation(compactMission(mission), mission)
+  const key = method === "delegate" ? input.taskKey : method === "declare" ? result.contract?.taskKey : result.taskKey
+  const task = mission.tasks.find(task => task.key === key)
+  if (method === "declare" && (!task || task.executionMode?.kind !== "native" || task.contractGeneration !== result.contract?.generation)) {
+    throw new MissionControlError("Declared native task context unavailable", "invalid-journal")
+  }
+  return boundedMutation({ disposition: result.disposition, ...compactMission(mission),
+    ...(key === undefined ? {} : { task: task && compactMissionTask(task) }),
+    ...(method === "declare" ? nativeAssignment(mission, task!) : {}) }, mission)
+}
 
 const REVISION_PAGE_NOTE = "This revision affected more tasks than one result holds: the first `returned`, in map order, are listed."
   + " Read any other with mission.inspect({ taskKey }) or the map's task pages."
@@ -10,7 +35,7 @@ const REVISION_PAGE_NOTE = "This revision affected more tasks than one result ho
 /** A mission_* mutation result within `MISSION_INSPECT_OUTPUT_LIMIT`: its frontier and
  * a task's assignment prompt give way, largest first, to `{ omittedCharacters, read }`
  * naming their exact mission.inspect read (a prompt is read whole before it is passed). */
-export function boundedMutation<T extends Record<string, unknown>>(result: T, mission: MissionMap): T {
+export function boundedMutation<T extends Record<string, unknown>>(result: T, mission: Pick<MissionMap, "id" | "revision">): T {
   const taskKey = (result.task as { key?: unknown } | undefined)?.key
   return boundedResult(result, mission, [
     ...("frontier" in result ? [{ key: "frontier" as const, selector: { kind: "mission" as const, field: "frontier" } }] : []),
@@ -51,7 +76,7 @@ export function boundedInterruption(result: MissionTaskInterruption & { note?: s
 
 /** A revision's result: the compact mission and its affected tasks in map order, as
  * many as a bounded result holds; `taskPage` counts them when some are left out. */
-export function boundedRevision(mission: MissionMap, taskKeys: readonly string[]) {
+export function boundedRevision(mission: Pick<MissionMap, "id" | "revision" | "status" | "runState" | "frontier" | "tasks">, taskKeys: readonly string[]) {
   const tasks = compactMissionTasks(mission, taskKeys)
   const page = (count: number) => ({ ...compactMission(mission), tasks: tasks.slice(0, count),
     ...(count < tasks.length ? { taskPage: { returned: count, total: tasks.length, note: REVISION_PAGE_NOTE } } : {}) })
@@ -82,7 +107,7 @@ export function compactMissionTask(task: MissionTask) {
 }
 
 /** What a coordinator acts on next: the current revision and frontier. Callers add the affected tasks. */
-export function compactMission(mission: MissionMap) {
+export function compactMission(mission: Pick<MissionMap, "id" | "revision" | "status" | "runState" | "frontier">) {
   return {
     missionID: mission.id, revision: mission.revision, status: mission.status,
     ...(mission.runState === undefined ? {} : { runState: mission.runState }),
@@ -90,12 +115,12 @@ export function compactMission(mission: MissionMap) {
   }
 }
 
-export function compactMissionTasks(mission: MissionMap, taskKeys: readonly string[]) {
+export function compactMissionTasks(mission: Pick<MissionMap, "tasks">, taskKeys: readonly string[]) {
   return mission.tasks.filter(task => taskKeys.includes(task.key)).map(compactMissionTask)
 }
 
 /** The exact current canonical prompt of a live native task; withdrawn work is never relaunched. */
-export function nativeAssignment(mission: MissionMap, task: MissionTask) {
+export function nativeAssignment(mission: Pick<MissionMap, "id" | "template" | "taskMode" | "objective">, task: MissionTask) {
   if (task.executionMode?.kind !== "native" || task.status === "withdrawn" || !Number.isSafeInteger(task.contractGeneration)) return {}
   return {
     contract: { missionID: mission.id, taskKey: task.key, generation: task.contractGeneration! },

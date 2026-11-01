@@ -10,7 +10,7 @@ OpenCode gives you the engine. CodeNomad gives you the cockpit. It connects to O
 
 ## Hand long work to Missions {#missions}
 
-Describe the work once. The mission's coordinator plans it as a task tree, delegates bounded tasks to native OpenCode conversations and reports results with their evidence. Run a mission once or every day; creating one never starts work until you choose to. Playbooks cover debugging, product delivery and comparing two models with a blind judge. See [Missions](missions.md).
+Describe the work once. The mission's coordinator plans it as a task tree, delegates bounded tasks to native OpenCode conversations and reports results with their evidence. Run once, at chosen times or intervals, or after a verified project change; creation saves a paused Mission for your explicit start. Playbooks cover debugging, product delivery and comparing two models with a blind judge. See [Missions](missions.md).
 
 ## Keep working from your phone {#phone-access}
 
@@ -77,7 +77,7 @@ The workspace root limits which folders CodeNomad opens; it is not an agent sand
 | Work across checkouts and conversations | [Projects](projects.md), [Conversations](conversations.md), [Files](files.md) |
 | Find history or safely clean it up | [History](history.md) |
 | Answer native questions and permissions | [Permissions](permissions.md) |
-| Coordinate bounded or daily work | [Missions](missions.md) |
+| Coordinate bounded or scheduled work | [Missions](missions.md) |
 | Configure execution and integrations | [OpenCode](opencode.md), [Providers](providers.md), [Integrations](integrations.md) |
 | Connect another device | [Remote Control](remote-control.md), [Security](security.md), [Mobile](mobile.md) |
 | Adapt the workspace | [Settings](settings.md), [Shortcuts](shortcuts.md), [Voice](voice.md), [Extensions](extensions.md) |

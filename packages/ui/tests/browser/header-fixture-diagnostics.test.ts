@@ -88,6 +88,14 @@ test("bounded rings, stage marks and detach use the real browser without asynchr
     await page.evaluate(() => console.log("after detach"))
     await observer.diagnose(message => logs.push(message))
     assert.deepEqual(JSON.parse(logs[1]).events, report.events)
+    const named = observeHeaderFixture(page, "extensionFixture")
+    try {
+      await page.evaluate(() => { delete (window as any).fixture; (window as any).extensionFixture = {} })
+      const namedLogs: string[] = []
+      await named.diagnose(message => namedLogs.push(message))
+      assert.equal(JSON.parse(namedLogs[0]).snapshot.fixture, "object", "the diagnostic reads its owner's actual readiness signal")
+    } finally { named.detach() }
+    assert.deepEqual(listenerCounts(page), baseline)
   } finally { observer.detach(); await page.close() }
 })
 
