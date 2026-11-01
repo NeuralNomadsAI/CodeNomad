@@ -60,6 +60,7 @@
     "appId": "ai.neuralnomads.codenomad.client",
     "publish": null,
     "productName": "CodeNomad",
+    "copyright": "Copyright © 2025-2026 CodeNomad contributors",
     "directories": {
       "output": "release",
       "buildResources": "electron/resources"
