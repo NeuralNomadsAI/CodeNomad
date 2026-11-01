@@ -30,6 +30,8 @@ export interface IntegrationView {
   catalogStatus: IntegrationCatalogEntry["status"]
   /** Recognised in the effective configuration, enabled or not. */
   configured: boolean
+  /** Configuration declaration and native loading, independently of activation and RPC health. */
+  plugin?: { declared: boolean; runtime: "active" | "failed" | "unloaded" | "unknown" }
   /** Writable scopes that declare it or a rule for its plugin. */
   scopes: PluginControlScope[]
   activation: { global: PluginScopeRuleState; project: PluginScopeRuleState; effective: PluginScopeRuleState }
@@ -53,6 +55,8 @@ export interface IntegrationsResponse {
   location: PluginControlLocation
   catalog: { state: IntegrationCatalogState; fetchedAt?: string }
   integrations: IntegrationView[]
+  /** Trusted renderer correlation only; strip before any extension MessagePort delivery. */
+  tracking?: { directory: string; declaredTargets?: string[]; sources: Array<{ integration: string; scope: PluginControlScope; target: string }> }
 }
 
 export type IntegrationHostsResponse = import("./opencode/integrations/contract").IntegrationRpcValue<"hosts.output">

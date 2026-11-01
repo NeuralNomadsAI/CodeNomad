@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { bundlesChangeSchema } from "../../../server/src/panel-extensions/bundles-contract"
+import { bundlesChangeSchema, bundlesInstallationSchema } from "../../../server/src/panel-extensions/bundles-contract"
 import type { BundlesConfirmation } from "../../../server/src/panel-extensions/bundles-lifecycle"
 
 const capability = z.string().regex(/^[a-f0-9]{32,64}$/)
@@ -11,7 +11,7 @@ const display = (max: number, min = 0) => z.string().refine(value => {
 const view = z.object({ requestID: capability, planID: capability,
   action: z.enum(["install", "update", "remove", "enable", "disable", "installHost", "attach"]),
   integration: display(120, 1), scope: z.enum(["global", "project"]), version: display(120),
-  conversation: display(256), document: display(243).optional() }).strict()
+  conversation: display(256), document: display(243).optional(), installation: bundlesInstallationSchema.optional() }).strict()
 const event = z.union([z.object({ mountID: capability, view: view.nullable() }).strict(),
   z.object({ mountID: capability, change: bundlesChangeSchema }).strict()])
 export type BundlesPrivateEvent = z.infer<typeof event>

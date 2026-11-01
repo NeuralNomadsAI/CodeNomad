@@ -23,7 +23,8 @@ const [active, setActive] = createSignal(true)
 const snapshot: PluginControlsSnapshot = {
   location, runtime: [], controls: [],
   configured: { rules: [{ selector: "-kept.rule", enabled: false, scope: "global", path: globalPath, order: 0, entryIndex: 0 }], sources: [] },
-  targets: [{ scope: "global", path: globalPath, exists: true, expectedRevision: "a".repeat(64) }, { scope: "project", path: projectPath, exists: true, expectedRevision: "b".repeat(64) }],
+  targets: [{ scope: "global", path: globalPath, exists: true, expectedRevision: "a".repeat(64), trackingContext: "c".repeat(64) },
+    { scope: "project", path: projectPath, exists: true, expectedRevision: "b".repeat(64), trackingContext: "d".repeat(64) }],
 }
 
 let uiConfig = { settings: { locale: "en" } }

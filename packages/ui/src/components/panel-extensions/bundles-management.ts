@@ -1,12 +1,15 @@
 import { bundlesManageInputSchema, type BundlesControlInput } from "../../../../server/src/panel-extensions/bundles-contract"
 import { bundlesPrivateEvents, type BundlesConfirmation } from "../../lib/bundles-private-events"
 import { PanelExtensionHttpError, panelExtensionsApi4 } from "../../lib/panel-extensions-api"
+import { pluginSourcesStore } from "../../stores/plugin-sources"
 
 type Command = BundlesControlInput extends infer T ? T extends BundlesControlInput ? Omit<T, "owner" | "mountID"> : never : never
 const inputs = new Map(bundlesManageInputSchema.options.map(option => [option.shape.method.value, option.shape.input]))
 export function createBundlesManagement(props: { id: string; instanceId: string; digest: string; sessionID: string | null
   current(): boolean; send(value: unknown): void; show(view: BundlesConfirmation | undefined): void }) {
   const lifetime = new AbortController()
+  const trackingOwner = {}
+  const attempts = new Map<string, ReturnType<typeof pluginSourcesStore.begin>>()
   let captured: { owner: string; mountID: string } | undefined, closed = false, release: (() => void) | undefined, releaseOwner: (() => void) | undefined
   let opening: Promise<void> | undefined, shown: BundlesConfirmation | undefined
   const show = (view: BundlesConfirmation | undefined) => {
@@ -24,6 +27,7 @@ export function createBundlesManagement(props: { id: string; instanceId: string;
     if (closed) return
     const old = captured
     closed = true; captured = undefined; lifetime.abort(); release?.(); releaseOwner?.(); show(undefined)
+    pluginSourcesStore.clearOwner(trackingOwner); attempts.clear()
     if (old) void panelExtensionsApi4.bundlesControl(props.id, { ...old, command: "dispose" }, AbortSignal.timeout(19_000)).catch(() => {})
   }
   const mount = () => opening ??= (async () => {
@@ -43,7 +47,17 @@ export function createBundlesManagement(props: { id: string; instanceId: string;
     release = bundlesPrivateEvents.subscribe(result.mountID, event => {
       if (closed || !props.current()) { dispose(); return }
       if ("view" in event) show(event.view ?? undefined)
-      else props.send({ type: "bundles:changed", ...event.change })
+      else {
+        if (event.change.kind === "request") {
+          const attempt = attempts.get(event.change.requestID)
+          if (attempt) {
+            if (event.change.outcome === "confirmed") pluginSourcesStore.submitted(attempt)
+            else pluginSourcesStore.consume(attempt)
+            attempts.delete(event.change.requestID)
+          }
+        }
+        props.send({ type: "bundles:changed", ...event.change })
+      }
     })
   })().catch(error => { dispose(); throw error })
   return {
@@ -63,7 +77,15 @@ export function createBundlesManagement(props: { id: string; instanceId: string;
       } } : {}) }
     },
     displayed: (planID: string) => control({ command: "displayed", planID }),
-    confirm: (planID: string) => { void control({ command: "confirm", planID }).catch(error => {
+    confirm: (planID: string) => {
+      const view = shown
+      if (closed || !props.current() || view?.planID !== planID) return
+      if (view.action === "install" && view.installation && !attempts.has(view.requestID)) {
+        const target = view.installation
+        attempts.set(view.requestID, pluginSourcesStore.begin(props.instanceId, { directory: target.directory }, target.scope, target.target,
+          { integration: target.integration, runtimeID: target.runtimeID, owner: trackingOwner }))
+      }
+      void control({ command: "confirm", planID }).catch(error => {
       // Stale admission has its own terminal event, possibly still behind SSE backpressure.
       if (!(error instanceof PanelExtensionHttpError && error.status === 409)) dispose()
     }) },

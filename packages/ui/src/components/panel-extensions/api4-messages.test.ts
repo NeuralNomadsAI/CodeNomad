@@ -25,9 +25,9 @@ test("every API 4 permission has its install sentence in all ten locales", () =>
 
 test("bundles management consent names supported asks with a dedicated confirmation for each", () => {
   const sentence = en["panelExtensions.api4.bundles.manage"]
-  for (const action of ["install or update", "enable or disable", "install their application component", "attach an open application to the displayed conversation"]) {
+  for (const action of ["install, update or remove", "enable or disable", "install their application component", "attach an open application to the displayed conversation"]) {
     assert.ok(sentence.includes(action), action)
   }
   assert.match(sentence, /Each action requires its own CodeNomad confirmation\./)
-  assert.doesNotMatch(sentence, /\b(remove|removal|detach|global)\b/i)
+  assert.doesNotMatch(sentence, /\b(detach|global)\b/i)
 })

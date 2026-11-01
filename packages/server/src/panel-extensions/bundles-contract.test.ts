@@ -17,3 +17,15 @@ test("bundles labels, documents and application versions count Unicode code poin
     attachment: { state: "attached", label: "😀".repeat(120) } }
   assert(bundlesStateResultSchema.safeParse({ catalog: { state: "fresh" }, integrations: [item] }).success)
 })
+
+test("additive plugin facts accept older DTOs and reject private or invented states", () => {
+  const item = { id: "fixture", family: "api", configured: true, scopes: [], state: "unknown",
+    activation: { global: "default", project: "default", effective: "default" } }
+  const valid = (plugin?: unknown) => bundlesStateResultSchema.safeParse({ catalog: { state: "fresh" },
+    integrations: [{ ...item, ...(plugin ? { plugin } : {}) }] }).success
+  assert(valid())
+  for (const runtime of ["active", "failed", "unloaded", "unknown"]) assert(valid({ declared: true, runtime }))
+  for (const progress of ["pending", "unconfirmed"]) assert(valid({ declared: true, runtime: "unloaded", progress }))
+  for (const plugin of [{ runtime: "active" }, { declared: true, runtime: "installed" },
+    { declared: true, runtime: "unloaded", progress: "installing" }, { declared: true, runtime: "active", target: "private" }]) assert(!valid(plugin))
+})

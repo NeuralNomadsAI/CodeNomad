@@ -61,7 +61,7 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   known before installation: a `native` one is refused in Project
   (`global-only`, 422), and two specs of one integration are duplicates.
 - **States**: the response publishes only the durable configured state
-  (`reloadPending`). A just-added spec is `pending` (busy row, **Installing**)
+  (`reloadPending`). An observed declaration added here is `pending` (busy row, **Installing**)
   until `plugin.list` reports its exact target, which turns it into an ordinary
   active or failed row (`error` and native `ref` in the tooltip).
   `PLUGIN_SOURCE_PENDING_TIMEOUT_MS` (120 s) bounds that window: a source still
@@ -71,6 +71,12 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   omits disabled plugins and exposes no package-to-ID link for them, so a disabled
   package with an exact `-id` rule shows two rows: its ID row with switches, and
   its unconfirmed source row carrying the Remove items.
+  The renderer reserves the source hint before submitting Add and requires both actual declaration observation
+  and a successful submission receipt. Its original start bounds the window even when the receipt arrives late.
+  Runtime observation, observed removal, reload and instance stop consume the hint permanently. The same tracker
+  supplies host-only progress to the integration bridge, using its private exact-target correlation.
+  Native Add captures the target's opaque connection/document context before transmission. It remains stable
+  across the intended write; a missing or changed context yields unconfirmed instead of adopting another connection.
 - **Correlation**: snapshot sources carry `pluginId` when the runtime inventory
   loaded them, so Remove items attach to the plugin row. A row offers removal only
   for declarations in a scope's own write target; inherited, inline and other

@@ -49,6 +49,8 @@ const commonStatus = { version, notices: z.array(z.literal("legacy_install")).ma
 const commonState = {
   id: entry.id, configured: z.boolean(), scopes: z.array(z.enum(["global", "project"])).max(2),
   activation: z.object({ global: rule, project: rule, effective: rule }).strict(),
+  plugin: z.object({ declared: z.boolean(), runtime: z.enum(["active", "failed", "unloaded", "unknown"]),
+    progress: z.enum(["pending", "unconfirmed"]).optional() }).strict().optional(),
   version: version.optional(), outdated: z.literal(true).optional(),
   state: z.enum(["absent", "inactive", "failed", "unsupported", "non-conforming", "unknown", "ok"]),
 }
@@ -61,6 +63,10 @@ const nativeState = z.object({ ...commonState, family: z.literal("native"), atta
     connection: z.object({ offers: z.number().int().min(0).max(INTEGRATION_MAX_OFFERS).optional() }).strict().optional(),
   }).strict().optional(),
 }).strict()
+/** Host HTTP/SSE correlation. Never forward this object to an author port. */
+export const bundlesInstallationSchema = z.object({ integration, scope, target: capability,
+  runtimeID: z.string().regex(/^[a-z][a-z0-9.-]{0,127}$/).optional(),
+  directory: z.string().min(1).max(32768) }).strict()
 const otherState = z.object({ ...commonState, family: z.enum(["vendor-mcp", "api"]),
   status: z.object({ ...commonStatus,
     connection: z.object({ state: integrationStatusSchema.shape.connection.unwrap().shape.state }).strict().optional(),
@@ -68,6 +74,11 @@ const otherState = z.object({ ...commonState, family: z.enum(["vendor-mcp", "api
 }).strict()
 export const bundlesStateResultSchema = z.object({ catalog: catalogState,
   integrations: z.array(z.union([nativeState, otherState])).max(INTEGRATION_CATALOG_MAX_ENTRIES),
+}).strict()
+export const bundlesStateHostResultSchema = bundlesStateResultSchema.extend({
+  tracking: z.object({ directory: z.string().min(1).max(32768),
+    declaredTargets: z.array(capability).max(4096).optional(),
+    sources: z.array(bundlesInstallationSchema.omit({ directory: true, runtimeID: true })).max(4096) }).strict().optional(),
 }).strict()
 export const bundlesHostsResultSchema = z.object({ offers: z.array(z.object({
   offerID: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/), label, document: label.optional(),

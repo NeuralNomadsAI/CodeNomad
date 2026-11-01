@@ -43,7 +43,7 @@ La superficie conserva su última instantánea mientras está oculta y se revali
 1. En **Estado → Plugins**, elige **Añadir plugin** (el icono de suma junto a **Actualizar controles de plugins**).
 2. Escribe un paquete del registro npm (`nombre`, `nombre@1.2.3`, `@scope/nombre@^1`) o un repositorio Git (`github:propietario/repo`, `git+https://…`).
 3. Mantén **Global**, salvo que el plugin deba ejecutarse solo para este proyecto, y elige **Añadir**.
-4. La nueva fila muestra **Instalando** hasta que OpenCode la notifica. Entonces pasa a ser una fila de plugin normal con sus interruptores, o una fila con error.
+4. Una vez observada la declaración, una adición enviada localmente muestra **Instalando** durante un máximo de dos minutos desde la solicitud original, hasta que OpenCode informa de su ejecución. Después pasa a ser una fila normal con interruptores o una fila con error. Tras recargar o sin pruebas locales suficientes aparece **Sin confirmar**; una respuesta tardía nunca reinicia el plazo.
 
 Para quitar un plugin, abre el menú junto a su nombre y elige **Quitar de Global** o **Quitar de Proyecto**. Solo se elimina la declaración del archivo de configuración de ese ámbito; sus reglas de activación **Global**/**Proyecto** siguen como reglas y la caché de paquetes de OpenCode se conserva.
 

@@ -79,9 +79,10 @@ UTF-8 JSON within `integrationCatalogSchema`.
 `opencode/integrations/recognition.ts` recognises a configured integration from the authoritative plugin snapshot
 (`PluginControls.read`), enabled or not, without reading OpenCode's cache. A source is the catalog integration `X`
 when its registry package (or the target of an `npm:` alias) is `X.package`, when the runtime loaded it as
-`X.plugin`, or when its spec starts with a prefix of `X.sources.git`; an exact `-X.plugin` rule also designates it,
+`X.plugin`, or when its spec starts with a prefix of `X.sources.git`; an exact disabled `X.plugin` rule also designates it,
 since `plugin.list` omits disabled plugins. A source that designates two integrations, or that loaded under another
-plugin ID, is ambiguous.
+plugin ID, is ambiguous. Native rules carry the normalized selector and `enabled: false`. An ID-less failed package
+correlates only through one exact recognized source target; conflicting or multiple inventory candidates are ambiguous.
 
 `GET /api/workspaces/:id/integrations?directory=[&workspaceID=]` (`server/routes/integrations.ts`,
 `IntegrationsReader`) answers every catalog entry for an owned Location, without the catalog's `plugin`, `rpc`,
@@ -328,10 +329,20 @@ Expected self-authored configuration bytes and native update versions have narro
 post-submission normalization; all other consent, session, catalogue and target
 checks remain live through subsequent metadata writes and success reconciliation.
 
-The read DTO retains native runtime state and activation separately. Bounded
-`pending`/`unconfirmed` presentation requires an operation tracker; the existing
-Plugins tracker records only its own source additions in renderer memory. Never infer
-installation from a missing version or create a timer in author code as authority.
+The additive optional `plugin` object carries `declared` (a recognized configuration source) and
+`runtime: active | failed | unloaded | unknown` (native inventory, with unknown attribution on ambiguity).
+`configured`, `activation.effective` and RPC `state` retain their separate meanings. An activation rule or runtime
+alone can establish `configured`; a missing version leaves known runtime loading unchanged.
+The trusted renderer adds `progress: pending | unconfirmed` only to declared, unloaded, effectively enabled entries.
+The shared Plugins source tracker reserves before transmission, requires actual declaration plus a submission
+receipt, and bounds pending to 120,000 ms from that reservation. Late receipts retain the original start.
+Runtime observation, observed removal, mount revocation/reload and instance stop consume hints permanently.
+Reloaded or externally declared sources use unconfirmed. Expiry emits a local display invalidation; reads remain
+demand/event-driven. Exact connection/document/source correlation stays in authenticated host HTTP/private SSE;
+the public port strips directory, opaque targets and confirmation context. Older DTOs may omit `plugin`.
+Private tracking includes complete configured-source token presence separately from catalogue mappings, so a
+catalogue-only read preserves unrelated Plugins hints. Native Add pins connection/document context before sending;
+the first source observation and all subsequent observations must retain it.
 Catalogue documentation URLs remain display data inside the sandbox; opening them
 requires a separately qualified fixed trusted action.
 
@@ -377,7 +388,8 @@ Commands:
   `catalog-fixture.ts` builds conforming catalog entries and plugin snapshots.
 - `node --import tsx scripts/test-integrations-recognition-native.mjs <absolute-cli>`: the fake integration loaded
   (`ok`), its marker-mismatch variant (`non-conforming`), a third disabled by its exact rule (`inactive`, recognised)
-  and an absent entry, against a real daemon; only loaded integrations are called, under catalog RPC IDs; a
+  and absent and ID-less failed entries, against a real daemon; normalized activation and separate declaration/runtime
+  facts are checked. Only loaded integrations are called, under catalog RPC IDs; a
   Project add of a native integration and a second spec of a loaded one are refused without writing.
 - `node --import tsx --test packages/server/src/server/routes/integration-attachments.test.ts
   packages/server/src/opencode/plugin-sources.test.ts`: real route/service checks for strict inputs, ownership and
@@ -428,6 +440,8 @@ Commands:
   concurrency, Project/WSL refusals, uncertain updates without replay and confidentiality
   across foreign streams, extension projections, metadata and structured diagnostics.
   Its final output names any native-platform or installer cases requiring separate qualification.
+  `--installation-state` runs the bounded install/activation/update/read projection slice and its private exact-source
+  correlation and sentinel checks, leaving full management attachment qualification to the complete command.
 - `node --import tsx scripts/test-integration-fixtures-native.mjs <absolute-cli>`: installs the fake package and
   its marker-mismatch variant through the fake registry, checks every output against `contract.ts`, runs the
   Python client against the fixture's own registration (advertise, attach, detach, withdraw), checks that its

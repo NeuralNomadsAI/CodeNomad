@@ -1,6 +1,7 @@
 // B: actual management HTTP, two authenticated owner SSE lanes, lifecycle, BundlesActions,
 // native configuration/package/RPC IO. Optional pinned real Blender pilot; no renderer claims.
 // node --import tsx scripts/test-panel-extension-bundles-management-native.mjs <absolute-cli> [integration-checkout] [blender-executable]
+// --installation-state selects the bounded declaration/runtime/progress-producer qualification.
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
@@ -43,7 +44,8 @@ import { ClientConnectionManager } from "../packages/server/src/clients/connecti
 import { InstanceEventBridge } from "../packages/server/src/workspaces/instance-events.ts"
 import { nativeEventConnections } from "../packages/server/src/workspaces/opencode-service.ts"
 
-const [cli, checkout, blender] = process.argv.slice(2)
+const installationOnly = process.argv.includes("--installation-state")
+const [cli, checkout, blender] = process.argv.slice(2).filter(value => value !== "--installation-state")
 assert(cli && path.isAbsolute(cli) && await stat(cli).then(x => x.isFile(), () => false), "Pass an existing absolute private CLI executable")
 assert.equal(Boolean(checkout), Boolean(blender), "Supply both the integration checkout and Blender executable, or neither")
 const pin = "54d6e5d0f4c22e74d228822fcaaa0912818a8b46"
@@ -301,15 +303,26 @@ try {
       const otherMount = await mount(outsider)
       await post("manage", { ...mounted, method: "request", input: requestInput("install") }, 503, foreignCookie)
       await post("manage", { ...otherMount, owner: owner.owner, method: "request", input: requestInput("install") }, 503)
-      const empty = await read("state"); assert.equal(empty.integrations.find(item => item.id === "fixture").state, "absent")
+       const empty = await read("state"); assert.equal(empty.integrations.find(item => item.id === "fixture").state, "absent")
+       assert.deepEqual(empty.integrations.find(item => item.id === "fixture").plugin, { declared: false, runtime: "unloaded" })
       const view = await execute(mounted, owner, "request", requestInput("install"))
       assert.equal(view.version, "^0.1")
-      await runtime("0.1.0")
+       await runtime("0.1.0")
+       const observed = await read("state"), installed = observed.integrations.find(item => item.id === "fixture")
+       assert.deepEqual(installed.plugin, { declared: true, runtime: "active" }, "HTTP producer carries only native facts, never local progress")
+       assert.equal(view.installation.target, observed.tracking.sources.find(source => source.integration === "fixture").target,
+         "private prepared target exactly matches the observed native declaration")
+       assert.equal(view.installation.directory, location.directory)
+       assert.equal((await controls.read("fixture", location)).configured.sources.find(source => source.target === "@neuralnomads/opencode-fixture@^0.1").trackingTarget,
+         view.installation.target, "native Plugins and bridge observe the same opaque source identity")
       assert(parse(await readFile(configFile, "utf8")).plugins.includes("@neuralnomads/opencode-fixture@^0.1"), "Installed source is the catalogue range, never frame-selected")
       console.log("PASS B install: real HTTP ACK/start/guard/confirm, catalog-derived range, native registry load 0.1.0")
 
       await execute(mounted, owner, "setActive", { integration: "fixture", scope: "global", enabled: false })
-      await runtime("0.1.0", false)
+       await runtime("0.1.0", false)
+       const disabled = (await read("state")).integrations.find(item => item.id === "fixture")
+       assert.deepEqual(disabled.plugin, { declared: true, runtime: "unloaded" })
+       assert.equal(disabled.activation.effective, "disabled")
       await execute(mounted, owner, "setActive", { integration: "fixture", scope: "global", enabled: true })
       await runtime("0.1.0")
       const next = laterPackage.get("0.1.1"); registry.publish(next.name, "0.1.1", next.bytes)
@@ -322,7 +335,13 @@ try {
       // Installed fixture payload with a closed application has unknown availability.
       assert.deepEqual((await read("state")).integrations.find(item => item.id === "fixture").status.host,
         { state: "unknown", expectedRange: "^0.1.0" })
-      console.log("PASS B disable/enable native reload, exact-target package.update to 0.1.1, one installHost(default) with actual status read-back")
+       console.log("PASS B disable/enable native reload, exact-target package.update to 0.1.1, one installHost(default) with actual status read-back")
+       if (installationOnly) {
+         check([empty, observed, disabled, logs, relayed], "installation-state HTTP/events/logs")
+         await scanLogs(root)
+         console.log("PASS installation-state slice: declaration/runtime/normalized disable, exact private source correlation, no server progress, HTTP/event/log sentinel scans")
+         return
+       }
 
       assert.equal((await rpc("fixture", "advertise", host.advertiseInput())).outcome, "accepted")
       const offers = await read("hosts", { integration: "fixture" }); assert.equal(offers.offers.length, 1)

@@ -30,7 +30,7 @@ describe("integration recognition", () => {
       { name: "Git prefix", snapshot: pluginSnapshot({ sources: [source(`${GIT}path:/integrations/fixture`)] }), ways: ["git"] },
       { name: "disabled by its exact rule", snapshot: pluginSnapshot({
         sources: [source("file:///builds/fixture")],
-        rules: [{ selector: "-neuralnomads.fixture", enabled: false, scope: "project", entryIndex: 1, order: 1 }] }), ways: ["plugin"] },
+        rules: [{ selector: "neuralnomads.fixture", enabled: false, scope: "project", entryIndex: 1, order: 1 }] }), ways: ["plugin"] },
     ]
     for (const { name, snapshot, ways } of cases) {
       const [fixture] = recognizeIntegrations(catalog, snapshot)
@@ -62,6 +62,25 @@ describe("integration recognition", () => {
     assert.deepEqual(integrationsForSpec(catalog, `${GIT}fixture-v0.1.0::path:/integrations/fixture`).map(entry => entry.id), ["fixture"])
     assert.deepEqual(integrationsForSpec(catalog, "alias@npm:@neuralnomads/opencode-mail@1").map(entry => entry.id), ["mail"])
     assert.deepEqual(integrationsForSpec(catalog, "neuralnomads.fixture"), [])
+  })
+
+  it("correlates one ID-less failed package by exact source target and refuses ambiguous inventories", async () => {
+    const target = "@neuralnomads/opencode-fixture@^0.1"
+    const failed = runtime("unused", { id: undefined, source: { type: "package", target }, state: { status: "failed", error: "private" } })
+    const read = (entries: PluginRuntimeInventoryEntry[], targets = [target]) => recognizeIntegrations(catalog,
+      pluginSnapshot({ sources: targets.map(target => source(target)), runtime: entries }))
+    assert.equal(read([failed])[0]!.runtime, failed)
+    assert.equal((await readIntegrationStatuses(read([failed]), async () => assert.fail("failed packages have no RPC")))[0]!.state, "failed")
+    assert.equal(read([{ ...failed, source: { type: "package", target: `${target}-other` } }])[0]!.runtime, undefined)
+    assert.equal(read([failed], [target, target])[0]!.runtime, undefined, "a fallback requires exactly one source")
+    for (const entries of [[failed, failed], [runtime("neuralnomads.fixture"), runtime("neuralnomads.fixture")]]) {
+      const recognition = read(entries)
+      assert.equal(recognition[0]!.ambiguous, true)
+      assert.equal((await readIntegrationStatuses(recognition, async () => assert.fail("ambiguous packages have no RPC")))[0]!.state, "non-conforming")
+    }
+    const runtimeOnly = read([runtime("neuralnomads.fixture"), runtime("neuralnomads.fixture")], [])
+    assert.deepEqual(runtimeOnly[0]!.ways, ["plugin"])
+    assert.equal((await readIntegrationStatuses(runtimeOnly, async () => assert.fail()))[0]!.state, "non-conforming")
   })
 })
 

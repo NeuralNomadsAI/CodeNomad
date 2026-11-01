@@ -43,7 +43,7 @@ Die Oberfläche behält im verborgenen Zustand ihren letzten Schnappschuss und p
 1. Wählen Sie in **Status → Plugins** **Plugin hinzufügen** (das Plus-Symbol neben **Plugin-Steuerung aktualisieren**).
 2. Geben Sie ein Paket aus der npm-Registry (`name`, `name@1.2.3`, `@scope/name@^1`) oder ein Git-Repository (`github:besitzer/repo`, `git+https://…`) ein.
 3. Behalten Sie **Global** bei, außer das Plugin soll nur für dieses Projekt laufen, und wählen Sie **Hinzufügen**.
-4. Die neue Zeile zeigt **Wird installiert**, bis OpenCode sie meldet. Danach wird sie eine normale Plugin-Zeile mit Schaltern oder eine fehlgeschlagene Zeile.
+4. Sobald die Deklaration erkannt wurde, zeigt ein lokal übermittelter Eintrag ab der ursprünglichen Anfrage höchstens zwei Minuten **Wird installiert**, bis OpenCode seinen Laufzeitstatus meldet. Danach erscheint eine normale Plugin-Zeile mit Schaltern oder eine fehlgeschlagene Zeile. Nach dem Neuladen oder ohne ausreichenden lokalen Nachweis erscheint **Nicht bestätigt**; eine späte Antwort startet die Frist niemals neu.
 
 Zum Entfernen öffnen Sie das Menü neben dem Namen und wählen **Aus Global entfernen** oder **Aus Projekt entfernen**. Nur die Deklaration in der Konfigurationsdatei dieses Bereichs wird gelöscht; ihre Aktivierungsregeln für **Global**/**Projekt** bleiben als Regeln erhalten, und der Paket-Cache von OpenCode bleibt bestehen.
 

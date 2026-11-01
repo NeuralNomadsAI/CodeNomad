@@ -411,7 +411,7 @@ const catalog = await codenomad.bundles.catalog()
 // { state, fetchedAt?, integrations: [{ id, displayName, family, summary, app, docs, catalogStatus }] }
 const state = await codenomad.bundles.state()
 // { catalog: { state, fetchedAt? }, integrations: [{ id, family, configured, scopes,
-//   activation: { global, project, effective }, version?, outdated?, state, status?, attachment? }] }
+//   activation: { global, project, effective }, plugin?: { declared, runtime, progress? }, version?, outdated?, state, status?, attachment? }] }
 const hosts = await codenomad.bundles.hosts({ integration: "blender" })
 // { offers: [{ offerID, label, document?, appVersion?, protocol }] }
 const stop = codenomad.bundles.onChanged(({ kind }) => { /* kind: "state"; re-read on demand */ })
@@ -430,6 +430,14 @@ Authoritative `none` comes from a conforming binding read; read failures give
 RPC IDs, paths, credentials, binding authority, aggregate attachment state/counts
 and foreign sessions outside these projections. Use only actual runtime states;
 never synthesize `pending` without a local operation tracker.
+The optional `plugin` facts separate recognized source declaration from native `active`, `failed`, `unloaded`
+or ambiguously attributed `unknown` runtime. `activation.effective` describes activation; `state` describes RPC
+availability/conformance. The parent-only tracker adds `pending` after both exact declaration and local native
+submission are observed, for at most 120,000 ms from before confirmation transmission; otherwise declared/unloaded
+entries use `unconfirmed`. Disabled and ambiguous entries carry no progress. Runtime/removal observation and
+revocation/reload/stop consume the hint; late receipts cannot recreate it. Host HTTP state includes optional
+private `tracking` correlation, and private confirmation views include an installation target; both are stripped
+before MessagePort delivery. Older hosts may omit the additive plugin facts.
 
 Reads share a sliding limit of 60 calls per extension per minute. The API 4 channel
 allows four in flight, refuses the fifth with `busy` and settles within 19.5 s;

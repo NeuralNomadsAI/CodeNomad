@@ -7,6 +7,7 @@ import type { IntegrationCatalogSource } from "../opencode/integrations/catalog"
 import { integrationStatusSchema, type IntegrationStatus } from "../opencode/integrations/contract"
 import type { IntegrationAttachments } from "../opencode/integrations/attachments"
 import { recognizeIntegrations } from "../opencode/integrations/recognition"
+import { integrationSourceIdentity } from "../opencode/plugin-source-identity"
 import { looksLikePath, readIntegrationStatuses } from "../opencode/integrations/status"
 import { NativeMutationUncertainError, type NativeMutationAuthority } from "../opencode/native-mutation-authority"
 import { appendPluginControlRule, encodePluginControlOriginal, type PluginControlDocument } from "../opencode/plugin-control-document"
@@ -233,7 +234,10 @@ export class BundlesActions {
           document, declaration, runtimeTarget, runtimeIdentity, offer, hostIntent,
         })) }
       const version = recognition.runtime?.source.type === "package" ? recognition.runtime.source.version : undefined
-      return { target, entry, offer, version: hostVersion ?? (version && integrationStatusSchema.shape.integration.shape.version.safeParse(version).success ? version : entry.range),
+      return { target, entry, offer, installation: action.action === "install" ? { integration: entry.id, scope, runtimeID: entry.plugin,
+        directory: context.location.directory, target: integrationSourceIdentity(context.instanceId, context.location, context.connection,
+          { scope, path: targetDocument.path, target: `${entry.package}@${entry.range}`, entryIndex: targetDocument.document.plugins.length }) } : undefined,
+        version: hostVersion ?? (version && integrationStatusSchema.shape.integration.shape.version.safeParse(version).success ? version : entry.range),
         conversation: displayText(session.title ?? "", context.sessionID) }
     }
 
@@ -242,9 +246,9 @@ export class BundlesActions {
       target: initial.target,
       display: { action: action.action === "setActive" ? action.active ? "enable" : "disable" : action.action,
         integration: displayText(initial.entry.displayName, initial.entry.id, 60), scope, version: initial.version,
-        conversation: initial.conversation, ...(initial.offer ? {
+         conversation: initial.conversation, ...(initial.offer ? {
           document: [initial.offer.label, initial.offer.document].filter(Boolean).join(" — "),
-        } : {}) },
+        } : {}), ...(initial.installation ? { installation: initial.installation } : {}) },
       readTarget: async readSignal => (await read(readSignal)).target,
       dispatch: async (authority, notify) => {
         const fenced: NativeMutationAuthority = {

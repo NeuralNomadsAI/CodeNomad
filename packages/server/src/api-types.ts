@@ -506,6 +506,8 @@ export interface PluginConfiguredRule {
 }
 
 export interface PluginConfiguredSource {
+  /** Opaque exact-source correlation for trusted renderer progress; never forward to extension frames. */
+  trackingTarget?: string
   target: string
   scope: PluginConfigScope
   path?: string
@@ -531,6 +533,8 @@ export interface PluginActivationControl {
 }
 
 export interface PluginControlTarget {
+  /** Parent-only connection/document identity, stable across declaration writes. */
+  trackingContext?: string
   scope: PluginControlScope
   path: string
   exists: boolean

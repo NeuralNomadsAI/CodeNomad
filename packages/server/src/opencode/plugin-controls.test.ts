@@ -485,7 +485,9 @@ describe("OpenCode V2 plugin activation controls", () => {
       })
 
       const before = await controls.read("workspace", { directory: projectDirectory })
-      assert.deepEqual(before.targets.find((target) => target.scope === "project"), { scope: "project", path: targetFile, exists: false })
+      const beforeTarget = before.targets.find((target) => target.scope === "project")!
+      assert.match(beforeTarget.trackingContext!, /^[a-f0-9]{64}$/)
+      assert.deepEqual(beforeTarget, { scope: "project", path: targetFile, exists: false, trackingContext: beforeTarget.trackingContext })
       assert.equal(fs.existsSync(targetFile), false, "display reads do not create the fallback")
       const response = await controls.mutate("workspace", {
         location: { directory: projectDirectory }, pluginId: "known", scope: "project", enabled: true,
@@ -499,6 +501,8 @@ describe("OpenCode V2 plugin activation controls", () => {
       assert.deepEqual((parse(fs.readFileSync(targetFile, "utf8")) as any).plugins, ["known"])
       assert.equal(fs.readFileSync(directFile, "utf8"), directBefore)
       assert.equal(fs.readFileSync(ancestorFile, "utf8"), ancestorBefore)
+      assert.equal((await controls.read("workspace", { directory: projectDirectory })).targets.find(target => target.scope === "project")?.trackingContext,
+        beforeTarget.trackingContext, "declaration creation preserves the connection/document context")
     }
   })
 
@@ -800,16 +804,14 @@ function fakeManager(options: {
     config: { get: async (input: any) => { calls.config++; calls.configLocations.push(input.location.directory); return options.entries } },
     plugin: { list: async (input: any) => { calls.plugins++; calls.pluginLocations.push(input.location.directory); return { location: { directory: "unused" }, data: options.runtime } } },
   }
+  const connection = { client, assertCurrent: () => {
+    calls.assertCurrent++
+    options.assertCurrent?.(calls.assertCurrent)
+  } }
   return {
     calls,
     get: (id: string) => id === "workspace" ? { id } : undefined,
-    getSharedServiceConnection: async () => ({
-      client,
-      assertCurrent: () => {
-        calls.assertCurrent++
-        options.assertCurrent?.(calls.assertCurrent)
-      },
-    }),
+    getSharedServiceConnection: async () => connection,
     ownsLocation: async () => options.ownsLocation !== false,
     getServiceDirectoryForPath: async (_id: string, directory: string) => options.serviceDirectory ?? directory,
     getWorktreeIdentityForPath: async () => "fixture-worktree",

@@ -4,7 +4,7 @@ import type { PanelExtensionStore } from "../../panel-extensions/store"
 import type { IntegrationCatalogSource } from "../../opencode/integrations/catalog"
 import type { IntegrationsReader } from "../../opencode/integrations/integrations"
 import type { IntegrationAttachments } from "../../opencode/integrations/attachments"
-import { bundlesCatalogResultSchema, bundlesStateResultSchema, bundlesHostsResultSchema, bundlesHostsInputSchema, bundlesSessionSchema,
+import { bundlesCatalogResultSchema, bundlesStateHostResultSchema, bundlesHostsResultSchema, bundlesHostsInputSchema, bundlesSessionSchema,
   type BundlesStateResult } from "../../panel-extensions/bundles-contract"
 import { readLocationRef, sameLocation } from "../../opencode/compatibility/location"
 import { createPanelExtensionRoute, PanelRouteRefused, type PanelRouteContext } from "./panel-extension-route"
@@ -67,7 +67,8 @@ export function registerPanelExtensionBundlesRoutes(app: FastifyInstance, deps: 
       context.signal.throwIfAborted()
       const status = item.status
       const common = { id: item.id, configured: item.configured, scopes: item.scopes.map(scope => scope),
-        activation: { global: item.activation.global, project: item.activation.project, effective: item.activation.effective },
+         activation: { global: item.activation.global, project: item.activation.project, effective: item.activation.effective },
+         ...(item.plugin ? { plugin: { declared: item.plugin.declared, runtime: item.plugin.runtime } } : {}),
         version: item.version, outdated: item.outdated, state: item.state }
       const statusCommon = status ? { version: status.version,
         notices: status.notices?.filter((notice): notice is "legacy_install" => notice === "legacy_install") } : undefined
@@ -85,7 +86,8 @@ export function registerPanelExtensionBundlesRoutes(app: FastifyInstance, deps: 
         } } : {}) })
       }
     }
-    return bundlesStateResultSchema.parse({ catalog: { state: result.catalog.state, fetchedAt: result.catalog.fetchedAt }, integrations })
+    return bundlesStateHostResultSchema.parse({ catalog: { state: result.catalog.state, fetchedAt: result.catalog.fetchedAt }, integrations,
+      tracking: result.tracking })
   })
   route("bundles/hosts", "bundles.read", { ...shape, ...bundlesHostsInputSchema.shape }, 4096, async (input, context) => {
     admit(context.id)

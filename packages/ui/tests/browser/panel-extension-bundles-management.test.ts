@@ -107,7 +107,11 @@ async function open(installed = true, authenticated = true, options: { holdMount
       keys: Object.keys((window as any).codenomad.bundles), changes: (window as any).changes })).catch(() => null)
     const text = JSON.stringify({ surfaces, errors, consoles })
     for (const sentinel of ["PRIVATE_", "planID", "mountID", "documentDigest", backend.file]) assert.ok(!text.includes(sentinel), sentinel)
-    for (const request of backend.requests) if (request.body.owner) assert.ok(!text.includes(request.body.owner))
+     for (const request of backend.requests) if (request.body.owner) assert.ok(!text.includes(request.body.owner))
+     assert.ok(!text.includes(backend.project), "private Location stays parent-side")
+     for (const response of http as Array<{ body?: any }>) {
+       for (const source of response.body?.tracking?.sources ?? []) assert.ok(!text.includes(source.target), "private installation target stays parent-side")
+     }
     for (const sentinel of ["PRIVATE_", backend.file, "documentDigest", "FOREIGN_TOKEN_96aa", "FOREIGN_SESSION_7ce0",
       '"attachedSessions":6137', "attachedSessions", "registryGeneration", "serviceGeneration"]) {
       assert.ok(!JSON.stringify(http).includes(sentinel), `HTTP: ${sentinel}`)
@@ -187,6 +191,52 @@ const safeCalls = [
   ["installHost", { integration: "fixture" }, true],
   ["attach", { integration: "fixture", offerID: "offer_fixture" }, true],
 ] as const
+
+test("installation progress uses actual declaration and private submission, consumes runtime and reload hints", async () => {
+  const { page, clean } = await open(false)
+  const read = () => frame(page).locator("body").evaluate(() => (window as any).readState())
+  try {
+    assert.deepEqual((await read()).integrations[0].plugin, { declared: false, runtime: "unloaded" })
+    backend.state.holdTerminal = true
+    const ack = await ask(page, "request", { action: "install", integration: "fixture", scope: "global" })
+    await page.getByRole("button", { name: "Confirm", exact: true }).click()
+    await page.getByRole("dialog").waitFor({ state: "detached" })
+    await wait(() => backend.streamFrames.some(value => value.includes('"outcome":"confirmed"')))
+    assert.deepEqual((await read()).integrations[0].plugin, { declared: true, runtime: "unloaded", progress: "unconfirmed" }, "ACK/admission/declaration without receipt never means pending")
+    backend.flushTerminals(); await terminal(page, ack.requestID)
+    assert.deepEqual((await read()).integrations[0].plugin, { declared: true, runtime: "unloaded", progress: "pending" })
+    backend.state.runtime = [{ id: backend.entry.plugin, source: { type: "package", target: backend.spec }, features: {}, state: { status: "active" } }]
+    backend.state.fail = true
+    const active = (await read()).integrations[0]
+    assert.equal(active.state, "unknown", "RPC failure is separate from native loading")
+    assert.deepEqual(active.plugin, { declared: true, runtime: "active" })
+    assert.equal(active.version, undefined, "missing version is not absence")
+    backend.state.runtime = []; backend.state.fail = false
+    assert.equal((await read()).integrations[0].plugin.progress, "unconfirmed", "runtime disappearance never revives the old hint")
+    await reload(page)
+    assert.equal((await read()).integrations[0].plugin.progress, "unconfirmed")
+    await clean()
+  } finally { await page.close() }
+})
+
+test("late installation receipt keeps the conservative pre-confirm deadline and explicit external declarations stay unconfirmed", async () => {
+  const { page, clean } = await open(false)
+  const read = () => frame(page).locator("body").evaluate(() => (window as any).readState())
+  try {
+    await writeFile(backend.file, JSON.stringify({ plugins: [backend.spec] }))
+    assert.equal((await read()).integrations[0].plugin.progress, "unconfirmed")
+    await writeFile(backend.file, JSON.stringify({ plugins: [] }))
+    backend.state.holdTerminal = true
+    const ack = await ask(page, "request", { action: "install", integration: "fixture", scope: "global" })
+    await page.getByRole("button", { name: "Confirm", exact: true }).click()
+    await page.getByRole("dialog").waitFor({ state: "detached" })
+    await wait(() => backend.streamFrames.some(value => value.includes('"outcome":"confirmed"')))
+    await page.evaluate(() => { const now = Date.now; Date.now = () => now() + 120_001 })
+    backend.flushTerminals(); await terminal(page, ack.requestID)
+    assert.equal((await read()).integrations[0].plugin.progress, "unconfirmed", "a delayed receipt cannot start another two-minute window")
+    await clean()
+  } finally { await page.close() }
+})
 
 test("real native emoji offers reach the trusted confirmation intact and reconcile the exact binding", async () => {
   for (const document of ["Scene", "🧩".repeat(120)]) {

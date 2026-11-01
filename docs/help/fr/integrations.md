@@ -43,7 +43,7 @@ La surface conserve son dernier instantané quand elle est masquée et le revali
 1. Dans **Statut → Plugins**, choisissez **Ajouter un plugin** (l’icône plus à côté de **Actualiser les contrôles des plugins**).
 2. Saisissez un paquet du registre npm (`nom`, `nom@1.2.3`, `@scope/nom@^1`) ou un dépôt Git (`github:propriétaire/dépôt`, `git+https://…`).
 3. Gardez **Global**, sauf si le plugin ne doit s’exécuter que pour ce projet, puis choisissez **Ajouter**.
-4. La nouvelle ligne affiche **Installation** jusqu’à ce qu’OpenCode la signale. Elle devient alors une ligne de plugin ordinaire avec ses commutateurs, ou une ligne en échec.
+4. Une fois sa déclaration observée, un ajout soumis localement affiche **Installation** pendant au plus deux minutes depuis la demande initiale, jusqu’au signalement de son exécution par OpenCode. Il devient alors une ligne ordinaire avec ses commutateurs, ou une ligne en échec. Après rechargement ou sans preuve locale suffisante, il affiche **Non confirmé** ; une réponse tardive ne relance jamais ce délai.
 
 Pour retirer un plugin, ouvrez le menu à côté de son nom et choisissez **Retirer de Global** ou **Retirer de Projet**. Seule la déclaration du fichier de configuration de cette portée est supprimée ; ses règles d’activation **Global**/**Projet** restent des règles, et le cache de paquets d’OpenCode reste en place.
 

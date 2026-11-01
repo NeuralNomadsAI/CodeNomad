@@ -3,6 +3,7 @@ import { createHmac, randomBytes } from "node:crypto"
 import { fileURLToPath } from "node:url"
 import { isDeepStrictEqual } from "node:util"
 import type { ConfigEntry, LocationRef, PluginInfo } from "@opencode/client"
+import { integrationSourceIdentity } from "./plugin-source-identity"
 import type {
   PluginActivationControl,
   PluginActivationMutationRequest,
@@ -101,6 +102,12 @@ export class PluginControls {
   async read(workspaceId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<PluginControlsSnapshot> {
     const context = await this.readContext(workspaceId, location, signal)
     const snapshot = buildSnapshot(context)
+    for (const source of snapshot.configured.sources) {
+      source.trackingTarget = integrationSourceIdentity(workspaceId, context.location, context.connection, source)
+    }
+    for (const target of snapshot.targets) {
+      target.trackingContext = integrationSourceIdentity(workspaceId, context.location, context.connection, { scope: target.scope, path: target.path })
+    }
     const documents = configDocuments(context).documents
     await Promise.all(context.targets.map(async target => {
       try {

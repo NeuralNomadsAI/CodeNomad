@@ -17,7 +17,10 @@ const MAX_TRACKED = 100
  * after the pending window (disabled, or never installed). Loaded sources use the runtime state. */
 export type PluginSourceState = "pending" | "unconfirmed"
 
-interface Tracked { key: string; spec: string; scope: PluginControlScope; startedAt: number }
+interface Tracked {
+  key: string; spec: string; scope: PluginControlScope; startedAt: number
+  submitted: boolean; observed: boolean; document?: string; owner?: object; integration?: string; trackingTarget?: string; runtimeID?: string; context?: string | null
+}
 
 interface Api {
   addPluginSource(instanceId: string, payload: PluginSourceAddRequest): Promise<PluginSourceMutationResponse>
@@ -31,6 +34,7 @@ export class PluginSourcesStore {
   private readonly removing = createSignal<ReadonlySet<string>>(new Set())
   // Bumped when a pending window closes, so derived rows change state without other events.
   private readonly tick = createSignal(0)
+  private readonly listeners = new Set<() => void>()
 
   constructor(
     private readonly api: Api,
@@ -39,14 +43,70 @@ export class PluginSourcesStore {
     private readonly schedule: (callback: () => void, delay: number) => unknown = (callback, delay) => setTimeout(callback, delay),
   ) {}
 
+  private key(instanceId: string, location: PluginControlLocation): string {
+    return locationKey(instanceId, pluginControlsCache.state(instanceId, location).snapshot?.location ?? location)
+  }
+
   async add(instanceId: string, location: PluginControlLocation, scope: PluginControlScope, spec: string): Promise<void> {
-    await this.api.addPluginSource(instanceId, { location: { directory: location.directory }, scope, spec })
-    const key = locationKey(instanceId, location)
-    const entry = { key, spec, scope, startedAt: this.now() }
-    this.added[1](previous => [...previous.filter(item => !(item.key === key && item.spec === spec)), entry].slice(-MAX_TRACKED))
-    this.schedule(() => this.tick[1](value => value + 1), PLUGIN_SOURCE_PENDING_TIMEOUT_MS + 1)
-    // The response is only the durable configured state; the inventory decides what loaded.
-    this.invalidate(instanceId)
+    const target = pluginControlsCache.state(instanceId, location).snapshot?.targets.find(target => target.scope === scope)
+    const attempt = this.begin(instanceId, location, scope, spec, { document: target?.path, context: target?.trackingContext ?? null })
+    try {
+      const response = await this.api.addPluginSource(instanceId, { location: { directory: location.directory }, scope, spec })
+      if (response?.scope !== scope || response.spec !== spec || response.reloadPending !== true) throw new Error("Plugin source addition could not be confirmed")
+      this.submitted(attempt)
+    } catch (error) { this.consume(attempt); throw error }
+    finally { this.invalidate(instanceId) }
+  }
+
+  /** Reserve BEFORE transmission. Receipts can update this exact handle, never recreate it. */
+  begin(instanceId: string, location: PluginControlLocation, scope: PluginControlScope, spec: string,
+    context: { document?: string; owner?: object; integration?: string; runtimeID?: string; context?: string | null } = {}): Tracked {
+    const entry: Tracked = { key: this.key(instanceId, location), spec, scope, startedAt: this.now(),
+      submitted: false, observed: false, ...context }
+    this.added[1](previous => [...previous.filter(item => !(item.key === entry.key && item.spec === spec && item.scope === scope)), entry].slice(-MAX_TRACKED))
+    this.schedule(() => {
+      if (!this.added[0]().includes(entry)) return
+      this.tick[1](value => value + 1)
+      for (const notify of this.listeners) notify()
+    }, PLUGIN_SOURCE_PENDING_TIMEOUT_MS + 1)
+    return entry
+  }
+
+  submitted(attempt: Tracked): void {
+    if (!this.added[0]().includes(attempt) || attempt.submitted) return
+    attempt.submitted = true
+    this.tick[1](value => value + 1)
+    for (const notify of this.listeners) notify()
+  }
+
+  consume(attempt: Tracked): void { this.added[1](previous => previous.filter(item => item !== attempt)) }
+  clearOwner(owner: object): void { this.added[1](previous => previous.filter(item => item.owner !== owner)) }
+  onChanged(notify: () => void): () => void { this.listeners.add(notify); return () => this.listeners.delete(notify) }
+
+  /** Authoritative observations consume hints one-way, including when runtime later vanishes. */
+  observe(attempt: Tracked, declared: boolean, runtime: boolean): void {
+    if (!this.added[0]().includes(attempt)) return
+    if (runtime || attempt.observed && !declared) { this.consume(attempt); return }
+    if (declared && !attempt.observed) { attempt.observed = true; this.tick[1](value => value + 1) }
+  }
+
+  observeSnapshot(instanceId: string, snapshot: PluginControlsSnapshot): void {
+    for (const attempt of this.addedSpecs(instanceId, snapshot.location)) {
+      if (!attempt.integration && attempt.context !== undefined && (attempt.context === null
+        || snapshot.targets.find(target => target.scope === attempt.scope)?.trackingContext !== attempt.context)) { this.consume(attempt); continue }
+      const sources = snapshot.configured.sources.filter(source => (attempt.integration ? source.trackingTarget === attempt.spec : source.target === attempt.spec)
+        && source.scope === attempt.scope
+        && (attempt.document === undefined || source.path === attempt.document))
+      if (sources.length === 1 && sources[0]!.trackingTarget !== undefined) {
+        if (attempt.trackingTarget !== undefined && attempt.trackingTarget !== sources[0]!.trackingTarget) { this.consume(attempt); continue }
+        attempt.trackingTarget = sources[0]!.trackingTarget
+      }
+      this.observe(attempt, sources.length === 1, snapshot.runtime.some(entry => {
+        const target = entry.source.type === "package" ? entry.source.target : undefined
+        return target !== undefined && (sources.some(source => source.target === target) || !attempt.integration && target === attempt.spec)
+          || entry.id !== undefined && (entry.id === attempt.runtimeID || sources.some(source => source.pluginId === entry.id))
+      }))
+    }
   }
 
   async remove(instanceId: string, location: PluginControlLocation, source: PluginConfiguredSource & { scope: PluginControlScope }): Promise<void> {
@@ -63,8 +123,9 @@ export class PluginSourcesStore {
     } finally {
       // An explicit removal supersedes this view's Installing hint even when its response is
       // lost. The reconciled configured/runtime inventory determines whether a row still exists.
-      const key = locationKey(instanceId, location)
-      this.added[1](previous => previous.filter(item => !(item.key === key && item.spec === source.target && item.scope === source.scope)))
+      const matching = this.addedSpecs(instanceId, location)
+      this.added[1](previous => previous.filter(item => !(matching.includes(item) && item.scope === source.scope
+        && (item.spec === source.target || item.spec === source.trackingTarget))))
       this.removing[1](previous => { const next = new Set(previous); next.delete(identity); return next })
       this.invalidate(instanceId)
     }
@@ -76,15 +137,19 @@ export class PluginSourcesStore {
 
   /** Specs added from this location that are still waiting for the inventory, newest last. */
   addedSpecs(instanceId: string, location: PluginControlLocation): readonly Tracked[] {
-    const key = locationKey(instanceId, location)
-    return this.added[0]().filter(item => item.key === key)
+    const key = this.key(instanceId, location)
+    return this.added[0]().filter(item => {
+      const [instance, directory] = JSON.parse(item.key) as [string, string]
+      return instance === instanceId && this.key(instance, { directory }) === key
+    })
   }
 
   /** State of a configured or just-added source with no runtime entry yet. */
-  state(instanceId: string, location: PluginControlLocation, target: string): PluginSourceState {
+  state(instanceId: string, location: PluginControlLocation, target: string, scope?: PluginControlScope, trackingTarget?: string): PluginSourceState {
     this.tick[0]()
-    const tracked = this.addedSpecs(instanceId, location).find(item => item.spec === target)
-    return tracked && this.now() - tracked.startedAt <= PLUGIN_SOURCE_PENDING_TIMEOUT_MS ? "pending" : "unconfirmed"
+    const tracked = this.addedSpecs(instanceId, location).find(item => (item.spec === target || item.trackingTarget === target
+      || trackingTarget !== undefined && item.spec === trackingTarget) && (scope === undefined || item.scope === scope))
+    return tracked?.submitted && tracked.observed && this.now() - tracked.startedAt <= PLUGIN_SOURCE_PENDING_TIMEOUT_MS ? "pending" : "unconfirmed"
   }
 
   clearInstance(instanceId: string): void {

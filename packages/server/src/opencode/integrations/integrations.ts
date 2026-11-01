@@ -5,6 +5,7 @@ import { locationRequestOptions } from "../compatibility/location"
 import { PluginControlsError, type PluginControls } from "../plugin-controls"
 import type { IntegrationCatalogSource } from "./catalog"
 import { recognizeIntegrations } from "./recognition"
+import { integrationSourceIdentity } from "../plugin-source-identity"
 import { readIntegrationStatuses, type IntegrationStatusRead } from "./status"
 
 export interface IntegrationsReaderDeps {
@@ -45,6 +46,11 @@ export class IntegrationsReader {
     return {
       location: owned,
       catalog: { state: catalog.state, ...(catalog.fetchedAt ? { fetchedAt: catalog.fetchedAt } : {}) },
+      tracking: { directory: owned.directory,
+        declaredTargets: snapshot.configured.sources.map(source => integrationSourceIdentity(workspaceId, owned, connection, source)),
+        sources: recognitions.flatMap(recognition => recognition.ambiguous ? []
+        : recognition.sources.flatMap(source => source.scope === "global" || source.scope === "project"
+          ? [{ integration: recognition.entry.id, scope: source.scope, target: integrationSourceIdentity(workspaceId, owned, connection, source) }] : [])) },
       integrations: recognitions.map((recognition, index): IntegrationView => {
         const { entry } = recognition
         const read: IntegrationStatusRead = statuses[index]!
@@ -59,6 +65,8 @@ export class IntegrationsReader {
           docs: entry.docs,
           catalogStatus: entry.status,
           configured: recognition.ways.length > 0,
+          plugin: { declared: recognition.sources.length > 0,
+            runtime: recognition.ambiguous ? "unknown" : recognition.runtime?.state.status ?? "unloaded" },
           scopes,
           activation: { global: recognition.control?.global ?? "default", project: recognition.control?.project ?? "default",
             effective: recognition.control?.effective ?? "default" },

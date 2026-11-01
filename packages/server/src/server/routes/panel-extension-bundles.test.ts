@@ -108,7 +108,7 @@ test("C3A: real binding registry projects only the exact conversation, never the
   assert.equal(response.statusCode, 200, response.body)
   assert.equal(response.headers["cache-control"], "no-store")
   const item = response.json().integrations[0]
-  assert.deepEqual(item, { id: "fixture", family: "native", configured: true, scopes: ["global"],
+  assert.deepEqual(item, { id: "fixture", family: "native", configured: true, scopes: ["global"], plugin: { declared: true, runtime: "active" },
     activation: { global: "default", project: "default", effective: "default" }, version: "0.1.0", outdated: true, state: "ok",
     status: { version: "0.1.0", host: { state: "ok", partVersion: "0.1.0", expectedRange: "^0.1.0" }, connection: { offers: 1 } }, attachment: { state: "none" } })
   assert.deepEqual(f.calls.filter(call => call.method === "bindingRead").map(call => call.input), [{ sessionID: "ses_displayed" }])
@@ -339,7 +339,9 @@ test("C3A: real catalog source serves unavailable/fresh/stale, cached and persis
   const source = new IntegrationCatalogSource({ releasesUrl, now: () => now, stateFile: path.join(directory, "catalog.json"), timeoutMs: 500 })
   const f = await fixture(t, { catalog: source })
   assert.deepEqual((await f.post("catalog")).json(), { state: "unavailable", integrations: [] })
-  assert.deepEqual((await f.post("state")).json(), { catalog: { state: "unavailable" }, integrations: [] })
+  const unavailableState = (await f.post("state")).json()
+  assert.equal(unavailableState.catalog.state, "unavailable"); assert.deepEqual(unavailableState.integrations, [])
+  assert.equal(unavailableState.tracking.declaredTargets.length, 1)
   assert.equal(requests, 1)
   available = true; now += INTEGRATION_CATALOG_CACHE_MS
   const fresh = (await f.post("catalog")).json()

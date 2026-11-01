@@ -97,15 +97,8 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   const sourceTargets = createMemo(() => {
     const loaded = new Set((snapshot()?.runtime ?? []).flatMap(entry => entry.source.type === "package" ? [entry.source.target] : []))
     const targets = new Set<string>()
-    const configured = new Set<string>()
     for (const source of snapshot()?.configured.sources ?? []) {
-      configured.add(source.target)
       if (!source.pluginId && !loaded.has(source.target)) targets.add(source.target)
-    }
-    // An added spec removed elsewhere stops being shown once its pending window closes.
-    for (const added of pluginSourcesStore.addedSpecs(props.instanceId, requestLocation())) {
-      if (loaded.has(added.spec)) continue
-      if (configured.has(added.spec) || pluginSourcesStore.state(props.instanceId, requestLocation(), added.spec) === "pending") targets.add(added.spec)
     }
     return [...targets]
   })
@@ -311,7 +304,8 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   const renderSource = (target: string) => {
     const nameId = createUniqueId()
     const removable = removableFor(target)
-    const state = () => pluginSourcesStore.state(props.instanceId, requestLocation(), target)
+    const state = () => declarationsFor(source => source.target === target).some(source => (source.scope === "global" || source.scope === "project")
+      && pluginSourcesStore.state(props.instanceId, requestLocation(), target, source.scope, source.trackingTarget) === "pending") ? "pending" : "unconfirmed"
     const details = () => [
       t("instanceServiceStatus.plugins.source.package", { source: target }),
       t(state() === "pending" ? "instanceServiceStatus.plugins.sources.pending" : "instanceServiceStatus.plugins.sources.unconfirmed"),

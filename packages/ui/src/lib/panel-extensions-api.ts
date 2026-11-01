@@ -7,7 +7,7 @@ import type { AssetTarget, AssetsResult, AssetReadResult } from "../../../server
 import type { GenerationTarget, ImagesResult } from "../../../server/src/opencode/session-pruning/assets-gallery-contract"
 import type { PanelConversationStatus, PanelImagesStatus, PanelPreferencesSetStatus } from "../../../server/src/panel-extensions/contract"
 import type { ImagesConversationRequest, ImagesConversationResponse } from "../../../server/src/server/routes/images-conversation-contract"
-import { bundlesCatalogResultSchema, bundlesStateResultSchema, bundlesHostsResultSchema } from "../../../server/src/panel-extensions/bundles-contract"
+import { bundlesCatalogResultSchema, bundlesStateHostResultSchema, bundlesHostsResultSchema } from "../../../server/src/panel-extensions/bundles-contract"
 import type { BundlesMountInput, BundlesManageInput, BundlesControlInput } from "../../../server/src/panel-extensions/bundles-contract"
 import type { BundlesAck } from "../../../server/src/panel-extensions/bundles-lifecycle"
 import { z } from "zod"
@@ -45,7 +45,7 @@ export const panelExtensionsApi4 = {
   bundlesCatalog: async ({ id, ...authority }: Authority, sessionID: string, signal: AbortSignal) =>
     bundlesCatalogResultSchema.parse(await api4<unknown>(id, "bundles/catalog", { ...authority, sessionID }, signal)),
   bundlesState: async ({ id, ...authority }: Authority, sessionID: string, signal: AbortSignal) =>
-    bundlesStateResultSchema.parse(await api4<unknown>(id, "bundles/state", { ...authority, sessionID }, signal)),
+    bundlesStateHostResultSchema.parse(await api4<unknown>(id, "bundles/state", { ...authority, sessionID }, signal)),
   bundlesHosts: async ({ id, ...authority }: Authority, sessionID: string, integration: string, signal: AbortSignal) =>
     bundlesHostsResultSchema.parse(await api4<unknown>(id, "bundles/hosts", { ...authority, sessionID, integration }, signal)),
   images: ({ id, ...authority }: Authority, sessionID: string, cursor: string | undefined, signal: AbortSignal) =>

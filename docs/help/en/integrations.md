@@ -43,7 +43,7 @@ The surface retains its last snapshot while hidden and revalidates when shown, o
 1. In **Status → Plugins**, select **Add plugin** (the plus icon beside **Refresh plugin controls**).
 2. Enter a package from the npm registry (`name`, `name@1.2.3`, `@scope/name@^1`) or a Git repository (`github:owner/repo`, `git+https://…`).
 3. Keep **Global** unless the plugin should run only for this project, then select **Add**.
-4. The new row shows **Installing** until OpenCode reports it. It then becomes an ordinary plugin row with its switches, or a failed row.
+4. Once its declaration is observed, a locally submitted addition shows **Installing** for up to two minutes from the original request, until OpenCode reports its runtime. It then becomes an ordinary plugin row with its switches, or a failed row. A reloaded or otherwise unverified addition shows **Not confirmed**; a late response never restarts the two-minute window.
 
 To remove a plugin, open the menu beside its name and select **Remove from Global** or **Remove from Project**. Only the declaration in that scope's configuration file is deleted; its **Global**/**Project** activation rules stay as rules, and OpenCode's package cache is left in place.
 

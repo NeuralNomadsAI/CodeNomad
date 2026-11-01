@@ -72,9 +72,16 @@ export function recognizeIntegrations(catalog: IntegrationCatalog, snapshot: Plu
       const set = designated.get(source) ?? new Set<string>()
       designated.set(source, set.add(entry.id))
     }
-    const runtime = snapshot.runtime.find(candidate => candidate.id === entry.plugin)
-    const rules = snapshot.configured.rules.filter(rule => rule.selector === entry.plugin || rule.selector === `-${entry.plugin}`)
-    if (runtime || rules.some(rule => rule.selector === `-${entry.plugin}`)) ways.add("plugin")
+    const candidates = snapshot.runtime.filter(candidate => {
+      const target = candidate.source.type === "package" ? candidate.source.target : undefined
+      if (candidate.id === undefined && target !== undefined && sources.filter(source => source.target === target).length > 1) ambiguous = true
+      return candidate.id === entry.plugin || (candidate.id === undefined && candidate.state.status === "failed"
+        && target !== undefined && sources.filter(source => source.target === target).length === 1)
+    })
+    if (candidates.length > 1) ambiguous = true
+    const runtime = candidates.length === 1 ? candidates[0] : undefined
+    const rules = snapshot.configured.rules.filter(rule => rule.selector === entry.plugin)
+    if (candidates.length > 0 || rules.some(rule => !rule.enabled)) ways.add("plugin")
     const control = snapshot.controls.find(candidate => candidate.id === entry.plugin)
     const scopes = [...new Set([...sources, ...(ways.has("plugin") ? rules : [])].map(item => item.scope))]
     return { entry, ways: [...ways], sources, scopes, control, runtime, ambiguous }

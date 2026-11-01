@@ -63,7 +63,10 @@ describe("integrations route", () => {
     assert.equal(body.integrations[0]!.version, "0.1.0")
     assert.deepEqual(body.integrations[0]!.configuredSources, [{ scope: "global", entryIndex: 0 }])
     assert.deepEqual(body.integrations[1]!.configuredSources, [], "only the scope's writable target is correlated")
-    for (const field of ["plugin", "rpc", "sources", "package"]) assert.equal(field in body.integrations[0]!, false, `${field} stays on the server`)
+    assert.deepEqual(body.integrations.map(item => item.plugin), [
+      { declared: true, runtime: "active" }, { declared: true, runtime: "active" }, { declared: false, runtime: "unloaded" },
+    ])
+    for (const field of ["rpc", "sources", "package"]) assert.equal(field in body.integrations[0]!, false, `${field} stays on the server`)
     assert.deepEqual(calls.map(call => [call.rpcID, call.method, call.input, call.location]),
       [["neuralnomads.fixture", "status", {}, { directory: "/work" }], ["neuralnomads.slow", "status", {}, { directory: "/work" }]])
     await app.close()
@@ -76,6 +79,34 @@ describe("integrations route", () => {
     }
     assert.equal(calls.length, 0)
     await app.close()
+  })
+
+  it("separates actual declarations, normalized activation rules, native failures and uncertain attribution", async () => {
+    for (const kind of ["rule", "runtime-only", "failed", "ambiguous", "missing-version"] as const) {
+      const snapshot = loadedSnapshot()
+      snapshot.runtime = snapshot.runtime.filter(item => item.id === "neuralnomads.fixture")
+      snapshot.configured.sources = snapshot.configured.sources.filter(item => item.pluginId === "neuralnomads.fixture")
+      if (kind === "rule" || kind === "runtime-only") snapshot.configured.sources = []
+      if (kind === "rule") {
+        snapshot.runtime = []
+        snapshot.configured.rules = [{ selector: "neuralnomads.fixture", enabled: false, scope: "global", entryIndex: 0, order: 0 }]
+      }
+      if (kind === "failed") {
+        snapshot.runtime[0] = { ...snapshot.runtime[0]!, id: undefined, source: { type: "package", target: snapshot.configured.sources[0]!.target },
+          state: { status: "failed", error: "private failure" } }
+        delete snapshot.configured.sources[0]!.pluginId
+      }
+      if (kind === "ambiguous") snapshot.runtime.push(snapshot.runtime[0]!)
+      if (kind === "missing-version") snapshot.runtime[0]!.source = { type: "package", target: "fixture" }
+      const { app, calls } = harness({ snapshot: () => snapshot })
+      const item = (await app.inject({ method: "GET", url: "/api/workspaces/w1/integrations?directory=%2Fwork" })).json().integrations[0]
+      assert.deepEqual(item.plugin, { declared: kind !== "rule" && kind !== "runtime-only",
+        runtime: kind === "rule" ? "unloaded" : kind === "failed" ? "failed" : kind === "ambiguous" ? "unknown" : "active" }, kind)
+      assert.equal(item.configured, true, kind)
+      if (kind === "failed" || kind === "ambiguous" || kind === "rule") assert.equal(calls.length, 0, kind)
+      if (kind === "missing-version") assert.equal(item.version, undefined)
+      await app.close()
+    }
   })
 
   it("refuses a Location the workspace does not own, before and after the RPC calls", async () => {
@@ -94,7 +125,8 @@ describe("integrations route", () => {
   it("lists nothing while the catalog is unavailable", async () => {
     const { app, calls } = harness({ catalog: { state: "unavailable", catalog: catalogOf() } })
     const body = (await app.inject({ method: "GET", url: "/api/workspaces/w1/integrations?directory=%2Fwork" })).json() as IntegrationsResponse
-    assert.deepEqual(body, { location: { directory: "/work" }, catalog: { state: "unavailable" }, integrations: [] })
+    assert.equal(body.catalog.state, "unavailable"); assert.deepEqual(body.integrations, [])
+    assert.equal(body.tracking?.declaredTargets?.length, 2)
     assert.equal(calls.length, 0)
     await app.close()
   })

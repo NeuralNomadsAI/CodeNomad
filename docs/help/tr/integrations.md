@@ -43,7 +43,7 @@ Yüzey, gizliyken son anlık görüntüsünü korur ve gösterildiğinde, yerel 
 1. **Durum → Eklentiler** içinde **Eklenti ekle** öğesini seçin (**Plugin denetimlerini yenile** yanındaki artı simgesi).
 2. npm kayıt defterinden bir paket (`name`, `name@1.2.3`, `@scope/name@^1`) veya bir Git deposu (`github:owner/repo`, `git+https://…`) girin.
 3. Eklenti yalnızca bu projede çalışmayacaksa **Genel** seçili kalsın, ardından **Ekle** öğesini seçin.
-4. Yeni satır, OpenCode bildirene kadar **Kuruluyor** gösterir. Ardından anahtarlarıyla sıradan bir eklenti satırına veya başarısız bir satıra dönüşür.
+4. Bildirim gözlemlendiğinde yerel olarak gönderilen ekleme, ilk istekten itibaren en fazla iki dakika boyunca OpenCode çalışma durumunu bildirene kadar **Kuruluyor** gösterir. Ardından anahtarlı normal veya başarısız bir satır görünür. Yeniden yüklemeden sonra veya yeterli yerel kanıt yoksa **Onaylanmadı** gösterilir; geç gelen yanıt süreyi asla yeniden başlatmaz.
 
 Bir eklentiyi kaldırmak için adının yanındaki menüyü açıp **Genel kapsamından kaldır** veya **Proje kapsamından kaldır** öğesini seçin. Yalnızca o kapsamın yapılandırma dosyasındaki bildirim silinir; **Genel**/**Proje** etkinleştirme kuralları kural olarak kalır ve OpenCode'un paket önbelleği yerinde kalır.
 

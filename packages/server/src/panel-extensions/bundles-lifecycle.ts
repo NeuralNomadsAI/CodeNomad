@@ -1,6 +1,8 @@
 import type { NativeMutationAuthority } from "../opencode/native-mutation-authority"
 import { BundlesBudget } from "./bundles-budget"
 import type { BundlesChange } from "./bundles-contract"
+import type { z } from "zod"
+import type { bundlesInstallationSchema } from "./bundles-contract"
 
 export const BUNDLES_PLAN_MS = 300_000, BUNDLES_CONFIRMATION_MS = 120_000, BUNDLES_CONFIRM_GUARD_MS = 600
 export const BUNDLES_CANCEL_WINDOW_MS = 60_000, BUNDLES_CANCEL_LIMIT = 3, BUNDLES_CUTOFF_MS = 300_000
@@ -27,6 +29,8 @@ export interface BundlesConfirmation {
   requestID: string; planID: string
   action: "install" | "update" | "remove" | "enable" | "disable" | "installHost" | "attach"
   integration: string; scope: "global" | "project"; version: string; conversation: string; document?: string
+  /** Parent-only exact installation identity; never render or send through the author port. */
+  installation?: z.infer<typeof bundlesInstallationSchema>
 }
 export interface BundlesPrepared {
   target: BundlesTarget

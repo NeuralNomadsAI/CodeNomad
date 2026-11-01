@@ -15,6 +15,9 @@ import { assertThumbnailBounds } from "./image-bounds"
 import { thumbnail } from "./assets-channel"
 import { composePrefill, prefillMarkers, PREFILL_LIMITS } from "./composer-prefill"
 import type { BundlesManagement } from "./bundles-management"
+import { projectBundlesInstallationState } from "./bundles-installation-state"
+import { pluginSourcesStore } from "../../stores/plugin-sources"
+import "../../stores/plugin-controls-events"
 
 /** Frame deadline is 20 s; the host answers first and cancels its own work. */
 export const API4_HOST_DEADLINE_MS = 19_500
@@ -89,7 +92,7 @@ export function useApi4Channel(props: {
       if (current()) props.send({ type: "bundles:changed", kind: "state" })
     }, CHANGE_DELAY_MS)
   }
-  const releases = [serverEvents.on("instance.event", payload => {
+  const releases = [pluginSourcesStore.onChanged(invalidateBundles), serverEvents.on("instance.event", payload => {
     if (payload.type !== "instance.event" || payload.instanceId !== props.instanceId) return
     const event = payload.event as { type?: string; data?: { sessionID?: string } }
     const type = event.type ?? ""
@@ -127,7 +130,9 @@ export function useApi4Channel(props: {
       state: async (input, signal) => {
         empty.parse(input)
         if (!session || !bundlesCurrent()) throw new Error("Bundles unavailable")
-        return { result: await panelExtensionsApi4.bundlesState(authority, session, signal) }
+        const result = await panelExtensionsApi4.bundlesState(authority, session, signal)
+        if (!bundlesCurrent() || signal.aborted) throw new Error("Bundles unavailable")
+        return { result: projectBundlesInstallationState(props.instanceId, result) }
       },
       hosts: async (input, signal) => {
         const { integration } = bundlesHostsInputSchema.parse(input)

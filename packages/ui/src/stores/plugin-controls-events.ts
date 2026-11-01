@@ -2,11 +2,25 @@ import type { WorkspaceEventPayload } from "../../../server/src/api-types"
 import { serverEvents } from "../lib/server-events"
 import { pluginControlsCache } from "./plugin-controls"
 import { pluginSourcesStore } from "./plugin-sources"
+import { createEffect, createRoot, untrack } from "solid-js"
+
+createRoot(() => {
+  const observed = new WeakSet<object>()
+  createEffect(() => {
+    for (const [key, state] of pluginControlsCache.states()) {
+      if (!state.snapshot || observed.has(state.snapshot)) continue
+      observed.add(state.snapshot)
+      const instanceId = JSON.parse(/^"(?:[^"\\]|\\.)*"/.exec(key)![0]) as string
+      untrack(() => pluginSourcesStore.observeSnapshot(instanceId, state.snapshot!))
+    }
+  })
+})
 
 type InstanceEvent = Extract<WorkspaceEventPayload, { type: "instance.event" }>
 
 serverEvents.on("instance.event", (event) => {
   const payload = event as InstanceEvent
+  if (payload.event.type === "server.connected") pluginSourcesStore.clearInstance(payload.instanceId)
   if (payload.event.type !== "config.updated" && payload.event.type !== "plugin.updated") return
   if (payload.event.type === "config.updated") {
     // A config event does not identify whether its changed document was global.
@@ -23,6 +37,7 @@ serverEvents.on("instance.event", (event) => {
 })
 
 serverEvents.on("instance.eventStatus", (event) => {
+  if (event.type === "instance.eventStatus" && event.status !== "connected") pluginSourcesStore.clearInstance(event.instanceId)
   if (event.type === "instance.eventStatus" && event.status === "connected") {
     pluginControlsCache.invalidateInstance(event.instanceId)
   }
