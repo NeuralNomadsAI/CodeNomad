@@ -6,6 +6,7 @@ class FakeEventSource extends EventTarget {
   onmessage: ((event: MessageEvent) => void) | null = null
   onerror: (() => void) | null = null
   onclose: (() => void) | null = null
+  close() {}
 }
 
 const logger = {
@@ -14,6 +15,22 @@ const logger = {
 }
 
 describe("attachEventSourceHandlers", () => {
+  it("keeps named private events outside normal dispatch, and resets on reopen, failure and explicit close", () => {
+    const source = new FakeEventSource(), normal: unknown[] = [], privateEvents: unknown[] = []
+    let resets = 0
+    attachEventSourceHandlers(source as unknown as EventSource, { onEvent: event => normal.push(event),
+      onPrivateOwner: value => privateEvents.push(value), onPrivateEvent: value => privateEvents.push(value),
+      onReset: () => resets++, logger })
+    source.dispatchEvent(new Event("open"))
+    source.dispatchEvent(new MessageEvent("codenomad.bundles.owner", { data: '{"owner":"private"}' }))
+    source.dispatchEvent(new MessageEvent("codenomad.bundles.event", { data: '{"view":null}' }))
+    assert.deepEqual(normal, []); assert.equal(privateEvents.length, 2)
+    source.onerror?.()
+    source.dispatchEvent(new MessageEvent("codenomad.bundles.event", { data: '{"ignored":true}' }))
+    assert.equal(privateEvents.length, 2)
+    source.dispatchEvent(new Event("open")); source.close()
+    assert.equal(resets, 4)
+  })
   it("separates malformed data from callback failures without reconnect or replay", () => {
     const source = new FakeEventSource()
     const errors: string[] = []

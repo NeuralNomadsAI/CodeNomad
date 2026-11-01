@@ -4,6 +4,7 @@ import path from "node:path"
 import {
   PLUGIN_CONTROL_MAX_CONFIG_BYTES,
   PluginControlDocumentError,
+  assertPluginControlDocumentCurrent,
   encodePluginControlOriginal,
   type PluginControlDocument,
   type PluginControlDocumentFileSystem,
@@ -247,6 +248,7 @@ export function createWslPluginControlDocumentFileSystem(
     const expected = createHash("sha256").update(encodePluginControlOriginal(document)).digest("hex")
     let locked = false
     try {
+      assertPluginControlDocumentCurrent(options)
       const prepared = await run(PREPARE_SCRIPT, [
         directory,
         document.writePath,
@@ -266,11 +268,14 @@ export function createWslPluginControlDocumentFileSystem(
       }
       assertSuccess(prepared, "Unable to prepare OpenCode configuration in WSL")
       locked = true
+      await options?.revalidate?.()
       try {
         options?.beforeCommit?.()
       } catch (error) {
         throw new PluginControlDocumentError("OpenCode configuration replacement is no longer authorized", "filesystem", { cause: error })
       }
+      assertPluginControlDocumentCurrent(options)
+      options?.onDispatch?.()
       const committed = await run(COMMIT_SCRIPT, [
         document.writePath,
         document.exists ? "1" : "0",

@@ -4,6 +4,7 @@ import path from "node:path"
 import { z } from "zod"
 import { ManifestSchema, PanelExtensionError, type PanelExtensionPackage } from "./archive"
 import { PANEL_EXTENSION_LIMITS, type PanelExtensionPermission, type PanelExtensionSummary } from "./contract"
+import type { NativeMutationAuthority } from "../opencode/native-mutation-authority"
 
 const RecordSchema = z.object({ manifest: ManifestSchema, html: z.string().max(PANEL_EXTENSION_LIMITS.htmlBytes),
   digest: z.string().regex(/^[a-f0-9]{64}$/), global: z.boolean(),
@@ -26,6 +27,7 @@ function preferencesOf(value: unknown): Preferences | "invalid" | "too-large" {
 
 export class PanelExtensionStore {
   private tail: Promise<unknown> = Promise.resolve()
+  private authorities = new Map<string, Set<AbortController>>()
   constructor(private readonly directory: string, private readonly changed: () => void = () => {}) {}
 
   async list(): Promise<PanelExtensionSummary[]> {
@@ -34,6 +36,7 @@ export class PanelExtensionStore {
   }
 
   install(pkg: PanelExtensionPackage, previousDigest?: string): Promise<void> {
+    this.revoke(pkg.manifest.id)
     return this.mutate(records => {
       const previous = records.find(record => record.manifest.id === pkg.manifest.id)
       if (previous?.digest !== previousDigest) throw new PanelExtensionError("conflict")
@@ -44,6 +47,7 @@ export class PanelExtensionStore {
   }
 
   activate(id: string, digest: string, enabled: boolean): Promise<void> {
+    this.revoke(id)
     return this.mutate(records => records.map(record => {
       if (record.manifest.id !== id) return record
       if (record.digest !== digest) throw new PanelExtensionError("conflict")
@@ -52,6 +56,7 @@ export class PanelExtensionStore {
   }
 
   remove(id: string, digest: string): Promise<void> {
+    this.revoke(id)
     return this.mutate(records => records.filter(record => {
       if (record.manifest.id !== id) return true
       if (record.digest !== digest) throw new PanelExtensionError("conflict")
@@ -78,6 +83,26 @@ export class PanelExtensionStore {
       throw new PanelExtensionError("disabled")
     }
     return entry
+  }
+
+  /** Trusted in-process lease; revoke synchronously when a consent-changing write is requested. */
+  async captureMutationAuthority(id: string, digest: string): Promise<NativeMutationAuthority & { signal: AbortSignal; dispose(): void }> {
+    const controller = new AbortController(), leases = this.authorities.get(id) ?? new Set<AbortController>()
+    leases.add(controller); this.authorities.set(id, leases)
+    const dispose = () => {
+      controller.abort(); leases.delete(controller)
+      if (!leases.size && this.authorities.get(id) === leases) this.authorities.delete(id)
+    }
+    const assertCurrent = () => controller.signal.throwIfAborted()
+    const revalidate = async () => { assertCurrent(); await this.authorize(id, digest, "bundles.manage"); assertCurrent() }
+    try { await revalidate(); return { signal: controller.signal, assertCurrent, revalidate, dispose } }
+    catch (error) { dispose(); throw error }
+  }
+
+  private revoke(id: string): void {
+    const leases = this.authorities.get(id)
+    this.authorities.delete(id)
+    for (const lease of leases ?? []) lease.abort()
   }
 
   /**

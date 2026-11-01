@@ -7,12 +7,28 @@ import type { AssetTarget, AssetsResult, AssetReadResult } from "../../../server
 import type { GenerationTarget, ImagesResult } from "../../../server/src/opencode/session-pruning/assets-gallery-contract"
 import type { PanelConversationStatus, PanelImagesStatus, PanelPreferencesSetStatus } from "../../../server/src/panel-extensions/contract"
 import type { ImagesConversationRequest, ImagesConversationResponse } from "../../../server/src/server/routes/images-conversation-contract"
+import { bundlesCatalogResultSchema, bundlesStateResultSchema, bundlesHostsResultSchema } from "../../../server/src/panel-extensions/bundles-contract"
+import type { BundlesMountInput, BundlesManageInput, BundlesControlInput } from "../../../server/src/panel-extensions/bundles-contract"
+import type { BundlesAck } from "../../../server/src/panel-extensions/bundles-lifecycle"
+import { z } from "zod"
+
+const opaque = z.string().regex(/^[a-f0-9]{32,64}$/)
+const bundlesAck = z.union([z.object({ outcome: z.literal("confirming"), requestID: opaque }).strict(),
+  z.object({ outcome: z.enum(["busy", "invalid"]) }).strict()])
+
+export class PanelExtensionBusyError extends Error {
+  constructor() { super("busy"); this.name = "PanelExtensionBusyError" }
+}
+export class PanelExtensionHttpError extends Error {
+  constructor(readonly status: number) { super("Panel extension request failed"); this.name = "PanelExtensionHttpError" }
+}
 
 async function request<T>(suffix: string, init?: RequestInit): Promise<T> {
   const response = await authenticatedFetch(`${CODENOMAD_API_BASE ?? ""}/api/panel-extensions${suffix}`, {
     ...init, headers: { "Content-Type": "application/json" }, credentials: "include",
   })
-  if (!response.ok) throw new Error("Panel extension request failed")
+  if (response.status === 429) throw new PanelExtensionBusyError()
+  if (!response.ok) throw new PanelExtensionHttpError(response.status)
   return response.json()
 }
 /** One API 4 method of one exact package; the host supplies instance and digest. */
@@ -20,6 +36,18 @@ const api4 = <T>(id: string, method: string, body: Record<string, unknown>, sign
   request<T>(`/${encodeURIComponent(id)}/${method}`, { method: "POST", body: JSON.stringify(body), signal })
 type Authority = { instanceId: string; id: string; digest: string }
 export const panelExtensionsApi4 = {
+  bundlesMount: async (id: string, input: BundlesMountInput, signal: AbortSignal) =>
+    z.object({ mountID: opaque }).strict().parse(await api4<unknown>(id, "bundles/mount", input, signal)),
+  bundlesManage: async (id: string, input: BundlesManageInput, signal: AbortSignal): Promise<BundlesAck> =>
+    bundlesAck.parse(await api4<unknown>(id, "bundles/manage", input, signal)),
+  bundlesControl: async (id: string, input: BundlesControlInput, signal: AbortSignal) =>
+    z.object({ ok: z.literal(true) }).strict().parse(await api4<unknown>(id, "bundles/control", input, signal)),
+  bundlesCatalog: async ({ id, ...authority }: Authority, sessionID: string, signal: AbortSignal) =>
+    bundlesCatalogResultSchema.parse(await api4<unknown>(id, "bundles/catalog", { ...authority, sessionID }, signal)),
+  bundlesState: async ({ id, ...authority }: Authority, sessionID: string, signal: AbortSignal) =>
+    bundlesStateResultSchema.parse(await api4<unknown>(id, "bundles/state", { ...authority, sessionID }, signal)),
+  bundlesHosts: async ({ id, ...authority }: Authority, sessionID: string, integration: string, signal: AbortSignal) =>
+    bundlesHostsResultSchema.parse(await api4<unknown>(id, "bundles/hosts", { ...authority, sessionID, integration }, signal)),
   images: ({ id, ...authority }: Authority, sessionID: string, cursor: string | undefined, signal: AbortSignal) =>
     api4<ImagesResult>(id, "images", { ...authority, sessionID, cursor }, signal),
   imageRead: ({ id, ...authority }: Authority, sessionID: string, target: AssetTarget, signal: AbortSignal) =>

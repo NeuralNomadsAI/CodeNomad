@@ -1,4 +1,13 @@
 export const integrationMessages = {
+  "integrations.confirmation.title": "Подтвердить изменение интеграции",
+  "integrations.confirmation.install": "Установить",
+  "integrations.confirmation.update": "Обновить",
+  "integrations.confirmation.remove": "Удалить",
+  "integrations.confirmation.enable": "Включить",
+  "integrations.confirmation.disable": "Отключить",
+  "integrations.confirmation.installHost": "Установить интеграцию приложения",
+  "integrations.confirmation.attach": "Подключить приложение",
+  "integrations.confirmation.machine": "Изменение применяется на компьютере, где работает OpenCode; он может быть удалённым.",
   "integrations.installHost.install": "Установить интеграцию приложения…",
   "integrations.installHost.update": "Обновить интеграцию приложения…",
   "integrations.installHost.warning": "Установить интеграцию для {app} из пакета интеграции версии {version}?",

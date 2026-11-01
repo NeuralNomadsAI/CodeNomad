@@ -78,6 +78,7 @@ import type { PluginSourceAddRequest, PluginSourceMutationResponse, PluginSource
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
 import { attachEventSourceHandlers } from "./event-source-handlers"
+import { bundlesPrivateEvents } from "./bundles-private-events"
 import { HttpResponseError, retryFileSearch } from "./retryable-file-search"
 import { deleteMissionRequest, type MissionDeletionRequest } from "./mission-cleanup"
 import { missionMutationRequest } from "./mission-mutation"
@@ -862,7 +863,7 @@ export const serverApi = {
     const url = buildClientEventsUrl(identity)
     sseLogger.info(`Connecting to ${url}`)
     const source = new EventSource(url, { withCredentials: true } as any)
-    attachEventSourceHandlers(source, { onEvent, onError, onPing, logger: sseLogger })
+    attachEventSourceHandlers(source, { onEvent, onError, onPing, logger: sseLogger, ...bundlesPrivateEvents.stream() })
     return source
   },
 }

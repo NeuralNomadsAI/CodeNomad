@@ -89,6 +89,9 @@ export class IntegrationCatalogSource {
     return this.view()
   }
 
+  /** Existing in-memory view for synchronous admission; loading and refresh remain explicit reads. */
+  snapshot(): IntegrationCatalogView { return this.view() }
+
   private view(): IntegrationCatalogView {
     if (!this.known) return { state: "unavailable", catalog: { schemaVersion: 1, integrations: [] } }
     return { state: this.attempt?.ok ? "fresh" : "stale", fetchedAt: this.known.fetchedAt, catalog: this.known.catalog }
@@ -182,8 +185,8 @@ export class IntegrationCatalogSource {
       const temporary = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
       await writeFile(temporary, `${JSON.stringify({ version: 1, revision: known.revision, fetchedAt: known.fetchedAt, catalog: known.catalog })}\n`, { mode: 0o600 })
       await rename(temporary, file)
-    } catch (error) {
-      this.options.logger?.warn({ err: error }, "Unable to keep the integration catalog")
+    } catch {
+      this.options.logger?.warn({ reason: "persistence" }, "Unable to keep the integration catalog")
     }
   }
 }

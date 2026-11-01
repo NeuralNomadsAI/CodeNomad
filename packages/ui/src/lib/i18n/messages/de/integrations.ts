@@ -1,4 +1,13 @@
 export const integrationMessages = {
+  "integrations.confirmation.title": "Integrationsänderung bestätigen",
+  "integrations.confirmation.install": "Installieren",
+  "integrations.confirmation.update": "Aktualisieren",
+  "integrations.confirmation.remove": "Entfernen",
+  "integrations.confirmation.enable": "Aktivieren",
+  "integrations.confirmation.disable": "Deaktivieren",
+  "integrations.confirmation.installHost": "Anwendungsintegration installieren",
+  "integrations.confirmation.attach": "Anwendung verbinden",
+  "integrations.confirmation.machine": "Diese Änderung gilt auf dem Rechner, auf dem OpenCode läuft; dies kann ein entfernter Rechner sein.",
   "integrations.installHost.install": "Anwendungsintegration installieren…",
   "integrations.installHost.update": "Anwendungsintegration aktualisieren…",
   "integrations.installHost.warning": "Die Anwendungsintegration für {app} aus Version {version} des Integrationspakets installieren?",

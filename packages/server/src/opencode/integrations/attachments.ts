@@ -10,6 +10,7 @@ import type { IntegrationCatalogSource } from "./catalog"
 import { integrationRpcSchemas, readIntegrationRpcOutput, type IntegrationCatalogEntry, type IntegrationRpcValue } from "./contract"
 import { recognizeIntegrations } from "./recognition"
 import { looksLikePath } from "./status"
+import { NativeMutationAdmission, type NativeMutationAuthority } from "../native-mutation-authority"
 
 export const INTEGRATION_ATTACHMENT_TIMEOUT_MS = 8_000
 const INTEGRATION_HOST_DETECTION_TIMEOUT_MS = 1_000
@@ -31,7 +32,7 @@ export interface IntegrationAttachmentsDeps {
   readKernelVersion?: () => Promise<string>
 }
 
-type Context = { workspaceId: string; location: PluginControlLocation; entry: IntegrationCatalogEntry; connection: ServiceConnection; signal: AbortSignal }
+type Context = { workspaceId: string; location: PluginControlLocation; entry: IntegrationCatalogEntry; connection: ServiceConnection; signal: AbortSignal; admission: NativeMutationAdmission }
 type Method = "status" | "hosts" | "attachHost" | "detachHost" | "installHost" | "bindingRead"
 
 /** Fixed catalog RPCs for an owned Location; Q8 stores a reattach hint, with live state owned by the plugin. */
@@ -39,7 +40,7 @@ export class IntegrationAttachments {
   private readonly sessions = new Map<string, Promise<unknown>>()
   constructor(private readonly deps: IntegrationAttachmentsDeps) {}
 
-  async installHost(workspaceId: string, integrationId: string, location: PluginControlLocation, signal?: AbortSignal) {
+  async assertHostInstallationSupported(workspaceId: string): Promise<void> {
     // Refuse before catalog.read(), which can persist a refresh. A mirrored offer never authorizes installation.
     if (this.deps.workspaceManager.getServiceWslDistro?.(workspaceId)) throw new IntegrationAttachmentError("unsupported")
     if ((this.deps.hostPlatform ?? process.platform) === "linux") {
@@ -49,19 +50,23 @@ export class IntegrationAttachments {
       catch { throw new IntegrationAttachmentError("unavailable") }
       if (/microsoft/i.test(version)) throw new IntegrationAttachmentError("unsupported")
     }
+  }
+
+  async installHost(workspaceId: string, integrationId: string, location: PluginControlLocation, signal?: AbortSignal, authority?: NativeMutationAuthority) {
+    await this.assertHostInstallationSupported(workspaceId)
     return this.run(workspaceId, integrationId, location, signal, async context => {
       await this.status(context)
       const result = await this.call(context, "installHost", { target: "default" })
       if (result.detail !== undefined && looksLikePath(result.detail)) throw new IntegrationAttachmentError("non-conforming")
       return { outcome: result.outcome }
-    }, true)
+    }, true, authority)
   }
 
-  hosts(workspaceId: string, integrationId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<IntegrationHostsResponse> {
+  hosts(workspaceId: string, integrationId: string, location: PluginControlLocation, signal?: AbortSignal, authority?: NativeMutationAuthority): Promise<IntegrationHostsResponse> {
     return this.run(workspaceId, integrationId, location, signal, async context => {
       await this.status(context)
       return this.call(context, "hosts", {})
-    })
+    }, Boolean(authority), authority)
   }
 
   async bindingRead(workspaceId: string, integrationId: string, location: PluginControlLocation, input: IntegrationRpcValue<"bindingRead.input">, signal?: AbortSignal): Promise<IntegrationBindingResponse> {
@@ -79,7 +84,7 @@ export class IntegrationAttachments {
     }
   }
 
-  attach(workspaceId: string, integrationId: string, location: PluginControlLocation, input: IntegrationAttachRequest, signal?: AbortSignal) {
+  attach(workspaceId: string, integrationId: string, location: PluginControlLocation, input: IntegrationAttachRequest, signal?: AbortSignal, authority?: NativeMutationAuthority) {
     if (!integrationRpcSchemas["attachHost.input"].safeParse(input).success || !input.sessionID.startsWith("ses")) return Promise.reject(new IntegrationAttachmentError("invalid"))
     return this.run(workspaceId, integrationId, location, signal, context => this.serialize(input.sessionID, context.signal, async () => {
       await this.status(context, input.sessionID)
@@ -94,10 +99,10 @@ export class IntegrationAttachments {
         })
       }
       return result
-    }))
+    }), Boolean(authority), authority)
   }
 
-  detach(workspaceId: string, integrationId: string, location: PluginControlLocation, input: IntegrationDetachRequest, signal?: AbortSignal) {
+  detach(workspaceId: string, integrationId: string, location: PluginControlLocation, input: IntegrationDetachRequest, signal?: AbortSignal, authority?: NativeMutationAuthority) {
     // Native Session.ID requires the `ses` prefix. Refuse malformed IDs before native URL logging.
     if (!integrationRpcSchemas["detachHost.input"].safeParse(input).success || !input.sessionID.startsWith("ses")) return Promise.reject(new IntegrationAttachmentError("invalid"))
     return this.run(workspaceId, integrationId, location, signal, context => this.serialize(input.sessionID, context.signal, async () => {
@@ -105,7 +110,7 @@ export class IntegrationAttachments {
       const result = await this.call(context, "detachHost", input, input.sessionID)
       await this.writeHint(context, input.sessionID)
       return result
-    }))
+    }), Boolean(authority), authority)
   }
 
   private serialize<T>(sessionID: string, signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
@@ -122,42 +127,51 @@ export class IntegrationAttachments {
   }
 
   private async run<T>(workspaceId: string, integrationId: string, location: PluginControlLocation, outer: AbortSignal | undefined,
-    operation: (context: Context) => Promise<T>, readOnlyCatalog = false): Promise<T> {
+    operation: (context: Context) => Promise<T>, readOnlyCatalog = false, authority?: NativeMutationAuthority): Promise<T> {
     if (!/^[a-z][a-z0-9-]{0,31}$/.test(integrationId) || location.workspaceID !== undefined
       || !location.directory || location.directory.length > 32_768 || /\p{Cc}/u.test(location.directory)) throw new IntegrationAttachmentError("invalid")
     const timeout = AbortSignal.timeout(this.deps.timeoutMs ?? INTEGRATION_ATTACHMENT_TIMEOUT_MS)
     const signal = outer ? AbortSignal.any([outer, timeout]) : timeout
+    const admission = new NativeMutationAdmission(authority)
     // Bound even an adapter ignoring cancellation; every later dispatch checks this same signal.
     return new Promise<T>((resolve, reject) => {
-      const abort = () => reject(new IntegrationAttachmentError("unavailable"))
+      const abort = () => reject(admission.failure(new IntegrationAttachmentError("unavailable")))
       if (signal.aborted) return abort()
       signal.addEventListener("abort", abort, { once: true })
       const work = async () => {
+        await admission.revalidate()
+        signal.throwIfAborted()
         const connection = await this.deps.workspaceManager.getSharedServiceConnection(workspaceId)
         if (!connection) throw new IntegrationAttachmentError("unavailable")
+        await admission.revalidate()
+        signal.throwIfAborted()
         const [snapshot, catalog] = await Promise.all([this.deps.controls.read(workspaceId, location, signal), this.deps.catalog.read(readOnlyCatalog ? { refresh: false } : undefined)])
         const recognition = recognizeIntegrations(catalog.catalog, snapshot).find(item => item.entry.id === integrationId)
         if (!recognition) throw new IntegrationAttachmentError("not-found")
         if (recognition.entry.family !== "native") throw new IntegrationAttachmentError("unsupported")
         if (recognition.ambiguous) throw new IntegrationAttachmentError("non-conforming")
         if (recognition.runtime?.state.status !== "active") throw new IntegrationAttachmentError("inactive")
-        const context: Context = { workspaceId, location: snapshot.location, entry: recognition.entry, connection, signal }
+        const context: Context = { workspaceId, location: snapshot.location, entry: recognition.entry, connection, signal, admission }
         await this.authorize(context)
-        return operation(context)
+        const result = await operation(context)
+        await admission.revalidate()
+        return result
       }
-      work().then(resolve, error => reject(error instanceof IntegrationAttachmentError ? error
+      work().then(resolve, error => reject(admission.failure(error instanceof IntegrationAttachmentError ? error
         : new IntegrationAttachmentError(error instanceof PluginControlsError
-          && (error.kind === "forbidden" || error.kind === "not-found" || error.kind === "invalid") ? error.kind : "unavailable")))
+          && (error.kind === "forbidden" || error.kind === "not-found" || error.kind === "invalid") ? error.kind : "unavailable"))))
         .finally(() => signal.removeEventListener("abort", abort))
     })
   }
 
   private async authorize(context: Context) {
+    await context.admission.revalidate()
     context.signal.throwIfAborted()
     context.connection.assertCurrent()
     if (context.location.workspaceID !== undefined || !await this.deps.workspaceManager.ownsLocation(
       context.workspaceId, context.location, context.connection.client, context.signal,
     )) throw new IntegrationAttachmentError("forbidden")
+    await context.admission.revalidate()
     context.signal.throwIfAborted()
     context.connection.assertCurrent()
   }
@@ -186,6 +200,8 @@ export class IntegrationAttachments {
     try {
       context.signal.throwIfAborted()
       context.connection.assertCurrent()
+      context.admission.assertCurrent()
+      if (method === "attachHost" || method === "detachHost" || method === "installHost") context.admission.admit()
       const response = await context.connection.client.rpc.call({ rpcID: context.entry.rpc, method, input, location: { directory: context.location.directory } },
         { ...locationRequestOptions(context.location), signal: context.signal })
       raw = response.output
@@ -226,6 +242,7 @@ export class IntegrationAttachments {
     else delete metadata[INTEGRATION_ATTACHMENT_METADATA_KEY]
     context.connection.assertCurrent()
     context.signal.throwIfAborted()
+    context.admission.admit()
     await context.connection.client.session.update({ sessionID, metadata }, { signal: context.signal })
     await this.session(context, sessionID)
   }

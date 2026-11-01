@@ -172,6 +172,18 @@ events/reads. A response lost after submission leaves an uncertain outcome: reco
 then require a new explicit action if needed. Reinstallation may restore availability, with reload or reattachment
 sometimes needed; interrupted operations retain their own completion state.
 
+The `bundles.manage` bridge requests removal of a catalogue integration through the
+same `PluginSources.remove(workspaceId, request, authority?)` service. A valid fresh or
+stale catalogue and exactly one unambiguous writable source are required. Its scope,
+path, source, index and HMAC revision come from the same `PluginControls.read`; the
+confirmation binds the full document/options, destination, mode and connection. Missing,
+multiple, inherited or non-preferred-target declarations are refused. The bridge keeps
+native integration removal Global-only; ordinary Plugins removal also supports exact
+native Project sources. Each action has its own trusted confirmation and the shared
+interruption/Global/recovery warnings. Success requires observing removal in the exact
+bound document; a lost response or post-dispatch failure yields a fixed uncertain
+`failed` event and requires a configuration read before any fresh explicit action.
+
 ### Application installation
 
 `POST /api/workspaces/:id/integrations/:integrationId/install-host?directory=` in
@@ -195,6 +207,26 @@ Installation is Location-scoped and works independently of sessions and offers. 
 machine, including a remote machine. Its outcome describes that request; application status and a separate explicit
 attachment action establish application availability and conversation access. Never retry or replay an installation
 request after an uncertain result: check the application, then require a fresh action and confirmation if needed.
+
+### Internal mutation admission
+
+`IntegrationAttachments.attach`, `detach` and `installHost` accept an optional final
+trusted `NativeMutationAuthority` argument after `signal`. It is an in-process seam
+for the trusted bundles adapter; existing native routes retain their ordinary call
+contract. See [mutation authority](PLUGIN_CONTROLS.md#internal-mutation-authority)
+for its asynchronous revalidation and synchronous live assertion requirements.
+Never deserialize this argument from an HTTP body or frame message.
+
+Authority is revalidated after session-queue waits and asynchronous ownership,
+session and RPC prerequisites, and synchronously asserted immediately before each
+mutation RPC and metadata update. Revalidation also precedes success. One action's
+submission state covers both its binding RPC and hint write; a later failure is
+`NativeMutationUncertainError`, including timeout, revocation, invalid native output
+or a metadata failure after binding submission. A late response cannot authorize
+further writes. Cancellation may release the existing session queue while submitted
+native work still runs; callers must reconcile rather than replay. Authority-bearing
+actions use a non-refreshing catalogue read; WSL host-install refusal precedes even
+that read and installer dispatch.
 
 ## UI read model
 
@@ -241,6 +273,67 @@ consent. Navigation, reconnects and relevant native invalidations cancel pending
 captured identity. An admitted request runs once, and receipts use only the projected outcome or a localized fixed
 error. Uncertain errors require checking the application before a fresh action. UI strings live in each locale's
 `integrations.ts`, and public instructions in `docs/help/<locale>/integrations.md#application-installation`.
+
+### Draft panel-extension reads
+
+The API 4 `bundles.read` capability uses the existing catalogue, integration reader and attachment service
+through three fixed routes in `server/routes/panel-extension-bundles.ts`:
+`POST /api/panel-extensions/:id/bundles/catalog`, `bundles/state` and `bundles/hosts` under the same prefix.
+The frame's MessageChannel API is `codenomad.bundles.catalog()`, `state()`, `hosts({ integration })`
+and `onChanged(listener)`; the trusted host supplies the instance, exact installed digest and conversation
+captured at mount. Dedicated strict input/output schemas live in `panel-extensions/bundles-contract.ts`.
+Enabled `bundles.read` consent, exact native session/Location ownership and pinned connection identity are
+checked before and after IO. Keep this adapter on the fixed service methods and catalogue-derived RPC IDs;
+never accept an author-selected session, Location, RPC method, package spec or URL.
+
+The catalogue projection is `{ state, fetchedAt?, integrations }`, with only
+`id`, `displayName`, `family`, `summary`, `app`, `docs` and `catalogStatus` per integration.
+State is `{ catalog: { state, fetchedAt? }, integrations }`; each integration carries only
+`id`, `family`, `configured`, `scopes`, `activation: { global, project, effective }`, optional `version`/`outdated`,
+the runtime `state`, optional `status` and exact-conversation `attachment`. Status projects only `version`,
+host `state`/`partVersion`/`expectedRange`/`appVersion`/`action`, a family-specific connection and
+`legacy_install` notices. Native connections expose only `offers`; other families expose only `state`.
+`attachment` comes exclusively from `bindingRead` and projects `attached` with its safe label, `none` or
+`unknown`. Keep aggregate binding state/counts, foreign sessions, Q8 authority, sources/options, RPC IDs,
+paths, credentials, generations and revisions outside the extension payload. Runtime state comes from
+the existing reader; never invent a `pending` state without a local operation tracker.
+Hosts return `{ offers: [{ offerID, label, document?, appVersion?, protocol }] }` after full native validation
+and safe-display projection.
+
+The read budget is 60 calls per extension in a sliding minute, four in flight and a 19.5 s channel deadline;
+the fifth in-flight call and HTTP 429 report `busy`. Integration/plugin/configuration and exact-session events
+and reconnects coalesce over 300 ms into `{ kind: "state" }` notifications. Navigation, moves/deletion,
+disconnect and unmount invalidate old reads; never poll. `bundles.manage` requires `bundles.read` in the
+manifest. Its fixed `request` (install/update/remove), `setActive`, `installHost` and `attach`
+methods use the shared trusted confirmation lifecycle through an owner-authenticated
+mount. Request ACKs precede preparation. Removal's terminal `confirmed` follows
+observed exact-document source removal; other methods' `confirmed` events denote
+native submission, with actual state supplied by subsequent authoritative reads.
+The development bridge returns `invalid` for detach. Direct local detach
+awaits a trustworthy explicit-action boundary for an opaque frame.
+See [Panel extensions](PANEL_EXTENSIONS.md#draft-integration-reads) for the boundary.
+The trusted internal confirmation lifecycle and revocable store leases are described in
+[Internal integration confirmation lifecycle](PANEL_EXTENSIONS.md#internal-integration-confirmation-lifecycle).
+The vendored source remains `54d6e5d0f4c22e74d228822fcaaa0912818a8b46`, draft 0.2, spec 0, RPC contract 1.
+
+`panel-extensions/bundles-actions.ts` derives package ranges, activation IDs and
+native targets from the reviewed catalogue and current native inventory. Removal resolves
+one exact writable source and its HMAC revision from the same plugin snapshot, without
+status/binding/census/detach calls or Q8/cache/application-file cleanup. Plans bind
+the exact write target and source declaration bytes/destination/mode, runtime
+provenance, selected offer and installation action. Native operations require Global;
+host installation requires an explicit inspected `absent/install` or versioned
+`outdated/update` status. WSL preflight precedes catalogue/native preparation reads.
+Expected self-authored configuration bytes and native update versions have narrow
+post-submission normalization; all other consent, session, catalogue and target
+checks remain live through subsequent metadata writes and success reconciliation.
+
+The read DTO retains native runtime state and activation separately. Bounded
+`pending`/`unconfirmed` presentation requires an operation tracker; the existing
+Plugins tracker records only its own source additions in renderer memory. Never infer
+installation from a missing version or create a timer in author code as authority.
+Catalogue documentation URLs remain display data inside the sandbox; opening them
+requires a separately qualified fixed trusted action.
 
 ## Test fixtures
 
@@ -326,7 +419,15 @@ Commands:
   kernel WSL detections run with and without authenticated validated offers; selected/backend WSL refuses before
   catalog or native RPC reads. Mirrored-offer kit refusals preserve every protected fixture file, including the
   preloaded catalog. A Linux positive control invokes exactly one installer callback and private sentinel write.
-  HTTP, native events, raw SSE and debug/trace logs are sentinel-scanned; every child has a private fixture environment.
+   HTTP, native events, raw SSE and debug/trace logs are sentinel-scanned; every child has a private fixture environment.
+- `node --import tsx scripts/test-panel-extension-bundles-management-native.mjs <absolute-cli> [integration-checkout] [blender-executable]`:
+  exercises actual authenticated owner SSE lanes, HTTP mount/ACK/start/confirmation,
+  configuration writers, native package updates, installation and attachment with
+  authoritative bindings/Q8. Private registry/runtime and optional immutable Blender
+  kit resources stay fixture-owned. It checks stale plans, cancellation, revocation,
+  concurrency, Project/WSL refusals, uncertain updates without replay and confidentiality
+  across foreign streams, extension projections, metadata and structured diagnostics.
+  Its final output names any native-platform or installer cases requiring separate qualification.
 - `node --import tsx scripts/test-integration-fixtures-native.mjs <absolute-cli>`: installs the fake package and
   its marker-mismatch variant through the fake registry, checks every output against `contract.ts`, runs the
   Python client against the fixture's own registration (advertise, attach, detach, withdraw), checks that its

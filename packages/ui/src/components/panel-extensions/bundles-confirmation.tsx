@@ -1,0 +1,65 @@
+// Named parts stay stable when Kobalte's shared root shorthand is extended by alert-dialog.
+import { Root as Dialog, Portal, Overlay, Content, Title, Description } from "@kobalte/core/dialog"
+import { createSignal, onCleanup, onMount, Show } from "solid-js"
+import { useI18n } from "../../lib/i18n"
+import { BUNDLES_CONFIRM_GUARD_MS, type BundlesConfirmation, type BundlesLifecycle, type BundlesMount,
+  type BundlesPrepared, type BundlesAck } from "../../../../server/src/panel-extensions/bundles-lifecycle"
+
+/** Trusted host-only entry. Posting the ACK completes before preparation or rendering starts. */
+export function acknowledgeBundlesRequest(lifecycle: BundlesLifecycle, owner: BundlesMount,
+  prepare: (signal: AbortSignal) => Promise<BundlesPrepared>, reply: (ack: BundlesAck) => void): BundlesAck {
+  const { ack, afterAck } = lifecycle.request(owner, prepare)
+  reply(ack)
+  if (ack.outcome === "confirming") setTimeout(afterAck, 0)
+  return ack
+}
+
+/** Mounted only by a trusted host; its payload is the server-built safe display projection. */
+export function BundlesConfirmationView(props: { view: BundlesConfirmation;
+  displayed(planID: string): void | Promise<unknown>; confirm(planID: string): void; cancel(planID: string): void }) {
+  const { t } = useI18n()
+  const [ready, setReady] = createSignal(false)
+  const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
+  let cancel: HTMLButtonElement | undefined, shownAt = Infinity, timer: ReturnType<typeof setTimeout> | undefined
+  let disposed = false
+  const dismiss = () => props.cancel(props.view.planID)
+  onMount(() => {
+    void Promise.resolve().then(() => props.displayed(props.view.planID)).then(() => {
+      if (disposed) return
+      shownAt = Date.now()
+      timer = setTimeout(() => setReady(true), BUNDLES_CONFIRM_GUARD_MS)
+    }).catch(dismiss)
+  })
+  onCleanup(() => { disposed = true; clearTimeout(timer) })
+  return <Dialog open modal onOpenChange={open => { if (!open) dismiss() }}>
+    <Portal>
+      <Overlay class="modal-overlay z-[60]" />
+      <Content class="alert-dialog guarded-confirmation window-shell modal-surface fixed left-1/2 top-1/2 z-[1310] w-full max-w-md -translate-x-1/2 -translate-y-1/2 border border-base shadow-2xl"
+        onOpenAutoFocus={event => { event.preventDefault(); cancel?.focus() }}
+        onCloseAutoFocus={event => { event.preventDefault(); if (returnFocus?.isConnected) returnFocus.focus() }}>
+        <div class="window-header"><Title class="window-title">{t("integrations.confirmation.title")}</Title></div>
+        <Description as="div" class="window-body space-y-2">
+          <p><bdi>{t(`integrations.confirmation.${props.view.action}`)}</bdi>: <bdi>{props.view.integration}</bdi> — <bdi>{props.view.version}</bdi></p>
+          <p>{t(`instanceServiceStatus.plugins.scope.${props.view.scope}`)}</p>
+          <p>{t("integrations.conversation")} <bdi>{props.view.conversation}</bdi></p>
+          <Show when={props.view.document}><p>{t("integrations.application")}: <bdi>{props.view.document}</bdi></p></Show>
+          <p>{t("integrations.confirmation.machine")}</p>
+          <Show when={props.view.action === "attach"}><p>{t("integrations.warning")}</p></Show>
+          <Show when={props.view.action === "remove"}>
+            <p>{t("instanceServiceStatus.plugins.sources.removeWarning")}</p>
+            <Show when={props.view.scope === "global"}><p>{t("instanceServiceStatus.plugins.sources.removeGlobalWarning")}</p></Show>
+            <p>{t("instanceServiceStatus.plugins.sources.removeRecovery")}</p>
+          </Show>
+        </Description>
+        <div class="window-footer">
+          <button ref={cancel} type="button" class="button-secondary" onClick={dismiss}>{t("alertDialog.actions.cancel")}</button>
+          <button type="button" class="button-primary" disabled={!ready()} onClick={() => {
+            if (Date.now() - shownAt >= BUNDLES_CONFIRM_GUARD_MS) props.confirm(props.view.planID)
+          }}>{props.view.action === "remove" ? t("instanceServiceStatus.plugins.sources.remove", {
+            scope: t(`instanceServiceStatus.plugins.scope.${props.view.scope}`),
+          }) : t("alertDialog.actions.confirm")}</button>
+        </div>
+      </Content>
+    </Portal>
+  </Dialog>
+}

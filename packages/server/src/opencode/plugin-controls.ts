@@ -33,6 +33,7 @@ import {
   PluginControlDocumentError,
 } from "./plugin-control-document"
 import { createWslPluginControlDocumentFileSystem } from "./plugin-control-document-wsl"
+import { NativeMutationAdmission, type NativeMutationAuthority } from "./native-mutation-authority"
 
 type PluginControlsWorkspaceManager = Pick<WorkspaceManager,
   | "get"
@@ -129,6 +130,38 @@ export class PluginControls {
     return { location: context.location, entries: context.entries, documents }
   }
 
+  /** Read one actual declaration, independently of the scope's preferred write target. Internal callers only. */
+  async readSourceDocument(workspaceId: string, location: PluginControlLocation, source: PluginConfiguredSource, signal?: AbortSignal) {
+    source = { ...source }
+    signal?.throwIfAborted()
+    const context = await this.readContext(workspaceId, location, signal)
+    if ((source.scope !== "global" && source.scope !== "project") || !source.path || !validAbsolutePath(context.paths, source.path)
+      || buildSnapshot(context).configured.sources.filter(candidate => candidate.scope === source.scope && candidate.path === source.path
+        && candidate.target === source.target && candidate.entryIndex === source.entryIndex && candidate.hasOptions === source.hasOptions).length !== 1) {
+      throw new PluginControlsError("Plugin declaration is absent from the authorized configuration", "forbidden")
+    }
+    const root = source.scope === "global" ? context.globalDirectory : context.location.directory
+    const nativeWsl = Boolean(this.options.workspaceManager.getServiceWslDistro(workspaceId))
+    // The fresh native entry selects the document; scope ownership excludes inherited and foreign paths.
+    const parent = context.paths.dirname(source.path)
+    if (!samePath(context.paths, parent, root)
+      && !(source.scope === "project" && samePath(context.paths, parent, context.paths.join(root, ".opencode")))) {
+      throw new PluginControlsError("Plugin declaration is outside the selected configuration scope", "forbidden")
+    }
+    const ioPath = nativeWsl ? source.path : await this.options.workspaceManager.getHostPathForServicePath(workspaceId, source.path)
+    if (!ioPath || !(nativeWsl ? path.posix : hostPathStyle()).isAbsolute(ioPath)) {
+      throw new PluginControlsError("OpenCode configuration paths could not be mapped to the execution host", "unavailable")
+    }
+    signal?.throwIfAborted()
+    const document = await readPluginControlDocument(ioPath, context.fileSystem)
+    const entry = document.plugins[source.entryIndex]
+    if (!document.exists || (typeof entry === "string" ? entry : entry?.package) !== source.target) {
+      throw new PluginControlsError("Plugin declaration changed in the authorized configuration", "conflict")
+    }
+    signal?.throwIfAborted(); assertCurrentConnection(context.connection)
+    return { location: context.location, scope: source.scope, path: source.path, document }
+  }
+
   editConfigDocument(
     workspaceId: string,
     location: PluginControlLocation,
@@ -137,10 +170,12 @@ export class PluginControls {
     // Aborts the daemon reads and, re-checked under the lock, the commit itself.
     signal?: AbortSignal,
     expectedRevision?: string,
+    admission?: NativeMutationAdmission,
   ): Promise<void> {
     const directory = location.directory.trim().replace(/[\\/]+$/, "").toLowerCase()
     const key = scope === "global" ? `${workspaceId}\nglobal` : `${workspaceId}\nproject\n${directory}`
     return this.serializeMutation(key, async () => {
+      await admission?.revalidate()
       const context = await this.readContext(workspaceId, location, signal)
       const target = context.targets.find(target => target.scope === scope)
       if (!target) throw new PluginControlsError("OpenCode configuration scope is unavailable", "unavailable")
@@ -154,12 +189,18 @@ export class PluginControls {
           throw new PluginControlDocumentError("OpenCode configuration changed since confirmation", "conflict")
         }
         const updated = await edit(document)
+        await admission?.revalidate()
         await replacePluginControlDocument(document, updated, {
-          beforeCommit: () => { assertCurrentConnection(context.connection); signal?.throwIfAborted() },
+          revalidate: () => admission?.revalidate() ?? Promise.resolve(),
+          assertCurrent: () => { assertCurrentConnection(context.connection); signal?.throwIfAborted(); admission?.assertCurrent() },
+          onDispatch: () => admission?.admit(),
         }, context.fileSystem)
+        signal?.throwIfAborted()
+        await admission?.revalidate()
+        signal?.throwIfAborted()
       } catch (error) { throw error instanceof PluginControlDocumentError ? mapDocumentError(error) : error }
       finally { release() }
-    })
+    }).catch(error => { throw admission?.failure(error) ?? error })
   }
 
   private documentRevision(workspaceId: string, context: ReadContext, target: ResolvedTarget, document: PluginControlDocument): string {
@@ -172,7 +213,8 @@ export class PluginControls {
     ])).digest("hex")
   }
 
-  mutate(workspaceId: string, request: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse> {
+  mutate(workspaceId: string, request: PluginActivationMutationRequest, authority?: NativeMutationAuthority): Promise<PluginActivationMutationResponse> {
+    const admission = new NativeMutationAdmission(authority)
     // Ordering is only required per write target. The global document is
     // daemon-wide for one workspace, so all of its global writes share one
     // queue regardless of which worktree directory requested them; project
@@ -184,6 +226,7 @@ export class PluginControls {
       ? `${workspaceId}\nglobal`
       : `${workspaceId}\nproject\n${normalizedDirectory}`
     return this.serializeMutation(tailKey, async () => {
+      await admission.revalidate()
       const context = await this.readContext(workspaceId, request.location)
       const target = context.targets.find((candidate) => candidate.scope === request.scope)
       if (!target) throw new PluginControlsError("OpenCode configuration scope is unavailable", "unavailable")
@@ -222,6 +265,7 @@ export class PluginControls {
         if (!control) throw new PluginControlsError("Plugin ID is not present in the authorized inventory", "forbidden")
 
         const desired: PluginScopeRuleState = request.enabled ? "enabled" : "disabled"
+        await admission.revalidate()
         assertCurrentConnection(context.connection)
         if (projection.noOpSafe && control[request.scope] === desired) {
           return {
@@ -237,8 +281,11 @@ export class PluginControls {
         const updated = appendPluginControlRule(document, rule)
         try {
           await replacePluginControlDocument(document, updated, {
-            beforeCommit: () => assertCurrentConnection(context.connection),
+            revalidate: () => admission.revalidate(),
+            assertCurrent: () => { assertCurrentConnection(context.connection); admission.assertCurrent() },
+            onDispatch: () => admission.admit(),
           }, context.fileSystem)
+          await admission.revalidate()
         } catch (error) {
           throw mapDocumentError(error)
         }
@@ -253,7 +300,7 @@ export class PluginControls {
       } finally {
         release()
       }
-    })
+    }).catch(error => { throw admission.failure(error) })
   }
 
   private async readContext(workspaceId: string, input: PluginControlLocation, signal?: AbortSignal): Promise<ReadContext> {

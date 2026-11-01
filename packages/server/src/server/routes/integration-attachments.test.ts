@@ -7,6 +7,7 @@ import { IntegrationAttachments } from "../../opencode/integrations/attachments"
 import { INTEGRATION_ATTACHMENT_METADATA_KEY as key } from "../../integration-types"
 import { catalogEntry, catalogOf, pluginSnapshot } from "../../opencode/integrations/catalog-fixture"
 import { PluginControlsError } from "../../opencode/plugin-controls"
+import { NativeMutationUncertainError, type NativeMutationAuthority } from "../../opencode/native-mutation-authority"
 import { registerIntegrationAttachmentRoutes } from "./integration-attachments"
 
 const secret = "SECRET_SENTINEL_TOKEN_SCRIPT_BINDING_PORT"
@@ -103,6 +104,162 @@ function harness(options: {
   }
   return { app, attachments, state, calls, trace, writes, logs, request, catalogReads }
 }
+
+describe("native mutation authority", () => {
+  for (const action of ["attach", "detach", "installHost"] as const) {
+    for (const reason of ["expired", "session", "digest", "connection", "stale mount"]) {
+      it(`${action} refuses ${reason} authority before catalog, RPC or writes`, async t => {
+        const f = harness({ outputs: { installHost: { outcome: "installed" } } })
+        t.after(() => f.app.close())
+        let revoked: string | undefined = reason
+        const guard: NativeMutationAuthority = {
+          async revalidate() { this.assertCurrent() },
+          assertCurrent() { if (revoked) throw new Error(`authority revoked: ${revoked}`) },
+        }
+        const pending = action === "installHost"
+          ? f.attachments.installHost("w", "fixture", { directory: "/work" }, undefined, guard)
+          : action === "attach" ? f.attachments.attach("w", "fixture", { directory: "/work" }, { sessionID: "ses_fixture", offerID: offer.offerID }, undefined, guard)
+            : f.attachments.detach("w", "fixture", { directory: "/work" }, { sessionID: "ses_fixture" }, undefined, guard)
+        await assert.rejects(pending)
+        assert.deepEqual([f.catalogReads.length, f.calls.length, f.writes.length], [0, 0, 0])
+        revoked = undefined
+      })
+    }
+  }
+
+  for (const [action, method] of [["attach", "status"], ["attach", "hosts"], ["installHost", "status"]] as const) it(`${action} revocation during ${method} read prevents mutation dispatch`, async t => {
+    let entered!: () => void, release!: () => void, revoked = false
+    const reading = new Promise<void>(resolve => { entered = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const f = harness({ rpc: async called => {
+      if (called === method) { entered(); await gate }
+      return called === "status" ? status() : called === "hosts" ? { offers: [offer] } : { outcome: action === "attach" ? "attached" : "installed" }
+    } })
+    t.after(() => { release(); return f.app.close() })
+    const guard: NativeMutationAuthority = {
+      async revalidate() { this.assertCurrent() }, assertCurrent() { if (revoked) throw new Error("revoked") },
+    }
+    const pending = action === "installHost" ? f.attachments.installHost("w", "fixture", { directory: "/work" }, undefined, guard)
+      : f.attachments.attach("w", "fixture", { directory: "/work" }, { sessionID: "ses_fixture", offerID: offer.offerID }, undefined, guard)
+    await reading
+    revoked = true; release()
+    await assert.rejects(pending)
+    assert.equal(f.calls.some(call => call.method === "attachHost" || call.method === "installHost"), false)
+    assert.equal(f.writes.length, 0)
+  })
+
+  it("rechecks authority after an awaited revalidation and synchronously at final dispatch", async t => {
+    for (const timing of ["awaited", "dispatch"]) await t.test(timing, async t => {
+      let entered!: () => void, release!: () => void, revoked = false
+      const checking = new Promise<void>(resolve => { entered = resolve })
+      const gate = new Promise<void>(resolve => { release = resolve })
+      const f = harness({ onGet: count => { if (timing === "dispatch" && count === 5) revoked = true } })
+      t.after(() => { release(); return f.app.close() })
+      const guard: NativeMutationAuthority = {
+        async revalidate() { this.assertCurrent(); if (timing === "awaited") { entered(); await gate } },
+        assertCurrent() { if (revoked) throw new Error("revoked") },
+      }
+      const pending = f.attachments.attach("w", "fixture", { directory: "/work" }, { sessionID: "ses_fixture", offerID: offer.offerID }, undefined, guard)
+      if (timing === "awaited") {
+        const reached = await Promise.race([checking.then(() => true), pending.then(() => false, () => false)])
+        revoked = true; release()
+        assert.equal(reached, true, "service must await authority.revalidate()")
+      }
+      await assert.rejects(pending)
+      assert.equal(f.calls.some(call => call.method === "attachHost"), false)
+      assert.equal(f.writes.length, 0)
+    })
+  })
+
+  it("revokes a second operation while waiting on the actual per-session queue", async t => {
+    let entered!: () => void, release!: () => void, queued!: () => void, revoked = false, controls = 0
+    const dispatched = new Promise<void>(resolve => { entered = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const admitted = new Promise<void>(resolve => { queued = resolve })
+    const f = harness({ onControls: () => { if (++controls === 2) queued() }, rpc: async method => {
+      if (method === "attachHost") { entered(); await gate }
+      return method === "status" ? status() : method === "hosts" ? { offers: [offer] } : { outcome: method === "attachHost" ? "attached" : "detached" }
+    } })
+    t.after(() => { release(); return f.app.close() })
+    const first = f.attachments.attach("w", "fixture", { directory: "/work" }, { sessionID: "ses_fixture", offerID: offer.offerID })
+    await dispatched
+    const guard: NativeMutationAuthority = {
+      async revalidate() { this.assertCurrent() }, assertCurrent() { if (revoked) throw new Error("revoked") },
+    }
+    const second = f.attachments.detach("w", "fixture", { directory: "/work" }, { sessionID: "ses_fixture" }, undefined, guard)
+    const rejected = assert.rejects(second)
+    await admitted
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(f.calls.some(call => call.method === "detachHost"), false, "second action is queued")
+    revoked = true; release()
+    await first
+    await rejected
+    assert.equal(f.calls.some(call => call.method === "detachHost"), false)
+    assert.equal(f.writes.length, 1, "only the ordinary first operation writes")
+  })
+
+  for (const action of ["attach", "detach", "installHost"] as const) for (const cancellation of ["revoked", "aborted"]) {
+    it(`${action} is uncertain when ${cancellation} after dispatch; late replies cannot writeHint or replay`, async t => {
+      let entered!: () => void, release!: () => void, revoked = false
+      const dispatched = new Promise<void>(resolve => { entered = resolve })
+      const gate = new Promise<void>(resolve => { release = resolve })
+      const mutation = action === "attach" ? "attachHost" : action === "detach" ? "detachHost" : "installHost"
+      const f = harness({ rpc: async method => {
+        if (method === mutation) { entered(); await gate }
+        return method === "status" ? status() : method === "hosts" ? { offers: [offer] }
+          : { outcome: action === "attach" ? "attached" : action === "detach" ? "detached" : "installed" }
+      } })
+      t.after(() => { release(); return f.app.close() })
+      f.state.metadata[key] = { integration: "fixture", label: "existing", attachedAt: 1 }
+      const before = structuredClone(f.state.metadata), controller = new AbortController()
+      const guard: NativeMutationAuthority = {
+        async revalidate() { this.assertCurrent() }, assertCurrent() { if (revoked) throw new Error("revoked") },
+      }
+      const pending = action === "installHost"
+        ? f.attachments.installHost("w", "fixture", { directory: "/work" }, controller.signal, guard)
+        : action === "attach" ? f.attachments.attach("w", "fixture", { directory: "/work" }, { sessionID: "ses_fixture", offerID: offer.offerID }, controller.signal, guard)
+          : f.attachments.detach("w", "fixture", { directory: "/work" }, { sessionID: "ses_fixture" }, controller.signal, guard)
+      const rejected = assert.rejects(pending, NativeMutationUncertainError)
+      await dispatched
+      if (cancellation === "aborted") controller.abort()
+      else { revoked = true; release() }
+      try { await rejected } finally { release(); await new Promise(resolve => setImmediate(resolve)) }
+      assert.equal(f.calls.filter(call => call.method === mutation).length, 1)
+      assert.equal(f.writes.length, 0)
+      assert.deepEqual(f.state.metadata, before)
+    })
+  }
+
+  it("keeps ordinary controls and valid-authority WSL refusal unchanged despite mirrored offers", async t => {
+    const ordinary = harness({ outputs: { installHost: { outcome: "installed" } } })
+    t.after(() => ordinary.app.close())
+    assert.deepEqual((await ordinary.request("attach")).json(), { outcome: "attached" })
+    assert.deepEqual((await ordinary.request("detach")).json(), { outcome: "detached" })
+    assert.deepEqual((await ordinary.request("install-host")).json(), { outcome: "installed" })
+    assert.equal(ordinary.writes.length, 2)
+    const guard: NativeMutationAuthority = { async revalidate() {}, assertCurrent() {} }
+    for (const options of [{ wslDistro: "Ubuntu" }, { hostPlatform: "linux" as const, hostEnv: { WSL_DISTRO_NAME: "Ubuntu" } },
+      { hostPlatform: "linux" as const, hostEnv: {}, readKernelVersion: async () => "Microsoft-standard-WSL2" }]) {
+      const f = harness(options)
+      t.after(() => f.app.close())
+      await assert.rejects(f.attachments.installHost("w", "fixture", { directory: "/work" }, undefined, guard), { code: "unsupported" })
+      assert.deepEqual([f.catalogReads.length, f.calls.length, f.writes.length], [0, 0, 0])
+    }
+  })
+
+  it("retains whole-action uncertainty on metadata failure after binding submission", async t => {
+    const guard: NativeMutationAuthority = { async revalidate() {}, assertCurrent() {} }
+    for (const action of ["attach", "detach"] as const) {
+      const f = harness({ updateError: true })
+      t.after(() => f.app.close())
+      const pending = action === "attach"
+        ? f.attachments.attach("w", "fixture", { directory: "/work" }, { sessionID: "ses_fixture", offerID: offer.offerID }, undefined, guard)
+        : f.attachments.detach("w", "fixture", { directory: "/work" }, { sessionID: "ses_fixture" }, undefined, guard)
+      await assert.rejects(pending, NativeMutationUncertainError)
+      assert.equal(f.calls.filter(call => call.method === (action === "attach" ? "attachHost" : "detachHost")).length, 1)
+    }
+  })
+})
 
 describe("integration attachment routes (real service and schemas)", () => {
   it("AC-C12 validates the whole binding then projects only state/label, independent of Q8", async t => {

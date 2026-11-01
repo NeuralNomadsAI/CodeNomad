@@ -60,6 +60,8 @@ export class IntegrationsReader {
           catalogStatus: entry.status,
           configured: recognition.ways.length > 0,
           scopes,
+          activation: { global: recognition.control?.global ?? "default", project: recognition.control?.project ?? "default",
+            effective: recognition.control?.effective ?? "default" },
           configuredSources: recognition.sources.flatMap(source =>
             (source.scope === "global" || source.scope === "project")
               && snapshot.targets.some(target => target.scope === source.scope && target.path === source.path)

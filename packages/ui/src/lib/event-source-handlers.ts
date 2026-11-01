@@ -13,11 +13,25 @@ interface EventSourceHandlerOptions {
   onEvent: (event: WorkspaceEventPayload) => void
   onError?: () => void
   onPing?: (payload: { ts?: number }) => void
+  onPrivateOwner?: (payload: unknown) => void
+  onPrivateEvent?: (payload: unknown) => void
+  onReset?: () => void
   logger: EventSourceLogger
 }
 
 export function attachEventSourceHandlers(source: EventSource, options: EventSourceHandlerOptions) {
   let disconnected = false
+  let closed = false
+  source.addEventListener("open", () => { if (!closed) { disconnected = false; options.onReset?.() } })
+  for (const [name, callback] of [["codenomad.bundles.owner", options.onPrivateOwner],
+    ["codenomad.bundles.event", options.onPrivateEvent]] as const) {
+    source.addEventListener(name, (event: MessageEvent) => {
+      if (disconnected) return
+      try { callback?.(JSON.parse(event.data)) } catch { /* Private data stays outside diagnostics. */ }
+    })
+  }
+  const close = source.close.bind(source)
+  source.close = () => { options.onReset?.(); disconnected = true; closed = true; close() }
 
   source.onmessage = (event) => {
     let payload: WorkspaceEventPayload
@@ -41,6 +55,7 @@ export function attachEventSourceHandlers(source: EventSource, options: EventSou
       return
     }
     disconnected = true
+    options.onReset?.()
     options.logger.warn(reason)
     options.onError?.()
   }

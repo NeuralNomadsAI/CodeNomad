@@ -11,14 +11,18 @@ import { PanelExtensionStore } from "./store"
 import { extensionsRequestDesign } from "../opencode/design/demand"
 
 const api4 = (permissions: unknown, extra = {}) => readPanelExtensionArchive(fixtureArchive("<p>x</p>", { apiVersion: 4, permissions, ...extra }))
-const design = ["session.context", ...PANEL_EXTENSION_API4_PERMISSIONS]
+const design = ["session.context", ...PANEL_EXTENSION_API4_PERMISSIONS.filter(value => !value.startsWith("bundles."))]
 
 test("API 4 manifests: session.context plus a non-empty subset of the finite set, in any order", async () => {
   assert.deepEqual((await api4(design)).manifest.permissions, design)
-  for (const permission of PANEL_EXTENSION_API4_PERMISSIONS.filter(value => value !== "session.images.prompts")) {
+  const all = ["session.context", ...PANEL_EXTENSION_API4_PERMISSIONS]
+  assert.deepEqual((await api4(all)).manifest.permissions, all)
+  for (const permission of PANEL_EXTENSION_API4_PERMISSIONS.filter(value => value !== "session.images.prompts" && value !== "bundles.manage")) {
     assert.deepEqual((await api4(["session.context", permission])).manifest.permissions, ["session.context", permission])
   }
   assert.deepEqual((await api4(["composer.prefill", "session.images.prompts", "session.images.read", "session.context"])).manifest.apiVersion, 4)
+  assert.deepEqual((await api4(["bundles.manage", "session.context", "bundles.read"])).manifest.permissions,
+    ["bundles.manage", "session.context", "bundles.read"])
   for (const permissions of [
     ["session.context"], // empty subset
     ["session.images.read"], // no session.context
@@ -29,6 +33,11 @@ test("API 4 manifests: session.context plus a non-empty subset of the finite set
     ["session.context", "filesystem.read"], // unknown
     ["session.context", "session.assets.read"], // another API's permission
     ["session.context", "repository.workItems.read"],
+    ["session.context", "bundles.manage"],
+    ["session.context", "bundles.manage", "panel.preferences"],
+    ["session.context", "bundles.read", "bundles.read"],
+    ["session.context", "bundles.read", "bundles.manage", "bundles.manage"],
+    ["session.context", "bundles.write"],
     [...design, "panel.preferences"],
     "session.context",
   ]) await assert.rejects(api4(permissions), { code: "invalid" }, JSON.stringify(permissions))
@@ -37,11 +46,23 @@ test("API 4 manifests: session.context plus a non-empty subset of the finite set
     [3, ["session.context", "composer.prefill"]]] as const) {
     await assert.rejects(readPanelExtensionArchive(fixtureArchive("<p>x</p>", { apiVersion, permissions })), { code: "invalid" })
   }
+  for (const [apiVersion, permissions] of [[1, ["session.context"]], [2, ["session.context", "session.assets.read"]],
+    [3, ["session.context", "repository.workItems.read"]]] as const) {
+    assert.deepEqual((await readPanelExtensionArchive(fixtureArchive("<p>x</p>", { apiVersion, permissions }))).manifest.permissions, permissions)
+    for (const permission of ["bundles.read", "bundles.manage"]) {
+      await assert.rejects(readPanelExtensionArchive(fixtureArchive("<p>x</p>", { apiVersion, permissions: [...permissions, permission] })), { code: "invalid" })
+    }
+  }
 })
 
 test("the catalogue marks API 4 entries compatible only with known permissions; incompatible ones never download or install", async () => {
   const valid = { ...fixtureManifest, id: "example.design", apiVersion: 4, permissions: design }
-  const entries = [valid, { ...valid, id: "example.future", permissions: ["session.context", "session.images.write"] },
+  const entries = [valid, { ...valid, id: "example.read", permissions: ["session.context", "bundles.read"] },
+    { ...valid, id: "example.manage", permissions: ["bundles.manage", "session.context", "bundles.read"] },
+    { ...valid, id: "example.unread", permissions: ["session.context", "bundles.manage"] },
+    { ...valid, id: "example.duplicate", permissions: ["session.context", "bundles.read", "bundles.read"] },
+    { ...valid, id: "example.unknown", permissions: ["session.context", "bundles.write"] },
+    { ...valid, id: "example.future", permissions: ["session.context", "session.images.write"] },
     { ...valid, id: "example.next", apiVersion: 5 }].map(manifest => ({ manifest, description: "Panel", digest: "a".repeat(64),
     release: { tag: "v1.0.0", asset: "panel-1.0.0.zip" } }))
   let downloads = 0
@@ -50,8 +71,10 @@ test("the catalogue marks API 4 entries compatible only with known permissions; 
     downloads++
     return new Response("never")
   }) as typeof fetch)
-  assert.deepEqual((await catalog.list()).entries.map(entry => entry.compatible), [true, false, false])
-  for (const id of ["example.future", "example.next"]) await assert.rejects(catalog.inspect(id, "a".repeat(64)), { code: "invalid" })
+  assert.deepEqual((await catalog.list()).entries.map(entry => entry.compatible), [true, true, true, false, false, false, false, false])
+  for (const id of ["example.unread", "example.duplicate", "example.unknown", "example.future", "example.next"]) {
+    await assert.rejects(catalog.inspect(id, "a".repeat(64)), { code: "invalid" })
+  }
   assert.equal(downloads, 0)
   // Manual installation reads only the manifest before refusing.
   await assert.rejects(api4(["session.context", "session.images.write"]), { code: "invalid" })

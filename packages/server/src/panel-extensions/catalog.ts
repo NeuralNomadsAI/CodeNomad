@@ -2,11 +2,11 @@ import { createHash } from "node:crypto"
 import { isDeepStrictEqual } from "node:util"
 import { z } from "zod"
 import { ManifestFields, ManifestSchema, PanelExtensionError, readPanelExtensionArchive } from "./archive"
-import { PANEL_EXTENSION_LIMITS, type PanelExtensionCatalog } from "./contract"
+import { PANEL_EXTENSION_API4_PERMISSIONS, PANEL_EXTENSION_LIMITS, type PanelExtensionCatalog } from "./contract"
 
 export const PANEL_EXTENSION_CATALOG_URL = "https://raw.githubusercontent.com/NeuralNomadsAI/CodeNomad-Extensions/main/catalog.json"
 const CatalogSchema = z.object({ schemaVersion: z.literal(1), extensions: z.array(z.object({
-  manifest: ManifestFields.extend({ apiVersion: z.number().int().min(1).max(100), permissions: z.array(z.string().min(1).max(80)).max(8) }).strict(),
+  manifest: ManifestFields.extend({ apiVersion: z.number().int().min(1).max(100), permissions: z.array(z.string().min(1).max(80)).max(PANEL_EXTENSION_API4_PERMISSIONS.length + 1) }).strict(),
   description: z.string().trim().min(1).max(600),
   digest: z.string().regex(/^[a-f0-9]{64}$/),
   release: z.object({ tag: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,119}$/),

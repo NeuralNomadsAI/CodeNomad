@@ -8,7 +8,7 @@ import {
   type DragEvent as SolidDndDragEvent,
 } from "@thisbeyond/solid-dnd"
 import IconButton from "@suid/material/IconButton"
-import { Settings2 } from "lucide-solid"
+import { Settings2, RotateCw } from "lucide-solid"
 import TabScroll from "../../../tab-scroll"
 
 import type { Instance } from "../../../../types/instance"
@@ -238,6 +238,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   })
 
   const extensionForTab = (id: string) => extensions.entries().find(entry => id === `extension:${entry.manifest.id}`)
+  const [extensionReload, setExtensionReload] = createSignal<(() => void)>()
   // API 4 host actions: the displayed conversation's composer, and closing the phone's floating panel.
   const extensionHost = { promptInputApi: props.promptInputApi, activeSessionId: props.activeSessionId,
     isPhoneLayout: props.isPhoneLayout, closePanel: () => props.onCloseRightDrawer() }
@@ -246,7 +247,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     return { id, displayNameKey: "", origin: "external", tabs: [{ id, labelKey: "", label: entry.manifest.name, order: 1000,
       render: () => <ExtensionPanel entry={entry} instanceId={props.instanceId} active={entry.enabled && extensions.verified() && props.isActive() && rightPanelTab() === id}
         context={{ apiVersion: 1, sessionId: props.activeSessionId(), locale: locale(), appearance: theme.isDark() ? "dark" : "light" }}
-        host={extensionHost} />,
+        host={extensionHost} registerReload={reload => setExtensionReload(() => reload)} />,
     }] }
   }))
   const rightPanelModules = createMemo(() => [coreModule, missionsModule, ...externalModules()])
@@ -284,6 +285,12 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       <div class="panel-header right-panel-tab-bar">
         <div class="tab-container">
           <div class="panel-header-actions tab-strip-shortcuts">
+            <Show when={extensionReload()}>
+              <IconButton size="small" color="inherit" aria-label={props.t("panelExtensions.reload")}
+                title={props.t("panelExtensions.reload")} onClick={event => { if (event.isTrusted) extensionReload()?.() }}>
+                <RotateCw class="h-4 w-4" />
+              </IconButton>
+            </Show>
             <IconButton
               ref={customizationTriggerRef}
               class="icon-toggle"

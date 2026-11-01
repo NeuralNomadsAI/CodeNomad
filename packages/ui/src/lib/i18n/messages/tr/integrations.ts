@@ -1,4 +1,13 @@
 export const integrationMessages = {
+  "integrations.confirmation.title": "Entegrasyon değişikliğini onayla",
+  "integrations.confirmation.install": "Yükle",
+  "integrations.confirmation.update": "Güncelle",
+  "integrations.confirmation.remove": "Kaldır",
+  "integrations.confirmation.enable": "Etkinleştir",
+  "integrations.confirmation.disable": "Devre dışı bırak",
+  "integrations.confirmation.installHost": "Uygulama entegrasyonunu yükle",
+  "integrations.confirmation.attach": "Uygulamayı bağla",
+  "integrations.confirmation.machine": "Bu değişiklik, OpenCode'un çalıştığı ve uzakta olabilen bilgisayarda uygulanır.",
   "integrations.installHost.install": "Uygulama entegrasyonunu kur…",
   "integrations.installHost.update": "Uygulama entegrasyonunu güncelle…",
   "integrations.installHost.warning": "{app} için uygulama entegrasyonu, entegrasyon paketinin {version} sürümünden kurulsun mu?",

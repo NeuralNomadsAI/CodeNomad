@@ -1,4 +1,13 @@
 export const integrationMessages = {
+  "integrations.confirmation.title": "連携の変更を確認",
+  "integrations.confirmation.install": "インストール",
+  "integrations.confirmation.update": "更新",
+  "integrations.confirmation.remove": "削除",
+  "integrations.confirmation.enable": "有効化",
+  "integrations.confirmation.disable": "無効化",
+  "integrations.confirmation.installHost": "アプリケーション連携をインストール",
+  "integrations.confirmation.attach": "アプリケーションを接続",
+  "integrations.confirmation.machine": "この変更は OpenCode が動作するマシンに適用されます。リモートマシンの場合もあります。",
   "integrations.installHost.install": "アプリ連携をインストール…",
   "integrations.installHost.update": "アプリ連携を更新…",
   "integrations.installHost.warning": "連携パッケージのバージョン {version} から {app} のアプリ連携をインストールしますか？",

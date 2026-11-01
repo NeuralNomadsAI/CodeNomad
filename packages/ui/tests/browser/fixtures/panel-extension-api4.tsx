@@ -9,7 +9,7 @@ import { ThemeProvider } from "../../../src/lib/theme"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { serverEvents } from "../../../src/lib/server-events"
 import { addInstance, setActiveInstanceId } from "../../../src/stores/instances"
-import { activeSessionId, clearActiveParentSession, sessions, setActiveParentSession, setProviders } from "../../../src/stores/session-state"
+import { activeSessionId, clearActiveParentSession, sessions, setSessions, setActiveParentSession, setProviders } from "../../../src/stores/session-state"
 import { getAttachments } from "../../../src/stores/attachments"
 import { fetchAgents, fetchSessions, hydrateRestoredSessionChain } from "../../../src/stores/session-api"
 import { updateSessionAgent } from "../../../src/stores/session-actions"
@@ -107,6 +107,11 @@ window.addEventListener("message", event => { if (event.data?.fixtureAnswer) fra
   openPanel: () => setPanelOpen(true),
   changed: () => (serverEvents as any).dispatchBatch([{ type: "storage.stateChanged", owner: "panelExtensions", value: {} }]),
   event: (event: unknown) => (serverEvents as any).dispatchBatch([event]),
+  move: (directory: string) => setSessions(current => {
+    const rows = new Map(current.get(instanceId)), id = active()!, session = rows.get(id)!
+    rows.set(id, { ...session, location: { directory } })
+    return new Map(current).set(instanceId, rows)
+  }),
   snapshot: () => ({ ...state, active: active(), panelOpen: panelOpen(),
     attachments: listed.reduce((count, id) => count + getAttachments(instanceId, id).length, 0),
     draft: (document.querySelector("textarea.prompt-input") as HTMLTextAreaElement | null)?.value ?? null,

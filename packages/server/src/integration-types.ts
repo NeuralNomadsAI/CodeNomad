@@ -1,5 +1,5 @@
 // Shared types of OpenCode integrations (dev-docs/OPENCODE_INTEGRATIONS.md), kept out of api-types.ts.
-import type { PluginControlLocation, PluginControlScope } from "./api-types"
+import type { PluginControlLocation, PluginControlScope, PluginScopeRuleState } from "./api-types"
 import type { IntegrationCatalogEntry, IntegrationFamily, IntegrationStatus } from "./opencode/integrations/contract"
 import type { IntegrationCatalogState } from "./opencode/integrations/catalog"
 import type { IntegrationRuntimeState } from "./opencode/integrations/status"
@@ -32,6 +32,7 @@ export interface IntegrationView {
   configured: boolean
   /** Writable scopes that declare it or a rule for its plugin. */
   scopes: PluginControlScope[]
+  activation: { global: PluginScopeRuleState; project: PluginScopeRuleState; effective: PluginScopeRuleState }
   /** Safe correlation to writable plugin-source rows; paths, targets and plugin IDs stay server-side. */
   configuredSources: Array<{ scope: PluginControlScope; entryIndex: number }>
   /** Installed package version, when the runtime loaded it. */

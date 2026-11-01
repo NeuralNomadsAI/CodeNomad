@@ -17,6 +17,7 @@ import {
 } from "./plugin-source-document"
 import type { IntegrationCatalogSource } from "./integrations/catalog"
 import { integrationsForSpec } from "./integrations/recognition"
+import { NativeMutationAdmission, type NativeMutationAuthority } from "./native-mutation-authority"
 
 export class PluginSourcesError extends PluginControlsError {
   constructor(message: string, kind: PluginControlsErrorKind, readonly code: PluginSourceErrorCode) {
@@ -44,7 +45,8 @@ export class PluginSources {
 
   constructor(private readonly options: { documents: Documents; logger: Logger; catalog?: Catalog; addTimeoutMs?: number; abortGraceMs?: number }) {}
 
-  add(workspaceId: string, request: PluginSourceAddRequest): Promise<PluginSourceMutationResponse> {
+  add(workspaceId: string, request: PluginSourceAddRequest, authority?: NativeMutationAuthority): Promise<PluginSourceMutationResponse> {
+    const admission = new NativeMutationAdmission(authority)
     try {
       validatePluginSourceSpec(request.spec)
     } catch (error) {
@@ -53,38 +55,39 @@ export class PluginSources {
     // The duplicate check spans both scopes while the document lock covers one file:
     // serialize adds so a concurrent add in the other scope, from any workspace, is visible.
     // Each turn has a deadline, so one unresponsive OpenCode service cannot hold the queue.
-    const result = this.addTail.then(() => this.withDeadline(signal => this.addSerialized(workspaceId, request, signal)))
+    const result = this.addTail.then(() => this.withDeadline(signal => this.addSerialized(workspaceId, request, signal, admission), admission))
     this.addTail = result.then(() => undefined, () => undefined)
     return result
   }
 
-  // The deadline aborts the turn; the turn's own outcome is reported, so a timeout is reported
-  // only when nothing was written (reads abort, the commit re-checks the signal under the lock).
-  // A client that ignores the signal still releases the queue after a short grace period; the
-  // abandoned turn then fails its next signal check before any write.
-  private withDeadline<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  // The deadline aborts the turn and releases the queue after a bounded grace period.
+  // Authority-bearing calls share commit submission state so a late native write reports
+  // uncertainty. Cancellation fences later dispatches; submitted work may still finish.
+  private withDeadline<T>(operation: (signal: AbortSignal) => Promise<T>, admission: NativeMutationAdmission): Promise<T> {
     const controller = new AbortController()
     const timeout = () => new PluginSourcesError("OpenCode did not answer in time", "unavailable", "timeout")
     return new Promise<T>((resolve, reject) => {
       let grace: ReturnType<typeof setTimeout> | undefined
       const timer = setTimeout(() => {
         controller.abort()
-        grace = setTimeout(() => reject(timeout()), this.options.abortGraceMs ?? PLUGIN_SOURCE_ABORT_GRACE_MS)
+        grace = setTimeout(() => reject(admission.failure(timeout())), this.options.abortGraceMs ?? PLUGIN_SOURCE_ABORT_GRACE_MS)
       }, this.options.addTimeoutMs ?? PLUGIN_SOURCE_ADD_TIMEOUT_MS)
       operation(controller.signal)
-        .then(resolve, error => reject(controller.signal.aborted ? timeout() : error))
+        .then(resolve, error => reject(admission.failure(controller.signal.aborted ? timeout() : error)))
         .finally(() => { clearTimeout(timer); clearTimeout(grace) })
     })
   }
 
-  private async addSerialized(workspaceId: string, request: PluginSourceAddRequest, signal: AbortSignal): Promise<PluginSourceMutationResponse> {
+  private async addSerialized(workspaceId: string, request: PluginSourceAddRequest, signal: AbortSignal, admission: NativeMutationAdmission): Promise<PluginSourceMutationResponse> {
+    await admission.revalidate()
     const { spec, scope } = request
     const [snapshot, raw, catalog] = await Promise.all([
       this.options.documents.read(workspaceId, request.location, signal),
       this.options.documents.readConfigDocuments(workspaceId, request.location, signal),
-      this.options.catalog?.read().then(view => view.catalog),
+      this.options.catalog?.read(admission.authority ? { refresh: false } : undefined).then(view => view.catalog),
     ])
     signal.throwIfAborted()
+    await admission.revalidate()
     // A recognised integration (spec change §4.2) is one package whatever its spec: registry and Git
     // specs of the same integration, or a spec of an integration whose plugin already loaded, collide.
     const integrations = catalog ? integrationsForSpec(catalog, spec) : []
@@ -109,17 +112,23 @@ export class PluginSources {
       signal.throwIfAborted()
       assertNotDeclared(document.plugins.map(pluginEntryTarget), identities, ids, identify)
       return appendPluginControlRule(document, spec)
-    }, signal)
+    }, signal, undefined, admission)
+    signal.throwIfAborted()
+    await admission.revalidate()
+    signal.throwIfAborted()
     this.options.logger.info({ workspaceId, scope }, "Added OpenCode plugin source")
     return { scope, spec, reloadPending: true }
   }
 
-  async remove(workspaceId: string, request: PluginSourceRemoveRequest): Promise<PluginSourceMutationResponse> {
+  async remove(workspaceId: string, request: PluginSourceRemoveRequest, authority?: NativeMutationAuthority): Promise<PluginSourceMutationResponse> {
+    request = { ...request, location: { ...request.location } }
+    const admission = new NativeMutationAdmission(authority)
     const { scope, target, entryIndex } = request
     if (!/^[a-f0-9]{64}$/.test(request.expectedRevision ?? "")) {
       throw new PluginSourcesError("OpenCode configuration confirmation is unavailable", "conflict", "stale")
     }
     try {
+      await admission.revalidate()
       await this.options.documents.editConfigDocument(workspaceId, request.location, scope, document => {
       try {
         return removePluginSourceEntry(document, entryIndex, target)
@@ -129,8 +138,10 @@ export class PluginSources {
         }
         throw error
       }
-      }, undefined, request.expectedRevision)
+      }, undefined, request.expectedRevision, admission)
+      await admission.revalidate()
     } catch (error) {
+      error = admission.failure(error)
       if (error instanceof PluginControlsError && error.kind === "conflict") throw new PluginSourcesError("OpenCode configuration changed since confirmation", "conflict", "stale")
       throw error
     }

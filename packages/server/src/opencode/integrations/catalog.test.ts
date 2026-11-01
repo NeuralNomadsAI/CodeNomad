@@ -96,6 +96,7 @@ describe("integration catalog", () => {
     const stateFile = path.join(stateDir, "installation.json")
     let now = 1_000_000
     const source = new IntegrationCatalogSource({ releasesUrl: url, stateFile, now: () => now })
+    assert.equal(source.snapshot().state, "unavailable")
     assert.equal((await source.read({ refresh: false })).state, "unavailable")
     assert.equal(fixture.state.requests.length, 0)
     await assert.rejects(readFile(stateFile), { code: "ENOENT" })
@@ -103,6 +104,8 @@ describe("integration catalog", () => {
     const before = await readFile(stateFile, "utf8")
     now += INTEGRATION_CATALOG_CACHE_MS + 1
     reset([release(origin, "catalog-v2", "two")], { two: JSON.stringify(catalogOf()) })
+    assert.deepEqual(source.snapshot(), known)
+    assert.equal(source.snapshot().catalog, known.catalog, "admission reuses the existing view, without a second cache")
     assert.deepEqual(await source.read({ refresh: false }), known)
     const restored = new IntegrationCatalogSource({ releasesUrl: url, stateFile })
     assert.deepEqual((await restored.read({ refresh: false })).catalog, known.catalog)

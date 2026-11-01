@@ -51,6 +51,11 @@ import { registerPanelExtensionRoutes } from "./routes/panel-extensions"
 import { registerPanelExtensionAssetRoutes } from "./routes/panel-extension-assets"
 import { registerPanelExtensionWorkItemRoutes } from "./routes/panel-extension-work-items"
 import { registerPanelExtensionApi4Routes } from "./routes/panel-extension-api4"
+import { registerPanelExtensionBundlesRoutes } from "./routes/panel-extension-bundles"
+import { registerPanelExtensionBundlesManagementRoutes } from "./routes/panel-extension-bundles-management"
+import { BundlesTransport } from "../panel-extensions/bundles-transport"
+import { BundlesActions } from "../panel-extensions/bundles-actions"
+import { PluginPackages } from "../opencode/plugin-packages"
 import { ForgeWorkItems } from "../forge/work-items"
 import type { PanelExtensionStore } from "../panel-extensions/store"
 import { registerPluginControlRoutes } from "./routes/plugin-controls"
@@ -351,9 +356,20 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerPluginControlRoutes(app, { controls: configurationControls })
   const integrationCatalog = deps.integrationCatalog ?? new IntegrationCatalogSource({ logger: apiLogger })
   const integrations = new IntegrationsReader({ controls: configurationControls, workspaceManager: deps.workspaceManager, catalog: integrationCatalog })
-  registerPluginSourceRoutes(app, { sources: new PluginSources({ documents: configurationControls, logger: apiLogger, catalog: integrationCatalog }) })
+  const pluginSources = new PluginSources({ documents: configurationControls, logger: apiLogger, catalog: integrationCatalog })
+  registerPluginSourceRoutes(app, { sources: pluginSources })
   registerIntegrationRoutes(app, { integrations })
-  registerIntegrationAttachmentRoutes(app, { attachments: new IntegrationAttachments({ controls: configurationControls, workspaceManager: deps.workspaceManager, catalog: integrationCatalog }) })
+  const integrationAttachments = new IntegrationAttachments({ controls: configurationControls, workspaceManager: deps.workspaceManager, catalog: integrationCatalog })
+  const bundlesTransport = deps.panelExtensions ? new BundlesTransport({ auth: deps.authManager, store: deps.panelExtensions,
+    workspaceManager: deps.workspaceManager, eventBus: deps.eventBus,
+    actions: new BundlesActions({ workspaceManager: deps.workspaceManager, catalog: integrationCatalog, controls: configurationControls,
+      sources: pluginSources, packages: new PluginPackages({ controls: configurationControls, workspaceManager: deps.workspaceManager }),
+      attachments: integrationAttachments }) }) : undefined
+  if (bundlesTransport) {
+    registerPanelExtensionBundlesManagementRoutes(app, { transport: bundlesTransport })
+    app.addHook("onClose", async () => bundlesTransport.dispose())
+  }
+  registerIntegrationAttachmentRoutes(app, { attachments: integrationAttachments })
   registerWebSearchSettingsRoutes(app, new WebSearchSettings(configurationControls))
   registerSubagentDepthSettingsRoutes(app, new SubagentDepthSettings(configurationControls, deps.workspaceManager))
   const imageSettings = new ImageSettings(configurationControls, deps.workspaceManager)
@@ -377,6 +393,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     registerClient: registerSseClient,
     logger: sseLogger,
     connectionManager: deps.clientConnectionManager,
+    bundlesTransport,
   })
   registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerPendingRequestRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
@@ -417,6 +434,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   if (deps.panelExtensions) registerPanelExtensionAssetRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   if (deps.panelExtensions) registerPanelExtensionWorkItemRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, forge: new ForgeWorkItems() })
   if (deps.panelExtensions) registerPanelExtensionApi4Routes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, worktreeDeletionFence, imageSettings })
+  if (deps.panelExtensions) registerPanelExtensionBundlesRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager,
+    catalog: integrationCatalog, integrations, attachments: integrationAttachments, budget: bundlesTransport?.lifecycle.budget })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger, authManager: deps.authManager })
   registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
   setupSideCarWebSocketProxy(app, {

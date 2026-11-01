@@ -6,10 +6,10 @@ export const PANEL_EXTENSION_LIMITS = { archiveBytes: 2 * 1024 * 1024, htmlBytes
 /**
  * API 4's finite permission set: `session.context` plus a non-empty subset of
  * these, each one capability with fixed methods (dev-docs/PANEL_EXTENSIONS.md#api-4).
- * `session.images.prompts` requires `session.images.read`.
+ * `session.images.prompts` requires `session.images.read`; `bundles.manage` requires `bundles.read`.
  */
 export const PANEL_EXTENSION_API4_PERMISSIONS = ["session.images.read", "session.images.prompts", "composer.prefill", "images.conversation",
-  "opencode.designAgent", "panel.preferences"] as const
+  "opencode.designAgent", "panel.preferences", "bundles.read", "bundles.manage"] as const
 export type PanelExtensionApi4Permission = typeof PANEL_EXTENSION_API4_PERMISSIONS[number]
 
 export type PanelExtensionManifest = {

@@ -1,4 +1,13 @@
 export const integrationMessages = {
+  "integrations.confirmation.title": "एकीकरण परिवर्तन पुष्टि गर्नुहोस्",
+  "integrations.confirmation.install": "स्थापना गर्नुहोस्",
+  "integrations.confirmation.update": "अद्यावधिक गर्नुहोस्",
+  "integrations.confirmation.remove": "हटाउनुहोस्",
+  "integrations.confirmation.enable": "सक्रिय गर्नुहोस्",
+  "integrations.confirmation.disable": "निष्क्रिय गर्नुहोस्",
+  "integrations.confirmation.installHost": "अनुप्रयोग एकीकरण स्थापना गर्नुहोस्",
+  "integrations.confirmation.attach": "अनुप्रयोग जोड्नुहोस्",
+  "integrations.confirmation.machine": "यो परिवर्तन OpenCode चल्ने कम्प्युटरमा लागू हुन्छ, जुन टाढाको पनि हुन सक्छ।",
   "integrations.installHost.install": "अनुप्रयोग एकीकरण स्थापना गर्नुहोस्…",
   "integrations.installHost.update": "अनुप्रयोग एकीकरण अद्यावधिक गर्नुहोस्…",
   "integrations.installHost.warning": "एकीकरण प्याकेजको संस्करण {version} बाट {app} को अनुप्रयोग एकीकरण स्थापना गर्ने हो?",
