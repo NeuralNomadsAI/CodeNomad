@@ -3,7 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { stat, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { chromium, type Browser, type Page, type Request } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -117,7 +117,8 @@ async function setup(missing = false) {
     const error = `${request.url()} ${request.failure()?.errorText}`, own = ownedRequest(request.url())
     // Only these explicit view retirements cancel the exact read-only list GET.
     // Preserve raw failure diagnostics and all actor/read/navigation failures.
-    if (recurrenceDemandRetired && request.method() === "GET" && request.failure()?.errorText === "net::ERR_ABORTED"
+    if (request.method() === "POST" && request.failure()?.errorText === "net::ERR_ABORTED" && own?.path.endsWith("/missions/panel-page")) cancelledRecurrenceReads.push(error)
+    else if (recurrenceDemandRetired && request.method() === "GET" && request.failure()?.errorText === "net::ERR_ABORTED"
       && own && /^\/api\/workspaces\/(fixture|replacement)\/missions\/(recurrence|scheduled)$/.test(own.path)) cancelledRecurrenceReads.push(error)
     else networkErrors.push(error)
   })

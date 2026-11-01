@@ -16,7 +16,7 @@ Object.assign(globalThis, { window: {
 } })
 const { initializeClientState } = await import("./client-state")
 await initializeClientState()
-const { markMissionsFinishedSeen, missionDisclosureOpen, missionFinishedSeen, missionProjectView, setMissionDisclosureOpen, updateMissionProjectView } = await import("./mission-view-state")
+const { markMissionsFinishedSeen, seedMissionFinishedSeen, missionDisclosureOpen, missionFinishedSeen, missionProjectView, setMissionDisclosureOpen, updateMissionProjectView } = await import("./mission-view-state")
 const playbookReader = { missionId: "debug", kind: "playbook", taskMode: "independent" } as const
 
 // The completions a project lists at the end, with whether each reads as seen.
@@ -90,6 +90,29 @@ if (reload) {
     assert.equal(missionProjectView("unknown-playbook").reader, undefined)
   })
 } else {
+  test("partial inventory seeds once from the durable finish boundary and never marks an undiscovered new finish seen", () => {
+    const old = { id: "old", finishSequence: 1 }, deleted = { id: "deleted", finishSequence: 2 }, fresh = { id: "fresh", finishSequence: 3 }, shown = { id: "shown", finishSequence: 4 }
+    seedMissionFinishedSeen("partial", 2)
+    markMissionsFinishedSeen("partial", [], [old], true)
+    assert.equal(missionFinishedSeen("partial", deleted), true, "later discovered historical completion is already seen")
+    assert.equal(missionFinishedSeen("partial", fresh), false)
+    markMissionsFinishedSeen("partial", [shown.id], [shown], true)
+    assert.equal(missionFinishedSeen("partial", fresh), false, "a later shown page cannot cover the missing new completion")
+    seedMissionFinishedSeen("partial", 4)
+    markMissionsFinishedSeen("partial", [], [old, deleted], true)
+    assert.equal(missionFinishedSeen("partial", fresh), false, "later traversal/refresh never reseeds")
+    assert.equal(missionFinishedSeen("partial", shown), true, "partial pages retain explicitly shown IDs")
+  })
+  test("a stored whole-inventory watermark keeps unseen finishes while partial views record exact seen sequences", () => {
+    const historical = { id: "historical", finishSequence: 2 }, fresh = { id: "fresh", finishSequence: 3 }
+    markMissionsFinishedSeen("migration", [], [historical])
+    seedMissionFinishedSeen("migration", 9)
+    assert.equal(missionFinishedSeen("migration", historical), true)
+    assert.equal(missionFinishedSeen("migration", fresh), false)
+    markMissionsFinishedSeen("migration", [fresh.id], [fresh], true)
+    assert.equal(missionFinishedSeen("migration", fresh), true)
+    assert.equal(missionFinishedSeen("migration", { id: "unloaded", finishSequence: 4 }), false)
+  })
   test("a playbook reader survives a reload, and one naming no playbook does not", () => {
     updateMissionProjectView("project", { reader: playbookReader })
     updateMissionProjectView("unknown-playbook", { reader: { missionId: "toString", kind: "playbook" } })

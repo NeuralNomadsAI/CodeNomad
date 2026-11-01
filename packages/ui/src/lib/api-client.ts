@@ -85,7 +85,7 @@ import { missionLifecycleRequest, type MissionLifecycleInput } from "./mission-l
 import { authenticatedFetch } from "./auth-recovery"
 import { CODENOMAD_API_BASE as API_BASE } from "./api-base"
 import { backgroundReads } from "./background-read-queue"
-import { readMissionTaskPage } from "./mission-task-page-read"
+import { readMissionTaskPage, readMissionPanelWindow, type MissionPanelReadScope } from "./mission-task-page-read"
 import { assertTaskReadLive, TASK_READ_TIMEOUT_MS } from "./mission-task-read-lifetime"
 import type { MissionTaskPageContext } from "./mission-task-page-schema"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
@@ -735,12 +735,17 @@ export const serverApi = {
   readInstanceData(id: string): Promise<InstanceData> {
     return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)
   },
-  fetchMissions(instanceId: string, input: { include?: readonly string[]; summariesVersion?: string } = {}): Promise<MissionListResponse> {
-    const params = new URLSearchParams()
-    if (input.include?.length) params.set("include", input.include.join(","))
-    if (input.summariesVersion) params.set("summaries", input.summariesVersion)
-    const query = params.toString()
-    return request<MissionListResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions${query ? `?${query}` : ""}`)
+  fetchMissionPanel(instanceId: string, selector: Exclude<import("../../../server/src/missions/mission-panel-wire").MissionPanelPageRequest, { source: "tasks" }>, scope: MissionPanelReadScope) {
+    const deadline = Math.min(scope.deadline ?? Infinity, performance.now() + TASK_READ_TIMEOUT_MS)
+    const signal = AbortSignal.any([...(scope.signal ? [scope.signal] : []), AbortSignal.timeout(Math.max(0, Math.ceil(deadline - performance.now())))])
+    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/panel-page`
+    return readMissionPanelWindow(selector, { ...scope, signal, deadline, runTransfer: read => secondaryRead(signal, read), exchange: body => {
+      if (!scope.current()) throw new DOMException("Obsolete panel read", "AbortError")
+      assertTaskReadLive(signal, deadline)
+      return authenticatedFetch(API_BASE ? new URL(path, API_BASE).toString() : path, {
+        method: "POST", body, signal, credentials: "include", headers: { "Content-Type": "application/json" },
+      })
+    } })
   },
   /** One mission's compact map and cleanups, for display reconciliation (lost acknowledgements, cleanup retries). */
   fetchMission(instanceId: string, missionId: string): Promise<MissionReadResponse> {

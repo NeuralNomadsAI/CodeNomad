@@ -104,7 +104,7 @@ export function setMissionDisclosureOpen(missionId: string, id: string, open: bo
 // completions fits: only that list takes room, and when it outgrows the layout value the
 // watermark rises over the oldest unseen completions, which then count as seen; a shown
 // completion never reads as unseen again, and a new finish is always above the watermark.
-interface FinishedSeen { watermark: number; seen: ReadonlySet<string> }
+interface FinishedSeen { watermark: number; seen: ReadonlySet<string>; partial?: true }
 export interface MissionCompletion { id: string; finishSequence?: number }
 const [seenVersion, setSeenVersion] = createSignal(0)
 const finishedSeen = new Map<string, FinishedSeen | undefined>()
@@ -119,15 +119,16 @@ function readFinishedSeen(scope: string): FinishedSeen | undefined {
   seenVersion()
   const storageKey = seenKey(scope)
   if (!finishedSeen.has(storageKey)) {
-    const stored = SEEN_FORMAT.exec(readClientLayoutValue(storageKey) ?? "")
-    finishedSeen.set(storageKey, stored ? { watermark: parseInt(stored[1], 36), seen: new Set(stored[2].match(/.{4}/g)) } : undefined)
+    const text = readClientLayoutValue(storageKey) ?? "", stored = SEEN_FORMAT.exec(text), partial = /^p([0-9a-z]{1,11}):([0-9a-z,]*)$/.exec(text)
+    finishedSeen.set(storageKey, partial && Number.isSafeInteger(parseInt(partial[1], 36)) ? { watermark: parseInt(partial[1], 36), seen: new Set(partial[2].split(",").filter(Boolean)), partial: true }
+      : stored ? { watermark: parseInt(stored[1], 36), seen: new Set(stored[2].match(/.{4}/g)) } : undefined)
   }
   return finishedSeen.get(storageKey)
 }
 
 // A completion without its finish number never asks for attention.
 const seenIn = (record: FinishedSeen, completion: MissionCompletion) => completion.finishSequence === undefined
-  || completion.finishSequence <= record.watermark || record.seen.has(seenId(completion.id))
+  || completion.finishSequence <= record.watermark || record.seen.has(record.partial ? completion.finishSequence.toString(36) : seenId(completion.id))
 
 /** Whether this window has shown the completed Mission; true before the first list read. */
 export function missionFinishedSeen(scope: string, completion: MissionCompletion): boolean {
@@ -135,10 +136,41 @@ export function missionFinishedSeen(scope: string, completion: MissionCompletion
   return !record || seenIn(record, completion)
 }
 
+/** Seed once before partial discovery. A durable counter includes deleted finishes
+ * and gaps; later pages and refreshes never advance this initial boundary. */
+export function seedMissionFinishedSeen(scope: string, finishHighWater: number): void {
+  const previous = readFinishedSeen(scope)
+  if (previous?.partial) return
+  if (!Number.isSafeInteger(finishHighWater) || finishHighWater < 0) throw new Error("Invalid finish high-water")
+  // A stored whole-inventory watermark retains its unseen boundary. Its hashed
+  // positives cannot identify exact finish numbers, so forget only those positives.
+  const watermark = previous?.watermark ?? finishHighWater
+  finishedSeen.set(seenKey(scope), { watermark, seen: new Set(), partial: true })
+  writeClientLayoutValue(seenKey(scope), `p${watermark.toString(36)}:`)
+  setSeenVersion(value => value + 1)
+}
+
 /** Records the shown completed Missions as seen, keeping only those still listed. The
  * first call (no record yet) also takes every listed completed Mission as seen. */
-export function markMissionsFinishedSeen(scope: string, shownIds: readonly string[], completed: readonly MissionCompletion[]): void {
+export function markMissionsFinishedSeen(scope: string, shownIds: readonly string[], completed: readonly MissionCompletion[], partial = false): void {
   const previous = readFinishedSeen(scope), shown = new Set(shownIds)
+  if (partial) {
+    if (!previous?.partial) return // an initial durable boundary is required before partial observations
+    const seen = new Set(previous.seen)
+    for (const item of completed) if (shown.has(item.id) && item.finishSequence !== undefined && item.finishSequence > previous.watermark) seen.add(item.finishSequence.toString(36))
+    if (seen.size === previous.seen.size) return
+    finishedSeen.set(seenKey(scope), { ...previous, seen })
+    let saved = `p${previous.watermark.toString(36)}:`
+    // Keep every explicit view in this window. Persistence exhaustion forgets only
+    // positive seen evidence; it never advances over an unseen/unloaded completion.
+    for (const sequence of [...seen].sort((a, b) => parseInt(b, 36) - parseInt(a, 36))) {
+      if (saved.length + sequence.length + 1 > MAX_LAYOUT_VALUE_LENGTH) break
+      saved += `${sequence},`
+    }
+    writeClientLayoutValue(seenKey(scope), saved)
+    setSeenVersion(value => value + 1)
+    return
+  }
   const listed = completed.flatMap(item => item.finishSequence === undefined ? [] : [{ id: item.id, finishSequence: item.finishSequence }])
     .sort((left, right) => left.finishSequence - right.finishSequence)
   const isSeen = (item: { id: string; finishSequence: number }) => !previous || shown.has(item.id) || seenIn(previous, item)

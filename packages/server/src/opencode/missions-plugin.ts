@@ -186,7 +186,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     project: {
       id: context.location.project.id,
       canonical: context.location.project.canonical,
-      location: { directory: context.location.directory, workspaceID: context.location.workspaceID },
+      location: { directory: context.location.directory, ...(context.location.workspaceID === undefined ? {} : { workspaceID: context.location.workspaceID }) },
     },
     storage: policy ? { get: key => context.storage.get(key), scan: options => context.storage.scan(options), set: (key, value, current) => writer.run(async () => {
       const event = parseMissionEvent(value)

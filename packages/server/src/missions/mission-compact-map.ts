@@ -73,6 +73,11 @@ function reportRow(map: AnyMap, tasks: ReadonlyMap<string, AnyTask>, value: AnyR
     ...(bodies ? { bodies: described(value, MISSION_BODY_FIELDS.report) } : {}) }
 }
 
+export function missionPanelReports(map: MissionMap): MissionPanelReport[] {
+  const tasks = new Map(map.tasks.map(task => [task.key, task]))
+  return map.reports.map(report => reportRow(map, tasks, report, true))
+}
+
 /** Compact rows of `selected` tasks in display order, and the reports of each from the
  * mission's own reports (with descriptors): its current one, those whose notification is
  * pending, its newest late one, then its newest, `MISSION_TASK_REPORT_ROWS` in all; and

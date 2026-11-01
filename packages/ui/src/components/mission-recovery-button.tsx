@@ -5,6 +5,7 @@ import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { canRecoverMissionReport } from "./mission-native-execution-model"
 import type { ActionOverflowMenuItem } from "./action-overflow-menu"
+import { missionStore } from "../stores/missions"
 
 export type MissionRecoveryButtonProps = {
   instanceId: string
@@ -55,11 +56,12 @@ export function createMissionRecoveryAction(props: MissionRecoveryButtonProps) {
     const mission = props.mission
     // Coordinator recovery also resumes a failed mission: the backend reopens it first.
     const resuming = props.target === "coordinator" && mission.status === "failed"
-    if (mission.status !== "active" && !resuming || (mission.runState ?? "running") !== "running" || mission.control?.pending.length) return false
+    if (mission.status !== "active" && !resuming || (mission.runState ?? "running") !== "running" || (mission.panelControl?.pending ?? mission.control?.pending.length)) return false
     const task = props.target === "report" ? mission.tasks.find(task => task.key === props.taskKey) : undefined
     if (props.target === "report" && !canRecoverMissionReport(task, props.activity)) return false
     const sessionId = props.target === "report" ? task?.actorSessionId : mission.coordinatorSessionId
     const actor = mission.actors.find(actor => actor.sessionId === sessionId)
+      ?? (mission.panelCollections ? missionStore.observedActors(props.instanceId, mission.id).find(actor => actor.sessionId === sessionId) : undefined)
     if (!actor) return false
     // Unknown projection is not idle. A report recovery may still ask the backend
     // to verify; coordinator recovery is offered only on observed idle-without-report

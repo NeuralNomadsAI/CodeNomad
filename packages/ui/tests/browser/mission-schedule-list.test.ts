@@ -5,7 +5,7 @@ import { createServer, type Server } from "node:http"
 import path from "node:path"
 import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { NativeMissionDocumentStore } from "../../../server/src/missions/mission-document-store"
 import { missionDocumentChanges as changes } from "../../../server/src/missions/mission-document-state"
 import { missionScheduleView } from "../../../server/src/missions/mission-schedule-view"
@@ -349,6 +349,7 @@ for (const alreadyReading of [false, true]) test(`a passive list refresh between
   try {
     // The schedule and journal inventories load independently. A native click on
     // the global Refresh button is admitted only after its journal read finishes.
+    await page.waitForFunction(() => (window as any).missionFixture.snapshot().status === "loading")
     assert.equal(await page.getByRole("button", { name: "Refresh mission map", exact: true }).isDisabled(), true)
     releaseJournal()
     await page.getByRole("button", { name: "Refresh mission map", exact: true }).and(page.locator(":enabled")).waitFor()

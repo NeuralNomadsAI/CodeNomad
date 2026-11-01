@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { fixtureEventStream } from "./fixture-event-stream"
+import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -44,7 +44,8 @@ type InstanceModule = typeof import("../../src/stores/instances")
 type IntentModule = typeof import("../../src/stores/mission-lifecycle-intents")
 function mission(id = "one"): MissionMap {
   return { version: 1, id, projectID: "fixture", projectCanonical: "/fixture", objective: `Navigation ${id}`, template: "custom",
-    coordinatorSessionId: `ses_${id}`, status: "active", runState: "running", actors: [], tasks: [], reports: [], frontier: [], claims: [],
+    coordinatorSessionId: `ses_${id}`, status: "active", runState: "running", actors: [{ sessionId: `ses_${id}`, kind: "coordinator", managed: false,
+      title: "Coordinator", roles: ["coordinator"], location: { directory: "/fixture" }, joinedAt: 1 }], tasks: [], reports: [], frontier: [], claims: [],
     revision: 1, createdAt: 1, updatedAt: 1, history: [], historyTruncated: false }
 }
 const call = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) =>
@@ -105,7 +106,7 @@ test("certified rejection while hidden releases only its owned intent; reactivat
     await call(page, "activate", true); await settle(page)
     assert.equal(await retryCount(page), 0); assert.equal(calls.length, 1)
     // An explicit refresh with nothing unconfirmed only reconciles read-only.
-    const reread = page.waitForResponse(value => value.url().endsWith("/missions"))
+    const reread = waitForMissionPanelRefresh(page)
     await missionRefresh(page).click(); await reread; await settle(page); assert.equal(calls.length, 1)
     assert.equal(await page.evaluate(() => (window as any).missionVisibility.state().missions[0].revision), 2)
     await pause(page).click(); await settle(page)
@@ -128,7 +129,7 @@ test("uncertain row remount and native reconnect invalidations retain exact orig
     await open(page); await pause(page).click(); await settle(page)
     await remount(page); await settle(page)
     assert.equal(await retryCount(page), 1); assert.equal(await pause(page).count(), 0); assert.equal(await check(page).isEnabled(), true)
-    const refreshed = page.waitForResponse(value => value.url().endsWith("/missions"))
+    const refreshed = waitForMissionPanelRefresh(page)
     await call(page, "event", "session.execution.started"); await refreshed; await settle(page)
     await call(page, "activate", false); await call(page, "activate", true); await settle(page)
     assert.equal(calls.length, 1, "navigation and reconnect reads cannot dispatch")
@@ -183,7 +184,7 @@ for (const outcome of ["rejected", "acknowledged", "unknown", "foreign-ack"] as 
 
 test("directory/project source ABA retains original uncertainty; stale completion cannot refresh the returned view", async () => {
   const page = await browser.newPage({ locale: "en-US" }), calls: Input[] = []
-  let current = mission(), reads = 0, release!: () => void, submitted!: () => void
+  let current = { ...mission(), projectID: "project-a" }, reads = 0, release!: () => void, submitted!: () => void
   const held = new Promise<void>(resolve => { release = resolve }), sent = new Promise<void>(resolve => { submitted = resolve })
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
@@ -202,6 +203,7 @@ test("directory/project source ABA retains original uncertainty; stale completio
     })
     await call(page, "activate", true); await select(page); await pause(page).waitFor(); await pause(page).click(); await sent
     for (const [directory, projectID] of [["/source-b", "project-b"], ["/source-a", "project-a"]]) {
+      current = { ...current, projectID }
       await page.evaluate(async ({ directory, projectID }) => {
         const { updateInstance }: InstanceModule = await import("/src/stores/instances" + ".ts")
         updateInstance("mission-visibility", { folder: directory, metadata: { project: { id: projectID } as any } })
@@ -209,6 +211,10 @@ test("directory/project source ABA retains original uncertainty; stale completio
       await tick(page)
       if (directory === "/source-b") { assert.equal(await retryCount(page), 0); assert.equal(await admissible(page), true) }
     }
+    await page.waitForFunction(() => {
+      const state = (window as any).missionVisibility.state()
+      return state.projectID === "project-a" && state.status === "ready" && state.missions.some(map => map.projectID === "project-a")
+    })
     assert.equal(await inFlight(page), true, "source A still owns its in-flight operation after ABA")
     const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
     release(); await response; await tick(page)
@@ -267,7 +273,7 @@ test("authoritative operation replacement wins over a late rejected local intent
     current = { ...current, revision: 10, status: "stopped", runState: "stopped", control: {
       id: "evt_replacement", missionID: current.id, requestID: "durable-replacement", expectedRevision: 9, action: "stop",
       targets: [{ sessionID: "ses_one", location: { directory: "/fixture" } }], pending: ["ses_one"] } }
-    const snapshot = page.waitForResponse(value => value.url().endsWith("/missions"))
+    const snapshot = waitForMissionPanelRefresh(page)
     await call(page, "event", "session.execution.started"); await snapshot; await tick(page)
     const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
     release(); await response; await tick(page)

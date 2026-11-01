@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { tmpdir } from "node:os"
 import { createHash } from "node:crypto"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { chromium, type Browser, type Locator, type Page, type Request } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -69,7 +69,7 @@ async function setup(label: string, narrow = false, independent = false) {
   const page = await browser.newPage({ locale: narrow ? "he-IL" : "en-US", viewport: narrow ? { width: 390, height: 600 } : { width: 1600, height: 950 },
     hasTouch: narrow, deviceScaleFactor: 1 })
   page.setDefaultTimeout(12000)
-  const errors: string[] = [], failures: string[] = [], consoleErrors: string[] = [], requests: Array<{ method: string; path: string; body?: unknown }> = []
+  const errors: string[] = [], failures: string[] = [], consoleErrors: string[] = [], requests: Array<{ method: string; path: string; body?: unknown; source?: string | null }> = []
   const voidResponses = new Set<Request>(), voidBodyCancellations: string[] = []
   const panelReads = collectPanelReadFailures(page, url)
   const { rawRequestFailures, panelListCancellations } = panelReads
@@ -125,7 +125,7 @@ async function setup(label: string, narrow = false, independent = false) {
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname, location = { directory: "/fixture" }
-    requests.push({ method: request.method(), path: pathname, ...(request.postData() ? { body: request.postDataJSON() } : {}) })
+    requests.push({ method: request.method(), path: pathname, source: new URL(request.url()).searchParams.get("panelSource"), ...(request.postData() ? { body: request.postDataJSON() } : {}) })
     if (pathname === "/api/events") return route.continue()
     if (pathname === "/api/panel-extensions") return route.fulfill({ json: [] })
     if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
@@ -229,7 +229,7 @@ async function expand(page: Page, id: string) {
 /** Raise a native Form on the ordinary child conversation and answer it from "Needs you",
  * the panel's remaining route into an ordinary descendant conversation. */
 async function refreshMap(page: Page) {
-  const response = page.waitForResponse(response => response.url().endsWith("/missions"))
+  const response = waitForMissionPanelRefresh(page)
   await page.getByRole("button", { name: "Refresh mission map", exact: true }).click()
   await response
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
@@ -612,12 +612,12 @@ test("real dispatcher refreshes bounded family observations on birth, fork, move
   const location = { directory: "/fixture" }, sessionID = "ses_born"
   const base = { id: "boundary", created: 1, location, durable: { aggregateID: sessionID, seq: 1, version: 1 as const } }
   const emit = async (event: V2Event) => {
-    const response = page.waitForResponse(response => response.url().endsWith("/missions"))
+    const response = waitForMissionPanelRefresh(page)
     await page.evaluate(serialized => window.missionNativeFamily.emit(JSON.parse(serialized) as V2Event), JSON.stringify(event))
     assert.equal((await response).status(), 200)
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
   }
-  const count = () => requests.filter(item => item.path.endsWith("/missions")).length
+  const count = () => requests.filter(item => item.path.endsWith("/missions") && item.source === "summaries").length
   try {
     await select(page, "A")
     ctx.setFamily({ state: "observed", members: [...observedFamily.members,

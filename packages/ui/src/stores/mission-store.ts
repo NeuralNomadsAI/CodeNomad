@@ -7,7 +7,7 @@ import { MISSION_TASK_PAGE, type MissionTaskPageResponse, type MissionTaskReques
 import { MissionTaskPageReadError, type MissionTaskPageFailure } from "../lib/mission-task-page-read"
 import { assertTaskReadLive, raceTaskRead, TASK_READ_TIMEOUT_MS } from "../lib/mission-task-read-lifetime"
 import type { MissionTaskPageContext } from "../lib/mission-task-page-schema"
-import { answerTaskRequest, coverAttention, createTaskPageCache, failTaskRequest, mergeTaskPages, recordTaskRequest, reorderTaskPageCache, taskRequestsOf,
+import { answerTaskRequest, coverAttention, createTaskPageCache, failTaskRequest, mergeTaskPages, recordTaskRequest, recordMissionRowRevision, missionTaskSource, reorderTaskPageCache, taskRequestsOf,
   type MissionTaskPageCache } from "./mission-task-pages"
 
 export type MissionLoadStatus = "idle" | "loading" | "ready" | "unavailable" | "error"
@@ -35,6 +35,7 @@ export interface MissionViewState {
 }
 
 export interface MissionListRequest { include?: string[]; summariesVersion?: string }
+export type MissionDisplayResponse = MissionListResponse & { panelDeadline?: number; panelCurrent?: () => boolean }
 /** `failure`: the oldest read further that failed and no read has answered since; others succeeding keep it. */
 export interface MissionTaskRead { loading: boolean; failure?: { error: string; request: MissionTaskRequest; reason?: MissionTaskPageFailure } }
 /** The attention windows answered for `sequence`, by offset. */
@@ -62,10 +63,12 @@ export interface MissionStore {
   /** Fence in-flight task slices on a connection/plugin transition, retaining last-good rows. */
   invalidateTasks(instanceId: string): void
   clear(instanceId: string): void
+  /** Owned bounded-header publication; display-only, after its caller's lifetime checks. */
+  adoptPanelMaps(instanceId: string, projectID: string, maps: MissionPanelMap[], deadline?: number): void
 }
 
-export function createMissionStore(fetchMissions: (instanceId: string, request: MissionListRequest) => Promise<MissionListResponse>,
-  fetchTasks?: MissionTaskFetch): MissionStore {
+export function createMissionStore(fetchMissions: (instanceId: string, request: MissionListRequest) => Promise<MissionDisplayResponse>,
+  fetchTasks?: MissionTaskFetch, bounded = false): MissionStore {
   const [states, setStates] = createSignal(new Map<string, MissionViewState>())
   const generations = new Map<string, number>()
   const demand = new Set<string>()
@@ -94,6 +97,7 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
   /** Bumped by `clear`: a page read of an earlier epoch never publishes. */
   const epochs = new Map<string, number>()
   const taskLifetimes = new Map<string, AbortController>()
+  const revalidateTasks = new Set<string>()
   const withPages = (instanceId: string, maps: MissionPanelMap[]) => maps.map(map =>
     mergeTaskPages(bases.get(instanceId)?.get(map.id) ?? map, pages.get(instanceId)?.get(map.id)))
   /** Reads further running, per instance and mission. */
@@ -122,10 +126,10 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
   // Store actions run inside callers' effects: reading state there must not
   // subscribe them to this store's publications.
   const peek = (instanceId: string) => untrack(() => state(instanceId))
-  const wanted = (instanceId: string) => [...new Set(wants.get(instanceId)?.values() ?? [])].slice(0, MISSION_LIST_MAX_INCLUDE)
+  const wanted = (instanceId: string) => bounded ? [...new Set(wants.get(instanceId)?.values() ?? [])] : [...new Set(wants.get(instanceId)?.values() ?? [])].slice(0, MISSION_LIST_MAX_INCLUDE)
   /** A wanted row whose full map a summaries backend has not sent yet. */
-  const missing = (value: MissionViewState, instanceId: string) => value.summariesVersion !== undefined
-    ? wanted(instanceId).filter(id => value.summaries.some(row => row.id === id) && !value.missions.some(mission => mission.id === id)) : []
+  const missing = (value: MissionViewState, instanceId: string) => bounded || value.summariesVersion !== undefined
+    ? wanted(instanceId).filter(id => (bounded || value.summaries.some(row => row.id === id)) && !value.missions.some(mission => mission.id === id)) : []
 
   const update = (instanceId: string, value: MissionViewState): void => {
     setStates((current) => {
@@ -142,11 +146,11 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
     update(instanceId, { ...previous, status: "loading", error: undefined })
     // Only a backend that answered with summaries understands includes and versions.
     const include = wanted(instanceId)
-    const request: MissionListRequest = previous.summariesVersion === undefined ? {} : { ...(include.length ? { include } : {}), summariesVersion: previous.summariesVersion }
+    const request: MissionListRequest = !bounded && previous.summariesVersion === undefined ? {} : { ...(include.length ? { include } : {}), summariesVersion: previous.summariesVersion }
     requested.set(instanceId, request.include ?? [])
     try {
       const response = await fetchMissions(instanceId, request)
-      if (generations.get(instanceId) !== generation) return
+      if (generations.get(instanceId) !== generation || response.panelCurrent && !response.panelCurrent()) return
       if (!response.available) {
         update(instanceId, { status: "unavailable", missions: [], summaries: [], reason: response.reason,
           ...(previous.cleanups?.length ? { cleanups: previous.cleanups, cleanupUnavailable: true } : {}) })
@@ -154,9 +158,17 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
       }
       // A list without summaries carries every map; an omitted list repeats the
       // version this read sent.
-      const summaries = response.summariesVersion === undefined ? response.missions.map(missionSummary)
+      const summaries = bounded ? response.summaries : response.summariesVersion === undefined ? response.missions.map(missionSummary)
         : response.summaries ?? (response.summariesVersion === request.summariesVersion ? previous.summaries : undefined)
       if (!summaries) throw new Error("Mission list omitted summaries this view does not hold")
+      if (bounded) {
+        if (response.panelDeadline !== undefined) assertTaskReadLive(undefined, response.panelDeadline)
+        const current = peek(instanceId)
+        update(instanceId, { ...current, status: "ready", projectID: response.projectID, summaries, error: undefined, reason: undefined,
+          missions: current.missions.filter(map => map.projectID === response.projectID), generatedAt: response.generatedAt,
+          cleanups: response.cleanups, cleanupUnavailable: response.cleanupUnavailable, discardedEvents: response.discardedEvents })
+        return
+      }
       // Rows wanted now that this read neither asked for nor got as open maps
       // (the first summaries answer, or a selection changed while it ran): their
       // maps from the last good display stay, with their activity, until the
@@ -169,6 +181,9 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
       // The returned maps are the bases pages merge against; rows read further belong to
       // listed paged maps, and go (their reads stay) when a map's order changed.
       const owned = pages.get(instanceId), own = bases.get(instanceId) ?? new Map<string, MissionPanelMap>()
+      const changedTaskSources = new Set(response.missions.filter(map => !bounded || revalidateTasks.has(instanceId)
+        || own.get(map.id)?.panelCollections?.tasks?.digest !== map.panelCollections?.tasks?.digest
+        || own.get(map.id)?.panelCollections?.reports?.digest !== map.panelCollections?.reports?.digest).map(map => map.id))
       bases.set(instanceId, own)
       for (const map of response.missions) own.set(map.id, map)
       for (const map of response.missions) {
@@ -195,18 +210,24 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
         ...(response.cleanupUnavailable ? { cleanupUnavailable: true } : {}),
         ...pageState(instanceId, listed),
       }
+      if (response.panelDeadline !== undefined) assertTaskReadLive(undefined, response.panelDeadline)
       update(instanceId, next)
       // What was read before a map's revision is read again: each read vouches only for itself.
-      for (const map of response.missions) {
+      for (const map of response.missions.filter(map => changedTaskSources.has(map.id))) {
         const cache = owned?.get(map.id)
         if (cache && map.taskPage && (!demand.has(instanceId) || wanted(instanceId).includes(map.id))) {
           for (const request of taskRequestsOf(cache, MISSION_TASK_PAGE, map.revision)) void readTasks(instanceId, map.id, request)
         }
       }
+      revalidateTasks.delete(instanceId)
       // A deactivation since this read started cancelled its follow-up: activation reads again.
       if (stale.length && cancellations.get(instanceId) === cancelled) trailing.add(instanceId)
     } catch (error) {
       if (generations.get(instanceId) !== generation) return
+      if (bounded && error instanceof Error && error.name === "AbortError") {
+        update(instanceId, { ...peek(instanceId), status: previous.status === "loading" ? "ready" : previous.status })
+        return
+      }
       // A failed read stays parked: only new demand, an invalidation or an explicit retry reads again.
       update(instanceId, {
         ...previous,
@@ -361,7 +382,9 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
       if (missionId) acquireOwner(instanceId, missionId)
       const current = peek(instanceId)
       // Already asked for by the read in flight, or held: nothing to read.
-      if (!missionId || current.status === "idle" || requested.get(instanceId)?.includes(missionId)) return
+      if (!missionId || current.status === "idle") return
+      if (bounded) return // the bounded inventory owner schedules its deadline-bearing refresh
+      if (requested.get(instanceId)?.includes(missionId)) return
       if (missing(current, instanceId).includes(missionId)) void refresh(instanceId)
     }),
     ensure: async (instanceId) => {
@@ -371,11 +394,18 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
     refresh,
     loadTasks: (instanceId, missionId, request) => readTasks(instanceId, missionId, request),
     invalidateTasks: instanceId => {
+      revalidateTasks.add(instanceId)
       if (!pages.has(instanceId)) return
       epochs.set(instanceId, (epochs.get(instanceId) ?? 0) + 1)
       taskLifetimes.get(instanceId)?.abort()
       taskLifetimes.delete(instanceId)
-      for (const cache of pages.get(instanceId)?.values() ?? []) cache.parked.clear()
+      for (const cache of pages.get(instanceId)?.values() ?? []) {
+        cache.parked.clear()
+        if (bounded) {
+          for (const unit of cache.reads.keys()) cache.reads.set(unit, 0)
+          for (const row of [...cache.rows.values(), ...cache.reports.values()]) { row.revision = 0; recordMissionRowRevision([row.value], 0) }
+        }
+      }
       running.delete(instanceId)
       publishPages(instanceId)
     },
@@ -398,6 +428,34 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
         next.delete(instanceId)
         return next
       })
+    },
+    adoptPanelMaps: (instanceId, projectID, maps, deadline = Infinity) => {
+      if (!bounded) return
+      const previous = peek(instanceId)
+      if (previous.projectID && previous.projectID !== projectID) {
+        epochs.set(instanceId, (epochs.get(instanceId) ?? 0) + 1); taskLifetimes.get(instanceId)?.abort(); taskLifetimes.delete(instanceId)
+        bases.delete(instanceId); pages.delete(instanceId)
+      }
+      const own = bases.get(instanceId) ?? new Map<string, MissionPanelMap>(), owned = pages.get(instanceId)
+      const changedSources = new Set(maps.filter(map => revalidateTasks.has(instanceId) || missionTaskSource(own.get(map.id)) !== missionTaskSource(map)).map(map => map.id))
+      bases.set(instanceId, own)
+      for (const map of maps) {
+        own.set(map.id, map)
+        const cache = owned?.get(map.id)
+        if (cache && map.taskPage) {
+          if (cache.order !== map.taskPage.order) reorderTaskPageCache(cache, map.taskPage.order)
+          if (map.taskPage.attention) coverAttention(cache, map.taskPage.attention.sequence, map.revision)
+        }
+      }
+      for (const id of own.keys()) if (!maps.some(map => map.id === id)) { own.delete(id); owned?.delete(id) }
+      const missions = withPages(instanceId, maps)
+      assertTaskReadLive(undefined, deadline)
+      update(instanceId, { ...previous, projectID, missions, ...pageState(instanceId, missions) })
+      for (const map of maps.filter(map => changedSources.has(map.id))) {
+        const cache = owned?.get(map.id)
+        if (cache && map.taskPage) for (const request of taskRequestsOf(cache, MISSION_TASK_PAGE, map.revision)) void readTasks(instanceId, map.id, request)
+      }
+      revalidateTasks.delete(instanceId)
     },
   }
 }

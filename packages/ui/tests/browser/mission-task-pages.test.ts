@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
 import { fixtureEventStream } from "./fixture-event-stream"
 import { chromium, type Browser, type Page } from "playwright"
@@ -57,7 +57,7 @@ async function open(value: MissionMap, activity: Array<{ sessionId: string; stat
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => {
     const request = route.request(), path = new URL(request.url()).pathname
-    const tasks = missionTaskFixture(request.url(), request.method(), [current], "project", request.postData())
+    const tasks = missionTaskFixture(request.url(), request.method(), [project ? project(current) as MissionMap : current], "project", request.postData())
     if (tasks) {
       reads.push(decodeURIComponent(missionTaskQuery(request)))
       const failing = typeof failTasks === "function" ? failTasks(new URLSearchParams(missionTaskQuery(request))) : failTasks
@@ -66,7 +66,7 @@ async function open(value: MissionMap, activity: Array<{ sessionId: string; stat
     const content = missionContentFixture(request.url(), request.method(), [current])
     if (content) { contents.push(decodeURIComponent(new URL(request.url()).search)); return route.fulfill({ json: content }) }
     if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project",
-      missions: project ? [compactMissionMap(project(current))] : panelMissions([current]), generatedAt: 1, discardedEvents: 0,
+      missions: project ? (panelMissions([current]), [compactMissionMap(project(current))]) : panelMissions([current]), generatedAt: 1, discardedEvents: 0,
       activity: { generatedAt: 1, missions: [{ missionId: current.id, actors: activity }] } } })
     if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project",
       projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] }) })
@@ -80,6 +80,7 @@ async function open(value: MissionMap, activity: Array<{ sessionId: string; stat
     ;(await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { selected: id })
   }, value.id)
   await page.locator(".mission-tree-node").first().waitFor()
+  reads.length = 0 // selectors below measure reads further, after initial header/task/pin adoption
   return { page, errors, reads, contents, current: () => current, replace: (next: MissionMap) => { current = next },
     failTasks: (fail: boolean | ((query: URLSearchParams) => boolean)) => { failTasks = fail },
     refresh: () => page.evaluate(async () => (await import("/src/stores/missions.ts")).missionStore.refresh("fixture")) }
@@ -509,9 +510,11 @@ test("a real reconnect fences a held task continuation and never publishes its r
 for (const recovery of ["fresh", "retry"] as const) test(`a central reader without a mounted panel keeps reconnect ${recovery} distinct from absence`, async () => {
   const value = paged(), f = await open(value)
   let entered!: () => void, release!: () => void, sends = 0, allow = recovery === "fresh"
+  const selectors: unknown[] = []
   const ready = new Promise<void>(resolve => { entered = resolve }), gate = new Promise<void>(resolve => { release = resolve })
   await f.page.route("**/missions/panel-page", async route => {
     const request = route.request(), answer = missionTaskFixture(request.url(), request.method(), [value], "project", request.postData())
+    selectors.push(request.postDataJSON())
     if (++sends === 1) { entered(); await gate }
     else if (!allow) return route.fulfill({ status: 503, json: {} })
     return route.fulfill({ json: answer }).catch(() => {})
@@ -544,7 +547,7 @@ for (const recovery of ["fresh", "retry"] as const) test(`a central reader witho
     }
     await reader.getByRole("heading", { name: "Task t108", exact: true }).waitFor()
     assert.equal(await reader.getByText("This mission content is no longer available.", { exact: true }).count(), 0)
-    assert.equal(sends, recovery === "fresh" ? 2 : 3, "one owned replacement attempt, then explicit Retry only")
+    assert.equal(sends, recovery === "fresh" ? 2 : 3, `one owned replacement attempt, then explicit Retry only: ${JSON.stringify(selectors)}`)
     assert.deepEqual(f.errors, [])
   } finally { release?.(); await f.page.context().close() }
 })

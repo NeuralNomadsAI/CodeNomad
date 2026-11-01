@@ -7,9 +7,10 @@ import { missionToolInspection, type MissionToolInspectInput } from "./tool-insp
 import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "./mission-summary"
 import { readMissionContent, type MissionContentRequest, type MissionContentResult } from "./mission-content"
 import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
-import { compactMissionMap, missionTaskPage } from "./mission-compact-map"
+import { compactMissionMap, missionTaskPage, missionPanelReports } from "./mission-compact-map"
 import type { MissionTaskPageResult, MissionTaskRequest } from "./mission-panel-map"
-import { missionPanelPage, type MissionPanelPageRequest, type MissionPanelPageResult } from "./mission-panel-page"
+import { missionPanelPage, missionPanelWindow, missionPanelTextWindow, type MissionPanelPageRequest, type MissionPanelPageResult } from "./mission-panel-page"
+import { missionPanelHeader } from "./mission-panel-header"
 import { activityActorWindow, missionActivityContext, MISSION_ACTIVITY_ACTORS } from "./mission-activity-context"
 import {
   MISSION_SCHEMA_VERSION,
@@ -195,7 +196,7 @@ export class MissionControl {
 
   /** Opt-in byte-bounded display reads. Directory reads use only index hints, never
    * open mission maps. Mission and task reads point-read exactly their named range.
-   * The existing list/mission readers remain the current UI's compatibility contract. */
+    * List/mission readers retain explicit compatibility and reconciliation callers. */
   async panelPage(request: MissionPanelPageRequest): Promise<MissionPanelPageResult> {
     const base = { projectID: this.options.project.id, source: request.source }
     if (request.source === "marks") {
@@ -206,11 +207,14 @@ export class MissionControl {
         cleanupUnavailable: value.damage.cleanupUnavailable }, [{ missionPage: { order: value.order, offset: value.offset, end: value.end, total: value.total }, contexts: value.contexts }], request.cursor)
     }
     if (request.source === "summaries" || request.source === "cleanups") {
+      const finishHighWater = request.source === "summaries" && request.initial && !request.cursor ? await this.journal.finishHighWater() : undefined
       return this.journal.readHints(hints => {
         const aggregate = hints.aggregate()
-        return missionPanelPage({ ...base, discardedEvents: aggregate.discardedEvents,
+        const header = { ...base, ...(finishHighWater === undefined ? {} : { finishHighWater }), discardedEvents: aggregate.discardedEvents,
           controlUnavailable: aggregate.controlUnavailable, notificationUnavailable: aggregate.notificationUnavailable,
-          cleanupUnavailable: aggregate.cleanupUnavailable }, request.source === "summaries" ? hints.summaries() : hints.cleanups(), request.cursor)
+          cleanupUnavailable: aggregate.cleanupUnavailable }
+        const values = request.source === "summaries" ? request.window ? hints.inventorySummaries() : hints.summaries() : hints.cleanups(Boolean(request.window))
+        return request.window ? missionPanelWindow(header, values, request.window, request.cursor) : missionPanelPage(header, values, request.cursor)
       })
     }
     const missionID = request.source === "tasks" ? request.task.missionID : request.missionID
@@ -232,12 +236,19 @@ export class MissionControl {
       if (request.task.order !== undefined && request.task.order !== page.taskPage.order) return { available: false, reason: "changed" }
       return missionPanelPage(header, [page], request.cursor)
     }
-    const map = compactMissionMap(mission)
+    if (this.options.documentReads) await projectMissionDocuments(this.options.documentReads, [mission])
+    if (mission.document?.dormant) return { available: false, reason: "mission-not-found" }
+    if (request.header) return missionPanelPage({ ...header, header: true }, [missionPanelHeader(mission)], request.cursor)
+    const map = request.window ? { ...compactMissionMap(mission), reports: missionPanelReports(mission), claims: mission.claims, frontier: mission.frontier } : compactMissionMap(mission)
     if (request.field === undefined) return missionPanelPage(header, [map], request.cursor)
     // Own root fields only: extension metadata survives as it does in compact maps.
     if (!Object.prototype.hasOwnProperty.call(map, request.field)) return { available: false, reason: "field-not-found" }
-    const value = (map as unknown as Record<string, unknown>)[request.field]
-    return missionPanelPage({ ...header, field: request.field }, Array.isArray(value) ? value : [value], request.cursor)
+    const value = request.part ? mission.control?.[request.part] ?? [] : (map as unknown as Record<string, unknown>)[request.field]
+    const fieldHeader = { ...header, field: request.field, ...(request.part ? { part: request.part } : {}) }
+    if (request.text) return missionPanelTextWindow(fieldHeader, value, request.window!, request.cursor)
+    const values = Array.isArray(value) ? value : [value]
+    return request.window ? missionPanelWindow(fieldHeader, values, request.window, request.cursor)
+      : missionPanelPage(fieldHeader, values, request.cursor)
   }
 
   /** One mission's range for display reconciliation, its map compact, with its own
@@ -538,8 +549,8 @@ export class MissionControl {
   update(input: MissionUpdateInput): Promise<{ mission: MissionMap }> {
     return this.mutate(async () => {
       if (this.options.documents) {
-        const mission = this.requireMission(await this.snapshot(), input.missionID)
-        if (mission.document) await requireMissionOneTimeDocument(this.options.documents, mission.id, mission.coordinatorSessionId)
+        const mission = (await this.snapshot()).missions.find(candidate => candidate.id === input.missionID)
+        if (mission?.document) await requireMissionOneTimeDocument(this.options.documents, mission.id, mission.coordinatorSessionId)
       }
       return this.updateCurrent(input)
     })
