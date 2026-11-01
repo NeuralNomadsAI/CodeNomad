@@ -200,7 +200,7 @@ try {
     // Advance only between settled cases to keep the real sliding management budget from
     // making this focused native runner wait minutes. Guard/timers retain real elapsed time.
     const lifecycle = new BundlesLifecycle({ now: () => Date.now() + skew, setTimeout, clearTimeout })
-    const transport = new BundlesTransport({ auth, store, workspaceManager: manager, actions: observedActions, eventBus: bus, lifecycle })
+    const transport = new BundlesTransport({ auth, store, workspaceManager: manager, actions: observedActions, eventBus: bus, lifecycle, catalog })
     const app = Fastify({ logger: false })
     registerRequestLogging(app, logger); app.addHook("onRequest", async request => { request.log = logger })
     registerPanelExtensionBundlesRoutes(app, { store, workspaceManager: manager, catalog, integrations, attachments, budget: lifecycle.budget })

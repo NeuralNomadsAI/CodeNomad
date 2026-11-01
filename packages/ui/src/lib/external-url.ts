@@ -1,7 +1,7 @@
 import { isNativeApplicationWindow, isTauriHost } from "./runtime-env"
 
-export async function openExternalUrl(url: string, context = "ui"): Promise<boolean> {
-  if (typeof window === "undefined") {
+export async function openExternalUrl(url: string, context = "ui", current: () => boolean = () => true): Promise<boolean> {
+  if (typeof window === "undefined" || !current()) {
     return false
   }
 
@@ -9,10 +9,11 @@ export async function openExternalUrl(url: string, context = "ui"): Promise<bool
   if (isTauriHost() && isNativeApplicationWindow()) {
     try {
       const { invoke } = await import("@tauri-apps/api/core")
+      if (!current()) return false
       await invoke("open_external_url", { url })
       return true
-    } catch (error) {
-      console.warn(`[${context}] unable to open via system opener`, error)
+    } catch {
+      console.warn(`[${context}] unable to open via system opener`)
       return false
     }
   }
@@ -21,8 +22,8 @@ export async function openExternalUrl(url: string, context = "ui"): Promise<bool
     // noopener deliberately returns null even when the browsing context opens.
     window.open(url, "_blank", "noopener,noreferrer")
     return true
-  } catch (error) {
-    console.warn(`[${context}] unable to open external url`, error)
+  } catch {
+    console.warn(`[${context}] unable to open external url`)
     return false
   }
 }

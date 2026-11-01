@@ -29,6 +29,8 @@ const api4Objects = (permissions: readonly string[]) => [
       catalog: () => request('api4', 'Bundles unavailable', 'catalog', {}, 'bundles'),
       state: () => request('api4', 'Bundles unavailable', 'state', {}, 'bundles'),
       hosts: (input = {}) => request('api4', 'Bundles unavailable', 'hosts', input, 'bundles'),
+      openDocs: (input = {}) => request('api4', 'Bundles unavailable', 'openDocs', input, 'bundles')
+        .catch(error => ({ outcome: error.message === 'busy' ? 'busy' : 'unavailable' })),
       ${permissions.includes("bundles.manage") ? ["request", "setActive", "installHost", "attach", "detach"].map(method =>
         `${method}: (input = {}) => request('api4', 'Bundles unavailable', '${method}', input, 'bundles', true),`).join("\n      ") : ""}
       onChanged: listener => { bundleChanges.add(listener); return () => bundleChanges.delete(listener); }

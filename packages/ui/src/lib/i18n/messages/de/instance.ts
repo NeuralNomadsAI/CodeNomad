@@ -9,7 +9,7 @@ export const instanceMessages = {
   "panelExtensions.api4.images.conversation": "Die Bilder-Unterhaltung dieses Projekts öffnen oder starten.",
   "panelExtensions.api4.opencode.designAgent": "Fügt OpenCode den Design-Agenten von CodeNomad und seine Bild-Skills hinzu, solange diese Erweiterung aktiviert ist.",
   "panelExtensions.api4.panel.preferences": "Die eigenen Einstellungen dieses Panels speichern.",
-  "panelExtensions.api4.bundles.read": "Den Katalog der OpenCode-Integrationen, ihren Zustand in diesem Projekt und verfügbare geöffnete Anwendungen lesen.",
+  "panelExtensions.api4.bundles.read": "Den Katalog der OpenCode-Integrationen, ihren Zustand in diesem Projekt und verfügbare geöffnete Anwendungen lesen und das Öffnen ihrer geprüften Katalogdokumentation im Browser anfordern.",
   "panelExtensions.api4.bundles.manage": "Sie bitten, OpenCode-Integrationen aus dem Katalog zu installieren, zu aktualisieren oder zu entfernen, sie zu aktivieren oder zu deaktivieren, ihre Anwendungskomponente zu installieren und eine geöffnete Anwendung mit der angezeigten Unterhaltung zu verbinden. Jede Aktion erfordert eine eigene CodeNomad-Bestätigung.",
   "panelExtensions.empty": "Keine Erweiterungen installiert.",
   "panelExtensions.catalog.title": "Online verfügbar",

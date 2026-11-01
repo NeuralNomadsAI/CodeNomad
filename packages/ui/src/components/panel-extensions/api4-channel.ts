@@ -122,6 +122,12 @@ export function useApi4Channel(props: {
   const table = (entries: Record<string, (input: unknown, signal: AbortSignal) => Promise<Answer>>) => new Map(Object.entries(entries))
   const methods = new Map<string, Map<string, (input: unknown, signal: AbortSignal) => Promise<Answer>>>(Object.entries({
     bundles: table({
+      openDocs: async (input, signal) => {
+        const parsed = bundlesHostsInputSchema.safeParse(input)
+        if (!parsed.success) return { result: { outcome: "invalid" } }
+        if (!session || !bundlesCurrent() || !props.management) return { result: { outcome: "unavailable" } }
+        return { result: await props.management.openDocs(parsed.data.integration, signal) }
+      },
       catalog: async (input, signal) => {
         empty.parse(input)
         if (!session || !bundlesCurrent()) throw new Error("Bundles unavailable")
@@ -250,7 +256,8 @@ export function useApi4Channel(props: {
       if (mounted()) props.send({ type: "api4:result", id, ...message })
       return true
     }
-    const deadline = setTimeout(() => { controller.abort(new Error("Deadline")); answer({ error: true }) }, API4_HOST_DEADLINE_MS)
+    const docs = capability === "bundles" && method === "openDocs"
+    const deadline = setTimeout(() => { controller.abort(new Error("Deadline")); answer(docs ? { result: { outcome: "unavailable" } } : { error: true }) }, API4_HOST_DEADLINE_MS)
     try {
       const run = methods.get(capability)?.get(method)
       if (!granted(grants.get(capability)!) || typeof run !== "function" || !current()) throw new Error("Unavailable")
@@ -262,7 +269,8 @@ export function useApi4Channel(props: {
       // task, so the frame handles its answer first. Only host functions, never a string.
       if (answer({ result }) && typeof after === "function") setTimeout(() => { if (current()) after() }, 0)
     } catch (error) {
-      answer({ error: capability === "bundles" && error instanceof PanelExtensionBusyError ? "busy" : true })
+      answer(docs ? { result: { outcome: error instanceof PanelExtensionBusyError ? "busy" : "unavailable" } }
+        : { error: capability === "bundles" && error instanceof PanelExtensionBusyError ? "busy" : true })
     }
   }
   return Object.assign(receive, { dispose, current: bundlesCurrent })

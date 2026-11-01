@@ -7,7 +7,7 @@ import type { AssetTarget, AssetsResult, AssetReadResult } from "../../../server
 import type { GenerationTarget, ImagesResult } from "../../../server/src/opencode/session-pruning/assets-gallery-contract"
 import type { PanelConversationStatus, PanelImagesStatus, PanelPreferencesSetStatus } from "../../../server/src/panel-extensions/contract"
 import type { ImagesConversationRequest, ImagesConversationResponse } from "../../../server/src/server/routes/images-conversation-contract"
-import { bundlesCatalogResultSchema, bundlesStateHostResultSchema, bundlesHostsResultSchema } from "../../../server/src/panel-extensions/bundles-contract"
+import { bundlesCatalogResultSchema, bundlesStateHostResultSchema, bundlesHostsResultSchema, bundlesDocsHostResultSchema } from "../../../server/src/panel-extensions/bundles-contract"
 import type { BundlesMountInput, BundlesManageInput, BundlesControlInput } from "../../../server/src/panel-extensions/bundles-contract"
 import type { BundlesAck } from "../../../server/src/panel-extensions/bundles-lifecycle"
 import { z } from "zod"
@@ -36,6 +36,8 @@ const api4 = <T>(id: string, method: string, body: Record<string, unknown>, sign
   request<T>(`/${encodeURIComponent(id)}/${method}`, { method: "POST", body: JSON.stringify(body), signal })
 type Authority = { instanceId: string; id: string; digest: string }
 export const panelExtensionsApi4 = {
+  bundlesOpenDocs: async (id: string, input: { owner: string; mountID: string; integration: string }, signal: AbortSignal) =>
+    bundlesDocsHostResultSchema.parse(await api4<unknown>(id, "bundles/openDocs", input, signal)),
   bundlesMount: async (id: string, input: BundlesMountInput, signal: AbortSignal) =>
     z.object({ mountID: opaque }).strict().parse(await api4<unknown>(id, "bundles/mount", input, signal)),
   bundlesManage: async (id: string, input: BundlesManageInput, signal: AbortSignal): Promise<BundlesAck> =>

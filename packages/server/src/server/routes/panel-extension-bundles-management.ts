@@ -1,14 +1,14 @@
 import type { FastifyInstance } from "fastify"
 import { z } from "zod"
 import type { BundlesTransport } from "../../panel-extensions/bundles-transport"
-import { bundlesMountInputSchema, bundlesManageInputSchema, bundlesControlInputSchema } from "../../panel-extensions/bundles-contract"
+import { bundlesMountInputSchema, bundlesManageInputSchema, bundlesControlInputSchema, bundlesDocsInputSchema, bundlesDocsHostResultSchema } from "../../panel-extensions/bundles-contract"
 import { BundlesStalePlanError } from "../../panel-extensions/bundles-lifecycle"
 
 const id = z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{1,39}\.[a-z][a-z0-9-]{1,39}$/) }).strict()
 
 /** Parent-only HTTP adapter. Author selectors and confirmation display data never enter this surface. */
 export function registerPanelExtensionBundlesManagementRoutes(app: FastifyInstance, deps: { transport: BundlesTransport; routeBudgetMs?: number }): void {
-  for (const method of ["mount", "manage", "control"] as const) {
+  for (const method of ["mount", "manage", "control", "openDocs"] as const) {
     app.post(`/api/panel-extensions/:id/bundles/${method}`, { bodyLimit: 4096 }, async (request, reply) => {
       reply.header("Cache-Control", "no-store")
       const abandoned = new AbortController()
@@ -22,6 +22,7 @@ export function registerPanelExtensionBundlesManagementRoutes(app: FastifyInstan
             case "mount": return deps.transport.mount(request, extension, bundlesMountInputSchema.parse(request.body), signal)
             case "manage": return deps.transport.manage(request, extension, bundlesManageInputSchema.parse(request.body), signal)
             case "control": return deps.transport.control(request, extension, bundlesControlInputSchema.parse(request.body), signal)
+            case "openDocs": return deps.transport.openDocs(request, extension, bundlesDocsInputSchema.parse(request.body), signal).then(value => bundlesDocsHostResultSchema.parse(value))
           }
         }
         return await new Promise((resolve, reject) => {

@@ -4,6 +4,7 @@ import type { FastifyRequest } from "fastify"
 import { EventBus } from "../events/bus"
 import { BundlesTransport } from "./bundles-transport"
 import { BundlesLifecycle, type BundlesConfirmation } from "./bundles-lifecycle"
+import { catalogEntry, catalogOf } from "../opencode/integrations/catalog-fixture"
 
 const extension = "test.bundles", digest = "a".repeat(64)
 const request = (session = "human") => ({ headers: { cookie: session } }) as FastifyRequest
@@ -19,9 +20,10 @@ function harness() {
   const lifecycle = new BundlesLifecycle({ now: () => at, setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: id => clearTimeout(id as NodeJS.Timeout) })
   const transport = new BundlesTransport({ lifecycle, eventBus: bus, readTimeoutMs: 30,
     auth: { getSessionFromRequest: req => principal && req.headers.cookie === principal ? { username: "human", sessionId: principal } : null },
-    store: { async captureMutationAuthority() {
+    catalog: { async read() { return { state: "fresh", catalog: catalogOf(catalogEntry("blender")) } } },
+    store: { async captureReadAuthority() {
       const controller = new AbortController(); leases.push(controller)
-      return { signal: controller.signal, assertCurrent: () => controller.signal.throwIfAborted(),
+      return { canManage: true, signal: controller.signal, assertCurrent: () => controller.signal.throwIfAborted(),
         async revalidate() { controller.signal.throwIfAborted() }, dispose() { disposed++; controller.abort() } }
     } }, workspaceManager: { async getSharedServiceConnection() { return connection as never }, async ownsLocation() { return owned } },
     actions: { accepts: () => true, async prepare(context, _action, outer) {

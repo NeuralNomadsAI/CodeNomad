@@ -27,7 +27,7 @@ const summary = await runProbe({ host: `Tauri/${engine}`, apiVersion, launch: as
   const profile = await mkdtemp(path.join(os.tmpdir(), "opencode-panel-native-"))
   try {
     // One host per mode, alive long enough for the frame report and the leak grace period.
-    const child = spawn(executable, [url, profile, "10"], { cwd: workspace, env, stdio: ["ignore", "pipe", "pipe"] })
+    const child = spawn(executable, [url, profile, "10"], { cwd: workspace, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true })
     let output = ""
     child.stdout.on("data", chunk => { output += chunk })
     child.stderr.on("data", chunk => { output += chunk })

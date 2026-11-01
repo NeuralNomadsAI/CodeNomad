@@ -361,7 +361,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerIntegrationRoutes(app, { integrations })
   const integrationAttachments = new IntegrationAttachments({ controls: configurationControls, workspaceManager: deps.workspaceManager, catalog: integrationCatalog })
   const bundlesTransport = deps.panelExtensions ? new BundlesTransport({ auth: deps.authManager, store: deps.panelExtensions,
-    workspaceManager: deps.workspaceManager, eventBus: deps.eventBus,
+    workspaceManager: deps.workspaceManager, eventBus: deps.eventBus, catalog: integrationCatalog,
     actions: new BundlesActions({ workspaceManager: deps.workspaceManager, catalog: integrationCatalog, controls: configurationControls,
       sources: pluginSources, packages: new PluginPackages({ controls: configurationControls, workspaceManager: deps.workspaceManager }),
       attachments: integrationAttachments }) }) : undefined

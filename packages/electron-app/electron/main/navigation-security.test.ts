@@ -22,3 +22,13 @@ test("navigation allows registered origins and only the exact loading file", () 
   assert.equal(decideNavigation("not a URL", origins, loading), "deny")
   assert.equal(decideNavigation("http://localhost:5173/loading.html", [], "http://localhost:5173/loading.html"), "allow")
 })
+
+test("canonical integration documentation stays an external destination for local and remote windows", () => {
+  const docs = "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/blender"
+  for (const origins of [["http://127.0.0.1:43123"], ["https://remote.example"]]) {
+    assert.equal(decideNavigation(docs, origins, "file:///fixture/loading.html"), "external")
+    for (const target of ["javascript:alert(1)", "file:///private/secret", "vscode://file/private"]) {
+      assert.equal(decideNavigation(target, origins, "file:///fixture/loading.html"), "deny")
+    }
+  }
+})

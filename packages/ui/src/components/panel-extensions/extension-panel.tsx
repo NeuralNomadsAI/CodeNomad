@@ -35,13 +35,13 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
   const authority = { instanceId: props.instanceId, id: props.entry.manifest.id, digest: props.entry.digest, send }
   // Each API version carries exactly its own capabilities; API 4 only those its manifest declares.
   const manifest = props.entry.manifest
-  const management = manifest.apiVersion === 4 && manifest.permissions.includes("bundles.manage") ? createBundlesManagement({
+  const management = manifest.apiVersion === 4 && manifest.permissions.includes("bundles.read") ? createBundlesManagement({
     ...authority, sessionID: props.context.sessionId, current: () => !disposed && authenticated && (props.host.activeSessionId() ?? null) === props.context.sessionId,
     show: setConfirmation,
   }) : undefined
   const api4 = manifest.apiVersion === 4 ? useApi4Channel({ ...authority, permissions: manifest.permissions,
     sessionId: props.context.sessionId, host: props.host, management, mounted: () => !disposed && authenticated && props.entry.digest === authority.digest }) : undefined
-  if (management) {
+  if (management && manifest.apiVersion === 4 && manifest.permissions.includes("bundles.manage")) {
     let reloading = false
     props.registerReload?.(() => {
       if (reloading) return

@@ -796,6 +796,8 @@ fn should_allow_registered_origin(registered_origin: Option<&str>, url: &Url) ->
     should_allow_internal(url)
 }
 
+mod integration_docs;
+
 fn should_open_external_url(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https" | "mailto")
 }
@@ -811,15 +813,16 @@ fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
 }
 
 // Remote documents have no opener IPC capability. Only this owned policy may
-// hand the public help site to the system browser; never create a native guest.
+// hand public help or canonical integration documentation to the system browser;
+// never create a native guest.
 fn open_remote_external_url(url: &Url, open: impl FnOnce(&Url)) -> bool {
-    if url.scheme() != "https"
+    if !integration_docs::is_integration_docs_url(url.as_str()) && (url.scheme() != "https"
         || url.host_str() != Some("neuralnomadsai.github.io")
         || url.port_or_known_default() != Some(443)
         || !url.username().is_empty()
         || url.password().is_some()
         || !url.path().starts_with("/CodeNomad/")
-        || url.path().contains('%')
+        || url.path().contains('%'))
     {
         return false;
     }
@@ -1061,6 +1064,14 @@ fn open_remote_window_locked(
         if current == Some(window_generation) {
             open_remote_external_url(&url, |url| {
                 if let Err(error) = external_open::open_url(&external_app, url.as_str()) {
+                    if integration_docs::is_integration_docs_url(url.as_str()) {
+                        eprintln!("[tauri] unable to hand integration documentation to the system opener");
+                        // Show only the canonical destination for manual opening. Native remote
+                        // windows have no renderer IPC; the OS supplies this dialog's chrome.
+                        tauri_plugin_dialog::DialogExt::dialog(&external_app)
+                            .message(url.as_str()).show(|_| {});
+                        return;
+                    }
                     eprintln!("[tauri] failed to open help: {error}");
                     tauri_plugin_dialog::DialogExt::dialog(&external_app)
                         .message("Could not open help in your browser. Visit https://neuralnomadsai.github.io/CodeNomad/ manually.")
@@ -2627,13 +2638,14 @@ mod menu_tests {
     use url::Url;
 
     #[test]
-    fn remote_help_policy_opens_only_allowlisted_https_in_system_browser() {
+    fn remote_help_and_integration_docs_policy_opens_only_allowlisted_https_in_system_browser() {
         let mut opened = Vec::new();
-        for value in [HELP_URL, SPONSOR_URL, "https://neuralnomadsai.github.io/CodeNomad/fr/history.html#delete"] {
+        for value in [HELP_URL, SPONSOR_URL, "https://neuralnomadsai.github.io/CodeNomad/fr/history.html#delete",
+            "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/blender"] {
             let url = Url::parse(value).unwrap();
             assert!(open_remote_external_url(&url, |url| opened.push(url.to_string())));
         }
-        assert_eq!(opened.len(), 3);
+        assert_eq!(opened.len(), 4);
         for value in [
             "http://neuralnomadsai.github.io/CodeNomad/en/",
             "https://example.com/CodeNomad/",
@@ -2644,6 +2656,13 @@ mod menu_tests {
             "https://neuralnomadsai.github.io:444/CodeNomad/",
             "https://user@neuralnomadsai.github.io/CodeNomad/",
             "mailto:help@example.com", "file:///CodeNomad/", "javascript:alert(1)",
+            "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/blender?redirect=evil",
+            "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/blender#",
+            "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/blender/",
+            "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/%62lender",
+            "https://github.com/NeuralNomadsAI/opencode-integrations/blob/main/README.md",
+            "https://github.com:444/NeuralNomadsAI/opencode-integrations/tree/main/integrations/blender",
+            "https://user@github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/blender",
         ] {
             assert!(!open_remote_external_url(&Url::parse(value).unwrap(), |_| panic!("denied URL reached the system opener: {value}")));
         }

@@ -199,6 +199,23 @@ test("actual store authority revokes at mutation admission, before async queue/p
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
 
+test("actual read lease captures a read-only grant and revokes synchronously without mutation authority", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "bundles-read-lease-"))
+  try {
+    const store = new PanelExtensionStore(directory), digest = "a".repeat(64), id = "fixture.read"
+    const pkg = { digest, html: "<p>Fixture</p>", manifest: { id, name: "Fixture", version: "1.0.0", apiVersion: 4 as const,
+      author: "Fixture", license: "MIT", repository: "https://github.com/fixture/read",
+      permissions: ["session.context", "bundles.read"] as ["session.context", "bundles.read"] } }
+    await store.install(pkg); await store.activate(id, digest, true)
+    await assert.rejects(store.captureMutationAuthority(id, digest))
+    const lease = await store.captureReadAuthority(id, digest)
+    assert.equal(lease.canManage, false); await lease.revalidate()
+    const disabled = store.activate(id, digest, false)
+    assert.throws(lease.assertCurrent); assert(lease.signal.aborted); await disabled
+    await assert.rejects(lease.revalidate()); lease.dispose()
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
 test("checked confirmation consumes before its first fresh await, rejects stale admission and emits one terminal", async () => {
   const f = fixture(); let release!: () => void
   f.prepared.readTarget = async () => { await new Promise<void>(resolve => { release = resolve }); return { ...initial, documentDigest: "changed" } }

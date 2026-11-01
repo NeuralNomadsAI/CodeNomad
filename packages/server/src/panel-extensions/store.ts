@@ -87,6 +87,14 @@ export class PanelExtensionStore {
 
   /** Trusted in-process lease; revoke synchronously when a consent-changing write is requested. */
   async captureMutationAuthority(id: string, digest: string): Promise<NativeMutationAuthority & { signal: AbortSignal; dispose(): void }> {
+    return this.captureAuthority(id, digest, "bundles.manage")
+  }
+
+  async captureReadAuthority(id: string, digest: string) {
+    return this.captureAuthority(id, digest, "bundles.read")
+  }
+
+  private async captureAuthority(id: string, digest: string, permission: "bundles.read" | "bundles.manage") {
     const controller = new AbortController(), leases = this.authorities.get(id) ?? new Set<AbortController>()
     leases.add(controller); this.authorities.set(id, leases)
     const dispose = () => {
@@ -94,8 +102,12 @@ export class PanelExtensionStore {
       if (!leases.size && this.authorities.get(id) === leases) this.authorities.delete(id)
     }
     const assertCurrent = () => controller.signal.throwIfAborted()
-    const revalidate = async () => { assertCurrent(); await this.authorize(id, digest, "bundles.manage"); assertCurrent() }
-    try { await revalidate(); return { signal: controller.signal, assertCurrent, revalidate, dispose } }
+    const revalidate = async () => { assertCurrent(); const entry = await this.authorize(id, digest, permission); assertCurrent(); return entry }
+    try {
+      const entry = await revalidate()
+      const canManage = (entry.manifest.permissions as readonly string[]).includes("bundles.manage")
+      return { signal: controller.signal, assertCurrent, revalidate: async () => { await revalidate() }, dispose, canManage }
+    }
     catch (error) { dispose(); throw error }
   }
 

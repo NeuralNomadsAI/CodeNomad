@@ -6,7 +6,7 @@ import { isRecurrenceProofPayload } from "../missions/recurrence-control-proof"
 const integrationRoute = "/api/workspaces/:id/integrations"
 const integrationRoutes = new Set([integrationRoute, "/api/workspaces/:id/plugin-sources", ...["hosts", "binding", "attach", "detach", "install-host"].map(action => `${integrationRoute}/:integrationId/${action}`)])
 const bundlesRoute = "/api/panel-extensions/:id/bundles"
-const bundlesRoutes = new Set(["catalog", "state", "hosts", "mount", "manage", "control"].map(method => `${bundlesRoute}/${method}`))
+const bundlesRoutes = new Set(["catalog", "state", "hosts", "mount", "manage", "control", "openDocs"].map(method => `${bundlesRoute}/${method}`))
 
 function integrationLogRoute(request: FastifyRequest): string | undefined {
   const route = request.routeOptions.url

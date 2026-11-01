@@ -13,7 +13,7 @@ import { catalogEntry, catalogOf } from "../../opencode/integrations/catalog-fix
 
 const turn = () => new Promise<void>(resolve => setImmediate(resolve))
 const digest = "a".repeat(64), extension = "test.bundles", base = `/api/panel-extensions/${extension}/bundles`
-async function harness(options: { backpressure?: boolean; closeOnRegister?: "client" | "connection"; routeBudgetMs?: number } = {}) {
+async function harness(options: { readOnly?: boolean; backpressure?: boolean; closeOnRegister?: "client" | "connection"; routeBudgetMs?: number } = {}) {
   const app = Fastify(), bus = new EventBus(), records: unknown[] = [], lanes: Array<{ close(): void; frames: string[] }> = []
   let prepared = 0, disposed = 0, leaseLive = true, nativeLive = true, owned = true, directory = "/private/project", at = 0
   let refusePrepare = false, staleTarget = false, refuseDispatch = false, replacement = false, unregistered = 0, unregisteredConnection = 0
@@ -22,19 +22,20 @@ async function harness(options: { backpressure?: boolean; closeOnRegister?: "cli
   let nativeReads = 0
   const entry = catalogEntry("blender")
   const catalog = { snapshot: () => ({ state: "fresh" as const, catalog: catalogOf(entry) }) }
+  let catalogState: "fresh" | "stale" | "unavailable" = "fresh", catalogWait: Promise<void> | undefined
   const admissions = new BundlesActions({ catalog } as never)
   const logger = { debug(record: unknown) { records.push(record) }, trace(record: unknown) { records.push(record) },
     isLevelEnabled() { return true } } as unknown as Logger
   const connection = { assertCurrent() { if (!nativeLive) throw new Error("secret-native-connection") }, client: { session: {
     async get() { nativeReads++; await stall; return { id: "ses_test", location: { directory } } },
   } } }
-  const transport = new BundlesTransport({ eventBus: bus, lifecycle: new BundlesLifecycle({ now: () => at,
+  const transport = new BundlesTransport({ eventBus: bus, catalog: { async read() { await catalogWait; return { ...catalog.snapshot(), state: catalogState } } }, lifecycle: new BundlesLifecycle({ now: () => at,
     setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: timer => clearTimeout(timer as NodeJS.Timeout) }),
     auth: { getSessionFromRequest(req) { const sessionId = req.headers.cookie; return typeof sessionId === "string" ? { username: "human", sessionId } : null } },
     workspaceManager: { async getSharedServiceConnection() { return (replacement ? { ...connection } : connection) as never }, async ownsLocation() { return owned } },
-    store: { async captureMutationAuthority() {
+    store: { async captureReadAuthority() {
       const controller = new AbortController(); leases.push(controller)
-      return { signal: controller.signal, assertCurrent() { controller.signal.throwIfAborted(); if (!leaseLive) throw new Error("secret-file-and-token") },
+      return { canManage: !options.readOnly, signal: controller.signal, assertCurrent() { controller.signal.throwIfAborted(); if (!leaseLive) throw new Error("secret-file-and-token") },
         async revalidate() { if (!leaseLive) throw new Error("secret-file-and-token") }, dispose() { disposed++; controller.abort() } }
     } },
     actions: { accepts: action => admissions.accepts(action), async prepare(context, action, signal) {
@@ -95,6 +96,7 @@ async function harness(options: { backpressure?: boolean; closeOnRegister?: "cli
   }
   const post = (method: string, payload: Record<string, unknown>, cookie = "human") => app.inject({ method: "POST", url: `${base}/${method}`, headers: { cookie }, payload })
   return { app, bus, transport, records, open, post, leases, dispatched, preparedActions, entry,
+    setCatalog(state: typeof catalogState, wait?: Promise<void>) { catalogState = state; catalogWait = wait },
     state: () => ({ prepared, disposed, nativeReads, unregistered, unregisteredConnection }), advance(ms: number) { at += ms },
     setLive(value: boolean) { leaseLive = value }, setStall(value: Promise<void> | undefined) { stall = value },
     set(options: { nativeLive?: boolean; owned?: boolean; directory?: string; refusePrepare?: boolean; staleTarget?: boolean; refuseDispatch?: boolean; replacement?: boolean;
@@ -111,6 +113,85 @@ async function harness(options: { backpressure?: boolean; closeOnRegister?: "cli
     },
     async close() { for (const lane of lanes) lane.close(); transport.dispose(); await app.close() } }
 }
+
+test("read-only authenticated docs mounts resolve fresh/stale catalogue URLs, never management authority", async () => {
+  const h = await harness({ readOnly: true })
+  try {
+    const a = await h.open(), b = await h.open()
+    const { mountID } = (await h.post("mount", { owner: a.owner, digest, instanceId: "instance", sessionID: "ses_test" })).json()
+    const input = { owner: a.owner, mountID, integration: "blender" }
+    for (const state of ["fresh", "stale"] as const) {
+      h.setCatalog(state)
+      const response = await h.post("openDocs", input)
+      assert.equal(response.statusCode, 200)
+      assert.equal(response.headers["cache-control"], "no-store")
+      assert.deepEqual(response.json(), { outcome: "ready", url: h.entry.docs })
+    }
+    h.setCatalog("unavailable"); assert.deepEqual((await h.post("openDocs", input)).json(), { outcome: "unavailable" })
+    h.setCatalog("fresh"); assert.deepEqual((await h.post("openDocs", { ...input, integration: "unknown" })).json(), { outcome: "invalid" })
+    h.entry.docs += "?redirect=PRIVATE_DOCS_SENTINEL"
+    assert.deepEqual((await h.post("openDocs", input)).json(), { outcome: "unavailable" })
+    for (const field of ["url", "sessionID", "directory", "rpc", "digest", "input"]) {
+      assert.equal((await h.post("openDocs", { ...input, [field]: "PRIVATE_DOCS_SENTINEL" })).statusCode, 400)
+    }
+    assert.equal((await h.post("openDocs", { ...input, owner: b.owner })).statusCode, 503)
+    assert.equal((await h.post("openDocs", input, "another-human")).statusCode, 503)
+    for (const method of ["request", "setActive", "installHost", "attach", "detach"]) {
+      const nested = method === "request" ? { action: "remove", integration: "blender", scope: "global" }
+        : method === "setActive" ? { integration: "blender", scope: "global", enabled: true }
+          : method === "attach" ? { integration: "blender", offerID: "offer_fixture" } : { integration: "blender" }
+      assert.equal((await h.post("manage", { owner: a.owner, mountID, method, input: nested })).statusCode, 503)
+    }
+    for (const command of ["start", "displayed", "confirm", "cancel", "userRemount"]) {
+      const extra = command === "start" ? { requestID: "a".repeat(32) } : command === "userRemount" ? {} : { planID: "a".repeat(32) }
+      assert.equal((await h.post("control", { owner: a.owner, mountID, command, ...extra })).statusCode, 503)
+    }
+    assert.equal(h.state().prepared, 0); assert.deepEqual(h.dispatched, [])
+    assert(!JSON.stringify(h.records).includes("PRIVATE_DOCS_SENTINEL")); assert(!JSON.stringify(h.records).includes(a.owner))
+    assert(h.records.some(record => JSON.stringify(record).includes(`${base.replace(extension, ":id")}/openDocs`)))
+    assert.deepEqual((await h.post("control", { owner: a.owner, mountID, command: "dispose" })).json(), { ok: true })
+  } finally { await h.close() }
+})
+
+test("documentation read quota survives remount and shares the lifecycle's read budget", async () => {
+  const h = await harness({ readOnly: true })
+  try {
+    const a = await h.open()
+    let mounted = (await h.post("mount", { owner: a.owner, digest, instanceId: "instance", sessionID: "ses_test" })).json()
+    for (let i = 0; i < 59; i++) assert(h.transport.lifecycle.budget.take(extension, "read"))
+    assert.equal((await h.post("openDocs", { owner: a.owner, ...mounted, integration: "blender" })).json().outcome, "ready")
+    await h.post("control", { owner: a.owner, ...mounted, command: "dispose" })
+    mounted = (await h.post("mount", { owner: a.owner, digest, instanceId: "instance", sessionID: "ses_test" })).json()
+    assert.deepEqual((await h.post("openDocs", { owner: a.owner, ...mounted, integration: "blender" })).json(), { outcome: "busy" })
+    h.advance(60_001)
+    assert.equal((await h.post("openDocs", { owner: a.owner, ...mounted, integration: "blender" })).json().outcome, "ready")
+  } finally { await h.close() }
+})
+
+test("documentation resolution fences revocation, owner/connection/session changes and deadlines across catalogue IO", async () => {
+  for (const change of ["consent", "owner", "connection", "session", "ownership", "deadline", "disconnect"] as const) {
+    const h = await harness({ readOnly: true, routeBudgetMs: 35 })
+    let resume!: () => void
+    try {
+      const a = await h.open(), mounted = (await h.post("mount", { owner: a.owner, digest, instanceId: "instance", sessionID: "ses_test" })).json()
+      h.setCatalog("fresh", new Promise(resolve => { resume = resolve }))
+      const pending = h.post("openDocs", { owner: a.owner, ...mounted, integration: "blender" })
+      void pending.then(() => {}); await turn(); await turn()
+      switch (change) {
+        case "consent": h.leases[0].abort(); break
+        case "owner": a.close(); break
+        case "connection": h.set({ replacement: true }); break
+        case "session": h.set({ directory: "/another-owned-location" }); break
+        case "ownership": h.set({ owned: false }); break
+        case "disconnect": h.bus.publish({ type: "instance.eventStatus", instanceId: "instance", status: "disconnected", generation: 1 }); break
+        case "deadline": assert.equal((await pending).statusCode, 503); break
+      }
+      resume()
+      assert.equal((await pending).statusCode, 503, change)
+      assert(!JSON.stringify((await pending).json()).includes("https:")); assert.deepEqual(h.dispatched, [])
+    } finally { resume?.(); await h.close() }
+  }
+})
 
 test("actual SSE streams mint independent private owners despite equal client IDs; stream close revokes mounts", async () => {
   const h = await harness()

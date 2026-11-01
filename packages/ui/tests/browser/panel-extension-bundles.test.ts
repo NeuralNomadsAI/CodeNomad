@@ -95,7 +95,7 @@ test("bundles object is frozen and permission-scoped; invalid raw manage/inherit
       const surface = await frame(page).locator("body").evaluate(() => ({ present: Boolean((window as any).codenomad.bundles),
         frozen: Object.isFrozen((window as any).codenomad.bundles), keys: Object.keys((window as any).codenomad.bundles ?? {}) }))
       assert.deepEqual(surface, { present: permissions.includes("bundles.read"), frozen: true,
-        keys: permissions.includes("bundles.read") ? ["catalog", "state", "hosts",
+        keys: permissions.includes("bundles.read") ? ["catalog", "state", "hosts", "openDocs",
           ...(permissions.includes("bundles.manage") ? ["request", "setActive", "installHost", "attach", "detach"] : []), "onChanged"] : [] })
       const attacks = ["request", "setActive", "installHost", "attach", "detach", "constructor", "__proto__", "toString", "hasOwnProperty"].map((method, index) => message(900 + index, method, secrets))
       if (!permissions.includes("bundles.read")) for (const method of ["catalog", "state", "hosts"]) attacks.push(message(950 + attacks.length, method, method === "hosts" ? { integration: "blender" } : {}))

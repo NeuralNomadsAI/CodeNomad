@@ -33,8 +33,8 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close(); await backend?.close() })
 const frame = (page: Page) => page.frameLocator('iframe[title="Bundles fixture"]')
-async function open(installed = true, authenticated = true, options: { holdMount?: boolean; captureDetach?: boolean } = {}) {
-  await backend.reset(installed)
+async function open(installed = true, authenticated = true, options: { holdMount?: boolean; captureDetach?: boolean; readOnly?: boolean } = {}) {
+  await backend.reset(installed, options.readOnly)
   if (options.holdMount) backend.hold("mount")
   const page = await browser.newPage(), errors: string[] = [], consoles: unknown[] = [], http: unknown[] = [], reads: Promise<void>[] = []
   if (authenticated) await page.context().addCookies([{ name: "human", value: "fixture", url }])
@@ -49,6 +49,9 @@ async function open(installed = true, authenticated = true, options: { holdMount
     }
   })
   await page.addInitScript(() => {
+    // Owned browser only: replace the external-delivery boundary, never navigate a real browser.
+    ;(window as any).docsOpens = []
+    window.open = ((...args: any[]) => { (window as any).docsOpens.push(args); return null }) as any
     ;(window as any).transportOrder = []
     ;(window as any).mountResponses = 0
     const post = MessagePort.prototype.postMessage
@@ -127,6 +130,83 @@ async function wait(check: () => boolean) {
   const deadline = Date.now() + 10_000
   while (!check()) { if (Date.now() >= deadline) assert.fail("backend observation timed out"); await new Promise(resolve => setTimeout(resolve, 20)) }
 }
+
+test("read-only documentation uses the real port/HTTP/owner mount and only parent canonical URL handoff", async () => {
+  const h = await open(true, true, { readOnly: true }), { page } = h
+  try {
+    const call = (input: unknown) => frame(page).locator("body").evaluate((_body, value) => (window as any).call("openDocs", value), input)
+    assert.equal(await frame(page).locator("body").evaluate(() => Object.isFrozen((window as any).codenomad.bundles)), true)
+    assert.equal(await frame(page).locator("body").evaluate(() => typeof (window as any).codenomad.bundles.attach), "undefined")
+    for (const input of [{ integration: "fixture", url: "https://evil.test/PRIVATE_DOCS_SENTINEL" }, { integration: "fixture", sessionID: "ses_other" }, { integration: "../fixture" }]) {
+      assert.deepEqual(await call(input), { outcome: "invalid" })
+    }
+    const before = backend.requests.filter(row => row.method === "openDocs").length
+    assert.equal(before, 0, "strict author input refused before HTTP")
+    backend.state.catalogState = "stale"
+    assert.deepEqual(await call({ integration: "fixture" }), { outcome: "requested" }, "null popup return records handoff only")
+    assert.deepEqual(await page.evaluate(() => (window as any).docsOpens), [[backend.entry.docs, "_blank", "noopener,noreferrer"]])
+    assert.deepEqual(await call({ integration: "fixture" }), { outcome: "busy" })
+    await page.evaluate(() => (window as any).fixture.show("ses_other"))
+    await frame(page).locator("#ready").filter({ hasText: "ses_other" }).waitFor()
+    await page.waitForFunction(() => (window as any).mountResponses >= 2)
+    // The same opener module survives a new mounting; it retains its dispatch history.
+    assert.deepEqual(await call({ integration: "fixture" }), { outcome: "busy" })
+    await page.waitForTimeout(1100)
+    backend.entry.docs += "?redirect=PRIVATE_DOCS_SENTINEL"
+    assert.deepEqual(await call({ integration: "fixture" }), { outcome: "unavailable" })
+    assert.equal(await page.evaluate(() => (window as any).docsOpens.length), 1)
+    const privateUrls = backend.requests.filter(row => row.method === "openDocs")
+    assert(privateUrls.every(row => Object.keys(row.body).sort().join(",") === "integration,mountID,owner"))
+    const frameData = await frame(page).locator("body").evaluate(() => JSON.stringify({ dom: document.body.textContent, messages: (window as any).messages }))
+    assert(!frameData.includes("https:")); assert(!frameData.includes("PRIVATE_DOCS_SENTINEL"))
+    await h.clean()
+  } finally { await page.close() }
+})
+
+test("raw docs port attacks, four-request cap, deadline and revoked/navigation continuations hand off nothing", async () => {
+  const h = await open(), { page } = h
+  try {
+    backend.hold("openDocs")
+    const result = frame(page).locator("body").evaluate(() => (window as any).call("openDocs", { integration: "fixture" })).catch(() => {})
+    await wait(() => backend.requests.some(row => row.method === "openDocs"))
+    await page.evaluate(() => (window as any).fixture.show("ses_other"))
+    backend.release("openDocs")
+    await result
+    await frame(page).locator("#ready").filter({ hasText: "ses_other" }).waitFor()
+    await page.waitForFunction(() => (window as any).mountResponses >= 2)
+    const raw = async (id: number, input: unknown, method = "openDocs") => frame(page).locator("body").evaluate((_body, value) => {
+      (window as any).rawPort.postMessage({ type: "api4:request", capability: "bundles", ...value })
+    }, { id, method, input })
+    await raw(8001, { integration: "fixture", owner: "a".repeat(64) })
+    await frame(page).locator("body").evaluate(`() => new Promise(resolve => {
+      if (messages.some(row => row.id === 8001)) return resolve();
+      const timer = setInterval(() => { if (messages.some(row => row.id === 8001)) { clearInterval(timer); resolve(); } }, 5);
+    })`)
+    assert.deepEqual(await frame(page).locator("body").evaluate(() => (window as any).messages.find((row: any) => row.id === 8001).result), { outcome: "invalid" })
+    backend.hold("catalog")
+    await page.clock.install()
+    for (let i = 0; i < 4; i++) await raw(8100 + i, {}, "catalog")
+    await wait(() => backend.requests.filter(row => row.method === "catalog").length >= 4)
+    await raw(8200, { integration: "fixture" })
+    await page.waitForFunction(() => [...document.querySelectorAll("iframe")].some(frame => Boolean(frame.contentWindow)))
+    await frame(page).locator("body").evaluate(`() => new Promise(resolve => {
+      if (messages.some(row => row.id === 8200)) return resolve();
+      const receive = event => { if (event.data.id === 8200) { rawPort.removeEventListener('message', receive); resolve(); } };
+      rawPort.addEventListener('message', receive);
+    })`)
+    assert.deepEqual(await frame(page).locator("body").evaluate(() => (window as any).messages.find((row: any) => row.id === 8200).result), { outcome: "busy" })
+    await page.clock.runFor(19_501)
+    backend.release("catalog")
+    backend.hold("openDocs")
+    await raw(8300, { integration: "fixture" })
+    await wait(() => backend.requests.filter(row => row.method === "openDocs").length >= 2)
+    await page.clock.runFor(19_501)
+    assert.deepEqual(await frame(page).locator("body").evaluate(() => (window as any).messages.find((row: any) => row.id === 8300)?.result), { outcome: "unavailable" })
+    backend.release("openDocs")
+    assert.equal(await page.evaluate(() => (window as any).docsOpens.length), 0)
+    await h.clean()
+  } finally { backend.release("catalog"); backend.release("openDocs"); await page.close() }
+})
 async function ask(page: Page, method = "attach", input: unknown = { integration: "fixture", offerID: "offer_fixture" }) {
   await frame(page).locator("body").evaluate((_body, value) => { (window as any).input = value }, { method, input })
   await frame(page).locator("#trigger").click()

@@ -280,8 +280,8 @@ error. Uncertain errors require checking the application before a fresh action. 
 The API 4 `bundles.read` capability uses the existing catalogue, integration reader and attachment service
 through three fixed routes in `server/routes/panel-extension-bundles.ts`:
 `POST /api/panel-extensions/:id/bundles/catalog`, `bundles/state` and `bundles/hosts` under the same prefix.
-The frame's MessageChannel API is `codenomad.bundles.catalog()`, `state()`, `hosts({ integration })`
-and `onChanged(listener)`; the trusted host supplies the instance, exact installed digest and conversation
+The frame's MessageChannel API is `codenomad.bundles.catalog()`, `state()`, `hosts({ integration })`,
+`openDocs({ integration })` and `onChanged(listener)`; the trusted host supplies the instance, exact installed digest and conversation
 captured at mount. Dedicated strict input/output schemas live in `panel-extensions/bundles-contract.ts`.
 Enabled `bundles.read` consent, exact native session/Location ownership and pinned connection identity are
 checked before and after IO. Keep this adapter on the fixed service methods and catalogue-derived RPC IDs;
@@ -343,8 +343,18 @@ the public port strips directory, opaque targets and confirmation context. Older
 Private tracking includes complete configured-source token presence separately from catalogue mappings, so a
 catalogue-only read preserves unrelated Plugins hints. Native Add pins connection/document context before sending;
 the first source observation and all subsequent observations must retain it.
-Catalogue documentation URLs remain display data inside the sandbox; opening them
-requires a separately qualified fixed trusted action.
+Catalogue documentation opens through the fixed unpublished API 4
+`bundles.openDocs({ integration })` action under `bundles.read`. The authenticated
+parent resolves only fresh or valid stale catalogue entries through the existing
+source, with before/after consent, mount, session/Location and connection checks.
+Its raw URL must exactly match the ID-bound HTTPS GitHub path
+`/NeuralNomadsAI/opencode-integrations/tree/main/integrations/<integration-id>`;
+only implicit port 443 is canonical, with no credentials, encoding, query or fragment.
+Only the parent receives that URL and invokes the existing external opener.
+Results are `requested`, `unavailable`, `busy` or `invalid`; `requested` describes
+the handoff, subject to browser popup policy. Shared read limits and the API 4
+deadline apply, with one window-wide opening and a persistent one-second interval.
+See [the documentation action contract](PANEL_EXTENSIONS.md#draft-integration-reads).
 
 ## Test fixtures
 

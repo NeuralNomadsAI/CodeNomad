@@ -19,7 +19,7 @@ const API4_FRAME_METHODS = {
   "images.conversation": { conversation: ["status", "open", "startNew"] },
   "opencode.designAgent": {},
   "panel.preferences": { preferences: ["get", "set"] },
-  "bundles.read": { bundles: ["catalog", "state", "hosts"] },
+  "bundles.read": { bundles: ["catalog", "state", "hosts", "openDocs"] },
   "bundles.manage": { bundles: ["request", "setActive", "installHost", "attach", "detach"] },
 }
 const LEGACY_FRAME_METHODS = { 1: {}, 2: { assets: ["list", "read"] }, 3: { workItems: ["list", "open"] } }
@@ -28,6 +28,7 @@ const ARGS = {
   "assets.read": ["probe-target", { thumbnail: true }], "workItems.list": [{ kind: "issue" }], "workItems.open": ["issue", 1],
   "images.read": ["probe-target", { thumbnail: true }], "composer.prefill": [{ text: "probe" }], "preferences.set": [{ probe: true }],
   "bundles.hosts": [{ integration: "blender" }],
+  "bundles.openDocs": [{ integration: "blender" }],
   "bundles.request": [{ action: "install", integration: "blender", scope: "global" }],
   "bundles.setActive": [{ integration: "blender", scope: "global", enabled: true }],
   "bundles.installHost": [{ integration: "blender" }],

@@ -9,7 +9,7 @@ export const instanceMessages = {
   "panelExtensions.api4.images.conversation": "यस परियोजनाको छविहरू कुराकानी खोल्ने वा सुरु गर्ने।",
   "panelExtensions.api4.opencode.designAgent": "यो विस्तार सक्षम रहेसम्म CodeNomad को Design agent र यसका छवि skill हरू OpenCode मा थप्छ।",
   "panelExtensions.api4.panel.preferences": "यस प्यानलका आफ्नै सेटिङहरू सम्झने।",
-  "panelExtensions.api4.bundles.read": "OpenCode एकीकरणहरूको सूची, यस परियोजनामा तिनको स्थिति र उपलब्ध खुला अनुप्रयोगहरू पढ्ने।",
+  "panelExtensions.api4.bundles.read": "OpenCode एकीकरणहरूको सूची, यस परियोजनामा तिनको स्थिति र उपलब्ध खुला अनुप्रयोगहरू पढ्ने र सूचीमा समीक्षा गरिएका तिनका कागजात ब्राउजरमा खोल्न अनुरोध गर्ने।",
   "panelExtensions.api4.bundles.manage": "सूचीबाट OpenCode एकीकरणहरू स्थापना, अद्यावधिक वा हटाउन, सक्रिय वा निष्क्रिय गर्न, तिनको अनुप्रयोग भाग स्थापना गर्न र खुला अनुप्रयोगलाई प्रदर्शित कुराकानीमा जोड्न तपाईंलाई अनुरोध गर्ने। प्रत्येक कार्यका लागि CodeNomad को छुट्टै पुष्टि आवश्यक हुन्छ।",
   "panelExtensions.empty": "कुनै विस्तार स्थापित छैन।",
   "panelExtensions.catalog.title": "अनलाइन उपलब्ध",

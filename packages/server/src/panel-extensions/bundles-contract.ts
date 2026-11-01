@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { INTEGRATION_CATALOG_MAX_ENTRIES, INTEGRATION_MAX_OFFERS, integrationCatalogEntrySchema, integrationStatusSchema } from "../opencode/integrations/contract"
 import { looksLikePath } from "../opencode/integrations/status"
+import { isIntegrationDocsUrl } from "./bundles-docs"
 
 // Draft API 4 projection contract. Native RPC authority stays inside the backend.
 const entry = integrationCatalogEntrySchema.innerType().shape
@@ -18,6 +19,13 @@ const capability = z.string().regex(/^[a-f0-9]{32,64}$/)
 const scope = z.enum(["global", "project"])
 const integration = bundlesHostsInputSchema.shape.integration
 const mounted = { owner: capability, mountID: capability }
+export const bundlesDocsInputSchema = z.object({ ...mounted, integration }).strict()
+export const bundlesDocsResultSchema = z.object({ outcome: z.enum(["requested", "unavailable", "busy", "invalid"]) }).strict()
+/** Private parent response, never delivered to the author port. */
+export const bundlesDocsHostResultSchema = z.union([
+  z.object({ outcome: z.literal("ready"), url: z.string().refine(value => isIntegrationDocsUrl(value)) }).strict(),
+  bundlesDocsResultSchema,
+])
 export const bundlesMountInputSchema = z.object({ owner: capability, instanceId: z.string().min(1).max(256),
   digest: z.string().regex(/^[a-f0-9]{64}$/), sessionID: bundlesSessionSchema }).strict()
 export const bundlesManageInputSchema = z.discriminatedUnion("method", [

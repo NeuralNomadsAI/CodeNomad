@@ -47,6 +47,7 @@ export async function bundlesManagementServer() {
   const file = path.join(global, "opencode.jsonc"), entry = catalogEntry("fixture"), spec = `${entry.package}@${entry.range}`
   const state = { current: true, owned: true, runtime: [] as any[], rpc: [] as string[], updates: [] as unknown[], packages: [] as unknown[],
     metadata: {} as Record<string, unknown>, location: project, fail: false, prepares: 0, offset: 0,
+    catalogState: "fresh" as "fresh" | "stale" | "unavailable",
     host: { state: "absent", action: "install" } as Record<string, string>, nativeGeneration: 1,
     binding: new Map<string, boolean>(), rpcInputs: [] as Array<{ method: string; input: any }>, uncertain: false, holdTerminal: false,
     offerLabel: "Fixture window", offerDocument: "Scene.blend", conversation: "Work" }
@@ -79,7 +80,7 @@ export async function bundlesManagementServer() {
     ownsLocation: async () => state.owned, getServiceDirectoryForPath: async (_id: string, directory: string) => directory,
     getWorktreeIdentityForPath: async () => "owned", getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",
     getServiceWslDistro: () => undefined, getHostPathForServicePath: async (_id: string, value: string) => value }
-  const catalog = { snapshot: () => ({ state: "fresh" as const, catalog: catalogOf(entry) }), read: async () => catalog.snapshot() }
+  const catalog = { snapshot: () => ({ state: state.catalogState, catalog: catalogOf(entry) }), read: async () => catalog.snapshot() }
   const logger: any = { debug() {}, trace() {}, info() {}, isLevelEnabled: () => false }
   const controls = new PluginControls({ workspaceManager: manager, worktreeDeletionFence: { enter: () => () => {} } as any, logger })
   const sources = new PluginSources({ documents: controls, catalog, logger }), packages = new PluginPackages({ controls, workspaceManager: manager })
@@ -96,7 +97,7 @@ export async function bundlesManagementServer() {
     const key = {}, native = setTimeout(() => { timers.delete(key); callback() }, delay)
     timers.set(key, { due: now() + delay, callback, native }); return key
   }, clearTimeout(key) { const timer = timers.get(key as object); if (timer) clearTimeout(timer.native); timers.delete(key as object) } })
-  const transport = new BundlesTransport({ eventBus: bus, store, workspaceManager: manager, lifecycle,
+  const transport = new BundlesTransport({ eventBus: bus, store, workspaceManager: manager, lifecycle, catalog,
     auth: { getSessionFromRequest(req) { return req.headers.cookie?.includes("human=fixture") ? { username: "human", sessionId: "fixture" } : null } },
     actions: { accepts: action => actions.accepts(action), prepare(...args) { state.prepares++; return actions.prepare(...args) } } })
   app.addHook("onRequest", (request, reply, done) => {
@@ -127,12 +128,13 @@ export async function bundlesManagementServer() {
    return { app, address, state, requests, streamFrames, file, spec, entry, controls, sources, project,
     hold: (key: string) => held.add(key), release,
     flushTerminals() { state.holdTerminal = false; for (const write of terminals.splice(0)) write() },
-    async reset(installed = true) {
+    async reset(installed = true, readOnly = false) {
       for (const key of held) release(key)
       terminals.length = 0; state.holdTerminal = false; state.uncertain = false
       state.current = true; state.owned = true; state.location = project; state.fail = false; state.offset += 301_000
       state.host = { state: "absent", action: "install" }
       entry.range = "^0.1"
+      entry.docs = catalogEntry("fixture").docs; state.catalogState = "fresh"
       entry.displayName = "OpenCode for fixture"
       state.offerLabel = "Fixture window"; state.offerDocument = "Scene.blend"; state.conversation = "Work"
       state.rpc = []; state.rpcInputs = []; state.updates = []; state.packages = []; state.prepares = 0
@@ -141,8 +143,10 @@ export async function bundlesManagementServer() {
         privateToken: "FOREIGN_TOKEN_96aa" }] : []
       await writeFile(file, JSON.stringify({ plugins: installed ? [spec] : [] }) + "\n")
       const installedPackage = (await store.list()).find(candidate => candidate.manifest.id === pkg.manifest.id)
-      if (installedPackage?.digest !== pkg.digest) await store.install(pkg, installedPackage?.digest)
-      await store.activate(pkg.manifest.id, pkg.digest, true); requests.length = 0; streamFrames.length = 0
+      const target = readOnly ? await readPanelExtensionArchive(fixtureArchive(author, { id: pkg.manifest.id, name: "Bundles fixture", apiVersion: 4,
+        permissions: ["session.context", "bundles.read"] })) : pkg
+      if (installedPackage?.digest !== target.digest) await store.install(target, installedPackage?.digest)
+      await store.activate(target.manifest.id, target.digest, true); requests.length = 0; streamFrames.length = 0
       bus.publish({ type: "instance.eventStatus", instanceId: "api4-instance", status: "connected", generation: state.nativeGeneration } as any)
     },
     revoke: () => store.activate(pkg.manifest.id, pkg.digest, false),

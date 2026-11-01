@@ -2,6 +2,7 @@ import { bundlesManageInputSchema, type BundlesControlInput } from "../../../../
 import { bundlesPrivateEvents, type BundlesConfirmation } from "../../lib/bundles-private-events"
 import { PanelExtensionHttpError, panelExtensionsApi4 } from "../../lib/panel-extensions-api"
 import { pluginSourcesStore } from "../../stores/plugin-sources"
+import { openBundlesDocs } from "./bundles-docs-opener"
 
 type Command = BundlesControlInput extends infer T ? T extends BundlesControlInput ? Omit<T, "owner" | "mountID"> : never : never
 const inputs = new Map(bundlesManageInputSchema.options.map(option => [option.shape.method.value, option.shape.input]))
@@ -62,6 +63,13 @@ export function createBundlesManagement(props: { id: string; instanceId: string;
   })().catch(error => { dispose(); throw error })
   return {
     mount, dispose,
+    async openDocs(integration: string, signal: AbortSignal) {
+      if (closed || signal.aborted || !props.current()) return { outcome: "unavailable" as const }
+      if (!captured) { void mount().catch(() => {}); return { outcome: "busy" as const } }
+      const envelope = captured
+      return openBundlesDocs(integration, () => panelExtensionsApi4.bundlesOpenDocs(props.id, { ...envelope, integration },
+        AbortSignal.any([signal, lifetime.signal])), () => !closed && !signal.aborted && captured === envelope && props.current())
+    },
     async manage(method: string, input: unknown, signal: AbortSignal) {
       // Admission never waits for acquisition and never queues an author action.
       const schema = inputs.get(method as Parameters<typeof inputs.get>[0])

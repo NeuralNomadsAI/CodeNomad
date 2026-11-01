@@ -241,7 +241,7 @@ exact package before and after IO. Never add a permission registry, generic RPC 
 | `images.conversation` | `conversation.status()`, `conversation.open()`, `conversation.startNew()` | the displayed conversation's Location (else the instance's), `images-conversation.ts` |
 | `opencode.designAgent` | none | while enabled, this backend's leases request the Design agent (`opencode/design/demand.ts`) |
 | `panel.preferences` | `preferences.get()`, `preferences.set(object)` | the server profile's store, per extension |
-| `bundles.read` (draft) | `bundles.catalog()`, `bundles.state()`, `bundles.hosts({ integration })`, `bundles.onChanged(listener)` | the conversation captured by the mounted host; fixed integration readers and exact-session `bindingRead` |
+| `bundles.read` (draft) | `bundles.catalog()`, `bundles.state()`, `bundles.hosts({ integration })`, `bundles.openDocs({ integration })`, `bundles.onChanged(listener)` | the conversation captured by the mounted host; fixed integration readers, exact-session `bindingRead` and canonical catalogue documentation |
 | `bundles.manage` (requires `bundles.read`) | `bundles.request({ action, integration, scope })`, `bundles.setActive({ integration, scope, enabled })`, `bundles.installHost({ integration })`, `bundles.attach({ integration, offerID })`, `bundles.detach({ integration })` | authenticated parent-owned mount and backend confirmation lifecycle; `request` supports install/update/remove; `detach` returns `invalid` |
 
 ```js
@@ -337,9 +337,41 @@ exfiltrate them like API 2 bytes, which the install sentence and the help state.
 
 ### Draft integration reads
 
+`bundles.openDocs({ integration })` implements the catalogue's documentation action
+under the unpublished `bundles.read` permission. Its strict input accepts only the
+integration ID; its public result is `{ outcome: "requested" | "unavailable" | "busy" | "invalid" }`.
+The authenticated parent owns the stream, mount, digest and exact conversation.
+The backend revalidates consent, session/Location ownership and connection before
+and after resolving the existing catalogue, including valid stale entries.
+Only the parent receives the validated URL and rechecks its live mount before handoff.
+`requested` means handed to the existing external opener; browser popup policies
+may prevent display. Explicit opener failure answers `unavailable`, with no retry.
+Malformed input or an unknown ID answers `invalid`; unavailable/unsafe catalogue
+documentation answers `unavailable`. Shared read admission, four pending requests
+and the 19.5-second deadline apply. One window-wide opening slot and a one-second
+dispatch interval survive every remount; pending opener completion retains the slot.
+
+The opening policy parses the original raw URL and requires exact equality with
+`https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/<integration-id>`.
+Only the implicit HTTPS port is canonical. Never accept credentials, alternate
+hosts/ports, encodings, normalization, queries, fragments or arbitrary repository
+paths; never fetch documentation, probe redirects or synthesize fallback URLs.
+The same raw policy guards backend and parent; native adapters check the resulting
+destination. Remote Tauri navigation admits this exact repository path family
+through its owned external-navigation policy, keeping remote IPC unchanged.
+Read-only mounts carry revocable read consent; each management entry/control
+requires its separately captured management grant, including trusted reload.
+The parent-only `POST /api/panel-extensions/:id/bundles/openDocs` takes
+`{ owner, mountID, integration }` and returns `{ outcome: "ready", url }` or a
+fixed refusal outcome. The parent validates and consumes that private response;
+the frame receives only its final public outcome. Remote Tauri opener failure
+shows the canonical destination in an OS dialog for manual opening.
+Method requests convey documentation intent; never claim verified clicks or grant
+direct detach authority through this method.
+
 `bundles.read` defines `codenomad.bundles` through the API 4 MessageChannel.
-The read surface consists of `catalog()`, `state()`, `hosts({ integration })`
-and `onChanged(listener)`. Declaring `bundles.manage` also defines the five fixed management methods above on the frozen object.
+The read surface consists of `catalog()`, `state()`, `hosts({ integration })`,
+`openDocs({ integration })` and `onChanged(listener)`. Declaring `bundles.manage` also defines the five fixed management methods above on the frozen object.
 Installation shows both permissions' full consent sentences when declared. Management
 covers requests to install, update, remove, enable or disable a catalogue integration, install its
 application component and attach an application to the displayed conversation; each
@@ -455,8 +487,9 @@ routes accept the same budget. Management routes bind the authenticated stream's
 the mounted exact package. Operation-specific preparation and dispatch use trusted in-process callbacks.
 
 - `mount()` mints an opaque mount identity and combines mount disposal with the consent
-  lease's abort signal. `PanelExtensionStore.captureMutationAuthority()` authorizes the
-  exact enabled digest and `bundles.manage`; installation, activation and removal revoke
+  lease's abort signal. `PanelExtensionStore.captureReadAuthority()` authorizes the
+  exact enabled digest and `bundles.read`, capturing its immutable management grant for
+  management entries and controls. Installation, activation and removal revoke
   existing leases synchronously at write admission. Preferences preserve the lease.
 - `request()` reserves the shared slot synchronously and returns an ACK and `afterAck`.
   ACKs are `{ outcome: "confirming", requestID }`, `{ outcome: "busy" }` or

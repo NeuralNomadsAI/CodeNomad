@@ -9,11 +9,14 @@ import type { PanelExtensionStore } from "./store"
 import type { BundlesActions, BundlesAction, BundlesHostContext } from "./bundles-actions"
 import { BundlesLifecycle, BundlesStalePlanError, type BundlesMount, type BundlesAck, type BundlesConfirmation } from "./bundles-lifecycle"
 import type { BundlesChange, BundlesMountInput, BundlesManageInput, BundlesControlInput } from "./bundles-contract"
+import type { IntegrationCatalogSource } from "../opencode/integrations/catalog"
+import { isIntegrationDocsUrl } from "./bundles-docs"
 
 export type BundlesPrivateEvent = { mountID: string; view: BundlesConfirmation | null } | { mountID: string; change: BundlesChange }
 export interface BundlesTransportDeps {
   auth: Pick<AuthManager, "getSessionFromRequest">
-  store: Pick<PanelExtensionStore, "captureMutationAuthority">
+  store: Pick<PanelExtensionStore, "captureReadAuthority">
+  catalog: Pick<IntegrationCatalogSource, "read">
   workspaceManager: Pick<WorkspaceManager, "getSharedServiceConnection" | "ownsLocation">
   actions: Pick<BundlesActions, "prepare" | "accepts">
   eventBus: Pick<EventBus, "onEvent">
@@ -25,7 +28,7 @@ interface Owner {
   write(payload: string): void; close(): void; mounts: Set<Mounted>; slots: number
 }
 interface Mounted {
-  owner: Owner; context: BundlesHostContext; mount: BundlesMount; dispose(): void
+  owner: Owner; context: BundlesHostContext; mount: BundlesMount; canManage: boolean; dispose(): void
   pending?: { requestID: string; afterAck(): void }
 }
 const opaque = () => randomBytes(32).toString("hex")
@@ -112,12 +115,12 @@ export class BundlesTransport {
     this.targets.set(controller, { instance: input.instanceId, session: input.sessionID })
     const liveSignal = AbortSignal.any([controller.signal, owner.controller.signal])
     const admissionSignal = AbortSignal.any([liveSignal, signal, AbortSignal.timeout(this.deps.readTimeoutMs ?? 8000)])
-    let lease: Awaited<ReturnType<PanelExtensionStore["captureMutationAuthority"]>> | undefined
+    let lease: Awaited<ReturnType<PanelExtensionStore["captureReadAuthority"]>> | undefined
     let admitted = false
     const assertLive = () => { liveSignal.throwIfAborted(); this.assertOwner(owner); lease?.assertCurrent() }
     try {
       await bounded(admissionSignal, async () => {
-        lease = await this.deps.store.captureMutationAuthority(extension, input.digest)
+        lease = await this.deps.store.captureReadAuthority(extension, input.digest)
         if (admissionSignal.aborted) { lease.dispose(); admissionSignal.throwIfAborted() }
       })
       assertLive()
@@ -158,7 +161,7 @@ export class BundlesTransport {
         show: view => { emit({ mountID: mount.mountID, view }) }, changed: change => {
           mounted.pending = undefined; emit({ mountID: mount.mountID, change })
         } })
-      const mounted: Mounted = { owner, mount, context: { instanceId: input.instanceId, sessionID: input.sessionID, location, connection, authority },
+      const mounted: Mounted = { owner, mount, canManage: lease!.canManage, context: { instanceId: input.instanceId, sessionID: input.sessionID, location, connection, authority },
         dispose: () => {
           if (!this.mounts.delete(mount.mountID)) return
           this.targets.delete(controller)
@@ -177,6 +180,7 @@ export class BundlesTransport {
 
   async manage(request: FastifyRequest, extension: string, input: BundlesManageInput, signal: AbortSignal = AbortSignal.timeout(19_000)): Promise<BundlesAck> {
     const mounted = this.ownedMount(request, extension, input)
+    if (!mounted.canManage) refused()
     try { this.assertMounted(mounted); signal.throwIfAborted() }
     catch (error) { this.lifecycle.budget.take(extension, "manage"); throw error }
     // Direct detach needs a proven specific user click; requests use the trusted confirmation.
@@ -210,6 +214,7 @@ export class BundlesTransport {
     signal.throwIfAborted()
     // Disposal removes authority; navigation must remain able to do it after native/consent staleness.
     if (input.command === "dispose") { mounted.dispose(); return { ok: true } }
+    if (!mounted.canManage) refused()
     if (input.command === "confirm") {
       await this.lifecycle.confirmChecked(mounted.mount, input.planID, signal)
       return { ok: true }
@@ -225,6 +230,24 @@ export class BundlesTransport {
       case "userRemount": this.lifecycle.resetCutoffForUserRemount(extension); mounted.dispose(); break
     }
     return { ok: true }
+  }
+
+  async openDocs(request: FastifyRequest, extension: string, input: { owner: string; mountID: string; integration: string }, signal: AbortSignal) {
+    const mounted = this.ownedMount(request, extension, input)
+    this.assertMounted(mounted); signal.throwIfAborted()
+    if (!this.lifecycle.budget.take(extension, "read")) return { outcome: "busy" as const }
+    const live = AbortSignal.any([signal, mounted.mount.signal])
+    return bounded(live, async () => {
+      const check = () => { live.throwIfAborted(); this.assertMounted(mounted) }
+      await mounted.context.authority.revalidate(); check()
+      const catalog = await this.deps.catalog.read(); check()
+      await mounted.context.authority.revalidate(); check()
+      if (catalog.state === "unavailable") return { outcome: "unavailable" as const }
+      const entry = catalog.catalog.integrations.find(entry => entry.id === input.integration)
+      if (!entry) return { outcome: "invalid" as const }
+      if (!isIntegrationDocsUrl(entry.docs, entry.id)) return { outcome: "unavailable" as const }
+      return { outcome: "ready" as const, url: entry.docs }
+    })
   }
 
   private invalidate(event: WorkspaceEventPayload): void {
