@@ -26,8 +26,8 @@ import { registerMissionPlaybookRoutes } from "./mission-playbooks"
 import { MissionMapMutationError, prepareMissionMapMutation } from "./mission-map-mutation"
 import type { AuthManager } from "../../auth/manager"
 import type { RemoteControlManager } from "../../remote-control/manager"
-import { MISSION_PANEL_PAGE_BYTES, MISSION_PANEL_REQUEST_BYTES, missionPanelBytes, missionPanelPageRequestSchema,
-  type MissionPanelPageResult } from "../../missions/mission-panel-page"
+import { MISSION_PANEL_PAGE_BYTES, MISSION_PANEL_REQUEST_BYTES, isMissionPanelPageResult, missionPanelBytes,
+  missionPanelPageRequestSchema } from "../../missions/mission-panel-page"
 
 interface MissionRouteDeps {
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"
@@ -81,8 +81,8 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
     const input = missionPanelPageRequestSchema.safeParse(request.body)
     if (!input.success) return reply.code(400).send({ available: false, reason: "invalid-request" })
     return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign }) => {
-      const result = await rpc.panelPage(input.data, call) as MissionPanelPageResult
-      if (missionPanelBytes(result) > MISSION_PANEL_PAGE_BYTES) return foreign()
+      const result: unknown = await rpc.panelPage(input.data, call)
+      if (!isMissionPanelPageResult(result) || missionPanelBytes(result) > MISSION_PANEL_PAGE_BYTES) return foreign()
       const missionID = input.data.source === "tasks" ? input.data.task.missionID : input.data.source === "mission" ? input.data.missionID : undefined
       const field = input.data.source === "mission" ? input.data.field : undefined
       if (result.available && (result.projectID !== projectID || result.source !== input.data.source

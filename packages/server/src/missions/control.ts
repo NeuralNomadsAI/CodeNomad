@@ -191,8 +191,13 @@ export class MissionControl {
     }
     const missionID = request.source === "tasks" ? request.task.missionID : request.missionID
     const view = await this.journal.missionView(missionID)
-    if (!view.mission) return { available: false, reason: "mission-not-found" }
-    const mission = view.mission, header = { ...base, missionID, revision: mission.revision }
+    // These are this range's already-observed facts, independent of project hints and
+    // of which field the caller reads. A damaged reconstruction cannot establish absence.
+    const damage = { discardedEvents: view.discardedEvents, controlUnavailable: Boolean(view.controlUnavailable),
+      notificationUnavailable: Boolean(view.notificationUnavailable), cleanupUnavailable: Boolean(view.cleanupUnavailable) }
+    if (!view.mission) return { available: false, reason: damage.discardedEvents || damage.controlUnavailable
+      || damage.notificationUnavailable || damage.cleanupUnavailable ? "damaged" : "mission-not-found" }
+    const mission = view.mission, header = { ...base, missionID, revision: mission.revision, ...damage }
     if (request.source === "tasks") {
       const page = missionTaskPage(mission, request.task)
       if (request.task.order !== undefined && request.task.order !== page.taskPage.order) return { available: false, reason: "changed" }

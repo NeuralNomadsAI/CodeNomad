@@ -9,12 +9,35 @@ import { parseMissionEvent } from "./journal"
 import type { MissionJsonValue, MissionMap } from "./model"
 import { CODENOMAD_MISSIONS_RPC } from "./rpc"
 import { MISSION_PANEL_PAGE_BYTES, MISSION_PANEL_PAGE_ROWS, MISSION_PANEL_REQUEST_BYTES, missionPanelPage,
-  missionPanelPageRequestSchema, type MissionPanelCursor, type MissionPanelPageRequest, type MissionPanelPageResult } from "./mission-panel-page"
+  isMissionPanelPageResult, missionPanelPageRequestSchema, type MissionPanelCursor, type MissionPanelPageRequest, type MissionPanelPageResult } from "./mission-panel-page"
 
 const valid = new Ajv({ allErrors: true }).compile(CODENOMAD_MISSIONS_RPC.methods.panelPage.output)
 const json = <T>(value: T): T => JSON.parse(JSON.stringify(value))
 // Independent of the production counter: catch character-counting or omitted envelopes.
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8")
+
+test("native alternatives and the shared HTTP validator require complete strict success/refusal shapes", () => {
+  const page = missionPanelPage({ source: "summaries", projectID: "project-1" }, [])
+  assert.ok(page.available)
+  const invalid: unknown[] = [{ available: true }, { available: true, projectID: "project-1", source: "summaries" },
+    { available: false }, { available: false, reason: "unknown" }, { ...page, available: false, reason: "changed" },
+    { ...page, reason: "changed" }, { ...page, version: 2 }, { ...page, extra: true },
+    { ...page, page: {} }, { ...page, page: { ...page.page, next: {} } },
+    { ...page, page: { ...page.page, pieces: [{ index: 0, offset: 0, characters: 1 }] } }]
+  for (const missing of ["version", "projectID", "source", "page"]) {
+    const copy = { ...page } as Record<string, unknown>
+    delete copy[missing]; invalid.push(copy)
+  }
+  for (const value of invalid) {
+    assert.equal(valid(value), false, JSON.stringify(value))
+    assert.equal(isMissionPanelPageResult(value), false, JSON.stringify(value))
+  }
+  for (const value of [page, { available: false, reason: "changed" }, { available: false, reason: "damaged" }]) {
+    assert.ok(valid(value), JSON.stringify(valid.errors))
+    assert.ok(isMissionPanelPageResult(value))
+    assert.ok(bytes(value) <= MISSION_PANEL_PAGE_BYTES)
+  }
+})
 
 /** Exact bounded traversal, including rows wider than a whole response. A failed read
  * supplies nothing to join; the saved cursor may be retried unchanged. */

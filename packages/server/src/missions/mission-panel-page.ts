@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { Exit, Schema, SchemaRepresentation } from "effect"
 import { contentDigest } from "./inspect-view"
 import { missionTaskRequestSchema } from "./mission-compact-map"
 
@@ -37,7 +38,7 @@ export interface MissionPanelPage {
   cleanupUnavailable?: boolean
   page: { digest: string; total: number; pieces: MissionPanelPiece[]; next?: MissionPanelCursor }
 }
-export type MissionPanelPageFailure = { available: false; reason: "invalid-request" | "changed" | "mission-not-found" | "field-not-found" | "invalid-cursor" }
+export type MissionPanelPageFailure = { available: false; reason: "invalid-request" | "changed" | "mission-not-found" | "field-not-found" | "invalid-cursor" | "damaged" }
 export type MissionPanelPageResult = MissionPanelPage | MissionPanelPageFailure
 
 /** UTF-8 bytes on the wire, including JSON escaping and every nested field. */
@@ -102,16 +103,30 @@ export const missionPanelPageInputSchema = {
 } as const
 /** Schemas registered by the native plugin; the handler checks cross-field selectors and bytes. */
 export const missionPanelPageOutputSchema = {
-  type: "object", properties: {
-    available: { type: "boolean" }, version: { type: "integer", const: 1 }, projectID: { type: "string", maxLength: 240 },
+  // Complete alternatives, rather than a union intersected with common root properties:
+  // this is the portable native JSON-Schema form consumed by OpenCode.
+  oneOf: [{ type: "object", properties: {
+    available: { type: "boolean", const: true }, version: { type: "integer", const: 1 }, projectID: { type: "string", maxLength: 240 },
     source: { type: "string", enum: ["summaries", "cleanups", "mission", "tasks"] }, missionID: { type: "string", maxLength: 100 },
     field: { type: "string", maxLength: 64 }, revision: count, discardedEvents: count,
     controlUnavailable: { type: "boolean" }, notificationUnavailable: { type: "boolean" }, cleanupUnavailable: { type: "boolean" },
-    reason: { type: "string", enum: ["invalid-request", "changed", "mission-not-found", "field-not-found", "invalid-cursor"] },
     page: { type: "object", properties: { digest: { type: "string", minLength: 43, maxLength: 43 }, total: count, next: cursor,
       pieces: { type: "array", maxItems: MISSION_PANEL_PAGE_ROWS, items: { type: "object", properties: {
         index: count, offset: count, characters: count, text: { type: "string", maxLength: MISSION_PANEL_PAGE_BYTES },
       }, required: ["index", "offset", "characters", "text"], additionalProperties: false } },
     }, required: ["digest", "total", "pieces"], additionalProperties: false },
-  }, required: ["available"], additionalProperties: false,
+  }, required: ["available", "version", "projectID", "source", "page"], additionalProperties: false },
+  { type: "object", properties: { available: { type: "boolean", const: false },
+    reason: { type: "string", enum: ["invalid-request", "changed", "mission-not-found", "field-not-found", "invalid-cursor", "damaged"] },
+  }, required: ["available", "reason"], additionalProperties: false }],
 } as const
+
+// The same portable schema at the HTTP seam: reject excess fields rather than stripping
+// them, and let the route keep its independent byte and requested-source identity checks.
+const decodePanelPage = Schema.decodeUnknownExit(Schema.toType(SchemaRepresentation.fromJsonSchemaDocument({
+  dialect: "draft-2020-12", schema: missionPanelPageOutputSchema, definitions: {},
+})), { onExcessProperty: "error" })
+
+export function isMissionPanelPageResult(value: unknown): value is MissionPanelPageResult {
+  return Exit.isSuccess(decodePanelPage(value))
+}

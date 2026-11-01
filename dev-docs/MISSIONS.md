@@ -418,8 +418,11 @@ types, byte counter and paginator live in `missions/mission-panel-page.ts`.
   continuation, fits **65,536 UTF-8 bytes of compact JSON** (`MISSION_PANEL_PAGE_BYTES`).
   Each transfer holds at most 50 pieces. Input bodies fit **16,384 bytes**; the route's
   body limit and the plugin's parsed-selector check enforce that separately. Invalid,
-  changed, missing-source and invalid-cursor answers contain only a fixed reason. The
-  HTTP route checks the returned byte count, project, source and mission/field identity;
+  changed, missing-source, damaged-range and invalid-cursor answers contain only a fixed
+  reason. The native output schema uses complete strict success/refusal alternatives:
+  literal `available`, required version/project/source/page on success, required reason
+  on refusal. `isMissionPanelPageResult` validates that same schema at the HTTP seam,
+  rejecting extra properties; the route also checks the byte count, project, source and mission/field identity;
   transport failures use the route's fixed unavailable shape. HTTP headers are outside
   the JSON-body budget.
 - Requests name one source: `summaries`, `cleanups`, `mission` with `missionID` and optional
@@ -427,7 +430,12 @@ types, byte counter and paginator live in `missions/mission-panel-page.ts`.
   including its mission ID). Directory sources use only `readHints`, preserving its
   60-second foreign-write contract. Warm directory traversal reads zero mission ranges,
   including when every mission is open. A mission or task request reads exactly its named
-  range. No source uses the snapshot or the legacy list as a fallback; a plugin without
+  range. Each successful range envelope carries its observation's `discardedEvents`,
+  `controlUnavailable`, `notificationUnavailable` and `cleanupUnavailable`, independently
+  of the field or task selected. These are range-local facts; directory envelopes carry
+  the hints' project aggregate separately. An absent map in a damaged observation refuses
+  `damaged`; a clean absent observation refuses `mission-not-found`.
+  No source uses the snapshot or the legacy list as a fallback; a plugin without
   `panelPage` answers unavailable. Mutation and admission continue through their full reads.
 - The directory contains the same summary and displayed-cleanup rows as the index,
   preserving order, actor session IDs, completion sequences and original cleanup retry
@@ -454,7 +462,13 @@ existing display contract. Consumers adopting this transport key pages by worksp
 project and the complete source selector, retain each page's own revision, and keep a
 failed middle page's cursor for explicit Retry. An unrelated successful page never
 authorizes the failed page's rows. The paginator holds no retained snapshot or polling
-job; it serializes and hashes the chosen collection afresh for each transfer.
+job; it serializes and hashes the chosen collection afresh for each transfer. That work
+is linear in source size per transfer, making a full traversal approximately quadratic
+at a fixed transfer budget, and temporarily holds source rows, serialized strings and
+the joined hash input. Directory pagination performs this synchronous work inside
+`readHints`' project append exclusion; range pagination runs after its range observation
+releases that exclusion. Both use the native host's event-loop thread. The transfer-byte
+bound and retained-cache policy leave those source CPU, memory and append-lane costs visible.
 
 ### Explicit execution controls
 
