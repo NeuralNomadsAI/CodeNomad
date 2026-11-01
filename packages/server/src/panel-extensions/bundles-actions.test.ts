@@ -12,6 +12,9 @@ import { PluginControls } from "../opencode/plugin-controls"
 import { PluginSources } from "../opencode/plugin-sources"
 import { PluginPackages } from "../opencode/plugin-packages"
 import { NativeMutationUncertainError } from "../opencode/native-mutation-authority"
+import { BundlesTransport } from "./bundles-transport"
+import { EventBus } from "../events/bus"
+import { setTimeout as delay } from "node:timers/promises"
 
 function deferred() {
   let resolve!: () => void
@@ -696,6 +699,54 @@ test("confirmation strings contain only bounded safe display fields", async () =
     f.state.title = "x".repeat(500)
     assert.equal((await f.prepare({ action: "update", integration: "fixture", scope: "global" })).display.conversation.length, 120)
   } finally { await f.cleanup() }
+})
+
+test("management attach completes under controlled session latency with bounded reads", { timeout: 25_000 }, async t => {
+  const f = await fixture(true), ready = deferred(), done = deferred(), frames: any[] = []
+  let now = 0, measuring = false, sessions = 0, leases = 0, targets = 0, elapsed = 0, failure: unknown
+  const get = f.context.connection.client.session.get
+  f.context.connection.client.session.get = (async (...args: any[]) => {
+    if (measuring) { sessions++; await delay(10, undefined, { signal: args[1]?.signal }) }
+    return (get as any)(...args)
+  }) as any
+  const lifecycle = new BundlesLifecycle({ now: () => now, setTimeout, clearTimeout: timer => clearTimeout(timer as NodeJS.Timeout) })
+  const transport = new BundlesTransport({ lifecycle, eventBus: new EventBus(), workspaceManager: f.manager, catalog: f.catalog,
+    auth: { getSessionFromRequest: () => ({ sessionId: "human", username: "human" }) },
+    store: { async captureReadAuthority() { return { canManage: true, signal: f.abort.signal,
+      assertCurrent: () => f.abort.signal.throwIfAborted(), async revalidate() { if (measuring) leases++; f.abort.signal.throwIfAborted() }, dispose() {} } } },
+    actions: { accepts: action => f.actions.accepts(action), async prepare(context, action, signal) {
+      const prepared = await f.actions.prepare(context, action, signal)
+      return { ...prepared, async readTarget(signal) { if (measuring) targets++; return prepared.readTarget(signal) },
+        async dispatch(...args) {
+          measuring = true; const start = performance.now()
+          try { await prepared.dispatch(...args) } catch (error) { failure = error; throw error }
+          finally { elapsed = performance.now() - start; measuring = false; done.resolve() }
+        } }
+    } },
+  })
+  const request = {} as any, extension = "test.bundles"
+  transport.openStream(request, {}, text => { const value = JSON.parse(text.split("data: ")[1]); frames.push(value); if (value.view) ready.resolve() })
+  try {
+    const owner = frames[0].owner
+    const mounted = { owner, ...await transport.mount(request, extension,
+      { owner, digest: "a".repeat(64), instanceId: "w", sessionID: "ses_fixture" }, AbortSignal.timeout(1000)) }
+    const ack = await transport.manage(request, extension, { ...mounted, method: "attach", input: { integration: "fixture", offerID: "offer_fixture" } })
+    assert.equal(ack.outcome, "confirming"); if (ack.outcome !== "confirming") return
+    await transport.control(request, extension, { ...mounted, command: "start", requestID: ack.requestID }); await ready.promise
+    const view = frames.find(event => event.view).view
+    await transport.control(request, extension, { ...mounted, command: "displayed", planID: view.planID }); now = 600
+    f.state.rpc.length = 0
+    await transport.control(request, extension, { ...mounted, command: "confirm", planID: view.planID }); await done.promise
+    t.diagnostic(JSON.stringify({ elapsed: Math.round(elapsed), targets, mountChecks: leases / 2, sessions,
+      attach: f.state.rpc.filter(method => method === "attachHost").length, q8: f.state.updates.length }))
+    assert.equal(failure, undefined, "Actual dispatch completes within the unchanged default eight-second service deadline")
+    assert.ok(elapsed < 8_000); assert.ok(targets <= 40, `target reads: ${targets}`)
+    assert.ok(leases / 2 <= 200, `mount checks: ${leases / 2}`); assert.ok(sessions <= 260, `session reads: ${sessions}`)
+    assert.equal(f.state.rpc.filter(method => method === "attachHost").length, 1); assert.equal(f.state.updates.length, 1)
+    assert.equal(f.state.metadata.unrelated, true)
+    await assert.rejects(transport.control(request, extension, { ...mounted, command: "confirm", planID: view.planID }))
+    assert.equal(f.state.updates.length, 1); assert.equal(frames.filter(event => event.change?.requestID === ack.requestID).length, 1)
+  } finally { transport.dispose(); await f.cleanup() }
 })
 
 test("confirmed removal uses the same snapshot revision, exact object entry and shared native writer without status or cleanup", async () => {

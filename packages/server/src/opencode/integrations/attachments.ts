@@ -32,7 +32,7 @@ export interface IntegrationAttachmentsDeps {
   readKernelVersion?: () => Promise<string>
 }
 
-type Context = { workspaceId: string; location: PluginControlLocation; entry: IntegrationCatalogEntry; connection: ServiceConnection; signal: AbortSignal; admission: NativeMutationAdmission }
+type Context = { workspaceId: string; location: PluginControlLocation; entry: IntegrationCatalogEntry; connection: ServiceConnection; signal: AbortSignal; admission: NativeMutationAdmission; hostsRead: boolean }
 type Method = "status" | "hosts" | "attachHost" | "detachHost" | "installHost" | "bindingRead"
 
 /** Fixed catalog RPCs for an owned Location; Q8 stores a reattach hint, with live state owned by the plugin. */
@@ -66,7 +66,7 @@ export class IntegrationAttachments {
     return this.run(workspaceId, integrationId, location, signal, async context => {
       await this.status(context)
       return this.call(context, "hosts", {})
-    }, Boolean(authority), authority)
+    }, Boolean(authority), authority, true)
   }
 
   async bindingRead(workspaceId: string, integrationId: string, location: PluginControlLocation, input: IntegrationRpcValue<"bindingRead.input">, signal?: AbortSignal): Promise<IntegrationBindingResponse> {
@@ -127,7 +127,7 @@ export class IntegrationAttachments {
   }
 
   private async run<T>(workspaceId: string, integrationId: string, location: PluginControlLocation, outer: AbortSignal | undefined,
-    operation: (context: Context) => Promise<T>, readOnlyCatalog = false, authority?: NativeMutationAuthority): Promise<T> {
+    operation: (context: Context) => Promise<T>, readOnlyCatalog = false, authority?: NativeMutationAuthority, hostsRead = false): Promise<T> {
     if (!/^[a-z][a-z0-9-]{0,31}$/.test(integrationId) || location.workspaceID !== undefined
       || !location.directory || location.directory.length > 32_768 || /\p{Cc}/u.test(location.directory)) throw new IntegrationAttachmentError("invalid")
     const timeout = AbortSignal.timeout(this.deps.timeoutMs ?? INTEGRATION_ATTACHMENT_TIMEOUT_MS)
@@ -143,7 +143,8 @@ export class IntegrationAttachments {
         signal.throwIfAborted()
         const connection = await this.deps.workspaceManager.getSharedServiceConnection(workspaceId)
         if (!connection) throw new IntegrationAttachmentError("unavailable")
-        await admission.revalidate()
+        if (hostsRead) admission.assertCurrent()
+        else await admission.revalidate()
         signal.throwIfAborted()
         const [snapshot, catalog] = await Promise.all([this.deps.controls.read(workspaceId, location, signal), this.deps.catalog.read(readOnlyCatalog ? { refresh: false } : undefined)])
         const recognition = recognizeIntegrations(catalog.catalog, snapshot).find(item => item.entry.id === integrationId)
@@ -151,7 +152,7 @@ export class IntegrationAttachments {
         if (recognition.entry.family !== "native") throw new IntegrationAttachmentError("unsupported")
         if (recognition.ambiguous) throw new IntegrationAttachmentError("non-conforming")
         if (recognition.runtime?.state.status !== "active") throw new IntegrationAttachmentError("inactive")
-        const context: Context = { workspaceId, location: snapshot.location, entry: recognition.entry, connection, signal, admission }
+        const context: Context = { workspaceId, location: snapshot.location, entry: recognition.entry, connection, signal, admission, hostsRead }
         await this.authorize(context)
         const result = await operation(context)
         await admission.revalidate()
@@ -165,13 +166,17 @@ export class IntegrationAttachments {
   }
 
   private async authorize(context: Context) {
-    await context.admission.revalidate()
+    // Read-only offer inspection refreshes full authority at entry/return. Mutation
+    // prerequisites retain every full checkpoint, including the Q8 continuation.
+    if (context.hostsRead) context.admission.assertCurrent()
+    else await context.admission.revalidate()
     context.signal.throwIfAborted()
     context.connection.assertCurrent()
     if (context.location.workspaceID !== undefined || !await this.deps.workspaceManager.ownsLocation(
       context.workspaceId, context.location, context.connection.client, context.signal,
     )) throw new IntegrationAttachmentError("forbidden")
-    await context.admission.revalidate()
+    if (context.hostsRead) context.admission.assertCurrent()
+    else await context.admission.revalidate()
     context.signal.throwIfAborted()
     context.connection.assertCurrent()
   }

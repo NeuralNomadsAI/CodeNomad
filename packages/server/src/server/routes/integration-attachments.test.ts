@@ -32,6 +32,7 @@ function harness(options: {
   hostEnv?: NodeJS.ProcessEnv
   readKernelVersion?: () => Promise<string>
   onControls?: () => void | Promise<void>
+  onWrite?: () => void
   catalogEmpty?: boolean
   updateError?: boolean
   guardHintRead?: boolean
@@ -57,6 +58,7 @@ function harness(options: {
         writes.push(input)
         // Native metadata is whole-object replacement, including deletion of omitted keys.
         state.metadata = structuredClone(input.metadata)
+        options.onWrite?.()
       },
     },
     rpc: { call: async (input: { rpcID: string; method: string; input: unknown; location: unknown }) => {
@@ -106,6 +108,64 @@ function harness(options: {
 }
 
 describe("native mutation authority", () => {
+  it("read-only hosts refresh full authority twice while mutation prerequisite checkpoints remain intact", async t => {
+    for (const [action, expected] of [["hosts", 2], ["attach", 37], ["detach", 21], ["installHost", 13]] as const) {
+      const f = harness({ outputs: { installHost: { outcome: "installed" } } }); t.after(() => f.app.close())
+      let checks = 0
+      const guard = { async revalidate() { checks++ }, assertCurrent() {} }
+      if (action === "hosts") await f.attachments.hosts("w", "fixture", { directory: "/work" }, undefined, guard)
+      else if (action === "installHost") await f.attachments.installHost("w", "fixture", { directory: "/work" }, undefined, guard)
+      else if (action === "attach") await f.attachments.attach("w", "fixture", { directory: "/work" }, { sessionID: "ses_fixture", offerID: offer.offerID }, undefined, guard)
+      else await f.attachments.detach("w", "fixture", { directory: "/work" }, { sessionID: "ses_fixture" }, undefined, guard)
+      assert.equal(checks, expected, action)
+    }
+  })
+
+  for (const method of ["status", "hosts"] as const) for (const change of ["target", "revoke", "connection", "ownership", "abort"] as const) {
+    it(`read-only hosts refuses ${change} during ${method} without publishing offers`, async t => {
+      let dirty = false, revoked = false
+      const controller = new AbortController()
+      const f = harness({ onRpc: called => {
+        if (called !== method) return
+        if (change === "target") dirty = true
+        else if (change === "revoke") revoked = true
+        else if (change === "connection") f.state.current = false
+        else if (change === "ownership") f.state.owned = false
+        else controller.abort()
+      } }); t.after(() => f.app.close())
+      const guard = { async revalidate() { if (dirty) throw new Error("asynchronous-only target drift") }, assertCurrent() { if (revoked) throw new Error("revoked") } }
+      await assert.rejects(f.attachments.hosts("w", "fixture", { directory: "/work" }, controller.signal, guard))
+      assert.equal(f.writes.length, 0); assert.ok(!f.calls.some(call => call.method === "attachHost"))
+    })
+  }
+
+  it("asynchronous-only drift during the final metadata read blocks Q8; drift after Q8 remains uncertain with no replay", async t => {
+    for (const stage of ["beforeQ8", "afterQ8"] as const) {
+      let dirty = false
+      const f = harness({ onGet: count => { if (stage === "beforeQ8" && count === 7) dirty = true },
+        onWrite: () => { if (stage === "afterQ8") dirty = true } }); t.after(() => f.app.close())
+      const guard = { async revalidate() { if (dirty) throw new Error("fresh target changed") }, assertCurrent() {} }
+      await assert.rejects(f.attachments.attach("w", "fixture", { directory: "/work" }, { sessionID: "ses_fixture", offerID: offer.offerID }, undefined, guard), NativeMutationUncertainError)
+      assert.equal(f.calls.filter(call => call.method === "attachHost").length, 1)
+      assert.equal(f.writes.length, stage === "beforeQ8" ? 0 : 1)
+      if (stage === "afterQ8") assert.equal(f.state.metadata[key].integration, "fixture", "Authoritative read observes the already-written hint")
+    }
+  })
+
+  it("an authority-bearing attach timeout remains uncertain and a late attached reply cannot write Q8", async t => {
+    let enter!: () => void, release!: () => void
+    const reached = new Promise<void>(resolve => { enter = resolve }), gate = new Promise<void>(resolve => { release = resolve })
+    const f = harness({ timeoutMs: 30, rpc: async method => {
+      if (method === "attachHost") { enter(); await gate; return { outcome: "attached" } }
+      return method === "status" ? status() : { offers: [offer] }
+    } }); t.after(() => { release(); return f.app.close() })
+    const pending = f.attachments.attach("w", "fixture", { directory: "/work" }, { sessionID: "ses_fixture", offerID: offer.offerID }, undefined,
+      { async revalidate() {}, assertCurrent() {} })
+    const rejected = assert.rejects(pending, NativeMutationUncertainError)
+    await reached; await rejected; release(); await new Promise(resolve => setImmediate(resolve))
+    assert.equal(f.calls.filter(call => call.method === "attachHost").length, 1); assert.equal(f.writes.length, 0)
+  })
+
   for (const action of ["attach", "detach", "installHost"] as const) {
     for (const reason of ["expired", "session", "digest", "connection", "stale mount"]) {
       it(`${action} refuses ${reason} authority before catalog, RPC or writes`, async t => {

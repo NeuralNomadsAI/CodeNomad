@@ -522,6 +522,13 @@ the mounted exact package. Operation-specific preparation and dispatch use trust
   A refusal emits `failed`. Cancellation and expiry have their own outcomes. Each accepted
   request emits one terminal event on its captured port, independently of 300-ms state
   invalidations. Submitted work requires reconciliation and fresh consent for a fresh action.
+  The lifecycle owns one fresh `readTarget()` and exact comparison per revalidation;
+  the builder delegates to it and asserts live fences. Target inspection's read-only
+  offer service refreshes mount authority at entry/return and checks live fences
+  and ownership around intermediate IO. Mutation prerequisites and metadata
+  continuations keep full asynchronous revalidation. A post-submission failure,
+  including one after Q8 was written, requires authoritative reconciliation before
+  a fresh explicit action.
 - Sliding budgets are 60 reads and 10 management attempts per extension per minute,
   independent of digest and mount. The channel and bridge keep their shared four-call cap.
   Three cancellations/expirations in 60 seconds trigger five minutes of management `busy`.

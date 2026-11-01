@@ -229,6 +229,17 @@ native work still runs; callers must reconcile rather than replay. Authority-bea
 actions use a non-refreshing catalogue read; WSL host-install refusal precedes even
 that read and installer dispatch.
 
+Read-only `hosts` inspection performs full authority revalidation at entry and
+before returning its validated offers. Its intermediate connection, ownership,
+status and hosts reads retain synchronous cancellation/revocation/connection
+fences and actual ownership reads. This hosts-only path bounds nested target
+inspection; mutation and `bindingRead` prerequisites retain their full checks.
+Every lifecycle authority refresh reads and compares the complete captured target
+once, including the live selected offer, document and runtime provenance. The
+builder delegates that comparison to the lifecycle and asserts its live fences.
+Each invocation owns its checks; never reuse successful authorization across
+requests, actions or connection generations.
+
 ## UI read model
 
 `createIntegrationsStore` (`stores/integrations-store.ts`, reading through `lib/integrations-api.ts`) is the read
@@ -457,6 +468,12 @@ Commands:
   concurrency, Project/WSL refusals, uncertain updates without replay and confidentiality
   across foreign streams, extension projections, metadata and structured diagnostics.
   Its final output names any native-platform or installer cases requiring separate qualification.
+  `--authority-latency` adds cancellation-aware 10-ms session-read latency during
+  attachment dispatch only; dispatch-local measurements report complete target,
+  mount and session reads and Q8 writes within the unchanged eight-second budget.
+  The fake host renews its actual advertisement every three seconds; cleanup joins
+  that worker before source removal or runtime disposal. Confirmation waits fail
+  immediately on an early terminal preparation result.
   `--installation-state` runs the bounded install/activation/update/read projection slice and its private exact-source
   correlation and sentinel checks, leaving full management attachment qualification to the complete command.
 - `node --import tsx scripts/test-integration-fixtures-native.mjs <absolute-cli>`: installs the fake package and

@@ -254,9 +254,8 @@ export class BundlesActions {
         const fenced: NativeMutationAuthority = {
           assertCurrent: () => { signal.throwIfAborted(); context.authority.assertCurrent(); context.connection.assertCurrent(); authority.assertCurrent() },
           revalidate: async () => {
+            // The lifecycle owns the fresh readTarget and exact captured-target comparison.
             await authority.revalidate()
-            const current = await read(signal)
-            if (JSON.stringify(current.target) !== JSON.stringify(initial.target)) stale()
             fenced.assertCurrent()
           },
           onSubmitted: () => {
