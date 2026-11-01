@@ -9,6 +9,8 @@ export const instanceMessages = {
   "panelExtensions.api4.images.conversation": "Bu projenin Görseller konuşmasını açmak veya başlatmak.",
   "panelExtensions.api4.opencode.designAgent": "Bu uzantı etkinken CodeNomad'in Design ajanını ve görsel becerilerini OpenCode'a ekler.",
   "panelExtensions.api4.panel.preferences": "Bu panelin kendi ayarlarını hatırlamak.",
+  "panelExtensions.api4.bundles.read": "OpenCode entegrasyon kataloğunu, bu projedeki durumlarını ve kullanılabilir açık uygulamaları okumak.",
+  "panelExtensions.api4.bundles.manage": "Katalogdaki OpenCode entegrasyonlarını yüklemenizi, güncellemenizi, kaldırmanızı veya etkinleştirmenizi, uygulama bileşenlerini yüklemenizi ve açık bir uygulamayı görüntülenen konuşmaya bağlamanızı istemek. Genel kapsamdan kaldırma diğer projelerdeki konuşmaların bağlantısını kesebilir; CodeNomad uygulamadan önce açık genel onayınızı ister.",
   "panelExtensions.empty": "Yüklü uzantı yok.",
   "panelExtensions.catalog.title": "Çevrimiçi kullanılabilir",
   "panelExtensions.catalog.search": "Uzantı ara",

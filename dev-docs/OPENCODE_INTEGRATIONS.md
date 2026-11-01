@@ -236,6 +236,41 @@ captured identity. An admitted request runs once, and receipts use only the proj
 error. Uncertain errors require checking the application before a fresh action. UI strings live in each locale's
 `integrations.ts`, and public instructions in `docs/help/<locale>/integrations.md#application-installation`.
 
+### Draft panel-extension reads
+
+The API 4 `bundles.read` capability uses the existing catalogue, integration reader and attachment service
+through three fixed routes in `server/routes/panel-extension-bundles.ts`:
+`POST /api/panel-extensions/:id/bundles/catalog`, `bundles/state` and `bundles/hosts` under the same prefix.
+The frame's MessageChannel API is `codenomad.bundles.catalog()`, `state()`, `hosts({ integration })`
+and `onChanged(listener)`; the trusted host supplies the instance, exact installed digest and conversation
+captured at mount. Dedicated strict input/output schemas live in `panel-extensions/bundles-contract.ts`.
+Enabled `bundles.read` consent, exact native session/Location ownership and pinned connection identity are
+checked before and after IO. Keep this adapter on the fixed service methods and catalogue-derived RPC IDs;
+never accept an author-selected session, Location, RPC method, package spec or URL.
+
+The catalogue projection is `{ state, fetchedAt?, integrations }`, with only
+`id`, `displayName`, `family`, `summary`, `app`, `docs` and `catalogStatus` per integration.
+State is `{ catalog: { state, fetchedAt? }, integrations }`; each integration carries only
+`id`, `family`, `configured`, `scopes`, `activation: { global, project, effective }`, optional `version`/`outdated`,
+the runtime `state`, optional `status` and exact-conversation `attachment`. Status projects only `version`,
+host `state`/`partVersion`/`expectedRange`/`appVersion`/`action`, a family-specific connection and
+`legacy_install` notices. Native connections expose only `offers`; other families expose only `state`.
+`attachment` comes exclusively from `bindingRead` and projects `attached` with its safe label, `none` or
+`unknown`. Keep aggregate binding state/counts, foreign sessions, Q8 authority, sources/options, RPC IDs,
+paths, credentials, generations and revisions outside the extension payload. Runtime state comes from
+the existing reader; never invent a `pending` state without a local operation tracker.
+Hosts return `{ offers: [{ offerID, label, document?, appVersion?, protocol }] }` after full native validation
+and safe-display projection.
+
+The read budget is 60 calls per extension in a sliding minute, four in flight and a 19.5 s channel deadline;
+the fifth in-flight call and HTTP 429 report `busy`. Integration/plugin/configuration and exact-session events
+and reconnects coalesce over 300 ms into `{ kind: "state" }` notifications. Navigation, moves/deletion,
+disconnect and unmount invalidate old reads; never poll. `bundles.manage` requires `bundles.read` in the
+manifest and remains reserved in the draft; the current slice A exposes read methods only. Its installation
+sentence includes explicit global consent for detaching other projects' conversations during Global removal.
+See [Panel extensions](PANEL_EXTENSIONS.md#draft-integration-reads) for the boundary.
+The vendored source remains `54d6e5d0f4c22e74d228822fcaaa0912818a8b46`, draft 0.2, spec 0, RPC contract 1.
+
 ## Test fixtures
 
 - `scripts/fixtures/fake-npm-registry.mjs`: `startFakeNpmRegistry()` serves the tarballs passed to

@@ -26,6 +26,7 @@ opening one item's page in the browser. API 4 carries `session.context` plus any
 non-empty subset of a finite permission set used by the independent **Design**
 image companion ([API 4](#api-4)): read-back images of the displayed conversation, their prompts,
 composer prefill, the Images conversation, the Design agent and panel preferences.
+Its draft integration capability adds bounded catalogue, state and application-offer reads.
 
 ## Package layout
 
@@ -65,8 +66,9 @@ HTML, 32 installed extensions, 16 MiB persisted installed-extension store.
   version. This host supports APIs 1 to 4. API 2 requires exactly
   `["session.context", "session.assets.read"]` and API 3 exactly
   `["session.context", "repository.workItems.read"]`; API 4 takes
-  `session.context` plus a non-empty subset of its six permissions, each at most
-  once, in any order. An unsupported major API or unknown permission is
+   `session.context` plus a non-empty subset of its eight permissions, each at most
+   once, in any order; `session.images.prompts` requires `session.images.read` and
+   `bundles.manage` requires `bundles.read`. An unsupported major API or unknown permission is
   rejected, without executing author code, and the catalogue shows it incompatible.
 - Author, name, license and repository are mandatory. Repository must be an HTTPS
   GitHub repository URL, without credentials/query/fragment. Use a real
@@ -228,7 +230,7 @@ Each permission is one capability with fixed methods and one install sentence
 (`panelExtensions.api4.<permission>` in every locale); inspection lists them before
 the trust checkbox, activation grants the whole set and replacement revokes it. The
 bridge defines only the objects of declared permissions, and every server route
-(`server/routes/panel-extension-api4.ts`) checks its own permission on the enabled
+(`server/routes/panel-extension-api4.ts`, `server/routes/panel-extension-bundles.ts`) checks its own permission on the enabled
 exact package before and after IO. Never add a permission registry, generic RPC or partial grant.
 
 | Permission | Frame API | Host authority |
@@ -239,6 +241,8 @@ exact package before and after IO. Never add a permission registry, generic RPC 
 | `images.conversation` | `conversation.status()`, `conversation.open()`, `conversation.startNew()` | the displayed conversation's Location (else the instance's), `images-conversation.ts` |
 | `opencode.designAgent` | none | while enabled, this backend's leases request the Design agent (`opencode/design/demand.ts`) |
 | `panel.preferences` | `preferences.get()`, `preferences.set(object)` | the server profile's store, per extension |
+| `bundles.read` (draft) | `bundles.catalog()`, `bundles.state()`, `bundles.hosts({ integration })`, `bundles.onChanged(listener)` | the conversation captured by the mounted host; fixed integration readers and exact-session `bindingRead` |
+| `bundles.manage` (requires `bundles.read`) | reserved in the draft; current slice A exposes the read methods only | management consent sentence reviewed at installation |
 
 ```js
 const status = await codenomad.images.status()
@@ -330,6 +334,60 @@ await codenomad.preferences.set({ imagesPerTurn: 3 }) // "saved" | "too-large" |
 
 Prompts reach the frame only with their separate permission; an approved author can
 exfiltrate them like API 2 bytes, which the install sentence and the help state.
+
+### Draft integration reads
+
+`bundles.read` defines `codenomad.bundles` through the API 4 MessageChannel.
+The current draft surface consists of `catalog()`, `state()`, `hosts({ integration })`
+and `onChanged(listener)`. `bundles.manage` is reserved; slice A is read-only.
+Installation shows both permissions' full consent sentences when declared, including
+the management sentence's explicit global consent for detaching other projects'
+conversations during Global removal. Each manifest permission is unique and belongs
+to the finite set; APIs 1 to 3 retain their exact tuples.
+
+The dedicated strict schemas in `panel-extensions/bundles-contract.ts` bound inputs
+and projected outputs on both sides of the trusted HTTP adapter. Only these fixed
+routes serve the reads: `POST /api/panel-extensions/:id/bundles/catalog`,
+`POST /api/panel-extensions/:id/bundles/state` and
+`POST /api/panel-extensions/:id/bundles/hosts`.
+The mounted host supplies the instance, installed digest and captured session;
+the frame supplies only the integration ID for `hosts`. Before and after IO, the
+server verifies enabled exact-digest consent, the exact native session in its
+canonical Location, workspace ownership and the pinned connection's current identity.
+Navigation, session movement/deletion, disconnect and unmount fence late results.
+
+```js
+const catalog = await codenomad.bundles.catalog()
+// { state, fetchedAt?, integrations: [{ id, displayName, family, summary, app, docs, catalogStatus }] }
+const state = await codenomad.bundles.state()
+// { catalog: { state, fetchedAt? }, integrations: [{ id, family, configured, scopes,
+//   activation: { global, project, effective }, version?, outdated?, state, status?, attachment? }] }
+const hosts = await codenomad.bundles.hosts({ integration: "blender" })
+// { offers: [{ offerID, label, document?, appVersion?, protocol }] }
+const stop = codenomad.bundles.onChanged(({ kind }) => { /* kind: "state"; re-read on demand */ })
+```
+
+Catalogue state is `fresh`, `stale` or `unavailable`; `fetchedAt` belongs to the
+last valid catalogue. State reads use the integration read model's available
+runtime states. Each `status` contains only `version`, safe host fields
+(`state`, `partVersion`, `expectedRange`, `appVersion`, `action`), the family-specific
+connection projection and `notices` restricted to `legacy_install`. A native
+connection contains only `offers`; other families expose only `state`.
+Attachment is solely the exact conversation's `bindingRead` projection:
+`{ state: "attached", label }`, `{ state: "none" }` or `{ state: "unknown" }`.
+Authoritative `none` comes from a conforming binding read; read failures give
+`unknown`. Session metadata remains a display hint. Keep plugin sources/options,
+RPC IDs, paths, credentials, binding authority, aggregate attachment state/counts
+and foreign sessions outside these projections. Use only actual runtime states;
+never synthesize `pending` without a local operation tracker.
+
+Reads share a sliding limit of 60 calls per extension per minute. The API 4 channel
+allows four in flight, refuses the fifth with `busy` and settles within 19.5 s;
+HTTP 429 becomes `busy`. Relevant integration/plugin/configuration and exact-session
+events plus reconnects coalesce into `{ kind: "state" }` invalidations over 300 ms.
+Readers refresh on demand and notifications; never poll. The integration contract
+pin remains draft 0.2, spec 0, RPC contract 1, as recorded in
+`opencode/integrations/vendor/VENDORED.json`.
 
 ### Sandbox
 

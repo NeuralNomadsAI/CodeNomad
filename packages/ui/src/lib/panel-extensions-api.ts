@@ -7,11 +7,17 @@ import type { AssetTarget, AssetsResult, AssetReadResult } from "../../../server
 import type { GenerationTarget, ImagesResult } from "../../../server/src/opencode/session-pruning/assets-gallery-contract"
 import type { PanelConversationStatus, PanelImagesStatus, PanelPreferencesSetStatus } from "../../../server/src/panel-extensions/contract"
 import type { ImagesConversationRequest, ImagesConversationResponse } from "../../../server/src/server/routes/images-conversation-contract"
+import { bundlesCatalogResultSchema, bundlesStateResultSchema, bundlesHostsResultSchema } from "../../../server/src/panel-extensions/bundles-contract"
+
+export class PanelExtensionBusyError extends Error {
+  constructor() { super("busy"); this.name = "PanelExtensionBusyError" }
+}
 
 async function request<T>(suffix: string, init?: RequestInit): Promise<T> {
   const response = await authenticatedFetch(`${CODENOMAD_API_BASE ?? ""}/api/panel-extensions${suffix}`, {
     ...init, headers: { "Content-Type": "application/json" }, credentials: "include",
   })
+  if (response.status === 429) throw new PanelExtensionBusyError()
   if (!response.ok) throw new Error("Panel extension request failed")
   return response.json()
 }
@@ -20,6 +26,12 @@ const api4 = <T>(id: string, method: string, body: Record<string, unknown>, sign
   request<T>(`/${encodeURIComponent(id)}/${method}`, { method: "POST", body: JSON.stringify(body), signal })
 type Authority = { instanceId: string; id: string; digest: string }
 export const panelExtensionsApi4 = {
+  bundlesCatalog: async ({ id, ...authority }: Authority, sessionID: string, signal: AbortSignal) =>
+    bundlesCatalogResultSchema.parse(await api4<unknown>(id, "bundles/catalog", { ...authority, sessionID }, signal)),
+  bundlesState: async ({ id, ...authority }: Authority, sessionID: string, signal: AbortSignal) =>
+    bundlesStateResultSchema.parse(await api4<unknown>(id, "bundles/state", { ...authority, sessionID }, signal)),
+  bundlesHosts: async ({ id, ...authority }: Authority, sessionID: string, integration: string, signal: AbortSignal) =>
+    bundlesHostsResultSchema.parse(await api4<unknown>(id, "bundles/hosts", { ...authority, sessionID, integration }, signal)),
   images: ({ id, ...authority }: Authority, sessionID: string, cursor: string | undefined, signal: AbortSignal) =>
     api4<ImagesResult>(id, "images", { ...authority, sessionID, cursor }, signal),
   imageRead: ({ id, ...authority }: Authority, sessionID: string, target: AssetTarget, signal: AbortSignal) =>

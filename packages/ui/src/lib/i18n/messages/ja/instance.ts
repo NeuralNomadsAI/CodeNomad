@@ -9,6 +9,8 @@ export const instanceMessages = {
   "panelExtensions.api4.images.conversation": "このプロジェクトの「画像」会話を開くか開始します。",
   "panelExtensions.api4.opencode.designAgent": "この拡張機能が有効な間、CodeNomad の Design エージェントとその画像スキルを OpenCode に追加します。",
   "panelExtensions.api4.panel.preferences": "このパネル独自の設定を記憶します。",
+  "panelExtensions.api4.bundles.read": "OpenCode 統合のカタログ、このプロジェクトでの状態、利用可能な起動中のアプリケーションを読み取ります。",
+  "panelExtensions.api4.bundles.manage": "カタログ内の OpenCode 統合のインストール、更新、削除、有効化、アプリケーション側コンポーネントのインストール、起動中のアプリケーションと表示中の会話の接続を依頼できます。グローバルな削除は他のプロジェクトの会話の接続を解除する場合があり、CodeNomad は実行前に明示的なグローバル同意を求めます。",
   "panelExtensions.empty": "インストール済みの拡張機能はありません。",
   "panelExtensions.catalog.title": "オンラインで利用可能",
   "panelExtensions.catalog.search": "拡張機能を検索",

@@ -9,6 +9,8 @@ export const instanceMessages = {
   "panelExtensions.api4.images.conversation": "פתיחה או התחלה של שיחת התמונות של פרויקט זה.",
   "panelExtensions.api4.opencode.designAgent": "מוסיפה ל-OpenCode את סוכן Design של CodeNomad ואת מיומנויות התמונה שלו כל עוד הרחבה זו מופעלת.",
   "panelExtensions.api4.panel.preferences": "זכירת ההגדרות הייחודיות של לוח זה.",
+  "panelExtensions.api4.bundles.read": "קריאת קטלוג האינטגרציות של OpenCode, מצבן בפרויקט זה והיישומים הפתוחים הזמינים.",
+  "panelExtensions.api4.bundles.manage": "בקשה ממך להתקין, לעדכן, להסיר או להפעיל אינטגרציות OpenCode מהקטלוג, להתקין את הרכיב שלהן ביישום ולחבר יישום פתוח לשיחה המוצגת. הסרה גלובלית עשויה לנתק שיחות בפרויקטים אחרים; CodeNomad מבקש את הסכמתך הגלובלית המפורשת לפני ביצועה.",
   "panelExtensions.empty": "אין הרחבות מותקנות.",
   "panelExtensions.catalog.title": "זמינות ברשת",
   "panelExtensions.catalog.search": "חיפוש הרחבות",

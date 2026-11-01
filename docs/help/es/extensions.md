@@ -55,6 +55,10 @@ Cada reemplazo revoca la activación en todos los proyectos, incluso si la lista
 | `images.conversation` | Abrir o iniciar la conversación Imágenes de este proyecto. |
 | `opencode.designAgent` | Añade el agente Design de CodeNomad y sus habilidades de imagen a OpenCode mientras esta extensión esté activada. |
 | `panel.preferences` | Recordar los ajustes propios de este panel. |
+| `bundles.read` (borrador) | Leer el catálogo de integraciones OpenCode, su estado en este proyecto y las aplicaciones abiertas disponibles. |
+| `bundles.manage` (requiere `bundles.read`) | Reservado en el borrador; la parte A es de solo lectura, sin modificaciones de gestión disponibles. |
+
+El puente de integraciones en borrador expone únicamente el catálogo, el estado, las aplicaciones disponibles y las notificaciones de cambios. La información de vinculación corresponde solo a la conversación mostrada. El permiso de gestión reservado describe solicitudes que requieren confirmación del anfitrión; la eliminación global exige consentimiento global explícito para desvincular conversaciones de otros proyectos. Revise este alcance incluso para un paquete que declare este permiso reservado.
 
 El acceso a recursos sigue al anfitrión/sesión montado actualmente, no a una sesión elegida por el autor. Las referencias locales/remotas pueden enumerarse como no disponibles; la API de recursos no obtiene URL remotas arbitrarias ni abre archivos locales. Cambiar de sesión, desconectar o revocar el consentimiento invalida el acceso anterior.
 

@@ -3,11 +3,13 @@ import { onCleanup } from "solid-js"
 import { assetTargetSchema } from "../../../../server/src/opencode/session-pruning/assets-contract"
 import { generationTargetSchema } from "../../../../server/src/opencode/session-pruning/assets-gallery-contract"
 import { PANEL_EXTENSION_LIMITS } from "../../../../server/src/panel-extensions/contract"
-import { panelExtensionsApi4 } from "../../lib/panel-extensions-api"
+import { bundlesHostsInputSchema } from "../../../../server/src/panel-extensions/bundles-contract"
+import { PanelExtensionBusyError, panelExtensionsApi4 } from "../../lib/panel-extensions-api"
 import { serverEvents } from "../../lib/server-events"
 import { getActiveCatalogLocation } from "../../stores/session-api"
 import { requestComposerFocus } from "../../stores/composer-focus"
 import { resolveImagesConversation, showImagesConversation } from "../../stores/images-conversation"
+import { isIntegrationRefreshEvent } from "../../stores/integrations-store"
 import type { PromptInputApi } from "../prompt-input/types"
 import { assertThumbnailBounds } from "./image-bounds"
 import { thumbnail } from "./assets-channel"
@@ -18,8 +20,9 @@ export const API4_HOST_DEADLINE_MS = 19_500
 const MAX_PENDING = 4, PREFILL_INTERVAL_MS = 1_000, CHANGE_DELAY_MS = 300
 
 const requestSchema = z.object({ type: z.literal("api4:request"), id: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
-  capability: z.enum(["images", "composer", "conversation", "preferences"]), method: z.string().max(32), input: z.unknown() }).strict()
-const grants = { images: "session.images.read", composer: "composer.prefill", conversation: "images.conversation", preferences: "panel.preferences" } as const
+  capability: z.enum(["images", "composer", "conversation", "preferences", "bundles"]), method: z.string().max(32), input: z.unknown() }).strict()
+const grants = new Map<string, string>([["images", "session.images.read"], ["composer", "composer.prefill"], ["conversation", "images.conversation"],
+  ["preferences", "panel.preferences"], ["bundles", "bundles.read"]])
 const empty = z.object({}).strict()
 const listSchema = z.object({ cursor: z.string().max(4096).optional() }).strict()
 const readSchema = z.object({ target: assetTargetSchema, thumbnail: z.boolean() }).strict()
@@ -54,15 +57,19 @@ type Answer = { result: unknown; after?: () => void }
  */
 export function useApi4Channel(props: {
   instanceId: string; id: string; digest: string; permissions: readonly string[]; sessionId: string | null
-  send: (value: unknown) => void; host: Api4Host
+  send: (value: unknown) => void; host: Api4Host; mounted: () => boolean
 }) {
   const pending = new Set<AbortController>()
   const authority = { instanceId: props.instanceId, id: props.id, digest: props.digest }
   const session = props.sessionId && props.sessionId !== "info" ? props.sessionId : null
+  const mountedLocation = getActiveCatalogLocation(props.instanceId).directory
   const granted = (permission: string) => props.permissions.includes(permission)
   let disposed = false, connected = true, nativeConnected = true, nativeGeneration: number | undefined
   let timer: ReturnType<typeof setTimeout> | undefined, changes = { gallery: false, status: false }
-  const current = () => !disposed && connected && nativeConnected && (props.host.activeSessionId() ?? null) === props.sessionId
+  let bundlesTimer: ReturnType<typeof setTimeout> | undefined, sessionAvailable = true
+  const mounted = () => !disposed && props.mounted() && (props.host.activeSessionId() ?? null) === props.sessionId
+  const current = () => mounted() && connected && nativeConnected
+  const bundlesCurrent = () => current() && sessionAvailable && getActiveCatalogLocation(props.instanceId).directory === mountedLocation
   const abort = () => { for (const request of pending) request.abort() }
   const invalidate = (gallery: boolean, status: boolean) => {
     if (disposed || !granted("session.images.read")) return
@@ -71,35 +78,61 @@ export function useApi4Channel(props: {
       timer = undefined
       const detail = changes
       changes = { gallery: false, status: false }
-      if (!disposed && connected && nativeConnected) props.send({ type: "images:changed", ...detail })
+      if (current()) props.send({ type: "images:changed", ...detail })
     }, CHANGE_DELAY_MS)
   }
-  onCleanup(serverEvents.on("instance.event", payload => {
+  const invalidateBundles = () => {
+    if (disposed || !granted("bundles.read")) return
+    bundlesTimer ??= setTimeout(() => {
+      bundlesTimer = undefined
+      if (current()) props.send({ type: "bundles:changed", kind: "state" })
+    }, CHANGE_DELAY_MS)
+  }
+  const releases = [serverEvents.on("instance.event", payload => {
     if (payload.type !== "instance.event" || payload.instanceId !== props.instanceId) return
     const event = payload.event as { type?: string; data?: { sessionID?: string } }
     const type = event.type ?? ""
     const own = Boolean(session) && event.data?.sessionID === session
     if (own && GALLERY_EVENTS.has(type)) invalidate(true, type === "session.updated" || type === "session.moved")
     else if (STATUS_EVENTS.has(type)) invalidate(false, true)
-  }))
-  onCleanup(serverEvents.on("instance.eventStatus", event => {
+    if (isIntegrationRefreshEvent(type) || type === "server.connected" || (own && ["session.updated", "session.moved", "session.deleted"].includes(type))) invalidateBundles()
+    if ((own && (type === "session.moved" || type === "session.deleted")) || type === "server.connected") abort()
+    if (own && type === "session.deleted") sessionAvailable = false
+  }), serverEvents.on("instance.eventStatus", event => {
     if (event.type !== "instance.eventStatus" || event.instanceId !== props.instanceId) return
     nativeConnected = event.status === "connected"
     if (!nativeConnected || nativeGeneration !== event.generation) abort()
     nativeGeneration = event.generation
-    if (nativeConnected) invalidate(true, true)
-  }))
-  onCleanup(serverEvents.onTransportStatus(status => {
+    if (nativeConnected) { invalidate(true, true); invalidateBundles() }
+  }), serverEvents.onTransportStatus(status => {
     connected = status === "connected"
     if (!connected) abort()
-    else invalidate(true, true)
-  }))
-  onCleanup(() => { disposed = true; clearTimeout(timer); abort(); pending.clear() })
+    else { invalidate(true, true); invalidateBundles() }
+  }), serverEvents.onOpen(() => { abort(); invalidateBundles() })]
+  const dispose = () => { disposed = true; clearTimeout(timer); clearTimeout(bundlesTimer); abort(); pending.clear(); releases.splice(0).forEach(release => release()) }
+  onCleanup(dispose)
 
   const location = () => getActiveCatalogLocation(props.instanceId).directory
   // Frame-supplied names select only these own entries (Maps, never property lookups on objects).
   const table = (entries: Record<string, (input: unknown, signal: AbortSignal) => Promise<Answer>>) => new Map(Object.entries(entries))
-  const methods = new Map<keyof typeof grants, Map<string, (input: unknown, signal: AbortSignal) => Promise<Answer>>>(Object.entries({
+  const methods = new Map<string, Map<string, (input: unknown, signal: AbortSignal) => Promise<Answer>>>(Object.entries({
+    bundles: table({
+      catalog: async (input, signal) => {
+        empty.parse(input)
+        if (!session || !bundlesCurrent()) throw new Error("Bundles unavailable")
+        return { result: await panelExtensionsApi4.bundlesCatalog(authority, session, signal) }
+      },
+      state: async (input, signal) => {
+        empty.parse(input)
+        if (!session || !bundlesCurrent()) throw new Error("Bundles unavailable")
+        return { result: await panelExtensionsApi4.bundlesState(authority, session, signal) }
+      },
+      hosts: async (input, signal) => {
+        const { integration } = bundlesHostsInputSchema.parse(input)
+        if (!session || !bundlesCurrent()) throw new Error("Bundles unavailable")
+        return { result: await panelExtensionsApi4.bundlesHosts(authority, session, integration, signal) }
+      },
+    }),
     images: table({
       status: async (input, signal) => {
         empty.parse(input)
@@ -148,7 +181,7 @@ export function useApi4Channel(props: {
         return { result: (await panelExtensionsApi4.preferencesSet(authority, value, signal)).status }
       },
     }),
-  }) as Array<[keyof typeof grants, Map<string, (input: unknown, signal: AbortSignal) => Promise<Answer>>]>)
+  }))
 
   async function conversation(mode: "open" | "new", signal: AbortSignal): Promise<Answer> {
     const result = await resolveImagesConversation(props.instanceId, mode,
@@ -188,7 +221,7 @@ export function useApi4Channel(props: {
     return { result: "added" }
   }
 
-  return async (value: unknown) => {
+  const receive = async (value: unknown) => {
     const parsed = requestSchema.safeParse(value)
     if (!parsed.success || disposed) return
     const { id, capability, method, input } = parsed.data
@@ -199,21 +232,23 @@ export function useApi4Channel(props: {
       settled = true
       clearTimeout(deadline)
       pending.delete(controller)
-      if (!disposed && (props.host.activeSessionId() ?? null) === props.sessionId) props.send({ type: "api4:result", id, ...message })
+      if (mounted()) props.send({ type: "api4:result", id, ...message })
       return true
     }
     const deadline = setTimeout(() => { controller.abort(new Error("Deadline")); answer({ error: true }) }, API4_HOST_DEADLINE_MS)
     try {
       const run = methods.get(capability)?.get(method)
-      if (!granted(grants[capability]) || typeof run !== "function" || !connected || !nativeConnected || pending.size >= MAX_PENDING) throw new Error("Unavailable")
+      if (!granted(grants.get(capability)!) || typeof run !== "function" || !current()) throw new Error("Unavailable")
+      if (pending.size >= MAX_PENDING) throw new PanelExtensionBusyError()
       pending.add(controller)
       const { result, after } = await run(input, controller.signal)
-      if (!current() || controller.signal.aborted) throw new Error("Stale")
+      if (!current() || controller.signal.aborted || (capability === "bundles" && !bundlesCurrent())) throw new Error("Stale")
       // Host actions that remove the frame (navigation, closing the phone panel) wait one
       // task, so the frame handles its answer first. Only host functions, never a string.
       if (answer({ result }) && typeof after === "function") setTimeout(() => after(), 0)
-    } catch {
-      answer({ error: true })
+    } catch (error) {
+      answer({ error: capability === "bundles" && error instanceof PanelExtensionBusyError ? "busy" : true })
     }
   }
+  return Object.assign(receive, { dispose })
 }

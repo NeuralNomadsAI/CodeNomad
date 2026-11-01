@@ -55,6 +55,10 @@ Jeder Ersatz widerruft die Aktivierung in allen Projekten, selbst bei unverände
 | `images.conversation` | Die Bilder-Unterhaltung dieses Projekts öffnen oder starten. |
 | `opencode.designAgent` | Fügt OpenCode den Design-Agenten von CodeNomad und seine Bild-Skills hinzu, solange diese Erweiterung aktiviert ist. |
 | `panel.preferences` | Die eigenen Einstellungen dieses Panels speichern. |
+| `bundles.read` (Entwurf) | Den Katalog der OpenCode-Integrationen, ihren Zustand in diesem Projekt und verfügbare geöffnete Anwendungen lesen. |
+| `bundles.manage` (benötigt `bundles.read`) | Im Entwurf reserviert; Teil A ist schreibgeschützt, ohne verfügbare Verwaltungsänderungen. |
+
+Die Integrationsbrücke im Entwurf bietet ausschließlich Katalog, Zustand, verfügbare Anwendungen und Änderungsbenachrichtigungen. Verbindungsinformationen betreffen allein die angezeigte Unterhaltung. Die reservierte Verwaltungsberechtigung beschreibt Anfragen mit Bestätigung durch den Host; globales Entfernen erfordert ausdrückliche globale Zustimmung zum Trennen von Unterhaltungen anderer Projekte. Prüfen Sie diesen Umfang auch bei einem Paket, das diese reservierte Berechtigung deklariert.
 
 Asset-Zugriff folgt dem aktuell eingebundenen Host/der Sitzung, nicht einer vom Autor ausgewählten Sitzung. Lokale/entfernte Referenzen können als nicht verfügbar erscheinen; die Asset-API lädt keine beliebigen entfernten URLs und öffnet keine lokalen Dateien. Sitzungswechsel, Trennung oder Zustimmungswiderruf macht alten Zugriff ungültig.
 

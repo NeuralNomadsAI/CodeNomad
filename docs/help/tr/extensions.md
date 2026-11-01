@@ -55,6 +55,10 @@ Paketin her değiştirilmesi, izin listesi değişmese bile tüm projelerde etki
 | `images.conversation` | Bu projenin Görseller konuşmasını açmak veya başlatmak. |
 | `opencode.designAgent` | Bu uzantı etkinken CodeNomad'in Design ajanını ve görsel becerilerini OpenCode'a ekler. |
 | `panel.preferences` | Bu panelin kendi ayarlarını hatırlamak. |
+| `bundles.read` (taslak) | OpenCode entegrasyon kataloğunu, bu projedeki durumlarını ve kullanılabilir açık uygulamaları okumak. |
+| `bundles.manage` (`bundles.read` gerektirir) | Taslakta ayrılmıştır; A dilimi salt okunurdur, yönetim değişiklikleri kullanılamaz. |
+
+Taslak entegrasyon köprüsü yalnızca katalog, durum, kullanılabilir uygulamalar ve değişiklik bildirimlerini sunar. Bağlantı bilgisi yalnızca görüntülenen konuşmayla ilgilidir. Ayrılmış yönetim izni, ana bilgisayarın onayını gerektiren istekleri tanımlar; Genel kapsamdan kaldırarak diğer projelerdeki konuşmaların bağlantısını kesmek için açık genel onay gerekir. Bu ayrılmış izni bildiren bir paket için de bu kapsamı inceleyin.
 
 Varlık erişimi, yazarın seçtiği bir oturumu değil, halihazırda bağlı olan ana bilgisayarı/oturumu takip eder. Yerel/uzak referanslar mevcut değil olarak listelenebilir; API varlığı rastgele uzak URL'ler getirmez veya yerel dosyaları açmaz. Oturumları değiştirmek, bağlantıyı kesmek veya izni iptal etmek eski erişimi geçersiz kılar.
 

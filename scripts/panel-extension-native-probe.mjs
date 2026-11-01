@@ -19,12 +19,15 @@ const API4_FRAME_METHODS = {
   "images.conversation": { conversation: ["status", "open", "startNew"] },
   "opencode.designAgent": {},
   "panel.preferences": { preferences: ["get", "set"] },
+  "bundles.read": { bundles: ["catalog", "state", "hosts"] },
+  "bundles.manage": {},
 }
 const LEGACY_FRAME_METHODS = { 1: {}, 2: { assets: ["list", "read"] }, 3: { workItems: ["list", "open"] } }
-const LISTENERS = { 2: { assets: ["onChanged"] }, 4: { images: ["onChanged"] } }
+const LISTENERS = { 2: { assets: ["onChanged"] }, 4: { images: ["onChanged"], bundles: ["onChanged"] } }
 const ARGS = {
   "assets.read": ["probe-target", { thumbnail: true }], "workItems.list": [{ kind: "issue" }], "workItems.open": ["issue", 1],
   "images.read": ["probe-target", { thumbnail: true }], "composer.prefill": [{ text: "probe" }], "preferences.set": [{ probe: true }],
+  "bundles.hosts": [{ integration: "blender" }],
 }
 
 export const MODES = ["real", "same-origin", "no-csp"]
@@ -54,7 +57,7 @@ function frameMethods(apiVersion, permissions) {
 // Author code: identity, reachability, native and network attempts, then each declared method once.
 function authorHtml({ leakBase, methods, apiVersion }) {
   return `<h1>Native probe</h1><script>
-  const results = { origin: self.origin, parentDocument: 'unknown', native: {}, globals: {}, leaks: {}, api: {}, surface: null, context: null, changed: null, errors: [] };
+  const results = { origin: self.origin, parentDocument: 'unknown', native: {}, globals: {}, leaks: {}, api: {}, surface: null, context: null, changed: null, bundlesChanged: null, errors: [] };
   try { void parent.document.title; results.parentDocument = 'reachable'; } catch { results.parentDocument = 'blocked'; }
   for (const [name, read] of Object.entries({
     __TAURI_INTERNALS__: () => window.__TAURI_INTERNALS__, __TAURI__: () => window.__TAURI__, electronAPI: () => window.electronAPI,
@@ -119,6 +122,7 @@ function authorHtml({ leakBase, methods, apiVersion }) {
   const fired = Date.now();
   if (${apiVersion} === 2) codenomad.assets.onChanged(() => { results.changed = 'called'; });
   if (${apiVersion} === 4 && codenomad.images) codenomad.images.onChanged(detail => { results.changed = detail; });
+  if (${apiVersion} === 4 && codenomad.bundles) codenomad.bundles.onChanged(detail => { results.bundlesChanged = detail; });
   const methods = ${JSON.stringify(methods)}, args = ${JSON.stringify(ARGS)};
   let started = false;
   codenomad.onContext(async context => {
@@ -161,6 +165,7 @@ function hostPage({ mode, srcdoc, sandbox, apiVersion }) {
         channel.port1.postMessage({ type: 'context', context: { apiVersion: ${apiVersion}, sessionId: 'native-session', locale: 'en', appearance: 'light' } });
         if (${apiVersion} === 2) channel.port1.postMessage({ type: 'assets:changed' });
         if (${apiVersion} === 4) channel.port1.postMessage({ type: 'images:changed', gallery: true, status: false });
+        if (${apiVersion} === 4) channel.port1.postMessage({ type: 'bundles:changed', kind: 'state' });
       } else unexpected.push(data?.type ?? typeof data);
     };
     frame.contentWindow.postMessage({ type: 'codenomad:init' }, '*', [channel.port2]);
@@ -241,6 +246,7 @@ export function probeViolations(outcome) {
   if (sorted(child.surface) !== sorted(surface)) fail("api", `frame surface ${JSON.stringify(child.surface)}, expected ${JSON.stringify(surface)}`)
   const change = outcome.apiVersion === 4 ? { gallery: true, status: false } : outcome.apiVersion === 2 ? "called" : null
   if (JSON.stringify(child.changed) !== JSON.stringify(change)) fail("api", `change notification ${JSON.stringify(child.changed)}`)
+  if (JSON.stringify(child.bundlesChanged) !== JSON.stringify(outcome.apiVersion === 4 ? { kind: "state" } : null)) fail("api", `bundles notification ${JSON.stringify(child.bundlesChanged)}`)
   return violations
 }
 

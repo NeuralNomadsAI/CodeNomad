@@ -55,6 +55,10 @@ Chaque remplacement révoque l’activation dans tous les projets, même si les 
 | `images.conversation` | Ouvrir ou démarrer la conversation Images de ce projet. |
 | `opencode.designAgent` | Ajoute l’agent Design de CodeNomad et ses compétences d’image à OpenCode tant que cette extension est activée. |
 | `panel.preferences` | Mémoriser les réglages propres à ce panneau. |
+| `bundles.read` (brouillon) | Peut lire le catalogue des intégrations OpenCode, leur état dans ce projet et les applications ouvertes disponibles. |
+| `bundles.manage` (nécessite `bundles.read`) | Réservée dans le brouillon ; la tranche A est en lecture seule, sans mutation de gestion disponible. |
+
+Le pont d’intégrations en brouillon expose uniquement le catalogue, l’état, les applications disponibles et les notifications de changement. L’attachement concerne seulement la conversation affichée. La permission de gestion réservée décrit des demandes soumises à confirmation par l’hôte ; un retrait Global exige un consentement global explicite pour détacher des conversations d’autres projets. Examinez cette portée même pour un paquet qui déclare cette permission réservée.
 
 L’accès aux ressources suit l’hôte/la session actuellement monté, pas une session choisie par l’auteur. Des références locales/distantes peuvent être listées comme indisponibles ; l’API de ressources ne récupère pas d’URL distantes arbitraires et n’ouvre pas de fichiers locaux. Changer de session, déconnecter ou révoquer le consentement invalide l’ancien accès.
 

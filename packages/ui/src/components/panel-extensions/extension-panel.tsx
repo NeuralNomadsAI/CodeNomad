@@ -27,10 +27,11 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
   const authority = { instanceId: props.instanceId, id: props.entry.manifest.id, digest: props.entry.digest, send }
   // Each API version carries exactly its own capabilities; API 4 only those its manifest declares.
   const manifest = props.entry.manifest
+  const api4 = manifest.apiVersion === 4 ? useApi4Channel({ ...authority, permissions: manifest.permissions,
+    sessionId: props.context.sessionId, host: props.host, mounted: () => !disposed && authenticated && props.entry.digest === authority.digest }) : undefined
   const receive = manifest.apiVersion === 2 ? useAssetsChannel({ ...authority, sessionId: () => props.context.sessionId })
     : manifest.apiVersion === 3 ? useWorkItemsChannel(authority)
-      : manifest.apiVersion === 4 ? useApi4Channel({ ...authority, permissions: manifest.permissions, sessionId: props.context.sessionId, host: props.host })
-        : () => {}
+      : api4 ?? (() => {})
   void panelExtensionsApi.panel(props.instanceId, manifest.id, props.entry.digest, controller.signal).then(result => {
     if (!disposed) setDocument(panelExtensionDocument(result.html, handshake, manifest.apiVersion, manifest.permissions))
   }).catch(() => { if (!disposed) setFailed(true) })
@@ -48,10 +49,10 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
   const palette = new MutationObserver(publish)
   palette.observe(globalThis.document.documentElement, { attributes: true, attributeFilter: ["style", "data-theme", "data-color-scheme"] })
   onCleanup(() => palette.disconnect())
-  onCleanup(() => { disposed = true; controller.abort(); port?.close() })
+  onCleanup(() => { disposed = true; api4?.dispose(); controller.abort(); port?.close() })
   const loaded = () => {
     // Never reconnect the capability channel after self-navigation/reload.
-    if (initialized) { authenticated = false; port?.close(); setDocument(undefined); setFailed(true); return }
+    if (initialized) { authenticated = false; api4?.dispose(); port?.close(); setDocument(undefined); setFailed(true); return }
     initialized = true
     const channel = new MessageChannel()
     port = channel.port1
