@@ -16,7 +16,8 @@ const WINDOWS_SESSION_END_TIMEOUT: Duration = Duration::from_secs(5);
 struct PendingClose {
     window_id: String,
     generation: u64,
-    persisted: bool,
+    /// False for an unpersisted window and for the last user window, whose saved state stays.
+    removes_state: bool,
 }
 
 #[cfg(windows)]
@@ -63,7 +64,12 @@ pub(crate) struct ShutdownCoordinator {
 }
 
 impl ShutdownCoordinator {
-    fn begin_local_close(&self, label: String, window_id: String, persisted: bool) -> Option<u64> {
+    fn begin_local_close(
+        &self,
+        label: String,
+        window_id: String,
+        removes_state: bool,
+    ) -> Option<u64> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if state.shutdown_started
             || state.local_closes.contains_key(&label)
@@ -79,7 +85,7 @@ impl ShutdownCoordinator {
             PendingClose {
                 window_id,
                 generation,
-                persisted,
+                removes_state,
             },
         );
         Some(generation)
@@ -454,14 +460,22 @@ impl ShutdownCoordinator {
     }
 }
 
+/// The loading page and the server's sign-in and pairing pages never run the application, so
+/// nothing there would answer a flush: waiting for one would keep the window from closing and
+/// CodeNomad from quitting. An unreadable address still asks.
+fn awaits_renderer_flush(url: Option<&tauri::Url>) -> bool {
+    url.map_or(true, |url| !crate::is_listenerless_document(url))
+}
+
 fn emit_flush(app: &AppHandle, label: &str, generation: u64) -> bool {
     app.get_webview(label).is_some_and(|webview| {
-        webview
-            .emit(
-                "client-state:flush-requested",
-                client_state::RendererFlushRequest { generation },
-            )
-            .is_ok()
+        awaits_renderer_flush(webview.url().ok().as_ref())
+            && webview
+                .emit(
+                    "client-state:flush-requested",
+                    client_state::RendererFlushRequest { generation },
+                )
+                .is_ok()
     })
 }
 
@@ -484,10 +498,13 @@ pub(crate) fn request_local_window_close(app: AppHandle, label: String) {
     let Some(record) = app.state::<LocalWindows>().record(&label) else {
         return;
     };
+    let removes_state = app
+        .state::<LocalWindows>()
+        .has_other_user_window(&label, |other| local_window_close_in_flight(&app, other));
     let Some(generation) = app.state::<ShutdownCoordinator>().begin_local_close(
         label.clone(),
         record.id.clone(),
-        record.persisted,
+        record.persisted && removes_state,
     ) else {
         return;
     };
@@ -545,12 +562,7 @@ fn finish_local_close(app: AppHandle, label: String, window_id: String, generati
 }
 
 fn renderer_labels(app: &AppHandle) -> Vec<String> {
-    let mut labels = app
-        .state::<LocalWindows>()
-        .records()
-        .into_iter()
-        .map(|record| record.label)
-        .collect::<Vec<_>>();
+    let mut labels = app.state::<LocalWindows>().user_window_labels();
     if app.get_webview_window(crate::preferences_window::LABEL).is_some()
         && app.state::<crate::preferences_window::PreferencesWindow>().renderer_ready()
     {
@@ -724,7 +736,7 @@ pub(crate) fn consume_local_window_close(app: &AppHandle, label: &str) -> Option
     let pending = app
         .state::<ShutdownCoordinator>()
         .take_committed_local_close(label)?;
-    if !pending.persisted {
+    if !pending.removes_state {
         app.state::<ShutdownCoordinator>()
             .approve_local_close(label.to_string());
         return Some(true);

@@ -132,6 +132,7 @@ export interface UiSettings {
   showProviderUsageCreditBalance: boolean
   autoCleanupBlankSessions: boolean
   keepUnseenSubagentIdleStatus: boolean
+  autoExpandActiveSubsessions: boolean
   focusExistingWindowOnSecondLaunch: boolean
   modelVisibility: ModelVisibilityPreferences
   missionProfileDefaults: MissionProfileDefault[]
@@ -247,6 +248,7 @@ const defaultUiSettings: UiSettings = {
   showProviderUsageCreditBalance: false,
   autoCleanupBlankSessions: true,
   keepUnseenSubagentIdleStatus: true,
+  autoExpandActiveSubsessions: true,
   focusExistingWindowOnSecondLaunch: false,
   modelVisibility: {},
   missionProfileDefaults: [],
@@ -373,6 +375,8 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
     keepUnseenSubagentIdleStatus:
       sanitized.keepUnseenSubagentIdleStatus ?? defaultUiSettings.keepUnseenSubagentIdleStatus,
+    autoExpandActiveSubsessions: typeof sanitized.autoExpandActiveSubsessions === "boolean"
+      ? sanitized.autoExpandActiveSubsessions : defaultUiSettings.autoExpandActiveSubsessions,
     focusExistingWindowOnSecondLaunch: sanitized.focusExistingWindowOnSecondLaunch === true,
     modelVisibility: normalizeModelVisibilityPreferences(sanitized.modelVisibility),
     missionProfileDefaults: normalizeMissionDefaults(sanitized.missionProfileDefaults),
@@ -1354,6 +1358,7 @@ void ensureLoaded().catch((error: unknown) => {
 
 interface ConfigContextValue {
   isLoaded: Accessor<boolean>
+  ensureLoaded: typeof ensureLoaded
   isUiConfigLoaded: typeof isUiConfigLoaded
   uiConfigLoadFailed: typeof uiConfigLoadFailed
   missionDefaultsValid: typeof missionDefaultsValid
@@ -1440,6 +1445,7 @@ const ConfigContext = createContext<ConfigContextValue>()
 
 const configContextValue: ConfigContextValue = {
   isLoaded,
+  ensureLoaded,
   isUiConfigLoaded,
   uiConfigLoadFailed,
   missionDefaultsValid,

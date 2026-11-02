@@ -724,6 +724,7 @@ test("refresh events during a read coalesce into a trailing check before reporti
   const page = await browser.newPage()
   let held = false, reads = 0, release!: () => void
   await page.route("**/api/**", async route => {
+    if (new URL(route.request().url()).pathname !== "/api/opencode/update") return route.fulfill({ json: healthyStatus })
     const stale = held
     if (held) {
       reads++
@@ -741,6 +742,8 @@ test("refresh events during a read coalesce into a trailing check before reporti
     assert.ok(release)
     await page.evaluate(() => { for (let i = 0; i < 10; i++) void (window as any).fixture.refresh() })
     held = false; release()
+    // Auth/SSE and Settings reads are independent of the status lane under test.
+    await page.evaluate(() => fetch("/api/auth/status"))
     await page.getByText("Status and update check complete.", { exact: true }).waitFor()
     await page.getByText("OpenCode is not connected.", { exact: true }).waitFor()
     assert.equal(reads, 2, "a burst queues one follow-up rather than losing the event or issuing ten checks")

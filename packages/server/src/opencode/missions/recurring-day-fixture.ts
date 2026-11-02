@@ -131,6 +131,7 @@ export class RecurringDayFixture {
       CREATE TABLE event_sequence(aggregate_id TEXT PRIMARY KEY,seq INTEGER,owner_id TEXT);
       CREATE TABLE event(id TEXT PRIMARY KEY,aggregate_id TEXT,seq INTEGER,type TEXT,data TEXT);
       CREATE TABLE session_message(id TEXT PRIMARY KEY,session_id TEXT,type TEXT,data TEXT,seq INTEGER);
+      CREATE TABLE session_part(message_id TEXT,session_id TEXT,ordinal INTEGER,type TEXT,data TEXT);
       CREATE TABLE session_inbox(session_id TEXT,id TEXT,payload TEXT);`)
     const configYamlPath = path.join(this.root, "profile.yaml")
     await writeFile(configYamlPath, "server:\n  environmentVariables: {}\n")
@@ -275,7 +276,11 @@ export class RecurringDayFixture {
     const unusedDomains = Object.fromEntries(["agent", "aisdk", "command", "credential", "experimental", "generate", "model", "provider",
       "integration", "mcp", "plugin", "permission", "reference", "skill", "vcs", "websearch", "worktree", "shell"]
       .map(name => [name, unsupported(name)]))
-    const host = new Proxy({ ...unusedDomains, location, storage, rpc, session: { ...native,
+    const host = new Proxy({ ...unusedDomains, location, storage, rpc,
+      // This daily-only fixture registers the real product hooks; no technical
+      // model is resolved in these journeys, so AISDK only owns registration.
+      aisdk: { hook: () => Effect.sync(registration) }, session: { ...native,
+      instructions: unsupported("session.instructions"),
       get: (input: { sessionID: string }) => native.get(input.sessionID),
       interrupt: (input: { sessionID: string }) => Effect.sync(() => { this.idle(input.sessionID); return { interrupted: true } }),
       hook: (_name: string, callback: (event: unknown) => Effect.Effect<unknown, unknown>) => Effect.sync(() => { this.hooks.push(callback); return registration() }),
@@ -359,7 +364,8 @@ export class RecurringDayFixture {
   }
   get sessions(): SessionInfo[] { return this.db.prepare("SELECT info FROM fixture_session").all().map(row => Schema.decodeUnknownSync(Session.Info)(JSON.parse(String(row.info)))) }
   get coordinators() { return this.sessions.filter(s => !s.parentID && !(this.config.watchedConversationIDs as string[]).includes(s.id)) }
-  get starts(): MessageInfo[] { return this.db.prepare("SELECT data FROM session_message WHERE type IN ('user','synthetic')").all().map(row => Schema.decodeUnknownSync(SessionMessage.Info)(JSON.parse(String(row.data)))) }
+  get starts(): MessageInfo[] { return this.db.prepare(`SELECT m.data FROM session_message m JOIN session_v2 s ON s.id=m.session_id
+    WHERE s.parent_id IS NULL AND m.type IN ('user','synthetic')`).all().map(row => Schema.decodeUnknownSync(SessionMessage.Info)(JSON.parse(String(row.data)))) }
   private session(id: string): SessionInfo {
     const row = this.db.prepare("SELECT info FROM fixture_session WHERE id=?").get(id)
     if (!row) throw new Error(`Native session missing: ${id}`)
@@ -455,6 +461,10 @@ export class RecurringDayFixture {
     for (const name of ["read", "shell"]) { assert(name in available, `${name} cannot be whitelisted away`); this.calls.push({ name, sessionID: coordinator.id }) }
     if (options.child) {
       const child = this.createSession({ id: `ses_child_${++this.serial}`, parentID: coordinator.id })
+      const message = Schema.decodeUnknownSync(SessionMessage.Info)({ id: `msg_child_${++this.serial}`, type: "synthetic",
+        text: "Native child task", description: "Child assignment", time: { created: this.now } })
+      this.db.prepare("INSERT INTO session_message VALUES(?,?,?,?,?)").run(message.id, child.id, "synthetic",
+        JSON.stringify(Schema.encodeSync(SessionMessage.Info)(message)), 0)
       this.calls.push({ name: "subagent", sessionID: child.id }); this.idle(child.id)
     }
     if (options.report !== false) {

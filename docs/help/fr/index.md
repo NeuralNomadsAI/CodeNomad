@@ -10,7 +10,7 @@ OpenCode vous donne le moteur. CodeNomad vous donne le cockpit. Il se connecte a
 
 ## Confier le travail de longue haleine aux Missions {#missions}
 
-Décrivez le travail une seule fois. Le coordinateur de la mission le planifie sous forme d’arbre de tâches, délègue des tâches délimitées à des conversations natives OpenCode et rend compte des résultats avec leurs preuves. Exécutez une mission une fois ou chaque jour ; en créer une ne démarre jamais le travail tant que vous ne l’avez pas décidé. Des scénarios couvrent le débogage, la livraison de produit et la comparaison de deux modèles avec un juge à l’aveugle. Voir [Missions](missions.md).
+Décrivez le travail une seule fois. Le coordinateur de la mission le planifie sous forme d’arbre de tâches, délègue des tâches délimitées à des conversations natives OpenCode et rend compte des résultats avec leurs preuves. Exécutez une fois, aux horaires ou intervalles choisis, ou après un changement vérifié du projet ; la création enregistre une Mission en pause que vous démarrez explicitement. Des scénarios couvrent le débogage, la livraison de produit et la comparaison de deux modèles avec un juge à l’aveugle. Voir [Missions](missions.md).
 
 ## Continuer à travailler depuis votre téléphone {#phone-access}
 
@@ -77,7 +77,7 @@ La racine de l’espace de travail limite les dossiers que CodeNomad ouvre ; ce 
 | Travailler avec plusieurs copies de travail et conversations | [Projets](projects.md), [Conversations](conversations.md), [Fichiers](files.md) |
 | Rechercher dans l’historique ou le nettoyer sans risque | [Historique](history.md) |
 | Répondre aux questions et autorisations natives | [Autorisations](permissions.md) |
-| Coordonner un travail délimité ou quotidien | [Missions](missions.md) |
+| Coordonner un travail délimité ou programmé | [Missions](missions.md) |
 | Configurer l’exécution et les intégrations | [OpenCode](opencode.md), [Fournisseurs](providers.md), [Intégrations](integrations.md) |
 | Connecter un autre appareil | [Contrôle à distance](remote-control.md), [Sécurité](security.md), [Mobile](mobile.md) |
 | Adapter l’espace de travail | [Paramètres](settings.md), [Raccourcis](shortcuts.md), [Voix](voice.md), [Extensions](extensions.md) |

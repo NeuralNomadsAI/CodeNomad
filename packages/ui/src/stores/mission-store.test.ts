@@ -24,8 +24,6 @@ const available = (objective: string): MissionListResponse => ({
     actors: [],
     tasks: [],
     reports: [],
-    frontier: [],
-    claims: [],
     createdAt: 1,
     updatedAt: 1,
     revision: 1,
@@ -53,11 +51,12 @@ test("loads durable mission snapshots and represents optional unavailability", a
   })
 })
 
-test("retains authoritative pending cleanup identities across passive failures and replaces them only on a successful read", async () => {
+for (const documentPending of [false, true]) test(`retains authoritative pending cleanup identities across passive failures (document pending: ${documentPending})`, async () => {
   const initial = available("first")
   if (!initial.available) throw new Error("fixture")
   const cleanup = { missionID: "msn_deleted", deletionID: "evt_deleted", requestID: "original-request", expectedRevision: 7,
-    deleteManagedSessions: true, objective: "Deleted mission", removed: 1, retained: 0, pending: 1, reasons: [], createdAt: 1 }
+    deleteManagedSessions: true, objective: "Deleted mission", removed: 1, retained: 0, pending: documentPending ? 0 : 1,
+    documentPending, reasons: [], createdAt: 1 }
   initial.cleanups = [cleanup]
   let fail = false
   const store = createMissionStore(async () => { if (fail) throw new Error("offline"); return initial })
@@ -65,14 +64,17 @@ test("retains authoritative pending cleanup identities across passive failures a
   assert.deepEqual(store.state("instance-1").cleanups, [cleanup])
   fail = true; await store.refresh("instance-1")
   assert.equal(store.state("instance-1").cleanups![0].requestID, "original-request")
-  assert.equal(store.state("instance-1").cleanups![0].pending, 1)
+  assert.equal(store.state("instance-1").cleanups![0].pending, cleanup.pending)
+  assert.equal(store.state("instance-1").cleanups![0].documentPending, documentPending)
   fail = false; initial.cleanups = []; initial.cleanupUnavailable = true
   await store.refresh("instance-1")
-  assert.equal(store.state("instance-1").cleanups![0].pending, 1)
+  assert.equal(store.state("instance-1").cleanups![0].pending, cleanup.pending)
+  assert.equal(store.state("instance-1").cleanups![0].documentPending, documentPending)
   assert.equal(store.state("instance-1").cleanupUnavailable, true)
-  delete initial.cleanupUnavailable; initial.cleanups = [{ ...cleanup, pending: 0, removed: 2 }]
+  delete initial.cleanupUnavailable; initial.cleanups = [{ ...cleanup, pending: 0, removed: 2, documentPending: false }]
   await store.refresh("instance-1")
   assert.equal(store.state("instance-1").cleanups![0].pending, 0)
+  assert.equal(store.state("instance-1").cleanups![0].documentPending, false)
 })
 
 const row = (id: string, status: "active" | "completed" = "completed") => ({ id, objective: id, status, coordinatorSessionId: "session-1",

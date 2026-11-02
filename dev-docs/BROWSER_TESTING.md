@@ -46,6 +46,9 @@ Edits made while a daemon is serving are an accepted blind spot: every run
 binds a fresh daemon, so only a mid-run edit can be missed, and mid-run
 edits are the developer's own signal to restart the run.
 
+The daemon serves the browser's implicit `GET /favicon.ico` as a small PNG.
+Other missing resources retain their HTTP errors and strict browser collectors.
+
 ## Logs, cleanup and platform limits
 
 - A daemon's `daemon.log` lives in `$(tmpdir())/codenomad-fixture-run-*`
@@ -84,3 +87,64 @@ synthetic provider.
 - Tests that need stateful middleware (SSE feeds driven by the test, custom
   Vite transform hooks, configs that diverge from the canonical daemon
   config) keep their own server and live in the heavy tier.
+- Before pointer/keyboard selection in a Monaco diff, wait for its computed
+  diff decoration (`.line-insert` in the Git fixture), then locate the line.
+  Plain model text can paint before the worker result inserts deleted-code view
+  zones. `git-history.test.ts` holds a real worker reply and defers Monaco's
+  repaint to exercise that geometry change with native pointer checks intact.
+  Its main-world DOM readiness probe releases the reply and repaint; a direct
+  native click instead receives the reply at pointer movement and releases
+  repaint on pointer-up, keeping the stale geometry through mouse-down.
+- Fixtures importing the production event transport serve `/api/events` with
+  `text/event-stream`, including when native frames enter through the real
+  dispatcher directly. Keep network-failure collectors strict for failed streams
+  and unrelated cancelled requests.
+- Shell fixtures share `tests/browser/panel-read-fixture.ts` to observe optional
+  panel-extension list cancellations: the exact request identity, its owning
+  aborted signal and its native `AbortError` receipt must agree. Drain pending
+  classifications before asserting; retain raw failures alongside the classified
+  cancellations. Same-URL network aborts and missing, unknown or reused identities
+  remain failures. Hold a controller-owned read across a native SSE open to
+  exercise supersession with the navigation ownership assertions intact.
+- Fixtures consuming EventSource serve a persistent `text/event-stream` response
+  and let the real connection close with its page. Never answer that path with
+  the generic JSON fallback. Composer bootstrap awaits DOM readiness and its
+  explicit rendered-fixture signal; stream headers are observed before navigation.
+- Panel-resize bootstrap installs `observeHeaderFixture` before navigation and uses
+  `fixtureEventStream` plus the exact session Yolo read. Failed initialization,
+  navigation and readiness close the page through `runWithDiagnosticCleanup`;
+  bounded bootstrap snapshots go to owned TEMP files. The rendered-fixture wait
+  retains its 30-second deadline. A held initial HTTP state read exercises that
+  deadline and its release control through the real Solid bootstrap.
+- Middle-button fixtures use `fixture-native-gesture.ts`: browser-native reveal,
+  a point inside the viewport and clipping ancestors, real hit testing, and a
+  trusted press captured by the original `.message-stream`. Native release and
+  capture cleanup run even after failed assertions. Targets preserve shell,
+  horizontal-code, transcript and summary ownership; left-button selection keeps
+  its own gesture. Tool copy actions hover the owning header before the native
+  click. Capture tests mount the real `VirtualFollowList` around isolated tools.
+- A fixture entry with top-level asynchronous restoration exposes its ready signal
+  after instance registration. Tests await that signal before connecting its native
+  client: the document load event can precede module continuation, and a later
+  `addInstance` publishes the fixture's initial client value.
+- Fixture owners use `runWithDiagnosticCleanup` from allocation through bootstrap,
+  test body and teardown, preserving the primary error and distinct observation and
+  cleanup failures. Failed setup closes owned contexts before rejecting. Attachment
+  failure snapshots and resource receipts stay in an owned TEMP directory; runner
+  output uses fixed phase/category labels. Never print raw observer snapshots.
+- Attachment diagnostics use `fixture-console.ts` before bootstrap: each native
+  console notification carries its original arguments and a synchronous JSON copy
+  with Error message/stack, document nonce and sequence. Callback and string init
+  scripts explicitly compose the idempotent capture before application code.
+  A single ordered Chromium CDP channel owns console previews, browser network
+  logs, exceptions and context retirement. Completion follows native page closure,
+  requires both target retirement receipts, detaches its observer and reconciles
+  every received packet, context and message/copy association. Missing, duplicated,
+  malformed or unserializable diagnostics fail closed, as do workers, OOPIFs and
+  related application targets outside this fixture's coverage. Never substitute a
+  silence delay, a string-only copy or Playwright event completion for these receipts.
+  Playwright console events serve only as refusal/format witnesses; the test-only
+  preview/error adapter follows the installed Playwright Chromium contract and its
+  native text/type/cardinality regression must pass on dependency updates. Keep raw
+  values and rejection details in owned private TEMP evidence; public assertions
+  report fixed categories or sentinel names.

@@ -10,7 +10,7 @@ OpenCode te da el motor. CodeNomad te da la cabina de mando. Se conecta al servi
 
 ## Delega el trabajo largo a las Misiones {#missions}
 
-Describe el trabajo una sola vez. El coordinador de la misión lo planifica como un árbol de tareas, delega tareas acotadas a conversaciones nativas de OpenCode e informa de los resultados con sus pruebas. Ejecuta una misión una vez o cada día; crear una nunca inicia el trabajo hasta que tú lo decidas. Los guiones cubren la depuración, la entrega de producto y la comparación de dos modelos con un juez a ciegas. Consulta [Misiones](missions.md).
+Describe el trabajo una sola vez. El coordinador de la misión lo planifica como un árbol de tareas, delega tareas acotadas a conversaciones nativas de OpenCode e informa de los resultados con sus pruebas. Ejecuta una vez, en horarios o intervalos elegidos, o tras un cambio verificado del proyecto; crear guarda una Misión en pausa para que la inicies explícitamente. Los guiones cubren la depuración, la entrega de producto y la comparación de dos modelos con un juez a ciegas. Consulta [Misiones](missions.md).
 
 ## Sigue trabajando desde tu teléfono {#phone-access}
 
@@ -77,7 +77,7 @@ La raíz del espacio de trabajo limita qué carpetas abre CodeNomad; no es un en
 | Trabajar con varias copias de trabajo y conversaciones | [Proyectos](projects.md), [Conversaciones](conversations.md), [Archivos](files.md) |
 | Buscar en el historial o limpiarlo de forma segura | [Historial](history.md) |
 | Responder preguntas y permisos nativos | [Permisos](permissions.md) |
-| Coordinar trabajo acotado o diario | [Misiones](missions.md) |
+| Coordinar trabajo acotado o programado | [Misiones](missions.md) |
 | Configurar la ejecución y las integraciones | [OpenCode](opencode.md), [Proveedores](providers.md), [Integraciones](integrations.md) |
 | Conectar otro dispositivo | [Control remoto](remote-control.md), [Seguridad](security.md), [Móvil](mobile.md) |
 | Adaptar el espacio de trabajo | [Configuración](settings.md), [Atajos](shortcuts.md), [Voz](voice.md), [Extensiones](extensions.md) |

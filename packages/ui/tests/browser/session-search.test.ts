@@ -4,8 +4,10 @@ import { fileURLToPath } from "node:url"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser } from "playwright"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { fixtureEventStream } from "./fixture-event-stream"
 
 let browser: Browser, url: string
+let events: Awaited<ReturnType<typeof fixtureEventStream>>
 before(async () => {
   const fixture = await borrowFixture({
       name: "session-search",
@@ -14,16 +16,38 @@ before(async () => {
       ],
     })
   url = fixture.url
+  events = await fixtureEventStream(url)
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); })
+after(async () => { try { await browser?.close() } finally { await events?.close() } })
+
+test("technical carriers stay out of followed-conversation choices and native title searches", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await events.route(page)
+    await page.goto(url); await page.waitForFunction(() => Boolean((window as any).fixture))
+    const picker = page.locator(".mission-conversation-picker")
+    await picker.locator("summary").click()
+    await picker.getByText("Local conversation", { exact: true }).waitFor()
+    assert.equal(await picker.getByText("Carrier needle", { exact: true }).count(), 0)
+    await picker.getByRole("searchbox").fill("needle")
+    await page.waitForFunction(() => (window as any).fixture.searches.some((s: any) => s.search === "needle"))
+    await picker.getByText("Child needle", { exact: true }).waitFor()
+    assert.equal(await picker.getByText("Carrier needle", { exact: true }).count(), 0)
+    await picker.getByText("Child needle", { exact: true }).click()
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.watched()), ["child"])
+    assert.equal(await page.locator('[data-session-id="ses_cn_schedule_fixture"]').count(), 0)
+  } finally { await page.close() }
+})
 
 test("search is flat, filters each session, selects only matches and restores the normal hierarchy", async () => {
   const page = await browser.newPage()
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await events.route(page)
   const rows = () => page.locator(".session-item-base").evaluateAll(elements => elements.map(el => el.getAttribute("data-session-id")))
   try {
     await page.goto(url)
@@ -91,6 +115,7 @@ test("dragging across the selection checkboxes gives every crossed session the f
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await events.route(page)
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture))

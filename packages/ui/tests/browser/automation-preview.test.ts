@@ -50,14 +50,11 @@ test("the shared engine drives a real Electron preview through the guarded nativ
   // The guest must load before a snapshot; no installed app or foreground window is involved.
   const page = await running.firstWindow()
   await page.waitForFunction(() => Boolean(document.querySelector("webview")))
-  let outline = ""
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (await running.evaluate(() => (globalThis as any).automationPreview?.ready())) {
-      outline = String((await execute({ action: "snapshot" })).snapshot)
-      if (outline.includes('textbox "Title"')) break
-    }
-    await new Promise(resolve => setTimeout(resolve, 50))
-  }
+  assert.equal(await running.evaluate(() => (globalThis as any).automationPreview.ready()), true)
+  assert.equal((await execute({ action: "wait", text: "Title", gone: false, timeout: 15000 })).found, true,
+    "the actual guest document is loaded before taking accessibility refs")
+  const outline = String((await execute({ action: "snapshot" })).snapshot)
+  assert.match(outline, /textbox "Title"/)
   const ref = (pattern: RegExp) => new RegExp(`${pattern.source}[^\\n]*?\\[(b\\d+e\\d+)\\]`).exec(outline)![1]
   const title = ref(/textbox "Title"/), plan = ref(/combobox "Plan"/), confirm = ref(/button "Confirm"/)
   assert.deepEqual((await execute({ action: "type", ref: title, text: "Pilot", clear: true })).value, "Pilot")

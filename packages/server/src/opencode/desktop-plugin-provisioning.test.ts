@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
-import { randomUUID } from "node:crypto"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { createHash, randomUUID } from "node:crypto"
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { createServer, type ServerResponse } from "node:http"
 import os from "node:os"
 import path from "node:path"
@@ -11,6 +11,7 @@ import type { Endpoint } from "@opencode/client/service"
 import { OpenCodeSharedService, type OpenCodeSharedServiceDependencies } from "../workspaces/opencode-service"
 import { resolveDesktopPluginPaths } from "./desktop-plugin-paths"
 import { provisionDesktopPlugins } from "./desktop-plugin-provisioning"
+import { installDesktopPluginPresence } from "./desktop-plugin-installation"
 
 function recordingLogger() {
   const calls: Array<{ level: "debug" | "error"; message: string; err: unknown }> = []
@@ -141,4 +142,38 @@ test("a persistent filesystem failure naming a fresh lease or temporary file eac
   }
   assert.deepEqual([...await levels(first), ...await levels(second), ...await levels(first), ...await levels(second)],
     ["error", "error", "debug", "debug"])
+})
+
+for (const role of ["runtime", "provider"] as const) test(`Missions ${role} publication failures use shared recovery notices and re-arm after repair`, async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-provisioning-carrier-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const paths = { config: path.join(root, "config"), data: path.join(root, "data") }
+  const runtime = Buffer.from("runtime"), provider = Buffer.from("provider")
+  const bytes = role === "runtime" ? runtime : provider
+  const file = path.join(paths.data, "missions", `${createHash("sha256").update(bytes).digest("hex")}${role === "provider" ? ".provider" : ""}.mjs`)
+  await mkdir(file, { recursive: true })
+  await writeFile(path.join(file, "sentinel"), "keep")
+  const { calls, logger } = recordingLogger(), reported = new Set<string>()
+  const provision = () => provisionDesktopPlugins({ connection: { assertCurrent() {} }, logger, reported,
+    resolvePaths: async () => paths,
+    install: async resolved => {
+      const stop = await installDesktopPluginPresence("missions", runtime, resolved, () => {}, () => "", provider)
+      await stop()
+    } })
+  assert.equal(await provision(), false)
+  assert.equal(await provision(), false)
+  assert.deepEqual(calls.map(call => call.level), ["error", "debug"])
+  assert.match(calls[0].message, /Missions and automation are unavailable/)
+  assert.match(String(calls[0].err), /is a directory/)
+  assert.equal(await readFile(path.join(file, "sentinel"), "utf8"), "keep")
+  assert.equal((await readdir(path.join(paths.data, "missions", "presence"))).length, 0)
+  // The owner clears the refused ordinary directory; the normal connection path retries.
+  await rm(file, { recursive: true })
+  assert.equal(await provision(), true)
+  assert.deepEqual(await readFile(file), bytes)
+  assert.equal(reported.size, 0)
+  await rm(file)
+  await mkdir(file)
+  assert.equal(await provision(), false)
+  assert.equal(calls.at(-1)?.level, "error")
 })

@@ -10,7 +10,13 @@ import { resolveTransitionProfile, type TransitionContext, type TransitionResult
 export interface LaunchIntent {
   newWindow: boolean
   folders: string[]
+  /** `--connect-server` value: a saved server name or id, or an http(s) URL; empty when the value is missing. */
+  connectServer?: string
 }
+
+/** A launch that only asks for a remote window: it opens no local window of its own when the connection succeeds. */
+export const isConnectOnlyLaunch = (intent: LaunchIntent): boolean =>
+  intent.connectServer !== undefined && !intent.newWindow && intent.folders.length === 0
 
 export interface StorageScope {
   /** Profile storage key; `stable` is the default profile (see data-profile.ts). */
@@ -228,10 +234,25 @@ function existingDirectory(value: string, cwd: string): string | undefined {
 export function parseLaunchIntent(argv: string[], cwd: string): LaunchIntent {
   const folders: string[] = []
   let newWindow = false
+  let connectServer: string | undefined
   for (let index = 0; index < argv.length; index++) {
     const value = argv[index]!
     if (value === "--new-window") {
       newWindow = true
+      continue
+    }
+    if (value === "--connect-server") {
+      const target = argv[index + 1]
+      if (target !== undefined && !target.startsWith("-")) {
+        index++
+        connectServer = target.trim()
+      } else {
+        connectServer = ""
+      }
+      continue
+    }
+    if (value.startsWith("--connect-server=")) {
+      connectServer = value.slice("--connect-server=".length).trim()
       continue
     }
     if (value === "--folder") {
@@ -252,10 +273,58 @@ export function parseLaunchIntent(argv: string[], cwd: string): LaunchIntent {
     const resolved = existingDirectory(value, cwd)
     if (resolved) folders.push(resolved)
   }
-  return { newWindow, folders: [...new Set(folders)] }
+  return { newWindow, folders: [...new Set(folders)], ...(connectServer !== undefined ? { connectServer } : {}) }
+}
+
+/**
+ * A saved window request (Preferences) restored once the backend is ready. A connect-only launch
+ * defers it: only a fallback to the normal start releases it, and it is never discarded meanwhile.
+ */
+export class DeferredRestore<T> {
+  constructor(private pending: T | undefined, private deferred: boolean) {}
+
+  /** The request to restore now, or nothing while deferred or already taken. */
+  take(): T | undefined {
+    if (this.deferred) return undefined
+    const request = this.pending
+    this.pending = undefined
+    return request
+  }
+
+  /** A restore that failed keeps its request for the next backend navigation. */
+  retry(request: T): void {
+    this.pending = request
+  }
+
+  /** The launch started normally: the request restores like any startup restore. */
+  release(): void {
+    this.deferred = false
+  }
+}
+
+const MAX_FORWARDED_FOLDERS = 64
+const MAX_CONNECT_SERVER_LENGTH = 2048
+
+/** The singleton payload a second launch sends: its own parse of its own, unreordered arguments. */
+export function forwardedLaunchData(intent: LaunchIntent): { codenomadLaunchIntent: LaunchIntent } {
+  return { codenomadLaunchIntent: intent }
+}
+
+/** Validates a second launch's singleton payload; anything malformed falls back to parsing the forwarded argv. */
+export function readForwardedLaunchIntent(data: unknown): LaunchIntent | undefined {
+  const intent = (data as { codenomadLaunchIntent?: unknown } | null | undefined)?.codenomadLaunchIntent as Partial<LaunchIntent> | undefined
+  if (!intent || typeof intent !== "object" || typeof intent.newWindow !== "boolean" || !Array.isArray(intent.folders)
+    || intent.folders.length > MAX_FORWARDED_FOLDERS || !intent.folders.every((folder) => typeof folder === "string")
+    || (intent.connectServer !== undefined && (typeof intent.connectServer !== "string" || intent.connectServer.length > MAX_CONNECT_SERVER_LENGTH))) {
+    return undefined
+  }
+  const folders = intent.folders.filter((folder) => isAbsolute(folder) && existingDirectory(folder, folder) === resolve(folder))
+  return { newWindow: intent.newWindow, folders: [...new Set(folders)], ...(intent.connectServer !== undefined ? { connectServer: intent.connectServer.trim() } : {}) }
 }
 
 export function prepareSecondLaunchIntent(intent: LaunchIntent, configPath: string): LaunchIntent {
+  // A connection runs in an existing window; a new window would be left empty beside the remote one.
+  if (isConnectOnlyLaunch(intent)) return intent
   try {
     const config = parseYaml(readFileSync(configPath, "utf8")) as any
     if (config?.ui?.settings?.focusExistingWindowOnSecondLaunch === true) return intent

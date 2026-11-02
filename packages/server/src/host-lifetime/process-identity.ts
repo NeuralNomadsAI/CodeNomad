@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process"
 import { readFile } from "node:fs/promises"
+import path from "node:path"
+import { lookupMacosProcess } from "./service-supervision-macos-native"
 import { validateOwner, type Owner } from "./protocol"
 
 export type ProcessState = { state: "live"; startIdentity: string } | { state: "dead" | "unknown" }
@@ -19,9 +21,10 @@ export const lookupProcess: ProcessLookup = async (pid) => {
     // Absence is a specific native lookup result, not any suppressed lookup
     // error. Permission/host failures cannot authorize replacing an owner.
     const script = `try { $p = [System.Diagnostics.Process]::GetProcessById(${pid}); try { 'LIVE:' + $p.StartTime.ToUniversalTime().Ticks } catch { 'UNKNOWN' } } catch [System.ArgumentException] { 'DEAD' } catch { 'UNKNOWN' }`
-    return command("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], "win32")
+    return command(path.join(process.env.SystemRoot || "C:/Windows", "System32/WindowsPowerShell/v1.0/powershell.exe"),
+      ["-NoProfile", "-NonInteractive", "-Command", script], "win32")
   }
-  // ps lstart has only second resolution. It is not a production identity gate.
+  if (process.platform === "darwin") return lookupMacosProcess(pid)
   return { state: "unknown" }
 }
 function command(file: string, args: string[], prefix: string): Promise<ProcessState> {

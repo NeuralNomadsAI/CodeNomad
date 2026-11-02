@@ -112,7 +112,8 @@ fn browser_hosting_native_window_prevents_final_window_shutdown() {
     assert!(windows.contains_key(OWNER));
     assert!(!crate::is_final_application_window(
         OTHER,
-        windows.keys().map(String::as_str)
+        windows.keys().map(String::as_str),
+        &[]
     ));
     // A surviving browser-hosting native window also prevents Destroyed cleanup.
     assert!(!windows

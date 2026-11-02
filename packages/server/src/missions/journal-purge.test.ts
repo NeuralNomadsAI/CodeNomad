@@ -97,7 +97,7 @@ async function assertHealthy(f: ReturnType<typeof fixture>) {
   assert.equal(snapshot.cleanupUnavailable, undefined)
   assert.equal(snapshot.controlUnavailable, undefined)
   assert.equal(snapshot.notificationUnavailable, undefined)
-  assert.ok((snapshot.cleanups ?? []).every(item => item.pending === 0), "a purge never reopens settled cleanup")
+  assert.ok((snapshot.cleanups ?? []).every(item => item.pending === 0 && item.documentPending !== true), "a purge never reopens settled cleanup")
   for (const mission of snapshot.missions) await f.journal.assertCanAppend(mission.id, 0)
   return snapshot
 }

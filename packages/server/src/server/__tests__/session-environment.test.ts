@@ -25,6 +25,8 @@ async function harness() {
   }
   const upstream = Fastify({ forceCloseConnections: true })
   apps.push(upstream)
+  upstream.post("/api/rpc/codenomad.missions/scheduleCarrierRead", async (_request, reply) =>
+    reply.code(400).send({ _tag: "RpcError", type: "rpc.method_not_found", message: "Unknown RPC method" }))
   upstream.get("/api/session/:id", async request => {
     const { id } = request.params as { id: string }
     return { data: { id, location: { directory: id === "foreign" ? "/other" : "/repo" } } }

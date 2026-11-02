@@ -73,6 +73,20 @@ function fixture() {
 const specialist = (mission: MissionMap) => mission.actors.find((actor) => actor.kind === "specialist")!.sessionId
 const code = (expected: string) => (error: unknown) => error instanceof MissionControlError && error.code === expected
 
+test("cleanup authority uses the newest prepared coordinator in event order, regardless of journal key ordering", async () => {
+  const f = fixture(), base = { version: 1 as const, missionID: "msn_prepared", projectID: "project-1" }, location = { directory: "/repo" }
+  await f.journal.append({ ...base, id: "evt_zzz_created", type: "mission.created", createdAt: 1, projectCanonical: "/repo",
+    objective: "Prepared", template: "custom", prepared: true, coordinator: { sessionID: "ses_original", title: "Original", location } })
+  await f.journal.append({ ...base, id: "evt_aaa_prepared", type: "mission.prepared", createdAt: 2, projectCanonical: "/repo",
+    objective: "Prepared", title: "Replacement", template: "custom", requestID: "replace", expectedRevision: 1, fingerprint: "a".repeat(64), taskMode: "native",
+    coordinator: { sessionID: "ses_replacement", title: "Replacement", location } })
+  assert.equal((await f.journal.snapshot()).missions[0].coordinatorSessionId, "ses_replacement")
+  await f.journal.append({ ...base, id: "evt_deleted", type: "mission.deleted", createdAt: 3, requestID: "delete", expectedRevision: 2,
+    deleteManagedSessions: true, cleanupTargets: [{ sessionID: "ses_specialist", location }] })
+  const result = await f.control().cleanupTarget({ missionID: base.missionID, deletionID: "evt_deleted", sessionID: "ses_specialist" })
+  assert.equal(result.target?.coordinatorSessionID, "ses_replacement")
+})
+
 test("valid tombstones do not exhaust live reconstruction or block subsequent native business work", async () => {
   const f = fixture(), historical = 20
   for (let index = 0; index < historical; index++) {

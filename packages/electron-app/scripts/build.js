@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "child_process"
-import { existsSync } from "fs"
+import { existsSync, readFileSync } from "fs"
 import path, { join } from "path"
 import { fileURLToPath } from "url"
 
@@ -99,6 +99,17 @@ function run(command, args, options = {}) {
   })
 }
 
+// electron-builder writes the numeric Windows form of the version
+// (major.minor.patch.0) as the executable's ProductVersion string, while
+// Tauri's binaries carry the full version; SignPath Foundation requires one
+// product version across the signed binaries of a release. shortVersionWindows
+// feeds the resource edit electron-builder performs before it signs: rcedit
+// stores the full string and its numeric prefix (major.minor.patch.0) in the
+// fixed version fields, as Tauri does.
+function windowsVersionArgs(args, version) {
+  return args.includes("--win") ? [`-c.extraMetadata.shortVersionWindows=${version}`] : []
+}
+
 function printAvailablePlatforms() {
   console.error(`\nAvailable platforms:`)
   for (const [name, cfg] of Object.entries(platforms)) {
@@ -156,7 +167,8 @@ async function build(platform) {
       })
 
       console.log(`\n📦 Packaging ${job.nodeTarget}...\n`)
-      await run(npxCmd, ["electron-builder", "--publish=never", ...job.args], {
+      const { version } = JSON.parse(readFileSync(join(appDir, "package.json"), "utf8"))
+      await run(npxCmd, ["electron-builder", "--publish=never", ...job.args, ...windowsVersionArgs(job.args, version)], {
         env: { CODENOMAD_NODE_TARGET: job.nodeTarget },
       })
     }

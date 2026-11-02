@@ -1,6 +1,6 @@
-import { For, Show, createMemo, createSignal } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js"
 import type { MissionActorActivity, MissionPanelMap, MissionPanelReport, MissionPanelTask } from "../../../server/src/api-types"
-import type { MissionTaskExecutionMode } from "../../../server/src/missions/model"
+import type { MissionReport, MissionTaskExecutionMode } from "../../../server/src/missions/model"
 import { missionReportExcerpt } from "../../../server/src/missions/mission-panel-map"
 import { missionOwnBody } from "../lib/mission-bodies"
 import { useI18n } from "../lib/i18n"
@@ -12,7 +12,8 @@ import { MissionReaderSection } from "./mission-reader"
 import { missionReports, missionTaskHistory, missionTaskReport } from "./mission-progress-model"
 import type { MissionPassageSection } from "./mission-passage-section"
 import type { MissionContentSelector } from "../../../server/src/missions/mission-content-wire"
-import { missionReaderBody, useReaderValue } from "./mission-reader-body"
+import { MissionBodyPending, missionReaderBody, useReaderValue } from "./mission-reader-body"
+import { openMissionTask } from "./mission-task-open"
 import { MissionReportArtifact, MissionReportProse, useReportBodies } from "./mission-report-prose"
 
 /** Read-only task facts; dependency navigation changes only this window's reader target. */
@@ -23,14 +24,29 @@ export function MissionTaskReader(props: {
 }) {
   const { t } = useI18n()
   const byKey = (key: string) => props.mission.tasks.find(task => task.key === key)
-  const navigate = (key: string) => {
-    const task = byKey(key)
-    if (task) updateMissionProjectView(props.scope, { reader: { missionId: props.mission.id, kind: "task", itemId: task.id, recurrence: props.recurrence } })
-  }
-  const link = (key: string, label: string) => <button type="button" class="mission-task-link" disabled={!byKey(key)}
+  // A one-time mission's compact map holds a page of its tasks: one not held is read by key.
+  const paged = () => Boolean(props.mission.taskPage) && !props.recurrence
+  const navigate = (key: string) => void openMissionTask(props.instanceId, props.scope, () => props.mission, key, props.recurrence)
+  const link = (key: string, label: string) => <button type="button" class="mission-task-link" disabled={!byKey(key) && !paged()}
     onClick={() => navigate(key)}>{t(label, { tasks: byKey(key)?.title ?? key, task: byKey(key)?.title ?? key })}</button>
   const latest = createMemo<MissionPanelReport | undefined>(() => missionTaskReport(props.mission, props.task))
-  const history = createMemo(() => missionTaskHistory(props.mission, props.task))
+  // A compact row holds its newest reports and counts them all; Show all reads them whole.
+  // Another task, never another copy of this one (a refresh), folds the history again.
+  const [allHistory, setAllHistory] = createSignal(false)
+  const taskKey = createMemo(() => props.task.key)
+  createEffect(on(taskKey, () => setAllHistory(false), { defer: true }))
+  const loadedReports = () => missionReports(props.mission).filter(report => report.taskKey === props.task.key).length
+  const omittedHistory = () => paged() ? Math.max(0, (props.task.reportCount ?? 0) - loadedReports()) : 0
+  const wholeHistory = useReaderValue<MissionReport[]>({ instanceId: () => props.instanceId, mission: () => props.mission, oneTime: () => !props.recurrence,
+    active: allHistory, selector: () => allHistory() ? { kind: "task", taskKey: props.task.key, field: "reports" } : undefined })
+  const history = createMemo((): MissionPanelReport[] => {
+    const whole = allHistory() && wholeHistory.settled() ? wholeHistory.value() : undefined
+    return whole ? [...whole].filter(report => report.id !== latest()?.id).sort((left, right) => right.createdAt - left.createdAt || left.id.localeCompare(right.id))
+      : missionTaskHistory(props.mission, props.task)
+  })
+  // Dependents of this task its map's page does not hold.
+  const omittedDependents = () => paged() && props.task.status !== "completed"
+    ? Math.max(0, (props.task.dependents ?? 0) - props.mission.tasks.filter(task => task.blockedBy.includes(props.task.key)).length) : 0
   const readout = createMemo(() => missionReports(props.mission).find(report => report.taskKey === props.task.key && !report.late
     && report.delivery === "coordinator-readout"))
   // A merging replacement names one predecessor; every retired task pointing to it is listed.
@@ -80,10 +96,17 @@ export function MissionTaskReader(props: {
       <For each={props.task.blockedBy}>{key => link(key, "missions.control.task.blockedBy")}</For>
       <For each={unblocks()}>{task => link(task.key, "missionsPanel.task.unblocks")}</For>
       <Show when={props.task.replacedByTaskKey}>{key => link(key(), "missions.control.task.replacedBy")}</Show>
+      <Show when={omittedDependents()}>{count => <p class="mission-task-omitted">
+        {t(`missionsPanel.task.omittedDependents.${count() === 1 ? "one" : "other"}`, { count: count() })}</p>}</Show>
     </div>
-    <Show when={history().length}>
+    <Show when={history().length || omittedHistory()}>
       <section aria-label={t("missions.progress.previousResults")}>
         <h3>{t("missions.progress.previousResults")}</h3>
+        <Show when={!allHistory() && omittedHistory()}>{count => <p class="mission-task-omitted">
+          <span>{t(`missionsPanel.task.historyOmitted.${count() === 1 ? "one" : "other"}`, { count: count() })}</span>{" "}
+          <button type="button" class="window-text-button" onClick={() => setAllHistory(true)}>{t("missionsPanel.task.showAllHistory")}</button></p>}</Show>
+        <Show when={allHistory() && !wholeHistory.settled()}>
+          <MissionBodyPending failed={wholeHistory.failed()} onRetry={wholeHistory.retry} /></Show>
         <For each={history().map(report => report.id)}>{id => {
           const report = () => history().find(report => report.id === id)!
           const [open, setOpen] = createSignal(false), [details, setDetails] = createSignal(false)
@@ -123,7 +146,7 @@ export function MissionTaskReader(props: {
       <div class="mission-route-meta"><code>{props.task.key}</code><span>{props.task.role}</span>
         <span>{t(props.task.status === "needs-input" ? "missions.progress.obstacle" : missionTaskStatusKey(props.task))}</span></div>
       <Show when={predecessors().length}><div><h4>{t("missions.control.history.before")}</h4>
-        <For each={predecessors()}>{key => <button type="button" class="mission-task-link" disabled={!byKey(key)}
+        <For each={predecessors()}>{key => <button type="button" class="mission-task-link" disabled={!byKey(key) && !paged()}
           onClick={() => navigate(key)}>{byKey(key)?.title ?? key}</button>}</For></div></Show>
       <Show when={props.task.status === "withdrawn" && props.task.outstandingExecution}><p role="status">{t("missions.control.task.retiredRunning")}</p></Show>
     </article>

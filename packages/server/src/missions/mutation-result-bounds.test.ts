@@ -205,7 +205,7 @@ test("a frontier larger than one result gives way to its exact read in every mut
       assert.ok(result.content.length <= MISSION_INSPECT_OUTPUT_LIMIT, `${result.content.length} characters`)
       return readMarker(plugin.tool, coordinator, result.value.frontier)
     }
-    const current = async () => (await f.control().mission(mission.id)).mission!
+    const current = async () => (await f.control().snapshot()).missions.find(value => value.id === mission.id)!
     const declared = await plugin.tool("delegate", { taskKey: "extra", title: "Extra", brief: "Extra work", role: "specialist" }, coordinator)
     assert.deepEqual(await frontierOf(declared), (await current()).frontier)
     assert.equal(typeof declared.value.assignmentPrompt, "string", "a prompt that fits stays whole")

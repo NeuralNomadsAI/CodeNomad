@@ -268,6 +268,8 @@ native echoes. WSL-unsupported status shows help.
 Plugins shows an unavailable catalog or the last
 valid catalog's fetch time. Saved Q8 hints offer confirmed reattachment only for matching integration and label.
 Action receipts describe the completed request.
+Cancelling attachment or application installation restores the captured visible, enabled opener while its
+owning view, conversation and integration context remain current. Navigation, invalidation and view disposal revoke restoration.
 
 `createIntegrationBindingsStore` (`stores/integration-bindings-store.ts`) shares reads for the exact instance,
 Location, session and native integration shown by the conversation header or its Plugins picker. The header keeps
@@ -440,7 +442,12 @@ Commands:
   native error data, concurrent requests and error recovery, with positive ordinary-route diagnostics checks.
 - `packages/ui/tests/browser/integration-attachment.test.ts`: real Solid entry points and native dispatcher with
   all renderer logger namespaces enabled. Every console level's text and structured arguments, nested Error
-  messages/stacks and page errors are captured before navigation and sentinel-scanned before teardown. Adversarial
+  messages/stacks and page errors are captured before navigation and sentinel-scanned through native teardown.
+  Document-owned synchronous copies travel with the original console arguments on one ordered CDP channel;
+  native retirement receipts and exact packet/context/copy reconciliation gate completion. Workers, OOPIFs,
+  related targets and serialization/association loss fail closed. The helper's native-format, delayed-delivery,
+  reload/close and negative controls live in `fixture-console.test.ts`; the real dispatcher post-drain control
+  retains the original deferred-handle failure assertion alongside the by-value capture. Adversarial
   HTTP/JSON/transport failures exercise read, hosts, attach, detach, retry and late navigation.
   Binding qualification covers external authority, Q8/receipt separation, unknown versus none, wide/narrow durable
   labels with isolation/truncation/accessibility, strict projected-response bounds, moved sessions, late replies,
@@ -475,6 +482,8 @@ Commands:
   concurrency, Project/WSL refusals, uncertain updates without replay and confidentiality
   across foreign streams, extension projections, metadata and structured diagnostics.
   Its final output names any native-platform or installer cases requiring separate qualification.
+  `CODENOMAD_TEST_EXPECTED_RUNTIME` selects the exact runtime version asserted by this probe (default `2.2.5`),
+  allowing the same assertions to qualify the minimum supported runtime independently.
   `--authority-latency` adds cancellation-aware 10-ms session-read latency during
   attachment dispatch only; dispatch-local measurements report complete target,
   mount and session reads and Q8 writes within the unchanged eight-second budget.

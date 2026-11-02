@@ -40,3 +40,5 @@
 @import "./panels/git-history.css";
 @import "./panels/workspace-tree.css";
 @import "./panels/file-row-actions.css";
+@import "./panels/mission-scheduling.css";
+@import "./panels/mission-unified-schedule.css";

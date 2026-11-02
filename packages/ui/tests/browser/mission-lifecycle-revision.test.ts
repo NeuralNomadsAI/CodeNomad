@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -43,7 +43,8 @@ after(() => runWithDiagnosticCleanup({ run: async () => { await browser?.close()
 type Input = { action: "start" | "pause" | "stop"; expectedRevision: number; requestId: string; graceful?: true }
 function mission(id = "revision"): MissionMap {
   return { version: 1, id, projectID: "fixture", projectCanonical: "/fixture", objective: `Lifecycle ${id}`, template: "custom",
-    coordinatorSessionId: "ses_fixture", status: "active", runState: "running", actors: [], frontier: [], claims: [], revision: 1,
+    coordinatorSessionId: "ses_fixture", status: "active", runState: "running", actors: [{ sessionId: "ses_fixture", kind: "coordinator", managed: false,
+      title: "Coordinator", roles: ["coordinator"], location: { directory: "/fixture" }, joinedAt: 1 }], frontier: [], claims: [], revision: 1,
     createdAt: 1, updatedAt: 1, history: [], historyTruncated: false, tasks: [], reports: [] }
 }
 const fixture = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) =>
@@ -134,7 +135,7 @@ for (const code of [undefined, "request-conflict", "control-pending", "lost-ack"
       // Never a second Pause or a fresh Stop while the exact request is unresolved.
       assert.equal(await pause(page).count(), 0); assert.equal(await check(page).count(), 1)
       assert.equal(await stop(page).isDisabled(), true); assert.equal(await retryOffered(page), true)
-      const reread = page.waitForResponse(value => value.url().endsWith("/missions"))
+      const reread = waitForMissionPanelRefresh(page)
       await fixture(page, "event", "session.execution.started"); await reread; await settled(page)
       assert.equal(calls.length, 1, "native invalidation reads never resend")
       await retry(page)
@@ -153,7 +154,13 @@ test("real RightPanel ignores late rejection after row disposal in a newly selec
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
-      if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: panelMissions([mission("one"), mission("two")]), generatedAt: reads, discardedEvents: 0 } }) }
+      if (route.request().method() === "GET") {
+        reads++
+        const path = new URL(route.request().url()).pathname
+        if (path.endsWith("/scheduled")) return route.fulfill({ json: { version: 1, projectID: "fixture", schedules: [] } })
+        if (path.endsWith("/schedule")) return route.fulfill({ json: { document: null, pending: false } })
+        return route.fulfill({ json: { available: true, missions: panelMissions([mission("one"), mission("two")]), generatedAt: reads, discardedEvents: 0 } })
+      }
       calls.push(route.request().postDataJSON() as Input); submitted(); await held
       return route.fulfill({ status: 409, json: { code: "revision-conflict" } })
     })
@@ -161,11 +168,14 @@ test("real RightPanel ignores late rejection after row disposal in a newly selec
     await pause(page).click(); await sent
     // Unmounting the panel disposes the dispatching toolbar; then another Mission is selected.
     await fixture(page, "mount", false); await missionDetail(page).waitFor({ state: "detached" }); await fixture(page, "mount", true)
+    // Complete selection's deferred list/point read before measuring the old control reply.
+    const selectionRead = page.waitForResponse(value => new URL(value.url()).pathname.endsWith("/two/schedule"))
     await selectMission(page, "Lifecycle two")
+    assert.equal(await (await selectionRead).finished(), null)
     await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready")
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
-    release(); await response
+    release(); assert.equal(await (await response).finished(), null)
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     assert.equal(reads, before, "disposed-row completion must not refresh the new context")
     for (const title of ["Lifecycle one", "Lifecycle two"]) {

@@ -10,7 +10,7 @@ OpenCode 提供引擎，CodeNomad 提供驾驶舱。它连接到 OpenCode 的共
 
 ## 将长时间工作交给任务 {#missions}
 
-只需描述一次工作。任务的协调者将其规划为任务树，把有界任务委派给原生 OpenCode 对话，并报告结果及其证据。任务可以运行一次或每天运行；创建任务后，在你选择启动之前绝不会开始工作。剧本涵盖调试、产品交付，以及由盲评裁判比较两个模型。参阅[任务](missions.md)。
+只需描述一次工作。任务的协调者将其规划为任务树，把有界任务委派给原生 OpenCode 对话，并报告结果及其证据。可以运行一次、按选定时间或间隔运行，或在核实项目变化后运行；创建会保存已暂停的任务，等待你显式启动。剧本涵盖调试、产品交付，以及由盲评裁判比较两个模型。参阅[任务](missions.md)。
 
 ## 用手机继续工作 {#phone-access}
 
@@ -77,7 +77,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | 跨检出目录和对话工作 | [项目](projects.md)、[对话](conversations.md)、[文件](files.md) |
 | 查找历史记录或安全清理 | [历史记录](history.md) |
 | 回答原生问题和权限请求 | [权限](permissions.md) |
-| 协调有界任务或每日工作 | [任务](missions.md) |
+| 协调有界任务或计划工作 | [任务](missions.md) |
 | 配置执行和集成 | [OpenCode](opencode.md)、[提供商](providers.md)、[集成](integrations.md) |
 | 连接另一台设备 | [远程控制](remote-control.md)、[安全](security.md)、[移动设备](mobile.md) |
 | 调整工作区 | [设置](settings.md)、[快捷键](shortcuts.md)、[语音](voice.md)、[扩展](extensions.md) |

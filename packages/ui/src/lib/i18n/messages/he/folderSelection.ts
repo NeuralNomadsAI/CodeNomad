@@ -105,6 +105,11 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "המשך",
   "folderSelection.servers.certificateInstall.cancelLabel": "ביטול",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad צריך שהאישור המקומי יהיה מהימן לפני שיוכל לפתוח חלונות HTTPS מרוחקים עם אישור בחתימה עצמית.",
+  "folderSelection.servers.launch.error.missing": "--connect-server דורש שם של שרת שמור או כתובת http(s).",
+  "folderSelection.servers.launch.error.invalid": "\"{value}\" אינה כתובת שרת http:// או https:// תקינה.",
+  "folderSelection.servers.launch.error.credentials": "\"{value}\" כוללת פרטי התחברות או קוד צימוד. כתובות הפעלה אינן יכולות לכלול אותם: צמדו את השרת דרך התחבר לשרת.",
+  "folderSelection.servers.launch.error.unknown": "אין שרת שמור בשם \"{value}\". השתמשו בשם של שרת שמור או בכתובת http(s).",
+  "folderSelection.servers.launch.error.ambiguous": "כמה שרתים שמורים נקראים \"{value}\". שנו את שמו של אחד מהם או השתמשו בכתובת שלו.",
   "folderSelection.sidecars.button": "פתח SideCar",
 
   "projectRenameDialog.title": "שנה שם סביבת עבודה",

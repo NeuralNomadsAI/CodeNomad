@@ -21,6 +21,8 @@ import { remoteAccessMessages } from "./remoteAccess"
 import { remoteControlMessages } from "./remoteControl"
 import { sessionMessages } from "./session"
 import { settingsMessages } from "./settings"
+import { serviceSupervisionMessages } from "./service-supervision"
+import { missionSchedulingMessages } from "./mission-scheduling"
 import { timeMessages } from "./time"
 import { toolCallMessages } from "./toolCall"
 import { mergeMessageParts } from "../merge"
@@ -47,6 +49,8 @@ export const frMessages = mergeMessageParts(
   settingsMessages,
   pluginSourceMessages,
   integrationMessages,
+  serviceSupervisionMessages,
+  missionSchedulingMessages,
   remoteAccessMessages,
   remoteControlMessages,
   commandMessages,

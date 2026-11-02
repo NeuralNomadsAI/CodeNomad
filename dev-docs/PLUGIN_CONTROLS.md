@@ -175,7 +175,7 @@ Location, scope, logical/physical destination, selected WSL distro, current auth
 document existence, native mode, BOM and complete text. Its random key and connection tokens stay private
 to the service instance; configuration values stay out of the token and diagnostics. Mutation-produced
 overlays acquire removal authority through reconciliation. `PluginSources.remove` requires this token;
-`editConfigDocument(id, location, scope, edit, signal?, expectedRevision?, admission?)` compares it inside the existing mutation queue before
+`editConfigDocument(id, location, scope, edit, signal?, strictDocuments?, expectedRevision?, admission?)` compares it inside the existing mutation queue before
 editing the freshly read document. Changed options at the same source/index, content, destination, mode or
 connection refuse with `stale` and require a fresh selection/confirmation.
 
@@ -204,9 +204,10 @@ connection refuse with `stale` and require a fresh selection/confirmation.
 WSL performs bounded inspect/read/create/chmod/sync/rename operations inside the
 selected distro, retaining native modes such as `0600`. Shell helpers prefer portable fallbacks (`realpath`,
 `sync`, `sha256sum`/`shasum`); Ubuntu remains the tested distro for minimal busybox
-images. A toggle costs four unpooled `wsl.exe` cold starts (`inspectMany`, `load`,
-`prepare`, `commit`; cleanup only after a failed commit): roughly 2–8 s of
-filesystem time before daemon RPCs on slow hosts.
+images. A toggle uses five unpooled `wsl.exe` starts (`inspectMany`, `load`,
+`prepare`, `commit`, `dispose`); batch edits add explicit source/nonce verification
+while both physical locks remain held. Filesystem latency remains visible before
+daemon RPCs on slow hosts.
 
 Never add a server display cache: every read and mutation reissues `config.get` +
 `plugin.list` (plus one `location.get` for session-scoped locations) and
@@ -261,7 +262,7 @@ this context on every call through the owner-bound bundles transport.
 `PluginSources.add(..., authority?)`, `PluginSources.remove(workspaceId, request, authority?)`
 and `PluginControls.mutate(..., authority?)`
 revalidate inside their existing queues and after asynchronous prerequisites.
-Nested `editConfigDocument(id, location, scope, edit, signal?, expectedRevision?, admission?)` carries the same per-call
+Nested `editConfigDocument(id, location, scope, edit, signal?, strictDocuments?, expectedRevision?, admission?)` carries the same per-call
 `NativeMutationAdmission` through the document queue. The writer asserts before
 preparation and final dispatch; its synchronous `onDispatch` observer marks only
 host `rename` or WSL commit-command submission. Its asynchronous `revalidate`
@@ -311,6 +312,29 @@ clients retain native read-then-mutate semantics.
 and reads its actual declaration document through the same host/WSL filesystem.
 Bundles plans bind its content, destination and mode separately from the scope's
 activation write target, including when both Global JSON and JSONC documents exist.
+
+Native settings share `readConfigDocuments` / `editConfigDocument`; the editor
+receives the current acquired configuration entries and native target position.
+Missions settings request strict document acquisition, rejecting JSON and JSONC
+coexistence in the same layer; plugin source edits retain the selected target
+and propagate their deadline signal through acquisition and commit. Missions'
+`native-experimental-settings.ts` edits only schedules/depth, retaining explicit
+companion values. Depth writes preserve inherited schedule activation when the
+local block omits its flag. Schedule activation materializes inherited depth
+only when creating a whole-block override. Adding schedules to an existing block
+keeps its effective depth choice, including the native default selected by an
+absent depth key. Existing file-byte expectations and the
+physical replacement lock fence concurrent writers.
+
+`editConfigDocuments` prepares and verifies each required target before its first
+rename. The Missions activation journal records the plan before effects, an
+attempt before each rename, and each exact acknowledgement. A read-only target
+or conflicting source refuses preparation; a partial global/project write keeps
+its durable receipts and preserves the successful write. An uncertain attempted
+write is reconciled only by its exact result bytes, preserving a later explicit
+OFF. `native-schedule-settings-activation.ts` acknowledges readiness only after
+the native global and effective Location blocks both enable schedules, within
+ten seconds, under the acquired connection and host/distro authority.
 
 OpenCode watches these configuration roots. Never restart the daemon or report a
 successful file write as an active plugin: the mutation response publishes the

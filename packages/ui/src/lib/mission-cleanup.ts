@@ -8,6 +8,9 @@ export class MissionDeletionError extends HttpResponseError {
   constructor(status: number, readonly code?: string) { super("Mission deletion was not confirmed", status, null) }
 }
 
+export const missionCleanupPending = (cleanup: Pick<MissionCleanup, "pending" | "documentPending">): boolean =>
+  cleanup.pending > 0 || cleanup.documentPending === true
+
 export async function deleteMissionRequest(url: string, input: MissionDeletionRequest): Promise<{ deleted: true; cleanup?: MissionCleanup }> {
   const response = await authenticatedFetch(url, { method: "DELETE", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) })
   if (!response.ok) {

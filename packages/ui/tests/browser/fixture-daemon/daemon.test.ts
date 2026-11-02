@@ -34,6 +34,27 @@ test("the daemon serves registered fixtures and re-registers idempotently", { ti
   ])
   for (const target of [second, third]) assert.equal((await fetch(target)).status, 200)
 
+  const { chromium } = await import("playwright")
+  const { armFixtureNavigationBudget } = await import("../fixture-navigation-budget")
+  const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
+  t.after(() => browser.close())
+  const network = await browser.newPage()
+  try {
+    await network.goto(url)
+    const icon = await network.evaluate(async () => {
+      const response = await fetch("/favicon.ico")
+      return { status: response.status, type: response.headers.get("content-type"), bytes: (await response.arrayBuffer()).byteLength }
+    })
+    assert.equal(icon.status, 200)
+    assert.equal(icon.type, "image/png")
+    assert.ok(icon.bytes > 0)
+    const consoleError = network.waitForEvent("console", message => message.type() === "error" && message.text().includes("404"))
+    assert.equal(await network.evaluate(async () => (await fetch("/unexpected-missing-resource.png")).status), 404)
+    assert.match((await consoleError).text(), /404/, "unexpected missing resources still reach the strict browser error collector")
+    for (const missing of ["/fixture/favicon.ico", "/favicon.ico/other"]) assert.equal((await fetch(daemon.baseUrl + missing)).status, 404)
+  } finally { await network.close() }
+
   // Warmup loads a real page once; serving the same module afterwards is a cache hit.
   await daemon.warmup({ routes: [{ path: "/__warmup", html: html(script) }] })
   const before = daemon.stats.transforms

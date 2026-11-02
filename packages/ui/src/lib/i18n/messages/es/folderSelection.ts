@@ -105,6 +105,11 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "Continuar",
   "folderSelection.servers.certificateInstall.cancelLabel": "Cancelar",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad necesita que el certificado local sea de confianza antes de poder abrir ventanas remotas HTTPS autofirmadas.",
+  "folderSelection.servers.launch.error.missing": "--connect-server necesita el nombre de un servidor guardado o una URL http(s).",
+  "folderSelection.servers.launch.error.invalid": "\"{value}\" no es una dirección de servidor http:// o https:// válida.",
+  "folderSelection.servers.launch.error.credentials": "\"{value}\" contiene credenciales o un código de emparejamiento. Las direcciones de inicio no pueden incluirlos: empareja el servidor desde Conectar a un servidor.",
+  "folderSelection.servers.launch.error.unknown": "Ningún servidor guardado se llama \"{value}\". Usa el nombre de un servidor guardado o una URL http(s).",
+  "folderSelection.servers.launch.error.ambiguous": "Varios servidores guardados se llaman \"{value}\". Cambia el nombre de uno o usa su URL.",
   "folderSelection.sidecars.button": "Abrir SideCar",
 
   "projectRenameDialog.title": "Renombrar workspace",

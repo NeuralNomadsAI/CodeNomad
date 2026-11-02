@@ -3,7 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
 import os from "node:os"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap, MissionReport } from "../../../server/src/api-types"
@@ -77,7 +77,7 @@ async function setup(locale = "fr-FR") {
   await page.goto(url, { timeout: 60000 })
   await choose(page, TITLE)
   const refresh = async () => {
-    const response = page.waitForResponse(response => response.url().endsWith("/missions"))
+    const response = waitForMissionPanelRefresh(page)
     await page.getByRole("button", { name: /^(Actualiser la carte de mission|Refresh mission map)$/ }).click()
     await response
   }

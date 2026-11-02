@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isPinnedLaunch, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, DeferredRestore, forwardedLaunchData, isConnectOnlyLaunch, isPinnedLaunch, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, readForwardedLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance } from "./startup"
 import { stripPrivateRelaunchEnvironment } from "./profile-selection-cleanup"
 import type { TransitionResult } from "./profile-transition"
 
@@ -120,6 +120,86 @@ test("launch arguments resolve valid folders relative to launch cwd and ignore u
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test("--connect-server takes a URL or saved server value, separate or inline, beside folder arguments", () => {
+  const root = join(tmpdir(), `codenomad-connect-launch-${process.pid}`)
+  const folder = join(root, "workspace")
+  mkdirSync(folder, { recursive: true })
+  try {
+    assert.deepEqual(parseLaunchIntent(["--connect-server", "https://server.example.com"], root),
+      { newWindow: false, folders: [], connectServer: "https://server.example.com" })
+    assert.deepEqual(parseLaunchIntent(["--connect-server= Build box "], root), { newWindow: false, folders: [], connectServer: "Build box" })
+    assert.deepEqual(parseLaunchIntent(["workspace", "--connect-server", "Build box", "--new-window"], root),
+      { newWindow: true, folders: [folder], connectServer: "Build box" })
+    // The value is never taken for a folder, even when a directory of that name exists.
+    assert.deepEqual(parseLaunchIntent(["--connect-server", "workspace"], root), { newWindow: false, folders: [], connectServer: "workspace" })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("a --connect-server without a value is reported as empty instead of consuming the next flag", () => {
+  assert.deepEqual(parseLaunchIntent(["--connect-server"], tmpdir()), { newWindow: false, folders: [], connectServer: "" })
+  assert.deepEqual(parseLaunchIntent(["--connect-server", "--new-window"], tmpdir()), { newWindow: true, folders: [], connectServer: "" })
+  assert.deepEqual(parseLaunchIntent(["--connect-server="], tmpdir()), { newWindow: false, folders: [], connectServer: "" })
+})
+
+test("only a launch with nothing but a connection is connect-only", () => {
+  assert.equal(isConnectOnlyLaunch({ newWindow: false, folders: [], connectServer: "prod" }), true)
+  assert.equal(isConnectOnlyLaunch({ newWindow: false, folders: [], connectServer: "" }), true)
+  assert.equal(isConnectOnlyLaunch({ newWindow: true, folders: [], connectServer: "prod" }), false)
+  assert.equal(isConnectOnlyLaunch({ newWindow: false, folders: ["/workspace"], connectServer: "prod" }), false)
+  assert.equal(isConnectOnlyLaunch({ newWindow: false, folders: [] }), false)
+})
+
+test("a forwarded connect-only second launch keeps running in an existing window", () => {
+  const config = join(tmpdir(), `codenomad-second-connect-${process.pid}`, "config.yaml")
+  const intent = { newWindow: false, folders: [], connectServer: "prod" }
+  assert.deepEqual(prepareSecondLaunchIntent(intent, config), intent)
+  assert.equal(prepareSecondLaunchIntent({ ...intent, folders: ["/workspace"] }, config).newWindow, true)
+})
+
+test("a second launch forwards its own parsed intent, which Chromium's reordered argv cannot carry", () => {
+  const root = join(tmpdir(), `codenomad-forwarded-launch-${process.pid}`)
+  const folder = join(root, "workspace")
+  mkdirSync(folder, { recursive: true })
+  try {
+    // The argv Electron 39 forwards on Windows for `--connect-server https://server.example.com` (unpackaged).
+    const reordered = ["electron.exe", "--connect-server", "--allow-file-access-from-files", "app.cjs", "https://server.example.com"]
+    assert.equal(parseLaunchIntent(reordered.slice(2), root).connectServer, undefined, "the reordered argv loses the value")
+    const sent = parseLaunchIntent(["--connect-server", "https://server.example.com", "workspace"], root)
+    const forwarded = readForwardedLaunchIntent(structuredClone(forwardedLaunchData(sent)))
+    assert.deepEqual(forwarded, { newWindow: false, folders: [folder], connectServer: "https://server.example.com" })
+    assert.deepEqual(readForwardedLaunchIntent(forwardedLaunchData({ newWindow: true, folders: [] })), { newWindow: true, folders: [] })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("a connect-only launch holds the saved Preferences window until it starts normally", () => {
+  const saved = { section: "general" }
+  const connectOnly = new DeferredRestore(saved, isConnectOnlyLaunch({ newWindow: false, folders: [], connectServer: "prod" }))
+  assert.equal(connectOnly.take(), undefined, "the backend becoming ready restores nothing")
+  assert.equal(connectOnly.take(), undefined)
+  connectOnly.release()
+  assert.equal(connectOnly.take(), saved, "a fallback to the normal start restores it")
+  assert.equal(connectOnly.take(), undefined)
+  connectOnly.retry(saved)
+  assert.equal(connectOnly.take(), saved, "a failed restore stays pending")
+  const ordinary = new DeferredRestore(saved, isConnectOnlyLaunch({ newWindow: false, folders: [] }))
+  assert.equal(ordinary.take(), saved)
+})
+
+test("a malformed singleton payload falls back to the forwarded argv, and forwarded folders must exist", () => {
+  for (const data of [undefined, null, "x", {}, { codenomadLaunchIntent: { newWindow: "yes", folders: [] } },
+    { codenomadLaunchIntent: { newWindow: false, folders: [1] } },
+    { codenomadLaunchIntent: { newWindow: false, folders: [], connectServer: 7 } },
+    { codenomadLaunchIntent: { newWindow: false, folders: [], connectServer: "x".repeat(4096) } }]) {
+    assert.equal(readForwardedLaunchIntent(data), undefined)
+  }
+  assert.deepEqual(readForwardedLaunchIntent({ codenomadLaunchIntent: { newWindow: false, folders: ["relative", join(tmpdir(), "codenomad-missing-folder")], connectServer: " prod " } }),
+    { newWindow: false, folders: [], connectServer: "prod" })
 })
 
 test("second launches open a new window unless the profile requests MRU focus", () => {

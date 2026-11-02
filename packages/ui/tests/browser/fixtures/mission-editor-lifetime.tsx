@@ -14,7 +14,9 @@ import { serverEvents } from "../../../src/lib/server-events"
 import "../../../src/index.css"
 import { markSessionListsRestored } from "./session-list-restored"
 
+;(window as any).__headerFixtureBoot?.mark("modules-evaluated")
 await initializeClientState()
+;(window as any).__headerFixtureBoot?.mark("state-initialized")
 markSessionListsRestored("fixture", "other")
 for (const id of ["fixture", "other"]) addInstance({ id, folder: "/fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client: null,
   metadata: { project: { id: "project", directory: "/fixture", canonical: "/fixture" } } })
@@ -66,3 +68,4 @@ declare global {
   }
 }
 render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+;(window as any).__headerFixtureBoot?.mark("rendered")

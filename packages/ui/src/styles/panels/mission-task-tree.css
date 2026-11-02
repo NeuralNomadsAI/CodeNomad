@@ -90,6 +90,15 @@
 .mission-tree-open:hover { background-color: var(--surface-hover); }
 .mission-tree-open:focus-visible { outline: 1px solid var(--accent-primary); outline-offset: -1px; }
 .mission-tree-recovery { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); padding-inline-start: calc(var(--space-xs) + 18px); font-size: var(--font-size-xs); }
+/* One scroll sentinel and keyboard fallback after the continuous task rows. */
+.mission-tree-more, .mission-panel-paging {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs);
+  min-height: var(--control-height-sm); color: var(--text-muted); font-size: var(--font-size-xs);
+}
+.mission-control .mission-tree-more { padding-inline: calc(var(--space-sm) + var(--space-xs)); }
+.mission-control .mission-flow-linked .mission-tree-more { padding-inline-start: calc(var(--space-sm) + 30px + var(--space-xs)); }
+.mission-tree-read { margin: var(--space-xs) 0 0; color: var(--text-muted); font-size: var(--font-size-xs); }
+.mission-tree > h3 { display: flex; align-items: center; }
 @media (pointer: coarse) {
   .mission-tree-open { min-width: var(--touch-target-size); min-height: var(--touch-target-size); opacity: 0.5; }
 }

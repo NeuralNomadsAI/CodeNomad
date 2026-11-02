@@ -26,7 +26,7 @@ const dependencyHook = resolver && registerHooks({ resolve(specifier, context, n
     return { url: pathToFileURL(resolver.resolve(specifier)).href, shortCircuit: true }
   }
 } })
-const version = execFileSync(cli, ["--version"], { encoding: "utf8" }).trim()
+const version = execFileSync(cli, ["--version"], { encoding: "utf8", windowsHide: true }).trim()
 const temporary = path.join(os.tmpdir(), "opencode")
 await mkdir(temporary, { recursive: true })
 // Windows CI's TEMP may use RUNNER~1. Direct RPC and the canonical workspace
@@ -36,6 +36,7 @@ for (const key of Object.keys(process.env)) if (/^(OPENCODE_|XDG_|CODENOMAD_)/i.
 for (const key of ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) process.env[key] = path.join(root, key)
 Object.assign(process.env, {
   HOME: root, USERPROFILE: root, APPDATA: root, OPENCODE_TEST_HOME: root, LOCALAPPDATA: root, XDG_RUNTIME_DIR: root,
+  TEMP: root, TMP: root, ProgramData: path.join(root, "program-data"),
   OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"),
   OPENCODE_SERVER_PASSWORD: "isolated-missions", OPENCODE_CONFIG_PROJECT_DISABLE: "1",
   OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
@@ -44,6 +45,7 @@ delete process.env.WSL_DISTRO_NAME
 const project = path.join(root, "project")
 await mkdir(project)
 await mkdir(process.env.OPENCODE_CONFIG_DIR)
+await mkdir(process.env.ProgramData)
 await writeFile(path.join(process.env.OPENCODE_CONFIG_DIR, "opencode.json"), "{}\n")
 const { WorkspaceManager } = await tsImport("../packages/server/src/workspaces/manager.ts", import.meta.url)
 const { EventBus } = await tsImport("../packages/server/src/events/bus.ts", import.meta.url)
@@ -53,6 +55,8 @@ const { resolveDesktopPluginPaths } = await tsImport("../packages/server/src/ope
 const { createAutomationBridgeRegistration, publishAutomationBridge } = await tsImport("../packages/server/src/opencode/automation-plugin.ts", import.meta.url)
 const { registerAutomationPluginRoute } = await tsImport("../packages/server/src/server/routes/automation-plugin.ts", import.meta.url)
 const { registerMissionRoutes } = await tsImport("../packages/server/src/server/routes/missions.ts", import.meta.url)
+const { AuthManager } = await tsImport("../packages/server/src/auth/manager.ts", import.meta.url)
+const { registerAuthRoutes } = await tsImport("../packages/server/src/server/routes/auth.ts", import.meta.url)
 const { WorktreeDeletionFence } = await tsImport("../packages/server/src/workspaces/worktree-session-evacuation.ts", import.meta.url)
 const { CODENOMAD_MISSIONS_RPC } = await tsImport("../packages/server/src/missions/rpc.ts", import.meta.url)
 const { compactMissionMap } = await tsImport("../packages/server/src/missions/mission-compact-map.ts", import.meta.url)
@@ -97,6 +101,16 @@ const provider = createServer(async (request, response) => {
   } catch (error) { failure = error; response.destroy(error) }
 })
 const bridge = Fastify()
+const auth = new AuthManager({ configPath: path.join(root, "profile.yaml"), username: "fixture-human",
+  password: "private-fixture-password", generateToken: false }, pino({ level: "silent" }))
+registerAuthRoutes(bridge, { authManager: auth })
+// Each request goes through the production login cookie verifier, including Play.
+bridge.addHook("preHandler", async (request, reply) => {
+  if (request.url.startsWith("/api/workspaces/") && !auth.getSessionFromRequest(request))
+    return reply.code(401).send({ error: "Authentication required" })
+})
+let cookie
+const http = input => bridge.inject({ ...input, headers: { cookie, ...input.headers } })
 async function until(predicate) {
   for (let i = 0; i < 600; i++) {
     if (failure) throw failure
@@ -108,27 +122,43 @@ async function until(predicate) {
 }
 const invocation = {
   id: "missions.fixture",
-  methods: { invoke: { input: { type: "object" }, output: { type: "string" } } },
+  methods: { invoke: { input: { type: "object" }, output: { type: "string" } },
+    panelShape: { input: { type: "object" }, output: CODENOMAD_MISSIONS_RPC.methods.panelPage.output } },
   events: {},
+}
+// Unified documents retain their exact cleanup acknowledgement, even with no actor deletion.
+const assertDocumentDeletion = (result, input, objective) => {
+  const cleanup = result.cleanup
+  assert.match(cleanup?.deletionID, /^evt_[a-z0-9_]+$/)
+  assert.ok(Number.isSafeInteger(cleanup.createdAt) && cleanup.createdAt > 0)
+  assert.deepEqual(result, { deleted: true, cleanup: {
+    missionID: input.missionID, deletionID: cleanup.deletionID, requestID: input.requestID,
+    expectedRevision: input.expectedRevision, deleteManagedSessions: false, objective, createdAt: cleanup.createdAt,
+    removed: 0, retained: 0, pending: 0, documentPending: false, reasons: [],
+  } })
+  return result
 }
 try {
   await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve))
   const fixturePlugin = path.join(root, "fixture-plugin")
   await mkdir(fixturePlugin)
   // Test-only RPC drives the actual registered tool executors without relying on LLM decisions.
-  await writeFile(path.join(fixturePlugin, "index.ts"), `export default { id: 'missions.fixture', async setup(ctx) {
-    await ctx.session.hook('http.request', event => {
+  await writeFile(path.join(fixturePlugin, "index.ts"), `import { Plugin, Rpc } from '@opencode/plugin/effect'
+  import { Effect } from 'effect'
+  export default Plugin.define({ id: 'missions.fixture', effect: Effect.fn(function*(ctx) {
+    yield* ctx.session.hook('http.request', event => Effect.sync(() => {
       event.request.headers.set('x-fixture-kind', event.kind)
       event.request.headers.set('x-fixture-session', event.sessionID)
-    })
-    await ctx.rpc.register(${JSON.stringify(invocation)}, { invoke: async input => {
-      const tool = (await ctx.tool.list()).find(tool => tool.id === 'mission_' + input.tool)
+    }))
+    yield* ctx.rpc.register(Rpc.define(${JSON.stringify(invocation)}), { invoke: Effect.fn(function*(input) {
+      const signal = yield* Effect.abortSignal
+      const tool = (yield* ctx.tool.list()).find(tool => tool.id === 'mission_' + input.tool)
       if (!tool) throw new Error('Mission tool unavailable')
-      const result = await tool.execute(input.input, { sessionID: input.sessionID, messageID: 'msg_fixture',
-        id: input.callID, progress: async () => {}, signal: new AbortController().signal })
+      const result = yield* tool.execute(input.input, { sessionID: input.sessionID, agent: 'build', messageID: 'msg_fixture',
+        id: input.callID, progress: () => Effect.void, signal })
       return result.content
-    } })
-  } }`)
+    }), panelShape: input => Effect.succeed(input) })
+  }) })`)
   process.env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
     model: "fixture/fixture", update: "disable", snapshots: false, permissions: [{ action: "*", resource: "*", effect: "allow" }],
     agents: { reviewer: { mode: "all", description: "Fixture reviewer" } },
@@ -188,9 +218,9 @@ try {
       differences: expected && Object.keys(expected).filter(key => !isDeepStrictEqual(expected[key], command.input[key])) }
   })
   const worktreeDeletionFence = new WorktreeDeletionFence()
-  registerMissionRoutes(bridge, { workspaceManager: manager, worktreeDeletionFence })
+  registerMissionRoutes(bridge, { workspaceManager: manager, worktreeDeletionFence, auth })
   registerAutomationPluginRoute(bridge, { workspaceManager: manager, worktreeDeletionFence,
-    authManager: { isLoopbackRequest: () => true }, bridgeToken: registration.token, nativeParent: {}, developerCdp: {} })
+    authManager: auth, bridgeToken: registration.token, nativeParent: {}, developerCdp: {} })
   await bridge.listen({ host: "127.0.0.1", port: 0 })
   registration.url = `http://127.0.0.1:${bridge.server.address().port}/api/opencode-plugin/automation`
   removeBridge = await publishAutomationBridge(registration)
@@ -202,7 +232,42 @@ try {
     (await client.location.get({ location: manager.getServiceLocation(workspace.id) })).project.id,
     "HTTP and direct RPC use the same native project authority")
   await until(async () => (await client.plugin.list({ location })).data.some(plugin => plugin.id === "codenomad.missions" && plugin.state.status === "active"))
+  const login = await bridge.inject({ method: "POST", url: "/api/auth/login",
+    payload: { username: "fixture-human", password: "private-fixture-password" } })
+  assert.equal(login.statusCode, 200, login.body)
+  cookie = login.headers["set-cookie"].split(";")[0]
+  const missionURL = `/api/workspaces/${workspace.id}/missions`
+  const play = async mission => {
+    assert.equal(mission.runState, "prepared")
+    const sessionID = mission.coordinatorSessionId
+    assert(!requests.some(request => request.session === sessionID), "Prepared creation admits no provider turn")
+    const payload = { requestId: `play-${mission.id}`, expectedRevision: mission.revision, action: "start" }
+    const url = `${missionURL}/${mission.id}/control`
+    const denied = await bridge.inject({ method: "POST", url, payload })
+    assert.equal(denied.statusCode, 401, denied.body)
+    const response = await http({ method: "POST", url, payload })
+    assert.equal(response.statusCode, 200, response.body)
+    const running = response.json().mission
+    assert.equal(running.runState, "running")
+    assert.deepEqual(running.control.pending, [])
+    assert.equal(running.control.receipts.length, 1)
+    const acknowledgement = running.control.receipts[0].nativeAcknowledgement
+    assert.equal(acknowledgement.disposition, "start-admitted")
+    assert.equal(acknowledgement.sessionID, sessionID)
+    assert.equal(acknowledgement.operationID, running.control.id)
+    await client.session.wait({ sessionID }, { signal: AbortSignal.timeout(20_000) })
+    const turns = requests.filter(request => request.session === sessionID).length
+    assert.equal(turns, 1, "Play admits exactly one native provider turn")
+    const replay = await http({ method: "POST", url, payload })
+    assert.equal(replay.statusCode, 200, replay.body)
+    assert.deepEqual(replay.json().mission.control, running.control, "Play replay retains the exact admission identity")
+    await client.session.wait({ sessionID }, { signal: AbortSignal.timeout(20_000) })
+    assert.equal(requests.filter(request => request.session === sessionID).length, turns)
+    receipt.authenticatedPlays = (receipt.authenticatedPlays ?? 0) + 1
+    return running
+  }
   const coordinator = await client.session.create({ location, title: "Coordinator" })
+  const createPrepared = input => client.rpc(CODENOMAD_MISSIONS_RPC).create({ ...input, prepared: true }, { location })
   // Mission tools return compact readouts; checks below read the resulting map from the native snapshot.
   const invoke = async (tool, input, sessionID = coordinator.id, callID = `fixture-${tool}`) => {
     const result = JSON.parse(await client.rpc(invocation).invoke({ tool, input, sessionID, callID }, { location }))
@@ -214,6 +279,8 @@ try {
   assert(inspected.catalog.agents.some(agent => agent.id === "reviewer"))
   assert(inspected.catalog.models.some(model => model.id === "selected" && model.variants.includes("careful")))
   gate("native catalog and configured variant discovery")
+  await play(inspected.mission)
+  gate("prepared mission, authenticated native Play and exact single-admission replay before delegation")
   // These original cases test durable root queues, report notifications and
   // root lifecycle/cleanup across plugin reloads. They are explicit independent
   // lifetime exceptions, not the default native child declaration path.
@@ -428,9 +495,8 @@ try {
   // Native lifecycle RPC is the same typed capability brokered by the authenticated UI routes.
   gate("targeted missing-report recovery without task replay or duplicate model turn")
   stage = "lifecycle CRUD and transcript preservation"
-  const missionURL = `/api/workspaces/${workspace.id}/missions`
-  const crudInput = { requestID: "native-crud-create", objective: "Keep this conversation", notes: "CRUD fixture", template: "custom" }
-  const crudCreated = await client.rpc(CODENOMAD_MISSIONS_RPC).create(crudInput, { location })
+  const crudInput = { requestID: "native-crud-create", objective: "Keep this conversation", notes: "CRUD fixture", template: "custom", prepared: true }
+  const crudCreated = await createPrepared(crudInput)
   const crudReplay = await client.rpc(CODENOMAD_MISSIONS_RPC).create(crudInput, { location })
   assert.equal(crudReplay.mission.id, crudCreated.mission.id)
   assert.equal(crudReplay.mission.coordinatorSessionId, crudCreated.mission.coordinatorSessionId)
@@ -454,7 +520,7 @@ try {
   assert.equal(updateReplay.mission.notes, "Updated notes")
   stage = "native mutation errors through HTTP routes"
   const rejectedMutation = async (method, suffix, payload, status, code) => {
-    const response = await bridge.inject({ method, url: missionURL + suffix, payload })
+    const response = await http({ method, url: missionURL + suffix, payload })
     // Keep every contract assertion and a red overall exit, but collect independent
     // structured-error failures so later storage/deletion/control checks still run.
     try {
@@ -492,8 +558,8 @@ try {
   assert.equal((await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location }))
     .missions.find(mission => mission.id === crudCreated.mission.id).revision, crudUpdated.mission.revision)
   const deletion = { missionID: crudCreated.mission.id, requestID: "native-crud-delete", expectedRevision: crudUpdated.mission.revision }
-  assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(deletion, { location }), { deleted: true })
-  assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(deletion, { location }), { deleted: true })
+  const deleted = assertDocumentDeletion(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(deletion, { location }), deletion, crudUpdated.mission.objective)
+  assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(deletion, { location }), deleted)
   await rejectedMutation("DELETE", `/${crudCreated.mission.id}`, {
     requestId: deletion.requestID, expectedRevision: 1,
   }, 409, "request-conflict")
@@ -505,10 +571,11 @@ try {
   gate("lifecycle CRUD replay, structured HTTP/RPC conflicts, tombstone and exact transcript preservation")
 
   stage = "optional managed specialist cleanup"
-  const cleanup = await client.rpc(CODENOMAD_MISSIONS_RPC).create({
+  const cleanup = await createPrepared({
     requestID: "native-cleanup-create", objective: "Clean only owned specialists", template: "custom",
-  }, { location })
+  })
   const cleanupCoordinator = cleanup.mission.coordinatorSessionId
+  await play(cleanup.mission)
   const managedTask = await invoke("delegate", { ...task, missionID: cleanup.mission.id, taskKey: "managed-cleanup" }, cleanupCoordinator, "cleanup-managed")
   const managedSession = managedTask.mission.tasks.find(task => task.key === "managed-cleanup").actorSessionId
   await client.session.wait({ sessionID: managedSession }, { signal: AbortSignal.timeout(20_000) })
@@ -518,7 +585,7 @@ try {
   const cleanupRequest = { requestId: "native-cleanup-delete", expectedRevision: reusedTask.revision, deleteManagedSessions: true }
   let cleanupReceipt
   for (let replay = 0; replay < 2; replay++) {
-    const response = await bridge.inject({ method: "DELETE", url: `${missionURL}/${cleanup.mission.id}`, payload: cleanupRequest })
+    const response = await http({ method: "DELETE", url: `${missionURL}/${cleanup.mission.id}`, payload: cleanupRequest })
     assert.equal(response.statusCode, 200, response.body)
     const result = response.json()
     assert.equal(result.deleted, true)
@@ -542,18 +609,19 @@ try {
   // Twenty newer settled deletions push both earlier ones past the retained cleanup
   // history: native storage.remove clears their entries, their deletion records stay.
   for (let index = 0; index < 20; index++) {
-    const extra = await client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: `native-purge-${index}`, objective: `Purge fixture ${index}`, template: "custom" }, { location })
-    assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete({
+    const extra = await createPrepared({ requestID: `native-purge-${index}`, objective: `Purge fixture ${index}`, template: "custom" })
+    const purgeDeletion = {
       missionID: extra.mission.id, requestID: `native-purge-delete-${index}`, expectedRevision: extra.mission.revision,
-    }, { location }), { deleted: true })
+    }
+    assertDocumentDeletion(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(purgeDeletion, { location }), purgeDeletion, extra.mission.objective)
   }
   const purgedSnapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
   assert.equal(purgedSnapshot.discardedEvents, 0)
   assert.equal(purgedSnapshot.cleanupUnavailable, undefined)
   assert.equal(purgedSnapshot.cleanups.length, 20, "The newest settled deletions stay as cleanup history")
   assert(!purgedSnapshot.cleanups.some(item => [crudCreated.mission.id, cleanup.mission.id].includes(item.missionID)), "Purged deletions leave the journal")
-  assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(deletion, { location }), { deleted: true }, "A purged deletion replays from its record")
-  const purgedReplay = await bridge.inject({ method: "DELETE", url: `${missionURL}/${cleanup.mission.id}`, payload: cleanupRequest })
+  assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(deletion, { location }), deleted, "A purged deletion replays its exact document cleanup acknowledgement")
+  const purgedReplay = await http({ method: "DELETE", url: `${missionURL}/${cleanup.mission.id}`, payload: cleanupRequest })
   assert.equal(purgedReplay.statusCode, 200, purgedReplay.body)
   assert.deepEqual(purgedReplay.json(), cleanupReceipt, "A purged cleanup replays its exact receipt")
   await rejectedMutation("DELETE", `/${cleanup.mission.id}`, { ...cleanupRequest, deleteManagedSessions: false }, 409, "request-conflict")
@@ -566,14 +634,14 @@ try {
   gate("settled deletion purge frees journal entries and keeps recreation and replay evidence")
 
   stage = "Play Pause Resume and terminal Stop"
-  const preparedResponse = await bridge.inject({ method: "POST", url: missionURL, payload: { requestId: "native-run-create", objective: "Controlled mission", template: "custom" } })
+  const preparedResponse = await http({ method: "POST", url: missionURL, payload: { requestId: "native-run-create", objective: "Controlled mission", template: "custom" } })
   assert.equal(preparedResponse.statusCode, 200, preparedResponse.body)
   let controlled = preparedResponse.json().mission
   assert.equal(controlled.runState, "prepared")
   const runCoordinator = controlled.coordinatorSessionId
   const runAction = async action => {
     const request = { requestId: `native-${action}-${controlled.revision}`, expectedRevision: controlled.revision, action }
-    const response = await bridge.inject({ method: "POST", url: `${missionURL}/${controlled.id}/control`, payload: request })
+    const response = await http({ method: "POST", url: `${missionURL}/${controlled.id}/control`, payload: request })
     assert.equal(response.statusCode, 200, response.body)
     controlled = response.json().mission
     return request
@@ -617,10 +685,10 @@ try {
   assert.equal(controlled.status, "stopped")
   assert.equal(controlled.control.pending.length, 0)
   assert.ok(!(await client.session.inbox.list({ sessionID: runWorker })).some(item => item.id === parked.id))
-  const restarted = await bridge.inject({ method: "POST", url: `${missionURL}/${controlled.id}/control`, payload: { requestId: "restart-stopped", expectedRevision: controlled.revision, action: "start" } })
+  const restarted = await http({ method: "POST", url: `${missionURL}/${controlled.id}/control`, payload: { requestId: "restart-stopped", expectedRevision: controlled.revision, action: "start" } })
   assert.equal(restarted.statusCode, 409, restarted.body)
   assert.equal(restarted.json().code, "mission-finished")
-  const staleStart = await bridge.inject({ method: "POST", url: `${missionURL}/${controlled.id}/control`, payload: startRequest })
+  const staleStart = await http({ method: "POST", url: `${missionURL}/${controlled.id}/control`, payload: startRequest })
   assert.equal(staleStart.json().mission.status, "stopped", "Replaying an old Play cannot restart a stopped mission")
   assert.equal((await client.session.get({ sessionID: runWorker })).id, runWorker)
   gate("prepared Play, root Pause/Resume, parked report notification and irreversible Stop")
@@ -700,8 +768,9 @@ try {
   // A mission of 12 actors and 107 tasks: managed roots, revisions, a paged
   // mission.inspect, Pause/Play/Stop receipts for every actor through the typed
   // RPC outputs, and a cleanup deletion of every managed root.
-  const wide = (await client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: "native-wide", objective: "Many actors and tasks", template: "custom" }, { location })).mission
+  const wide = (await createPrepared({ requestID: "native-wide", objective: "Many actors and tasks", template: "custom" })).mission
   const wideCoordinator = wide.coordinatorSessionId
+  await play(wide)
   const wideActors = []
   for (let index = 0; index < 11; index++) {
     const delegatedWide = await invoke("delegate", { ...task, missionID: wide.id, taskKey: `wide-actor-${index}` }, wideCoordinator, `wide-actor-${index}`)
@@ -733,7 +802,7 @@ try {
   }
   assert.deepEqual(wideKeys, wideMap.tasks.map(value => value.key), "The pages read every task once, in map order")
   const wideAction = async action => {
-    const response = await bridge.inject({ method: "POST", url: `${missionURL}/${wide.id}/control`,
+    const response = await http({ method: "POST", url: `${missionURL}/${wide.id}/control`,
       payload: { requestId: `native-wide-${action}-${wideMap.revision}`, expectedRevision: wideMap.revision, action } })
     assert.equal(response.statusCode, 200, response.body)
     wideMap = response.json().mission
@@ -743,25 +812,97 @@ try {
   await wideAction("start")
   assert.deepEqual([wideMap.runState, wideMap.control.pending.length], ["running", 0])
   await Promise.all([wideCoordinator, ...wideActors].map(sessionID => client.session.wait({ sessionID }, { signal: AbortSignal.timeout(20_000) })))
-  const widePanel = (await bridge.inject({ method: "GET", url: `${missionURL}?include=${wide.id}` })).json()
-  assert.equal(widePanel.missions.find(mission => mission.id === wide.id).tasks.length, 107)
+  const widePanel = (await http({ method: "GET", url: `${missionURL}?include=${wide.id}` })).json()
+  // The panel's map holds a page of the tasks; the task route reads the rest in display order.
+  const panelWide = widePanel.missions.find(mission => mission.id === wide.id)
+  assert.deepEqual([panelWide.taskPage.total, panelWide.taskPage.end], [107, 50])
+  // Opt-in display transport over the real plugin and route: exact compact map in
+  // byte-bounded slices, independent of the current UI's list contract.
+  const directPanel = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage({ source: "mission", missionID: wide.id }, { location })
+  assert.equal(directPanel.available, true, JSON.stringify(directPanel))
+  const directoryWindow = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage({ source: "summaries", initial: true, window: { offset: 0 } }, { location })
+  assert.equal(directoryWindow.available, true)
+  assert.ok(Number.isSafeInteger(directoryWindow.finishHighWater))
+  assert.equal(directoryWindow.page.total, directoryWindow.window.end - directoryWindow.window.offset)
+  assert.ok(directoryWindow.page.total <= 50)
+  assert.ok(directoryWindow.page.pieces.every(piece => !piece.text.includes('"actorSessionIds"')))
+  const selectedHeader = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage({ source: "mission", missionID: wide.id, header: true }, { location })
+  assert.equal(selectedHeader.available, true)
+  assert.equal(selectedHeader.header, true)
+  const headerValue = JSON.parse(selectedHeader.page.pieces.map(piece => piece.text).join(""))
+  assert.deepEqual([headerValue.root.id, headerValue.root.actors, headerValue.root.tasks, headerValue.collections.actors.total], [wide.id, undefined, undefined, 12])
+  assert.equal(headerValue.control.pending, 0)
+  const actorWindow = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage({ source: "mission", missionID: wide.id, field: "actors", window: { offset: 1 } }, { location })
+  assert.equal(actorWindow.available, true)
+  assert.deepEqual([actorWindow.window.offset, actorWindow.window.end, actorWindow.window.total], [1, 12, 12])
+  const headerHTTP = await http({ method: "POST", url: `${missionURL}/panel-page`, payload: { source: "mission", missionID: wide.id, header: true } })
+  assert.ok(headerHTTP.rawPayload.length <= 65536)
+  assert.deepEqual(headerHTTP.json(), selectedHeader)
+  const rawInput = { source: "mission", missionID: wide.id, field: "actors", text: true, window: { offset: 0 } }
+  const rawRPC = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage(rawInput, { location })
+  assert.equal(rawRPC.available, true); assert.equal(rawRPC.text, true)
+  assert.deepEqual(JSON.parse(JSON.parse(rawRPC.page.pieces.map(piece => piece.text).join(""))), panelWide.actors)
+  const rawHTTP = await http({ method: "POST", url: `${missionURL}/panel-page`, payload: rawInput })
+  assert.ok(rawHTTP.rawPayload.length <= 65536); assert.deepEqual(rawHTTP.json(), rawRPC)
+  assert.deepEqual(headerValue.tasks.page, panelWide.taskPage)
+  gate("bounded inventory windows, durable finish baseline and selected header over native RPC plus HTTP")
+  const activityContext = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage({ source: "activity", missionID: wide.id }, { location })
+  assert.deepEqual([activityContext.available, activityContext.phase], [true, "context"])
+  const livePanel = await http({ method: "POST", url: `${missionURL}/panel-page`, payload: { source: "activity", missionID: wide.id } })
+  assert.ok(livePanel.rawPayload.length <= 65_536)
+  const liveObservation = livePanel.json()
+  assert.deepEqual([liveObservation.available, liveObservation.phase, liveObservation.page.next], [true, "observed", undefined])
+  const liveActors = JSON.parse(liveObservation.page.pieces[0].text)
+  assert.deepEqual([liveActors.context.actorPage.total, liveActors.activity.actors.length], [12, 12])
+  const markContext = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage({ source: "marks" }, { location })
+  assert.deepEqual([markContext.available, markContext.phase], [true, "context"])
+  assert.deepEqual(await client.rpc(invocation).panelShape({ available: false, reason: "damaged" }, { location }), { available: false, reason: "damaged" })
+  for (const invalid of [{ available: true, projectID: wideMap.projectID, source: "summaries" }, { available: false },
+    { ...directPanel, page: {} }, { ...directPanel, available: "true" }]) {
+    await assert.rejects(client.rpc(invocation).panelShape(invalid, { location }), error => error.type === "rpc.invalid_output", JSON.stringify(invalid))
+  }
+  let panelCursor
+  const panelText = []
+  do {
+    const response = await http({ method: "POST", url: `${missionURL}/panel-page`,
+      payload: { source: "mission", missionID: wide.id, ...(panelCursor ? { cursor: panelCursor } : {}) } })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.ok(response.rawPayload.length <= 65_536, `${response.rawPayload.length} display bytes`)
+    const result = response.json()
+    assert.equal(result.available, true, response.body)
+    for (const piece of result.page.pieces) {
+      assert.equal((panelText[piece.index] ?? "").length, piece.offset)
+      panelText[piece.index] = (panelText[piece.index] ?? "") + piece.text
+    }
+    panelCursor = result.page.next
+  } while (panelCursor)
+  assert.deepEqual(JSON.parse(panelText[0]), panelWide)
+  const panelKeys = panelWide.tasks.slice(0, panelWide.taskPage.end).map(value => value.key)
+  for (let offset = panelWide.taskPage.end; offset < panelWide.taskPage.total;) {
+    const page = (await http({ method: "GET", url: `${missionURL}/${wide.id}/tasks?order=${encodeURIComponent(panelWide.taskPage.order)}&offset=${offset}` })).json()
+    assert.equal(page.available, true, JSON.stringify(page))
+    panelKeys.push(...page.tasks.map(value => value.key))
+    offset = page.taskPage.end
+  }
+  assert.deepEqual(panelKeys, wideMap.tasks.map(value => value.key), "The panel's pages read every task once, in display order")
   assert.equal(widePanel.activity.missions.find(item => item.missionId === wide.id).actors.length, 12)
   await wideAction("stop")
   assert.deepEqual([wideMap.status, wideMap.control.pending.length, wideMap.control.receipts.length], ["stopped", 0, 12])
-  const wideDeleted = await bridge.inject({ method: "DELETE", url: `${missionURL}/${wide.id}`,
+  const wideDeleted = await http({ method: "DELETE", url: `${missionURL}/${wide.id}`,
     payload: { requestId: "native-wide-delete", expectedRevision: wideMap.revision, deleteManagedSessions: true } })
   assert.equal(wideDeleted.statusCode, 200, wideDeleted.body)
   assert.deepEqual([wideDeleted.json().cleanup.removed, wideDeleted.json().cleanup.pending], [11, 0])
   for (const sessionID of wideActors) await assert.rejects(client.session.get({ sessionID }), "Cleanup removes every managed root")
   assert.equal((await client.session.get({ sessionID: wideCoordinator })).id, wideCoordinator)
-  gate("a mission beyond eight actors and 96 tasks: managed roots, revisions, paged inspect, Pause/Play/Stop receipts and cleanup deletion")
+  gate("a mission beyond eight actors and 96 tasks: managed roots, revisions, paged inspect, panel task pages, Pause/Play/Stop receipts and cleanup deletion")
 
   stage = "finished mission history and journal index"
   // Many finished missions through the real bundle, then a new activation whose
   // index builds once over them. Last stage: its damage probe must not leak.
   const history = []
   for (let index = 0; index < 100; index++) {
-    const created = await client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: `native-history-${index}`, objective: `Finished ${index}`, template: "custom" }, { location })
+    const created = await createPrepared({ requestID: `native-history-${index}`, objective: `Finished ${index}`, template: "custom" })
+    await play(created.mission)
     const finished = await invoke("report", { missionID: created.mission.id, outcome: "completed", summary: `Finished ${index}`, final: true },
       created.mission.coordinatorSessionId, `history-${index}`)
     assert.equal(finished.mission.status, "completed")
@@ -795,8 +936,9 @@ try {
   } finally { seeding.close() }
   await client.location.reload({ signal: AbortSignal.timeout(20_000) })
   await until(async () => { try { return Boolean(await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })) } catch { return false } })
-  const live = (await client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: "native-history-live", objective: "Live beside history", template: "custom" }, { location })).mission
+  const live = (await createPrepared({ requestID: "native-history-live", objective: "Live beside history", template: "custom" })).mission
   const liveCoordinator = live.coordinatorSessionId
+  await play(live)
   const liveTask = { missionID: live.id, taskKey: "history-work", title: "History work", brief: "Return evidence.", role: "reviewer", execution: task.execution, blockedBy: [] }
   assert.equal((await invoke("delegate", liveTask, liveCoordinator, "history-declare")).disposition, "declared")
   assert.equal((await invoke("report", { missionID: live.id, taskKey: liveTask.taskKey, outcome: "completed", summary: "History unaffected" },
@@ -806,8 +948,10 @@ try {
   // The deletion's retention purge pushes the oldest settled deletion past the history, through native storage.remove.
   const settled = beforeDelete.cleanups.filter(item => item.pending === 0)
   assert.equal(settled.length, 20)
-  assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete({ missionID: history[0].id, requestID: "native-history-delete",
-    expectedRevision: beforeDelete.missions.find(mission => mission.id === history[0].id).revision }, { location }), { deleted: true })
+  const historyDeletion = { missionID: history[0].id, requestID: "native-history-delete",
+    expectedRevision: beforeDelete.missions.find(mission => mission.id === history[0].id).revision }
+  assertDocumentDeletion(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(historyDeletion, { location }), historyDeletion,
+    beforeDelete.missions.find(mission => mission.id === history[0].id).objective)
   const withHistory = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
   assert.equal(withHistory.missions.filter(mission => history.some(item => item.id === mission.id)).length, history.length - 1)
   assert.equal(withHistory.discardedEvents, 0)
@@ -815,7 +959,7 @@ try {
   assert(!withHistory.cleanups.some(item => item.missionID === settled.at(-1).missionID), "The oldest settled deletion was purged")
   // The panel's reads through the real routes and bundle: one row per live map, compact maps
   // only for open and included missions, activity only for those maps.
-  const panel = (suffix = "") => bridge.inject({ method: "GET", url: missionURL + suffix }).then(response => response.json())
+  const panel = (suffix = "") => http({ method: "GET", url: missionURL + suffix }).then(response => response.json())
   const finished = id => history.some(item => item.id === id)
   const listed = await panel()
   assert.equal(listed.available, true)
@@ -861,11 +1005,48 @@ try {
       // The fixture RPC reports tool errors as opaque defects; the retry below names the cause.
       await assert.rejects(invoke("delegate", { ...liveTask, taskKey: "history-refused" }, liveCoordinator, "history-refused"))
     } finally { database.prepare("DELETE FROM kv WHERE key=?").run(strayKey) }
+    // A private range's damage travels with every bounded view, even when the map can
+    // no longer be reconstructed. This uses only this fixture's own newly created KV.
+    const panelID = "msn_native_panel_damage", creationKey = `${journalRange}${panelID}/evt_created`, badKey = `${journalRange}${panelID}/evt_bad`
+    const insert = database.prepare("INSERT INTO kv(key,value,time_created,time_updated) VALUES(?,?,?,?)")
+    const created = { version: 1, projectID: live.projectID, missionID: panelID, id: "evt_created", type: "mission.created", projectCanonical: project,
+      objective: "Native panel damage", template: "custom", coordinator: { sessionID: "ses_panel_damage", title: "Panel", location }, createdAt: Date.now() }
+    insert.run(creationKey, JSON.stringify(created), Date.now(), Date.now())
+    insert.run(badKey, "{}", Date.now(), Date.now())
+    const panelRequests = [{ source: "mission", missionID: panelID }, { source: "mission", missionID: panelID, field: "actors" },
+      { source: "tasks", task: { missionID: panelID, offset: 0 } }]
+    try {
+      for (const input of panelRequests) {
+        const rpc = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage(input, { location })
+        const response = await http({ method: "POST", url: `${missionURL}/panel-page`, payload: input })
+        assert.equal(response.statusCode, 200, response.body)
+        assert.deepEqual(response.json(), rpc)
+        assert.equal(rpc.available, true, response.body)
+        assert.deepEqual([rpc.discardedEvents, rpc.controlUnavailable, rpc.notificationUnavailable, rpc.cleanupUnavailable], [1, true, true, true])
+        assert.ok(response.rawPayload.length <= 65_536)
+      }
+      const damagedLive = await http({ method: "POST", url: `${missionURL}/panel-page`, payload: { source: "activity", missionID: panelID } })
+      const damagedObservation = damagedLive.json()
+      assert.deepEqual([damagedObservation.available, damagedObservation.phase, damagedObservation.discardedEvents,
+        damagedObservation.controlUnavailable, damagedObservation.notificationUnavailable, damagedObservation.cleanupUnavailable], [true, "observed", 1, true, true, true])
+      assert.ok(damagedLive.rawPayload.length <= 65_536)
+      database.prepare("UPDATE kv SET value=? WHERE key=?").run("{}", creationKey)
+      for (const input of [...panelRequests, { source: "activity", missionID: panelID }]) {
+        const rpc = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage(input, { location })
+        const response = await http({ method: "POST", url: `${missionURL}/panel-page`, payload: input })
+        assert.deepEqual(rpc, { available: false, reason: "damaged" })
+        assert.deepEqual(response.json(), rpc)
+      }
+    } finally {
+      database.prepare("DELETE FROM kv WHERE key=?").run(creationKey)
+      database.prepare("DELETE FROM kv WHERE key=?").run(badKey)
+    }
   } finally { database.close() }
   assert.equal((await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).discardedEvents, 0)
   assert.equal((await invoke("delegate", { ...liveTask, taskKey: "history-refused" }, liveCoordinator, "history-accepted")).disposition, "declared",
     "Only the damage refused the declaration: its authoritative gate read the entry the hints had not seen")
   gate("finished history beyond one mission's bound: creation, declaration, readout, deletion and purge beside it; hinted reads and the panel list skip it, write gates read it")
+  gate("bounded panel range damage, damaged absence and strict native success/refusal validation")
   assert.equal(failures.length, 0, "Every baseline expectation must pass; collected errors are never skipped or accepted")
   receipt.status = "passed"; receipt.passCount = gates.length
   receipt.finalSnapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location }); receipt.providerRequests = requests.length

@@ -170,7 +170,7 @@ describe("plugin source mutations", () => {
       await writeFile(f.globalFile, "{}")
       await assert.rejects(sources.add("w", { location: f.location, scope: "global", spec: "committed" }, {
         async revalidate() {
-          if (++checks !== 6) return
+          if (++checks !== 7) return
           assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["committed"])
           await new Promise<void>(resolve => {
             if (signal!.aborted) resolve()
@@ -178,7 +178,7 @@ describe("plugin source mutations", () => {
           })
         }, assertCurrent() {},
       }), NativeMutationUncertainError)
-      assert.equal(checks, 6)
+      assert.equal(checks, 7, "prepared commit refreshes authority before the post-rename checkpoint")
     } finally { await f.cleanup() }
   })
 
@@ -195,6 +195,21 @@ describe("plugin source mutations", () => {
       await assert.rejects(readFile(f.projectFile))
       await f.sources.add("w", { location: f.location, scope: "project", spec: "@scope/project-only" })
       assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, ["@scope/project-only"])
+    } finally { await f.cleanup() }
+  })
+
+  it("keeps plugin source editing on the selected JSONC target while native settings require one document per layer", async () => {
+    const f = await fixture()
+    try {
+      const lower = path.join(path.dirname(f.globalFile), "opencode.json")
+      await writeFile(lower, '{"plugins":["lower-plugin"]}')
+      await writeFile(f.globalFile, '{"plugins":[]}')
+      await assert.rejects(f.controls.readConfigDocuments("w", f.location, undefined, true), /JSON and JSONC coexist/)
+      await f.sources.add("w", { location: f.location, scope: "global", spec: "fixture-plugin" })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["fixture-plugin"])
+      await f.sources.remove("w", { location: f.location, scope: "global", target: "fixture-plugin", entryIndex: 0, expectedRevision: await revision(f) })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, [])
+      assert.equal(await readFile(lower, "utf8"), '{"plugins":["lower-plugin"]}')
     } finally { await f.cleanup() }
   })
 
@@ -255,7 +270,7 @@ describe("plugin source mutations", () => {
       t.mock.timers.enable({ apis: ["setTimeout"] })
       await writeFile(f.globalFile, "{}")
       // This fake client ignores the abort signal: the grace period still releases the queue.
-      const sources = new PluginSources({ documents: f.controls, logger: { info() {} } as any, addTimeoutMs: 50, abortGraceMs: 20 })
+      const sources = new PluginSources({ documents: f.controls, logger: { info() {} } as any, addTimeoutMs: 500, abortGraceMs: 50 })
       let release!: () => void
       f.state.gate = new Promise<void>(resolve => { release = resolve })
       const stalled = sources.add("w", { location: f.location, scope: "global", spec: "stalled-plugin" })
@@ -263,8 +278,8 @@ describe("plugin source mutations", () => {
       await new Promise(resolve => setImmediate(resolve))
       f.state.gate = undefined
       const next = sources.add("w2", { location: f.location, scope: "global", spec: "next-plugin" })
+      t.mock.timers.tick(500)
       t.mock.timers.tick(50)
-      t.mock.timers.tick(20)
       await assert.rejects(stalled, code("timeout", "unavailable"))
       await next
       release()

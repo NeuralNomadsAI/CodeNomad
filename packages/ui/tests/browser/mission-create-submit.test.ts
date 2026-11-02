@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
@@ -9,6 +9,7 @@ import type {} from "./fixtures/mission-editor-lifetime"
 import { captureMissionView } from "./mission-view-capture"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { panelMissions } from "./mission-content-fixture"
+import { pausedMissionScheduleReceipt } from "./mission-scheduled-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -43,14 +44,15 @@ async function setup(page: Page) {
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   await page.route("**/api/storage/config/ui", route => route.fulfill({ json: { settings: { missionProfileDefaults: [{ template: "custom", profiles }] } } }))
-  await page.route("**/api/workspaces/fixture/missions**", route => {
+  await page.route("**/api/workspaces/fixture/missions**", async route => {
     const request = route.request(), path = new URL(request.url()).pathname
     if (path.endsWith("/control")) { controls.push(path); return route.abort() }
+    if (path.endsWith("/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" }, api: { available: true }, enabled: true } })
     if (request.method() === "GET") return route.fulfill({ json: path.endsWith("/missions/recurrence") ? emptyRecurrence()
       : { available: true, projectID: "project", missions: panelMissions(list), generatedAt: 1, discardedEvents: 0 } })
-    if (path.endsWith("/missions/recurrence")) {
+    if (path.endsWith("/missions/scheduled")) {
       creates.push(request.postDataJSON())
-      return route.fulfill({ json: { schedule: { id: "rec_created", revision: 0, state: "paused", digest: "d".repeat(64), projectID: "project", projectCanonical: "/fixture" } } })
+      return route.fulfill({ json: await pausedMissionScheduleReceipt(request.postDataJSON()) })
     }
     if (path.endsWith("/missions")) {
       const body = request.postDataJSON(); creates.push(body)
@@ -235,12 +237,14 @@ test("a first list read reporting another project than the instance's fences a c
     await form.getByRole("button", { name: "Create", exact: true }).click()
     await posted.promise
     firstRead.resolve()
-    await page.waitForFunction(() => window.missionEditorLifetime.state("fixture").projectID === "other-project")
+    await page.waitForFunction(() => window.missionEditorLifetime.state("fixture").status === "error")
+    assert.equal(await page.evaluate(() => window.missionEditorLifetime.state("fixture").projectID), undefined, "a foreign directory response is refused, never adopted")
+    await page.evaluate(() => window.missionEditorLifetime.project("other-project"))
     reply.resolve()
     // Either outcome of the completion reads the list again: decide only after that read.
     await completionRead.promise
     assert.equal(await page.evaluate(() => Boolean(document.querySelector("form.mission-editor"))), true,
-      "the other project's view is not closed by the original project's completion")
+      "a refused foreign-project response cannot close the creation view")
     assert.equal((await page.evaluate(() => window.missionEditorLifetime.selectedHistory())).includes("msn_created"), false)
     assert.equal(fixture.creates.length, 1)
     assert.deepEqual(fixture.errors, [])
@@ -283,9 +287,10 @@ test("clearing the daily time and choosing Once creates a one-time mission witho
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     const form = page.locator("form.mission-editor")
     await form.getByLabel(OBJECTIVE, { exact: true }).fill("One-time after clearing the schedule")
-    await form.getByLabel("Every day at", { exact: true }).check()
-    await form.getByLabel("Daily local time", { exact: true }).fill("")
-    await form.getByLabel("Once", { exact: true }).check()
+    await form.locator(".mission-scheduling > summary").click()
+    await form.getByLabel("Frequency", { exact: true }).selectOption("daily")
+    await form.getByLabel("Time 1", { exact: true }).fill("")
+    await form.getByLabel("Frequency", { exact: true }).selectOption("immediate")
     await submitReady(page)
     await form.getByRole("button", { name: "Create", exact: true }).click()
     await form.waitFor({ state: "detached", timeout: 3_000 }).catch(() => undefined)
@@ -306,16 +311,18 @@ test("daily Create stores a paused schedule and never sends Play", async () => {
     await page.getByRole("button", { name: "Create mission", exact: true }).click({ timeout: 60_000 })
     const form = page.locator("form.mission-editor")
     await form.getByLabel(OBJECTIVE, { exact: true }).fill("Review yesterday's merged changes and summarize risks.")
-    await form.getByLabel("Every day at", { exact: true }).check()
-    await form.getByLabel("Daily local time", { exact: true }).fill("07:30")
-    assert.match(await form.locator(".mission-create-zone").innerText(), /Europe\/Paris/)
+    await form.locator(".mission-scheduling > summary").click()
+    await form.getByLabel("Frequency", { exact: true }).selectOption("daily")
+    await form.getByLabel("Time 1", { exact: true }).fill("07:30")
+    assert.equal(await form.getByLabel("Saved time zone (IANA)", { exact: true }).inputValue(), "Europe/Paris")
     await submitReady(page)
     await captureMissionView(page, "create-recurring")
     await assertSingleCreate(form)
     await page.waitForTimeout(300)
     assert.equal(fixture.creates.length, 1)
-    assert.equal(fixture.creates[0]!.title, "Review yesterday's merged changes and summarize risks")
-    assert.deepEqual(fixture.creates[0]!.clock, { time: "07:30", zone: "Europe/Paris" })
+    const configuration = fixture.creates[0]!.configuration as Record<string, any>
+    assert.equal(configuration.title, "Review yesterday's merged changes and summarize risks")
+    assert.deepEqual(configuration.launch.timing, { kind: "cron", expression: "30 7 * * *", zone: "Europe/Paris" })
     assert.deepEqual(fixture.controls, [], "Play stays a separate explicit action")
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }

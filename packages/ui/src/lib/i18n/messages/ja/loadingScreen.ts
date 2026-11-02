@@ -3,6 +3,11 @@ export const loadingScreenMessages = {
   "loadingScreen.status.issue": "問題が発生しました",
   "loadingScreen.actions.showAnother": "別のメッセージを表示",
   "loadingScreen.errors.missingRoot": "読み込み用のルート要素が見つかりません",
+  "loadingScreen.remoteUnavailable.title": "このサーバーに接続できません",
+  "loadingScreen.remoteUnavailable.message": "CodeNomad はこのサーバーを読み込めませんでした。サーバーが起動していて接続できることを確認してから、もう一度お試しください。",
+  "loadingScreen.remoteUnavailable.retry": "再試行",
+  "loadingScreen.remoteUnavailable.openLocal": "ローカルウィンドウを開く",
+  "loadingScreen.remoteUnavailable.close": "ウィンドウを閉じる",
 
   "loadingScreen.phrases.neurons": "AI のニューロンをウォームアップ中…",
   "loadingScreen.phrases.daydreaming": "AI に空想をやめるよう説得中…",

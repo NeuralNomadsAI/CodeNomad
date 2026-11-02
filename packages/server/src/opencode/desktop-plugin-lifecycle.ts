@@ -1,6 +1,12 @@
 import { readFile } from "node:fs/promises"
 import { installDesktopPluginPresence, type DesktopPluginFeature, type DesktopPluginPaths } from "./desktop-plugin-installation"
 
+const readPayload = (feature: DesktopPluginFeature, file: string) => readFile(new URL(`../plugins/${feature}/${file}`, import.meta.url))
+  .catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error
+    return readFile(new URL(`../../dist/plugins/${feature}/${file}`, import.meta.url))
+  })
+
 type PreparedPlugin = { commit(): void; release(): Promise<void> }
 type Presence = Awaited<ReturnType<typeof installDesktopPluginPresence>>
 type Installation = {
@@ -20,11 +26,8 @@ export class DesktopPluginLifecycle {
 
   constructor(
     private readonly feature: DesktopPluginFeature,
-    private readonly readBundle = () => readFile(new URL(`../plugins/${feature}/plugin.mjs`, import.meta.url))
-      .catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== "ENOENT") throw error
-        return readFile(new URL(`../../dist/plugins/${feature}/plugin.mjs`, import.meta.url))
-      }),
+    private readonly readBundle = () => readPayload(feature, "plugin.mjs"),
+    private readonly readProvider = () => readPayload("missions", "provider.mjs"),
   ) {}
 
   async start(paths: DesktopPluginPaths): Promise<void> {
@@ -57,7 +60,9 @@ export class DesktopPluginLifecycle {
           current()
           const bundle = await this.readBundle()
           current()
-          return installDesktopPluginPresence(this.feature, bundle, paths, current, () => this.leaseContent)
+          const provider = this.feature === "missions" ? await this.readProvider() : undefined
+          current()
+          return installDesktopPluginPresence(this.feature, bundle, paths, current, () => this.leaseContent, provider)
         }),
       }
       this.installations.set(key, entry)

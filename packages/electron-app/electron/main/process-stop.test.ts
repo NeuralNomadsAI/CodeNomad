@@ -1,9 +1,11 @@
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 import { EventEmitter, once } from "node:events"
+import { readFile } from "node:fs/promises"
 import { registerHooks } from "node:module"
 import { setTimeout as delay } from "node:timers/promises"
 import test from "node:test"
+import { getProcessStartIdentityAsync } from "./client-state-process-identity"
 import {
   CLI_SHUTDOWN_COMMAND,
   CLI_STOP_DEADLINE_MS,
@@ -179,6 +181,40 @@ test("tree capture records immutable root and nested descendant identities", asy
     { pid: 200, startIdentity: "linux:boot:20" },
     { pid: 201, startIdentity: "linux:boot:21" },
   ] })
+})
+
+test("Linux captures ready processes without per-process helper commands", {
+  skip: process.platform !== "linux",
+  timeout: 5_000,
+}, async () => {
+  const child = spawn(process.execPath, ["-e", `
+    process.title = 'fx ) a\\n*'
+    setInterval(() => {}, 1000)
+    process.stdout.write('ready')
+  `], { windowsHide: true, stdio: ["ignore", "pipe", "inherit"] })
+  const exited = once(child, "exit")
+  try {
+    await once(child.stdout!, "data")
+    assert.ok(child.pid)
+    assert.equal(await readFile(`/proc/${child.pid}/comm`, "utf8"), "fx ) a\n*\n")
+    const identity = await getProcessStartIdentityAsync(child.pid, 1_500)
+    assert.ok(identity)
+    const tree = await captureProcessTree(child.pid, "linux", (command, args, options) => {
+      assert.equal(command, "sh")
+      assert.equal(options.timeout, 1_500)
+      // An empty PATH prevents the scan from spending its deadline spawning
+      // cat/cut/sed for every entry in the host's process table.
+      return new Promise(resolve => {
+        execFile("/bin/sh", args, { ...options, env: { ...process.env, PATH: "" } }, (error, stdout, stderr) => {
+          resolve({ status: error ? null : 0, stdout, stderr, error: error ?? undefined })
+        })
+      })
+    })
+    assert.deepEqual(tree, { platform: "linux", members: [{ pid: child.pid, startIdentity: identity }] })
+  } finally {
+    child.kill("SIGKILL")
+    await exited
+  }
 })
 
 test("Windows tree capture ignores the system idle PID without rejecting the process table", async () => {

@@ -105,6 +105,11 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "जारी राख्नुहोस्",
   "folderSelection.servers.certificateInstall.cancelLabel": "रद्द गर्नुहोस्",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad लाई स्व-हस्ताक्षरित HTTPS रिमोट विन्डोहरू खोल्न सक्नु अघि स्थानीय प्रमाणपत्र विश्वास गरिनु पर्छ।",
+  "folderSelection.servers.launch.error.missing": "--connect-server लाई सुरक्षित सर्भरको नाम वा http(s) URL चाहिन्छ।",
+  "folderSelection.servers.launch.error.invalid": "\"{value}\" मान्य http:// वा https:// सर्भर ठेगाना होइन।",
+  "folderSelection.servers.launch.error.credentials": "\"{value}\" मा प्रमाणपत्र विवरण वा पेयरिङ कोड छ। सुरु गर्ने ठेगानामा यी राख्न मिल्दैन: बरु सर्भरमा जडान गर्नुहोस् बाट सर्भर पेयर गर्नुहोस्।",
+  "folderSelection.servers.launch.error.unknown": "\"{value}\" नामको कुनै सुरक्षित सर्भर छैन। सुरक्षित सर्भरको नाम वा http(s) URL प्रयोग गर्नुहोस्।",
+  "folderSelection.servers.launch.error.ambiguous": "\"{value}\" नामका धेरै सुरक्षित सर्भरहरू छन्। एउटाको नाम बदल्नुहोस् वा यसको URL प्रयोग गर्नुहोस्।",
   "folderSelection.sidecars.button": "SideCar खोल्नुहोस्",
 
   "projectRenameDialog.title": "कार्यस्थान पुन: नामकरण गर्नुहोस्",

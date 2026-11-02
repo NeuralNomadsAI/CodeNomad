@@ -2,8 +2,12 @@ import type { MissionStorage } from "../../missions/journal"
 import type { RecurrenceDocument } from "../../missions/recurrence-contract"
 import { recurrencePassage } from "../../missions/recurrence-passage"
 import { MAX_CONTROL_FAMILY_SESSIONS } from "../../missions/native-session-family"
+import { isMissionTaskSession } from "../../missions/session-identity"
 import { passageSourceCursors, passageStartInput, type PassageSource } from "../../missions/recurrence-input"
+import type { MissionMap } from "../../missions/model"
 import { samePassageObservation, type NativePassageObservation, type PassageSessionObservation } from "./native-passage-observation"
+import { canonicalAuthority } from "../../missions/authority-protocol"
+import { stableToken } from "../../missions/receipt-identity"
 
 export type PassageOutcome = "completed" | "failed" | "ended-without-report"
 
@@ -21,7 +25,9 @@ export async function passageFamilyRoots(native: Pick<NativePassageObservation, 
  * Background subagents are ordinary descendants and must also be inactive. */
 export async function observeNativePassageSettlement(input: {
   document: RecurrenceDocument; storage: MissionStorage; native: NativePassageObservation;
-  directory: string; workspaceID?: string; current(): true; signal: AbortSignal
+  directory: string; workspaceID?: string; current(): true; signal: AbortSignal;
+  /** Display-only uncertainty; this callback grants no execution authority. */
+  uncertain?(): void
 }) {
   const { document: doc, native, signal } = input
   if (!doc.pending?.admission) return undefined
@@ -31,8 +37,38 @@ export async function observeNativePassageSettlement(input: {
   if (snapshot.missions.length !== 1 || snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable
     || !mission || mission.id !== passage.missionID || mission.coordinatorSessionId !== passage.coordinatorSessionID)
     throw new Error("Passage journal unavailable")
+  const frozen = await input.storage.get(passage.inputKey) as unknown as { sources: PassageSource[]; input: ReturnType<typeof passageStartInput> } | undefined
+  if (!frozen || !samePassageObservation(frozen.input, passageStartInput(doc, passage, frozen.sources)))
+    throw new Error("Passage frozen input unavailable")
+  const settled = await observePassageFamilySettlement({ ...input, projectID: doc.projectID, mission,
+    coordinatorSessionID: passage.coordinatorSessionID, messageID: passage.messageID })
+  if (!settled) return undefined
+  const result = { passageID: passage.passageID, messageID: passage.messageID, missionID: passage.missionID,
+    conversationID: passage.coordinatorSessionID, outcome: settled.outcome, ...(settled.interrupted ? { reason: "interrupted" as const } : {}), artifactMessageIDs: [],
+    cursors: settled.outcome === "completed" ? passageSourceCursors(frozen.sources) : [] }
+  return { result, expectedRevision: doc.revision }
+}
+
+/** Shared native H11 proof. Callers supply their own typed durable document and
+ * archive CAS; every original input, claim, family and background delivery is covered. */
+export async function observePassageFamilySettlement(input: {
+  projectID: string; mission: MissionMap; coordinatorSessionID: string; messageID: string;
+  native: Pick<NativePassageObservation, "session" | "children" | "requests" | "assertCurrent">;
+  directory: string; workspaceID?: string; signal: AbortSignal; current(): true; uncertain?(): void
+}) {
+  const { native, mission, signal } = input
   const actorIDs = mission.actors.map(actor => actor.sessionId)
-  const family: PassageSessionObservation[] = [], queue = (await passageFamilyRoots(native, passage.coordinatorSessionID, actorIDs))
+  const originalInputs = new Map([[input.coordinatorSessionID, input.messageID]])
+  const roots = await passageFamilyRoots(native, input.coordinatorSessionID, actorIDs)
+  for (const id of roots.slice(1)) {
+    // Fresh managed roots and all their descendants belong to this passage. A
+    // reused external root needs separate input/family provenance qualification.
+    const actor = mission.actors.find(actor => actor.sessionId === id)
+    const source = mission.tasks.find(task => task.actorSessionId === id && isMissionTaskSession(id, mission.id, task.id))
+    if (!actor?.managed || !source?.admissionId) { input.uncertain?.(); return undefined }
+    originalInputs.set(id, source.admissionId)
+  }
+  const family: PassageSessionObservation[] = [], queue = roots
     .map(id => ({ id, parentID: undefined as string | undefined }))
   const seen = new Set<string>(), children = new Map<string, string[]>()
   while (queue.length) {
@@ -40,14 +76,18 @@ export async function observeNativePassageSettlement(input: {
     const next = queue.shift()!
     if (seen.has(next.id)) throw new Error("Passage family moved")
     seen.add(next.id)
-    const session = await native.session(next.id, next.id === passage.coordinatorSessionID ? passage.messageID : undefined)
-    if (session.projectID !== doc.projectID || session.directory !== input.directory || session.workspaceID !== input.workspaceID
+    const session = await native.session(next.id, originalInputs.get(next.id))
+    if (session.projectID !== input.projectID || session.directory !== input.directory || session.workspaceID !== input.workspaceID
       || session.parentID !== next.parentID) throw new Error("Passage family moved")
-    // A claim from an earlier service process with no live execution is a turn cut by a
-    // restart that nothing resumed; Resume never sends a continuation for it.
-    if (session.active || session.inbox || session.suspended && !session.orphaned || session.runningTools) return undefined
-    // The admission is recorded: a later-absent start message (pruned history) is
-    // observed history, never a reason to wait for or resend it.
+    // Every claim blocks, including old claims absent from process-local active:
+    // native restart recovery can resume them after this asynchronous read.
+    if (session.active || session.inbox || session.suspended || session.runningTools || !session.terminal) {
+      if (!session.active && (session.suspended || !session.terminal && !session.inbox && !session.runningTools)) input.uncertain?.()
+      return undefined
+    }
+    if (originalInputs.has(next.id) && session.terminal.inputMessageID !== originalInputs.get(next.id)) { input.uncertain?.(); return undefined }
+    // A pruned original input keeps the correlation uncertain; admission remains
+    // recorded and the original prompt is never resent.
     family.push(session)
     const ids = await native.children(next.id)
     // The shared whole-family control ceiling: beyond it coverage is unknown, so the
@@ -62,24 +102,16 @@ export async function observeNativePassageSettlement(input: {
   if (mission.control?.pending.length) return undefined
   const outcome: PassageOutcome = mission.status === "completed" ? "completed"
     : family.some(session => session.failed) || mission.status === "failed" ? "failed" : "ended-without-report"
-  const frozen = await input.storage.get(passage.inputKey) as unknown as { sources: PassageSource[]; input: ReturnType<typeof passageStartInput> } | undefined
-  if (!frozen || !samePassageObservation(frozen.input, passageStartInput(doc, passage, frozen.sources)))
-    throw new Error("Passage frozen input unavailable")
   // Recheck after the asynchronous journal and request reads. Unknown changes
   // park the same pending passage; they never admit another turn.
   for (const session of family) {
-    if (!samePassageObservation(session, await native.session(session.id,
-      session.id === passage.coordinatorSessionID ? passage.messageID : undefined))
-      || !samePassageObservation(children.get(session.id), await native.children(session.id))) return undefined
+    if (!samePassageObservation(session, await native.session(session.id, originalInputs.get(session.id)))
+      || !samePassageObservation(children.get(session.id), await native.children(session.id))) { input.uncertain?.(); return undefined }
   }
   if (await native.requests([...seen])) return undefined
   signal.throwIfAborted(); input.current(); native.assertCurrent()
-  const interrupted = outcome === "ended-without-report" && family.some(session => session.orphaned)
-  const result = { passageID: passage.passageID, messageID: passage.messageID, missionID: passage.missionID,
-    conversationID: passage.coordinatorSessionID, outcome, ...(interrupted ? { reason: "interrupted" as const } : {}), artifactMessageIDs: [],
-    cursors: outcome === "completed" ? passageSourceCursors(frozen.sources) : [] }
-  // The archive must be published with `finish(..., expectedRevision)`: any document
-  // change since this awaited observation is a CAS conflict, re-observed next wake.
-  return { result, expectedRevision: doc.revision }
+  const interrupted = outcome === "ended-without-report" && family.some(session => session.terminal?.outcome === "interrupted")
+  return { outcome, interrupted, proof: { revision: mission.revision,
+    familyDigest: stableToken(canonicalAuthority({ family, children: [...children] }, 16 * 1024 * 1024), 64) } }
 }
 

@@ -16,7 +16,9 @@ async function harness() {
   const cleared: string[] = []
   let sessions: Array<{ id: string; parentID?: string; location: { directory: string } }> = []
   let active: Record<string, unknown> = {}
+  let carrier = ""
   const client = {
+    rpc: () => ({ scheduleCarrierRead: async ({ sessionID }: { sessionID: string }) => ({ owned: sessionID === carrier }) }),
     session: {
       list: async ({ directory }: { directory: string }) => ({ data: sessions.filter(() => directory), cursor: {} }),
       active: async () => active,
@@ -48,6 +50,7 @@ async function harness() {
     base, file, registry, workspaces, removed, cleared, temporary, changes,
     setSessions: (next: typeof sessions) => { sessions = next },
     setActive: (next: typeof active) => { active = next },
+    setCarrier: (id: string) => { carrier = id },
     cleanup: () => rm(base, { recursive: true, force: true }),
   }
 }
@@ -107,6 +110,20 @@ test("discarding removes conversations children first, closes the workspace and 
     assert.equal(h.workspaces.has("temp"), false)
     assert.deepEqual(await readdir(h.registry.root), [])
     assert.equal(h.registry.has(folder), false)
+  } finally { await h.cleanup() }
+})
+
+test("temporary discard refuses an unmarked technical carrier before deleting any conversation or folder", async () => {
+  const h = await harness()
+  try {
+    const folder = await h.temporary.createFolder()
+    h.workspaces.set("temp", { id: "temp", path: folder })
+    h.setSessions([{ id: "ordinary", location: { directory: folder } }, { id: "carrier", location: { directory: folder } }])
+    h.setCarrier("carrier")
+    await assert.rejects(h.temporary.discard("temp"), /owned schedule controls/)
+    assert.deepEqual(h.removed, [])
+    assert.equal(h.workspaces.has("temp"), true)
+    assert.ok((await stat(folder)).isDirectory())
   } finally { await h.cleanup() }
 })
 

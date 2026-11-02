@@ -44,7 +44,7 @@ function effectiveRights(raw: unknown): number {
 /** Pure validator for bounded native evidence, not an assertion supplied by env/token.
  * No denial ACE is used to excuse an otherwise foreign Allow ACE. Unknown ACE kinds
  * (including callback/object ACEs), null DACLs and noncanonical ACLs fail closed. */
-export function verifyWindowsStorageEvidence(raw: string, directory: boolean, ancestorCount: number): void {
+export function verifyWindowsStorageEvidence(raw: string, directory: boolean, ancestorCount: number, maximumBytes = MAX_BYTES): void {
   if (typeof raw !== "string" || Buffer.byteLength(raw, "utf8") > EVIDENCE_BYTES
     || !Number.isSafeInteger(ancestorCount) || ancestorCount < 0 || ancestorCount > MAX_ANCESTORS) return unknown()
   let parsed: unknown
@@ -62,7 +62,7 @@ export function verifyWindowsStorageEvidence(raw: string, directory: boolean, an
     if ((attributes & 0x400) !== 0 || Boolean(attributes & 0x10) !== isDirectory)
       throw new HostError(index ? "unsafe-storage-ancestor" : "unsafe-storage-type")
     const length = integer(entry.length, Number.MAX_SAFE_INTEGER)
-    if ((isDirectory && length !== 0) || (!isDirectory && length > MAX_BYTES)) throw new HostError("unsafe-storage-read")
+    if ((isDirectory && length !== 0) || (!isDirectory && length > maximumBytes)) throw new HostError("unsafe-storage-read")
     const owner = sid(entry.owner)
     const trusted = new Set(index ? [current, SYSTEM, ADMINISTRATORS, TRUSTED_INSTALLER] : [current, SYSTEM])
     if (!trusted.has(owner)) throw new HostError(index ? "unsafe-storage-ancestor" : "unsafe-storage-permissions")
@@ -141,7 +141,12 @@ try {
 }
 
 export const windowsPrivateStorage: StoragePolicy = {
-  async verify(file, directory) {
+  verify: (file, directory) => verifyWindowsPrivateStorage(file, directory),
+}
+
+/** Executable bundles retain the same owner/ancestor/DACL policy, with a caller's
+ * explicit artifact size bound instead of the small JSON-record bound. */
+export async function verifyWindowsPrivateStorage(file: string, directory: boolean, maximumBytes = MAX_BYTES): Promise<void> {
     if (process.platform !== "win32") throw new HostError("windows-storage-evidence-unknown")
     const { script, ancestorCount } = windowsStorageScript(file)
     const executable = path.join(process.env.SystemRoot || "C:/Windows", "System32/WindowsPowerShell/v1.0/powershell.exe")
@@ -154,6 +159,5 @@ export const windowsPrivateStorage: StoragePolicy = {
           else resolve(stdout)
         })
     }).catch(() => unknown())
-    verifyWindowsStorageEvidence(raw, directory, ancestorCount)
-  },
+    verifyWindowsStorageEvidence(raw, directory, ancestorCount, maximumBytes)
 }

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
-import { chromium, type Browser, type Page } from "playwright"
+import { chromium, type Browser, type Page, type Request } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import type {} from "./fixtures/mission-editor-lifetime"
 import { clickMissionAction, inlineMissionEntry, selectMission, selectedMissionTitle } from "./mission-actions"
@@ -66,6 +66,16 @@ async function transition(page: Page, change: Transition) {
   }
   // The creation form replaces the list: leaving it is the newer view intent before browsing.
   if (await page.locator(".mission-control[data-creating]").count()) await page.locator("form.mission-editor").getByRole("button", { name: "Cancel", exact: true }).click()
+  if (change === "inactive" || change === "project") {
+    // A hidden panel performs no new reads. A new project cannot browse the old
+    // project's rows; an exact restored target can load independently of discovery.
+    await page.evaluate(async () => {
+      const { updateMissionProjectView } = await import("/src/stores/mission-view-state.ts")
+      updateMissionProjectView("/fixture", { selected: "two" })
+    })
+    if (change === "project") await page.locator('section.mission-detail[aria-label="Objective two"]').waitFor()
+    return
+  }
   await selectMission(page, "Objective two")
   if (change === "selection-aba") {
     await selectMission(page, "Objective one")
@@ -83,6 +93,15 @@ for (const method of ["POST", "PATCH"] as const) for (const phase of ["mutation"
     test(`${method} ${phase} completion respects ${change} origin and newer view intent`, async () => {
       const { page, errors } = await setup(), hold = gate(), reached = gate()
       let list = [mission("one"), mission("two")], completed = false, reads = 0
+      const otherProject = list.map(value => ({ ...value, projectID: "other-project" }))
+      let sourceProject = "project"
+      let refreshRequest: Request | undefined
+      const refreshSettled = gate()
+      page.on("request", request => {
+        if (phase === "refresh" && completed && !refreshRequest && request.url().endsWith("/missions/panel-page") && request.postDataJSON()?.source === "summaries") refreshRequest = request
+      })
+      const settleRefresh = (request: Request) => { if (request === refreshRequest) refreshSettled.release() }
+      page.on("requestfinished", settleRefresh); page.on("requestfailed", settleRefresh)
       const requests: Array<{ method: string; input: Record<string, unknown> }> = []
       try {
         await page.route("**/api/workspaces/*/missions**", async route => {
@@ -90,8 +109,9 @@ for (const method of ["POST", "PATCH"] as const) for (const phase of ["mutation"
           if (content) return route.fulfill({ json: content })
           if (request.method() === "GET") {
             const version = ++reads
-            if (completed && phase === "refresh" && new URL(request.url()).pathname.includes("/fixture/")) { reached.release(); await hold.promise }
-            return route.fulfill({ json: { available: true, version: 1, projectID: "project", missions: panelMissions(list), cleanups: [], generatedAt: version, discardedEvents: 0 } })
+            const query = new URL(request.url()).searchParams
+            if (completed && phase === "refresh" && new URL(request.url()).pathname.includes("/fixture/") && query.get("panelSource") === "summaries") { reached.release(); await hold.promise }
+            return route.fulfill({ json: { available: true, version: 1, projectID: sourceProject, missions: panelMissions(sourceProject === "project" ? list : otherProject), cleanups: [], generatedAt: version, discardedEvents: 0 } })
           }
           requests.push({ method: request.method(), input: request.postDataJSON() as Record<string, unknown> })
           if (phase === "mutation") { reached.release(); await hold.promise }
@@ -108,10 +128,11 @@ for (const method of ["POST", "PATCH"] as const) for (const phase of ["mutation"
         await page.locator("form.mission-editor button[type=submit]").first().click()
         await reached.promise
         if (phase === "refresh") await page.locator("form.mission-editor").waitFor({ state: "detached" })
+        if (change === "project") sourceProject = "other-project"
         await transition(page, change)
         // A request in flight settles through its own hold, never as a reopened draft.
         if (change === "unmount") assert.equal(await page.locator("form.mission-editor").count(), 0)
-        const response = page.waitForResponse(r => r.request().method() === (phase === "mutation" ? method : "GET") && r.url().includes("/fixture/missions"))
+        const response = phase === "mutation" ? page.waitForResponse(r => r.request().method() === method && !r.url().endsWith("/panel-page") && r.url().includes("/fixture/missions")) : refreshSettled.promise
         hold.release(); await response
         // Read-only native invalidation makes the durable result visible even
         // when a disposed editor no longer owns an onSaved callback.
@@ -123,7 +144,8 @@ for (const method of ["POST", "PATCH"] as const) for (const phase of ["mutation"
           assert.equal(await page.locator(".mission-picker-control").isVisible(), false, "the newer creation form replaces the list")
           await page.locator("form.mission-editor").getByRole("button", { name: "Cancel", exact: true }).click()
         }
-        await (await inlineMissionEntry(page, "Saved result")).waitFor()
+        if (change !== "project") await (await inlineMissionEntry(page, "Saved result")).waitFor()
+        else assert.equal(await page.getByText("Saved result", { exact: true }).count(), 0, "an old-project completion never appears in the new project's inventory")
         assert.match(await selectedMissionTitle(page).innerText(), /^Objective two$/)
         assert.equal(requests.length, 1); assert.equal(requests[0].method, method)
         assert.equal(requests[0].input.directory, undefined, "view fencing must not change the native default creation location")
@@ -267,9 +289,9 @@ test("creation-uncertain retains original request/draft across close, remount an
     assert.equal(await page.locator("form.mission-editor button[type=submit]").first().isDisabled(), true)
     // Even a map observed later is not a terminal receipt for the held creation.
     list = [...list, { ...mission("late"), objective: "Late durable map" }]
-    // The list stays hidden behind the creation form; the applied map is the observation.
+    // Discovery remains summary-only while the creation form hides the picker.
     await page.locator("form.mission-editor").getByRole("button", { name: "Refresh mission map", exact: true }).click()
-    await page.waitForFunction(() => (window.missionEditorLifetime.state("fixture") as { missions?: Array<{ id: string }> }).missions?.some(value => value.id === "late"))
+    await page.waitForFunction(() => (window.missionEditorLifetime.state("fixture") as { summaries?: Array<{ id: string }> }).summaries?.some(value => value.id === "late"))
     assert.equal(await page.locator(".mission-picker-control").isVisible(), false)
     await page.locator("form.mission-editor").evaluate(form => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
     assert.equal(attempts.length, 1)

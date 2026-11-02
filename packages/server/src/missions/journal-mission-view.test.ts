@@ -60,7 +60,8 @@ async function assertEquivalent(f: HistoryFixture, label: string) {
 
 function mergeCleanups(items: MissionCleanup[]) {
   const ordered = items.sort((a, b) => b.createdAt - a.createdAt || a.deletionID.localeCompare(b.deletionID))
-  return [...ordered.filter(item => item.pending > 0), ...ordered.filter(item => item.pending === 0).slice(0, SETTLED_CLEANUP_HISTORY)]
+  const pending = (item: MissionCleanup) => item.pending > 0 || item.documentPending === true
+  return [...ordered.filter(pending), ...ordered.filter(item => !pending(item)).slice(0, SETTLED_CLEANUP_HISTORY)]
 }
 
 

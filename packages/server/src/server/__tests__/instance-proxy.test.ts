@@ -82,6 +82,7 @@ async function harness(
   const servicePathCalls: string[] = []
   let invalidations = 0
   const client = {
+    rpc: () => ({ scheduleCarrierRead: async () => { throw { type: "rpc.method_not_found" } } }),
     project: {
       list: async () => [
         { id: "owned-project", canonical: serviceDirectory, time: { created: 1, updated: 1 }, sandboxes: [sessionDirectory, "/other"] },
@@ -272,7 +273,7 @@ describe("instance proxy location enforcement", () => {
     const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session/owned/generate",
       payload: { prompt: "Explain the current approach" } })
     assert.equal(response.statusCode, 200)
-    assert.deepEqual(sessionGets, ["owned"])
+    assert.deepEqual(sessionGets, ["owned", "owned"])
     assert.deepEqual(response.json().body, { prompt: "Explain the current approach" })
     assert.equal(response.json().url, "/api/session/owned/generate")
     assert.equal(requestCount(), 1)
@@ -330,7 +331,7 @@ describe("instance proxy location enforcement", () => {
     const response = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/experimental/session/session/wait" })
     assert.equal(response.statusCode, 200)
     assert.equal(JSON.parse(response.body).url, "/api/experimental/session/session/wait")
-    assert.deepEqual(sessionGets, ["session"])
+    assert.deepEqual(sessionGets, ["session", "session"])
     assert.equal(requestCount(), 1)
   })
 
@@ -358,7 +359,7 @@ describe("instance proxy location enforcement", () => {
     const list = await app.inject({ method: "GET",
       url: "/workspaces/workspace/instance/api/experimental/session/session/instructions/entries" })
     assert.equal(list.statusCode, 200)
-    assert.deepEqual(sessionGets, ["session", "session", "session"])
+    assert.deepEqual(sessionGets, ["session", "session", "session", "session", "session"])
     assert.equal(requestCount(), 3)
   })
 

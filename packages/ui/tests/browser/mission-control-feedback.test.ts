@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -65,10 +65,11 @@ async function visible(missions: () => MissionMap[], activity?: () => unknown) {
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
     const path = new URL(route.request().url()).pathname
+    if (path.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "fixture", schedules: [] } })
     if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "fixture", projectCanonical: "/fixture",
       location: { directory: "/fixture" }, schedules: [] } })
     if (route.request().method() !== "GET") return route.fallback()
-    counter.reads++
+    if (new URL(route.request().url()).searchParams.get("panelSource") === "summaries") counter.reads++
     return route.fulfill({ json: { available: true, projectID: "fixture", missions: panelMissions(missions()), generatedAt: counter.reads, discardedEvents: 0,
       ...(activity ? { activity: activity() } : {}) } })
   })
@@ -124,7 +125,7 @@ test("revision drift during Stop confirmation sends nothing and asks to review a
     await toolbar(page).getByRole("button", { name: "Stop mission permanently", exact: true }).click()
     const dialog = page.getByRole("dialog"); await dialog.waitFor()
     current = { ...current, revision: 2 }
-    const refreshed = page.waitForResponse(value => new URL(value.url()).pathname.endsWith("/missions"))
+    const refreshed = waitForMissionPanelRefresh(page)
     await visibility(page, "event", "session.execution.started"); await refreshed
     await page.waitForFunction(() => (window as any).missionVisibility.state().missions[0]?.revision === 2)
     await dialog.getByRole("button", { name: "Stop mission permanently", exact: true }).click()
@@ -155,7 +156,7 @@ test("a recovery acknowledgement after deactivation preserves the cached snapsho
     assert.deepEqual(await visibility(page, "demanded"), [])
     const hidden = await page.evaluate(() => { const state = (window as any).missionVisibility.state(); return { status: state.status, ids: state.missions.map((value: MissionMap) => value.id) } })
     assert.deepEqual(hidden, { status: "ready", ids: ["one"] })
-    const revalidated = page.waitForResponse(value => new URL(value.url()).pathname.endsWith("/missions"))
+    const revalidated = waitForMissionPanelRefresh(page)
     await visibility(page, "activate", true); await revalidated
     assert.equal(counter.reads, before + 1, "activation revalidates exactly once")
     assert.equal(posts, 1, "never replayed")
@@ -173,6 +174,7 @@ async function navigable(values: MissionMap[]) {
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => {
     const request = route.request(), pathname = new URL(request.url()).pathname
+    if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (pathname === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
     if (pathname.includes("/instructions/") && request.method() !== "GET") return route.fulfill({ status: 204, body: "" })
     if (pathname.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", projectCanonical: "/fixture",
@@ -216,7 +218,7 @@ for (const exact of [true, false]) {
       assert.notEqual(values[0].briefing!.requestID, requestID, "the latest briefing is the milestone")
       await frames(page)
       assert.equal(counter.reads, before, "hidden views do not read")
-      const revalidated = page.waitForResponse(value => new URL(value.url()).pathname.endsWith("/missions"))
+      const revalidated = waitForMissionPanelRefresh(page)
       await page.evaluate(() => window.missionNavigation.activate(true)); await revalidated
       if (exact) {
         await feedback.waitFor({ state: "detached" })

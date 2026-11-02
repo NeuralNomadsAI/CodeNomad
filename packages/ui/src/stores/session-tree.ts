@@ -1,5 +1,6 @@
 import type { Session } from "../types/session"
 import { normalizeSessionDirectory } from "./session-list-options"
+import { isReservedMissionScheduleSessionID } from "../../../server/src/missions/mission-schedule-carrier-identity"
 
 export type SessionThread = {
   session: Session
@@ -37,6 +38,7 @@ export function projectSessionFamilies(
 ): SessionThread[] {
   const worktreeDirectory = normalizeSessionDirectory(options.worktreeDirectory)
   const projected = threads.filter((thread) => {
+    if (isReservedMissionScheduleSessionID(thread.session.id)) return false
     if (options.matchesSession && !someSession(thread, options.matchesSession)) return false
     if (!worktreeDirectory) return true
     return someSession(thread, (session) => normalizeSessionDirectory(session.location?.directory) === worktreeDirectory)
@@ -63,6 +65,7 @@ export function projectSessionSearchResults(
 ): SessionThread[] {
   const rows = new Map<string, SessionThread>()
   for (const session of sessions) {
+    if (isReservedMissionScheduleSessionID(session.id)) continue
     if (session.parentId && !options.includeSubsessions) continue
     if (!session.parentId && !options.includeMainSessions) continue
     rows.set(session.id, { session, children: [], depth: 0, hasChildren: false, latestUpdated: session.time.updated })
@@ -159,7 +162,7 @@ function buildThread(
   depth: number,
   ancestorIds: Set<string>,
 ): SessionThread | null {
-  if (ancestorIds.has(session.id)) return null
+  if (ancestorIds.has(session.id) || isReservedMissionScheduleSessionID(session.id)) return null
   const nextAncestorIds = new Set(ancestorIds)
   nextAncestorIds.add(session.id)
 

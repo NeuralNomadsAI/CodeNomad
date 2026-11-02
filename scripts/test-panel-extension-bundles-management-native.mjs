@@ -2,6 +2,7 @@
 // native configuration/package/RPC IO. Optional pinned real Blender pilot; no renderer claims.
 // node --import tsx scripts/test-panel-extension-bundles-management-native.mjs <absolute-cli> [integration-checkout] [blender-executable]
 // --installation-state selects the bounded declaration/runtime/progress-producer qualification.
+// CODENOMAD_TEST_EXPECTED_RUNTIME selects the exact asserted runtime (default 2.2.5).
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
@@ -121,7 +122,7 @@ try {
     const client = OpenCode.make({ baseUrl: original.endpoint.url,
       headers: { authorization: `Basic ${Buffer.from(`opencode:${original.endpoint.auth.password}`).toString("base64")}` },
       fetch: (input, init) => new URL(input instanceof Request ? input.url : input).pathname === "/api/event" ? fetch(input, init) : original.fetch(input, init) })
-    const info = await client.server.info(); assert.equal(info.version, "2.2.5")
+    const info = await client.server.info(); assert.equal(info.version, process.env.CODENOMAD_TEST_EXPECTED_RUNTIME ?? "2.2.5")
     console.log(`Native runtime: ${info.version}`)
     const location = { directory: (await client.location.get({ location: { directory: root } })).directory }
     const other = path.join(root, "foreign-project"); await mkdir(other)

@@ -8,6 +8,7 @@ import AuthRecoveryDialog from "./components/auth-recovery-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
 import NewInstanceLauncher from "./components/new-instance-launcher"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
+import { useDesktopConnectionLaunch } from "./lib/hooks/use-desktop-connection-launch"
 import { installKeyboardOffset } from "./lib/keyboard-offset"
 import { closeTemporaryInstance, openTemporaryInstance } from "./stores/temporary-instances"
 import InstanceTabs from "./components/instance-tabs"
@@ -507,6 +508,7 @@ const App: Component = () => {
   }
 
   useDesktopFolderLaunch(handleSelectFolder)
+  useDesktopConnectionLaunch()
 
   async function handleNewTemporaryInstance(): Promise<void> {
     clearLaunchError()

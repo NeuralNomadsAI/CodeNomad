@@ -8,8 +8,9 @@ import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 import { observeHeaderFixture } from "./header-fixture-diagnostics"
 
 let server: ViteDevServer, browser: Browser, url: string
+let eventStreams: { opened: number }
 before(async () => {
-  ;({ server, url } = await startDeviceUploadFixture())
+  ;({ server, url, events: eventStreams } = await startDeviceUploadFixture())
   try {
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
     armFixtureNavigationBudget(browser)
@@ -32,6 +33,7 @@ async function setup(host = "web", context = "remote", params = "") {
   }, { host, context })
   await page.route("**/api/**", route => {
     const request = route.request(), target = new URL(request.url())
+    if (target.pathname === "/api/events") return route.continue()
     if (target.pathname.endsWith("/prompt")) {
       prompts.push(request.postDataJSON())
       return route.fulfill({ json: { data: {} } })
@@ -51,11 +53,15 @@ async function setup(host = "web", context = "remote", params = "") {
   })
   // A boot that never publishes the fixture reports its stage, page errors and
   // module responses instead of only the readiness timeout.
+  const stream = page.waitForResponse(response => new URL(response.url()).pathname === "/api/events"
+    && response.headers()["content-type"] === "text/event-stream", { timeout: 120_000 })
+  void stream.catch(() => undefined) // Navigation failure still owns the primary error.
   try {
     await runWithDiagnosticCleanup({
       run: async () => {
-        await page.goto(`${url}${params}`)
+        await page.goto(`${url}${params}`, { waitUntil: "domcontentloaded" })
         await page.waitForFunction(() => Boolean((window as any).fixture))
+        await stream
       },
       diagnose: () => observer.diagnose(message => console.error(message)),
       cleanup: async () => observer.detach(),
@@ -68,6 +74,16 @@ async function setup(host = "web", context = "remote", params = "") {
   }
   return { page, prompts, paths, errors }
 }
+
+test("composer bootstrap retains one real SSE stream instead of reconnecting a JSON response", async () => {
+  const opened = eventStreams.opened
+  const { page, errors } = await setup()
+  try {
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    assert.equal(eventStreams.opened, opened + 1)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
 
 async function chooseDevice(page: Page) {
   await page.locator(".prompt-actions-menu-trigger").click()

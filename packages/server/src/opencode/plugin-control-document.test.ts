@@ -6,6 +6,7 @@ import { afterEach, describe, it } from "node:test"
 import { parse } from "jsonc-parser"
 import {
   appendPluginControlRule,
+  hostPluginControlDocumentFileSystem,
   PluginControlDocumentError,
   readPluginControlDocument,
   replacePluginControlDocument,
@@ -19,6 +20,45 @@ afterEach(() => {
 })
 
 describe("plugin control JSONC document", () => {
+  it("revalidates deferred prepared authority without treating preparation or verification as submission", async () => {
+    const target = temporaryFile()
+    const document = await readPluginControlDocument(target)
+    let dirty = false, refreshes = 0, submissions = 0
+    const prepared = await hostPluginControlDocumentFileSystem.prepare!(document, appendPluginControlRule(document, "acme"), {
+      revalidate: async () => { refreshes++; if (dirty) throw new Error("changed asynchronous authority") },
+      assertCurrent() {}, onDispatch: () => { submissions++ },
+    })
+    try {
+      await prepared.verify()
+      assert.equal(refreshes, 1, "preparation refreshes after acquiring the lock")
+      assert.equal(submissions, 0)
+      dirty = true
+      await assert.rejects(prepared.commit(), /changed asynchronous authority/)
+      assert.equal(refreshes, 2, "a deferred commit cannot reuse preparation's authority")
+      assert.equal(submissions, 0)
+      assert.equal(fs.existsSync(target), false)
+    } finally { await prepared.dispose() }
+    assert.deepEqual(fs.readdirSync(path.dirname(target)), [])
+  })
+
+  it("refuses a requested directory alias retargeted after preparation even when both files have the same bytes", async () => {
+    const root = path.dirname(temporaryFile())
+    const a = path.join(root, "first"), b = path.join(root, "second"), alias = path.join(root, "alias")
+    fs.mkdirSync(a); fs.mkdirSync(b)
+    const first = path.join(a, "opencode.jsonc"), second = path.join(b, "opencode.jsonc")
+    fs.writeFileSync(first, "{}\n"); fs.writeFileSync(second, "{}\n")
+    fs.symlinkSync(a, alias, process.platform === "win32" ? "junction" : "dir")
+    const document = await readPluginControlDocument(path.join(alias, "opencode.jsonc"))
+    await assert.rejects(replacePluginControlDocument(document, '{"experimental":{"schedules":true}}\n', {
+      beforeCommit: () => {
+        fs.rmSync(alias, { recursive: true, force: true })
+        fs.symlinkSync(b, alias, process.platform === "win32" ? "junction" : "dir")
+      },
+    }), error => error instanceof PluginControlDocumentError && error.kind === "conflict")
+    assert.equal(fs.readFileSync(first, "utf8"), "{}\n")
+    assert.equal(fs.readFileSync(second, "utf8"), "{}\n")
+  })
+
   it("appends an ordered rule without replacing comments, sources, options, or unrelated keys", async () => {
     const target = temporaryFile()
     const original = `{

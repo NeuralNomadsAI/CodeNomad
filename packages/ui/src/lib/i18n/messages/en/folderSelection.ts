@@ -105,6 +105,11 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "Continue",
   "folderSelection.servers.certificateInstall.cancelLabel": "Cancel",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad needs the local certificate to be trusted before it can open self-signed HTTPS remote windows.",
+  "folderSelection.servers.launch.error.missing": "--connect-server needs a saved server name or an http(s) URL.",
+  "folderSelection.servers.launch.error.invalid": "\"{value}\" is not a valid http:// or https:// server address.",
+  "folderSelection.servers.launch.error.credentials": "\"{value}\" carries credentials or a pairing code. Launch addresses cannot include them: pair the server from Connect to Server instead.",
+  "folderSelection.servers.launch.error.unknown": "No saved server is named \"{value}\". Use the name of a saved server or an http(s) URL.",
+  "folderSelection.servers.launch.error.ambiguous": "Several saved servers are named \"{value}\". Rename one of them, or use its URL.",
   "folderSelection.sidecars.button": "Open SideCar",
 
   "projectRenameDialog.title": "Rename workspace",

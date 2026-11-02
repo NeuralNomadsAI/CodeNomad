@@ -9,6 +9,7 @@ import { invalidateFilesystemCaches } from "../../../src/lib/filesystem-events"
 import { backgroundReads } from "../../../src/lib/background-read-queue"
 
 const mounts: Record<string, number> = {}, disposals: Record<string, number> = {}
+;(window as any).__headerFixtureBoot?.mark("modules-evaluated")
 const panels: Record<string, ReturnType<typeof useGitChanges>> = {}
 const worktree: Record<string, (slug: string) => void> = {}
 function add(id: string) {
@@ -48,3 +49,4 @@ const controllers: AbortController[] = []
   release: () => controllers.splice(0).forEach(controller => controller.abort()),
 }
 render(() => <For each={appTabs()}>{tab => tab.kind === "instance" ? <Panel tab={tab} /> : null}</For>, document.getElementById("root")!)
+;(window as any).__headerFixtureBoot?.mark("rendered")

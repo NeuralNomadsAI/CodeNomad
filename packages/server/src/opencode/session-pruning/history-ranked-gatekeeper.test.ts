@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite"
 import { setImmediate as tick } from "node:timers/promises"
 import { queryRankedHistory } from "./history-ranked-store"
 import { historyRankedInputSchema } from "./history-ranked-contract"
+import { HISTORY_SLICE_MS } from "./history-content"
 
 function database(count = 0) {
   const db = new DatabaseSync(":memory:")
@@ -54,7 +55,7 @@ for (const change of ["deleted", "replaced", "during-read"]) test(`horizon senti
   } finally { db.close() }
 })
 
-for (const technical of [false, true]) test(`large ignored tool metadata keeps first yield bounded (technical=${technical})`, async t => {
+for (const technical of [false, true]) test(`large ignored tool metadata preserves bounded work between yields (technical=${technical})`, async t => {
   const db = database()
   const targetBytes = 12_689_000
   const record = JSON.stringify({ a: {}, b: [] })
@@ -64,7 +65,36 @@ for (const technical of [false, true]) test(`large ignored tool metadata keeps f
   const records = Array(count).fill(record).join(",")
   const raw = prefix + records + suffix.replace('"padding":""', `"padding":"${"x".repeat(targetBytes - prefix.length - records.length - suffix.length)}"`)
   assert.equal(Buffer.byteLength(raw), targetBytes)
-  db.prepare("INSERT INTO session_message VALUES ('large','s','assistant',1,?)").run(raw)
+  const insert = db.prepare("INSERT INTO session_message VALUES (?, 's','assistant',1,?)")
+  for (const id of ["large-1", "large-2"]) insert.run(id, raw)
+  // A synchronous SQLite step/JSON parse finishes before yielding. Advance the
+  // slice clock by one expired slice per real row, independently of CPU scheduling.
+  let now = 0
+  t.mock.method(performance, "now", () => now)
+  const events: string[] = [], turns: Promise<void>[] = []
+  const completed = (phase: string) => {
+    events.push(phase)
+    now += HISTORY_SLICE_MS + 1
+    turns.push(tick().then(() => { events.push("turn") }))
+  }
+  const define = db.function.bind(db), prepare = db.prepare.bind(db)
+  t.mock.method(db, "function", (name: string, options: any, callback: any) => define(name, options, (data: any, role: any) => {
+    const result = callback(data, role)
+    completed("scan")
+    return result
+  }))
+  t.mock.method(db, "prepare", (sql: string) => {
+    const statement = prepare(sql)
+    if (sql.includes("AS data")) {
+      const get = statement.get.bind(statement)
+      statement.get = (...params) => {
+        const row = Reflect.apply(get, statement, params)
+        completed("body")
+        return row
+      }
+    }
+    return statement
+  })
   const parse = JSON.parse
   let largestDecoded = 0
   t.mock.method(JSON, "parse", (value: string, ...args: any[]) => {
@@ -72,12 +102,14 @@ for (const technical of [false, true]) test(`large ignored tool metadata keeps f
     return Reflect.apply(parse, JSON, [value, ...args])
   })
   try {
-    const started = performance.now(), firstYield = tick().then(() => performance.now() - started)
     const result = await search(db, undefined, technical)
-    const elapsed = await firstYield
-    console.log(JSON.stringify({ technical, firstYieldMs: +elapsed.toFixed(2), largestDecoded }))
-    assert.equal(result.hits[0]?.messageID, "large")
-    assert(elapsed < (technical ? 1800 : 300), `first yield ${elapsed.toFixed(1)} ms (technical=${technical})`)
+    await Promise.all(turns)
+    assert.deepEqual(events, ["scan", "turn", "scan", "turn", "body", "turn", "body", "turn"],
+      "each expired slice must let an event-loop turn run before another row, including inside a chunk and while judging")
+    assert.equal(result.scanned, 2)
+    assert.equal(result.judged, 2)
+    assert.deepEqual(result.hits.map(hit => hit.messageID).sort(), ["large-1", "large-2"])
     if (!technical) assert(largestDecoded < 64 * 1024, `ignored metadata entered JSON.parse: ${largestDecoded} bytes`)
+    else assert.equal(largestDecoded, targetBytes, "technical search retains the bounded native body")
   } finally { db.close() }
 })

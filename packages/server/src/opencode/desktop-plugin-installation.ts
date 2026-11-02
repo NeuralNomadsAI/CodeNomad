@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { constants, type Stats } from "node:fs"
-import { lstat, mkdir, open, readFile, rename, rm, rmdir, stat, writeFile, utimes } from "node:fs/promises"
+import { mkdir, readFile, rename, rm, stat, writeFile, utimes } from "node:fs/promises"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -12,6 +11,10 @@ export const PRESENCE_READY_WAIT_MS = 5_000
 const PRESENCE_READY_POLL_MS = 100
 import { isLegacyAutomationPlugin } from "./automation-plugin"
 import { assertNativePluginPath, type DesktopPluginNativePath } from "./desktop-plugin-wsl-paths"
+import { installDesktopPluginArtifact } from "./desktop-plugin-artifact"
+import type { NativeScheduleCarrierInstallation } from "./missions/native-schedule-carrier-binding"
+
+export type DesktopMissionArtifacts = Readonly<Pick<NativeScheduleCarrierInstallation, "provider" | "runtime">>
 
 export interface DesktopPluginPaths {
   config: string
@@ -29,7 +32,9 @@ async function managedStorage(feature: DesktopPluginFeature, existing: string | 
   const match = /^import \{ desktopPlugin \} from ("(?:[^"\\]|\\.)*")\nexport default desktopPlugin\((.+)\)\n$/.exec(existing.slice(marker.length))
   if (!match) throw new Error("Invalid managed CodeNomad plugin entry")
   const url = new URL(JSON.parse(match[1]) as string)
-  const argument: unknown = JSON.parse(match[2])
+  const arguments_: unknown[] = JSON.parse(`[${match[2]}]`)
+  if (!arguments_.length || arguments_.length > 2) throw new Error("Invalid managed CodeNomad plugin arguments")
+  const [argument, artifacts] = arguments_
   const presenceDirectories = typeof argument === "string" ? [argument] : argument
   const nativePaths = paths.nativeData ? path.posix : path
   if (!Array.isArray(presenceDirectories) || !presenceDirectories.length || presenceDirectories.length > 8
@@ -46,6 +51,19 @@ async function managedStorage(feature: DesktopPluginFeature, existing: string | 
     || nativePaths.basename(nativeLeases) !== "presence" || nativePaths.dirname(plugin) !== nativeDirectory
     || !/^[a-f\d]{64}\.mjs$/.test(nativePaths.basename(plugin))) {
     throw new Error("Invalid managed CodeNomad plugin storage")
+  }
+  if (arguments_.length === 2) {
+    if (feature !== "missions" || !artifacts || typeof artifacts !== "object" || Array.isArray(artifacts)
+      || Object.keys(artifacts).sort().join(",") !== "provider,runtime") throw new Error("Invalid managed Missions artifacts")
+    for (const role of ["provider", "runtime"] as const) {
+      const artifact = (artifacts as DesktopMissionArtifacts)[role]
+      if (!artifact || Object.keys(artifact).sort().join(",") !== "file,sha256"
+        || typeof artifact.file !== "string" || typeof artifact.sha256 !== "string" || !/^[a-f\d]{64}$/.test(artifact.sha256)
+        || nativePaths.dirname(artifact.file) !== nativeDirectory
+        || nativePaths.basename(artifact.file) !== `${artifact.sha256}${role === "provider" ? ".provider" : ""}.mjs`
+        || role === "runtime" && artifact.file !== plugin) throw new Error("Invalid managed Missions artifacts")
+      if (paths.nativeData) assertNativePluginPath(artifact.file)
+    }
   }
   if (!paths.nativeData) return { directory: nativeDirectory, nativeDirectory, presenceDirectories: presenceDirectories as string[] }
   for (const directory of presenceDirectories) assertNativePluginPath(directory)
@@ -69,96 +87,6 @@ async function writeLease(lease: string, content: string) {
   } finally { await rm(temporary, { force: true }) }
 }
 
-// Waits before each verify-and-publish pass (about 3 s in all). Concurrent installers of
-// the same bytes converge within the first passes; the later ones outlast short Windows
-// sharing violations from a reader or an antivirus scan.
-const BUNDLE_REPAIR_DELAYS_MS = [0, 25, 50, 100, 200, 400, 800, 1600]
-// Sharing violations and locks Windows reports while another process holds the file.
-const TRANSIENT_LOCK_CODES = new Set(["EPERM", "EBUSY", "EACCES"])
-
-function errorCode(error: unknown): string | undefined {
-  const code = (error as NodeJS.ErrnoException | undefined)?.code
-  return typeof code === "string" ? code : undefined
-}
-
-async function lstatOrUndefined(file: string) {
-  return lstat(file).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") return undefined
-    throw error
-  })
-}
-
-/**
- * The identity of `plugin` when it is one regular file holding exactly `bundle`,
- * read through a single handle; undefined when it is absent or holds anything else.
- */
-async function verifiedBundle(plugin: string, bundle: Uint8Array, hash: string): Promise<{ dev: number; ino: number } | undefined> {
-  // Links (including Windows junctions) and directories are never opened or followed.
-  const before = await lstatOrUndefined(plugin)
-  if (!before?.isFile()) return undefined
-  const handle = await open(plugin, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT" || error.code === "ELOOP" || error.code === "EISDIR") return undefined
-    throw error
-  })
-  if (!handle) return undefined
-  try {
-    const info = await handle.stat(), named = await lstatOrUndefined(plugin)
-    if (!named || !info.isFile() || !named.isFile() || named.isSymbolicLink() || info.nlink !== 1
-      || info.dev !== named.dev || info.ino !== named.ino || info.size !== bundle.byteLength) return undefined
-    const actual = createHash("sha256"), chunk = Buffer.alloc(64 * 1024)
-    for (let offset = 0; offset < bundle.byteLength;) {
-      const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, bundle.byteLength - offset), offset)
-      if (!bytesRead) return undefined
-      actual.update(chunk.subarray(0, bytesRead))
-      offset += bytesRead
-    }
-    if (actual.digest("hex") !== hash || (await handle.read(chunk, 0, 1, bundle.byteLength)).bytesRead) return undefined
-    return { dev: info.dev, ino: info.ino }
-  } finally { await handle.close() }
-}
-
-/** Test-only scheduling seam: runs after a directory link was observed, before it is removed. */
-export const bundleRepairSchedule: { beforeLinkRemoval?: (plugin: string) => Promise<void> } = {}
-
-/**
- * Renames a complete private copy over `plugin`, replacing the name itself, never a
- * link's target: a rename replaces a file link atomically. Windows cannot rename a file
- * over a directory link (a junction or a directory symlink); such a link is removed with
- * `rmdir`, which never removes a regular file another installer published meanwhile,
- * nor a link's target. When the name changed instead, nothing is replaced: the caller
- * verifies what is there now. An ordinary directory is never removed.
- */
-async function publishBundle(plugin: string, bundle: Uint8Array) {
-  const refuseDirectory = (named: Stats | undefined) => {
-    if (named?.isDirectory()) {
-      throw new Error(`Managed plugin bundle path is a directory, which CodeNomad never removes: ${plugin}. Delete it, then reconnect.`)
-    }
-  }
-  refuseDirectory(await lstatOrUndefined(plugin))
-  const temporary = `${plugin}.${randomUUID()}.tmp`
-  try {
-    await writeFile(temporary, bundle, { flag: "wx" })
-    try {
-      await rename(temporary, plugin)
-      return
-    } catch (error) {
-      const code = errorCode(error)
-      if (code !== "EPERM" && code !== "EISDIR" && code !== "EACCES") throw error
-      const named = await lstatOrUndefined(plugin)
-      refuseDirectory(named)
-      // Not a link (a locked file, for example): the caller backs off and retries.
-      if (!named?.isSymbolicLink()) throw error
-    }
-    await bundleRepairSchedule.beforeLinkRemoval?.(plugin)
-    const removed = await rmdir(plugin).then(() => true, (error: NodeJS.ErrnoException) => {
-      // The link is gone or became something else: another installer repaired the name.
-      if (error.code === "ENOENT" || error.code === "ENOTDIR" || error.code === "ENOTEMPTY" || error.code === "EEXIST") return false
-      throw error
-    })
-    if (removed) await rename(temporary, plugin)
-  } finally { await rm(temporary, { force: true }) }
-}
-
 /**
  * `leaseContent` is the backend's current lease state (empty when it requests
  * nothing). The lease is created with it and rewritten only when it changes:
@@ -170,8 +98,10 @@ export async function installDesktopPluginPresence(
   paths: DesktopPluginPaths,
   assertCurrent: () => void = () => {},
   leaseContent: () => string = () => "",
+  providerBundle?: Uint8Array,
 ) {
   assertCurrent()
+  if (providerBundle && feature !== "missions") throw new Error("Local carrier provider requires Missions")
   const marker = `// Managed by CodeNomad: ${feature.replaceAll("-", " ")} lifecycle v1\n`
   const hash = createHash("sha256").update(bundle).digest("hex")
   const entry = path.join(paths.config, "plugins", `codenomad-${feature}.ts`)
@@ -196,47 +126,24 @@ export async function installDesktopPluginPresence(
     ? pathToFileURL(`${nativeDirectory}/${hash}.mjs`, { windows: false }).href
     : pathToFileURL(plugin).href
   const presenceDirectories = [...new Set([nativeLeases, ...(storage?.presenceDirectories ?? [])])]
-  const source = `${marker}import { desktopPlugin } from ${JSON.stringify(pluginUrl)}\nexport default desktopPlugin(${JSON.stringify(presenceDirectories.length === 1 ? nativeLeases : presenceDirectories)})\n`
+  const providerHash = providerBundle && createHash("sha256").update(providerBundle).digest("hex")
+  const nativePlugin = paths.nativeData ? path.posix.join(nativeDirectory, `${hash}.mjs`) : plugin
+  const artifacts: DesktopMissionArtifacts | undefined = providerHash ? Object.freeze({
+    provider: Object.freeze({ file: (paths.nativeData ? path.posix : path).join(nativeDirectory, `${providerHash}.provider.mjs`), sha256: providerHash }),
+    runtime: Object.freeze({ file: nativePlugin, sha256: hash }),
+  }) : undefined
+  const source = `${marker}import { desktopPlugin } from ${JSON.stringify(pluginUrl)}\nexport default desktopPlugin(${JSON.stringify(presenceDirectories.length === 1 ? nativeLeases : presenceDirectories)}${artifacts ? `, ${JSON.stringify(artifacts)}` : ""})\n`
   await mkdir(leases, { recursive: true })
   assertCurrent()
   await mkdir(path.dirname(entry), { recursive: true })
   assertCurrent()
   // Immutable, content-addressed payloads keep running instances independent of upgrades.
-  // A payload is only ever published whole, by renaming a complete temporary copy, and a
-  // name holding other bytes (cut short by a killed process, or not a single regular file)
-  // is replaced the same way: the entry only ever points at verified bytes.
-  // Transient Windows locks (a reader, an antivirus scan) back off within the bounded
-  // passes; any other failure is final at once.
-  let identity: { dev: number; ino: number } | undefined
-  let failure: unknown
-  for (const wait of BUNDLE_REPAIR_DELAYS_MS) {
-    if (wait) await delay(wait, undefined, { ref: false })
-    assertCurrent()
-    try {
-      identity = await verifiedBundle(plugin, bundle, hash)
-      if (identity) break
-      assertCurrent()
-      await publishBundle(plugin, bundle)
-      identity = await verifiedBundle(plugin, bundle, hash)
-      if (identity) break
-    } catch (error) {
-      if (!TRANSIENT_LOCK_CODES.has(errorCode(error) ?? "")) throw error
-      failure = error
-    }
-  }
-  if (!identity) {
-    // The server compiles against a library without `Error.cause`.
-    throw Object.assign(new Error(`Managed plugin bundle differs from its digest and could not be replaced: ${plugin}. `
-      + "Stop other CodeNomad servers using this OpenCode configuration, or delete that file, then reconnect."), { cause: failure })
-  }
-  const assertBundlePath = async () => {
-    const named = await lstat(plugin)
-    if (named.isFile() && !named.isSymbolicLink() && named.nlink === 1 && named.size === bundle.byteLength
-      && named.dev === identity!.dev && named.ino === identity!.ino) return
-    // Another installer may have published the same bytes meanwhile.
-    identity = await verifiedBundle(plugin, bundle, hash)
-    if (!identity) throw new Error(`Managed plugin bundle changed while it was being installed: ${plugin}`)
-  }
+  const assertRuntimePath = await installDesktopPluginArtifact(plugin, bundle, hash, assertCurrent)
+  assertCurrent()
+  const assertProviderPath = providerBundle && providerHash
+    ? await installDesktopPluginArtifact(path.join(directory, `${providerHash}.provider.mjs`), providerBundle, providerHash, assertCurrent)
+    : undefined
+  const assertBundlePath = async () => { await assertRuntimePath(); await assertProviderPath?.() }
   await assertBundlePath()
   assertCurrent()
   const lease = path.join(leases, `${randomUUID()}.lease`)
@@ -250,6 +157,7 @@ export async function installDesktopPluginPresence(
         await writeFile(temporary, source)
         assertCurrent()
         await assertBundlePath()
+        assertCurrent()
         await rename(temporary, entry)
       } finally { await rm(temporary, { force: true }) }
     }

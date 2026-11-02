@@ -13,6 +13,7 @@ import { WorkspaceSearchBusyError } from "../../filesystem/search-cache"
 import { UnsupportedOpenCodeError } from "../../opencode/runtime-support"
 import { GitRequiredError } from "../../workspaces/git-requirement"
 import { getGitHistory, getGitCommit, getGitCommitDiff } from "../../workspaces/git-history"
+import { getLocalGitBranches } from "../../workspaces/git-branches"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
@@ -77,6 +78,25 @@ const WorkspaceFileSearchQuerySchema = z.object({
 })
 
 export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
+  app.get<{ Params: { id: string } }>("/api/workspaces/:id/git-branches", async (request, reply) => {
+    try {
+      const { directory } = z.object({ directory: z.string().min(1).max(4096) }).strict().parse(request.query)
+      const id = request.params.id, workspace = deps.workspaceManager.get(id)
+      if (!workspace) return reply.code(404).send({ error: "Workspace not found" })
+      const owned = await deps.workspaceManager.getServiceDirectoryForPath(id, directory)
+      const host = owned && await deps.workspaceManager.getHostPathForServicePath(id, owned)
+      const identity = host && await deps.workspaceManager.getWorktreeIdentityForPath(id, host)
+      if (!host || !identity) return reply.code(403).send({ error: "Foreign branch directory" })
+      const release = deps.worktreeDeletionFence.enter([identity])
+      if (!release) return reply.code(409).send({ error: "Worktree deletion pending" })
+      try {
+        const branches = await getLocalGitBranches(host)
+        if (deps.workspaceManager.get(id) !== workspace || await deps.workspaceManager.getServiceDirectoryForPath(id, directory) !== owned
+          || await deps.workspaceManager.getWorktreeIdentityForPath(id, host) !== identity) throw new Error("Branch directory changed")
+        return { branches }
+      } finally { release() }
+    } catch (error) { return handleWorkspaceError(error, reply) }
+  })
   app.get<{ Params: { id: string } }>("/api/workspaces/:id/files/preview", async (request, reply) => {
     try {
       const query = z.object({ path: z.string().min(1), directory: z.string().min(1).optional() }).parse(request.query)

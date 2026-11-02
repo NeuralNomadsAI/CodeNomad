@@ -45,7 +45,7 @@ Son instrucciones. Lo que un agente puede hacer realmente lo deciden los permiso
 
 ### Preguntas que se te hacen {#questions}
 
-Solo el coordinador te hace preguntas. Las tareas y sus auxiliares devuelven las suyas a la conversación que las lanzó, con las opciones, las evidencias, las consecuencias, la reversibilidad y una recomendación, y siguen con el trabajo que no depende de la respuesta. El coordinador resuelve primero lo que puede y agrupa las preguntas restantes en un solo formulario en **Te necesita**; [Preguntas y decisiones](missions.md#questions) explica qué pregunta y cómo se etiquetan las decisiones. Cada coordinador, único o diario, y cada asignación de tarea reciben esta regla como instrucción; Exploración añade las comprobaciones de decisiones [más abajo](#wayfinder-checks).
+Solo el coordinador te hace preguntas. Las tareas y sus auxiliares devuelven las suyas a la conversación que las lanzó, con las opciones, las evidencias, las consecuencias, la reversibilidad y una recomendación, y siguen con el trabajo que no depende de la respuesta. El coordinador resuelve primero lo que puede y agrupa las preguntas restantes en un solo formulario en **Te necesita**; [Preguntas y decisiones](missions.md#questions) explica qué pregunta y cómo se etiquetan las decisiones. Cada coordinador, puntual o programado, y cada asignación de tarea reciben esta regla como instrucción; Exploración añade las comprobaciones de decisiones [más abajo](#wayfinder-checks).
 
 Responde en el panel de interrupciones (**Responder** en **Te necesita**): solo eso cuenta como tu respuesta. Una respuesta escrita en el chat es un mensaje normal.
 
@@ -53,7 +53,7 @@ Responde en el panel de interrupciones (**Responder** en **Te necesita**): solo 
 
 El coordinador tiene instrucciones de publicar un informe de situación tras su plan inicial, tras cada tarea que cierra, cada vez que empieza a esperarte y antes de su informe final; consulta [Informes de situación y solicitudes de actualización](missions.md#briefings). Los informes de situación, los resúmenes de tareas y el informe final están escritos para ti: en tu idioma, en pocas frases cortas, primero el resultado, con identificadores y comandos en las evidencias.
 
-El informe final indica lo entregado, lo que queda y lo que requiere tu decisión. Una misión única solo termina como completada: cuando nada puede avanzar sin ti, el coordinador te pregunta y espera en lugar de fallar, y solo tú detienes una misión. Una ejecución diaria también puede terminar como fallida.
+El informe final indica lo entregado, lo que queda y lo que requiere tu decisión. Una misión única solo termina como completada: cuando nada puede avanzar sin ti, el coordinador te pregunta y espera en lugar de fallar, y solo tú detienes una misión. Una pasada programada también puede terminar como fallida.
 
 ### Lo que CodeNomad comprueba en cada misión {#common-checks}
 
@@ -177,7 +177,7 @@ Nunca escribe tu respuesta por sí mismo ni presenta su propia decisión como tu
 - Solo se aceptan los cinco roles de Exploración.
 - Una tarea de decisión solo se completa con la decisión propia del coordinador o con tu respuesta. Una decisión del coordinador indica la pregunta, la decisión y su justificación, y nunca se registra como tu respuesta.
 - Tu respuesta solo cuenta si la diste en la interfaz de CodeNomad. CodeNomad la vincula a una tarea por la etiqueta de la pregunta: la pregunta se hizo desde la conversación del coordinador, su texto termina con la etiqueta de esa tarea y no nombra otra decisión, se respondió después de declararse la tarea y no ha resuelto otra decisión. Cada pregunta de un formulario agrupado se vincula por separado; una pregunta que nombra dos decisiones no resuelve ninguna. También se acepta una respuesta a una pregunta hecha desde la propia conversación de la tarea de decisión.
-- El informe propio de una tarea no puede afirmar quién decidió. Antes de que una misión o una ejecución diaria termine con éxito, CodeNomad vuelve a comprobar cada decisión completada, etiquetas incluidas.
+- El informe propio de una tarea no puede afirmar quién decidió. Antes de que una misión o una pasada programada termine con éxito, CodeNomad vuelve a comprobar cada decisión completada, etiquetas incluidas.
 - Estas comprobaciones se aplican con **Subagentes nativos**. Con **Sesiones independientes**, los responsables de decisión envían sus informes ellos mismos y el coordinador registra cada resultado en las notas indicando quién decidió; CodeNomad no lo verifica.
 
 Solo instrucciones: cuándo una elección se considera fácil de revertir, la calidad de los informes y la investigación, y limitarse a planificar.

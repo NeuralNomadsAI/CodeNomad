@@ -11,7 +11,7 @@ export const MISSION_BODY_FIELDS = {
   mission: ["objective", "notes", "summary", "briefing"],
   task: ["brief", "executionMode", "report", "lateReports"],
   report: ["summary", "next", "evidence", "artifact"],
-  change: ["reason", "objective", "notes"],
+  change: ["reason", "objective", "notes", "addedTaskKeys", "retiredTasks", "dependencyUpdates"],
 } as const
 
 /** A mission body's place in the live map: a map field, a task's own field (and its
@@ -54,11 +54,17 @@ export type MissionContentResult = { version: 1; projectID: string; missionID: s
 export type MissionContentResponse = ({ available: true } & MissionContentResult) | MissionListUnavailableResponse
 
 /** The descriptor `mission` gives the body at `selector`: a report's from the mission's
- * own `reports`, which hold every report and which the report selector reads. Undefined
- * when the map names none: no such body, or a full map (descriptors are on compact maps only). */
+ * own `reports`, which hold the reports a compact map or page holds and which the report
+ * selector reads. Undefined when the map names none: no such body, or a full map
+ * (descriptors are on compact maps only). */
 export function missionBodyDescriptor(mission: MissionPanelMap, selector: MissionContentSelector): MissionBodyDescriptor | undefined {
-  if (selector.kind === "mission") return mission.bodies?.[selector.field]
-  if (selector.kind === "task") return mission.tasks.find(task => task.key === selector.taskKey)?.bodies?.[selector.field]
-  if (selector.kind === "report") return mission.reports.find(report => report.id === selector.reportId)?.bodies?.[selector.field]
-  return mission.history.find(change => change.revision === selector.change)?.bodies?.[selector.field]
+  return missionBodyOwner(mission, selector)?.bodies?.[selector.field]
+}
+
+/** What holds the body at `selector` in `mission`: the map, a task row, a report row or a plan change. */
+export function missionBodyOwner(mission: MissionPanelMap, selector: MissionContentSelector): { bodies?: MissionBodyDescriptors } | undefined {
+  if (selector.kind === "mission") return mission
+  if (selector.kind === "task") return mission.tasks.find(task => task.key === selector.taskKey)
+  if (selector.kind === "report") return mission.reports.find(report => report.id === selector.reportId)
+  return mission.history.find(change => change.revision === selector.change)
 }

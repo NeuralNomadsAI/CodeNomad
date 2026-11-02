@@ -800,6 +800,20 @@ pub(crate) struct LocalCliAccess {
     pub(crate) session_cookie: String,
 }
 
+impl LocalCliAccess {
+    /// The session cookie a local window needs before it loads `target` from this server. WebView2
+    /// keeps a session cookie only while a window of its store is open, so a window opened after the
+    /// last local window closed (beside a remote window, or after a launch connection) would otherwise
+    /// land on the sign-in page: every new local window is given the cookie itself.
+    pub(crate) fn session_cookie_for(&self, target: &str) -> Option<Cookie<'static>> {
+        let base = Url::parse(&self.base_url).ok()?;
+        if Url::parse(target).ok()?.origin() != base.origin() {
+            return None;
+        }
+        local_session_cookie(&self.base_url, &self.cookie_name, &self.session_cookie).ok()
+    }
+}
+
 impl Default for CliStatus {
     fn default() -> Self {
         Self {
@@ -1111,6 +1125,15 @@ impl CliProcessManager {
 
     pub fn status(&self) -> CliStatus {
         self.status.lock().clone()
+    }
+
+    /// `local_cli_access` without the lifecycle lock, for windows built on the main thread: the bootstrap
+    /// holds that lock while it installs the session cookie, which can wait for the main thread.
+    pub(crate) fn ready_local_access(&self) -> Option<LocalCliAccess> {
+        if self.status.lock().state != CliState::Ready {
+            return None;
+        }
+        self.local_access.lock().clone()
     }
 
     pub(crate) fn local_cli_access(&self) -> Option<LocalCliAccess> {
@@ -2213,6 +2236,34 @@ pub(crate) mod tests {
 
         manager.stop().unwrap();
         assert_eq!(manager.local_cli_access(), None);
+    }
+
+    #[test]
+    fn every_new_local_window_receives_the_local_session_cookie_for_its_server() {
+        let manager = CliProcessManager::new();
+        let access = LocalCliAccess {
+            base_url: "http://127.0.0.1:3000".into(),
+            cookie_name: "codenomad_session_test".into(),
+            session_cookie: "secret".into(),
+        };
+        *manager.local_access.lock() = Some(access.clone());
+        assert_eq!(manager.ready_local_access(), None);
+        manager.status.lock().state = CliState::Ready;
+        assert_eq!(manager.ready_local_access(), Some(access.clone()));
+
+        // A window opened after the last local window closed lands on the server, signed in.
+        let cookie = access.session_cookie_for("http://127.0.0.1:3000/").unwrap();
+        assert_eq!(
+            (cookie.name(), cookie.value()),
+            ("codenomad_session_test", "secret")
+        );
+        assert_eq!(cookie.domain(), Some("127.0.0.1"));
+        assert_eq!(cookie.http_only(), Some(true));
+        assert!(access.session_cookie_for("http://127.0.0.1:3000/login").is_some());
+        // Never for another server or a stale port.
+        assert!(access.session_cookie_for("http://127.0.0.1:3001/").is_none());
+        assert!(access.session_cookie_for("https://remote.example/").is_none());
+        assert!(access.session_cookie_for("not a url").is_none());
     }
 
     #[test]

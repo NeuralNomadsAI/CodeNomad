@@ -12,6 +12,7 @@ import { SettingsReadError } from "../../settings/yaml-doc-store"
 interface RouteDeps {
   settings: SettingsService
   logger: Logger
+  publishSupervisionTarget?: () => Promise<void>
 }
 
 const ValidateBinarySchema = z.object({
@@ -67,7 +68,10 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
         }
         body = bodyObj
       }
-      return sanitizeConfigDoc(deps.settings.mergePatchDoc("config", body))
+      const saved = deps.settings.mergePatchDoc("config", body)
+      if (body && typeof body === "object" && "server" in body && body.server && typeof body.server === "object"
+        && "opencodeBinary" in body.server) await deps.publishSupervisionTarget?.()
+      return sanitizeConfigDoc(saved)
     } catch (error) {
       reply.code(400)
       return { error: error instanceof Error ? error.message : "Invalid patch" }
@@ -102,10 +106,10 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
       const processed = request.params.owner === "server"
         ? enforceSpeechCredentialPairing(request.body ?? {}, currentOwner)
         : request.body ?? {}
-      return sanitizeConfigOwner(
-        request.params.owner,
-        deps.settings.mergePatchOwner("config", request.params.owner, processed),
-      )
+      const saved = deps.settings.mergePatchOwner("config", request.params.owner, processed)
+      if (request.params.owner === "server" && processed && typeof processed === "object" && "opencodeBinary" in processed)
+        await deps.publishSupervisionTarget?.()
+      return sanitizeConfigOwner(request.params.owner, saved)
     } catch (error) {
       reply.code(error instanceof MissionPreferenceConflictError ? 409 : error instanceof SettingsReadError ? 503 : 400)
       return { error: error instanceof Error ? error.message : "Invalid patch" }

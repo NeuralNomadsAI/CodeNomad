@@ -3,6 +3,7 @@ import test from "node:test"
 import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, parseMissionEvent, type MissionStorage } from "./journal"
 import { reduceMissionEvents, type MissionEvent, type MissionJsonValue } from "./model"
 import { parseExecutionMode, sameExecutionMode, type MissionTaskExecutionMode } from "./task-execution-mode"
+import { MISSION_DOCUMENT_PREFIX } from "./mission-document"
 
 const native: MissionTaskExecutionMode = { kind: "native", parentTaskKey: null }
 const nested: MissionTaskExecutionMode = { kind: "native", parentTaskKey: "parent.work", reuseFromTaskKey: "previous-work" }
@@ -109,7 +110,8 @@ test("actual journal persists initial/replacement descriptors with agent/model s
       assert.equal(Object.prototype.hasOwnProperty.call(mission.tasks[0], "executionMode"), false)
       assert.equal(Object.prototype.hasOwnProperty.call(mission.tasks[1], "executionMode"), false)
     }
-    assert.ok(f.reads.every(key => key.startsWith(`${MISSION_JOURNAL_STORAGE_PREFIX}/`)), "no alternate/legacy namespace reads")
+    const documentKey = `${MISSION_DOCUMENT_PREFIX}/project/${f.journal.projectToken}/missions/${base.missionID}`
+    assert.ok(f.reads.every(key => key.startsWith(`${MISSION_JOURNAL_STORAGE_PREFIX}/`) || key === documentKey), "only the journal and its exact document key")
   }
 })
 

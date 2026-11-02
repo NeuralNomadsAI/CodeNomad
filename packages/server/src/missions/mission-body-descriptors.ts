@@ -2,7 +2,8 @@ import { contentDigest, contentText } from "./inspect-view"
 import { MISSION_BODY_FIELDS, type MissionBodyDescriptors } from "./mission-content-wire"
 import type { MissionMap } from "./model"
 
-function describe(owner: object, fields: readonly string[]): MissionBodyDescriptors {
+/** A descriptor of each of `fields` that `owner` holds. */
+export function describe(owner: object, fields: readonly string[]): MissionBodyDescriptors {
   const bodies: MissionBodyDescriptors = {}
   for (const field of fields) {
     const value = (owner as Record<string, unknown>)[field]

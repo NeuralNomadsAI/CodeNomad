@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.behavior.autoExpandActiveSubsessions.title": "הרחבה אוטומטית של תת־סשנים",
+  "settings.behavior.autoExpandActiveSubsessions.info": "כשענף גלוי ומכווץ בשיחה הנבחרת עובר לעבודה, דחיסה או המתנה לקלט, הנתיב לתת־הסשנים הפעילים שלו נפתח. אותו כלל חל על תת־סשנים גלויים בכל עומק. כבו כדי שפעילות לא תפתח ענפים. ענפים פתוחים נשמרים לשחזור.",
   "settings.usage.cached": "הנתונים הסטטיסטיים האחרונים שנשמרו · ממתין לרענון",
   "settings.native.openFailed": "לא ניתן היה לפתוח את ההעדפות בחלון שלהן. הפעילו מחדש או עדכנו את אפליקציית CodeNomad ונסו שוב.",
   "settings.accounts.current": "חשבון פעיל",

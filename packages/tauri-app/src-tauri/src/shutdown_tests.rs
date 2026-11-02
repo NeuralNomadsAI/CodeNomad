@@ -130,6 +130,51 @@ fn pending_and_approved_local_closes_remain_visible_to_final_window_decisions() 
 }
 
 #[test]
+fn pages_without_the_application_never_hold_a_close_or_quit() {
+    // A local window stuck on the sign-in page could neither close nor let CodeNomad quit.
+    for url in [
+        "http://127.0.0.1:9898/login",
+        "http://127.0.0.1:9898/remote-pair",
+        "http://127.0.0.1:9898/auth/token",
+        "tauri://localhost/loading.html",
+    ] {
+        assert!(
+            !awaits_renderer_flush(Some(&tauri::Url::parse(url).unwrap())),
+            "{url}"
+        );
+    }
+    for url in [
+        "http://127.0.0.1:9898/",
+        "http://127.0.0.1:9898/workspaces/a",
+    ] {
+        assert!(
+            awaits_renderer_flush(Some(&tauri::Url::parse(url).unwrap())),
+            "{url}"
+        );
+    }
+    assert!(awaits_renderer_flush(None));
+}
+
+#[test]
+fn the_last_user_window_close_keeps_its_saved_state() {
+    let coordinator = ShutdownCoordinator::default();
+    let generation = coordinator
+        .begin_local_close("local-a".into(), "window-a".into(), false)
+        .unwrap();
+    let pending = coordinator
+        .acknowledge_local("local-a", "window-a", generation)
+        .unwrap();
+    assert!(coordinator.commit_local_close("local-a".into(), pending));
+    // consume_local_window_close approves it without removing the window from client state.
+    assert!(
+        !coordinator
+            .take_committed_local_close("local-a")
+            .unwrap()
+            .removes_state
+    );
+}
+
+#[test]
 fn local_close_dispatch_rollback_reopens_close_authority() {
     let coordinator = ShutdownCoordinator::default();
     let generation = coordinator

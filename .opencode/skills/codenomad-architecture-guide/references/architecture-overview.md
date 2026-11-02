@@ -20,7 +20,7 @@ Client-state V3 is a per-window envelope over the V2 content-addressed partition
 
 | Owner | Responsibilities | Main paths |
 |---|---|---|
-| OpenCode V2 | Sessions, messages, permissions, Forms, files, session Shell/instructions, background Shells, interactive PTYs | pinned `@opencode/client@2.1.0` contract across server and UI; host-owned native plugin runtime |
+| OpenCode V2 | Sessions, messages, permissions, Forms, files, session Shell/instructions, background Shells, interactive PTYs | pinned `@opencode/client@2.2.3` contract across server and UI; host-owned native plugin runtime |
 | CodeNomad server | Shared service lifecycle, locations, proxy authorization, Git mutations, Yolo, auth, storage, speech, SSE multiplexing, desktop automation bridge | `packages/server/src/` |
 | CodeNomad UI | Generated Promise clients, state reconciliation, interaction and rendering | `packages/ui/src/` |
 | Desktop hosts | Start CodeNomad and provide native OS integration | `packages/electron-app/`, `packages/tauri-app/` |

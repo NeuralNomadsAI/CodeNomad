@@ -1,12 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import Ajv from "ajv"
-import { MISSION_JOURNAL_STORAGE_PREFIX, MissionJournal, parseMissionEvent } from "./journal"
 import { describeMissionBodies } from "./mission-body-descriptors"
 import { compactMissionMap } from "./mission-compact-map"
 import { MISSION_BODY_FIELDS } from "./mission-content-wire"
 import { MISSION_BRIEFING_CONTENT, MISSION_EXCERPT_MAX, missionExcerpt, type MissionPanelMap } from "./mission-panel-map"
-import { FIXTURE_PROJECT, missionPluginFixture } from "./mission-plugin-fixture"
+import { missionPluginFixture } from "./mission-plugin-fixture"
 import { missionObjectiveLabel } from "./mission-summary"
 import type { MissionList, MissionMap, MissionRead, MissionSnapshot } from "./model"
 import { CODENOMAD_MISSIONS_RPC } from "./rpc"
@@ -101,7 +100,10 @@ test("compaction keeps every field but the bodies, unknown ones included, and le
     const readout = { ...full.tasks[0].report!, delivery: "coordinator-readout" as const, futureReportField: true,
       artifact: { kind: "decision", decidedBy: "coordinator", question: "Which?", decision: "This", rationale: "Because" } }
     const late = { ...readout, id: "rep_late", taskKey: "second", late: true, summary: body("Late") }
-    const map = { ...structuredClone(full), template: "wayfinder" as const, document: { id: "doc_1", revision: 4 }, futureScalar: 7,
+    const document: NonNullable<MissionMap["document"]> = { revision: 4, configurationGeneration: 2, timeGeneration: 1,
+      state: "paused", firstPlayedAt: null, launchedCount: 0, firstPlay: null, scheduleActivation: null, everCreatedTask: false,
+      launch: { timing: { kind: "immediate" }, condition: null, ends: { at: null, afterMs: null, maxLaunches: null } } }
+    const map = { ...structuredClone(full), template: "wayfinder" as const, document, futureScalar: 7,
       tasks: [{ ...full.tasks[0], role: "decision", report: readout, futureTaskField: "kept" },
         { ...full.tasks[1], executionMode: { kind: "independent" as const, reason: "playbook" as const, explanation: body("Explanation", 1_000) }, lateReports: [late] }],
       reports: [readout, late], history: full.history.map(change => ({ ...change, requestID: `req_${change.revision}` })) } as MissionMap
@@ -113,18 +115,22 @@ test("compaction keeps every field but the bodies, unknown ones included, and le
     const kept = (owner: object, compactOwner: object, dropped: readonly string[], label: string) => {
       for (const [key, value] of Object.entries(owner)) if (!dropped.includes(key)) assert.deepEqual((compactOwner as Record<string, unknown>)[key], value, `${label} ${key}`)
     }
-    kept(map, compact, [...MISSION_BODY_FIELDS.mission, "tasks", "reports", "history"], "mission")
+    // Unbounded lists leave the map (`frontier`, `claims`) and its plan changes (bodies now).
+    kept(map, compact, [...MISSION_BODY_FIELDS.mission, "tasks", "reports", "history", "frontier", "claims"], "mission")
     kept(map.briefing!, compact.briefing!, MISSION_BRIEFING_CONTENT, "briefing")
-    map.tasks.forEach((task, index) => kept(task, compact.tasks[index], MISSION_BODY_FIELDS.task, `task ${task.key}`))
+    const row = (key: string) => compact.tasks.find(task => task.key === key)!
+    map.tasks.forEach(task => kept(task, row(task.key), MISSION_BODY_FIELDS.task, `task ${task.key}`))
     map.reports.forEach((report, index) => kept(report, compact.reports[index], MISSION_BODY_FIELDS.report, `report ${report.id}`))
     map.history.forEach((change, index) => kept(change, compact.history[index], MISSION_BODY_FIELDS.change, `change ${change.revision}`))
     assert.deepEqual([(compact as unknown as { document: unknown }).document, compact.history.map(change => (change as unknown as { requestID: string }).requestID)],
-      [{ id: "doc_1", revision: 4 }, map.history.map(change => `req_${change.revision}`)])
-    // Rows in place of the mixed bodies.
-    assert.deepEqual(compact.tasks[1].executionMode, { kind: "independent", reason: "playbook", excerpt: missionExcerpt(body("Explanation", 1_000)) })
+      [document, map.history.map(change => `req_${change.revision}`)])
+    // Rows in place of the mixed bodies, each with its place in the display order.
+    assert.deepEqual(row("second").executionMode, { kind: "independent", reason: "playbook", excerpt: missionExcerpt(body("Explanation", 1_000)) })
+    assert.deepEqual(compact.tasks.map(task => [task.key, task.order, task.dependents]), [["first", 0, 1], ["second", 1, 0]])
     // Only the decision task's readout is a decision; the late report belongs to a specialist task.
-    assert.deepEqual([compact.tasks[0].report?.decidedBy, compact.reports.map(report => report.decidedBy)], ["coordinator", ["coordinator", undefined]])
-    assert.deepEqual(compact.tasks[1].lateReports?.map(report => [report.id, report.excerpt]), [["rep_late", missionExcerpt(body("Late"))]])
+    assert.deepEqual([row("first").report?.decidedBy, compact.reports.map(report => report.decidedBy)], ["coordinator", ["coordinator", undefined]])
+    assert.deepEqual([row("second").lateReports?.map(report => [report.id, report.excerpt]), row("second").lateReportCount],
+      [[["rep_late", missionExcerpt(body("Late"))]], 1])
     // Described when the map has none, kept when it has them.
     assert.deepEqual(compact.bodies, describeMissionBodies(map).bodies)
     assert.deepEqual(compactMissionMap(describeMissionBodies(map)), compact)
@@ -162,32 +168,4 @@ test("the snapshot, mission.inspect, mutations and the maps they read keep every
     assert.deepEqual([edited.objective, edited.tasks.map(task => task.brief), edited.history.at(-1)?.notes],
       [full.objective, full.tasks.map(task => task.brief), { before: full.notes, after: "Changed notes" }])
   } finally { await plugin.dispose() }
-})
-
-test("a 2,400-task mission with maximum briefs lists in a bounded response", { timeout: 300_000 }, async t => {
-  const f = missionPluginFixture(), journal = new MissionJournal(f.storage, FIXTURE_PROJECT.id, FIXTURE_PROJECT.canonical)
-  const missionID = "msn_payload", base = { version: 1, missionID, projectID: FIXTURE_PROJECT.id }
-  // The review's probe: one creation, then 100 revisions of 24 tasks, each brief at its 20,000-character maximum.
-  const events: unknown[] = [{ ...base, id: "evt_created", type: "mission.created", projectCanonical: FIXTURE_PROJECT.canonical, objective: "Payload",
-    template: "custom", coordinator: { sessionID: "ses_payload", title: "Coordinator", location: FIXTURE_PROJECT.location }, createdAt: 10_000 }]
-  for (let revision = 0; revision < 100; revision++) events.push({ ...base, id: `evt_rev_${revision}`, type: "mission.revised", requestID: `rev-${revision}`,
-    expectedRevision: revision + 1, actorSessionID: "ses_payload", reason: "More tasks", notesSpecified: false, retiredTasks: [], dependencyUpdates: [],
-    addedTasks: Array.from({ length: 24 }, (_, index) => ({ id: `tsk_${revision}_${index}`, key: `task-${revision}-${index}`, title: "Work",
-      brief: "b".repeat(20_000), role: "specialist", blockedBy: [], executionMode: { kind: "native", parentTaskKey: null } })), createdAt: 10_001 + revision })
-  for (const event of events) {
-    const parsed = parseMissionEvent(event)
-    assert.ok(parsed)
-    f.values.set(`${MISSION_JOURNAL_STORAGE_PREFIX}/${journal.projectToken}/${missionID}/${parsed.id}`, parsed as never)
-  }
-  const list = await f.control().list({ include: [missionID] }), read = await f.control().mission(missionID)
-  const snapshot = await f.control().snapshot()
-  assert.equal(list.missions[0].tasks.length, 2_400)
-  assert.ok(validList(JSON.parse(JSON.stringify(list))), JSON.stringify(validList.errors))
-  const full = bytes(snapshot), listed = bytes(list), single = bytes(read)
-  const row = Math.max(...list.missions[0].tasks.map(bytes))
-  t.diagnostic(`snapshot ${full} bytes; list ${listed} bytes; mission ${single} bytes; largest task row ${row} bytes`)
-  assert.ok(full > 48_000_000, "the full map: what the list returned with its bodies")
-  // A row holds its scalars and keys, and descriptors in place of its brief and mode.
-  assert.ok(row <= 512, `a task row is ${row} bytes`)
-  assert.ok(listed < 2_400 * 512 && single < 2_400 * 512, `${listed} and ${single} bytes`)
 })

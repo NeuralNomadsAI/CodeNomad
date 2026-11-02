@@ -55,6 +55,7 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
     session, location: { get: async () => ({ directory: nativeDirectory, project: { id: projectID } }) },
     plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
     rpc: () => new Proxy({}, { get: (_, method) => async (input: any) => {
+      if (method === "documentCapabilities") return { version: 1 }
       if (method === "snapshot" && creates && settlementGate) { settlementStarted.resolve(); await settlementGate.promise }
       if (method === "create") rpcCreates++
       try {

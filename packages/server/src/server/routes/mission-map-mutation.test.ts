@@ -4,6 +4,7 @@ import Fastify from "fastify"
 
 import { registerMissionRoutes } from "./missions"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { prepareMissionMapMutation } from "./mission-map-mutation"
 
 const routes = [
   { method: "PATCH", url: "/api/workspaces/workspace-1/missions/msn_1", rpc: "update", payload: { objective: "Edited", expectedRevision: 1, requestId: "edit" } },
@@ -12,7 +13,7 @@ const routes = [
   { method: "POST", url: "/api/workspaces/workspace-1/missions/msn_1/recover", rpc: "recover", payload: { expectedRevision: 1, target: "coordinator" } },
 ] as const
 
-function harness(hooks: { inventory?(state: State): void; dispatch?(state: State): Promise<void> } = {}) {
+function harness(hooks: { inventory?(state: State): void; dispatch?(state: State): Promise<void>; unsupportedDocuments?: boolean } = {}) {
   const state = { workspace: { id: "workspace-1" } as object | undefined, current: true, rpcs: [] as string[], entries: 0, fence: new WorktreeDeletionFence(50) }
   const enter = state.fence.enter.bind(state.fence)
   state.fence.enter = (directories: string[]) => { state.entries++; return enter(directories) }
@@ -20,6 +21,10 @@ function harness(hooks: { inventory?(state: State): void; dispatch?(state: State
     location: { get: async ({ location }: { location: { directory: string } }) => ({ directory: location.directory, project: { id: "project-1" } }) },
     plugin: { list: async () => { hooks.inventory?.(state); return { data: [{ id: "codenomad.missions", state: { status: "active" } }] } } },
     rpc: () => new Proxy({}, { get: (_target, name: string) => async () => {
+      if (name === "documentCapabilities") {
+        if (hooks.unsupportedDocuments) throw new Error("rpc.method_not_found")
+        return { version: 1 }
+      }
       state.rpcs.push(name)
       await hooks.dispatch?.(state)
       return name === "delete" ? { deleted: true } : { mission: { id: "msn_1" } }
@@ -51,6 +56,43 @@ test("every map mutation enters the worktree-deletion fence before its single na
     assert.equal(response.statusCode, 200, route.rpc)
     assert.deepEqual(h.state.rpcs, [route.rpc])
     assert.equal(h.state.entries, 1, route.rpc)
+  }
+})
+
+test("immediate human Play defaults supervision on its exact fenced connection; Pause and revoked Play leave it alone", async () => {
+  const h = harness(), app = Fastify({ logger: false }), connection = await h.manager.getSharedServiceConnection()
+  h.manager.getSharedServiceConnection = async () => connection
+  let human = true, plays = 0, revoke = false
+  registerMissionRoutes(app, { workspaceManager: h.manager as never, worktreeDeletionFence: h.state.fence,
+    auth: { isAuthEnabled: () => true, getSessionFromRequest: () => human ? { username: "human", sessionId: "cookie" } : null },
+    supervision: { missionPlay: async (exact, _id, authorize) => {
+      assert.equal(exact, connection); assert.ok(h.state.entries > 0)
+      authorize(); plays++; if (revoke) human = false; authorize()
+      return {} as never
+    } },
+  })
+  try {
+    const post = (action: string) => app.inject({ method: "POST", url: routes[1].url,
+      payload: { action, expectedRevision: 1, requestId: action } })
+    assert.equal((await post("start")).statusCode, 200)
+    assert.equal(plays, 1); assert.deepEqual(h.state.rpcs, ["lifecycle"])
+    assert.equal((await post("pause")).statusCode, 200)
+    assert.equal(plays, 1)
+    revoke = true
+    assert.equal((await post("start")).statusCode, 503)
+    assert.equal(h.state.rpcs.length, 2)
+    assert.equal((await post("start")).statusCode, 401)
+    assert.equal(plays, 2)
+  } finally { await app.close() }
+})
+
+test("existing map mutations keep their native contract without requiring document-creation capabilities", async () => {
+  for (const route of routes) {
+    const h = harness({ unsupportedDocuments: true })
+    const response = await inject(h, route)
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(h.state.rpcs, [route.rpc])
+    assert.equal(h.state.entries, 1)
   }
 })
 
@@ -103,4 +145,24 @@ test("deletion admission is held until the dispatched native mutation settles, a
     await new Promise(resolve => setTimeout(resolve, 5))
     assert.equal(deletionRan, true)
   }
+})
+
+test("scheduled retention transfers the original permit and a failed registration keeps normal cleanup", async () => {
+  const h = harness(), signal = new AbortController().signal
+  const owned = await prepareMissionMapMutation({ manager: h.manager as never, fence: h.state.fence, workspaceID: "workspace-1", signal })
+  let release!: () => void
+  await assert.rejects(owned.run(async () => {
+    owned.retain(original => { release = original })
+    throw new Error("Unknown native effect")
+  }), /Unknown/)
+  let deleted = false
+  const deletion = h.state.fence.run("/owned/repo", ["/owned/repo"], async () => { deleted = true })
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.equal(deleted, false)
+  release(); await deletion
+  assert.equal(deleted, true)
+
+  const other = harness(), next = await prepareMissionMapMutation({ manager: other.manager as never, fence: other.state.fence, workspaceID: "workspace-1", signal })
+  await assert.rejects(next.run(async () => { next.retain(() => { throw new Error("Capacity exhausted") }) }), /Capacity/)
+  await other.state.fence.run("/owned/repo", ["/owned/repo"], async () => {})
 })

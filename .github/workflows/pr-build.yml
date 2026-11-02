@@ -212,6 +212,10 @@ jobs:
             # native config schema and production JSONC document admission.
             node --import tsx scripts/test-subagent-depth-settings-native.mjs $cli
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            # Real nested General subagents: the built-in denial, the rule a saved
+            # depth adds to the project and its removal by Inherit.
+            node --import tsx scripts/test-subagent-nesting-native.mjs $cli
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
           # Settings → Providers → Images: default-on generation, native acceptance
           # and hot reload of the written values.
@@ -299,16 +303,17 @@ jobs:
         run: npm run build:missions --workspace @neuralnomads/codenomad
 
       - name: Test desktop packaging invariants
-        run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs
+        run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs
 
       - name: Test CI fixture diagnostics and artifact announcements
-        run: node --test scripts/native-fixture-diagnostics.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/release-pr-notes.test.cjs
+        run: node --test scripts/native-fixture-diagnostics.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/windows-signing.test.cjs .github/scripts/zip-entry.test.cjs .github/scripts/release-pr-notes.test.cjs
 
       - name: Test Electron client state
         env:
           CODENOMAD_TEST_ZSH: /bin/zsh
         run: |
-          npm run test:native --workspace @neuralnomads/codenomad-electron-app
+          # A display for the tests that drive real Electron IPC (remote-recovery.test.ts).
+          xvfb-run -a npm run test:native --workspace @neuralnomads/codenomad-electron-app
           node --import tsx --test packages/electron-app/electron/main/view-menu.test.ts
 
       - name: Test changed runnable UI behavior
@@ -354,6 +359,8 @@ jobs:
           packages/ui/src/lib/hooks/use-instance-metadata.test.ts
           packages/ui/src/lib/hooks/use-foreground-refresh.test.ts
           packages/ui/src/lib/hooks/use-electron-folder-launch.test.ts
+          packages/ui/src/lib/desktop-connection-queue.test.ts
+          packages/ui/src/lib/launch-connect-target.test.ts
           packages/ui/src/lib/launch-errors.test.ts
           packages/ui/src/lib/i18n/messages/missions.test.ts
           packages/ui/src/lib/clipboard.test.ts
@@ -415,6 +422,8 @@ jobs:
           node --conditions=browser --import tsx --test --test-force-exit
           packages/ui/src/components/mission-attention.test.ts
           packages/ui/src/stores/mission-store.test.ts
+          packages/ui/src/stores/mission-task-pages.test.ts
+          packages/ui/tests/contracts/mission-task-page-read.test.ts
           packages/ui/src/lib/native/preferences-window.test.ts
           packages/ui/src/components/mission-briefing-locales.test.ts
           packages/ui/src/components/mission-briefing-model.test.ts

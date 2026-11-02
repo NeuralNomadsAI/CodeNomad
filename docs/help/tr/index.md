@@ -10,7 +10,7 @@ OpenCode size motoru verir. CodeNomad size kokpiti verir. OpenCode'un paylaşıl
 
 ## Uzun işleri Görevlere devredin {#missions}
 
-İşi bir kez tanımlayın. Görevin koordinatörü onu bir görev ağacı olarak planlar, sınırlı işleri yerel OpenCode konuşmalarına devreder ve sonuçları kanıtlarıyla birlikte raporlar. Bir görevi bir kez veya her gün çalıştırın; bir görev oluşturmak, siz seçene kadar hiçbir işi başlatmaz. İş akışı rehberleri hata ayıklamayı, ürün teslimini ve iki modelin kör bir hakemle karşılaştırılmasını kapsar. Bkz. [Görevler](missions.md).
+İşi bir kez tanımlayın. Görevin koordinatörü onu bir görev ağacı olarak planlar, sınırlı işleri yerel OpenCode konuşmalarına devreder ve sonuçları kanıtlarıyla birlikte raporlar. Bir kez, seçilen saatlerde veya aralıklarla ya da doğrulanmış bir proje değişikliğinden sonra çalıştırın; oluşturma, açıkça başlatmanız için duraklatılmış bir Görev kaydeder. İş akışı rehberleri hata ayıklamayı, ürün teslimini ve iki modelin kör bir hakemle karşılaştırılmasını kapsar. Bkz. [Görevler](missions.md).
 
 ## Telefonunuzdan çalışmaya devam edin {#phone-access}
 
@@ -77,7 +77,7 @@ Kesin sınırlar için, bkz. [tarayıcı önizlemeleri ve SideCars](browser-side
 | Çalışma kopyaları ve konuşmalar arasında çalışın | [Projeler](projects.md), [Konuşmalar](conversations.md), [Dosyalar](files.md) |
 | Geçmişi bulun veya güvenle temizleyin | [Geçmiş](history.md) |
 | Yerel soruları ve izinleri yanıtlayın | [İzinler](permissions.md) |
-| Sınırlı veya günlük işleri koordine edin | [Görevler](missions.md) |
+| Sınırlı veya zamanlanmış işleri koordine edin | [Görevler](missions.md) |
 | Yürütme ve entegrasyonları yapılandırma | [OpenCode](opencode.md), [Sağlayıcılar](providers.md), [Entegrasyonlar](integrations.md) |
 | Başka bir cihaz bağlayın | [Uzaktan Kontrol](remote-control.md), [Güvenlik](security.md), [Mobil](mobile.md) |
 | Çalışma alanını uyarlayın | [Ayarlar](settings.md), [Kısayollar](shortcuts.md), [Ses](voice.md), [Uzantılar](extensions.md) |

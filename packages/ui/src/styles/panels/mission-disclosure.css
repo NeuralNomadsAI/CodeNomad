@@ -27,3 +27,5 @@
 .mission-task-dependencies { display: grid; gap: var(--space-xs); }
 .mission-task-link { text-align: start; color: var(--text-secondary); overflow-wrap: anywhere; }
 .mission-task-link:hover { color: var(--accent-primary); text-decoration: underline; }
+/* What a compact map's page does not hold of this task: its dependents and earlier results. */
+.mission-task-omitted { margin: 0; color: var(--text-muted); font-size: var(--font-size-xs); }

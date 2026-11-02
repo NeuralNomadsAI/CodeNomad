@@ -9,7 +9,7 @@ import type { IntegrationBindingTarget } from "../stores/integration-bindings-st
 
 interface Target { id: string; title?: string; metadata?: Record<string, unknown> }
 interface Offer { integration: IntegrationView; host: IntegrationHostOffer }
-interface Capture { instanceId: string; directory: string; session: Target; identity: string; epoch: string }
+interface Capture { instanceId: string; directory: string; session: Target; identity: string; epoch: string; returnFocus: () => void }
 const attachable = (entry: IntegrationView) => entry.family === "native" && entry.state === "ok"
   && entry.status?.host?.state !== "unsupported" && (entry.status?.connection?.offers ?? 0) > 0
 
@@ -48,6 +48,7 @@ export function createIntegrationAttachment(props: {
   let controller: AbortController | undefined
   let cancel: HTMLButtonElement | undefined
   let viewGeneration = 0
+  let disposed = false
   const close = () => { controller?.abort(); setCapture(undefined); setOperation(undefined); setOutcome(undefined); setError(undefined); setOffers([]); setSelected(undefined); setPending(false) }
   createEffect(on(demandIdentity, () => {
     const instanceId = props.instanceId, directory = props.directory
@@ -60,7 +61,7 @@ export function createIntegrationAttachment(props: {
     controller?.abort()
     setOffers([]); setSelected(undefined)
   }, { defer: true }))
-  onCleanup(close)
+  onCleanup(() => { disposed = true; close() })
   const owns = (value: Capture) => props.active !== false && value.identity === identity() && capture() === value
   const current = (value: Capture) => owns(value) && value.epoch === epoch() && !controller?.signal.aborted
   const fail = (failure: unknown) => t(failure instanceof HttpResponseError && failure.status === 403 ? "integrations.error.placement"
@@ -71,7 +72,14 @@ export function createIntegrationAttachment(props: {
     const candidates = entries().filter(entry => attachable(entry) && (!integrationId || entry.id === integrationId))
     if (!candidates.length) return
     close()
-    const value: Capture = { instanceId: props.instanceId, directory: props.directory, session: { ...session }, identity: identity(), epoch: epoch() }
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
+    const generation = ++viewGeneration
+    const signature = JSON.stringify(entries())
+    const value: Capture = { instanceId: props.instanceId, directory: props.directory, session: { ...session }, identity: identity(), epoch: epoch(),
+      returnFocus: () => {
+        if (!disposed && !capture() && generation === viewGeneration && value.identity === identity() && value.epoch === epoch() && signature === JSON.stringify(entries())
+          && opener?.isConnected && opener.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }) && !opener.closest('[inert], [aria-hidden="true"]') && !opener.matches(":disabled")) opener.focus({ preventScroll: true })
+      } }
     controller = new AbortController()
     const signal = controller.signal
     setCapture(value); setError(undefined); setPending(true)
@@ -135,12 +143,13 @@ export function createIntegrationAttachment(props: {
       </div></Show>
     }}</For><Show when={detachError()?.identity === identity()}><p role="alert">{detachError()?.message}</p></Show></div>
   </Show>
-  const picker = () => <Show when={capture()}>{value => <Dialog open modal onOpenChange={next => { if (!next) close() }}>
+  const picker = () => <Show when={capture()} keyed>{value => <Dialog open modal onOpenChange={next => { if (!next) close() }}>
     <Dialog.Portal><Dialog.Overlay class="modal-overlay z-[1300]" />
-      <Dialog.Content class="window-shell integration-attachment" onOpenAutoFocus={event => { event.preventDefault(); cancel?.focus() }}>
+      <Dialog.Content class="window-shell integration-attachment" onOpenAutoFocus={event => { event.preventDefault(); cancel?.focus() }}
+        onCloseAutoFocus={event => { event.preventDefault(); value.returnFocus() }}>
         <header class="window-header"><Dialog.Title class="window-title">{t("integrations.attach")}</Dialog.Title></header>
         <div class="window-body integration-attachment-body">
-          <p><strong>{t("integrations.conversation")}</strong> <bdi>{value().session.title || t("sessionList.session.untitled")}</bdi></p>
+          <p><strong>{t("integrations.conversation")}</strong> <bdi>{value.session.title || t("sessionList.session.untitled")}</bdi></p>
           <Dialog.Description>{t(operation() ? "integrations.machine" : "integrations.warning")}</Dialog.Description>
           <Show when={!operation()}><p>{t("integrations.machine")}</p></Show>
           <Show when={operation()} fallback={

@@ -14,7 +14,8 @@ const track = <A>(pending: Set<Promise<unknown>>, promise: Promise<A>) => {
  * Each check's answer runtimes share cancellation/deadline and join before graph
  * release. A noninterruptible native finalizer must still finish: abandoning it
  * at a wall-clock deadline would be an unsafe use-after-release. */
-export function nativeInvocation() {
+export function nativeInvocation(timeoutMs = NATIVE_HUMAN_ANSWER_TIMEOUT_MS) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new Error("Native invocation deadline invalid")
   type Invocation = { active: boolean; pending: Set<Promise<unknown>>;
     signal: AbortSignal; run: <A, E>(effect: Effect.Effect<A, E>, signal: AbortSignal) => Promise<A> }
   const local = new AsyncLocalStorage<Invocation>()
@@ -45,7 +46,7 @@ export function nativeInvocation() {
       if (signal.aborted) return Promise.reject(signal.reason)
       return track(invocation.pending, track(pending, invocation.run(effect, signal)))
     }
-    const timer = setTimeout(() => cancel.abort(new Error("Native human answer read timed out")), NATIVE_HUMAN_ANSWER_TIMEOUT_MS)
+    const timer = setTimeout(() => cancel.abort(new Error("Native Mission invocation timed out")), timeoutMs)
     const done = (async () => {
       try { return await run(Effect.tryPromise({ try: () => use(run), catch: error => error })) }
       finally { clearTimeout(timer); cancel.abort(); await Promise.allSettled(pending) }

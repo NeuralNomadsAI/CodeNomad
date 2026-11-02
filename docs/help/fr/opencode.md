@@ -23,13 +23,25 @@ L’exécutable installé et le service actif peuvent avoir des versions différ
 | Recommandée | OpenCode **2.2.5** | Cible qualifiée, distincte du minimum technique. |
 | Non vérifiée | Version plus récente ou personnalisée non entièrement validée | Non rejetée simplement parce que non testée ; les contrats API réels du service connecté sont vérifiés. |
 
-Les contrats requis de session, permission, Form, boîte de réception et environnement de session doivent aussi être disponibles. Une version d’exécutable seule ne prouve pas que le service connecté les prend en charge. Si la configuration signale un service actif non pris en charge, sélectionnez/installez une CLI prise en charge et utilisez le redémarrage explicite du service partagé lorsque vous êtes prêt.
+Le service connecté doit exposer les contrats requis de session, permission, Form, boîte de réception et environnement de session. La programmation native des Missions vérifie aussi les API de programmation, l’ensemble plugin/fournisseur et le réglage effectif `experimental.schedules`. La disponibilité suit les capacités consommées, y compris sur les versions futures compatibles. Si la configuration signale un service actif non pris en charge, sélectionnez/installez une CLI prise en charge et utilisez le redémarrage explicite du service partagé lorsque vous êtes prêt.
 
 ## Hôte, WSL et portée du service partagé {#execution-host}
 
 Sous Windows, un exécutable WSL sélectionné s’exécute dans la distribution choisie. Installez/mettez-le à jour là-bas et utilisez des chemins valides dans cette distribution. La connectivité WSL dépend du transfert localhost de Windows. Une CLI Windows et une CLI WSL ne sont pas des environnements d’exécution interchangeables.
 
 OpenCode possède l’enregistrement global de son service, ses sessions, messages et base de données. CodeNomad ne crée pas une base OpenCode privée par fenêtre ou projet. Fermer un onglet de projet ferme ce projet dans CodeNomad ; les sessions continuent dans OpenCode et réapparaissent quand vous rouvrez le projet. CodeNomad ne décharge jamais les Locations natives. Fermer une fenêtre entière, quitter ou recharger conserve les connexions de projet pour la restauration ; ni ces actions ni l’arrêt du backend n’arrêtent le démon partagé. Voir [Projets](projects.md).
+
+## Garder OpenCode démarré {#service-supervision}
+
+Avant tout lancement de Mission, **Rester désactivé au premier Play** enregistre un OFF explicite sans installer d'abord la supervision.
+
+Dans **Paramètres → OpenCode**, **Garder OpenCode démarré** installe une supervision système sur l'hôte d'exécution, partagée par tous les profils CodeNomad utilisant ce service. Elle fonctionne indépendamment des Missions, même CodeNomad fermé. Le premier Play d'une Mission l'active, sauf désactivation explicite préalable ; créer une Mission en pause conserve ce choix. Pause, Arrêter ou Supprimer une Mission conserve cette préférence.
+
+La désactivation retire la supervision tandis qu'OpenCode continue de fonctionner et ne sera plus relancé. Pour un arrêt durable, désactivez d'abord cette préférence, puis arrêtez explicitement OpenCode. Avec la supervision active, `opencode service stop` est suivi d'un redémarrage.
+
+**En marche · supervision active** exige un superviseur système actif et un service OpenCode sain. **Installé · service en démarrage**, **Installation ou retrait de la supervision…** et **Supervision en échec** désignent des états distincts. Un service qui répond laisse à lui seul la supervision non confirmée. Le détail affiche la cause, le dernier essai, le nouvel essai du superviseur et la vérification système de secours lorsqu'ils sont connus. **Vérifier la supervision** lit seulement ; **Réessayer la supervision** répare explicitement l'installation demandée. Une action non confirmée garde sa requête d'origine ; **Réessayer l'action d'origine** renvoie uniquement cette action exacte. Une révision modifiée est actualisée pour examen plutôt qu'écrasée.
+
+Windows, macOS et WSL démarrent après connexion. WSL exige la redirection localhost de la distribution choisie. Sous Linux natif, linger démarre **tous les services utilisateur activés** avant connexion et les maintient après déconnexion. Désactiver restaure linger seulement si CodeNomad l'a activé et qu'aucune autre supervision n'en dépend ; le réglage personnel préexistant est conservé. Si restaurer linger risque d'arrêter les processus OpenCode libérés alors qu'aucune session utilisateur n'est ouverte, la restauration est différée et reste visible avec **Réessayer la supervision**. Réessayez lorsqu'une session utilisateur est ouverte ou que les processus OpenCode libérés sont terminés, permettant une restauration sûre. Si Linux exige une autorisation, accordez-la sur l'hôte d'exécution puis réessayez ; la préférence demandée reste enregistrée. Veille et hibernation restent gérées par le système. Un hôte indisponible ou non pris en charge affiche une commande grisée avec explication.
 
 ## Mettre à jour, redémarrer ou recharger {#maintenance}
 
@@ -41,7 +53,7 @@ OpenCode possède l’enregistrement global de son service, ses sessions, messag
 | Action | Portée et effet | Récupération sûre |
 | --- | --- | --- |
 | Mettre à jour la CLI | Change l’exécutable installé pris en charge ; ne redémarre pas implicitement le démon actif. | Vérifiez les versions installée et active après un échec ; réessayez explicitement après résolution de l’erreur seulement. |
-| Redémarrer le service | Remplace le processus partagé et interrompt le travail actif de tous les clients OpenCode connectés ; l’historique reste. | Reconnectez-vous et inspectez conversations et Missions planifiées ; un redémarrage n’est pas une continuation automatique. |
+| Redémarrer le service | Remplace le processus partagé et interrompt le travail actif de tous les clients OpenCode connectés ; l’historique reste. | Les programmations natives de Missions saines et en marche récupèrent automatiquement ; inspectez les passages en attente et toute pause/erreur/incertitude. Les entrées quotidiennes existantes exigent **Reprendre**. Inspectez séparément les conversations ponctuelles et leurs commandes de récupération ; voir [Missions](missions.md#lifetime). |
 | Recharger la configuration OpenCode | Conserve le processus mais reconstruit **chaque Location chargée** pour tous les clients. Annule les permissions/Forms en attente et ferme terminaux/commandes en arrière-plan ; le travail actif peut être interrompu. | Revérifiez ressources et travaux en attente après rechargement. Ne répétez pas un prompt ou une modification simplement parce que sa réponse a été perdue. |
 
 Utilisez explicitement **Recharger la configuration OpenCode**, sous **Dépannage** lorsque le service actif le prend en charge, lorsqu’une configuration enregistrée ou un plugin installé reste indisponible et que l’interruption est acceptable. Ce n’est pas une actualisation d’affichage anodine. CodeNomad n’utilisera pas une CLI sélectionnée plus ancienne pour rétrograder un démon actif plus récent.

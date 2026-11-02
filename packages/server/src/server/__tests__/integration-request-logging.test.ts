@@ -48,11 +48,12 @@ for (const level of ["debug", "trace"] as const) {
       f.check()
     }
     await f.app.inject({ method: "DELETE", url: `/api/workspaces/${secret}/plugin-sources`, payload: { ...payload, [secret]: secret } })
+    await f.app.inject({ method: "DELETE", url: `/api/workspaces/w;${secret}/plugin-sources/unknown?directory=${secret}`, payload })
     f.check()
     const records = f.records().filter(record => record.msg.startsWith("HTTP request"))
     assert.ok(records.length >= 5)
     for (const record of records) {
-      assert.equal(record.url, "/api/workspaces/:id/plugin-sources")
+      assert.match(record.url, /^\/api\/workspaces\/:id\/plugin-sources(?:\/\*)?$/)
       for (const key of ["params", "query", "body", "err"]) assert.equal(key in record, false)
     }
   })
@@ -87,6 +88,7 @@ for (const level of ["debug", "trace"] as const) {
       { method: "GET", url: `/api/workspaces/${encodeURIComponent(secret + "/path")}/integrations/fixture/hosts${query}` },
       { method: "GET", url: `/api/workspaces/w/%69ntegrations/fixture/hosts${query}&value=${secret}` },
       { method: "GET", url: `${root}/fixture/hosts;${secret}?value=${secret}` },
+      { method: "GET", url: `/api/workspaces/w;${secret}/integrations/fixture/unknown?directory=${secret}` },
     ] as const
     for (const [index, input] of requests.entries()) {
       const before = f.records().filter(record => record.msg === "HTTP request completed").length

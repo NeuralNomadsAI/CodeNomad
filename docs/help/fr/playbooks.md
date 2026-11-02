@@ -45,7 +45,7 @@ Ce sont des instructions. Ce qu’un agent peut réellement faire dépend des au
 
 ### Questions qui vous sont posées {#questions}
 
-Seul le coordinateur vous pose des questions. Les tâches et leurs aides renvoient les leurs à la conversation qui les a lancées, avec les options, les éléments à l’appui, les conséquences, la réversibilité et une recommandation, et poursuivent le travail qui ne dépend pas de la réponse. Le coordinateur tranche d’abord ce qu’il peut et regroupe les questions restantes dans un seul formulaire sous **Votre réponse est attendue** ; [Questions et décisions](missions.md#questions) explique ce qu’il demande et comment les décisions sont libellées. Chaque coordinateur, ponctuel ou quotidien, et chaque affectation de tâche reçoivent cette règle comme instruction ; Exploration ajoute les vérifications de décision [ci-dessous](#wayfinder-checks).
+Seul le coordinateur vous pose des questions. Les tâches et leurs aides renvoient les leurs à la conversation qui les a lancées, avec les options, les éléments à l’appui, les conséquences, la réversibilité et une recommandation, et poursuivent le travail qui ne dépend pas de la réponse. Le coordinateur tranche d’abord ce qu’il peut et regroupe les questions restantes dans un seul formulaire sous **Votre réponse est attendue** ; [Questions et décisions](missions.md#questions) explique ce qu’il demande et comment les décisions sont libellées. Chaque coordinateur, ponctuel ou programmé, et chaque affectation de tâche reçoivent cette règle comme instruction ; Exploration ajoute les vérifications de décision [ci-dessous](#wayfinder-checks).
 
 Répondez dans le dock d’interruption (**Répondre** sous **Votre réponse est attendue**) : seule cette réponse compte comme la vôtre. Une réponse tapée dans le chat est un message ordinaire.
 
@@ -53,7 +53,7 @@ Répondez dans le dock d’interruption (**Répondre** sous **Votre réponse est
 
 Le coordinateur a pour instruction de publier un point de situation après son plan initial, après chaque tâche qu’il clôt, chaque fois qu’il commence à vous attendre et avant son rapport final ; voir [Points de situation et demandes de mise à jour](missions.md#briefings). Les points de situation, les résumés de tâches et le rapport final sont rédigés pour vous : dans votre langue, en quelques phrases courtes, le résultat d’abord, les identifiants et commandes restant dans les preuves.
 
-Le rapport final indique ce qui a été livré, ce qui reste à faire et ce qui demande votre décision. Une mission ponctuelle se termine uniquement comme réussie : quand plus rien ne peut avancer sans vous, le coordinateur vous pose la question et attend au lieu d’échouer, et vous seul arrêtez une mission. Une exécution quotidienne peut aussi se terminer en échec.
+Le rapport final indique ce qui a été livré, ce qui reste à faire et ce qui demande votre décision. Une mission ponctuelle se termine uniquement comme réussie : quand plus rien ne peut avancer sans vous, le coordinateur vous pose la question et attend au lieu d’échouer, et vous seul arrêtez une mission. Un passage programmé peut aussi se terminer en échec.
 
 ### Ce que CodeNomad vérifie dans chaque mission {#common-checks}
 
@@ -177,7 +177,7 @@ Il n’écrit jamais votre réponse lui-même et ne présente jamais sa propre d
 - Seuls les cinq rôles d’Exploration sont acceptés.
 - Une tâche de décision ne se termine qu’avec la décision propre du coordinateur ou avec votre réponse. Une décision du coordinateur énonce la question, la décision et sa justification, et n’est jamais enregistrée comme votre réponse.
 - Votre réponse ne compte que si vous l’avez donnée dans l’interface de CodeNomad. CodeNomad la rattache à une tâche par l’étiquette de la question : la question a été posée depuis la conversation du coordinateur, son texte se termine par l’étiquette de cette tâche et ne nomme aucune autre décision, la réponse est venue après la déclaration de la tâche et n’a pas tranché une autre décision. Chaque question d’un formulaire groupé est rattachée séparément ; une question qui nomme deux décisions n’en tranche aucune. Une réponse à une question posée depuis la propre conversation de la tâche de décision est aussi acceptée.
-- Le rapport propre d’une tâche ne peut pas indiquer qui a décidé. Avant qu’une mission ou une exécution quotidienne se termine avec succès, CodeNomad revérifie chaque décision terminée, étiquettes comprises.
+- Le rapport propre d’une tâche ne peut pas indiquer qui a décidé. Avant qu’une mission ou un passage programmé se termine avec succès, CodeNomad revérifie chaque décision terminée, étiquettes comprises.
 - Ces vérifications s’appliquent avec **Sous-agents natifs**. Avec **Sessions indépendantes**, les responsables de décision rapportent eux-mêmes leurs notes et le coordinateur consigne chaque issue dans les notes en précisant qui a décidé ; CodeNomad ne le vérifie pas.
 
 Simples instructions : quand un choix est considéré comme peu coûteux à annuler, la qualité des notes et des recherches, et le fait de s’en tenir à la planification.

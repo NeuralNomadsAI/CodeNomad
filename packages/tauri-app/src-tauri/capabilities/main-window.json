@@ -42,6 +42,8 @@
     "allow-desktop-launch-ready",
     "allow-desktop-launch-next-folder",
     "allow-desktop-launch-acknowledge-folder",
+    "allow-desktop-launch-next-connection",
+    "allow-desktop-launch-acknowledge-connection",
     "allow-install-desktop-update",
     "allow-check-desktop-update",
     "allow-take-desktop-update-failure",

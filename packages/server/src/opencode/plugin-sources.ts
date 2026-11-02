@@ -112,7 +112,7 @@ export class PluginSources {
       signal.throwIfAborted()
       assertNotDeclared(document.plugins.map(pluginEntryTarget), identities, ids, identify)
       return appendPluginControlRule(document, spec)
-    }, signal, undefined, admission)
+    }, signal, false, undefined, admission)
     signal.throwIfAborted()
     await admission.revalidate()
     signal.throwIfAborted()
@@ -138,7 +138,7 @@ export class PluginSources {
         }
         throw error
       }
-      }, undefined, request.expectedRevision, admission)
+      }, undefined, false, request.expectedRevision, admission)
       await admission.revalidate()
     } catch (error) {
       error = admission.failure(error)
