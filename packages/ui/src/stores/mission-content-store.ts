@@ -102,9 +102,15 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     return !body || satisfies(entry, body.digest, body.revision) && marked(entry, body.mark)
   }
 
+  /** Current display provenance; pending values additionally require their live operation. */
+  const currentValueEligible = (entry: Entry, body: MissionBody) => !entry.stale
+    && (!entry.expected || body.digest === entry.expected.digest) && marked(entry, body.mark)
+    && (body !== entry.pending || Boolean(entry.operation && !entry.operation.signal.aborted && performance.now() < entry.operation.deadline))
+
   const endOperation = (entry: Entry) => {
     entry.operation?.controller.abort()
     entry.operation = undefined
+    if (entry.ref.passage) entry.pending = undefined
   }
   const cancel = (entry: Entry) => {
     entry.controller?.abort()
@@ -126,10 +132,11 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
   }
 
   const promote = (entry: Entry) => {
-    if (entry.pending && (!entry.display || covers(entry.pending, need(entry)))) {
-      entry.display = entry.pending
-      entry.pending = undefined
-    }
+    if (!entry.pending || entry.display && !covers(entry.pending, need(entry))) return false
+    if (entry.ref.passage && !currentValueEligible(entry, entry.pending)) return false
+    entry.display = entry.pending
+    entry.pending = undefined
+    return true
   }
 
   const accept = (entry: Entry, query: { digest?: string; offset: number }, response: MissionContentResponse, mark: string | undefined) => {
@@ -247,10 +254,8 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     if (!entry.consumers.size || entries.get(entry.key) !== entry) return
     const shown = entry.pending ?? entry.display
     // Current aggregate demand can finish while a now-unnecessary continuation is held.
-    if (entry.ref.passage && !entry.stale && shown && fresh(entry) && covers(shown, need(entry))
-      && (!entry.expected || shown.digest === entry.expected.digest)
-      && (!entry.pending || !entry.operation || !entry.operation.signal.aborted && performance.now() < entry.operation.deadline)) {
-      promote(entry)
+    if (entry.ref.passage && shown && currentValueEligible(entry, shown) && covers(shown, need(entry))
+      && (!entry.pending || promote(entry))) {
       cancel(entry) // Revokes both read and operation before any late result can publish.
       entry.status = "ready"; entry.parked = false
       publish(entry)

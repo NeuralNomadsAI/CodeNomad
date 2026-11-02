@@ -591,8 +591,11 @@ fulfilled demand ends its operation; a later user extension or explicit Retry ca
 start a fresh one. Need reductions and consumer releases reconsider aggregate coverage
 even during a running continuation: fresh covered demand ends that read immediately,
 while stale/invalidated data and outstanding peers keep their original operation.
-Pending-value promotion retains its deadline check. Failed outstanding operations retain
-their budget through automatic revalidation. Technical details exposes the scoped persisted-field/raw-page reader for
+Every current pending promotion shares the store's stale/mark, exact expected digest and
+live-operation deadline eligibility, including accept, demand changes and completion.
+Ending an operation discards unpromoted current data and retains its last good display.
+Failed outstanding operations retain their budget through automatic revalidation.
+Technical details exposes the scoped persisted-field/raw-page reader for
 compact current maps; archived daily readers retain their receipt-bound sections.
 
 ## Settlement, result and watched cursors
