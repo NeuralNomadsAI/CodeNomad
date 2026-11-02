@@ -37,6 +37,8 @@ function acquireSnapshot(directory: string) {
   }
   const entry = snapshot
   entry.users++
+  // Each handle owns only the marker writes it admits, even across bundle copies.
+  const writes = new Set<Promise<void>>()
   return {
     read(): Promise<readonly string[]> {
       if (entry.pending) return entry.pending
@@ -60,9 +62,13 @@ function acquireSnapshot(directory: string) {
       for (const lease of entry.leases) {
         if (entry.marked.has(lease) || !followers.length || !followers.every(follower => follower.acknowledged.has(lease))) continue
         entry.marked.add(lease)
-        void writeFile(path.join(directory, `${lease}${PRESENCE_READY_SUFFIX}`), "").catch(() => { entry.marked.delete(lease) })
+        const writing = writeFile(path.join(directory, `${lease}${PRESENCE_READY_SUFFIX}`), "")
+          .catch(() => { entry.marked.delete(lease) })
+          .finally(() => { writes.delete(writing) })
+        writes.add(writing)
       }
     },
+    async drain() { await Promise.all(writes) },
     release() {
       if (--entry.users === 0 && snapshots.get(directory) === entry) snapshots.delete(directory)
     },
@@ -188,7 +194,7 @@ export async function followPresence(
       follower.acknowledged = new Set(dispose ? observed[0] : [])
       // Outside the serialized reconciliation: marker IO must not delay or
       // swallow the next presence check.
-      primary?.acknowledge()
+      if (!stopped) primary?.acknowledge()
     })().finally(() => { pending = undefined })
     return pending
   }
@@ -213,6 +219,7 @@ export async function followPresence(
       await pending?.catch(onError)
       await reconcile()
     } finally {
+      await primary?.drain()
       releaseReaders()
     }
   })().catch(error => {
