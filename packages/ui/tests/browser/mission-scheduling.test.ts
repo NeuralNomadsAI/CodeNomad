@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
-import { mkdir } from "node:fs/promises"
+import { mkdtemp } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import path from "node:path"
 import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
@@ -10,14 +11,14 @@ import { fixtureEventStream } from "./fixture-event-stream"
 
 let browser: Browser, url: string
 let events: Awaited<ReturnType<typeof fixtureEventStream>>
-const captures = path.join(process.env.LOCALAPPDATA || process.env.TEMP!, "codenomad-agent-scratch", "issue-926", "impl", "ui-final")
+let captures: string
 before(async () => {
   url = (await borrowFixture({ name: "mission-scheduling", routes: [{ path: "/scheduling", html:
     '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body,#root{min-height:100%;margin:0;background:var(--surface-canvas)}</style></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-scheduling.tsx"></script></body></html>' }] })).url
   events = await fixtureEventStream(url)
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
-  await mkdir(captures, { recursive: true })
+  captures = await mkdtemp(path.join(tmpdir(), "codenomad-mission-scheduling-"))
 })
 after(async () => { try { await browser?.close() } finally { await events?.close() } })
 async function setup(query = "") {

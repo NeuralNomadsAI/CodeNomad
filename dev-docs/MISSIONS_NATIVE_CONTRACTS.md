@@ -96,6 +96,19 @@ family; the internal bridge accepts only fixed business-control methods and ENV
 preparation, with each mutation entering `executeBusiness` under document exclusion.
 Human lifecycle controls use their separate authenticated control path.
 
+Native test drivers register Effect RPC handlers and yield registered tool
+executors inside the receiving invocation. Promise setup adapters retain their
+activation context, so tools requiring native services need the receiving Effect
+graph. Execution scenarios first assert prepared state and absence of provider
+turns, then Play through the authenticated lifecycle route and verify the saved
+native admission and exact replay before declaring work. Storage-damage probes
+remain isolated from lifecycle admission.
+
+Plugin project Locations pass through `readLocationRef` before document creation;
+optional selectors enter durable JSON only when present. The native RPC creation
+contract supports an omitted `expectedCoordinatorLocation` by using that normalized
+project Location.
+
 Internal RPC authentication carries the service's full privileges. Its trusted
 adapter owns the exact service registration, endpoint, incarnation and native
 pending-family checks. Never accept endpoint/path selectors from model input,

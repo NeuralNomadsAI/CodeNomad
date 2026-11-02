@@ -91,6 +91,25 @@ describe("integration catalog", () => {
     assert.doesNotMatch(INTEGRATION_CATALOG_RELEASES_URL, /latest/)
   })
 
+  it("authorizes installation from the known catalogue without refresh or persistence, including after expiry", async () => {
+    reset([release(origin, "catalog-v1", "one")], { one: JSON.stringify(catalogOf(catalogEntry("fixture"))) })
+    const stateFile = path.join(stateDir, "installation.json")
+    let now = 1_000_000
+    const source = new IntegrationCatalogSource({ releasesUrl: url, stateFile, now: () => now })
+    assert.equal((await source.read({ refresh: false })).state, "unavailable")
+    assert.equal(fixture.state.requests.length, 0)
+    await assert.rejects(readFile(stateFile), { code: "ENOENT" })
+    const known = await source.read()
+    const before = await readFile(stateFile, "utf8")
+    now += INTEGRATION_CATALOG_CACHE_MS + 1
+    reset([release(origin, "catalog-v2", "two")], { two: JSON.stringify(catalogOf()) })
+    assert.deepEqual(await source.read({ refresh: false }), known)
+    const restored = new IntegrationCatalogSource({ releasesUrl: url, stateFile })
+    assert.deepEqual((await restored.read({ refresh: false })).catalog, known.catalog)
+    assert.equal(fixture.state.requests.length, 0)
+    assert.equal(await readFile(stateFile, "utf8"), before)
+  })
+
   it("reads the newest catalog release, ignoring other tags, drafts, prereleases and foreign assets", async () => {
     const wanted = catalogOf(catalogEntry("fixture"))
     reset([

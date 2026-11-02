@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import Ajv from "ajv"
-import { MissionControl } from "./control"
+import { MissionControl, MissionControlError } from "./control"
 import type { NativeMissionSession } from "./control-types"
 import { MissionJournal, type MissionStorage } from "./journal"
 import type { MissionJsonValue } from "./model"
@@ -95,7 +95,7 @@ function fixture(unified = true) {
       } },
   }
   const control: MissionControl = new MissionControl(options)
-  return { control, documents, journal, values, admissions, sessions, access, get created() { return created },
+  return { control, documents, journal, storage, values, admissions, sessions, access, get created() { return created },
     get transportCalls() { return transportCalls }, failReceipt: () => { failReceipt = true },
     get cleanupCalls() { return cleanupCalls }, failCleanup: () => { failCleanup = true },
     continueWithDocuments: (documents = access) => new MissionControl({ ...options, documents, documentReads: access }),
@@ -145,6 +145,42 @@ test("product create is paused, projects the stored document and Play replays on
   assert.equal(declared.mission.document!.everCreatedTask, true)
 })
 
+test("panel maps project exact unified documents with bounded missing and damaged document reads", async t => {
+  const f = fixture(), mission = (await f.control.create({ requestID: "panel-original", objective: "Panel work", template: "custom" })).mission
+  await f.control.create({ requestID: "panel-sibling", objective: "Other work", template: "custom" })
+  const documentKey = [...f.values.keys()].find(key => key.includes("documents-v1") && key.endsWith(`/missions/${mission.id}`))!
+  const journalKey = [...f.values.keys()].find(key => key.startsWith("codenomad-missions/v2/") && key.includes(`/${mission.id}/`))!
+  const range = journalKey.slice(0, journalKey.lastIndexOf("/") + 1), saved = f.values.get(documentKey)!
+  const get = t.mock.method(f.storage, "get"), scan = t.mock.method(f.storage, "scan")
+  for (const state of ["healthy", "absent", "damaged"] as const) {
+    if (state === "absent") f.values.delete(documentKey)
+    else f.values.set(documentKey, state === "healthy" ? saved : { damaged: true })
+    const listed = state === "damaged" ? undefined : (await f.control.list()).missions.find(value => value.id === mission.id)!
+    const read = state === "damaged" ? undefined : (await f.control.mission(mission.id)).mission!
+    if (listed) assert.deepEqual(listed, read)
+    const before = canonicalAuthority([...f.values])
+    for (const field of [undefined, "document"]) {
+      get.mock.resetCalls(); scan.mock.resetCalls()
+      const request = { source: "mission" as const, missionID: mission.id, ...(field ? { field } : {}) }
+      if (state === "damaged") await assert.rejects(f.control.panelPage(request))
+      else {
+        const result = await f.control.panelPage(request)
+        if (state === "absent" && field) assert.deepEqual(result, { available: false, reason: "field-not-found" })
+        else {
+          assert.ok(result.available)
+          assert.equal(result.page.next, undefined)
+          const expected = field ? listed!.document : listed
+          assert.deepEqual(JSON.parse(result.page.pieces[0].text), JSON.parse(JSON.stringify(expected)))
+        }
+      }
+      assert.deepEqual(get.mock.calls.map(call => call.arguments[0]), [documentKey], "one named document lookup, including absence")
+      assert.ok(scan.mock.callCount() > 0)
+      assert.ok(scan.mock.calls.every(call => call.arguments[0].prefix === range), "only the named journal range")
+      assert.equal(canonicalAuthority([...f.values]), before, "display reads preserve stored bytes")
+    }
+  }
+})
+
 test("existing user objective/notes updates keep unified stored configuration current without prompting", async () => {
   const f = fixture(), mission = (await f.control.create({ requestID: "create-original", objective: "Work", template: "custom" })).mission
   const update = { missionID: mission.id, requestID: "edit-original", expectedRevision: mission.revision, objective: "Clarified work", notes: "Keep this note" }
@@ -156,6 +192,31 @@ test("existing user objective/notes updates keep unified stored configuration cu
   assert.equal(saved.configuration.notes, update.notes)
   assert.equal(f.admissions.size, 0)
   assert.equal((await f.control.update(update)).mission.document!.configurationGeneration, 2)
+})
+
+for (const state of ["empty", "healthy", "deleted", "damaged"] as const) test(`document-enabled controls distinguish missing missions from ${state} storage without effects`, async () => {
+  const f = fixture()
+  const mission = state === "empty" ? undefined : (await f.control.create({ requestID: "create-missing-check", objective: "Work", template: "custom" })).mission
+  if (state === "deleted") await f.control.delete({ missionID: mission!.id, requestID: "delete-missing-check", expectedRevision: mission!.revision })
+  if (state === "damaged") {
+    const key = [...f.values.keys()].find(key => key.startsWith("codenomad-missions/v2/") && key.includes(`/${mission!.id}/`))!
+    f.values.set(key, { damaged: true })
+  }
+  const missionID = state === "deleted" || state === "damaged" ? mission!.id : "msn_unknown"
+  const snapshot = await f.control.snapshot()
+  assert.equal(snapshot.missions.some(mission => mission.id === missionID), false)
+  assert.equal(Boolean(snapshot.discardedEvents), state === "damaged")
+  const before = canonicalAuthority([...f.values]), sessions = structuredClone([...f.sessions])
+  const counts = [f.created, f.transportCalls, f.cleanupCalls, f.admissions.size]
+  const request = { missionID, requestID: "missing-control", expectedRevision: 1 }
+  for (const operation of [() => f.control.update({ ...request, objective: "Must not save" }),
+    ...(["start", "pause", "stop"] as const).map(action => () => f.control.lifecycle({ ...request, action }))]) {
+    await assert.rejects(operation, error => error instanceof MissionControlError
+      && error.code === (state === "damaged" ? "invalid-journal" : "mission-not-found"))
+    assert.equal(canonicalAuthority([...f.values]), before, "journal and document bytes stay unchanged")
+    assert.deepEqual([...f.sessions], sessions)
+    assert.deepEqual([f.created, f.transportCalls, f.cleanupCalls, f.admissions.size], counts)
+  }
 })
 
 test("coordinator inspect-start uses unified paused creation and exact native-call replay without creating another root", async () => {

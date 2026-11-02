@@ -1,4 +1,6 @@
 import { render } from "solid-js/web"
+import { createSignal } from "solid-js"
+import AlertDialog from "../../../src/components/alert-dialog"
 import type { PluginControlsSnapshot, PluginRuntimeInventoryEntry } from "../../../../server/src/api-types"
 import { PluginActivationControls } from "../../../src/components/plugin-activation-controls"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
@@ -7,6 +9,7 @@ import { ThemeProvider } from "../../../src/lib/theme"
 import { serverApi } from "../../../src/lib/api-client"
 import { serverEvents } from "../../../src/lib/server-events"
 import { HttpResponseError } from "../../../src/lib/retryable-file-search"
+import { getToastHistory } from "../../../src/lib/notifications"
 import "../../../src/index.css"
 
 const instanceId = "plugin-sources-fixture"
@@ -14,11 +17,13 @@ const location = { directory: "/repo" }
 const calls: Array<Record<string, unknown>> = []
 const globalPath = "/daemon/opencode.jsonc", projectPath = "/repo/.opencode/opencode.jsonc"
 let nextError: { status: number; code?: string } | undefined
+let loseRemovalResponse = false
+const [active, setActive] = createSignal(true)
 
 const snapshot: PluginControlsSnapshot = {
   location, runtime: [], controls: [],
   configured: { rules: [{ selector: "-kept.rule", enabled: false, scope: "global", path: globalPath, order: 0, entryIndex: 0 }], sources: [] },
-  targets: [{ scope: "global", path: globalPath, exists: true }, { scope: "project", path: projectPath, exists: true }],
+  targets: [{ scope: "global", path: globalPath, exists: true, expectedRevision: "a".repeat(64) }, { scope: "project", path: projectPath, exists: true, expectedRevision: "b".repeat(64) }],
 }
 
 let uiConfig = { settings: { locale: "en" } }
@@ -47,16 +52,16 @@ serverApi.addPluginSource = async (_id, request) => {
 }
 serverApi.removePluginSource = async (_id, request) => {
   calls.push({ type: "remove", ...request })
-  snapshot.configured.sources = snapshot.configured.sources.filter(source => !(source.scope === request.scope && source.target === request.target))
-  snapshot.runtime = snapshot.runtime.filter(entry => entry.source.type !== "package" || entry.source.target !== request.target)
-  snapshot.controls = snapshot.controls.filter(control => control.runtime?.source.type !== "package" || control.runtime.source.target !== request.target)
+  snapshot.configured.sources = snapshot.configured.sources.filter(source => !(source.scope === request.scope && source.target === request.target && source.entryIndex === request.entryIndex))
+  if (loseRemovalResponse) { loseRemovalResponse = false; throw new Error("Response lost after commit") }
   return { scope: request.scope, spec: request.target, reloadPending: true }
 }
 
 render(() => (
   <ConfigProvider><I18nProvider><ThemeProvider>
     <main style={{ width: "430px", margin: "24px", padding: "12px", "background-color": "var(--surface-secondary)" }}>
-      <PluginActivationControls instanceId={instanceId} location={location} />
+      <PluginActivationControls instanceId={instanceId} location={location} active={active()} />
+      <AlertDialog />
     </main>
   </ThemeProvider></I18nProvider></ConfigProvider>
 ), document.getElementById("root")!)
@@ -69,6 +74,16 @@ const notify = () => (serverEvents as any).dispatchBatch([{
 
 ;(window as any).fixture = {
   calls,
+  toasts: getToastHistory,
+  setActive,
+  loseRemovalResponse: () => { loseRemovalResponse = true },
+  changeRevision: () => { snapshot.targets[0]!.expectedRevision = "c".repeat(64); notify() },
+  disconnect: () => (serverEvents as any).dispatchBatch([{ type: "instance.eventStatus", instanceId, status: "disconnected" }]),
+  unload: (target: string) => {
+    snapshot.runtime = snapshot.runtime.filter(entry => entry.source.type !== "package" || entry.source.target !== target)
+    snapshot.controls = snapshot.controls.filter(control => control.runtime?.source.type !== "package" || control.runtime.source.target !== target)
+    notify()
+  },
   failNextAdd: (status: number, code?: string) => { nextError = { status, code } },
   dropProjectTarget: () => { snapshot.targets = snapshot.targets.filter(target => target.scope !== "project"); notify() },
   notify,

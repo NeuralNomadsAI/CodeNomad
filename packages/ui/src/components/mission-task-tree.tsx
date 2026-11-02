@@ -53,7 +53,7 @@ export function MissionTaskTree(props: {
   reading: (task: MissionPanelTask) => boolean; onRead: (task: MissionPanelTask) => void
   /** The task's exact owned conversation, once one is known. */
   conversation: (task: MissionPanelTask) => string | undefined; onOpenConversation: (sessionId: string) => void
-  disabled?: boolean; onRecoveryAdmitted?: () => void | Promise<void>
+  active?: boolean; disabled?: boolean; onRecoveryAdmitted?: () => void | Promise<void>
 }) {
   const { t } = useI18n()
   let list!: HTMLUListElement
@@ -100,17 +100,18 @@ export function MissionTaskTree(props: {
   const scope = () => instances().get(props.instanceId)?.folder ?? props.instanceId
   const open = () => missionProjectView(scope()).tasksCollapsed !== true
   let root!: HTMLElement
-  const panelScrolls = missionPanelScroll(() => root)
+  const panelScrolls = missionPanelScroll(() => root, () => props.active ?? true)
   const [sentinel, setSentinel] = createSignal<HTMLLIElement>()
   const loadNext = () => {
     const offset = nextOffset()
-    if (open() && offset !== undefined && !read()?.loading) readFurther({ offset })
+    if (props.active !== false && open() && offset !== undefined && !read()?.loading) readFurther({ offset })
   }
   createEffect(() => {
     const target = sentinel(), offset = nextOffset()
-    if (!target || !open() || offset === undefined || read()?.loading || read()?.failure) return
+    if (!target || props.active === false || !open() || offset === undefined || read()?.loading || read()?.failure) return
     const observer = new IntersectionObserver(entries => {
-      if (entries.some(entry => entry.isIntersecting) && !read()?.failure) loadNext()
+      // Reaching the manual fallback with the keyboard is not an activation.
+      if (entries.some(entry => entry.isIntersecting) && !target.contains(document.activeElement) && !read()?.failure) loadNext()
     }, { root: panelScrolls() ? root.closest(".mission-control") : target.closest(".mission-flow"), rootMargin: "0px 0px 120px 0px" })
     observer.observe(target)
     onCleanup(() => observer.disconnect())
@@ -160,7 +161,7 @@ export function MissionTaskTree(props: {
                 onClick={() => void action().onSelect()}>{action().label}</button>{recovery.feedback}</div>}</Show>
           </li>
         }}</For><Show when={nextOffset() !== undefined && !read()?.failure}><li ref={setSentinel} class="mission-tree-more">
-          <button type="button" class="window-text-button" disabled={read()?.loading}
+          <button type="button" class="window-text-button" aria-disabled={read()?.loading || undefined}
             onClick={loadNext}>{t("missionsPanel.tasks.showMore")}</button>
         </li></Show></ul>
         <Show when={linked()}><MissionGraph tasks={ordered()} list={list} omitted={omitted()} /></Show>

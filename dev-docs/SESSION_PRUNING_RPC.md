@@ -31,6 +31,7 @@ methods, the integration OpenCode's maintainers recommend for plugins
 - `assets-store.ts`, `assets-gallery*.ts`, `assets-conversation.ts`: tool-file assets, the [image gallery](#image-gallery) and the [Images conversation](#images-conversation).
 - `history-ranked-service.ts`: the presence-owned Code Mode `codenomad.session_search` tool and versioned ranked-history RPC; ranking, scope and bounds are specified in [full-history queries](SESSION_HISTORY_QUERIES.md).
 - `desktop-plugin.ts` / `presence.ts`: register RPC while a CodeNomad backend is present; dispose on final close or lease expiry. At load, before following presence, the entry also registers the Design agent and skills that backend leases request (`../design/register.ts`, contract in [OpenCode compatibility](OPENCODE_COMPATIBILITY.md#agent-conventions)).
+  Closing the native plugin scope stops its follower and joins that follower's admitted readiness writes before releasing its observations. Other live followers retain their registrations and writes; backend shutdown removes its own lease while OpenCode continues independently.
 - `tui.ts` / `tui-reload.ts`: companion cache invalidation via the public TUI API.
 
 `pruning-lifecycle.ts` and `pruning-installation.ts` beside that directory own

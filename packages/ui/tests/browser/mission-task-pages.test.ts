@@ -340,6 +340,49 @@ test("ordinary windows never claim displayed attention tasks are unread when onl
   } finally { await f.page.context().close() }
 })
 
+test("inactive task trees suspend the scroll continuation and resume it with the existing focus policy", async () => {
+  const f = await open(blockages(4))
+  try {
+    const before = (await rows(f.page)).length
+    await f.page.evaluate(() => (window as any).missionFixture.active(false))
+    await f.page.locator(".mission-tree-more").scrollIntoViewIfNeeded()
+    await settle(f.page); await settle(f.page)
+    assert.deepEqual(f.reads, [], "a visible sentinel in an inactive panel issues no task reads")
+    assert.equal((await rows(f.page)).length, before)
+    await f.page.evaluate(() => (window as any).missionFixture.active(true))
+    await f.page.waitForFunction(count => document.querySelectorAll(".mission-tree-node").length > count, before)
+    assert.ok(f.reads.some(query => new URLSearchParams(query).get("offset") === "50"))
+    assert.deepEqual(f.errors, [])
+  } finally { await f.page.context().close() }
+})
+
+test("keyboard fallback keeps focus and reads only the explicitly requested window", async () => {
+  const f = await open(paged())
+  let release!: () => void, entered!: () => void, requests = 0
+  const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { entered = resolve })
+  try {
+    const control = f.page.locator(".mission-tree-more button")
+    await control.focus()
+    await settle(f.page); await settle(f.page)
+    assert.deepEqual(f.reads, [], "reaching the fallback with the keyboard does not activate it")
+    await f.page.route("**/missions/panel-page", async route => { requests++; entered(); await gate; return route.fallback() })
+    await f.page.keyboard.press("Enter")
+    await started
+    assert.equal(await control.getAttribute("aria-disabled"), "true")
+    assert.equal(await control.evaluate(element => element === document.activeElement), true, "the pending read preserves keyboard focus")
+    await f.page.keyboard.press("Enter")
+    await settle(f.page)
+    assert.equal(requests, 1, "repeated activation during the read is ignored")
+    release()
+    await f.page.waitForFunction(() => document.querySelectorAll(".mission-tree-node").length >= 101)
+    await settle(f.page); await settle(f.page)
+    assert.equal(await control.evaluate(element => element === document.activeElement), true)
+    assert.equal((await rows(f.page)).length, 101, "one activation reads one window")
+    assert.equal(f.reads.length, 1)
+    assert.deepEqual(f.errors, [])
+  } finally { release?.(); await f.page.context().close() }
+})
+
 test("a failed scroll continuation waits for explicit Retry and keeps the loaded tree", async () => {
   const f = await open(blockages(4))
   try {

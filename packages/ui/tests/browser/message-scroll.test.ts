@@ -10,6 +10,7 @@ import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { SCROLL_REASONS } from "../../src/components/virtual-scroll-trace"
 import { createFixtureCache } from "./fixture-cache"
+import { fixtureGesturePoint, withFixtureMiddleDrag } from "./fixture-native-gesture"
 
 // Scroll ownership regressions over the real SessionView/VirtualFollowList:
 // a manual reader is never repinned by proximity and is restored exactly, a
@@ -982,9 +983,7 @@ test("middle-button autoscroll keeps moving across a rolling window", async () =
   await open(async page => {
     await escapeNearTail(page, -1200)
     const box = (await page.locator(".message-stream").boundingBox())!
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-    await page.mouse.down({ button: "middle" })
-    try {
+    await withFixtureMiddleDrag(page, page.locator(".message-stream"), { x: box.x + box.width / 2, y: box.y + box.height / 2 }, async () => {
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 120, { steps: 5 })
       await frames(page, 10)
       // The content position is the always-mounted last row's viewport offset:
@@ -1002,7 +1001,7 @@ test("middle-button autoscroll keeps moving across a rolling window", async () =
       // The step appends one 48 px row below: compare successive samples of that new last row.
       const pulledBack = tails.slice(2).filter((tail, i) => tail > tails[i + 1] + 2)
       assert.ok(pulledBack.length === 0 && tails[1] - tails.at(-1)! > 100, `The autoscroll froze across the roll: ${JSON.stringify(tails)}`)
-    } finally { await page.mouse.up({ button: "middle" }) }
+    })
   }, { name: "list" })
 })
 
@@ -1480,17 +1479,25 @@ for (const gesture of ["middle-button autoscroll", "selection drag"] as const) t
     })
     await frames(page, 10)
     assert.equal((await readerState(page)).followModeType, "following")
-    const box = (await page.locator("[data-press-target]").boundingBox())!
-    const [x, y] = [box.x + 40, box.y + box.height / 2]
+    const target = page.locator("[data-press-target]")
+    const box = (await target.boundingBox())!
+    const { x, y } = gesture === "middle-button autoscroll" ? await fixtureGesturePoint(target, { x: 40, y: box.height / 2 })
+      : { x: box.x + 40, y: box.y + box.height / 2 }
     assert.ok(await page.evaluate(([x, y]) => Boolean(document.elementFromPoint(x, y)?.closest("[data-press-target]")), [x, y]), "The press must hit the summary")
-    await page.mouse.move(x, y)
-    await page.mouse.down({ button: gesture === "selection drag" ? "left" : "middle" })
-    for (let i = 1; i <= 8; i++) {
-      await page.mouse.move(x, y - i * 10)
-      await page.evaluate(() => (window as any).fixture.delta("Streamed while the pointer drags.\n\n"))
-      await frames(page, 3)
+    const drag = async () => {
+      for (let i = 1; i <= 8; i++) {
+        await page.mouse.move(x, y - i * 10)
+        await page.evaluate(() => (window as any).fixture.delta("Streamed while the pointer drags.\n\n"))
+        await frames(page, 3)
+      }
     }
-    await page.mouse.up({ button: gesture === "selection drag" ? "left" : "middle" })
+    if (gesture === "selection drag") {
+      await page.mouse.move(x, y)
+      try { await page.mouse.down({ button: "left" }); await drag() }
+      finally { await page.mouse.up({ button: "left" }) }
+    } else {
+      await withFixtureMiddleDrag(page, target, { x, y }, drag)
+    }
     for (let i = 0; i < 6; i++) {
       await page.evaluate(() => (window as any).fixture.delta("Streamed after release.\n\n".repeat(2)))
       await frames(page, 3)

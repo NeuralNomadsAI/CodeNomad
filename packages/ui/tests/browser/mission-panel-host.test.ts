@@ -1,9 +1,12 @@
 import assert from "node:assert/strict"
+import { mkdir, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
-import { chromium, type Browser, type BrowserContextOptions, type Page } from "playwright"
+import { chromium, type Browser, type BrowserContextOptions, type Page, type Route } from "playwright"
 import type { MissionMap, MissionTask } from "../../../server/src/api-types"
 import { MISSION_TASK_PAGE } from "../../../server/src/missions/mission-panel-map"
 import { missionPickerExpander, missionPickerField, missionPopupOption, missionDetail, missionGeneralAction, inlineMissionEntry, selectMission, selectedMissionTitle } from "./mission-actions"
@@ -40,14 +43,17 @@ function mission(id: string, objective: string, tasks: MissionTask[]): MissionMa
 const LONG = mission("long", "Long migration", Array.from({ length: TASKS }, (_, index) => task(index)))
 const SHORT = mission("short", "Short audit", [task(0)])
 
-async function open(options: BrowserContextOptions = {}) {
+async function open(options: BrowserContextOptions = {}, holdDepth = false) {
   const context = await browser.newContext({ locale: "en-US", viewport: { width: 1000, height: 600 }, ...options })
   const page = await context.newPage(), errors: string[] = [], mutations: string[] = []
+  await page.addInitScript("globalThis.__name ??= target => target")
   page.setDefaultTimeout(15_000)
   page.on("pageerror", error => errors.push(error.message))
+  let depthRoute: Route | undefined
   await page.route("**/api/**", route => {
     const request = route.request(), path = new URL(request.url()).pathname
     if (request.method() !== "GET") mutations.push(`${request.method()} ${path}`)
+    if (holdDepth && path.endsWith("/subagent-depth")) { depthRoute = route; return }
     if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([LONG, SHORT]), generatedAt: 1, discardedEvents: 0,
       activity: { generatedAt: 1, missions: [{ missionId: "long", actors: [{ sessionId: "ses_worker", state: "running" }] }, { missionId: "short", actors: [] }] } } })
     if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] } })
@@ -55,7 +61,12 @@ async function open(options: BrowserContextOptions = {}) {
   })
   await page.goto(url, { timeout: 60_000 })
   await missionPickerField(page).waitFor()
-  return { page, errors, mutations, close: () => context.close() }
+  return { page, errors, mutations, close: () => context.close(), releaseDepth: async () => {
+    assert(depthRoute, "the actual depth HTTP request is held")
+    // Exactly the default HTTP fixture reply, including its depth-read validation error.
+    const route = depthRoute; depthRoute = undefined
+    await route.fulfill({ json: {} })
+  } }
 }
 
 const scrolls = (page: Page, selector: string) => page.locator(selector).first().evaluate(element => element.scrollHeight > element.clientHeight + 1)
@@ -235,6 +246,108 @@ test("a very short panel scrolls the whole creation form: Options opens and ever
     }
     assert.equal(await scrolls(f.page, "form.mission-editor > .window-body"), false, "the body never scrolls inside the scrolling panel")
     assert.equal(await scrolls(f.page, ".mission-control"), true)
+    assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+const focusLayouts = [
+  { name: "tall", viewport: { width: 1000, height: 600 }, panel: false },
+  { name: "short", viewport: { width: 260, height: 300 }, panel: true },
+  { name: "tiny", viewport: { width: 220, height: 120 }, panel: true },
+  { name: "tall RTL/zoom", viewport: { width: 1000, height: 600 }, panel: false, rtlZoom: true },
+  { name: "short RTL/zoom", viewport: { width: 260, height: 300 }, panel: true, rtlZoom: true },
+]
+
+async function assertFocusVisible(page: Page, label: string) {
+  const focus = await focusVisible(page)
+  if (!focus.visible) {
+    const diagnostics = await page.evaluate(() => {
+      const describe = (element: Element | null) => {
+        if (!element) return null
+        const style = getComputedStyle(element)
+        return { tag: element.tagName, class: element.className, id: element.id, connected: element.isConnected,
+          rect: element.getBoundingClientRect().toJSON(), scrollTop: element.scrollTop, scrollLeft: element.scrollLeft,
+          scrollHeight: element.scrollHeight, scrollWidth: element.scrollWidth, clientHeight: element.clientHeight, clientWidth: element.clientWidth,
+          overflowX: style.overflowX, overflowY: style.overflowY, direction: style.direction, zoom: style.zoom }
+      }
+      const focused = document.activeElement!, rect = focused.getBoundingClientRect(), ancestors = []
+      for (let node: Element | null = focused; node; node = node.parentElement) ancestors.push(describe(node))
+      return { focused: describe(focused), ancestors, viewport: { width: innerWidth, height: innerHeight },
+        documentFocused: document.hasFocus(), visibility: document.visibilityState,
+        mode: document.querySelector(".mission-tree, form.mission-editor")?.getAttribute("data-scroller"),
+        owners: [".mission-control", ".mission-tree", ".mission-flow", "#tab-body", "[role=tabpanel]", "form.mission-editor > .window-body"].map(selector => ({ selector, ...describe(document.querySelector(selector)) })),
+        hits: document.elementsFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2).map(describe) }
+    })
+    const directory = process.env.CODENOMAD_FOCUS_DIAGNOSTICS || join(tmpdir(), "opencode", "c4-mission-focus-fix", "host-diagnostics")
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, `${process.pid}-${label.replace(/[^a-z0-9]+/gi, "-")}.private.json`), JSON.stringify(diagnostics, null, 2))
+  }
+  assert.equal(focus.visible, true, `${focus.label} is visible in ${label}`)
+}
+
+for (const layout of focusLayouts) for (const releaseAt of ["Notes", "Scheduling"] as const) {
+  test(`a held depth HTTP reply preserves creation focus: ${layout.name}, released at ${releaseAt}`, async () => {
+    const f = await open({ viewport: layout.viewport }, true)
+    try {
+      if (layout.rtlZoom) await f.page.evaluate(() => {
+        document.documentElement.dir = "rtl"
+        // Zoom the consumer inside its fixed host, not the fixture's explicit 100vw/100vh shell.
+        const panel = document.querySelector<HTMLElement>(".mission-control")!
+        panel.style.zoom = "1.25"; panel.style.height = "80%"
+      })
+      const requested = f.page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/subagent-depth"))
+      await openCreation(f.page)
+      await requested
+      const form = f.page.locator("form.mission-editor"), notes = form.getByRole("textbox", { name: "Notes", exact: true })
+      const scheduling = form.locator(".mission-scheduling > summary")
+      await form.getByRole("button", { name: "Save as brief", exact: true }).click()
+      await form.getByRole("textbox", { name: "Brief name", exact: true }).waitFor()
+      await form.locator("summary").filter({ hasText: /^Agents and models$/ }).focus()
+      await f.page.keyboard.press("Tab")
+      assert.equal(await notes.evaluate(element => element === document.activeElement), true, "Tab reached Notes before the reply")
+      if (releaseAt === "Scheduling") await f.page.keyboard.press("Tab")
+      const target = releaseAt === "Notes" ? notes : scheduling
+      assert.equal(await target.evaluate(element => element === document.activeElement), true, `${releaseAt} owns focus at release`)
+      const before = await focusVisible(f.page)
+      assert.equal(before.visible, true, `${before.label} is visible before the reply`)
+      await f.releaseDepth()
+      // Observe publication without locator actions that could repair scrolling or focus.
+      await f.page.waitForFunction(() => Boolean(document.querySelector(".mission-depth [role='alert']")))
+      assert.equal(await target.evaluate(element => element === document.activeElement), true, "the reply preserves the exact focus target")
+      const after = await focusVisible(f.page)
+      assert.equal(after.visible, true, `${after.label} remains visible after the reply`)
+      if (releaseAt === "Notes") {
+        await f.page.keyboard.press("Tab")
+        assert.equal(await scheduling.evaluate(element => element === document.activeElement), true, "the temporal control reaches Scheduling after the same reply")
+        const control = await focusVisible(f.page)
+        assert.equal(control.visible, true, `${control.label} is visible in the temporal control`)
+      }
+      assert.equal(await scrolls(f.page, "form.mission-editor > .window-body"), !layout.panel)
+      assert.equal(await scrolls(f.page, ".mission-control"), layout.panel)
+      assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
+    } finally { await f.close() }
+  })
+}
+
+test("task-tree keyboard focus stays reachable across inner and whole-panel scrolling, tiny and RTL/zoom layouts", async () => {
+  const f = await open()
+  try {
+    const detail = await selectMission(f.page, "Long migration")
+    const target = detail.locator('.mission-tree-node[data-task-key="t20"] .mission-tree-task')
+    await target.focus()
+    for (const layout of focusLayouts) {
+      await f.page.setViewportSize(layout.viewport)
+      await f.page.evaluate(rtlZoom => {
+        document.documentElement.dir = rtlZoom ? "rtl" : "ltr"
+        const panel = document.querySelector<HTMLElement>(".mission-control")!
+        panel.style.zoom = rtlZoom ? "1.25" : "1"; panel.style.height = rtlZoom ? "80%" : "100%"
+      }, Boolean(layout.rtlZoom))
+      assert.equal(await target.evaluate(element => element === document.activeElement), true, `the same task retains focus in ${layout.name}`)
+      await assertFocusVisible(f.page, `task-tree ${layout.name}`)
+      assert.equal(await scrolls(f.page, ".mission-tree .mission-flow"), !layout.panel, `task scroller in ${layout.name}`)
+      assert.equal(await scrolls(f.page, ".mission-control"), layout.panel, `panel scroller in ${layout.name}`)
+      assert.equal(await scrolls(f.page, "#tab-body"), false, `no host scroller in ${layout.name}`)
+    }
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })

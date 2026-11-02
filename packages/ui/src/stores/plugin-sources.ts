@@ -50,16 +50,21 @@ export class PluginSourcesStore {
   }
 
   async remove(instanceId: string, location: PluginControlLocation, source: PluginConfiguredSource & { scope: PluginControlScope }): Promise<void> {
+    if (!source.expectedRevision) throw new Error("Plugin source confirmation is unavailable")
     const identity = removalKey(instanceId, location, source)
     if (this.removing[0]().has(identity)) return
     this.removing[1](previous => new Set(previous).add(identity))
     try {
-      await this.api.removePluginSource(instanceId, {
+      const response = await this.api.removePluginSource(instanceId, {
         location: { directory: location.directory }, scope: source.scope, target: source.target, entryIndex: source.entryIndex,
+        expectedRevision: source.expectedRevision,
       })
+      if (response?.scope !== source.scope || response.spec !== source.target || response.reloadPending !== true) throw new Error("Plugin source removal could not be confirmed")
+    } finally {
+      // An explicit removal supersedes this view's Installing hint even when its response is
+      // lost. The reconciled configured/runtime inventory determines whether a row still exists.
       const key = locationKey(instanceId, location)
       this.added[1](previous => previous.filter(item => !(item.key === key && item.spec === source.target && item.scope === source.scope)))
-    } finally {
       this.removing[1](previous => { const next = new Set(previous); next.delete(identity); return next })
       this.invalidate(instanceId)
     }
@@ -98,7 +103,7 @@ export function removableSources(snapshot: PluginControlsSnapshot | undefined, m
   return snapshot.configured.sources.filter((source): source is PluginConfiguredSource & { scope: PluginControlScope } => (
     (source.scope === "global" || source.scope === "project") && matches(source)
     && snapshot.targets.some(target => target.scope === source.scope && Boolean(source.path) && samePath(target.path, source.path!))
-  ))
+  )).map(source => ({ ...source, expectedRevision: snapshot.targets.find(target => target.scope === source.scope)?.expectedRevision }))
 }
 
 function samePath(left: string, right: string): boolean {

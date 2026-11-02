@@ -19,6 +19,7 @@ export const exemptions: Record<string, string> = {
   "device-upload.test.ts": "served by a self-hosting harness or inline server that owns its Vite server",
   "event-subscriber-isolation.test.ts": "Vite config diverges from the canonical daemon config",
   "fixture-cache.test.ts": "no fixture page of its own",
+  "fixture-console.test.ts": "native diagnostics contract with an owned HTTP/SSE server",
   "fixture-daemon/daemon.test.ts": "tests the daemon core directly",
   "fixture-daemon/hide-console-windows.test.ts": "no fixture page of its own",
   "fixture-daemon/run.test.ts": "tests the runner-owned daemon lifecycle itself",

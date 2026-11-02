@@ -11,8 +11,8 @@ import { isMissionActivityEvent } from "./missions"
 
 export type UnifiedMissionSchedule = NonNullable<MissionScheduleRead["document"]>
 export type UnifiedScheduleAction = Parameters<typeof serverApi.controlMissionSchedule>[2]["action"]
-export type UnifiedScheduleHold = { phase: "control" | "activation"; requestID: string; expectedRevision: number;
-  action: UnifiedScheduleAction; partial: boolean; document: UnifiedMissionSchedule; original?: UnifiedScheduleHold }
+export type UnifiedScheduleHold = { phase: "control" | "activation" | "publication"; requestID: string; expectedRevision: number;
+  action: UnifiedScheduleAction; partial: boolean; document: UnifiedMissionSchedule; original?: UnifiedScheduleHold; minimumRevision?: number }
 export const unifiedScheduleHolds = new Map<string, UnifiedScheduleHold>()
 const [holdVersion, setHoldVersion] = createSignal(0)
 export const changedUnifiedScheduleHolds = () => setHoldVersion(value => value + 1)
@@ -41,6 +41,16 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
     }
     return [...collected.values()]
   })
+  const published = (owner: ReturnType<typeof binding>, documents: UnifiedMissionSchedule[]) => {
+    let changed = false
+    for (const doc of documents) {
+      const key = JSON.stringify([owner.instance, owner.project, owner.directory, doc.id]), hold = unifiedScheduleHolds.get(key)
+      if (hold?.phase === "publication" && doc.revision >= hold.minimumRevision!) {
+        unifiedScheduleHolds.delete(key); changed = true
+      }
+    }
+    if (changed) changedUnifiedScheduleHolds()
+  }
   const read = async () => {
     const owner = binding()
     if (!owner.active || !owner.project) return
@@ -66,6 +76,7 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
       // Keep the selected display/pointer target while its revalidation runs.
       setRows([...collected.values(), ...(previous ? [previous] : [])]); setNext(after)
       setFresh(new Set([...collected.keys(), ...(previous && fresh().has(previous.id) ? [previous.id] : [])])); setError(false)
+      published(owner, [...collected.values()])
       if (selected && !collected.has(selected)) {
         try {
           const value = await serverApi.fetchMissionSchedule(owner.instance, selected, { directory: owner.directory }, abort.signal)
@@ -75,6 +86,7 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
           setRows([...collected.values()])
           setSelectionError(value.pending ? "pending" : undefined)
           setFresh(previous => new Set([...previous].filter(id => id !== selected).concat(!value.pending && value.document ? [selected] : [])))
+          if (!value.pending && value.document) published(owner, [value.document])
         } catch (error) {
           if (!selectedCurrent()) return
           const receipt = partialMissionScheduleReceipt(error)

@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createSignal } from "solid-js"
 import { useI18n } from "../lib/i18n"
-import { useMissionSchedules, type UnifiedMissionSchedule } from "../stores/mission-schedules"
+import { useMissionSchedules, unifiedScheduleHold, type UnifiedMissionSchedule } from "../stores/mission-schedules"
 import type { MissionPickerEntry } from "./mission-picker-model"
 import { decodeMissionSchedulingPolicy } from "./mission-scheduling-decode"
 import { createMissionScheduleControls } from "./mission-schedule-controls"
@@ -55,10 +55,11 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
       : doc.state === "paused" ? "paused" : doc.state === "finished" ? "done" : "idle",
     status: [t(`missions.scheduleList.state.${doc.state}`), frequency(doc), condition(doc), nextWake(doc)].filter(Boolean).join(" · ") })))
   const refresh = () => setRevision(value => value + 1)
+  const publishing = () => unifiedScheduleHold(JSON.stringify([props.instanceId, props.projectID, props.directory, props.selected]))?.phase === "publication"
   const view = () => <>
     <Show when={list.error()}><p role="status" class="mission-control-stale">{t("missions.scheduleList.readFailed")}</p></Show>
     <Show when={list.selectionError()}>{error => <p class="mission-control-stale" role="status">
-      {t(error() === "pending" ? "missions.scheduleList.uncertain" : "missions.scheduleList.readFailed")}
+      {t(error() === "pending" ? publishing() ? "missions.scheduleList.confirmedRefreshing" : "missions.scheduleList.uncertain" : "missions.scheduleList.readFailed")}
     </p>}</Show>
     <Show when={list.next()}><button type="button" class="window-text-button" disabled={list.loading() || !props.active()}
       onClick={list.more}>{t("missions.scheduleList.more")}</button></Show>
@@ -73,10 +74,12 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
       const action = (name: "play" | "resume" | "pause" | "stop" | "run-now") => ({ key: name, label: controls.label(name),
         disabled: !controls.capable(name), onSelect: () => controls.act(name) })
       const zone = () => zoneOf(doc())
+      const editable = () => props.active() && props.enabled() && !list.error() && list.fresh(id)
+        && !controls.held() && !controls.busy() && doc().availableActions.includes("configure")
       return <section id={props.detailId} class="mission-detail mission-unified-schedule" aria-label={doc().configuration.title}>
         <MissionActionBar label={t("missionsPanel.picker.actions")} reading={expanded()} onToggleReader={() => expand(value => !value)}
           primary={primary() ? action(primary()!) : undefined} stop={action("stop")} runNow={action("run-now")}
-          onEdit={() => props.onEdit(id)} editDisabled={!props.enabled() || list.error() || !list.fresh(id) || !!controls.held() || controls.busy() || !doc().availableActions.includes("configure")}
+          onEdit={() => { if (editable()) props.onEdit(id) }} editDisabled={!editable()}
           onDelete={() => void controls.act("delete")} deleteDisabled={!controls.capable("delete")}
           onOpenConversation={doc().pendingPassage ? () => props.onOpenConversation(doc().pendingPassage!.coordinatorSessionID) : undefined}
           secondary={<>
@@ -84,7 +87,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
             <Show when={controls.held()}><button type="button" class="window-text-button" disabled={controls.busy()} onClick={() => void controls.reconcile()}>{t("missions.scheduling.readReceipt")}</button></Show>
           </>}
           feedback={<>
-            <Show when={controls.held()}><p role="status">{t("missions.scheduleList.uncertain")}</p></Show>
+            <Show when={controls.held()}><p role="status">{t(controls.publishing() ? "missions.scheduleList.confirmedRefreshing" : "missions.scheduleList.uncertain")}</p></Show>
             <Show when={controls.feedback()}>{key => <p role="status">{t(key())}</p>}</Show>
             <Show when={controls.capability() === "missing"}><p role="status">{t("missions.scheduling.capability.missing")}</p></Show>
             <Show when={controls.capability() === "activatable"}><p role="status">{t("missions.scheduleList.runNowRequiresEnabled")}</p></Show>

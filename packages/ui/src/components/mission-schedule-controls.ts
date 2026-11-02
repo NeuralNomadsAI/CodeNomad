@@ -30,6 +30,7 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
   let alive = true
   onCleanup(() => { alive = false })
   const held = () => unifiedScheduleHold(identity())
+  const publishing = () => held()?.phase === "publication"
   const [capability, setCapability] = createSignal<"loading" | "available" | "activatable" | "missing">("loading")
   const capabilityOwner = createMemo(() => ({ key: identity(), active: props.active(),
     client: instances().get(props.instanceId)?.client, generation: getOpenCodeInstanceGeneration(props.instanceId) }), undefined,
@@ -52,17 +53,19 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
       onCleanup(() => abort.abort())
     })
   })
-  const settle = (key: string, hold: Hold, current: () => boolean, applied = true) => {
+  const settle = (key: string, hold: Hold, current: () => boolean, revision?: number) => {
     if (holds.get(key) !== hold) return
     // The hold can be the selected row's sole display owner. Schedule its parent's
     // fresh read and deletion callback before publication disposes this controller.
     batch(() => {
-      holds.delete(key)
-      if (current()) { props.refresh(); if (applied && hold.action === "delete") props.onDeleted() }
+      if (revision !== undefined) holds.set(key, { ...hold, phase: "publication", minimumRevision: Math.max(hold.minimumRevision ?? 0, revision) })
+      else holds.delete(key)
+      if (current()) { props.refresh(); if (revision === undefined && hold.action === "delete") props.onDeleted() }
       bump()
     })
   }
   const capable = (action: Action) => props.active() && props.enabled() && !busy() && props.document().availableActions.includes(action)
+     && (held()?.minimumRevision === undefined || props.document().revision >= held()!.minimumRevision!)
      && (!requiresMissionCalendar(props.document().configuration.launch) || !["play", "resume", "run-now"].includes(action)
        || capability() === "available" || action !== "run-now" && capability() === "activatable")
     && (!held() || action === "check" && held()!.phase === "control" && held()!.partial && !held()!.original)
@@ -73,8 +76,13 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
       })
     if (exactMissionScheduleControl(result, hold, doc.id)) {
       if (holds.get(key) !== hold) return
-      if (hold.original) { holds.set(key, hold.original); bump(); if (current()) await receipt(key, hold.original, current) }
-      else settle(key, hold, current)
+      const revision = result.document?.revision
+      if (hold.action !== "delete" && (!Number.isSafeInteger(revision) || revision! < hold.expectedRevision)) return
+      if (hold.original) {
+        hold.original.minimumRevision = Math.max(hold.minimumRevision ?? 0, hold.original.minimumRevision ?? 0, revision!)
+        holds.set(key, hold.original); bump(); if (current()) await receipt(key, hold.original, current)
+      }
+      else settle(key, hold, current, hold.action === "delete" ? undefined : revision)
     }
     else if (holds.get(key) === hold) {
       const control = result.document?.control
@@ -88,11 +96,13 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
     if (!hold || busy() || !props.active()) return
     setBusy(true)
     try {
+      if (hold.phase === "publication") { if (current()) props.refresh(); return }
       if (hold.phase === "activation") {
         const { document } = await serverApi.missionScheduleSettings(props.instanceId, props.document().id,
           { requestID: hold.requestID, expectedDocumentRevision: hold.expectedRevision })
         const proof = document.scheduleActivation
-        if (proof?.requestID === hold.requestID && proof.expectedRevision === hold.expectedRevision && proof.state === "ready") settle(key, hold, current)
+        if (Number.isSafeInteger(document.revision) && document.revision >= hold.expectedRevision
+          && proof?.requestID === hold.requestID && proof.expectedRevision === hold.expectedRevision && proof.state === "ready") settle(key, hold, current, document.revision)
       } else await receipt(key, hold, current)
       if (current()) props.refresh()
     } catch { /* Negative or failed reads preserve the original identity. */ }
@@ -136,15 +146,16 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
           const value = await serverApi.missionScheduleSettings(props.instanceId, original.id,
             { requestID: activation.requestID, expectedDocumentRevision: revision }, true)
           const proof = value.document.scheduleActivation
-          if (proof?.requestID !== activation.requestID || proof.expectedRevision !== revision || proof.state !== "ready") return
-          settle(key, activation, current); dispatched = undefined
+          if (!Number.isSafeInteger(value.document.revision) || value.document.revision < revision
+            || proof?.requestID !== activation.requestID || proof.expectedRevision !== revision || proof.state !== "ready") return
+          settle(key, activation, current, value.document.revision); dispatched = undefined
           if (!current()) return
           revision = value.document.revision
         }
       }
       if (!current() || holds.size >= 128 && !holds.has(key)) return
       const request: Hold = { phase: "control", action, requestID: crypto.randomUUID(), expectedRevision: revision, partial: false,
-        document: original, ...(previous ? { original: previous } : {}) }
+        document: original, ...(previous ? { original: previous } : {}), minimumRevision: holds.get(key)?.minimumRevision }
       // Check is the sole permitted successor of a positively read partial intent.
       // It reconciles that original; its own ACK cannot release the original hold.
       holds.set(key, request); bump()
@@ -153,13 +164,16 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
         expectedRevision: revision, directory: props.directory, ...(action === "delete" ? { deleteManagedSessions: false } : {}) }).catch(error => {
           const result = partialReceipt(error); if (result) return result; throw error
         })
-      if (!previous && exactMissionScheduleControl(result, request, original.id)) settle(key, request, current)
+      if (!previous && exactMissionScheduleControl(result, request, original.id)
+        && (action === "delete" || Number.isSafeInteger(result.document?.revision) && result.document!.revision! >= revision))
+        settle(key, request, current, action === "delete" ? undefined : result.document?.revision)
       else if (current()) await receipt(key, request, current)
       if (current()) props.refresh()
     } catch (error) {
       if (dispatched?.phase === "control" && refusedMissionScheduleReceipt(error, dispatched, original.id) && holds.get(key) === dispatched) {
         if (dispatched.original) { holds.set(key, dispatched.original); bump() }
-        else settle(key, dispatched, current, false)
+        else if (dispatched.minimumRevision !== undefined) settle(key, dispatched, current, dispatched.minimumRevision)
+        else { holds.delete(key); bump(); if (current()) props.refresh() }
         if (current()) setFeedback("missions.scheduleList.conflict")
       } else if (current() && !dispatched) setFeedback("missions.scheduleList.readFailed")
     }
@@ -167,5 +181,5 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
   }
   const label = (action: Action) => t(action === "delete" ? "missionsPanel.picker.delete" : action === "run-now" ? "missionsPanel.action.runNow"
     : action === "check" ? "missionsPanel.action.checkPassage" : action === "play" ? "missionsPanel.action.start" : `missionsPanel.action.${action}`)
-  return { held, busy, feedback, capability, capable, act, reconcile, label }
+  return { held, publishing, busy, feedback, capability, capable, act, reconcile, label }
 }

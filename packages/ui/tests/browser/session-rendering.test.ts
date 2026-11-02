@@ -8,6 +8,7 @@ import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 import { createFixtureCache } from "./fixture-cache"
+import { fixtureGesturePoint, withFixtureMiddleDrag } from "./fixture-native-gesture"
 
 const root = fileURLToPath(new URL("../..", import.meta.url))
 let server: ViteDevServer, browser: Browser, baseUrl: string
@@ -355,16 +356,13 @@ test("unchanged native tool reprojection retains the held output scroller", asyn
     await page.locator(".tool-call-header").click()
     const output = page.locator(".tool-call-markdown")
     await output.waitFor({ state: "visible" })
-    const box = (await output.boundingBox())!
-    await page.mouse.move(box.x + 100, box.y + 100)
-    await page.mouse.down({ button: "middle" })
-    try {
+    await withFixtureMiddleDrag(page, output, await fixtureGesturePoint(output), async () => {
       await output.evaluate(el => { (window as any).heldTool = el; el.scrollTop = 240 })
       await page.evaluate(() => (window as any).fixture.reproject())
       await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
       assert.equal(await output.evaluate(el => el === (window as any).heldTool), true)
       assert.equal(await output.evaluate(el => el.scrollTop), 240)
-    } finally { await page.mouse.up({ button: "middle" }) }
+    })
     await page.evaluate(() => (window as any).fixture.changeOutput())
     await page.waitForFunction(() => document.querySelector('.tool-call-markdown')?.textContent?.includes('Changed native output'))
     await page.evaluate(() => (window as any).fixture.mutateOutput())
@@ -657,22 +655,21 @@ for (const operation of ["append", "roll"]) test(`middle-button scrolling owns n
     await page.evaluate(() => (window as any).fixture.renderOutput())
     await page.waitForFunction(() => (document.querySelector("[data-nested-output]")?.scrollTop ?? 0) > 1000)
     await page.evaluate(`new Promise(resolve => { let n = 30; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    const point = await fixtureGesturePoint(output)
     const bounds = (await output.boundingBox())!
     await page.evaluate(() => document.addEventListener("pointerdown", event => {
       (window as any).middleHit = { tag: (event.target as HTMLElement)?.outerHTML?.slice(0, 180), button: event.button, y: event.clientY }
     }, { once: true }))
-    await page.mouse.move(bounds.x + 100, bounds.y + 100)
-    await page.mouse.down({ button: "middle" })
-    assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).innerFollow, false,
-      JSON.stringify(await page.evaluate(() => ({ hit: (window as any).middleHit, box: document.querySelector("[data-nested-output]")?.getBoundingClientRect().toJSON() }))))
-    await page.evaluate(() => { (window as any).gestureOutput = document.querySelector("[data-nested-output]") })
-    await page.evaluate(operation => (window as any).fixture[operation](), operation)
-    await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
-    assert.equal(await page.evaluate(() => (window as any).gestureOutput === document.querySelector("[data-nested-output]")), true,
-      "A streamed append must not replace the active native drag target")
-    assert.equal(await output.locator("..").getAttribute("data-item-index"), operation === "roll" ? "28" : "29",
-      "Keeping the keyed child must not freeze its shifted index")
-    try {
+    await withFixtureMiddleDrag(page, output, point, async () => {
+      assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).innerFollow, false,
+        JSON.stringify(await page.evaluate(() => ({ hit: (window as any).middleHit, box: document.querySelector("[data-nested-output]")?.getBoundingClientRect().toJSON() }))))
+      await page.evaluate(() => { (window as any).gestureOutput = document.querySelector("[data-nested-output]") })
+      await page.evaluate(operation => (window as any).fixture[operation](), operation)
+      await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
+      assert.equal(await page.evaluate(() => (window as any).gestureOutput === document.querySelector("[data-nested-output]")), true,
+        "A streamed append must not replace the active native drag target")
+      assert.equal(await output.locator("..").getAttribute("data-item-index"), operation === "roll" ? "28" : "29",
+        "Keeping the keyed child must not freeze its shifted index")
       // Delay motion beyond the intent deadline, then drive the actual drag.
       // Do not write scrollTop: controller-only simulation hid the old MMB bug.
       const started = await page.evaluate(() => performance.now())
@@ -691,7 +688,7 @@ for (const operation of ["append", "roll"]) test(`middle-button scrolling owns n
       const state = await page.evaluate(() => (window as any).fixture.snapshot())
       assert.equal(state.innerFollow, false)
       assert.equal(state.outerFollow, false)
-    } finally { await page.mouse.up({ button: "middle" }) }
+    })
   })
 })
 
@@ -703,16 +700,15 @@ test("native MMB drag started inside output keeps scrolling output outside its b
     await page.evaluate(() => (window as any).fixture.renderOutput())
     await page.waitForFunction(() => (document.querySelector("[data-nested-output]")?.scrollTop ?? 0) > 1000)
     await page.evaluate(`new Promise(resolve => { let n = 30; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    const point = await fixtureGesturePoint(output, { x: 100, y: 140 })
     const box = (await output.boundingBox())!
     const before = await page.evaluate(() => (window as any).fixture.snapshot())
-    await page.mouse.move(box.x + 100, box.y + 140)
-    await page.mouse.down({ button: "middle" })
-    try {
+    await withFixtureMiddleDrag(page, output, point, async () => {
       await page.mouse.move(box.x + box.width + 60, box.y + 40, { steps: 10 })
       await page.waitForFunction(() => (document.querySelector("[data-nested-output]")?.scrollTop ?? Infinity) < 1000, undefined, { timeout: 3000 })
       const after = await page.evaluate(() => (window as any).fixture.snapshot())
       assert.ok(Math.abs(after.outerTop - before.outerTop) < 2, "A child-owned drag must not move the transcript")
-    } finally { await page.mouse.up({ button: "middle" }) }
+    })
   })
 })
 
@@ -740,16 +736,15 @@ test("real shell output accepts native MMB drag without moving its transcript", 
     const output = page.locator('[data-virtual-follow-key="tool-29"] .tool-call-markdown')
     await output.waitFor({ state: "visible" })
     await page.evaluate(`new Promise(resolve => { let n = 60; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
+    const point = await fixtureGesturePoint(output, { x: 100, y: 50 })
     const box = (await output.boundingBox())!
     const before = await page.evaluate(() => (window as any).fixture.snapshot())
-    await page.mouse.move(box.x + 100, Math.max(box.y + 50, 50))
-    await page.mouse.down({ button: "middle" })
-    try {
+    await withFixtureMiddleDrag(page, output, point, async () => {
       await page.mouse.move(box.x + box.width + 60, Math.min(box.y + 200, 650), { steps: 10 })
       await page.waitForFunction(() => (document.querySelector('[data-virtual-follow-key="tool-29"] .tool-call-markdown')?.scrollTop ?? 0) > 100, undefined, { timeout: 3000 })
       const after = await page.evaluate(() => (window as any).fixture.snapshot())
       assert.ok(Math.abs(after.outerTop - before.outerTop) < 2, "Child drag moved transcript")
-    } finally { await page.mouse.up({ button: "middle" }) }
+    })
   })
 })
 
@@ -808,13 +803,14 @@ test("MMB started in the transcript stays there over a shell and stops on releas
     await page.evaluate(`new Promise(resolve => { let n = 30; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
     const box = (await output.boundingBox())!
     const before = await page.evaluate(() => (window as any).fixture.snapshot())
-    await page.mouse.move(box.x + 100, box.y + box.height + 25)
-    await page.mouse.down({ button: "middle" })
-    try {
+    const point = { x: box.x + 100, y: box.y + box.height + 25 }
+    assert.equal(await output.evaluate((element, point) => element.contains(document.elementFromPoint(point.x, point.y)), point), false,
+      "The transcript-owned press starts outside the shell")
+    await withFixtureMiddleDrag(page, page.locator(".message-stream"), point, async () => {
       await page.mouse.move(box.x + 100, box.y + 120, { steps: 10 })
       await page.waitForFunction(before => (window as any).fixture.snapshot().outerTop < before - 80, before.outerTop)
       assert.equal(await output.evaluate(el => el.scrollTop), before.savedTop, "The shell must not steal a transcript drag")
-    } finally { await page.mouse.up({ button: "middle" }) }
+    })
     const stopped = await page.evaluate(() => (window as any).fixture.snapshot().outerTop)
     await page.evaluate(`new Promise(resolve => { let n = 20; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
     assert.equal(await page.evaluate(() => (window as any).fixture.snapshot().outerTop), stopped)
@@ -912,16 +908,15 @@ test("MMB selects independent axes when horizontal code is inside a vertical she
   await openScrollableOutput(async page => {
     await makeHorizontalCode(page)
     const output = page.locator("[data-nested-output]")
+    const point = await fixtureGesturePoint(output, { x: 100, y: 140 })
     const box = (await output.boundingBox())!
     const before = await page.locator(".message-stream").evaluate(el => el.scrollTop)
-    await page.mouse.move(box.x + 100, box.y + 140)
-    await page.mouse.down({ button: "middle" })
-    try {
+    await withFixtureMiddleDrag(page, output.locator("pre"), point, async () => {
       await page.mouse.move(box.x + 250, box.y + 40, { steps: 10 })
       await page.waitForFunction(() => document.querySelector("[data-nested-output]")!.scrollTop < 1100, undefined, { timeout: 3000 })
       assert.ok(await output.locator("pre").evaluate(el => el.scrollLeft) > 50, "Code must still pan horizontally")
       assert.equal(await page.locator(".message-stream").evaluate(el => el.scrollTop), before)
-    } finally { await page.mouse.up({ button: "middle" }) }
+    })
   })
 })
 
@@ -929,10 +924,9 @@ test("hiding a session cancels its captured MMB gesture instead of resuming it o
   await openScrollableOutput(async page => {
     const stream = page.locator(".message-stream")
     const output = page.locator("[data-nested-output]")
+    const point = await fixtureGesturePoint(output, { x: 100, y: 140 })
     const box = (await output.boundingBox())!
-    await page.mouse.move(box.x + 100, box.y + 140)
-    await page.mouse.down({ button: "middle" })
-    try {
+    await withFixtureMiddleDrag(page, output, point, async () => {
       await page.mouse.move(box.x + 100, box.y + 40)
       await page.waitForFunction(() => document.querySelector("[data-nested-output]")!.scrollTop < 1300)
       await stream.evaluate(el => { el.style.display = "none" })
@@ -942,7 +936,7 @@ test("hiding a session cancels its captured MMB gesture instead of resuming it o
       const stopped = await output.evaluate(el => el.scrollTop)
       await page.evaluate(`new Promise(resolve => { let n = 20; const frame = () => --n ? requestAnimationFrame(frame) : resolve(); requestAnimationFrame(frame) })`)
       assert.equal(await output.evaluate(el => el.scrollTop), stopped)
-    } finally { await page.mouse.up({ button: "middle" }) }
+    })
   })
 })
 
