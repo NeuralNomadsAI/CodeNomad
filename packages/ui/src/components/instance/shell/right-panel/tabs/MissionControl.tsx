@@ -67,6 +67,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // The selected item's unconfirmed control, resent only by an explicit refresh click.
   const [controlRetry, setControlRetry] = createSignal<MissionControlRetry>()
   const [refreshing, setRefreshing] = createSignal(false)
+  // The open editor's passive scheduling reads share the toolbar's update icon.
+  const [editorReading, setEditorReading] = createSignal(false)
   const registerRetry = (retry: MissionControlRetry) => {
     setControlRetry(() => retry)
     return () => setControlRetry(current => current === retry ? undefined : current)
@@ -371,7 +373,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const listExpanded = () => missionProjectView(scope()).listExpanded === true
   const refreshLabel = () => props.t(controlRetry()?.pending() ? "missions.control.refreshResend" : "missions.control.refresh")
   const reading = () => refreshing() || missionStore.reading(props.instanceId) || currentPassage.inventory()?.reading(props.instanceId)
-    || recurrence.loading() || scheduled.loading() || currentPassage.loading()
+    || recurrence.loading() || scheduled.loading() || currentPassage.loading() || editorReading()
   /** Read-only reconciliation first; only a control still unconfirmed by that
    * read is resent, with its original identity, from this explicit click. */
   const refresh = async () => {
@@ -442,6 +444,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           })
         }}
         onRecurrenceRefresh={() => setRecurrenceRefresh(value => value + 1)}
+        onReading={setEditorReading}
         onRecurrenceSaved={() => { if (!completionCurrent() || editor() !== action) return; settleMissionEditor(action); setRecurrenceRefresh(value => value + 1) }}
         onSaved={(saved, scheduleID) => {
           if (!completionCurrent() || editor() !== action) return
