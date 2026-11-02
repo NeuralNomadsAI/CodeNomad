@@ -302,7 +302,12 @@ Commands:
   native error data, concurrent requests and error recovery, with positive ordinary-route diagnostics checks.
 - `packages/ui/tests/browser/integration-attachment.test.ts`: real Solid entry points and native dispatcher with
   all renderer logger namespaces enabled. Every console level's text and structured arguments, nested Error
-  messages/stacks and page errors are captured before navigation and sentinel-scanned before teardown. Adversarial
+  messages/stacks and page errors are captured before navigation and sentinel-scanned through native teardown.
+  Document-owned synchronous copies travel with the original console arguments on one ordered CDP channel;
+  native retirement receipts and exact packet/context/copy reconciliation gate completion. Workers, OOPIFs,
+  related targets and serialization/association loss fail closed. The helper's native-format, delayed-delivery,
+  reload/close and negative controls live in `fixture-console.test.ts`; the real dispatcher post-drain control
+  retains the original deferred-handle failure assertion alongside the by-value capture. Adversarial
   HTTP/JSON/transport failures exercise read, hosts, attach, detach, retry and late navigation.
   Binding qualification covers external authority, Q8/receipt separation, unknown versus none, wide/narrow durable
   labels with isolation/truncation/accessibility, strict projected-response bounds, moved sessions, late replies,

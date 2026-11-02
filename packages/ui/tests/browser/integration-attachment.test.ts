@@ -8,6 +8,7 @@ import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 import { observeHeaderFixture } from "./header-fixture-diagnostics"
+import { captureConsole, refuseUntaggedConsole, type ConsoleEntry } from "./fixture-console"
 import { assertNoSentinels, FAKE_INTEGRATION_SENTINELS, findSentinels } from "../../../../scripts/fixtures/fake-integration/index.mjs"
 
 let browser: Browser, url: string
@@ -30,7 +31,8 @@ const sentinelOptions = { port: sentinelPort }
 const failureKinds = ["malformed-json", "raw-http-error", "json-http-error", "network-error"] as const
 type FailureKind = typeof failureKinds[number]
 
-function captureDiagnostics(page: Page) {
+// Retain the original handle collector for its deferred-handle negative control.
+function captureHandleControl(page: Page) {
   const consoleEntries: Array<{ type: string; text: string; args: unknown[] }> = []
   const pageErrors: Array<{ message: string; stack?: string }> = []
   const pending: Promise<void>[] = []
@@ -63,6 +65,44 @@ function captureDiagnostics(page: Page) {
   } }
 }
 
+async function captureDiagnostics(page: Page, record: (category: string, error: unknown) => void = () => {}) {
+  const transport = await captureConsole(page, browser, { onCleanupError: error => record("console-init-cleanup-error", error) })
+  const consoleEntries: ConsoleEntry[] = [], pageErrors = transport.pageErrors
+  const coverageFailures: string[] = []
+  const witness = (message: Parameters<typeof refuseUntaggedConsole>[0]) => {
+    try { refuseUntaggedConsole(message, transport.token) }
+    catch { coverageFailures.push("untagged-playwright-arguments") }
+  }
+  page.on("console", witness)
+  let completed = false, checked = false
+  const drain = async () => {
+    if (completed) transport.reconcile(true)
+    else await transport.fence()
+    assert.equal(coverageFailures.length, 0, "every diagnostic belongs to a covered native target")
+    consoleEntries.splice(0, consoleEntries.length, ...transport.consoleEntries())
+  }
+  const check = async () => {
+    await drain()
+    assertNoSentinels({ consoleEntries, pageErrors }, sentinelOptions, "renderer diagnostics")
+    assert.equal(pageErrors.length, 0, "the real renderer raised no uncaught exceptions")
+    assert.ok(consoleEntries.some(entry => entry.text.includes("session.messages")), "enabled renderer loggers emitted real HTTP/session diagnostics")
+    assert.ok(consoleEntries.some(entry => entry.args.some(value => value && typeof value === "object")), "structured renderer diagnostics were observed")
+    checked = true
+  }
+  return { consoleEntries, pageErrors, drain, check, transport, complete: () => runWithDiagnosticCleanup({
+    run: async () => {
+      await transport.complete()
+      completed = true
+      await drain()
+      if (checked) await check()
+    },
+    diagnose: async () => {},
+    cleanup: async () => { page.off("console", witness); await transport.abort() },
+    onObservationError: () => {},
+    onCleanupError: error => { record("console-observer-error", error); console.error("attachment-console-observer-cleanup-failed") },
+  }) }
+}
+
 async function failResponse(route: Route, kind: FailureKind) {
   if (kind === "network-error") return route.abort("connectionfailed")
   const body = JSON.stringify(privateHost)
@@ -70,7 +110,7 @@ async function failResponse(route: Route, kind: FailureKind) {
   if (kind === "raw-http-error") return route.fulfill({ status: 503, contentType: "text/plain", body })
   return route.fulfill({ status: 503, json: { code: FAKE_INTEGRATION_SENTINELS.bindingKey, error: privateHost } })
 }
-async function prepareAttachment(page: Page, diagnostics: ReturnType<typeof captureDiagnostics>) {
+async function prepareAttachment(page: Page, diagnostics: Awaited<ReturnType<typeof captureDiagnostics>>) {
   // lib/logger has namespace switches rather than a separate severity threshold: enable all of them at boot.
   await page.addInitScript(() => localStorage.setItem("opencode:logger:namespaces", JSON.stringify(["sse", "api", "session", "actions", "foreground-refresh", "scroll"])))
   // Drive transport status/open explicitly through ServerEvents, without incidental HTTP fixture reconnects.
@@ -133,7 +173,7 @@ async function prepareAttachment(page: Page, diagnostics: ReturnType<typeof capt
 }
 
 async function withAttachment<T>(run: (fixture: Awaited<ReturnType<typeof prepareAttachment>>) => Promise<T>, width = 1500, height = 850) {
-  let page: Page | undefined, diagnostics: ReturnType<typeof captureDiagnostics> | undefined
+  let page: Page | undefined, diagnostics: Awaited<ReturnType<typeof captureDiagnostics>> | undefined
   let observer: ReturnType<typeof observeHeaderFixture> | undefined, evidenceDirectory: string | undefined
   let phase = "allocation", checking = false
   // Raw observations can contain private URLs and sentinels. Keep them only in owned TEMP evidence.
@@ -141,7 +181,7 @@ async function withAttachment<T>(run: (fixture: Awaited<ReturnType<typeof prepar
     try {
       evidenceDirectory ??= mkdtempSync(join(tmpdir(), "codenomad-attachment-failure-"))
       appendFileSync(join(evidenceDirectory, "diagnostics.private.jsonl"), JSON.stringify({ category, phase, value }, (_key, item) =>
-        item instanceof Error ? { name: item.name, message: item.message, stack: item.stack } : item) + "\n")
+        item instanceof Error ? { name: item.name, message: item.message, stack: item.stack, categories: (item as any).categories } : item) + "\n")
     } catch { console.error("attachment-evidence-write-failed") }
   }
   return runWithDiagnosticCleanup({
@@ -149,7 +189,7 @@ async function withAttachment<T>(run: (fixture: Awaited<ReturnType<typeof prepar
       try {
         page = await browser.newPage({ viewport: { width, height } })
         page.setDefaultTimeout(20_000)
-        diagnostics = captureDiagnostics(page)
+        diagnostics = await captureDiagnostics(page, record)
         observer = observeHeaderFixture(page, "integrationFixture")
         await observer.install()
         phase = "bootstrap"
@@ -169,8 +209,15 @@ async function withAttachment<T>(run: (fixture: Awaited<ReturnType<typeof prepar
       if (!checking) await diagnostics?.check()
     },
     cleanup: async () => {
-      try { await page?.close() }
-      catch (error) { record("close-error", error); throw error }
+      try {
+        await runWithDiagnosticCleanup({
+          run: async () => { try { await page?.close() } catch (error) { record("close-error", error); throw error } },
+          diagnose: async () => {},
+          cleanup: async () => { try { await diagnostics?.complete() } catch (error) { record("console-completion-error", error); throw error } },
+          onObservationError: () => {},
+          onCleanupError: () => console.error("attachment-console-completion-failed"),
+        })
+      }
       finally {
         observer?.detach()
         if (evidenceDirectory) record("resources", { pageClosed: page?.isClosed(), contextOwned: page ? browser.contexts().includes(page.context()) : false })
@@ -467,10 +514,11 @@ for (const kind of [...failureKinds, "invalid-outcome"] as const) test(`AC-C15 i
   })
 })
 
-test("diagnostic capture detects sentinel text, structured arguments and Error stacks at every console level before navigation", async () => {
+async function checkDiagnosticCapture() {
   const page = await browser.newPage()
-  const diagnostics = captureDiagnostics(page)
+  let diagnostics: Awaited<ReturnType<typeof captureDiagnostics>> | undefined
   await runWithDiagnosticCleanup({ run: async () => {
+    diagnostics = await captureDiagnostics(page)
     await page.addInitScript(host => {
       const error = new Error(host.token)
       error.stack += JSON.stringify(host)
@@ -499,9 +547,22 @@ test("diagnostic capture detects sentinel text, structured arguments and Error s
       return true
     })
     await diagnostics.drain()
-  }, diagnose: diagnostics.drain, cleanup: () => page.close(),
+  }, diagnose: async () => { await diagnostics?.drain() }, cleanup: () => runWithDiagnosticCleanup({
+    run: () => page.close(), diagnose: async () => {}, cleanup: async () => { await diagnostics?.complete() },
+    onObservationError: () => {}, onCleanupError: () => console.error("capture-control-completion-failed"),
+  }),
   onObservationError: () => console.error("capture-control-diagnostic-failed"),
   onCleanupError: () => console.error("capture-control-close-failed") })
+}
+test("diagnostic capture detects sentinel text, structured arguments and Error stacks at every console level before navigation", checkDiagnosticCapture)
+test("diagnostic capture control closes its owned page on transport initialization failure", async t => {
+  const page = await browser.newPage(), context = page.context(), primary = new Error("capture initialization primary"), stack = primary.stack
+  t.after(() => context.close())
+  t.mock.method(browser, "newPage", async () => page)
+  t.mock.method(context, "addInitScript", async () => { throw primary })
+  await assert.rejects(checkDiagnosticCapture(), error => error === primary && (error as Error).stack === stack)
+  assert.equal(page.isClosed(), true)
+  assert.equal(browser.contexts().includes(context), false, "capture setup releases its owned context immediately")
 })
 for (const width of [1500, 390]) for (const entry of ["header", "plugins"])
 test(`attachment cancellation returns to its exact ${entry} opener at ${width}px`, async () => {
@@ -1019,8 +1080,38 @@ test("AC-C12 reload restores a live binding without Q8 or an action receipt and 
   })
 })
 
+test("diagnostic capture retains real dispatcher output after drain while the original handle control rejects document death", async () => {
+  await withAttachment(async ({ page, diagnostics }) => {
+    const legacy = captureHandleControl(page)
+    const started = Promise.withResolvers<void>(), release = Promise.withResolvers<void>()
+    page.prependListener("console", message => {
+      if (!message.text().includes("event batch")) return
+      const argument = message.args()[4], evaluate = argument.evaluate.bind(argument)
+      argument.evaluate = async (expression, arg) => { started.resolve(); await release.promise; return evaluate(expression, arg) }
+    })
+    await diagnostics.drain()
+    await legacy.drain()
+    try {
+      await call(page, "event", "session.updated", { sessionID: "other-session" })
+      await started.promise
+      await page.reload()
+      release.resolve()
+      await assert.rejects(legacy.drain, error => error instanceof assert.AssertionError && error.actual === 1 && error.expected === 0
+        && error.message.includes("every console argument was serialized before teardown"))
+      await page.waitForFunction(() => Boolean((window as any).integrationFixture))
+      await diagnostics.drain()
+      const entry = diagnostics.consoleEntries.find(entry => entry.text.includes("event batch") && entry.args.some((value: any) => value?.size === 1))
+      assert.ok(entry, "the actual dispatcher message emitted after drain retained its structured value")
+      const snapshot = diagnostics.transport.snapshots.get(entry.id!)
+      assert.equal(diagnostics.transport.history.get(snapshot.uniqueId).retired, true)
+    } finally { release.resolve() }
+  })
+})
+
 test("diagnostic capture drains a delayed structured argument before fixture reload", async () => {
-  await withAttachment(async ({ page, diagnostics, reload }) => {
+  await withAttachment(async ({ page, diagnostics: captured, reload }) => {
+    const diagnostics = captureHandleControl(page), authorityDrain = captured.drain
+    captured.drain = async () => { await diagnostics.drain(); await authorityDrain() }
     const started = Promise.withResolvers<void>(), release = Promise.withResolvers<void>()
     page.prependListener("console", message => {
       if (!message.text().startsWith("delayed reload diagnostic")) return
