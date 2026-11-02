@@ -849,11 +849,11 @@ export const serverApi = {
   fetchMissionCurrentTasks(instanceId: string, source: MissionCurrentSource, task: import("../../../server/src/missions/mission-panel-map").MissionTaskRequest, scope: MissionPanelReadScope) {
     return readMissionTaskPage(source.missionID, task, currentPassageTransport(instanceId, source, scope))
   },
-  async fetchMissionCurrentBody(instanceId: string, source: MissionCurrentSource, body: MissionContentRequest, signal: AbortSignal) {
+  async fetchMissionCurrentBody(instanceId: string, source: MissionCurrentSource, body: MissionContentRequest, signal: AbortSignal, deadline = performance.now() + TASK_READ_TIMEOUT_MS) {
     source = structuredClone(source)
     body = structuredClone(body)
     const answer = await readMissionPanelWindow({ source: "mission", missionID: source.missionID, field: "body", window: { offset: 0 } },
-      currentPassageTransport(instanceId, source, { signal, current: () => !signal.aborted }, body))
+      currentPassageTransport(instanceId, source, { signal, deadline, current: () => !signal.aborted }, body))
     if (answer.values.length !== 1) throw new MissionTaskPageReadError("invalid")
     const value = answer.values[0] as import("../../../server/src/missions/mission-content-wire").MissionContentResponse
     if (!value || !value.available || value.projectID !== source.projectID || !("missionID" in value) || value.missionID !== source.missionID) throw new MissionTaskPageReadError("invalid")
@@ -862,6 +862,7 @@ export const serverApi = {
       const { missionID: _mission, digest, offset, ...selector } = body
       validMissionContentSlice(selector, { offset, digest }, value.content)
     }
+    assertTaskReadLive(signal, deadline)
     return value
   },
   fetchMissionCurrentContent(instanceId: string, input: import("../../../server/src/missions/recurrence-current").RecurrenceCurrentContentInput, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrentContent> {

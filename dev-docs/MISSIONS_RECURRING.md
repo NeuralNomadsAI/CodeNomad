@@ -584,6 +584,14 @@ the ordinary panel contract. Unrelated journal revisions revalidate the header w
 rereading unchanged task windows or bodies. Daily archive readers keep receipt authority;
 scheduled inventory and schedule controls retain their document-owned paths.
 
+Each outstanding current body demand owns one monotonic 30-second deadline and
+cancellation signal across semantic content offsets, automatic restarts/revalidation
+and outer wire pieces. Assembly is staged before the final publication check. A
+fulfilled demand ends its operation; a later user extension or explicit Retry can
+start a fresh one. Failed outstanding operations retain their budget through automatic
+revalidation. Technical details exposes the scoped persisted-field/raw-page reader for
+compact current maps; archived daily readers retain their receipt-bound sections.
+
 ## Settlement, result and watched cursors
 
 Settlement requires the coordinator and **all descendants** to be inactive,

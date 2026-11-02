@@ -26,6 +26,10 @@ the bounded selected-mission inventory owner without directory or finish-counter
 Body keys include that exact passage source. Owner revision fences publication separately
 from frozen execution-source identity, preserving unchanged task/body windows through
 unrelated journal updates. Archive reads retain their exact receipt and one range observation.
+An outstanding current-body demand retains one 30-second deadline/cancellation lifetime
+through every semantic slice, automatic restart and revalidation. Fulfillment ends that
+operation; a later user extension/Retry can admit a fresh budget. Validate assembled
+content before promoting it, and retain the last good display on expiry.
 
 | Area | Current behaviour | Implementation |
 | --- | --- | --- |

@@ -73,7 +73,7 @@ export function MissionOverviewDetails(props: {
         refresh={() => missionStore.refresh(props.instanceId)} />
     </Show>
     <details class="mission-report-technical"><summary>{t("missionsPanel.technical")}</summary>
-      <Show when={!props.recurrence}><MissionPanelFields instanceId={props.instanceId} mission={props.mission} /></Show>
+      <Show when={!props.recurrence || props.mission.panelPassage}><MissionPanelFields instanceId={props.instanceId} mission={props.mission} /></Show>
       <dl class="mission-technical">
         <dt>{t("missionsPanel.technical.mission")}</dt><dd><bdi>{props.mission.id}</bdi></dd>
         <dt>{t("missionsPanel.technical.coordinator")}</dt><dd><bdi>{props.mission.coordinatorSessionId}</bdi></dd>

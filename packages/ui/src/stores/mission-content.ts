@@ -8,8 +8,8 @@ import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { createMissionContentStore, type MissionBodyConsumer, type MissionBodyRef, type MissionBodyState } from "./mission-content-store"
 import { missionBodyRevision, missionHistoryMark } from "./mission-task-pages"
 
-export const missionContent = createMissionContentStore((ref, query, signal) =>
-  ref.passage ? serverApi.fetchMissionCurrentBody(ref.instanceId, ref.passage, { missionID: ref.missionID, ...ref.selector, ...query }, signal)
+export const missionContent = createMissionContentStore((ref, query, signal, deadline) =>
+  ref.passage ? serverApi.fetchMissionCurrentBody(ref.instanceId, ref.passage, { missionID: ref.missionID, ...ref.selector, ...query }, signal, deadline)
     : serverApi.fetchMissionContent(ref.instanceId, ref.missionID, { ...ref.selector, ...query }, signal))
 
 /** A body a reader shows, the revision its descriptor is expected at, that descriptor

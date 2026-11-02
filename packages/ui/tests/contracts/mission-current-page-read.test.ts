@@ -71,10 +71,11 @@ test("a pending passage body cannot publish a newer digest for an older row, and
       content: { kind: "task", taskKey: "work", field: "brief", digest: newer, offset: 0, characters: 3, text: "new" } })
     void (async () => {
       try {
-        for (let tick = 0; tick < 5; tick++) await Promise.resolve()
+        // Drain the logical cancellation race and its finally before the next user Retry.
+        for (let tick = 0; tick < 30; tick++) await Promise.resolve()
         assert.equal(handle.state().status, "error"); assert.equal(handle.state().body, undefined)
         handle.retry()
-        for (let tick = 0; tick < 5; tick++) await Promise.resolve()
+        for (let tick = 0; tick < 30; tick++) await Promise.resolve()
         assert.equal(handle.state().body?.text, "old"); assert.equal(requests[1].digest, expected)
         handle.release(); dispose(); resolve()
       } catch (error) { handle.release(); dispose(); reject(error) }

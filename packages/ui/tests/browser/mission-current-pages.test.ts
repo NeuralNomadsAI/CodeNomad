@@ -28,6 +28,7 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
   const f = await currentPassageFixture(owner), app = Fastify({ logger: false }), page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
   const errors: string[] = [], writes: string[] = [], selections: any[] = [], sizes: number[] = []
   const activityRows: unknown[] = []
+  let failRawPage = false
   page.on("pageerror", error => errors.push(error.message))
   try {
     let map = (await f.control.snapshot()).missions[0]
@@ -59,6 +60,11 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
       if (path === "/api/storage/config/ui") return route.fulfill({ json: { settings: { locale: "en" } } })
       if (path.includes("/current")) {
         if (request.method() === "POST") selections.push(request.postDataJSON())
+        const selector = request.method() === "POST" ? request.postDataJSON().selector : undefined
+        if (failRawPage && selector?.text && selector.field === "actors" && selector.window?.offset === 1) {
+          failRawPage = false
+          return route.fulfill({ status: 503, json: { error: "Owned raw field retry" } })
+        }
         const response = await app.inject({ method: request.method() as "GET" | "POST", url: new URL(request.url()).pathname + new URL(request.url()).search,
           ...(request.method() === "POST" ? { payload: request.postDataJSON() } : {}) })
         sizes.push(response.rawPayload.length)
@@ -112,6 +118,33 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     assert.equal(selections.filter(input => input.selector.source === "tasks").length, taskReads, "an unrelated journal revision does not storm expanded task pages")
     assert.equal(selections.filter(input => input.body).length, bodyReads, "an unchanged exact body retains its original digest")
+    const source = (await f.read()).source!, headerSelector = { source: "mission", missionID: map.id, header: true }
+    const beforeFields = await f.page({ source, selector: headerSelector })
+    await page.evaluate(async ({ root, missionID, scheduleID, passageID, owner }) => {
+      (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView(root, { reader: { missionId: missionID, kind: "overview",
+        recurrence: { instanceId: "fixture", projectID: "project", scheduleID, passageID, owner } } })
+    }, { root: f.root, missionID: map.id, scheduleID: f.scheduleID, passageID: source.passageID, owner })
+    await page.locator(".mission-reader .mission-overview-details > details").filter({ has: page.locator("summary").filter({ hasText: /^Technical details$/ }) }).locator(":scope > summary").click()
+    const fields = page.locator(".mission-reader .mission-panel-fields")
+    await fields.locator(":scope > summary").click()
+    const actors = fields.locator(":scope > details").filter({ has: page.locator("summary").filter({ hasText: /^actors \(/ }) })
+    await actors.locator(":scope > summary").click()
+    await actors.locator("pre").first().waitFor()
+    await actors.getByRole("button", { name: "Read raw JSON pages", exact: true }).click()
+    await actors.getByText(/Raw JSON page 1 of/).waitFor()
+    failRawPage = true
+    await actors.getByRole("button", { name: "Next page", exact: true }).click()
+    await actors.getByRole("button", { name: "Try again", exact: true }).click()
+    await actors.getByText(/Raw JSON page 2 of/).waitFor()
+    await actors.locator("pre").first().waitFor()
+    const fieldReads = selections.filter(input => input.selector.field === "actors")
+    assert.ok(fieldReads.some(input => !input.selector.text && input.selector.window.offset === 0))
+    assert.ok(fieldReads.some(input => input.selector.text && input.selector.window.offset === 0))
+    assert.ok(fieldReads.filter(input => input.selector.text && input.selector.window.offset === 1).length >= 2, "Retry repeats the failed scoped raw continuation")
+    assert.ok(fieldReads.every(input => JSON.stringify(input.source) === JSON.stringify(source)))
+    assert.deepEqual(await f.page({ source, selector: headerSelector }), beforeFields, "field reads never enlarge the selected header")
+    assert.ok(selections.every(input => ["mission", "tasks", "activity"].includes(input.selector.source)
+      && (input.selector.source !== "mission" || input.selector.header || input.selector.field)), "no full-map or project fallback")
     assert.ok(sizes.every(size => size <= 65536)); assert.deepEqual(writes, []); assert.deepEqual(errors, [])
     t.diagnostic(JSON.stringify({ owner, tasks: map.tasks.length, initialBodies: 0, transfers: selections.length, largestBody: Math.max(...sizes), ...f.metrics() }))
   } finally { await page.context().close(); await app.close(); await f.dispose() }
