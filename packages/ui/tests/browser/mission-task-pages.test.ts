@@ -4,6 +4,7 @@ import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
 import { fixtureEventStream } from "./fixture-event-stream"
 import { chromium, type Browser, type Page } from "playwright"
+import path from "node:path"
 import type { MissionMap, MissionPanelMap, MissionReport, MissionTask } from "../../../server/src/api-types"
 import { compactMissionMap } from "../../../server/src/missions/mission-compact-map"
 import { missionTaskOrder } from "../../../server/src/missions/mission-task-order"
@@ -11,7 +12,7 @@ import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrenc
 import { missionContentFixture, missionTaskFixture, missionTaskQuery, olderPluginMap, panelMissions } from "./mission-content-fixture"
 
 // Real MissionControl and reader over a compact map that holds a page of its tasks:
-// the tree's gaps, the graph's omitted edges, reads further and Needs you beyond the page.
+// scroll continuation, graph's omitted edges, reads further and Needs you beyond the page.
 let browser: Browser, url: string
 let events: Awaited<ReturnType<typeof fixtureEventStream>>
 before(async () => {
@@ -87,8 +88,10 @@ async function open(value: MissionMap, activity: Array<{ sessionId: string; stat
 }
 const settle = (page: Page) => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
 const rows = (page: Page) => page.locator(".mission-tree-node").evaluateAll(nodes => nodes.map(node => (node as HTMLElement).dataset.taskKey))
-const gaps = (page: Page) => page.locator(".mission-tree-gap").evaluateAll(nodes => nodes.map(node => [Number((node as HTMLElement).dataset.start),
-  Number((node as HTMLElement).dataset.end), node.querySelector("span")!.textContent]))
+// Exercise the keyboard fallback without scrolling the sentinel into view as a
+// side effect. Scroll-driven loading has its own real-scroller regression below.
+const more = (page: Page) => page.locator(".mission-tree-more button").evaluate((button: HTMLButtonElement) => button.click())
+const attentionInfo = (page: Page) => page.locator(".mission-tree > h3 .settings-info-tip")
 const stubs = (page: Page) => page.locator(".mission-graph path.mission-graph-omitted").evaluateAll(paths => paths.map(path =>
   `${(path as SVGPathElement).dataset.task}:${(path as SVGPathElement).dataset.omitted}`).sort())
 /** Every declared edge starts and ends at its tasks' status icons, in client space. */
@@ -105,7 +108,7 @@ const railGaps = (page: Page) => page.evaluate(() => {
   }))
 })
 
-test("the tree shows a page of the display order with counted gaps and omitted edges, and reads further on request, rails measured on every page", async () => {
+test("the continuous tree has one continuation, retains pins and omitted edges, and measures rails on every page", async () => {
   const value = paged(), order = missionTaskOrder(value.tasks).map(task => task.key)
   const { page, errors, reads } = await open(value)
   try {
@@ -113,27 +116,28 @@ test("the tree shows a page of the display order with counted gaps and omitted e
     assert.equal(await page.locator(".mission-tree > h3 .mission-disclosure-trigger small").innerText(), "120", "the group counts every task")
     // The window (positions 0-49), then the pinned blockage at the end of the order.
     assert.deepEqual(await rows(page), [...order.slice(0, 50), "t119"])
-    assert.deepEqual(await gaps(page), [[50, 119, "69 tasks not shown"]])
+    assert.equal(await page.locator(".mission-tree-gap").count(), 0)
+    assert.equal(await page.locator(".mission-tree-more button").count(), 1)
     // Round 3's tasks of chains 2-11 and round 4's two shown tasks have dependents not shown; t119 waits on t118.
     assert.deepEqual(await stubs(page), [...[2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(chain => `t${chain * 10 + 3}`), "t4", "t14"].map(key => `${key}:dependents`)
       .concat("t119:dependencies").sort())
     assert.equal(await page.locator(".mission-graph path[data-from]").count(), 38, "every edge between shown tasks")
     assert.ok(await railGaps(page) <= 0.75)
     assert.match(await page.locator('.mission-tree-node[data-task-key="t119"] .sr-only').textContent() ?? "", /1 dependency not shown/)
-    // Show more reads the next page of the order the map named, from the gap's start.
-    await page.locator(".mission-tree-gap").getByRole("button", { name: "Show more", exact: true }).click()
+    // The sole fallback reads the earliest missing page in the map's order.
+    await more(page)
     await page.waitForFunction(() => document.querySelectorAll(".mission-tree-node").length === 101)
     assert.equal(reads.length, 1)
     assert.match(reads[0], /^\?order=[^&]+&offset=50$/)
     assert.deepEqual(await rows(page), [...order.slice(0, 100), "t119"])
-    assert.deepEqual(await gaps(page), [[100, 119, "19 tasks not shown"]])
+    assert.equal(await page.locator(".mission-tree-more button").count(), 1)
     await settle(page)
     assert.equal(await page.locator(".mission-graph path[data-from]").count(), 88)
     assert.ok(await railGaps(page) <= 0.75, "rails meet the icons of rows read further")
-    await page.locator(".mission-tree-gap").getByRole("button", { name: "Show more", exact: true }).click()
+    await more(page)
     await page.waitForFunction(() => document.querySelectorAll(".mission-tree-node").length === 120)
     assert.deepEqual(await rows(page), order)
-    assert.deepEqual(await gaps(page), [])
+    assert.equal(await page.locator(".mission-tree-more").count(), 0)
     await settle(page)
     assert.deepEqual(await stubs(page), [], "every edge's both ends are shown")
     assert.equal(await page.locator(".mission-graph path[data-from]").count(), 108)
@@ -145,7 +149,7 @@ test("the tree shows a page of the display order with counted gaps and omitted e
 test("the reader opens a dependency the page does not hold by reading it, and shows all earlier results on request", async () => {
   const { page, errors, reads } = await open(paged())
   try {
-    await page.locator('.mission-tree-node[data-task-key="t119"] .mission-tree-task').click()
+    await page.locator('.mission-tree-node[data-task-key="t119"] .mission-tree-task').evaluate((button: HTMLButtonElement) => button.click())
     const reader = page.locator(".mission-reader")
     await reader.getByRole("heading", { name: "Task t119", exact: true }).waitFor()
     // Its row holds three of its five reports: the rest are counted, and read whole on request.
@@ -188,7 +192,7 @@ test("a reader target the page does not hold, a task or an earlier report, is re
 test("Show all reads the whole history again once a new report arrives, keeping the earlier ones", async () => {
   const value = paged(), f = await open(value)
   try {
-    await f.page.locator('.mission-tree-node[data-task-key="t119"] .mission-tree-task').click()
+    await f.page.locator('.mission-tree-node[data-task-key="t119"] .mission-tree-task').evaluate((button: HTMLButtonElement) => button.click())
     const reader = f.page.locator(".mission-reader")
     const earlier = reader.locator("section", { has: f.page.getByRole("heading", { name: "Previous and late results", exact: true }) })
     const excerpts = () => earlier.locator("details > summary .mission-advance-summary").allTextContents()
@@ -214,7 +218,7 @@ function withLateResult(value: MissionMap): MissionMap {
 const WHOLE_HISTORY = ["Summary of rep_late_new", ...[4, 3, 2, 1].map(index => `Summary of rep_attempt_${index}`)]
 /** Opens t119's reader and its whole history; the history's section and its excerpts. */
 async function showAllOf119(page: Page) {
-  await page.locator('.mission-tree-node[data-task-key="t119"] .mission-tree-task').click()
+  await page.locator('.mission-tree-node[data-task-key="t119"] .mission-tree-task').evaluate((button: HTMLButtonElement) => button.click())
   const earlier = page.locator(".mission-reader section", { has: page.getByRole("heading", { name: "Previous and late results", exact: true }) })
   await earlier.getByRole("button", { name: "Show all", exact: true }).click()
   return { earlier, excerpts: () => earlier.locator("details > summary .mission-advance-summary").allTextContents() }
@@ -283,21 +287,28 @@ function blockages(revision: number): MissionMap {
   return { ...paged(), id: "blockages", objective: "Objective blockages", revision, actors: [], tasks, reports: tasks.flatMap(task => task.report ? [task.report] : []) }
 }
 
-test("ordinary Show more reaches every task and hides the attention notice, with failed-window Retry independent", async () => {
+test("scrolling loads all 400 tasks without gap controls and preserves independent failed-window Retry", async () => {
   const value = blockages(4), f = await open(value)
   try {
-    const notice = f.page.locator(".mission-tree-attention"), failure = f.page.locator(".mission-tree-read")
+    const notice = attentionInfo(f.page), failure = f.page.locator(".mission-tree-read")
     await notice.waitFor()
-    for (let click = 0; await f.page.locator(".mission-tree-gap").count(); click++) {
-      assert.ok(click < 8, "at most seven ordinary pages")
+    for (let scroll = 0; (await rows(f.page)).length < value.tasks.length; scroll++) {
+      assert.ok(scroll < 8, "at most seven ordinary pages")
       const before = (await rows(f.page)).length
-      await f.page.locator(".mission-tree-gap").first().getByRole("button", { name: "Show more", exact: true }).click()
+      assert.ok(await f.page.locator(".mission-tree-more button").count() <= 1)
+      assert.equal(await f.page.locator(".mission-tree-gap").count(), 0)
+      await f.page.evaluate(() => {
+        const tree = document.querySelector(".mission-tree")!, flow = tree.querySelector<HTMLElement>(".mission-flow")!
+        const scroller = tree.getAttribute("data-scroller") === "panel" ? tree.closest<HTMLElement>(".mission-control")! : flow
+        scroller.scrollTop = scroller.scrollHeight
+      })
       await f.page.waitForFunction(count => document.querySelectorAll(".mission-tree-node").length > count, before)
     }
     assert.deepEqual(await rows(f.page), missionTaskOrder(value.tasks).map(task => task.key), "every task once, in order")
     assert.equal(await f.page.locator('.mission-tree-node[data-status="needs-input"]').count(), 300)
     assert.deepEqual(f.reads.map(query => new URLSearchParams(query).get("offset")), ["50", "100", "150", "200", "250", "300", "350"], "ordinary reads only")
     assert.equal(await notice.count(), 0, "no unseen attention tasks remain")
+    if (process.env.CODENOMAD_TEST_SCREENSHOTS) await f.page.screenshot({ path: path.join(process.env.CODENOMAD_TEST_SCREENSHOTS, "missions-400-tasks.png") })
     // Even on a fully shown plan, a failed attention read keeps its separate Retry.
     f.failTasks(true)
     await f.page.evaluate(async () => (await import("/src/stores/missions.ts")).missionStore.loadTasks("fixture", "blockages", { attention: 50 }))
@@ -311,20 +322,109 @@ test("ordinary Show more reaches every task and hides the attention notice, with
   } finally { await f.page.context().close() }
 })
 
+test("ordinary windows never claim displayed attention tasks are unread when only ready tasks remain", async () => {
+  const f = await open(blockages(4))
+  try {
+    for (let window = 0; window < 6; window++) {
+      const before = (await rows(f.page)).length
+      await more(f.page)
+      await f.page.waitForFunction(count => document.querySelectorAll(".mission-tree-node").length > count, before)
+    }
+    assert.equal((await rows(f.page)).length, 350)
+    assert.equal(await f.page.locator('.mission-tree-node[data-status="needs-input"]').count(), 300)
+    assert.equal(await f.page.locator('.mission-tree-node[data-task-key="b350"]').count(), 0, "only ready tasks remain unread")
+    assert.equal(await attentionInfo(f.page).getAttribute("aria-label"), "In this mission: 300 blocked, 0 failed, 0 awaiting a report, 0 with a notification pending")
+    assert.equal(await f.page.getByText(/more tasks need attention/).count(), 0)
+    assert.deepEqual(f.reads.map(query => new URLSearchParams(query).get("offset")), ["50", "100", "150", "200", "250", "300"], "no additional attention scans")
+    assert.deepEqual(f.errors, [])
+  } finally { await f.page.context().close() }
+})
+
+test("inactive task trees suspend the scroll continuation and resume it with the existing focus policy", async () => {
+  const f = await open(blockages(4))
+  try {
+    const before = (await rows(f.page)).length
+    await f.page.evaluate(() => (window as any).missionFixture.active(false))
+    await f.page.locator(".mission-tree-more").scrollIntoViewIfNeeded()
+    await settle(f.page); await settle(f.page)
+    assert.deepEqual(f.reads, [], "a visible sentinel in an inactive panel issues no task reads")
+    assert.equal((await rows(f.page)).length, before)
+    await f.page.evaluate(() => (window as any).missionFixture.active(true))
+    await f.page.waitForFunction(count => document.querySelectorAll(".mission-tree-node").length > count, before)
+    assert.ok(f.reads.some(query => new URLSearchParams(query).get("offset") === "50"))
+    assert.deepEqual(f.errors, [])
+  } finally { await f.page.context().close() }
+})
+
+test("keyboard fallback keeps focus and reads only the explicitly requested window", async () => {
+  const f = await open(paged())
+  let release!: () => void, entered!: () => void, requests = 0
+  const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { entered = resolve })
+  try {
+    const control = f.page.locator(".mission-tree-more button")
+    await control.focus()
+    await settle(f.page); await settle(f.page)
+    assert.deepEqual(f.reads, [], "reaching the fallback with the keyboard does not activate it")
+    await f.page.route("**/missions/panel-page", async route => { requests++; entered(); await gate; return route.fallback() })
+    await f.page.keyboard.press("Enter")
+    await started
+    assert.equal(await control.getAttribute("aria-disabled"), "true")
+    assert.equal(await control.evaluate(element => element === document.activeElement), true, "the pending read preserves keyboard focus")
+    await f.page.keyboard.press("Enter")
+    await settle(f.page)
+    assert.equal(requests, 1, "repeated activation during the read is ignored")
+    release()
+    await f.page.waitForFunction(() => document.querySelectorAll(".mission-tree-node").length >= 101)
+    await settle(f.page); await settle(f.page)
+    assert.equal(await control.evaluate(element => element === document.activeElement), true)
+    assert.equal((await rows(f.page)).length, 101, "one activation reads one window")
+    assert.equal(f.reads.length, 1)
+    assert.deepEqual(f.errors, [])
+  } finally { release?.(); await f.page.context().close() }
+})
+
+test("a failed scroll continuation waits for explicit Retry and keeps the loaded tree", async () => {
+  const f = await open(blockages(4))
+  try {
+    const before = await rows(f.page)
+    f.failTasks(true)
+    await f.page.locator(".mission-tree-more").scrollIntoViewIfNeeded()
+    const failure = f.page.locator(".mission-tree-read")
+    await failure.waitFor()
+    await settle(f.page)
+    assert.deepEqual(await rows(f.page), before)
+    assert.equal(f.reads.length, 1, "a failed visible sentinel never loops")
+    assert.equal(await f.page.locator(".mission-tree-more").count(), 0, "Retry is the only continuation control")
+    if (process.env.CODENOMAD_TEST_SCREENSHOTS) await f.page.screenshot({ path: path.join(process.env.CODENOMAD_TEST_SCREENSHOTS, "missions-scroll-failure.png") })
+    f.failTasks(false)
+    await failure.getByRole("button", { name: "Try again", exact: true }).click()
+    await failure.waitFor({ state: "detached" })
+    await f.page.waitForFunction(count => document.querySelectorAll(".mission-tree-node").length > count, before.length)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.page.context().close() }
+})
+
 test("a changed attention sequence counts nothing read before it as covered, and a failed middle window stays shown until it is read", async () => {
   const f = await open(blockages(3))
   try {
-    const notice = f.page.locator(".mission-tree-attention"), failure = f.page.locator(".mission-tree-read")
+    const notice = attentionInfo(f.page), failure = f.page.locator(".mission-tree-read")
     const blocked = () => f.page.locator('.mission-tree-node[data-status="needs-input"]').count()
     const idle = () => f.page.waitForFunction(async () => {
       const state = (await import("/src/stores/missions.ts")).missionStore.state("fixture")
       return state.status === "ready" && !state.taskReads?.blockages?.loading
         && document.querySelectorAll(".mission-tree-node").length === state.missions.find(value => value.id === "blockages")?.tasks.length
-        && !document.querySelector(".mission-tree-attention button:disabled")
     })
-    const showThem = async () => { await notice.getByRole("button", { name: "Show them", exact: true }).click(); await idle() }
-    for (let click = 0; click < 10 && await notice.count(); click++) await showThem()
-    assert.deepEqual([await notice.count(), await blocked()], [0, 200])
+    // Attention reads remain supported by the store independently of ordinary
+    // scroll windows; their sequence coverage drives the header's info tooltip.
+    const showThem = async (request: { attention: number }) => {
+      await f.page.evaluate(async request => (await import("/src/stores/missions.ts")).missionStore.loadTasks("fixture", "blockages", request), request)
+      await idle()
+    }
+    const coverage = () => f.page.evaluate(async () => (await import("/src/stores/missions.ts")).missionStore.state("fixture").taskAttention?.blockages)
+    for (const attention of [0, 50, 100, 150]) await showThem({ attention })
+    assert.equal(await blocked(), 200)
+    assert.deepEqual((await coverage())?.windows.sort((a, b) => a - b), [0, 50, 100, 150])
+    const previousSequence = (await coverage())?.sequence
     // Revision 4: 100 newer blockages, the same order. The automatic reread of the window at 50 fails, once.
     let failed = false
     f.failTasks(query => { if (failed || query.get("attention") !== "50") return false; failed = true; return true })
@@ -334,9 +434,12 @@ test("a changed attention sequence counts nothing read before it as covered, and
     await idle()
     // The windows at 100 and 150 were read again for the new sequence, the one at 50 failed: its failure stays.
     assert.match(await failure.innerText(), /These tasks could not be read\./)
-    assert.equal(await notice.locator("span").innerText(), "180 more tasks need attention", "the new first keys and the windows at 50, 200 and 250")
-    for (let click = 0; click < 10 && await notice.count(); click++) await showThem()
-    assert.deepEqual([await notice.count(), await failure.count(), await blocked()], [0, 0, 300], "every blockage, the failure answered")
+    assert.notEqual((await coverage())?.sequence, previousSequence)
+    assert.deepEqual((await coverage())?.windows.sort((a, b) => a - b), [0, 100, 150], "the failed window has no coverage in the new sequence")
+    assert.equal(await notice.getAttribute("aria-label"), "In this mission: 300 blocked, 0 failed, 0 awaiting a report, 0 with a notification pending")
+    for (const attention of [0, 50, 200, 250]) await showThem({ attention })
+    assert.deepEqual([await failure.count(), await blocked()], [0, 300], "every blockage, the failure answered")
+    assert.deepEqual((await coverage())?.windows.sort((a, b) => a - b), [0, 50, 100, 150, 200, 250])
     assert.deepEqual(f.errors, [])
   } finally { await f.page.context().close() }
 })
@@ -391,25 +494,19 @@ function crowded(): MissionMap {
     actors: [{ sessionId: "ses_recover", title: "Recovering worker", kind: "specialist", managed: true, roles: ["worker"], location: { directory: "/fixture" }, joinedAt: 1 }] }
 }
 
-test("tasks needing action beyond the pins show a notice of their own with the mission's counts; Show them reads them by name, then by attention window", async () => {
+test("off-page attention stays available in an info tooltip and every recovery action is reached through the single continuation", async () => {
   const f = await open(crowded(), [{ sessionId: "ses_recover", state: "idle-without-report" }])
   try {
-    const notice = f.page.locator(".mission-tree-attention")
+    const notice = attentionInfo(f.page)
     await notice.waitFor()
-    assert.deepEqual([await notice.locator("span").innerText(), await notice.locator("small").innerText()],
-      ["55 more tasks need attention", "In this mission: 15 blocked, 0 failed, 55 awaiting a report, 5 with a notification pending"])
-    assert.deepEqual(await gaps(f.page), [[70, 125, "55 tasks not shown"]], "the gap of the order is separate")
+    assert.equal(await notice.getAttribute("aria-label"), "In this mission: 15 blocked, 0 failed, 55 awaiting a report, 5 with a notification pending")
+    assert.equal(await f.page.locator(".mission-tree-gap").count(), 0)
     assert.equal(await f.page.locator(".mission-tree-recovery button").count(), 0, "no recovery task is shown yet")
-    // The first 50 by name, in the order the map named.
-    await notice.getByRole("button", { name: "Show them", exact: true }).click()
+    await more(f.page)
     await f.page.waitForFunction(() => document.querySelectorAll(".mission-tree-node").length === 120)
-    const named = `&keys=${Array.from({ length: 50 }, (_, index) => `c${String(70 + index).padStart(3, "0")}`).join(",")}`
-    assert.ok(f.reads.some(query => /^\?order=[^&]+&keys=/.test(query) && query.endsWith(named)), f.reads.join(" "))
-    assert.equal(await notice.locator("span").innerText(), "5 more tasks need attention")
-    // The rest by attention window.
-    await notice.getByRole("button", { name: "Show them", exact: true }).click()
+    await more(f.page)
     await f.page.waitForFunction(() => document.querySelectorAll(".mission-tree-node").length === 125)
-    assert.ok(f.reads.some(query => /^\?order=[^&]+&attention=50$/.test(query)), f.reads.join(" "))
+    assert.deepEqual(f.reads.map(query => new URLSearchParams(query).get("offset")), ["70", "120"])
     await notice.waitFor({ state: "detached" })
     assert.equal(await f.page.locator(".mission-tree-recovery button").count(), 55, "every recovery action is reachable")
     assert.deepEqual(f.errors, [])
@@ -453,7 +550,7 @@ for (const failure of ["network", "changed"] as const) test(`sliced task ${failu
   })
   try {
     const original = await rows(f.page), toolbar = f.page.locator(".mission-action-bar"), element = await toolbar.elementHandle()
-    await f.page.locator(".mission-tree-gap").first().getByRole("button", { name: "Show more", exact: true }).click()
+    await more(f.page)
     const read = f.page.locator(".mission-tree-read")
     await read.waitFor()
     assert.match(await read.innerText(), failure === "changed" ? /task list changed/ : /tasks could not be read/)
@@ -492,7 +589,7 @@ test("a real reconnect fences a held task continuation and never publishes its r
   })
   try {
     const original = await rows(f.page)
-    await f.page.locator(".mission-tree-gap").first().getByRole("button", { name: "Show more", exact: true }).click()
+    await more(f.page)
     await held; reconnected = true
     await f.page.evaluate(async () => {
       const { serverEvents } = await import("/src/lib/server-events.ts")

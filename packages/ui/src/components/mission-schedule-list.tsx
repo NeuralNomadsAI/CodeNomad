@@ -125,6 +125,6 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   </>
   const ownsSession = (sessionID: string) => schedules().some(doc => doc.id === props.selected
     && (doc.pendingPassage?.coordinatorSessionID === sessionID || doc.history.some(item => item.coordinatorSessionID === sessionID)))
-  return { entries, view, refresh, ownsSession,
+  return { entries, view, refresh, ownsSession, loading: list.loading,
     representation: (id: string) => list.error() || list.loading() || !list.fresh(id) ? undefined : list.rows().find(row => row.id === id)?.kind }
 }
