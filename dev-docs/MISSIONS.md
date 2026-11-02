@@ -411,9 +411,16 @@ passage exposes its conversation. The overview toggle reveals saved instructions
 
 `components/mission-schedule-controls.ts` retains every dispatched control or
 settings-activation request across panel remounts in per-window memory, bounded to
-128 unresolved objects. Exact positive receipts release a hold; pending deletion
-retains a visible row even after its inventory entry disappears. Refresh saved
-request performs reads only. An explicit Check may follow a positively read partial
+128 held objects. An exact complete positive receipt retains its confirmed outcome
+and minimum publication revision R in that entry. New mutations and Edit stay
+disabled until a fully validated display document for the same object and owner
+publishes at revision >= R. Remounts, same-owner revalidation and failed, partial or
+older display reads retain this obligation and the confirmed feedback. During this
+wait, Refresh saved request requests only a display refresh; an unresolved request
+uses its exact receipt read. Confirmed deletion releases matching retention and
+clears the current selection without waiting for publication of a deleted document;
+pending deletion retains a visible
+row even after its inventory entry disappears. An explicit Check may follow a positively read partial
 control; both request identities remain retained until their exact receipts settle.
 Never resend from reconnect, remount, display refresh or an unavailable/negative read.
 Revision preflight refuses a stale click before dispatch. Controls retain the
@@ -426,7 +433,10 @@ effective native setting, with an explicit disabled explanation and a fresh
 capability check before reservation. Its click preserves settings activation.
 First native activation
 asks for confirmation with the exact configuration paths; an uncertain activation
-keeps Play unsent, and receipt reconciliation leaves the next Play explicit.
+keeps Play unsent. A direct positive activation acknowledgement may continue the
+same user intention under its original view fences. Read-only recovery of activation
+retains the publication barrier and leaves the next Play explicit. Never replay an
+action or continue Play automatically from recovered activation or display publication.
 
 `mission-scheduling-decode.ts` reconstructs the controlled draft from a validated
 stored policy. Exact cron equivalence selects daily/weekday/monthly controls;

@@ -44,6 +44,7 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.readFailed": "Zamanlamalar yenilenemedi. Son görünüm korundu; işlemden önce yenileyin.",
   "missions.scheduleList.capacity": "Çok fazla onaylanmamış komut var. Yenisini göndermeden önce kayıtlı bir isteği çözün.",
   "missions.scheduleList.uncertain": "Bu istek onaylanmadı. Özgün kimliği korunuyor. Kayıtlı isteği yenileyin; otomatik yeniden gönderim yapılmaz.",
+  "missions.scheduleList.confirmedRefreshing": "Eylem doğrulandı. Başka bir eylemden önce güncel görünüm bekleniyor. Yeniden okumak için Kayıtlı isteği yenile kullanın.",
   "missions.scheduleList.activate": "Bu işlem yerel zamanlama gerektirir. Bu yapılandırma belgelerinde experimental.schedules etkinleştirilsin mi?\n{paths}\nİşlem sürmeden önce etkinleştirme onaylanmalıdır. Açık OFF korunur.",
   "missions.scheduleList.confirm.stop": "“{title}” kalıcı olarak durdurulsun mu? Gelecek geçişler devre dışı bırakılır. Başlatılmış araç etkileri sürebilir; konuşmalar ve sonuçlar korunur.",
   "missions.scheduleList.confirm.delete": "“{title}” silinsin mi? Kaldırmadan önce gelecek geçişler devre dışı bırakılır. Konuşmalar ve sonuçlar korunur. Onaysız temizlik görünür kalır.",
