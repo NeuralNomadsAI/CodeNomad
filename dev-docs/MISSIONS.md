@@ -337,6 +337,15 @@ stable prefix with the shared native source reader and launch envelope; unavaila
 moved, excluded or over-capacity sources block with an explanation. The original
 first-Play intent retains this text across acknowledgement loss and exact retries.
 Stored execution roots outside the editor's single directory-only scope stay read-only.
+`mission-editor-schedule.ts` owns its passive capability and document reads by view
+identity, client and native generation, and fences their responses by that owner and
+visibility; only a changed owner returns Scheduling to its first-read state. Showing the
+editor and Retry read both. Config, plugin and reconnection events revalidate the visible
+editor's capability with one read in flight and at most one trailing read. Task revisions
+and transcript releases read nothing. During a successful revalidation the shown fields,
+values, focus and open picker stay unchanged, and the panel's existing update icon is the
+only indicator; a failed document read shows its error with Retry and locks the form.
+Save rereads the document before dispatch.
 Create stores a paused immediate Mission or a paused calendar-owned document.
 
 H9 editing uses the document projection and the mutator's fresh guards:
@@ -976,8 +985,7 @@ capability reader independently recognizes the consumed API shapes and reads the
 effective Location flag and its block origin through the acquired connection.
 The depth snapshot exposes that selected block's document path as `origin`,
 including when its missing depth selects the native default. The editor displays
-the effective block separately from its project write target; Scheduling displays
-the acquired capability read's effective block too.
+the effective block separately from its project write target.
 `node --import tsx scripts/test-subagent-depth-settings-native.mjs <absolute-isolated-opencode-cli>`
 (also in the latest-runtime CI job) qualifies this against a private runtime: depth
 capability, JSONC save/reset preserving comments and siblings, Global image storage

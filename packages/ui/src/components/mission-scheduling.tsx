@@ -12,7 +12,6 @@ export type MissionSchedulingLock = "uncertain" | "passage" | "launched-once" | 
 export function MissionScheduling(props: {
   draft: MissionSchedulingDraft; directory?: string; sources: MissionSchedulingSourceLists
   capability: "available" | "activatable" | "missing" | "loading"
-  origin?: string | null
   lockReason?: MissionSchedulingLock | null; disabled?: boolean
   /** A frozen prospective Play instant, rather than a ticking browser clock. */
   anchorAt: number
@@ -66,7 +65,6 @@ export function MissionScheduling(props: {
     <summary>{t("missions.scheduling.title")} · {t(retained() ? "missions.scheduling.retained.title" : `missions.scheduling.frequency.${props.draft.frequency}`)}
       {" · "}{t(`missions.scheduling.condition.${props.draft.condition}`)}</summary>
     <Show when={reason()}>{text => <p id={description} role="status">{text()}</p>}</Show>
-    <Show when={props.origin}>{origin => <p>{t("missions.settings.effectiveOrigin")} <code dir="ltr" title={origin()}>{origin()}</code></p>}</Show>
     <Show when={retained()}>{reason => <section aria-label={t("missions.scheduling.retained.title")}>
       <p role="status">{t(`missions.scheduling.retained.${reason()}`)}</p>
       <pre dir="ltr">{JSON.stringify(props.draft.stored!.policy, null, 2)}</pre>

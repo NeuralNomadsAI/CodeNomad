@@ -494,7 +494,7 @@ test("the depth editor states the nesting rule and whether General subagents can
   } finally { await page.close() }
 })
 
-test("the mission editor displays the OpenCode configuration file only when capabilities name a path", async () => {
+test("the mission editor's Scheduling never displays an OpenCode configuration path", async () => {
   const page = await browser.newPage({ locale: "en-US" }), errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   let origin: string | null = "/ancestor/.opencode/opencode.jsonc"
@@ -510,14 +510,9 @@ test("the mission editor displays the OpenCode configuration file only when capa
       await missionGeneralAction(page, "Create mission").click()
       const editor = page.locator("form.mission-editor"), scheduling = editor.locator(".mission-scheduling")
       await scheduling.locator("summary").click()
-      if (origin) {
-        await scheduling.getByText(`OpenCode configuration file: ${origin}`, { exact: true }).waitFor()
-        assert.equal(await scheduling.locator("code").getAttribute("dir"), "ltr")
-      } else {
-        assert.equal(await scheduling.getByText(/OpenCode configuration file:/).count(), 0)
-        assert.equal(await scheduling.getByText("No document path", { exact: true }).count(), 0)
-      }
-      assert.equal(await scheduling.getByText("/global/opencode.jsonc", { exact: true }).count(), 0, "an activation target never substitutes for the effective origin")
+      await page.waitForFunction(() => !document.querySelector<HTMLOptionElement>('form.mission-editor .mission-scheduling option[value="daily"]')?.disabled)
+      assert.equal(await scheduling.getByText(/OpenCode configuration file:|No document path|opencode\.jsonc/).count(), 0)
+      assert.equal(await scheduling.locator("code").count(), 0)
       await editor.getByRole("button", { name: "Cancel", exact: true }).click()
     }
     assert.deepEqual(errors, [])
