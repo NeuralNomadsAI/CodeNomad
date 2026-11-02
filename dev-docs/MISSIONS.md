@@ -699,6 +699,8 @@ field windows. Lifecycle receipt/pending collections use `field:"control"` with
 `part:"receipts"|"pending"`; lifecycle identity and counts stay in compact control.
 Field lanes retain the root field and part separately; the owning root descriptor
 invalidates structured and raw part windows together, and Retry preserves the exact part.
+Pending first reads share that invalidation. Publication rechecks the owning descriptor;
+successful reads retire only failures unchanged since their admission.
 The selected mission reads its unified document projection. `document`, boolean cleanup
 `documentPending` and history `requestID` retain their exact shapes; scheduling editors
 keep their descriptor-pinned bodies/content reads. Snapshot/admission, internal and
@@ -731,9 +733,10 @@ new completions are recorded without advancing over unseen/unloaded ones. Exact 
 retry reconciliation retains its single-mission read and immutable request/revision/option.
 
 Project-scoped completion records inherit an existing folder record before durable-counter
-seeding. Saved whole-inventory watermarks retain their unseen boundary; undiscovered
-hashed-ID positives persist separately across reloads until exact discovered rows supply
-their finish sequences. Passive first-window validation retains a failed middle selector;
+seeding. Saved whole-inventory watermarks retain their unseen boundary; bounded legacy
+hashed-ID positives persist across reloads and partial discovery, covering colliding IDs
+while exact discovered rows also supply sequence positives. Passive first-window validation
+retains a failed middle selector;
 an obsolete collection order marks that failure changed until an explicit restart succeeds.
 
 Fixed host, plugin and workspace unavailable refusals retain their typed cause through

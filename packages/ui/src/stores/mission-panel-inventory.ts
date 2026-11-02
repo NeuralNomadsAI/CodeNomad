@@ -147,7 +147,8 @@ export function createMissionPanelInventory(input: {
   async function readLane(instanceId: string, key: string, selector: Selector, parent?: MissionPanelReadScope, restart = false): Promise<void> {
     const own = entry(instanceId), target = lane(own, key)
     if (selector.source === "mission") target.field = { missionID: selector.missionID, field: selector.field, part: selector.part, text: selector.text }
-    const superseded = restart ? new Map(target.failures) : undefined
+    const admittedFailures = new Map(target.failures)
+    const fieldDigest = selector.source === "mission" && selector.field ? own.maps.get(selector.missionID)?.header.collections[selector.field]?.digest : undefined
     const signature = JSON.stringify([selector.source, "missionID" in selector ? selector.missionID : null, selector.source === "mission" ? [selector.field, selector.part, selector.text] : null, offsetOf(selector), orderOf(selector)]), waiting = target.pending
     if (!restart && waiting && target.pendingSelector === signature && target.pendingCurrent?.()) return waiting
     const serial = ++readSerial
@@ -155,7 +156,9 @@ export function createMissionPanelInventory(input: {
     const life = parent ? { ...ownLife, deadline: Math.min(ownLife.deadline!, parent.deadline!), signal: AbortSignal.any([ownLife.signal!, parent.signal!]), current: () => ownLife.current() && parent.current() } : ownLife
     const failed = (error: unknown) => {
       if (life.current()) {
-        target.failures.set(signature, { selector, changed: error instanceof MissionTaskPageReadError && error.reason === "changed" })
+        const previous = target.failures.get(signature)
+        if (!previous || admittedFailures.get(signature) === previous) target.failures.set(signature, { selector,
+          changed: previous?.changed === true || error instanceof MissionTaskPageReadError && error.reason === "changed" })
         target.failed = target.failures.values().next().value
       }
     }
@@ -254,15 +257,16 @@ export function createMissionPanelInventory(input: {
         }
         assertTaskReadLive(life.signal, life.deadline)
         if (!life.current()) return
+        if (selector.source === "mission" && selector.field && own.maps.get(selector.missionID)?.header.collections[selector.field]?.digest !== fieldDigest) throw new MissionTaskPageReadError("changed")
         target.pages = pages; target.inventoryRows = inventoryRows
         if (advancing) target.cycle = cycle
         // Only this exact failed window can clear its failure.
-        target.failures.delete(signature)
-        for (const [id, failure] of target.failures) if (offsetOf(failure.selector) === window.offset && (orderOf(failure.selector) === undefined || orderOf(failure.selector) === window.order)) target.failures.delete(id)
+        if (target.failures.get(signature) === admittedFailures.get(signature)) target.failures.delete(signature)
+        for (const [id, failure] of target.failures) if (admittedFailures.get(id) === failure && offsetOf(failure.selector) === window.offset && (orderOf(failure.selector) === undefined || orderOf(failure.selector) === window.order)) target.failures.delete(id)
         if (window.offset === 0) for (const [id, failure] of target.failures) {
           const oldOrder = orderOf(failure.selector)
-          if (superseded?.get(id) === failure) target.failures.delete(id)
-          else if (oldOrder !== undefined && oldOrder !== window.order) failure.changed = true
+          if (restart && admittedFailures.get(id) === failure) target.failures.delete(id)
+          else if (oldOrder !== undefined && oldOrder !== window.order && !failure.changed) target.failures.set(id, { ...failure, changed: true })
         }
         target.failed = target.failures.values().next().value
       } catch (error) {
@@ -304,7 +308,7 @@ export function createMissionPanelInventory(input: {
     if (!life.current()) throw new DOMException("Obsolete mission owner", "AbortError")
     for (const target of own.lanes.values()) if (target.field?.missionID === id && target.field.field) {
       const field = target.field.field, before = previous?.header.collections[field], after = header.collections[field]
-      if (before && after && before.digest !== after.digest && target.pages.size) {
+      if (before && after && before.digest !== after.digest && (target.pages.size || target.pending)) {
         const selector: Selector = { source: "mission", ...target.field, window: { offset: 0 } }
         target.failures.set(`header:${after.digest}`, { selector, changed: true }); target.failed = target.failures.values().next().value
       }

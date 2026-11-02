@@ -75,6 +75,15 @@ async function projectControls() {
 }
 
 if (reload) {
+  if (process.env.MISSION_COLLISION_CHECK) test("legacy collision positives survive reload before the originally viewed row is discovered", () => {
+    const { folder, scope, rows } = JSON.parse(process.env.MISSION_COLLISION_CHECK!)
+    assert.deepEqual(rows.map((row: ReturnType<typeof completion>) => missionFinishedSeen(scope, row)), [true, false, true, true])
+    seedMissionFinishedSeen(scope, 100, folder, [rows[3]])
+    assert.equal(missionFinishedSeen(scope, rows[2]), true)
+    seedMissionFinishedSeen(scope, 101, folder, [rows[2]])
+    assert.deepEqual(rows.map((row: ReturnType<typeof completion>) => missionFinishedSeen(scope, row)), [true, false, true, true])
+    assert.equal(missionFinishedSeen(scope, { id: "later", finishSequence: 5 }), false)
+  })
   if (process.env.MISSION_UPGRADE_CHECK) test("a partial folder upgrade retains undiscovered positive exceptions across reload", () => {
     const { folder, scope, rows } = JSON.parse(process.env.MISSION_UPGRADE_CHECK!)
     assert.deepEqual(rows.map((row: ReturnType<typeof completion>) => missionFinishedSeen(scope, row)), [true, false, true])
@@ -98,6 +107,17 @@ if (reload) {
     assert.equal(missionProjectView("unknown-playbook").reader, undefined)
   })
 } else {
+  test("discovering a colliding legacy positive first preserves the original seen mission and unopened boundary", () => {
+    const folder = "/legacy-collision", scope = JSON.stringify([folder, "project"])
+    const rows = [{ id: "historical", finishSequence: 1 }, { id: "unopened", finishSequence: 2 },
+      { id: "msn_6afe5522b1991b38a5536702", finishSequence: 3 }, { id: "msn_25cb5286530d0229edc48088", finishSequence: 4 }]
+    markMissionsFinishedSeen(folder, [], rows.slice(0, 1)); markMissionsFinishedSeen(folder, [rows[2].id], rows)
+    seedMissionFinishedSeen(scope, 4, folder, rows.slice(0, 1))
+    assert.equal(missionFinishedSeen(scope, rows[2]), true)
+    seedMissionFinishedSeen(scope, 99, folder, [rows[3]])
+    assert.deepEqual(rows.map(row => missionFinishedSeen(scope, row)), [true, false, true, true])
+    reloadWith({ MISSION_COLLISION_CHECK: JSON.stringify({ folder, scope, rows }) })
+  })
   test("folder completion upgrade keeps boundary and pending positives through partial discovery and reload", () => {
     const folder = "old-folder-upgrade", scope = JSON.stringify([folder, "project"]), rows = range(0, 3)
     markMissionsFinishedSeen(folder, [], rows.slice(0, 1))

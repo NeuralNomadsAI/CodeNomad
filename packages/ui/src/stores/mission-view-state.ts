@@ -149,7 +149,6 @@ export function seedMissionFinishedSeen(scope: string, finishHighWater: number, 
   for (const row of discovered) if (row.finishSequence !== undefined && legacy.has(seenId(row.id))) {
     if (row.finishSequence > watermark) seen.add(row.finishSequence.toString(36))
   }
-  for (const row of discovered) if (row.finishSequence !== undefined) legacy.delete(seenId(row.id))
   if (previous?.partial && readFinishedSeen(scope) === previous && seen.size === previous.seen.size && legacy.size === (previous.legacy?.size ?? 0)) return
   savePartialSeen(scope, { watermark, seen, legacy, partial: true })
   setSeenVersion(value => value + 1)
@@ -162,7 +161,7 @@ function savePartialSeen(scope: string, record: FinishedSeen): void {
     if (saved.length + sequence.length + 1 > MAX_LAYOUT_VALUE_LENGTH) break
     saved += `${sequence},`
   }
-  // Undiscovered ID positives remain separate until exact rows supply sequences.
+  // Bounded legacy hashes also cover colliding, still-undiscovered IDs.
   if (record.legacy?.size) writeClientLayoutValue(legacySeenKey(scope), [...record.legacy].join(""))
   else removeClientLayoutValue(legacySeenKey(scope))
   writeClientLayoutValue(seenKey(scope), saved)
