@@ -11,7 +11,7 @@ before(async () => {
   const fixture = await borrowFixture({
       name: "drawer-accessibility",
       routes: [
-        { path: "/drawer-accessibility", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/drawer-accessibility.tsx\"></script></body></html>" },
+        { path: "/drawer-accessibility", html: "<html><head><link rel=\"icon\" href=\"data:,\"></head><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/drawer-accessibility.tsx\"></script></body></html>" },
       ],
     })
   try {

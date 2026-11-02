@@ -5,7 +5,7 @@ import { createServer, type Server } from "node:http"
 import path from "node:path"
 import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { NativeMissionDocumentStore } from "../../../server/src/missions/mission-document-store"
 import { missionDocumentChanges as changes } from "../../../server/src/missions/mission-document-state"
 import { missionScheduleView } from "../../../server/src/missions/mission-schedule-view"
@@ -242,10 +242,19 @@ test("informed activation lists exact paths and its lost ACK never sends Play au
     assert.match(await dialog.innerText(), /experimental.schedules.*\/private\/config\/opencode.jsonc/s)
     await dialog.getByRole("button", { name: "Start", exact: true }).click()
     await button(page, "Refresh saved request").waitFor()
+    // Receipt settlement releases the hold before its parent's list revalidation.
+    // Wait for that exact activated revision to traverse the real response/render path.
+    const refreshed = page.waitForResponse(async response => response.request().method() === "GET"
+      && new URL(response.url()).pathname.endsWith("/missions/scheduled")
+      && (await response.json()).schedules?.some((row: any) => row.id === f.doc.id && row.revision === f.doc.revision))
     await button(page, "Refresh saved request").click()
     await button(page, "Refresh saved request").waitFor({ state: "detached" })
+    await (await refreshed).finished()
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     assert.equal(f.posts.length, 1); assert.equal(f.posts[0].target.endsWith("/schedule-settings"), true)
-    f.lost = undefined; await click(page, "Play"); await button(page, "Pause").waitFor()
+    f.lost = undefined; await click(page, "Play"); await button(page, "Pause").waitFor().catch(async error => {
+      throw new Error(`${error}\n${JSON.stringify({ posts: f.posts, reads: f.reads, document: f.doc })}\n${await detail(page).innerText()}\n${f.errors.join("\n")}`)
+    })
     assert.deepEqual(f.posts.map(post => post.action), [undefined, "play"])
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
@@ -349,6 +358,7 @@ for (const alreadyReading of [false, true]) test(`a passive list refresh between
   try {
     // The schedule and journal inventories load independently. A native click on
     // the global Refresh button is admitted only after its journal read finishes.
+    await page.waitForFunction(() => (window as any).missionFixture.snapshot().status === "loading")
     assert.equal(await page.getByRole("button", { name: "Refresh mission map", exact: true }).isDisabled(), true)
     releaseJournal()
     await page.getByRole("button", { name: "Refresh mission map", exact: true }).and(page.locator(":enabled")).waitFor()

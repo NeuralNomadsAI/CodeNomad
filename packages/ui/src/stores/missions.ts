@@ -1,21 +1,34 @@
 import { serverApi } from "../lib/api-client"
 import { createEventRefreshScheduler, type RefreshUrgency } from "../lib/event-refresh-scheduler"
 import { serverEvents } from "../lib/server-events"
-import { createMissionStore } from "./mission-store"
+import { createMissionPanelInventory } from "./mission-panel-inventory"
 import { instances } from "./instances"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
+import { createRoot, createComputed, untrack } from "solid-js"
 
-export const missionStore = createMissionStore((instanceId, request) => serverApi.fetchMissions(instanceId, request),
-  (instanceId, missionId, request, scope) => {
+export const missionStore = createMissionPanelInventory({
+  scope: instanceId => instances().get(instanceId)?.folder ?? instanceId,
+  projectID: instanceId => instances().get(instanceId)?.metadata?.project?.id,
+  capture: instanceId => {
+    const origin = instances().get(instanceId), client = origin?.client, folder = origin?.folder, projectID = origin?.metadata?.project?.id, generation = getOpenCodeInstanceGeneration(instanceId)
+    return () => instances().get(instanceId)?.client === client && instances().get(instanceId)?.folder === folder
+      && instances().get(instanceId)?.metadata?.project?.id === projectID && getOpenCodeInstanceGeneration(instanceId) === generation
+  },
+  read: (instanceId, selector, scope) => {
+    const origin = instances().get(instanceId), client = origin?.client, folder = origin?.folder, generation = getOpenCodeInstanceGeneration(instanceId)
+    return serverApi.fetchMissionPanel(instanceId, selector, { ...scope, projectID: scope.projectID ?? origin?.metadata?.project?.id,
+      current: () => scope.current() && instances().get(instanceId)?.client === client && instances().get(instanceId)?.folder === folder && getOpenCodeInstanceGeneration(instanceId) === generation })
+  },
+  tasks: (instanceId, missionId, request, scope) => {
     const origin = instances().get(instanceId), client = origin?.client, folder = origin?.folder, generation = getOpenCodeInstanceGeneration(instanceId)
     return serverApi.fetchMissionTasks(instanceId, missionId, request, { ...scope, current: () => scope.current()
       && instances().get(instanceId)?.client === client && instances().get(instanceId)?.folder === folder && getOpenCodeInstanceGeneration(instanceId) === generation })
-  })
+  } })
 
 // Every native status change of a large running family is an invalidation:
 // activity revalidates at a bounded rate, journal changes promptly.
 const refreshes = createEventRefreshScheduler((instanceId) => {
-  if (missionStore.demandedInstanceIds().includes(instanceId)) return missionStore.refresh(instanceId)
+  if (missionStore.demandedInstanceIds().includes(instanceId)) return missionStore.refresh(instanceId, false)
 })
 
 export function activateMissionDemand(instanceId: string): void {
@@ -77,4 +90,21 @@ serverEvents.on("workspace.stopped", (event) => {
   if (event.type !== "workspace.stopped") return
   refreshes.cancel(event.workspaceId)
   missionStore.clear(event.workspaceId)
+})
+
+// Observe transitions, rather than only comparing endpoints when a request returns:
+// client/folder/project A→B→A permanently retires the earlier operation lifetime.
+createRoot(() => {
+  const previous = new Map<string, { client: unknown; folder?: string; project?: string; generation: number }>()
+  createComputed(() => {
+    const values = instances(), ids = missionStore.trackedInstanceIds()
+    for (const id of ids) {
+      const instance = values.get(id), next = { client: instance?.client, folder: instance?.folder, project: instance?.metadata?.project?.id, generation: getOpenCodeInstanceGeneration(id) }, before = previous.get(id)
+      previous.set(id, next)
+      if (before && (before.client !== next.client || before.folder !== next.folder || before.project !== next.project || before.generation !== next.generation)) untrack(() => {
+        missionStore.invalidateTasks(id); scheduleRefresh(id, "urgent")
+      })
+    }
+    for (const id of previous.keys()) if (!ids.includes(id)) previous.delete(id)
+  })
 })

@@ -3,7 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { chromium, type Browser } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -64,7 +64,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     if (route.request().method() !== "GET") writes.push(path)
     if (path.endsWith("/missions")) {
       if (route.request().method() === "POST") {
-        ordinary = { ...mission, id: "msn_ordinary", objective: route.request().postDataJSON().objective, tasks: [], reports: [] }
+        ordinary = { ...mission, id: "msn_ordinary", objective: route.request().postDataJSON().objective, tasks: [], reports: [], briefing: undefined }
         return route.fulfill({ json: { mission: ordinary } })
       }
       return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(ordinary ? [ordinary] : []), generatedAt: 1, discardedEvents: 0 } })

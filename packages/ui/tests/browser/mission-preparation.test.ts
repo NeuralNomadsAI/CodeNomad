@@ -38,6 +38,12 @@ async function setup(page: Page, lose = false, calendar?: Awaited<ReturnType<typ
   await page.route("**/workspaces/fixture/instance/api/provider**", route => route.fulfill({ json: { data: [{ id: "p", name: "Provider P" }] } }))
   await page.route("**/api/workspaces/fixture/missions**", async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname
+    if (pathname.endsWith("/panel-page")) return route.fulfill({ json: await f.control.panelPage(request.postDataJSON()) })
+    if (pathname.endsWith("/content")) {
+      const params = Object.fromEntries(new URL(request.url()).searchParams)
+      return route.fulfill({ json: { available: true, ...await f.control.content({ ...params, missionID: f.mission.id,
+        ...(params.offset ? { offset: Number(params.offset) } : {}) } as any) } })
+    }
     if (pathname.endsWith("/capabilities")) return route.fulfill({ json: { location: { directory },
       api: { available: !!calendar }, enabled: !!calendar, activation: { available: false, reason: "missing-api", targets: [] } } })
     if (request.method() !== "GET") {

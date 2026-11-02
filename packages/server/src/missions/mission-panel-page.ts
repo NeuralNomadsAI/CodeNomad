@@ -2,6 +2,8 @@ import { z } from "zod"
 import { Exit, Schema, SchemaRepresentation } from "effect"
 import { contentDigest } from "./inspect-view"
 import { missionTaskRequestSchema } from "./mission-compact-map"
+import type { MissionPanelCursor, MissionPanelPage, MissionPanelPageResult, MissionPanelPiece } from "./mission-panel-wire"
+export type { MissionPanelCursor, MissionPanelPage, MissionPanelPageResult, MissionPanelPageRequest, MissionPanelPiece, MissionPanelPageFailure } from "./mission-panel-wire"
 
 /** Opt-in display transport: budgets include the complete compact-JSON HTTP body, including
  * its envelope and continuations. Limits bind transfers and selectors, never source counts. */
@@ -10,41 +12,44 @@ export const MISSION_PANEL_REQUEST_BYTES = 16 * 1024
 export const MISSION_PANEL_PAGE_ROWS = 50
 
 const number = z.number().int().nonnegative().safe()
+const window = z.object({ offset: number, order: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional() }).strict()
 export const missionPanelCursorSchema = z.object({ digest: z.string().regex(/^[A-Za-z0-9_-]{43}$/), index: number, offset: number }).strict()
 export const missionPanelPageRequestSchema = z.discriminatedUnion("source", [
-  z.object({ source: z.literal("summaries"), cursor: missionPanelCursorSchema.optional() }).strict(),
-  z.object({ source: z.literal("cleanups"), cursor: missionPanelCursorSchema.optional() }).strict(),
+  z.object({ source: z.literal("summaries"), window: window.optional(), initial: z.literal(true).optional(), cursor: missionPanelCursorSchema.optional() }).strict(),
+  z.object({ source: z.literal("cleanups"), window: window.optional(), cursor: missionPanelCursorSchema.optional() }).strict(),
   z.object({ source: z.literal("mission"), missionID: z.string().min(1).max(100),
-    field: z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(64).optional(), cursor: missionPanelCursorSchema.optional() }).strict(),
+    field: z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/).max(64).optional(), part: z.enum(["receipts", "pending"]).optional(), text: z.literal(true).optional(), header: z.literal(true).optional(), window: window.optional(), cursor: missionPanelCursorSchema.optional() }).strict(),
   z.object({ source: z.literal("tasks"), task: missionTaskRequestSchema, cursor: missionPanelCursorSchema.optional() }).strict(),
   z.object({ source: z.literal("activity"), missionID: z.string().min(1).max(100), actorOffset: number.optional(),
     actorOrder: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional(), cursor: missionPanelCursorSchema.optional() }).strict(),
   z.object({ source: z.literal("marks"), missionOffset: number.optional(), missionOrder: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional(), cursor: missionPanelCursorSchema.optional() }).strict(),
-]).refine(value => Buffer.byteLength(JSON.stringify(value)) <= MISSION_PANEL_REQUEST_BYTES, "Mission panel selector exceeds its byte budget")
+]).refine(value => value.source !== "mission" || !value.header || value.field === undefined && value.window === undefined,
+  "A header has no field/window").refine(value => value.source !== "mission" || value.part === undefined || value.field === "control" && !value.header,
+  "Control parts belong to the control field").refine(value => value.source !== "mission" || !value.text || value.field !== undefined && value.window !== undefined && !value.header,
+  "Text windows name a field and window").refine(value => Buffer.byteLength(JSON.stringify(value)) <= MISSION_PANEL_REQUEST_BYTES, "Mission panel selector exceeds its byte budget")
 
-export type MissionPanelPageRequest = z.infer<typeof missionPanelPageRequestSchema>
-export type MissionPanelCursor = z.infer<typeof missionPanelCursorSchema>
 /** One row's exact JSON, or a slice of it. Join slices by index and offset, parse only
  * once characters have all arrived. A partial row supplies no absence or mutation evidence. */
-export interface MissionPanelPiece { index: number; offset: number; characters: number; text: string }
-export interface MissionPanelPage {
-  available: true
-  version: 1
-  projectID: string
-  source: MissionPanelPageRequest["source"]
-  missionID?: string
-  field?: string
-  revision?: number
-  phase?: "context" | "observed"
-  observedAt?: number
-  discardedEvents?: number
-  controlUnavailable?: boolean
-  notificationUnavailable?: boolean
-  cleanupUnavailable?: boolean
-  page: { digest: string; total: number; pieces: MissionPanelPiece[]; next?: MissionPanelCursor }
+
+/** Independent logical windows: content commits this window; order commits the whole
+ * chosen collection, including row values, so a stale continuation refuses. */
+export function missionPanelWindow(header: Omit<MissionPanelPage, "page" | "available" | "version">,
+  values: readonly unknown[], selection: { offset: number; order?: string }, cursor?: MissionPanelCursor): MissionPanelPageResult {
+  const order = contentDigest(JSON.stringify(values)), offset = Math.min(selection.offset, values.length), end = Math.min(offset + MISSION_PANEL_PAGE_ROWS, values.length)
+  if (selection.order !== undefined && selection.order !== order) return { available: false, reason: "changed" }
+  return missionPanelPage({ ...header, window: { order, offset, end, total: values.length } }, values.slice(offset, end), cursor)
 }
-export type MissionPanelPageFailure = { available: false; reason: "invalid-request" | "changed" | "mission-not-found" | "field-not-found" | "invalid-cursor" | "damaged" | "observation-unavailable" }
-export type MissionPanelPageResult = MissionPanelPage | MissionPanelPageFailure
+
+/** Exact raw JSON fields remain readable without assembling an arbitrarily wide
+ * scalar/row in the renderer. One logical row is one surrogate-safe 32 Ki-unit
+ * text window; its collection identity commits the complete field JSON. */
+export function missionPanelTextWindow(header: Omit<MissionPanelPage, "page" | "available" | "version">, value: unknown,
+  selection: { offset: number; order?: string }, cursor?: MissionPanelCursor): MissionPanelPageResult {
+  const text = JSON.stringify(value) ?? "null", order = contentDigest(text), total = Math.ceil(text.length / 32768), offset = Math.min(selection.offset, total), end = Math.min(offset + 1, total)
+  if (selection.order !== undefined && selection.order !== order) return { available: false, reason: "changed" }
+  const boundary = (at: number) => at < text.length && /[\uDC00-\uDFFF]/.test(text[at] ?? "") && /[\uD800-\uDBFF]/.test(text[at - 1] ?? "") ? at - 1 : Math.min(at, text.length)
+  return missionPanelPage({ ...header, text: true, window: { order, offset, end, total } }, offset < total ? [text.slice(boundary(offset * 32768), boundary(end * 32768))] : [], cursor)
+}
 
 /** UTF-8 bytes on the wire, including JSON escaping and every nested field. */
 export const missionPanelBytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value))
@@ -94,11 +99,13 @@ export function missionPanelPage(header: Omit<MissionPanelPage, "page" | "availa
 const count = { type: "integer", minimum: 0 } as const
 const cursor = { type: "object", properties: { digest: { type: "string", minLength: 43, maxLength: 43 }, index: count, offset: count },
   required: ["digest", "index", "offset"], additionalProperties: false } as const
+const windowInput = { type: "object", properties: { offset: count, order: { type: "string", minLength: 43, maxLength: 43 } }, required: ["offset"], additionalProperties: false } as const
+const windowOutput = { type: "object", properties: { offset: count, end: count, total: count, order: { type: "string", minLength: 43, maxLength: 43 } }, required: ["order", "offset", "end", "total"], additionalProperties: false } as const
 export const missionPanelPageInputSchema = {
   type: "object", properties: {
-    source: { type: "string", enum: ["summaries", "cleanups", "mission", "tasks", "activity", "marks"] }, cursor, actorOffset: count, missionOffset: count,
+    source: { type: "string", enum: ["summaries", "cleanups", "mission", "tasks", "activity", "marks"] }, cursor, window: windowInput, initial: { type: "boolean", const: true }, header: { type: "boolean", const: true }, text: { type: "boolean", const: true }, actorOffset: count, missionOffset: count,
     actorOrder: { type: "string", minLength: 43, maxLength: 43 }, missionOrder: { type: "string", minLength: 43, maxLength: 43 },
-    missionID: { type: "string", minLength: 1, maxLength: 100 }, field: { type: "string", minLength: 1, maxLength: 64 },
+    missionID: { type: "string", minLength: 1, maxLength: 100 }, field: { type: "string", minLength: 1, maxLength: 64 }, part: { type: "string", enum: ["receipts", "pending"] },
     task: { type: "object", properties: { missionID: { type: "string", minLength: 1, maxLength: 100 },
       order: { type: "string", maxLength: 64 }, offset: count, attention: count,
       keys: { type: "array", maxItems: 50, items: { type: "string", maxLength: 64 } },
@@ -114,7 +121,7 @@ export const missionPanelPageOutputSchema = {
   oneOf: [{ type: "object", properties: {
     available: { type: "boolean", const: true }, version: { type: "integer", const: 1 }, projectID: { type: "string", maxLength: 240 },
     source: { type: "string", enum: ["summaries", "cleanups", "mission", "tasks", "activity", "marks"] }, missionID: { type: "string", maxLength: 100 },
-    field: { type: "string", maxLength: 64 }, revision: count, discardedEvents: count,
+    field: { type: "string", maxLength: 64 }, part: { type: "string", enum: ["receipts", "pending"] }, text: { type: "boolean", const: true }, revision: count, discardedEvents: count, window: windowOutput, header: { type: "boolean", const: true }, finishHighWater: count,
     phase: { type: "string", enum: ["context", "observed"] }, observedAt: { type: "number" },
     controlUnavailable: { type: "boolean" }, notificationUnavailable: { type: "boolean" }, cleanupUnavailable: { type: "boolean" },
     page: { type: "object", properties: { digest: { type: "string", minLength: 43, maxLength: 43 }, total: count, next: cursor,

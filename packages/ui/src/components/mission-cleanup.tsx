@@ -44,7 +44,7 @@ export function MissionCleanupPanel(props: {
     const instanceId = props.instanceId
     const viewCurrent = captureView(), operation = ++attempt
     const current = () => alive && operation === attempt && viewCurrent() && Boolean(rows().get(key) && missionCleanupPending(rows().get(key)!))
-    setPending(saved.deletionID); setError("")
+    setPending(key); setError("")
     try {
       // Display data is never destructive authority. Reconcile the original
       // intent before an explicit retry, then let the native bridge revalidate.
@@ -69,7 +69,7 @@ export function MissionCleanupPanel(props: {
     <For each={[...rows().keys()]}>{key => <Show when={rows().get(key)}>{item => <MissionListItem text={item().objective} title={item().objective}
       status={<span role="status">{t("missions.cleanup.counts", { removed: item().removed, retained: item().retained, pending: item().pending })}</span>}
       statusKind={missionCleanupPending(item()) ? "needs-input" : "completed"}
-      actions={missionCleanupPending(item()) ? [{ key: "retry", label: t(pending() === item().deletionID ? "missions.control.mutation.pending" : "missions.control.retry"),
+      actions={missionCleanupPending(item()) ? [{ key: "retry", label: t(pending() === key ? "missions.control.mutation.pending" : "missions.control.retry"),
         icon: <RefreshCw class="h-3.5 w-3.5" />, disabled: props.disabled || !props.active || Boolean(pending()), onSelect: () => retry(key) }] : []}>
       <Show when={item().documentPending}><p role="status">{t("missions.cleanup.documentPending")}</p></Show>
       <Show when={item().retained > 0}><For each={item().reasons}>{reason => <p>{t(`missions.cleanup.reason.${reason}`)}</p>}</For></Show>

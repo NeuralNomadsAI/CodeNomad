@@ -1,5 +1,9 @@
 # Misiones
 
+Para un campo guardado demasiado grande, elija **Leer páginas de JSON sin procesar**. **Página anterior** y **Página siguiente** leen partes exactas y acotadas; si cambia la colección, **Intentar de nuevo** vuelve a la primera página.
+
+El selector carga 50 resúmenes por vez; **Cargar más** continúa la exploración. La búsqueda filtra solo las misiones cargadas. Solo las misiones seleccionadas o abiertas en el lector cargan sus detalles. La limpieza, la actividad y las solicitudes tienen contadores y controles **Cargar más** propios. Los actores y solicitudes sin leer siguen siendo desconocidos, incluso tras observar varias ventanas por separado. **Leer campos guardados** permite consultar páginas exactas de actores, informes, historial, recibos y metadatos. Una ventana fallida conserva la última vista; **Intentar de nuevo** la relee, y una colección cambiada vuelve a la primera ventana. Leer no inicia trabajo. Las finalizaciones históricas se reconocen una sola vez mediante el contador duradero; las nuevas permanecen sin ver hasta mostrarse.
+
 Las Misiones combinan un plan de proyecto duradero con conversaciones nativas de OpenCode. El coordinador planifica y delega; el árbol de tareas registra dependencias y resultados. Un plan guardado, una entrada admitida y una ejecución observada son hechos distintos.
 
 ## Crear y después iniciar explícitamente {#create}

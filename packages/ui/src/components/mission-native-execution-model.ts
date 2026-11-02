@@ -57,7 +57,8 @@ export function missionActivityWorking(actors: readonly Pick<MissionActorActivit
   return Boolean(actors?.some(actor => ["running", "queued", "background", "permission", "form"].includes(actor.state)))
 }
 
-export function partialInterrupt(mission: Pick<MissionPanelMap, "control">): boolean {
+export function partialInterrupt(mission: Pick<MissionPanelMap, "control" | "panelControl">): boolean {
+  if (mission.panelControl) return mission.panelControl.action !== "start" && mission.panelControl.partialDescendants > 0
   const control = mission.control
   if (!control || control.action === "start") return false
   return Boolean(control.receipts?.some(receipt => receipt.nativeAcknowledgement?.disposition === "interrupt-observed"

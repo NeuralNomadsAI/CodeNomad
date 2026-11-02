@@ -5,7 +5,7 @@ import { chromium, type Browser } from "playwright"
 import { fixture } from "../../../server/src/missions/journal-history-fixture"
 import { registerMissionRoutes } from "../../../server/src/server/routes/missions"
 import { borrowFixture } from "./fixture-borrow"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { panelMissions } from "./mission-content-fixture"
 
 // "Request an update" sends an application-authored native prompt: its admission

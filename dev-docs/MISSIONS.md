@@ -565,9 +565,10 @@ An ordinary journal's finish carries the project's finish number (`mission.finis
 ### Opt-in bounded panel transport
 
 `MissionControl.panelPage`, the `panelPage` RPC and `POST /api/workspaces/:id/missions/panel-page`
-provide a byte-bounded display transport alongside the `list`, `mission` and `tasks` contracts
-used by the current UI. The transport covers persisted directory, compact-map data and
-opt-in live actor observations (§Paged live activity). The UI keeps the list route's activity projection. Its schema,
+provide the live one-time panel's byte-bounded display transport. The `list`, `mission`
+and `tasks` contracts also serve explicit compatibility/reconciliation callers. The
+transport covers persisted directory, selected header/field data and live actor
+observations (§Paged live activity). Its schema,
 types, byte counter and paginator live in `missions/mission-panel-page.ts`.
 
 - Every successful body, including `available`, the envelope, escaped nested text and the
@@ -672,9 +673,90 @@ surrogates, under the same logical budget and deadline.
 The producer/consumer contract tests live in `packages/ui/tests/contracts/`, outside
 the browser application's source graph, and run in the Missions UI unit CI step.
 
-Picker discovery, selected/wanted maps, activity and cleanup display retain the list
-contract; exact cleanup reconciliation retains its single-mission read. Completion
-seeding uses that complete inventory.
+Picker discovery and cleanup history read explicit `window:{offset,order?}` selections
+of at most 50 rows. The envelope echoes `window:{order,offset,end,total}`: `page.digest`
+commits the chosen window alone, while `window.order` commits all row values of the
+collection and fences subsequent selections. Each sliced logical window is assembled,
+hash-verified and schema/identity-checked before adoption. A changed continuation parks
+with Retry from offset zero; failed middle windows retain their exact selector and last
+display independently of successes elsewhere. Expanded windows are retained with their
+own observation revisions; passive refresh reads the first directory windows and wanted
+headers, leaving other windows for explicit continuation/retry. Search filters loaded
+summaries and says so while discovery remains partial. Summary windows carry `actorCount`
+in place of actor-ID fan-out. Only selected and reader-wanted missions load headers/tasks.
+
+`{source:"mission",missionID,header:true}` returns one bounded
+`{root,collections,tasks,coordinator?,control?}` row. Root identity/state, body descriptors
+and small exact extension values stay inline. Collections carry
+`{characters,digest,total,array,order?}`; actors also name their observation order.
+The top-level task metadata carries its page, pinned task/report IDs and source version.
+The coordinator is one exact copied actor, including its Location, for full-ACK identity.
+Wanted headers publish independently of directory reads; an explicit refresh awaits its
+owned header reconciliation. Last-owner release fences pending work while retaining a
+last-good header for a later selection. Task-source versions suppress unrelated expanded
+task rereads. Actors, all compact reports, history and claims use independently selected
+field windows. Lifecycle receipt/pending collections use `field:"control"` with
+`part:"receipts"|"pending"`; lifecycle identity and counts stay in compact control.
+Field lanes retain the root field and part separately; the owning root descriptor
+invalidates structured and raw part windows together, and Retry preserves the exact part.
+Pending first reads share that invalidation. Publication rechecks the owning descriptor;
+successful reads retire only failures unchanged since their admission.
+The selected mission reads its unified document projection. `document`, boolean cleanup
+`documentPending` and history `requestID` retain their exact shapes; scheduling editors
+keep their descriptor-pinned bodies/content reads. Snapshot/admission, internal and
+mutation contracts retain full authority.
+
+Any persisted field also accepts `text:true` with a window. Its offset names one
+surrogate-safe 32-Ki-unit page of the field's exact JSON; `window.order` hashes the
+complete JSON and `page.digest` independently verifies the chosen string row. The UI's
+explicit raw-page controls read one page at a time under a 256-Ki-unit assembly budget,
+including when a structured scalar/row exceeds its structured assembly budget. Structured
+summary/header/field/observation windows use 256 Ki/1 Mi/8 Mi/24 Mi units respectively.
+Every logical admission shares task transport deadlines, cancellation and two-slot
+accounting, through validation and publication; a missing capability never widens a read.
+
+Windowed cleanup discovery retains every pending intent, including document-only pending
+deletions, with the settled-history policy applied separately. Rows use the composite
+mission/deletion identity and validate immutable request/revision/options before adoption.
+Only a complete same-order traversal retires last-good directory rows. Summary revision
+merges are qualified by connection epoch. Native observations carry their own epoch and
+observation cycle; failed/older windows retain display while fresh membership and recovery
+coverage come only from current windows. Separately observed windows keep whole-mission
+idle/absence unknown.
+
+An initial summary request (`initial:true`) point-reads the durable finish counter under
+the project's append exclusion before traversing hints, returning `finishHighWater` on
+its first transfer. Failed/corrupt counter reads fail closed. The window seeds that
+project's persisted completion watermark once, including deleted/purged finishes and
+counter gaps. Later pages and refreshes preserve the initial boundary; separately shown
+new completions are recorded without advancing over unseen/unloaded ones. Exact cleanup
+retry reconciliation retains its single-mission read and immutable request/revision/option.
+
+Project-scoped completion records inherit an existing folder record before durable-counter
+seeding. Saved whole-inventory watermarks retain their unseen boundary; bounded legacy
+hashed-ID positives persist across reloads and partial discovery, covering colliding IDs
+while exact discovered rows also supply sequence positives. Passive first-window validation
+retains a failed middle selector;
+an obsolete collection order marks that failure changed until an explicit restart succeeds.
+
+Fixed host, plugin and workspace unavailable refusals retain their typed cause through
+the bounded owner and its localized unavailable guidance. Last-good display survives;
+malformed data, transport failures, changed orders and damaged ranges keep distinct errors.
+
+The inventory consumer (`stores/mission-panel-inventory.ts`) uses the task consumer's
+slot-owning response/cancel boundary and UTF-16LE SHA-256. Logical character ceilings are
+256 Ki for 50 summaries, 1 Mi for a selected header, 8 Mi for field windows and 24 Mi for
+the existing bounded activity/mark contexts and correlated native records. UTF-8 input
+is bounded at three times that ceiling and cumulative wire input at eight times it;
+the existing JSON structural-token/depth limits also apply. Over-budget values refuse
+explicitly and keep last-good display, with exact source fields still addressable.
+One 30-second operation deadline covers queueing, cleanup, hash, validation and adoption.
+Last-owner release and connection epochs abort/fence trailing work; concurrent owners
+retain their mission lifetime. Visible demand observes only the first mark window and
+each wanted mission's first actor window. Further windows are explicit, retain their own
+provenance and remain partial/unknown as a whole-mission claim. Positive requests survive
+partial coverage and open the ordinary interruption dock; separate windows never combine
+into atomic absence or recovery authority.
 The recurrence-passage reader keeps its own transport.
 Consumers adopting this transport key pages by workspace,
 project and the complete source selector, retain each page's own revision, and keep a

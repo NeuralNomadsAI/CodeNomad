@@ -135,6 +135,10 @@ export type MissionPanelBriefing = Omit<MissionBriefing, typeof MISSION_BRIEFING
  * (`MISSION_BODY_FIELDS`), each one's descriptor in its owner's `bodies`, and bounded
  * excerpts. A full map is one too, so a passage's own map shows through the same views. */
 export type MissionPanelMap = Omit<MissionMap, "objective" | "notes" | "summary" | "briefing" | "tasks" | "reports" | "history" | "frontier" | "claims"> & {
+  /** Bounded panel header facts, independent of full lifecycle receipts. */
+  panelControl?: { id: string; requestID: string; expectedRevision: number; completedRevision?: number; action: "start" | "pause" | "stop";
+    graceful?: true; pending: number; receipts: number; unconfirmedReceipts: number; partialDescendants: number }
+  panelCollections?: Record<string, { characters: number; digest: string; total: number; array: boolean; order?: string }>
   /** The objective's display label (`missionObjectiveLabel`). */
   excerpt?: string
   briefing?: MissionPanelBriefing

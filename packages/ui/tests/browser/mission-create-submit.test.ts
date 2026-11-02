@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
@@ -237,12 +237,14 @@ test("a first list read reporting another project than the instance's fences a c
     await form.getByRole("button", { name: "Create", exact: true }).click()
     await posted.promise
     firstRead.resolve()
-    await page.waitForFunction(() => window.missionEditorLifetime.state("fixture").projectID === "other-project")
+    await page.waitForFunction(() => window.missionEditorLifetime.state("fixture").status === "error")
+    assert.equal(await page.evaluate(() => window.missionEditorLifetime.state("fixture").projectID), undefined, "a foreign directory response is refused, never adopted")
+    await page.evaluate(() => window.missionEditorLifetime.project("other-project"))
     reply.resolve()
     // Either outcome of the completion reads the list again: decide only after that read.
     await completionRead.promise
     assert.equal(await page.evaluate(() => Boolean(document.querySelector("form.mission-editor"))), true,
-      "the other project's view is not closed by the original project's completion")
+      "a refused foreign-project response cannot close the creation view")
     assert.equal((await page.evaluate(() => window.missionEditorLifetime.selectedHistory())).includes("msn_created"), false)
     assert.equal(fixture.creates.length, 1)
     assert.deepEqual(fixture.errors, [])
