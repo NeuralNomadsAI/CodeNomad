@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.behavior.autoExpandActiveSubsessions.title": "自动展开子会话",
+  "settings.behavior.autoExpandActiveSubsessions.info": "当所选对话中可见的折叠分支切换为工作中、压缩中或等待输入时，展开通向其活动子会话的路径。可见子会话在各个深度都遵循同一规则。禁用后，活动不会打开分支。已打开的分支会保存以供恢复。",
   "settings.usage.cached": "上次保存的统计数据 · 等待刷新",
   "settings.native.openFailed": "无法在设置窗口中打开偏好设置。请重启或更新 CodeNomad 应用后重试。",
   "settings.accounts.current": "活动账户",

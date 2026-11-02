@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.behavior.autoExpandActiveSubsessions.title": "Automatically expand subsessions",
+  "settings.behavior.autoExpandActiveSubsessions.info": "When a visible collapsed branch under the selected conversation changes to working, compacting or awaiting input, expand the path to its active subsessions. Visible subsessions follow the same rule at every depth. Disable to keep activity from opening branches. Open branches are saved for restoration.",
   "settings.usage.cached": "Previous saved statistics · awaiting refresh",
   "settings.native.openFailed": "Preferences could not open in their window. Restart or update the CodeNomad desktop app, then try again.",
   "settings.accounts.current": "Active account",

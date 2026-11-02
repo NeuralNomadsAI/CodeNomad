@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.behavior.autoExpandActiveSubsessions.title": "Untersitzungen automatisch aufklappen",
+  "settings.behavior.autoExpandActiveSubsessions.info": "Wenn ein sichtbarer eingeklappter Zweig unter der ausgewählten Unterhaltung zu Arbeit, Komprimierung oder Eingabe erforderlich wechselt, wird der Pfad zu seinen aktiven Untersitzungen aufgeklappt. Sichtbare Untersitzungen folgen derselben Regel auf jeder Ebene. Deaktivieren, damit Aktivität keine Zweige öffnet. Geöffnete Zweige werden zur Wiederherstellung gespeichert.",
   "settings.usage.cached": "Zuletzt gespeicherte Statistik · Aktualisierung ausstehend",
   "settings.native.openFailed": "Die Einstellungen konnten nicht in ihrem Fenster geöffnet werden. Starten oder aktualisieren Sie die CodeNomad-App und versuchen Sie es erneut.",
   "settings.accounts.current": "Aktives Konto",

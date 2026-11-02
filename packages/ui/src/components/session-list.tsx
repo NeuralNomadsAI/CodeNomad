@@ -43,6 +43,7 @@ import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useConfig } from "../stores/preferences"
 import { isSessionListViewportAttached, shouldRenderSessionRows } from "./session-list-visibility"
+import { getDescendantSessions, getSessionAncestorIds, revealSubsession } from "../stores/session-state"
 const log = getLogger("session")
 
 
@@ -589,6 +590,29 @@ const SessionList: Component<SessionListProps> = (props) => {
     const isActive = () => props.activeSessionId === sessionId()
     // A collapsed parent's chevron carries its subsessions' visible status.
     const childActivity = () => rowProps.hasChildren && !rowProps.expanded ? descendantActivity().get(sessionId()) : undefined
+    // Observe activity independently of expansion: folding a busy branch is not
+    // a new activity transition. Visible descendants follow the same rule.
+    const activityKind = createMemo(() => {
+      const activity = descendantActivity().get(sessionId())
+      return activity ? childActivityKind(activity) : undefined
+    })
+    createEffect(on(activityKind, (kind, previous) => {
+      if (kind === previous || !kind || kind === "idle" || rowProps.expanded
+        || props.enableFilterBar || !preferences().autoExpandActiveSubsessions) return
+      const active = props.activeSessionId
+      if (!active || (!isActive() && !getSessionAncestorIds(props.instanceId, sessionId()).includes(active))) return
+      const row = rowElement()?.getBoundingClientRect(), viewport = listEl()?.getBoundingClientRect()
+      // Virtua also mounts buffered rows beyond the viewport; only visible rows reveal.
+      if (!row || !viewport || row.width <= 0 || row.height <= 0
+        || row.bottom <= Math.max(0, viewport.top) || row.top >= Math.min(window.innerHeight, viewport.bottom)
+        || row.right <= Math.max(0, viewport.left) || row.left >= Math.min(window.innerWidth, viewport.right)) return
+      for (const descendant of getDescendantSessions(props.instanceId, sessionId())) {
+        if (descendant.pendingPermission || descendant.pendingForm
+          || descendant.status === "working" || descendant.status === "compacting") {
+          revealSubsession(props.instanceId, descendant.id)
+        }
+      }
+    }, { defer: true }))
     const expanderLabel = (key: string) => {
       const label = t(`sessionList.expand.${key}`)
       const activity = childActivity()

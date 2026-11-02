@@ -261,6 +261,14 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
     },
     {
       kind: "toggle",
+      id: "behavior.autoExpandActiveSubsessions",
+      titleKey: "settings.behavior.autoExpandActiveSubsessions.title",
+      infoKey: "settings.behavior.autoExpandActiveSubsessions.info",
+      get: (p) => p.autoExpandActiveSubsessions,
+      set: (next) => updatePreferences?.({ autoExpandActiveSubsessions: next }),
+    },
+    {
+      kind: "toggle",
       id: "behavior.focusExistingWindowOnSecondLaunch",
       titleKey: "settings.behavior.focusExistingWindowOnSecondLaunch.title",
       subtitleKey: "settings.behavior.focusExistingWindowOnSecondLaunch.subtitle",

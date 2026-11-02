@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.behavior.autoExpandActiveSubsessions.title": "サブセッションを自動展開",
+  "settings.behavior.autoExpandActiveSubsessions.info": "選択中の会話内で、表示中の折りたたまれた枝が作業中、圧縮中、入力待ちに変わると、アクティブなサブセッションへの経路を展開します。表示中のサブセッションにも深さに関係なく同じルールが適用されます。無効にすると活動による展開を停止します。開いた枝は復元用に保存されます。",
   "settings.usage.cached": "前回保存した統計 · 更新待ち",
   "settings.native.openFailed": "設定ウィンドウを開けませんでした。CodeNomad アプリを再起動または更新してから、もう一度お試しください。",
   "settings.accounts.current": "有効なアカウント",

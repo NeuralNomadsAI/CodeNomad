@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.behavior.autoExpandActiveSubsessions.title": "Déplier automatiquement les sous-sessions",
+  "settings.behavior.autoExpandActiveSubsessions.info": "Lorsqu’une branche visible et repliée sous la conversation sélectionnée passe en activité, en compactage ou en attente de réponse, déplier le chemin vers ses sous-sessions actives. Les sous-sessions visibles suivent la même règle à chaque profondeur. Désactiver pour empêcher l’activité d’ouvrir des branches. Les branches ouvertes sont mémorisées pour la restauration.",
   "settings.usage.cached": "Dernières statistiques sauvegardées · en attente d’actualisation",
   "settings.native.openFailed": "Les préférences n'ont pas pu s'ouvrir dans leur fenêtre. Redémarrez ou mettez à jour l'application CodeNomad, puis réessayez.",
   "settings.accounts.current": "Compte actif",
