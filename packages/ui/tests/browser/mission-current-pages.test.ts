@@ -3,6 +3,7 @@ import { after, before, test } from "node:test"
 import { chromium, type Browser } from "playwright"
 import Fastify from "fastify"
 import { createServer, type Server } from "node:http"
+import { setTimeout as delay } from "node:timers/promises"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { selectMission } from "./mission-actions"
@@ -10,6 +11,7 @@ import { currentPassageFixture } from "../../../server/src/opencode/missions/nat
 import { registerMissionRecurrenceCurrent } from "../../../server/src/server/routes/mission-recurrence-current"
 import { WorktreeDeletionFence } from "../../../server/src/workspaces/worktree-session-evacuation"
 import { missionScheduleView } from "../../../server/src/missions/mission-schedule-view"
+import { missionPanelWindow } from "../../../server/src/missions/mission-panel-page"
 
 let browser: Browser, url: string, events: Server, eventsURL: string
 before(async () => {
@@ -148,4 +150,107 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     assert.ok(sizes.every(size => size <= 65536)); assert.deepEqual(writes, []); assert.deepEqual(errors, [])
     t.diagnostic(JSON.stringify({ owner, tasks: map.tasks.length, initialBodies: 0, transfers: selections.length, largestBody: Math.max(...sizes), ...f.metrics() }))
   } finally { await page.context().close(); await app.close(); await f.dispose() }
+})
+
+for (const owner of ["daily", "scheduled"] as const) test(`${owner} covered page back aborts its held continuation without a false error after real 31 seconds`, { timeout: 90_000 }, async t => {
+  const f = await currentPassageFixture(owner), page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
+  let release!: () => void, entered!: () => void, heldID: string | undefined, heldOffset: number | undefined
+  const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { entered = resolve })
+  const errors: string[] = [], failures: Array<{ id?: string; url: string; error?: string }> = []
+  page.on("pageerror", error => errors.push(error.message))
+  page.on("requestfailed", request => failures.push({ id: request.headers()["x-body-read"], url: request.url(), error: request.failure()?.errorText }))
+  try {
+    const lead = "FIRST_PAGE_MARKER\n\n" + "\u0001".repeat(12_000) + "\n", middle = "\n\nSECOND_PAGE_MARKER\n\n"
+    const brief = lead + "\u0001".repeat(17_000 - lead.length) + middle + "\u0001".repeat(3_000 - middle.length)
+    assert.equal(brief.length, 20_000)
+    let map = (await f.control.snapshot()).missions[0]
+    map = (await f.control.revise(map.coordinatorSessionId, { missionID: map.id, requestID: "page-back", expectedRevision: map.revision,
+      reason: "Demand contraction", retireTasks: [], dependencyUpdates: [], addTasks: [{ taskKey: "page-back", title: "Paged brief", brief,
+        role: "specialist", blockedBy: [], executionMode: { kind: "native", parentTaskKey: null } }] })).mission
+    const source = (await f.read()).source!
+    await page.addInitScript("Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})")
+    await page.addInitScript(() => {
+      const original = window.fetch, records: any[] = []
+      ;(window as any).__bodyReads = records
+      window.fetch = (input, init) => {
+        if (typeof input === "string" && input.includes("/missions/") && init?.method === "POST") {
+          const id = String(records.length + 1), headers = new Headers(init.headers)
+          headers.set("x-body-read", id)
+          const record = { id, body: JSON.parse(String(init.body)), at: performance.now(), abortedAtDispatch: init.signal?.aborted,
+            abortedAt: undefined as number | undefined, reason: undefined as string | undefined }
+          records.push(record)
+          init.signal?.addEventListener("abort", () => { record.abortedAt = performance.now(); record.reason = init.signal?.reason?.name }, { once: true })
+          return original(input, { ...init, headers })
+        }
+        return original(input, init)
+      }
+    })
+    await page.route("**/api/**", async route => {
+      const request = route.request(), path = new URL(request.url()).pathname
+      if (path === "/api/events") return route.continue({ url: eventsURL })
+      if (path === "/api/storage/config/ui") return route.fulfill({ json: { settings: { locale: "en" } } })
+      if (path.endsWith("/current")) { const { projectCanonical: _canonical, location: _location, ...identity } = await f.read(); return route.fulfill({ json: identity }) }
+      if (path.endsWith("/missions/panel-page")) {
+        const input = request.postDataJSON()
+        return route.fulfill({ json: input.source === "summaries" || input.source === "cleanups" ? missionPanelWindow({ projectID: "project", source: input.source,
+          discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false, ...(input.initial ? { finishHighWater: 0 } : {}) },
+        [], input.window ?? { offset: 0 }, input.cursor) : { available: false, reason: "observation-unavailable" } })
+      }
+      if (/\/current\/[^/]+\/page$/.test(path)) {
+        const input = request.postDataJSON()
+        assert.deepEqual(input.source, source)
+        if (!heldID && input.body?.kind === "task" && input.body.field === "brief" && input.body.offset > 0) {
+          heldID = request.headers()["x-body-read"]; heldOffset = input.body.offset; entered(); await gate
+          if (failures.some(failure => failure.id === heldID)) return
+        }
+        return route.fulfill({ json: input.selector.source === "activity" ? { available: false, reason: "observation-unavailable" } : await f.page(input) })
+      }
+      if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", projectCanonical: f.root, location: { directory: f.root },
+        schedules: owner === "daily" ? [{ id: f.scheduleID, title: "Daily contraction", revision: 1, state: "interrupted", interruptionReason: "service-restart",
+          clock: { time: "23:59", zone: "UTC" }, nextDueAt: null, actions: [], controls: [], pending: { passageID: source.passageID, missionID: map.id,
+            conversationID: map.coordinatorSessionId, status: "running" }, latestResult: null, history: [] }] : [] } })
+      if (path.endsWith("/missions/scheduled")) {
+        const doc = owner === "scheduled" ? await f.documents.read(f.scheduleID) : undefined
+        return route.fulfill({ json: { version: 1, projectID: "project", schedules: doc && "configuration" in doc ? [missionScheduleView(doc).document] : [] } })
+      }
+      return route.fulfill({ json: path.endsWith("/missions") ? { available: true, version: 1, projectID: "project", missions: [], summaries: [], generatedAt: 1, discardedEvents: 0 }
+        : path.includes("/instance/") ? [] : {} })
+    })
+    await page.goto(url + "?directory=" + encodeURIComponent(f.root))
+    await selectMission(page, owner === "daily" ? "Daily contraction" : "Scheduled current")
+    await page.evaluate(async ({ root, missionID, taskID, scheduleID, passageID, owner }) => {
+      (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView(root, { reader: { missionId: missionID, kind: "task", itemId: taskID,
+        recurrence: { instanceId: "fixture", projectID: "project", scheduleID, passageID, owner } } })
+    }, { root: f.root, missionID: map.id, taskID: map.tasks[0].id, scheduleID: f.scheduleID, passageID: source.passageID, owner })
+    const section = page.locator(".mission-task-reader > details").filter({ has: page.locator("summary").filter({ hasText: /^Task brief$/ }) })
+    await section.locator(":scope > summary").click(); await section.getByText("FIRST_PAGE_MARKER", { exact: true }).waitFor()
+    const number = section.locator("input[type=number]")
+    await number.fill("2"); await number.press("Enter"); await started
+    await number.fill("1"); await number.press("Enter"); await section.getByText("FIRST_PAGE_MARKER", { exact: true }).waitFor()
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    const contractedAt = await page.evaluate(() => performance.now()), at = performance.now()
+    const immediately = await page.evaluate(id => (window as any).__bodyReads.find((read: any) => read.id === id), heldID)
+    await delay(31_000)
+    const retry = await section.getByRole("button", { name: "Try again", exact: true }).count()
+    const records = await page.evaluate(() => (window as any).__bodyReads)
+    t.diagnostic(JSON.stringify({ owner, elapsed: performance.now() - at, heldOffset, immediately, contractedAt, retry, failures }))
+    assert.equal(await number.inputValue(), "1"); assert.equal(retry, 0, "a covered page must not inherit the unnecessary continuation's timeout")
+    assert.ok(immediately.abortedAt !== undefined && immediately.abortedAt <= contractedAt, "abort happens on contraction, before the real deadline")
+    assert.equal(immediately.reason, "AbortError")
+    assert.ok(failures.some(failure => failure.id === heldID))
+    for (const failure of failures) {
+      const read = records.find((record: any) => record.id === failure.id)
+      assert.equal(failure.error, "net::ERR_ABORTED"); assert.equal(read?.reason, "AbortError")
+      if (failure.id === heldID) {
+        assert.deepEqual(read.body.source, source); assert.equal(read.body.body.field, "brief"); assert.equal(read.body.body.offset, heldOffset)
+      } else {
+        assert.ok(failure.url.endsWith("/missions/panel-page")); assert.equal(read.body.window.offset, 0)
+        assert.ok(read.body.source === "summaries" && read.body.initial === true || read.body.source === "cleanups" && read.body.initial === undefined)
+      }
+    }
+    await number.fill("2"); await number.press("Enter"); await section.getByText("SECOND_PAGE_MARKER", { exact: true }).waitFor()
+    const extended = await page.evaluate(id => (window as any).__bodyReads.filter((read: any) => read.id !== id && read.body.body?.offset > 0), heldID)
+    assert.ok(extended.some((read: any) => read.body.body.offset === heldOffset && read.abortedAtDispatch === false && read.at >= contractedAt + 30_000))
+    assert.equal(await section.getByRole("button", { name: "Try again", exact: true }).count(), 0); assert.deepEqual(errors, [])
+  } finally { release(); await page.context().close(); await f.dispose() }
 })

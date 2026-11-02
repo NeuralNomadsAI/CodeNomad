@@ -588,8 +588,11 @@ Each outstanding current body demand owns one monotonic 30-second deadline and
 cancellation signal across semantic content offsets, automatic restarts/revalidation
 and outer wire pieces. Assembly is staged before the final publication check. A
 fulfilled demand ends its operation; a later user extension or explicit Retry can
-start a fresh one. Failed outstanding operations retain their budget through automatic
-revalidation. Technical details exposes the scoped persisted-field/raw-page reader for
+start a fresh one. Need reductions and consumer releases reconsider aggregate coverage
+even during a running continuation: fresh covered demand ends that read immediately,
+while stale/invalidated data and outstanding peers keep their original operation.
+Pending-value promotion retains its deadline check. Failed outstanding operations retain
+their budget through automatic revalidation. Technical details exposes the scoped persisted-field/raw-page reader for
 compact current maps; archived daily readers retain their receipt-bound sections.
 
 ## Settlement, result and watched cursors

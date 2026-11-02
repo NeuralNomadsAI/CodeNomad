@@ -142,3 +142,79 @@ test("a user extension of a parked current demand admits a fresh operation", asy
     assert.deepEqual(deadlines, [30_000, 30_000, 75_000])
   } finally { handle.release() }
 })
+
+for (const owner of ["daily", "scheduled"] as const) for (const trigger of ["reduce", "release"] as const)
+  for (const late of ["success", "failure"] as const) test(`${owner} demand contraction by ${trigger} fences late ${late} and admits a later extension`, async t => {
+    let clock = 0, resolve!: (value: ReturnType<typeof slice>) => void, reject!: (error: Error) => void
+    t.mock.method(performance, "now", () => clock)
+    const calls: Array<{ signal: AbortSignal; deadline?: number }> = []
+    const store = createMissionContentStore(async (_ref, query, signal, deadline) => {
+      calls.push({ signal, deadline })
+      if (calls.length === 2) return new Promise((yes, no) => { resolve = yes; reject = no })
+      return slice(query.offset)
+    })
+    const source = { ...ref, passage: { ...ref.passage!, owner } }
+    const whole = store.use(source, "connection"), prefix = store.use(source, "connection")
+    whole.need(Infinity); prefix.need(3)
+    try {
+      await flush(); assert.equal(calls.length, 2); assert.equal(prefix.state().body?.text, "01234")
+      clock = 10_000
+      if (trigger === "reduce") whole.need(3); else whole.release()
+      assert.equal(calls[1].signal.aborted, true, "covered aggregate demand aborts immediately, not at the deadline")
+      assert.equal(calls[1].signal.reason.name, "AbortError")
+      clock = 31_000
+      if (late === "success") resolve(slice(5)); else reject(new Error("Late unnecessary read failure"))
+      await flush()
+      assert.equal(prefix.state().status, "ready"); assert.equal(prefix.state().body?.text, "01234")
+      assert.equal(calls.length, 2, "completion must not pump a replacement read")
+      clock = 45_000; prefix.need(Infinity); await flush()
+      assert.equal(prefix.state().status, "ready"); assert.equal(prefix.state().body?.text, text)
+      assert.equal(calls[2].deadline, 75_000); assert.notEqual(calls[2].signal, calls[1].signal)
+    } finally { whole.release(); prefix.release(); resolve?.(slice(5)) }
+  })
+
+for (const owner of ["daily", "scheduled"] as const) for (const trigger of ["reduce", "release"] as const)
+  test(`${owner} ${trigger} preserves another consumer's outstanding lifetime`, async t => {
+    let clock = 0, resolve!: (value: ReturnType<typeof slice>) => void
+    t.mock.method(performance, "now", () => clock)
+    const calls: Array<{ signal: AbortSignal; deadline?: number }> = []
+    const store = createMissionContentStore(async (_ref, query, signal, deadline) => {
+      calls.push({ signal, deadline })
+      return query.offset === 0 ? slice(0) : new Promise(yes => { resolve = yes })
+    })
+    const source = { ...ref, passage: { ...ref.passage!, owner } }
+    const a = store.use(source, "connection"), b = store.use(source, "connection")
+    a.need(Infinity); b.need(10)
+    try {
+      await flush(); clock = 10_000
+      if (trigger === "reduce") a.need(3); else a.release()
+      assert.equal(calls[1].signal.aborted, false); assert.equal(calls[1].deadline, 30_000)
+      clock = 29_000; resolve(slice(5)); await flush()
+      assert.equal(b.state().status, "ready"); assert.equal(b.state().body?.text, text)
+      assert.equal(calls.length, 2); assert.equal(calls[0].signal, calls[1].signal)
+    } finally { a.release(); b.release(); resolve?.(slice(5)) }
+  })
+
+for (const owner of ["daily", "scheduled"] as const) for (const change of ["invalidate", "descriptor", "same-revision-descriptor"] as const)
+  test(`${owner} contraction must retain ${change} revalidation despite an old covered prefix`, async t => {
+    let clock = 0, resolve!: (value: ReturnType<typeof slice>) => void
+    t.mock.method(performance, "now", () => clock)
+    const calls: Array<{ signal: AbortSignal; deadline?: number }> = []
+    const store = createMissionContentStore(async (_ref, query, signal, deadline) => {
+      calls.push({ signal, deadline })
+      return query.offset === 0 ? slice(0) : new Promise(yes => { resolve = yes })
+    })
+    const source = { ...ref, passage: { ...ref.passage!, owner } }
+    const whole = store.use(source, "connection"), prefix = store.use(source, "connection")
+    whole.need(Infinity); prefix.need(3)
+    try {
+      await flush(); clock = 10_000
+      if (change === "invalidate") store.invalidate()
+      else prefix.expect({ digest: contentDigest("new-value!"), characters: 10 }, change === "descriptor" ? 2 : 1)
+      whole.release()
+      assert.equal(calls[1].signal.aborted, false, "old coverage cannot complete fresh authority/descriptor revalidation")
+      clock = 31_000; resolve(slice(5)); await flush()
+      assert.equal(prefix.state().status, "error"); assert.equal(prefix.state().body?.text, "01234")
+      assert.equal(calls.length, 2); assert.ok(calls.every(call => call.deadline === 30_000))
+    } finally { whole.release(); prefix.release(); resolve?.(slice(5)) }
+  })

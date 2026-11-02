@@ -242,12 +242,23 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     })
   }
 
-  /** One read at a time per body; demand that arrives meanwhile is served when it settles. */
+  /** Coalesce reads, completing fresh covered current demand before guarding a held transfer. */
   function pump(entry: Entry) {
-    if (entry.controller || !entry.consumers.size || entry.parked || entries.get(entry.key) !== entry) return
+    if (!entry.consumers.size || entries.get(entry.key) !== entry) return
+    const shown = entry.pending ?? entry.display
+    // Current aggregate demand can finish while a now-unnecessary continuation is held.
+    if (entry.ref.passage && !entry.stale && shown && fresh(entry) && covers(shown, need(entry))
+      && (!entry.expected || shown.digest === entry.expected.digest)
+      && (!entry.pending || !entry.operation || !entry.operation.signal.aborted && performance.now() < entry.operation.deadline)) {
+      promote(entry)
+      cancel(entry) // Revokes both read and operation before any late result can publish.
+      entry.status = "ready"; entry.parked = false
+      publish(entry)
+      return true
+    }
+    if (entry.controller || entry.parked) return
     // A map that named another body while a read ran is served now.
     if (!fresh(entry)) entry.stale = true
-    const shown = entry.pending ?? entry.display
     if (entry.stale || !shown) {
       if (!entry.stale && entry.status === "missing") { endOperation(entry); return }
       read(entry, { offset: 0, ...(entry.ref.passage && entry.expected ? { digest: entry.expected.digest } : {}) })
@@ -278,10 +289,12 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
       need: characters => {
         const consumer = owner.consumers.get(id)
         if (!consumer || consumer.need === characters) return
+        const reduced = characters < consumer.need
         if (owner.ref.passage && owner.parked && characters > consumer.need) {
           endOperation(owner); owner.parked = false; owner.restarts = 0
         }
         consumer.need = characters
+        if (owner.ref.passage && reduced && pump(owner)) return
         try { assertTaskReadLive(owner.operation?.signal, owner.operation?.deadline) }
         catch { owner.status = "error"; owner.parked = true; owner.pending = undefined; publish(owner); return }
         promote(owner)
@@ -323,7 +336,8 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
         pump(owner)
       },
       release: () => {
-        if (!owner.consumers.delete(id) || owner.consumers.size) return
+        if (!owner.consumers.delete(id)) return
+        if (owner.consumers.size) { if (owner.ref.passage) pump(owner); return }
         owner.used = ++tick
         cancel(owner)
         if (!owner.display) drop(owner)
