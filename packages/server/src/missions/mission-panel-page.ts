@@ -2,6 +2,7 @@ import { z } from "zod"
 import { Exit, Schema, SchemaRepresentation } from "effect"
 import { contentDigest } from "./inspect-view"
 import { missionTaskRequestSchema } from "./mission-compact-map"
+import { missionCurrentSourceWire } from "./mission-current-source"
 import type { MissionPanelCursor, MissionPanelPage, MissionPanelPageResult, MissionPanelPiece } from "./mission-panel-wire"
 export type { MissionPanelCursor, MissionPanelPage, MissionPanelPageResult, MissionPanelPageRequest, MissionPanelPiece, MissionPanelPageFailure } from "./mission-panel-wire"
 
@@ -120,6 +121,7 @@ export const missionPanelPageOutputSchema = {
   // this is the portable native JSON-Schema form consumed by OpenCode.
   oneOf: [{ type: "object", properties: {
     available: { type: "boolean", const: true }, version: { type: "integer", const: 1 }, projectID: { type: "string", maxLength: 240 },
+    passage: missionCurrentSourceWire,
     source: { type: "string", enum: ["summaries", "cleanups", "mission", "tasks", "activity", "marks"] }, missionID: { type: "string", maxLength: 100 },
     field: { type: "string", maxLength: 64 }, part: { type: "string", enum: ["receipts", "pending"] }, text: { type: "boolean", const: true }, revision: count, discardedEvents: count, window: windowOutput, header: { type: "boolean", const: true }, finishHighWater: count,
     phase: { type: "string", enum: ["context", "observed"] }, observedAt: { type: "number" },

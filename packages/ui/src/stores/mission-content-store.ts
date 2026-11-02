@@ -1,9 +1,11 @@
 import { createSignal, type Accessor, type Setter } from "solid-js"
 import type { MissionBodyDescriptor, MissionContentResponse, MissionContentSelector } from "../../../server/src/missions/mission-content-wire"
 import { validMissionContentSlice } from "../lib/mission-content-slice"
+import { MissionTaskWindowBudget } from "../lib/mission-task-window-budget"
 
 /** One mission body: the mission it belongs to, where, and its selector. */
-export interface MissionBodyRef { instanceId: string; projectID: string; missionID: string; selector: MissionContentSelector }
+export interface MissionBodyRef { instanceId: string; projectID: string; missionID: string; selector: MissionContentSelector;
+  passage?: import("../../../server/src/missions/mission-current-source").MissionCurrentSource }
 /** A body's text from offset 0, cut from exactly one digest: never two values joined.
  * `mark`: the owner metadata it was read under (`MissionBodyConsumer.version`). */
 export interface MissionBody { digest: string; revision: number; characters: number; json: boolean; text: string; mark?: string }
@@ -70,7 +72,7 @@ interface Entry {
 }
 
 const keyOf = (ref: MissionBodyRef) => JSON.stringify([ref.instanceId, ref.projectID, ref.missionID, ref.selector.kind, ref.selector.field,
-  "taskKey" in ref.selector ? ref.selector.taskKey : "reportId" in ref.selector ? ref.selector.reportId : "change" in ref.selector ? ref.selector.change : null])
+  "taskKey" in ref.selector ? ref.selector.taskKey : "reportId" in ref.selector ? ref.selector.reportId : "change" in ref.selector ? ref.selector.change : null, ref.passage])
 
 /** The display cache of mission bodies read through the content route, per workspace,
  * project, mission and selector, each continuation pinned by its digest. */
@@ -156,11 +158,19 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
       return
     }
     const slice = validMissionContentSlice(entry.ref.selector, query, response.content)
+    if (entry.ref.passage && entry.expected && slice.digest !== entry.expected.digest) throw new Error("Current passage body changed")
+    const validateJSON = (json: boolean, prefix = "") => {
+      if (!entry.ref.passage || !json || slice.next !== undefined) return
+      const budget = new MissionTaskWindowBudget()
+      if (prefix) budget.append(prefix, slice.characters)
+      budget.append(slice.text, slice.characters)
+    }
     if (!Number.isSafeInteger(response.revision)) throw new Error("Invalid mission content")
     const revision = response.revision!
     entry.answered = Math.max(entry.answered ?? 0, revision)
     entry.status = "ready"
     if (query.offset === 0) {
+      validateJSON(slice.json === true)
       settle(slice.digest, revision)
       const body = { digest: slice.digest, revision, characters: slice.characters, json: slice.json === true, text: slice.text, ...(mark === undefined ? {} : { mark }) }
       if (entry.display?.digest === body.digest) {
@@ -172,6 +182,8 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
       const body = owner && entry[owner]
       // Only the body this slice continues, at exactly its end, ever grows.
       if (!owner || !body || body.text.length !== slice.offset) return
+      if (entry.ref.passage && body.json !== (slice.json === true)) throw new Error("Current passage body encoding changed")
+      validateJSON(body.json, body.text)
       entry[owner] = { ...body, revision: Math.max(body.revision, revision), text: body.text + slice.text }
     }
     promote(entry)
@@ -213,7 +225,7 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     const shown = entry.pending ?? entry.display
     if (entry.stale || !shown) {
       if (!entry.stale && entry.status === "missing") return
-      read(entry, { offset: 0 })
+      read(entry, { offset: 0, ...(entry.ref.passage && entry.expected ? { digest: entry.expected.digest } : {}) })
     } else if (!covers(shown, need(entry))) read(entry, { digest: shown.digest, offset: shown.text.length })
   }
 

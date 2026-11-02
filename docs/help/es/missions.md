@@ -1,5 +1,7 @@
 # Misiones
 
+La ejecución actual de una programación diaria o nativa usa el mismo árbol de tareas paginado y los mismos lectores de contenido exacto. Cargue explícitamente más tareas o actividad; las solicitudes no observadas siguen siendo desconocidas. Los lectores de resumen, tareas, informes, partes de situación y cambios del plan permanecen vinculados a la ejecución seleccionada. Los resultados guardados conservan sus identidades originales de ejecución e informe cuando comienza otra ejecución.
+
 Para un campo guardado demasiado grande, elija **Leer páginas de JSON sin procesar**. **Página anterior** y **Página siguiente** leen partes exactas y acotadas; si cambia la colección, **Intentar de nuevo** vuelve a la primera página.
 
 El selector carga 50 resúmenes por vez; **Cargar más** continúa la exploración. La búsqueda filtra solo las misiones cargadas. Solo las misiones seleccionadas o abiertas en el lector cargan sus detalles. La limpieza, la actividad y las solicitudes tienen contadores y controles **Cargar más** propios. Los actores y solicitudes sin leer siguen siendo desconocidos, incluso tras observar varias ventanas por separado. **Leer campos guardados** permite consultar páginas exactas de actores, informes, historial, recibos y metadatos. Una ventana fallida conserva la última vista; **Intentar de nuevo** la relee, y una colección cambiada vuelve a la primera ventana. Leer no inicia trabajo. Las finalizaciones históricas se reconocen una sola vez mediante el contador duradero; las nuevas permanecen sin ver hasta mostrarse.

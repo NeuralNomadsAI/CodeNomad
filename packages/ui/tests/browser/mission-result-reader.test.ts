@@ -8,6 +8,11 @@ import type { MissionMap, MissionReport, MissionTask } from "../../../server/src
 import { missionMessages as en } from "../../src/lib/i18n/messages/en/missions"
 import { captureMissionView } from "./mission-view-capture"
 import { listedMissions, panelMissions, routeMissionContent } from "./mission-content-fixture"
+import { recurrenceCurrentPageInput } from "../../../server/src/missions/recurrence-current"
+import { projectMissionPanel } from "../../../server/src/missions/mission-panel-projection"
+import { readMissionContent } from "../../../server/src/missions/mission-content"
+import { missionPanelPage } from "../../../server/src/missions/mission-panel-page"
+import { contentDigest } from "../../../server/src/missions/content-digest"
 
 let browser: Browser, url: string
 before(async () => {
@@ -115,14 +120,23 @@ test("a historical non-late report is explicitly identified as a previous attemp
 
 test("a current one-line remote summary has no Page 1 of 11 illusion and aligns with reader prose", async () => {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 } }), value = snapshot()
+  value.missions[0].reports[0].summary = "Exact current summary"
+  const source = { owner: "daily" as const, projectID: "project", scheduleID: "schedule", passageID: "passage", missionID: "mission", digest: "a".repeat(43) }
   try {
     await page.route("**/api/**", route => {
       const path = new URL(route.request().url()).pathname
-      if (path.endsWith("/schedule/current")) return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: "schedule", passageID: "passage", mission: value.missions[0] } })
-      if (path.endsWith("/schedule/current/passage/content")) return route.fulfill({ json: {
-        version: 1, projectID: "project", missionID: "mission", scheduleID: "schedule", passageID: "passage", revision: 2, page: 0, pageCount: 1,
-        sourceText: new URL(route.request().url()).searchParams.get("section") === "summary" ? "Exact current summary" : "Exact section", markdownText: null,
-      } })
+      if (path.endsWith("/schedule/current")) return route.fulfill({ json: { version: 1, ownerRevision: 1, projectID: "project", scheduleID: "schedule", passageID: "passage", source } })
+      if (path.endsWith("/schedule/current/passage/page")) {
+        const input = recurrenceCurrentPageInput.parse(route.request().postDataJSON()), selector = input.selector
+        assert.deepEqual(input.source, source)
+        if (selector.source === "summaries" || selector.source === "marks" || selector.source === "cleanups") throw Error("Unexpected project display read")
+        if (selector.source === "activity") return route.fulfill({ json: { available: false, reason: "observation-unavailable" } })
+        const damage = { discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }
+        if (input.body) return route.fulfill({ json: missionPanelPage({ source: "mission", field: "body", projectID: "project", missionID: "mission", revision: 2,
+          ...damage, passage: source, window: { offset: 0, end: 1, total: 1, order: contentDigest(JSON.stringify(input.body)) } },
+        [{ available: true, ...readMissionContent("project", input.body, value.missions[0]) }], selector.cursor) })
+        return route.fulfill({ json: projectMissionPanel(value.missions[0], selector, damage, { passage: source }) })
+      }
       return route.fulfill({ json: path.endsWith("/missions") ? listed(value) : path.endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} })
     })
     await routeMissionContent(page, listedMissions)

@@ -9,7 +9,7 @@ import { controlNativeRecurrence } from "./native-recurrence-control"
 import { nativeRecurrenceHandlers } from "./native-recurrence-create"
 import { HUMAN_ANSWER_RPC } from "../../missions/human-answer"
 import { acquireNativeHumanAnswers, nativeHumanAnswerGate } from "./native-human-answer"
-import { readNativeRecurrenceCurrent, readNativeRecurrenceCurrentContent } from "./native-recurrence-current"
+import { readNativeRecurrenceCurrent, readNativeRecurrenceCurrentContent, readNativeRecurrenceCurrentPage } from "./native-recurrence-current"
 import { readNativeRecurrencePage } from "./native-recurrence-reader"
 import { runNativeRecurrenceNow, readNativeRecurrenceRunNow } from "./native-recurrence-manual"
 import { nativeInvocation } from "./native-invocation"
@@ -35,6 +35,7 @@ export function withNativeRecurrenceRpc(ctx: Plugin.Context, artifacts?: NativeS
         })).pipe(Effect.orDie), recurrenceSnapshot: () => readNativeRecurrenceSnapshot(ctx),
         ...nativeRecurrenceHandlers(ctx), recurrencePassageRead: (input: unknown) => readNativeRecurrencePage(ctx, input),
         recurrenceCurrent: (input: unknown) => readNativeRecurrenceCurrent(ctx, input),
+        recurrenceCurrentPage: (input: unknown) => readNativeRecurrenceCurrentPage(ctx, input),
         recurrenceCurrentContent: (input: unknown) => readNativeRecurrenceCurrentContent(ctx, input),
         recurrenceControl: (input: unknown) => controlNativeRecurrence(ctx, input),
         recurrenceRunNow: (input: unknown) => runNativeRecurrenceNow(ctx, input),

@@ -11,6 +11,7 @@ export type MissionPanelPageRequest =
   | { source: "marks"; missionOffset?: number; missionOrder?: string; cursor?: MissionPanelCursor }
 export interface MissionPanelPiece { index: number; offset: number; characters: number; text: string }
 export interface MissionPanelPage {
+  passage?: import("./mission-current-source").MissionCurrentSource
   available: true; version: 1; projectID: string; source: MissionPanelPageRequest["source"]
   missionID?: string; field?: string; part?: "receipts" | "pending"; text?: true; revision?: number; header?: true; finishHighWater?: number
   phase?: "context" | "observed"; observedAt?: number

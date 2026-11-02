@@ -34,6 +34,7 @@ import { useMissionCurrentPassage } from "../../../../../stores/mission-recurren
 import { createMissionViewFence, createReportedChanges } from "../../../../../lib/mission-view-fence"
 import { sessionListRestored } from "../../../../../stores/session-list-restoration"
 import { createMissionScheduleList } from "../../../../mission-schedule-list"
+import { MissionPanelScope } from "../../../../mission-panel-scope"
 import { MissionPanelPaging } from "../../../../mission-panel-paging"
 
 interface MissionControlProps {
@@ -139,9 +140,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const refreshVisible = () => (props.isActive?.() ?? true) && missionStore.demandedInstanceIds().includes(props.instanceId)
     ? missionStore.refresh(props.instanceId) : Promise.resolve()
 
+  const passageSchedule = () => selectedSchedule() ?? selectedScheduled()
+  const [scheduledCurrent, setScheduledCurrent] = createSignal<string>()
   const currentPassage = useMissionCurrentPassage({ instanceId: () => props.instanceId, projectID,
-    directory: scope, scheduleID: selectedSchedule, active: () => props.isActive?.() ?? true, refresh: recurrenceRefresh })
-  const mission = createMemo(() => selectedScheduled() ? undefined : selectedSchedule() ? currentPassage.snapshot()?.mission
+    directory: scope, scheduleID: () => selectedSchedule() ?? scheduledCurrent(), owner: () => selectedScheduled() ? "scheduled" : "daily", active: () => props.isActive?.() ?? true, refresh: recurrenceRefresh })
+  const passageStore = () => currentPassage.inventory() ?? missionStore
+  const mission = createMemo(() => passageSchedule() ? currentPassage.snapshot()?.scheduleID === passageSchedule() ? currentPassage.snapshot()?.mission : undefined
     : missions().find((candidate) => candidate.id === selectedMissionId()))
   // The selected one-time Mission's detail needs its full map, even when it is closed.
   // Only the instance and selection identities drive the registration, never store publications.
@@ -152,27 +156,35 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     untrack(() => missionStore.want(instanceId, wantOwner, id))
     onCleanup(() => missionStore.want(instanceId, wantOwner, undefined))
   })
-  const observedActivity = () => selectedSchedule() ? currentPassage.snapshot()?.activity : state().activity
+  const observedActivity = () => passageSchedule() ? currentPassage.snapshot()?.activity : state().activity
   // Answers requested by a mission's declared actors and observed family, as listed under Needs you.
   const openRequests = (id: string, actors: readonly { sessionId: string }[], activity?: MissionActivityProjection) => selectMissionAttention({ actors,
     forms: getFormQueue(props.instanceId), permissions: getPermissionQueue(props.instanceId), tasks: [],
     family: activity?.missions.find(item => item.missionId === id)?.family })
     .filter(item => item.open && item.sessionId && item.kind !== "blocked").length
+  const currentRequests = () => {
+    const value = mission(), passageID = currentPassage.snapshot()?.passageID
+    if (!passageSchedule() || !value || !passageID) return
+    const store = passageStore(), actors = [...value.actors, ...store.observedActors(props.instanceId, value.id)]
+    const known = new Set(store.observations(props.instanceId, value.id).flatMap(page => page.requests.items.map(item => `${item.kind}:${item.request.id}`)))
+    return { passageID, count: Math.max(known.size, openRequests(value.id, actors, observedActivity())) }
+  }
   const readerTarget = (target: MissionReaderTarget): MissionReaderTarget => {
     const current = currentPassage.snapshot()
-    return selectedSchedule() && current?.mission && current.passageID ? { ...target, recurrence: {
+    return passageSchedule() && current?.mission && current.passageID ? { ...target, recurrence: {
       instanceId: props.instanceId, projectID: current.projectID, scheduleID: current.scheduleID, passageID: current.passageID,
+      ...(current.source?.owner === "scheduled" ? { owner: "scheduled" as const } : {}),
     } } : target
   }
   const selectedFamily = () => observedActivity()?.missions.find(item => item.missionId === mission()?.id)?.family
 
   const navigationOrigin = () => {
     const instanceId = props.instanceId, viewScope = scope(), viewCurrent = captureView(), operation = ++intent
-    const schedule = selectedSchedule(), passage = currentPassage.snapshot()?.passageID
+    const schedule = passageSchedule(), passage = currentPassage.snapshot()?.passageID
     let epoch = conversationEpoch
     return { instanceId, scope: viewScope,
       current: () => viewCurrent() && operation === intent && scope() === viewScope && epoch === conversationEpoch
-        && selectedSchedule() === schedule && (!schedule || currentPassage.snapshot()?.passageID === passage),
+        && passageSchedule() === schedule && (!schedule || currentPassage.snapshot()?.passageID === passage),
       // Adopt only our guarded synchronous batch, never an awaited external change.
       adoptConversation: () => { epoch = conversationEpoch },
     }
@@ -180,9 +192,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
 
   const openActor = async (sessionId: string, origin = navigationOrigin(), afterSelection?: () => void): Promise<boolean> => {
     const missionId = mission()?.id
-    const scheduleID = selectedSchedule(), passageID = currentPassage.snapshot()?.passageID
+    const scheduleID = passageSchedule(), passageID = currentPassage.snapshot()?.passageID
     const client = instances().get(origin.instanceId)?.client, generation = getOpenCodeInstanceGeneration(origin.instanceId)
-    const authorized = () => selectedSchedule() === scheduleID && (!scheduleID || currentPassage.snapshot()?.passageID === passageID)
+    const authorized = () => passageSchedule() === scheduleID && (!scheduleID || currentPassage.snapshot()?.passageID === passageID)
       && (scheduleID ? Boolean(mission()?.id === missionId && (mission()!.coordinatorSessionId === sessionId
         || missionIncludesSession(mission()!.actors, sessionId, selectedFamily())
         || missionDerivedSessionIncludes(props.instanceId, mission()!, sessionId)))
@@ -239,7 +251,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       const value = mission()?.id === target.missionId ? mission() : undefined
       const task = value?.tasks.find(task => task.id === target.itemId)
       const actor = value && target.kind === "task" ? task && missionTaskConversation(value, task, selectedFamily(),
-        missionDerivedTaskSession(props.instanceId, value, task.key), [...value.actors, ...missionStore.observedActors(props.instanceId, value.id)]) : value?.coordinatorSessionId
+         missionDerivedTaskSession(props.instanceId, value, task.key), [...value.actors, ...passageStore().observedActors(props.instanceId, value.id)]) : value?.coordinatorSessionId
       if (!actor || !await openActor(actor, origin)) return
     }
     if (!origin.current()) return
@@ -264,24 +276,21 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const cleanupPending = () => (state().cleanups ?? []).some(missionCleanupPending)
   const detailId = createUniqueId()
   const tracking = () => <>
-    <Show when={selectedSchedule()}>
-      <Show when={currentPassage.loading() && !currentPassage.snapshot()}><p role="status">{props.t("missions.control.loading")}</p></Show>
-      <Show when={currentPassage.error()}><p role="status">{props.t(currentPassage.snapshot() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
+    <Show when={passageSchedule()}>
+      <Show when={currentPassage.loading() && !currentPassage.snapshot()?.mission}><p role="status">{props.t("missions.control.loading")}</p></Show>
+      <Show when={currentPassage.error()}><p role="status">{props.t(currentPassage.snapshot()?.mission ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
     </Show>
-    <Show when={mission()}>{selected => <MissionTracking
+    <MissionPanelScope value={passageStore}><Show when={mission()}>{selected => <MissionTracking
       instanceId={props.instanceId} mission={selected()} activity={observedActivity()}
       active={props.isActive?.() ?? true} disabled={Boolean(editor())}
-      readOnly={Boolean(selectedSchedule())} reading={isReading} read={target => void read(target)}
-      refresh={refreshVisible} onOpenActor={onOpenActor} />}</Show>
+      readOnly={Boolean(passageSchedule())} reading={isReading} read={target => void read(target)}
+      refresh={refreshVisible} onOpenActor={onOpenActor} />}</Show></MissionPanelScope>
   </>
   const recurrence = createMissionRecurrenceList({ get instanceId() { return props.instanceId }, get scope() { return scope() },
     get projectID() { return projectID() }, active: () => props.isActive?.() ?? true, get refresh() { return recurrenceRefresh() },
     get onRead() { return props.onRevealConversation }, get selectedSchedule() { return selectedSchedule() },
     get tracking() { return tracking() }, detailId, registerRetry,
-    get selectedRequests() {
-      const passage = selectedSchedule() ? mission() : undefined, passageID = currentPassage.snapshot()?.passageID
-      return passage && passageID ? { passageID, count: openRequests(passage.id, passage.actors, observedActivity()) } : undefined
-    },
+    get selectedRequests() { return selectedSchedule() ? currentRequests() : undefined },
     get passage() {
       const passage = mission()
       if (!passage) return undefined
@@ -307,6 +316,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // cold restoration. Point-read that selection; absence never triggers an inventory scan.
   const unifiedSelection = () => selectedScheduled() ?? (selectedSchedule() ? undefined : selectedMissionId())
   const scheduled = createMissionScheduleList({ get instanceId() { return props.instanceId }, get directory() { return scope() },
+    get selectedRequests() { return selectedScheduled() ? currentRequests() : undefined },
+    onPassage: setScheduledCurrent,
+    get tracking() { return selectedScheduled() ? tracking() : undefined },
+    get passage() { const value = selectedScheduled() ? mission() : undefined; if (!value) return undefined
+      const target: MissionReaderTarget = { missionId: value.id, kind: "overview" }
+      return { reading: isReading(target), onToggle: () => void read(target) } },
     get projectID() { return projectID() }, active: visible, enabled: () => !editor(), get refresh() { return recurrenceRefresh() },
     get selected() { return unifiedSelection() }, detailId, onEdit: id => openEditor({ kind: "edit", scheduleID: id }),
     onDeleted: id => { if (selectedScheduled() === id) updateMissionProjectView(scope(), { selectedScheduled: undefined }) },

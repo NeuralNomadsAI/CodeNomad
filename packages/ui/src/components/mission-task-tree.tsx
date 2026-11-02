@@ -10,7 +10,7 @@ import { missionProjectView, updateMissionProjectView } from "../stores/mission-
 import { MissionGraph, orderMissionTasks } from "./mission-graph"
 import { createMissionRecoveryAction } from "./mission-recovery-button"
 import { missionPanelScroll } from "./mission-panel-scroll"
-import { missionStore } from "../stores/missions"
+import { useMissionPanelStore } from "./mission-panel-scope"
 import { MISSION_TASK_PAGE, type MissionTaskRequest } from "../../../server/src/missions/mission-panel-map"
 
 export type MissionTaskState = "done" | "active" | "input" | "assigned" | "ready" | "waiting" | "blocked" | "failed" | "retired"
@@ -54,6 +54,7 @@ export function MissionTaskTree(props: {
   conversation: (task: MissionPanelTask) => string | undefined; onOpenConversation: (sessionId: string) => void
   disabled?: boolean; onRecoveryAdmitted?: () => void | Promise<void>
 }) {
+  const missionStore = useMissionPanelStore()
   const { t } = useI18n()
   let list!: HTMLUListElement
   // A compact map holds a page of its tasks, each with its place in the whole display order;

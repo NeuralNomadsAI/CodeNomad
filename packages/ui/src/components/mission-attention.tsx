@@ -7,7 +7,7 @@ import { getFormQueue } from "../stores/forms"
 import { getPermissionQueue } from "../stores/instances"
 import { sessions } from "../stores/session-state"
 import { selectMissionAttention, type MissionObservedFamily } from "./mission-attention-model"
-import { missionStore } from "../stores/missions"
+import { useMissionPanelStore } from "./mission-panel-scope"
 import type { MissionAttentionItem } from "./mission-attention-model"
 
 /**
@@ -24,6 +24,7 @@ export const MissionAttention: Component<{
   family?: MissionObservedFamily
   onOpenActor: (sessionId: string, request?: { kind: "form" | "permission"; id: string }) => Promise<void>
 }> = (props) => {
+  const missionStore = useMissionPanelStore()
   const { t } = useI18n()
   const items = createMemo(() => {
     const native = selectMissionAttention({

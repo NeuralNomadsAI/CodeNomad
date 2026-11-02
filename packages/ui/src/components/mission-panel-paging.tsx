@@ -1,9 +1,10 @@
 import { Show } from "solid-js"
-import { missionStore } from "../stores/missions"
+import { useMissionPanelStore } from "./mission-panel-scope"
 import { useI18n } from "../lib/i18n"
 
 /** Explicit continuation of exactly one directory, field or observation window. */
 export function MissionPanelPaging(props: { instanceId: string; lane: string; search?: boolean }) {
+  const missionStore = useMissionPanelStore()
   const { t } = useI18n(), state = () => missionStore.progress(props.instanceId, props.lane)
   const unknown = () => props.lane.startsWith("activity:") && missionStore.observations(props.instanceId, props.lane.slice(9)).some(page => page.coverage !== "observed" || page.requests.state !== "observed")
   return <Show when={state().total === undefined || state().more || state().failure || state().loading || unknown()}><div class="mission-panel-paging">

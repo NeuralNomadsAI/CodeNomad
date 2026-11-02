@@ -13,22 +13,21 @@ export async function readArchivedRecurrencePage(storage: MissionStorage, docume
   if (input.scheduleID !== document.id) throw new Error("Recurrence schedule changed")
   const { receipt, missionID, journal } = archivedRecurrencePassage(storage, document, input.passageID)
   if (!("missionID" in receipt.result)) throw new Error("Archived result unavailable")
-  const snapshot = await journal.snapshot()
-  const mission = snapshot.missions[0]
+  const snapshot = await journal.missionView(missionID)
+  const mission = snapshot.mission
   // Native terminality and business completion are distinct. A quiescent
   // failure/no-report passage can archive an unfinished business map.
   const outcome = String(receipt.result.outcome)
   const statusMatches = mission && (outcome === "completed" ? mission.status === "completed"
     : outcome === "failed" ? ["active", "failed"].includes(mission.status)
     : outcome === "ended-without-report" ? mission.status === "active" : mission.status === outcome)
-  if (snapshot.missions.length !== 1 || snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable
+  if (snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable || snapshot.cleanupUnavailable
     || !mission || mission.id !== missionID || mission.projectID !== document.projectID
     || mission.projectCanonical !== document.projectCanonical || mission.coordinatorSessionId !== receipt.result.conversationID
     || !statusMatches || input.revision !== undefined && input.revision !== mission.revision) {
     throw new Error("Archived recurrence journal unavailable or changed")
   }
-  const history = await journal.events()
-  if (history.discardedEvents || !history.events.some(event => event.type === "mission.created"
+  if (!snapshot.events.some(event => event.type === "mission.created"
     && event.missionID === missionID && event.requestID === receipt.passage.id)) throw new Error("Archived recurrence creation binding unavailable")
 
   type Section = typeof recurrenceReadPage._type.sections[number]
