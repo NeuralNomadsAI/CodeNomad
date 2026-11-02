@@ -52,7 +52,7 @@ export function MissionTaskTree(props: {
   reading: (task: MissionPanelTask) => boolean; onRead: (task: MissionPanelTask) => void
   /** The task's exact owned conversation, once one is known. */
   conversation: (task: MissionPanelTask) => string | undefined; onOpenConversation: (sessionId: string) => void
-  disabled?: boolean; onRecoveryAdmitted?: () => void | Promise<void>
+  active?: boolean; disabled?: boolean; onRecoveryAdmitted?: () => void | Promise<void>
 }) {
   const { t } = useI18n()
   let list!: HTMLUListElement
@@ -112,7 +112,7 @@ export function MissionTaskTree(props: {
   const scope = () => instances().get(props.instanceId)?.folder ?? props.instanceId
   const open = () => missionProjectView(scope()).tasksCollapsed !== true
   let root!: HTMLElement
-  const panelScrolls = missionPanelScroll(() => root)
+  const panelScrolls = missionPanelScroll(() => root, () => props.active ?? true)
   return <section ref={root} class="mission-tree mission-disclosure" data-scroller={panelScrolls() ? "panel" : undefined}>
     <h3><button type="button" class="mission-disclosure-trigger" aria-expanded={open()} aria-controls={id}
       onClick={() => updateMissionProjectView(scope(), { tasksCollapsed: open() || undefined })}>

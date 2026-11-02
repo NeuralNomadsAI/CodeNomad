@@ -44,6 +44,7 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.readFailed": "スケジュールを更新できませんでした。最後の表示を保持しています。操作前に更新してください。",
   "missions.scheduleList.capacity": "未確認のコマンドが多すぎます。保存済みのリクエストを解決してから送信してください。",
   "missions.scheduleList.uncertain": "リクエストは未確認です。元の識別情報を保持しています。保存済みのリクエストを更新してください。自動再送は行いません。",
+  "missions.scheduleList.confirmedRefreshing": "操作は確認済みです。次の操作の前に最新表示を待っています。「保存済みリクエストを更新」で読み取りをやり直してください。",
   "missions.scheduleList.activate": "この操作にはネイティブスケジュールが必要です。次の設定文書でexperimental.schedulesを有効にしますか？\n{paths}\n操作を続ける前に有効化の確認が必要です。明示的なOFFは保持されます。",
   "missions.scheduleList.confirm.stop": "「{title}」を完全に停止しますか？今後の実行を無効にします。開始済みツールの影響は続く場合があります。会話と結果は保持されます。",
   "missions.scheduleList.confirm.delete": "「{title}」を削除しますか？削除前に今後の実行を無効にします。会話と結果は保持されます。未確認の後処理は表示され続けます。",

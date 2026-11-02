@@ -8,3 +8,15 @@
   outline-offset: 1px;
   box-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring-color);
 }
+
+.alert-dialog.guarded-confirmation {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 2 * var(--space-md));
+  padding: 0;
+}
+
+.alert-dialog.guarded-confirmation .window-footer {
+  margin-top: 0;
+  flex-wrap: wrap;
+}

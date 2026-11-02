@@ -95,7 +95,7 @@ const withoutPatterns = value => Array.isArray(value) ? value.map(withoutPattern
 async function rpcDefinition(marker) {
   const schema = JSON.parse(await readFile(new URL("../../../packages/server/src/opencode/integrations/vendor/rpc.schema.json", import.meta.url), "utf8"))
   const definition = name => withoutPatterns(schema.$defs[name])
-  const methods = Object.fromEntries(["status", "installHost", "hosts", "attachHost", "detachHost", "advertise", "withdraw"].map(method =>
+  const methods = Object.fromEntries(["status", "installHost", "hosts", "attachHost", "detachHost", "bindingRead", "advertise", "withdraw"].map(method =>
     [method, { input: ["advertise", "withdraw"].includes(method) ? { type: "object" } : definition(`${method}.input`), output: definition(`${method}.output`) }]))
   const events = Object.fromEntries(["status_changed", "hosts_changed"].map(event => [event, { schema: { ...definition(`${event}.event`), type: "object" } }]))
   return { id: marker.rpc, methods, events }

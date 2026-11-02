@@ -106,10 +106,17 @@ request/revision for explicit read-only reconciliation. Only successfully read
 documents enable new controls or representation changes; retained display metadata
 and partial error-body receipts keep the original reconciliation available. Selection,
 scope, connection and disposal fence late selected reads, including ABA changes.
-Exact control settlement schedules the still-current parent's fresh read and deletion
-callback before releasing a selected hold's display owner. Late confirmations release
-only their matching hold; chained receipt reads and activation continuations retain
-their original view and connection fences.
+Exact complete control or activation confirmation retains a minimum publication
+revision R with its confirmed outcome in per-window memory across remounts. New
+mutations and Edit remain disabled until a fully validated document for that object
+and owner publishes at revision >= R. Same-owner revalidation and failed, partial or
+older reads retain the barrier and confirmed feedback. During this phase, Refresh
+saved request requests only the parent's display refresh. Confirmed deletion releases
+matching retention and clears the current selection without waiting for publication
+of a deleted document. Chained receipt reads and direct activation continuations retain
+their original view and connection fences. A direct positive activation acknowledgement
+may continue the same user intention; recovered activation leaves Play explicit.
+Never replay a mutation or start Play from receipt recovery or display publication.
 
 List and detail also expose `observation`, `availableActions` and `blockReason`.
 Their `technical` projection exposes only the recorded current/retiring carrier

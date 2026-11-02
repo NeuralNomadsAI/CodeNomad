@@ -57,6 +57,11 @@ export async function startFixtureDaemon({ directory, cacheDir }: {
         configureServer(s) {
           s.middlewares.use(async (request, response, next) => {
             for (const control of controls) if (await control(request, response)) return
+            if (request.url === "/favicon.ico" && request.method === "GET") {
+              response.setHeader("Content-Type", "image/png")
+              response.end(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aokcAAAAASUVORK5CYII=", "base64"))
+              return
+            }
             const route = routes.get(request.url?.split("?")[0] ?? "")
             if (!route) return next()
             try {

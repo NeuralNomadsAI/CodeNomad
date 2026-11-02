@@ -88,6 +88,8 @@ import { readClientLayoutValue, writeClientLayoutValue } from "../../stores/clie
 import { runtimeEnv } from "../../lib/runtime-env"
 import { getServerMeta, previewsUnavailable } from "../../lib/server-meta"
 import { useInterruptionViewport } from "./shell/useInterruptionViewport"
+import { createIntegrationAttachment } from "../integration-attachment"
+import { Link } from "lucide-solid"
 
 const log = getLogger("session")
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
@@ -167,6 +169,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     handleSessionSelect,
   } = useInstanceSessionContext({
     instanceId: () => props.instance.id,
+  })
+  const attachment = createIntegrationAttachment({
+    get instanceId() { return props.instance.id },
+    get directory() { return activeSessionForInstance()?.location.directory ?? props.instance.folder },
+    get session() { return activeSessionForInstance() },
+    get active() { return props.isActiveInstance !== false && Boolean(activeSessionForInstance()) },
   })
 
   // Shell ownership keeps partially answered requests alive as session panes change.
@@ -655,6 +663,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       onSelect: handleCommandPaletteClick,
     }]
     if (showingInfoView()) return items
+    if (attachment.available()) items.push({ key: "attach-application", label: t("integrations.attach"),
+      icon: <Link class="w-4 h-4" aria-hidden="true" />, onSelect: () => attachment.open() })
+    if (attachment.unsupported()) items.push({ key: "application-unsupported", label: t("integrations.unsupported"), disabled: true, onSelect: () => {} })
     items.push({
       key: "search",
       checked: searchOpen(),
@@ -1141,6 +1152,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                             <Search class="w-5 h-5" aria-hidden="true" />
                           </IconButton>
                           <Show when={!previewsUnavailable()}>{renderPreviewToggleButton()}</Show>
+                          <Show when={attachment.available()}><IconButton color="inherit" size="small" aria-label={t("integrations.attach")}
+                            title={t("integrations.attach")} onClick={() => void attachment.open()}><Link class="w-5 h-5" aria-hidden="true" /></IconButton></Show>
+                          <Show when={attachment.unsupported()}><span tabindex="0" class="text-xs text-secondary" title={t("integrations.unsupported")}>{t("integrations.unavailableShort")}</span></Show>
                           {renderFullscreenButton()}
                           <TranscriptFilters open={filtersOpen()} onOpenChange={setFiltersOpen}
                             overflowAnchor={() => headerActionsCollapsed()
@@ -1176,6 +1190,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 </div>
               </div>
             </Toolbar>
+            {attachment.indicator()}
           </AppBar>
         </Show>
 
@@ -1184,6 +1199,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           sx={{ flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowX: "hidden" }}
           class="content-area"
         >
+          {attachment.picker()}
           <Show
             when={showingInfoView()}
             fallback={

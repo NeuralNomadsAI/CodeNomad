@@ -21,6 +21,7 @@ const RemoveSchema = z.object({
   scope: Scope,
   target: z.string().min(1).max(32_768),
   entryIndex: z.number().int().min(0).max(100_000),
+  expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict()
 
 export function registerPluginSourceRoutes(app: FastifyInstance, deps: RouteDeps): void {
@@ -56,9 +57,9 @@ function handleError(error: unknown, workspaceId: string, logger: FastifyReply["
         : error.kind === "invalid" ? 422
           : error.kind === "conflict" ? 409
             : 503
-    if (status >= 500) logger.warn({ err: error, workspaceId }, "Plugin sources unavailable")
-    return reply.code(status).send({ error: error.message, ...(error instanceof PluginSourcesError ? { code: error.code } : {}) })
+    if (status >= 500) logger.warn({ status }, "Plugin sources unavailable")
+    return reply.code(status).send({ error: "Plugin source update refused", ...(error instanceof PluginSourcesError ? { code: error.code } : {}) })
   }
-  logger.error({ err: error, workspaceId }, "Plugin source update failed")
+  logger.error({ status: 500 }, "Plugin source update failed")
   return reply.code(500).send({ error: "Plugin source update failed" })
 }

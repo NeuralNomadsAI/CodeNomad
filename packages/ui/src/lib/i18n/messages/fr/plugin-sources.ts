@@ -1,4 +1,7 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.sources.removeWarning": "Retirer ce plugin peut interrompre sa disponibilité et ses connexions dans les conversations qui l’utilisent.",
+  "instanceServiceStatus.plugins.sources.removeGlobalWarning": "Cela peut aussi affecter des conversations dans d’autres projets.",
+  "instanceServiceStatus.plugins.sources.removeRecovery": "Réinstaller peut rétablir la disponibilité ; un rechargement ou rattachement peut être nécessaire. Les opérations interrompues peuvent ne pas reprendre.",
   "instanceServiceStatus.plugins.sources.add": "Ajouter un plugin",
   "instanceServiceStatus.plugins.sources.addTitle": "Ajouter un plugin",
   "instanceServiceStatus.plugins.sources.spec": "Paquet",
@@ -29,6 +32,6 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "La configuration OpenCode {scope} est mal formée. Elle n'a pas été modifiée.",
   "instanceServiceStatus.plugins.sources.errors.unavailable": "La configuration {scope} est indisponible pour cet emplacement.",
   "instanceServiceStatus.plugins.sources.errors.timeout": "OpenCode n'a pas répondu à temps. Rien n'a été ajouté ; réessayez.",
-  "instanceServiceStatus.plugins.sources.errors.remove": "{name} n'a pas pu être retiré de {scope}.",
+  "instanceServiceStatus.plugins.sources.errors.remove": "Le retrait de {name} de {scope} n’a pas pu être confirmé. Actualisez Plugins pour vérifier la configuration avant de réessayer.",
   "instanceServiceStatus.plugins.sources.errors.removeStale": "{name} a changé dans la configuration {scope} depuis son affichage. Actualisez et réessayez.",
 } as const

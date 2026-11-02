@@ -44,6 +44,7 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.readFailed": "无法刷新计划。已保留上次显示；请刷新后再操作。",
   "missions.scheduleList.capacity": "未确认的命令过多。请先解决一条已保存的请求，再发送新请求。",
   "missions.scheduleList.uncertain": "此请求尚未确认，已保留原始身份。请刷新已保存的请求；不会自动重新发送。",
+  "missions.scheduleList.confirmedRefreshing": "操作已确认。等待更新后的视图才能进行其他操作。请使用“刷新已保存的请求”重新读取。",
   "missions.scheduleList.activate": "此操作需要原生计划功能。是否在以下配置文件中启用 experimental.schedules？\n{paths}\n确认启用后才会继续此操作。明确的 OFF 设置会保留。",
   "missions.scheduleList.confirm.stop": "永久停止“{title}”？后续轮次将被禁用。已开始的工具效果可能继续；对话和结果会保留。",
   "missions.scheduleList.confirm.delete": "删除“{title}”？移除前会禁用后续轮次。对话和结果会保留。未确认的清理仍然可见。",

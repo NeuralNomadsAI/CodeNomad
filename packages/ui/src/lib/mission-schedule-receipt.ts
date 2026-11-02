@@ -1,6 +1,6 @@
 import { HttpResponseError } from "./retryable-file-search"
 
-export type MissionScheduleControlReceipt = { pending: boolean; document: { id: string; control: { requestID: string; expectedRevision: number;
+export type MissionScheduleControlReceipt = { pending: boolean; document: { id: string; revision?: number; control: { requestID: string; expectedRevision: number;
   action: string; pending: boolean } | null } | null; deleted?: boolean;
   deletionReceipt?: { id: string; requestID: string; expectedRevision: number; deleteManagedSessions: boolean } }
 

@@ -1,4 +1,7 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.sources.removeWarning": "यो प्लगइन हटाउँदा यसलाई प्रयोग गर्ने कुराकानीहरूमा यसको उपलब्धता र जडानहरू अवरुद्ध हुन सक्छन्।",
+  "instanceServiceStatus.plugins.sources.removeGlobalWarning": "यसले अन्य परियोजनाका कुराकानीहरूलाई पनि असर गर्न सक्छ।",
+  "instanceServiceStatus.plugins.sources.removeRecovery": "पुनः स्थापना गर्दा उपलब्धता फर्कन सक्छ; पुनः लोड वा संलग्न गर्नुपर्ने हुन सक्छ। रोकिएका कार्यहरू फेरि सुरु नहुन सक्छन्।",
   "instanceServiceStatus.plugins.sources.add": "प्लगइन थप्नुहोस्",
   "instanceServiceStatus.plugins.sources.addTitle": "प्लगइन थप्नुहोस्",
   "instanceServiceStatus.plugins.sources.spec": "प्याकेज",
@@ -29,6 +32,6 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "{scope} OpenCode कन्फिगरेसन बिग्रिएको छ। यसलाई बदलिएन।",
   "instanceServiceStatus.plugins.sources.errors.unavailable": "यो स्थानका लागि {scope} कन्फिगरेसन उपलब्ध छैन।",
   "instanceServiceStatus.plugins.sources.errors.timeout": "OpenCode ले समयमै जवाफ दिएन। केही थपिएन; फेरि प्रयास गर्नुहोस्।",
-  "instanceServiceStatus.plugins.sources.errors.remove": "{name} लाई {scope} बाट हटाउन सकिएन।",
+  "instanceServiceStatus.plugins.sources.errors.remove": "{scope} बाट {name} हटेको पुष्टि हुन सकेन। फेरि प्रयास गर्नुअघि प्लगइन ताजा गरी वास्तविक कन्फिगरेसन हेर्नुहोस्।",
   "instanceServiceStatus.plugins.sources.errors.removeStale": "देखाइएपछि {scope} कन्फिगरेसनमा {name} बदलियो। रिफ्रेस गरेर फेरि प्रयास गर्नुहोस्।",
 } as const

@@ -36,7 +36,7 @@ import { SideCarManager } from "./sidecars/manager"
 import { PreviewManager } from "./previews/manager"
 import { ClientConnectionManager } from "./clients/connection-manager"
 import { runCliUpgrade } from "./cli-upgrade"
-import { createServerShutdownHandler, orchestrateServerShutdown, type ServerShutdownTrigger } from "./shutdown"
+import { createServerShutdownHandler, installShutdownSignalHandlers, installShutdownStdinHandler, orchestrateServerShutdown } from "./shutdown"
 import { AutoAcceptManager } from "./permissions/auto-accept-manager"
 import { createOpencodePermissionReplier } from "./permissions/opencode-replier"
 import { PermissionReceipts } from "./permissions/receipts"
@@ -95,53 +95,6 @@ const DEFAULT_HOST = "127.0.0.1"
 const DEFAULT_CONFIG_PATH = "~/.config/codenomad/config.json"
 const DEFAULT_HTTPS_PORT = 9898
 const DEFAULT_HTTP_PORT = 9899
-export const STDIN_SHUTDOWN_COMMAND = "codenomad:shutdown"
-
-interface ShutdownSignalSource {
-  on: (signal: "SIGINT" | "SIGTERM", listener: () => void) => unknown
-}
-
-export function installShutdownSignalHandlers(
-  source: ShutdownSignalSource,
-  shutdown: (signal: ServerShutdownTrigger) => Promise<void>,
-): void {
-  source.on("SIGINT", () => void shutdown("SIGINT"))
-  source.on("SIGTERM", () => void shutdown("SIGTERM"))
-}
-
-interface ShutdownStdinSource {
-  on(event: "data", listener: (chunk: Buffer | string) => void): unknown
-  off?(event: "data", listener: (chunk: Buffer | string) => void): unknown
-  destroy?(): unknown
-}
-
-export function installShutdownStdinHandler(
-  source: ShutdownStdinSource,
-  shutdown: (signal: ServerShutdownTrigger) => Promise<void>,
-  handleLine?: (line: string) => boolean,
-): void {
-  let buffer = ""
-  let requested = false
-  const onData = (chunk: Buffer | string) => {
-    if (requested) return
-    buffer += chunk.toString()
-    const lines = buffer.split(/\r?\n/)
-    buffer = lines.pop() ?? ""
-    let shutdownRequested = false
-    for (const line of lines) {
-      if (line.trim() === STDIN_SHUTDOWN_COMMAND) shutdownRequested = true
-      else handleLine?.(line)
-    }
-    if (!shutdownRequested) return
-
-    requested = true
-    source.off?.("data", onData)
-    source.destroy?.()
-    void shutdown("stdin")
-  }
-  source.on("data", onData)
-}
-
 export function parseBooleanSwitchEnv(name: string, value: string | undefined = process.env[name]): boolean {
   const normalized = (value ?? "").trim().toLowerCase()
   if (["1", "true", "yes", "on"].includes(normalized)) return true

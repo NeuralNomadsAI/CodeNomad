@@ -75,6 +75,32 @@ function locationlessManager(
 }
 
 describe("InstanceEventBridge", () => {
+  it("projects payload-free integration events before the ownership relay and drops unknown notifications", async () => {
+    const secret = "HOST_TOKEN_SCRIPT_BINDING_SENTINEL"
+    const location = { directory: "/repo-a" }
+    const events = [
+      { type: "rpc.neuralnomads.fixture.status_changed", location, data: { token: secret }, secret },
+      { type: "rpc.neuralnomads.fixture.hosts_changed", location, data: { script_handle: secret }, id: secret },
+      { type: "rpc.neuralnomads.fixture.binding_changed", location, data: { binding_key: secret } },
+      { type: "rpc.neuralnomads.fixture.status_changed", data: { token: secret } },
+      { type: "config.updated", data: {} },
+    ] as unknown as OpenCodeEvent[]
+    const { manager } = locationlessManager(events, {})
+    const bus = new EventBus()
+    const received: OpenCodeEvent[] = []
+    bus.on("instance.event", event => { if (event.event.type !== "server.connected") received.push(event.event) })
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] })
+      await waitFor(() => received.length === 3)
+      assert.deepEqual(received.filter(event => event.type.startsWith("rpc.")), [
+        { type: "rpc.neuralnomads.fixture.status_changed", location, data: {} },
+        { type: "rpc.neuralnomads.fixture.hosts_changed", location, data: {} },
+      ])
+      assert.equal(JSON.stringify(received).includes(secret), false)
+    } finally { bridge.shutdown() }
+  })
+
   it("keeps same-directory legacy identities separate for scoped and cached locationless events", async () => {
     const one = { directory: "/repo", workspaceID: "one" }
     const two = { directory: "/repo", workspaceID: "two" }
