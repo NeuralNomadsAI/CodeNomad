@@ -1,10 +1,13 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
-import { mkdirSync } from "node:fs"
+import { appendFileSync, mkdirSync, mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { chromium, type Browser, type Page, type Route } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
+import { observeHeaderFixture } from "./header-fixture-diagnostics"
 import { assertNoSentinels, FAKE_INTEGRATION_SENTINELS, findSentinels } from "../../../../scripts/fixtures/fake-integration/index.mjs"
 
 let browser: Browser, url: string
@@ -67,10 +70,7 @@ async function failResponse(route: Route, kind: FailureKind) {
   if (kind === "raw-http-error") return route.fulfill({ status: 503, contentType: "text/plain", body })
   return route.fulfill({ status: 503, json: { code: FAKE_INTEGRATION_SENTINELS.bindingKey, error: privateHost } })
 }
-async function open(width = 1500, height = 850) {
-  const page = await browser.newPage({ viewport: { width, height } })
-  page.setDefaultTimeout(20_000)
-  const diagnostics = captureDiagnostics(page)
+async function prepareAttachment(page: Page, diagnostics: ReturnType<typeof captureDiagnostics>) {
   // lib/logger has namespace switches rather than a separate severity threshold: enable all of them at boot.
   await page.addInitScript(() => localStorage.setItem("opencode:logger:namespaces", JSON.stringify(["sse", "api", "session", "actions", "foreground-refresh", "scroll"])))
   // Drive transport status/open explicitly through ServerEvents, without incidental HTTP fixture reconnects.
@@ -121,20 +121,64 @@ async function open(width = 1500, height = 850) {
       status: { host: { state: model.host, ...(model.hostAction ? { action: model.hostAction } : {}) }, connection: { offers: model.offers, attachedSessions: 42, state: "attached" }, version: model.version },
     }] } })
   })
-  const finish = async () => {
-    try { await diagnostics.check() } finally { await page.close() }
-  }
   const reload = async () => {
     await diagnostics.drain()
     await page.reload()
   }
-  try {
-    await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).integrationFixture))
-    await page.waitForFunction(() => document.querySelector(".session-header-expanded-actions"))
-    assert.equal(await page.evaluate(() => (window as any).codenomadLogger.listLoggerNamespaces().every((entry: any) => entry.enabled)), true)
-    return { page, calls, model, diagnostics, reload, finish }
-  } catch (error) { await finish(); throw error }
+  await page.goto(url)
+  await page.waitForFunction(() => Boolean((window as any).integrationFixture))
+  await page.waitForFunction(() => document.querySelector(".session-header-expanded-actions"))
+  assert.equal(await page.evaluate(() => (window as any).codenomadLogger.listLoggerNamespaces().every((entry: any) => entry.enabled)), true)
+  return { page, calls, model, diagnostics, reload }
+}
+
+async function withAttachment<T>(run: (fixture: Awaited<ReturnType<typeof prepareAttachment>>) => Promise<T>, width = 1500, height = 850) {
+  let page: Page | undefined, diagnostics: ReturnType<typeof captureDiagnostics> | undefined
+  let observer: ReturnType<typeof observeHeaderFixture> | undefined, evidenceDirectory: string | undefined
+  let phase = "allocation", checking = false
+  // Raw observations can contain private URLs and sentinels. Keep them only in owned TEMP evidence.
+  const record = (category: string, value: unknown) => {
+    try {
+      evidenceDirectory ??= mkdtempSync(join(tmpdir(), "codenomad-attachment-failure-"))
+      appendFileSync(join(evidenceDirectory, "diagnostics.private.jsonl"), JSON.stringify({ category, phase, value }, (_key, item) =>
+        item instanceof Error ? { name: item.name, message: item.message, stack: item.stack } : item) + "\n")
+    } catch { console.error("attachment-evidence-write-failed") }
+  }
+  return runWithDiagnosticCleanup({
+    run: async () => {
+      try {
+        page = await browser.newPage({ viewport: { width, height } })
+        page.setDefaultTimeout(20_000)
+        diagnostics = captureDiagnostics(page)
+        observer = observeHeaderFixture(page, "integrationFixture")
+        await observer.install()
+        phase = "bootstrap"
+        const fixture = await prepareAttachment(page, diagnostics)
+        phase = "body"
+        const result = await run(fixture)
+        phase = "diagnostics"
+        checking = true
+        await diagnostics.check()
+        return result
+      } catch (error) { record("primary", error); throw error }
+    },
+    diagnose: async () => {
+      console.error("attachment-primary-failed", phase)
+      try { await observer?.diagnose(message => record("snapshot", message)) }
+      catch (error) { record("snapshot-error", error); console.error("attachment-snapshot-failed") }
+      if (!checking) await diagnostics?.check()
+    },
+    cleanup: async () => {
+      try { await page?.close() }
+      catch (error) { record("close-error", error); throw error }
+      finally {
+        observer?.detach()
+        if (evidenceDirectory) record("resources", { pageClosed: page?.isClosed(), contextOwned: page ? browser.contexts().includes(page.context()) : false })
+      }
+    },
+    onObservationError: error => { record("diagnostic-error", error); console.error("attachment-diagnostic-failed") },
+    onCleanupError: () => console.error("attachment-close-failed"),
+  })
 }
 async function launch(page: Page) {
   const inline = page.locator(".session-header-expanded-actions").getByRole("button", { name: label, exact: true })
@@ -186,9 +230,47 @@ async function nextToast(page: Page, count: number) {
   return (await call(page, "toasts"))[0]
 }
 
-test("AC-C15 install/update uses exact source association and fresh active native status, without a session or offers", async () => {
-  const { page, model, calls, finish } = await open()
+for (const stage of ["addInitScript", "goto", "waitForFunction"] as const)
+test(`attachment boundary preserves ${stage} primary under diagnostic and close failures`, async t => {
+  const page = await browser.newPage(), context = page.context(), close = page.close.bind(page)
+  const primary = new Error("bootstrap primary"), stack = primary.stack, output: unknown[][] = []
+  t.mock.method(console, "error", (...args: unknown[]) => { output.push(args) })
+  t.mock.method(browser, "newPage", async () => page)
+  if (stage === "addInitScript") t.mock.method(page, "addInitScript", async () => { throw primary })
+  else {
+    t.mock.method(page, "goto", async () => { if (stage === "goto") throw primary; return null })
+    t.mock.method(page, "waitForFunction", async () => { throw primary })
+  }
+  const closing = t.mock.method(page, "close", async () => { await close(); throw new Error("close secondary") })
   try {
+    await assert.rejects(withAttachment(async () => assert.fail("bootstrap must reject")), error => error === primary && (error as Error).stack === stack)
+    assert.equal(page.isClosed(), true)
+    assert.equal(browser.contexts().includes(context), false, "the owned newPage context is closed immediately")
+    assert.equal(closing.mock.callCount(), 1)
+    for (const event of ["requestfailed", "response", "framenavigated"]) assert.equal(page.listenerCount(event), 0, "the failure observer is detached")
+    assert.deepEqual(output, [["attachment-primary-failed", stage === "addInitScript" ? "allocation" : "bootstrap"],
+      ["attachment-diagnostic-failed"], ["attachment-close-failed"]])
+  } finally { await close() }
+})
+
+test("attachment boundary preserves body primary and separates diagnostic and close failures", async t => {
+  const primary = new Error("body primary"), stack = primary.stack, output: unknown[][] = []
+  let ownedPage: Page | undefined
+  t.mock.method(console, "error", (...args: unknown[]) => { output.push(args) })
+  await assert.rejects(withAttachment(async ({ page }) => {
+    ownedPage = page
+    const close = page.close.bind(page)
+    t.mock.method(page, "close", async () => { await close(); throw new Error("close secondary") })
+    await page.evaluate(host => console.debug("private failure evidence", host), privateHost)
+    throw primary
+  }), error => error === primary && (error as Error).stack === stack)
+  assert.equal(ownedPage?.isClosed(), true)
+  assertNoSentinels(output, sentinelOptions, "public failure categories")
+  assert.deepEqual(output, [["attachment-primary-failed", "body"], ["attachment-diagnostic-failed"], ["attachment-close-failed"]])
+})
+
+test("AC-C15 install/update uses exact source association and fresh active native status, without a session or offers", async () => {
+  await withAttachment(async ({ page, model, calls }) => {
     await call(page, "sessionless", true)
     await installationReady(page, model)
     for (const variation of [
@@ -214,13 +296,12 @@ test("AC-C15 install/update uses exact source association and fresh active nativ
       await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
     }
     assert.equal(calls.some(call => ["hosts", "attach", "detach", "install-host"].includes(call.action)), false)
-  } finally { await finish() }
+  })
 })
 
 for (const [width, height, locale] of [[1500, 850, "en"], [390, 850, "en"], [390, 480, "en"], [390, 850, "he"]] as const)
 test(`AC-C15 shared confirmation ${width}x${height} ${locale}: Cancel focus/ring and Enter/Cancel/Escape/backdrop never install`, async () => {
-    const { page, model, calls, finish } = await open(width, height)
-    try {
+    await withAttachment(async ({ page, model, calls }) => {
       await installationReady(page, model)
       if (locale === "he") {
         await shell(page, "setLocale", "he")
@@ -250,7 +331,7 @@ test(`AC-C15 shared confirmation ${width}x${height} ${locale}: Cancel focus/ring
         await page.waitForFunction(element => element === document.activeElement, opener)
         assert.equal(calls.filter(call => call.action === "install-host").length, 0)
       }
-    } finally { await finish() }
+    }, width, height)
 })
 
 const installInvalidations: Array<[string, (page: Page) => Promise<unknown>]> = [
@@ -267,8 +348,7 @@ const installInvalidations: Array<[string, (page: Page) => Promise<unknown>]> = 
   ["workspace stop", page => call(page, "stop", "installation-only")],
 ]
 for (const [name, invalidate] of installInvalidations) test(`AC-C15 ${name} revokes preconsent without installer dispatch`, async () => {
-  const { page, model, calls, finish } = await open()
-  try {
+  await withAttachment(async ({ page, model, calls }) => {
     // Stop the real Plugins demand without removing the unrelated imported shell's instance.
     if (name === "workspace stop") await call(page, "instance", "installation-only")
     await installationReady(page, model)
@@ -280,12 +360,11 @@ for (const [name, invalidate] of installInvalidations) test(`AC-C15 ${name} revo
     assert.equal(await opener!.evaluate(element => element === document.activeElement), false, "revoked consent never restores a stale opener")
     await page.keyboard.press("Enter")
     assert.equal(calls.filter(call => call.action === "install-host").length, 0)
-  } finally { await finish() }
+  })
 })
 
 test("AC-C15 unrelated instance events retain consent; each projected outcome posts exactly one empty body to its captured Location", async () => {
-  const { page, model, calls, finish } = await open()
-  try {
+  await withAttachment(async ({ page, model, calls }) => {
     await installationReady(page, model)
     await call(page, "directory", "/installation-repo")
     await page.waitForTimeout(450)
@@ -304,12 +383,11 @@ test("AC-C15 unrelated instance events retain consent; each projected outcome po
     }
     assert.deepEqual(calls.filter(call => call.action === "install-host"), Array.from({ length: 5 }, () => ({ action: "install-host", directory: "/installation-repo", body: {}, method: "POST" })))
     assert.equal(calls.some(call => ["hosts", "attach", "detach"].includes(call.action)), false)
-  } finally { await finish() }
+  })
 })
 
 test("AC-C15 unsupported WSL hides installation while mirrored compatible status still handles route refusal safely", async () => {
-  const { page, model, calls, finish } = await open()
-  try {
+  await withAttachment(async ({ page, model, calls }) => {
     await installationReady(page, model)
     model.host = "unsupported"
     await refreshInstallation(page)
@@ -330,12 +408,11 @@ test("AC-C15 unsupported WSL hides installation while mirrored compatible status
     assert.equal(toast.variant, "error")
     assertNoSentinels({ toast, dom: await page.locator("body").innerText() }, sentinelOptions, "WSL refusal")
     assert.equal(calls.filter(call => call.action === "install-host").length, 1)
-  } finally { await finish() }
+  })
 })
 
 for (const name of ["session navigation", "surface hiding"] as const) test(`AC-C15 held successful installation after ${name} never publishes wrong-view feedback or retries`, async () => {
-  const { page, model, calls, finish } = await open()
-  try {
+  await withAttachment(async ({ page, model, calls }) => {
     await installationReady(page, model)
     model.holdInstall = true
     const dialog = await launchInstallation(page)
@@ -351,12 +428,11 @@ for (const name of ["session navigation", "surface hiding"] as const) test(`AC-C
     await page.waitForTimeout(200)
     assert.equal((await call(page, "toasts")).length, before, "an admitted result stays owned by its original live view")
     assert.equal(calls.filter(call => call.action === "install-host").length, 1)
-  } finally { await finish() }
+  })
 })
 
 for (const kind of [...failureKinds, "invalid-outcome"] as const) test(`AC-C15 installer ${kind} is confidential, never replayed, and late navigation receives no feedback`, async () => {
-  const { page, model, calls, finish } = await open()
-  try {
+  await withAttachment(async ({ page, model, calls }) => {
     await installationReady(page, model)
     if (kind === "invalid-outcome") model.installOutcome = FAKE_INTEGRATION_SENTINELS.token
     else model.failure = { action: "install-host", kind }
@@ -388,13 +464,13 @@ for (const kind of [...failureKinds, "invalid-outcome"] as const) test(`AC-C15 i
     assert.equal((await call(page, "toasts")).length, toastCount, "late failures never publish into another conversation")
     assertNoSentinels(await page.locator("body").innerText(), sentinelOptions, "late installer failure")
     assert.equal(calls.filter(call => call.action === "install-host").length, 2, "a fresh explicit confirmation is the only second dispatch")
-  } finally { await finish() }
+  })
 })
 
 test("diagnostic capture detects sentinel text, structured arguments and Error stacks at every console level before navigation", async () => {
   const page = await browser.newPage()
   const diagnostics = captureDiagnostics(page)
-  try {
+  await runWithDiagnosticCleanup({ run: async () => {
     await page.addInitScript(host => {
       const error = new Error(host.token)
       error.stack += JSON.stringify(host)
@@ -422,12 +498,14 @@ test("diagnostic capture detects sentinel text, structured arguments and Error s
       assertNoSentinels(String(error), sentinelOptions, "leak assertion output")
       return true
     })
-  } finally { try { await diagnostics.drain() } finally { await page.close() } }
+    await diagnostics.drain()
+  }, diagnose: diagnostics.drain, cleanup: () => page.close(),
+  onObservationError: () => console.error("capture-control-diagnostic-failed"),
+  onCleanupError: () => console.error("capture-control-close-failed") })
 })
 for (const width of [1500, 390]) for (const entry of ["header", "plugins"])
 test(`attachment cancellation returns to its exact ${entry} opener at ${width}px`, async () => {
-  const { page, calls, finish } = await open(width)
-  try {
+  await withAttachment(async ({ page, calls }) => {
     if (entry === "plugins") await call(page, "plugins", true)
     for (const dismissal of ["Enter", "Cancel", "Escape"]) {
       const opener = entry === "plugins" ? pluginRow(page).getByRole("button")
@@ -448,13 +526,12 @@ test(`attachment cancellation returns to its exact ${entry} opener at ${width}px
       await page.waitForFunction(element => element === document.activeElement, actual)
     }
     assert.equal(calls.some(call => ["attach", "detach", "install-host"].includes(call.action)), false)
-  } finally { await finish() }
+  }, width)
 })
 for (const width of [1500, 390]) for (const entry of ["header", "plugins"])
 test(`attachment ${entry} restoration is fenced by navigation, invalidation and visibility at ${width}px`, async () => {
   for (const change of ["navigation", "roundtrip", "event", "hidden", "disabled", "detached"]) {
-    const { page, finish } = await open(width)
-    try {
+    await withAttachment(async ({ page }) => {
       if (entry === "plugins") await call(page, "plugins", true)
       const trigger = entry === "plugins" ? pluginRow(page).getByRole("button")
         : page.locator('.session-header-expanded-actions button[aria-label="Attach an open application…"]:visible, .session-header-actions-menu:visible').first()
@@ -482,13 +559,12 @@ test(`attachment ${entry} restoration is fenced by navigation, invalidation and 
       await dialog.waitFor({ state: "hidden" })
       await page.waitForTimeout(100)
       assert.equal(await opener!.evaluate(element => element === document.activeElement), false, `${change} must not restore stale focus`)
-    } finally { await finish() }
+    }, width)
   }
 })
 for (const width of [1500, 390]) test(`installation never restores a hidden, disabled or detached opener at ${width}px`, async () => {
   for (const change of ["hidden", "disabled", "detached"]) {
-    const { page, model, finish } = await open(width)
-    try {
+    await withAttachment(async ({ page, model }) => {
       await installationReady(page, model)
       const opener = await pluginRow(page).getByRole("button").elementHandle()
       const dialog = await launchInstallation(page)
@@ -501,12 +577,11 @@ for (const width of [1500, 390]) test(`installation never restores a hidden, dis
       await dialog.waitFor({ state: "hidden" })
       await page.waitForTimeout(100)
       assert.equal(await opener!.evaluate(element => element === document.activeElement), false)
-    } finally { await finish() }
+    }, width)
   }
 })
 for (const action of ["attachment", "installation"]) test(`${action} changed integration digest suppresses opener restoration`, async () => {
-  const { page, model, finish } = await open()
-  try {
+  await withAttachment(async ({ page, model }) => {
     if (action === "installation") await installationReady(page, model)
     const opener = await (action === "installation" ? pluginRow(page).getByRole("button")
       : page.locator('.session-header-expanded-actions button[aria-label="Attach an open application…"]')).elementHandle()
@@ -520,12 +595,11 @@ for (const action of ["attachment", "installation"]) test(`${action} changed int
     await dialog.waitFor({ state: "hidden" })
     await page.waitForTimeout(100)
     assert.equal(await opener!.evaluate(element => element === document.activeElement), false)
-  } finally { await finish() }
+  })
 })
 test("real shell wide and narrow entries use a Cancel-focused trusted picker, exact Q8 matching, attach and local detach", async () => {
   for (const width of [1500, 390]) {
-    const { page, calls, finish } = await open(width)
-    try {
+    await withAttachment(async ({ page, calls }) => {
       await call(page, "hint", "other", "Scene")
       await launch(page)
       const dialog = page.getByRole("dialog", { name: label })
@@ -554,12 +628,11 @@ test("real shell wide and narrow entries use a Cancel-focused trusted picker, ex
       await dialog.getByText(/Detach request completed here/).waitFor()
       await dialog.getByRole("button", { name: "OK", exact: true }).click()
       assert.deepEqual(calls.find(call => call.action === "detach")?.body, { sessionID: "session" })
-    } finally { await finish() }
+    }, width)
   }
 })
 test("native dispatcher coalesces events, reconciles reconnect/open, forgets stopped workspaces and never polls", async () => {
-  const { page, calls, finish } = await open()
-  try {
+  await withAttachment(async ({ page, calls }) => {
     await page.locator(".session-header-expanded-actions").getByRole("button", { name: label, exact: true }).waitFor()
     const reads = () => calls.filter(call => call.action === "read").length
     const before = reads()
@@ -589,11 +662,10 @@ test("native dispatcher coalesces events, reconciles reconnect/open, forgets sto
     assert.equal(await call(page, "snapshot"), "ready")
     await call(page, "stop")
     assert.equal(await call(page, "snapshot"), "loading")
-  } finally { await finish() }
+  })
 })
 test("late hosts cannot retarget another conversation; busy/gone/refused remain actionable without replay", async () => {
-  const { page, calls, model, finish } = await open()
-  try {
+  await withAttachment(async ({ page, calls, model }) => {
     model.holdHosts = true
     await launch(page)
     await page.waitForTimeout(100)
@@ -625,11 +697,10 @@ test("late hosts cannot retarget another conversation; busy/gone/refused remain 
     await page.waitForTimeout(100)
     assert.equal(await page.getByText(/Attachment request completed here/).count(), 0, "late mutation feedback never belongs to another session")
     assert.equal(calls.filter(call => call.action === "attach").at(-1)?.body.sessionID, "other")
-  } finally { await finish() }
+  })
 })
 test("Plugins uses safe source association, displays catalog staleness, and unsupported WSL never reads hosts", async () => {
-  const { page, calls, model, finish } = await open()
-  try {
+  await withAttachment(async ({ page, calls, model }) => {
     await call(page, "plugins", true)
     const row = page.locator('[data-plugin-id="neuralnomads.blender"]')
     await row.getByRole("button").click()
@@ -670,11 +741,10 @@ test("Plugins uses safe source association, displays catalog staleness, and unsu
     await page.keyboard.press("Escape")
     await page.waitForTimeout(400)
     assert.equal(calls.filter(call => call.action === "hosts").length, hostsBefore)
-  } finally { await finish() }
+  })
 })
 for (const kind of failureKinds) test(`D25 removal ${kind}: confidential uncertainty, one submission and no detach`, async () => {
-  const { page, calls, model, finish } = await open()
-  try {
+  await withAttachment(async ({ page, calls, model }) => {
     await call(page, "plugins", true)
     model.binding = "attached"
     model.failure = { action: "remove", kind }
@@ -693,12 +763,11 @@ for (const kind of failureKinds) test(`D25 removal ${kind}: confidential uncerta
     assert.equal(calls.filter(call => call.action === "remove").length, 1)
     assert.equal(calls.filter(call => ["detach", "attach"].includes(call.action)).length, 0)
     assert.equal(model.binding, "attached")
-  } finally { await finish() }
+  })
 })
 
 test("aggregate bindings and saved hints never enable attachment without active native offers", async () => {
-  const { page, calls, model, finish } = await open()
-  try {
+  await withAttachment(async ({ page, calls, model }) => {
     await call(page, "hint", "blender", "Scene")
     for (const variation of [{ state: "inactive" }, { state: "ok", family: "api" }, { family: "native", offers: 0 }]) {
       Object.assign(model, variation)
@@ -707,11 +776,10 @@ test("aggregate bindings and saved hints never enable attachment without active 
       assert.equal(await page.locator(".session-header-expanded-actions").getByRole("button", { name: label, exact: true }).count(), 0)
     }
     assert.equal(calls.filter(call => call.action === "hosts" || call.action === "attach").length, 0)
-  } finally { await finish() }
+  })
 })
 test("unrelated workspace and other-session native events preserve the picker and its explicit selection", async () => {
-  const { page, calls, finish } = await open()
-  try {
+  await withAttachment(async ({ page, calls }) => {
     await launch(page)
     const dialog = page.getByRole("dialog", { name: label })
     const offer = dialog.getByRole("button", { name: /Blender.*Scene/ })
@@ -726,12 +794,11 @@ test("unrelated workspace and other-session native events preserve the picker an
     await call(page, "event", "session.updated", { sessionID: "session" })
     await dialog.waitFor({ state: "hidden" })
     assert.equal(calls.filter(call => call.action === "attach").length, 0, "a relevant pre-admission update expires the selection without consent")
-  } finally { await finish() }
+  })
 })
 test("native echoes before and after attach and detach HTTP responses retain scoped local action receipts", async () => {
   for (const detachOutcome of ["detached", "none"]) {
-    const { page, calls, model, finish } = await open()
-    try {
+    await withAttachment(async ({ page, calls, model }) => {
       model.holdAttach = true
       model.holdDetach = true
       await launch(page)
@@ -769,12 +836,11 @@ test("native echoes before and after attach and detach HTTP responses retain sco
       await shell(page, "addSession", "other")
       await shell(page, "selectSession", "other")
       await dialog.waitFor({ state: "hidden" })
-    } finally { await finish() }
+    })
   }
 })
 test("native echoes retain refused outcomes and transport errors, including a usable safe detach retry", async () => {
-  const { page, calls, model, finish } = await open()
-  try {
+  await withAttachment(async ({ page, calls, model }) => {
     model.holdAttach = true
     model.holdDetach = true
     for (const failure of ["busy", "gone", "refused", "http-error"]) {
@@ -810,16 +876,15 @@ test("native echoes retain refused outcomes and transport errors, including a us
     model.binding = "none"
     await (await held(model)).fulfill({ json: { outcome: "none" } })
     await dialog.getByText(/Detach request completed here/).waitFor()
-  } finally { await finish() }
+  })
 })
 
 for (const kind of failureKinds) test(`renderer confidentiality across ${kind}, native echoes, explicit retry and late navigation`, async () => {
-  const { page, calls, model, diagnostics, finish } = await open()
-  const count = (action: string) => calls.filter(call => call.action === action).length
-  const header = page.locator(".session-header-expanded-actions").getByRole("button", { name: label, exact: true })
-  const dialog = page.getByRole("dialog", { name: label })
-  const alert = dialog.getByRole("alert").filter({ hasText: /\S/ })
-  try {
+  await withAttachment(async ({ page, calls, model, diagnostics }) => {
+    const count = (action: string) => calls.filter(call => call.action === action).length
+    const header = page.locator(".session-header-expanded-actions").getByRole("button", { name: label, exact: true })
+    const dialog = page.getByRole("dialog", { name: label })
+    const alert = dialog.getByRole("alert").filter({ hasText: /\S/ })
     await header.waitFor()
     const reads = count("read")
     model.failure = { action: "read", kind }
@@ -897,12 +962,11 @@ for (const kind of failureKinds) test(`renderer confidentiality across ${kind}, 
     assert.equal(count("attach"), 3, "navigation never replays an admitted mutation")
     await diagnostics.drain()
     assert.ok(diagnostics.consoleEntries.some(entry => entry.text.includes("event batch")), "the real native dispatcher emitted safe SSE diagnostics")
-  } finally { await finish() }
+  })
 })
 
 for (const width of [1500, 390]) test(`AC-C12 durable binding outside overflow at ${width}px: external authority, safe bounded label, Q8 and none/unknown`, async () => {
-  const { page, calls, model, finish } = await open(width)
-  try {
+  await withAttachment(async ({ page, calls, model }) => {
     await page.waitForFunction(() => Boolean(document.querySelector('.session-header-expanded-actions')))
     await page.waitForTimeout(100)
     assert.equal(await bindingRow(page).count(), 0, "authoritative none has no indicator")
@@ -934,12 +998,11 @@ for (const width of [1500, 390]) test(`AC-C12 durable binding outside overflow a
     model.binding = "none"
     await call(page, "event", "plugin.updated")
     await row.waitFor({ state: "hidden" })
-  } finally { await finish() }
+  }, width)
 })
 
 test("AC-C12 reload restores a live binding without Q8 or an action receipt and reads external detachment afresh", async () => {
-  const { page, model, calls, reload, finish } = await open()
-  try {
+  await withAttachment(async ({ page, model, calls, reload }) => {
     model.binding = "attached"
     model.bindingLabel = "Restored scene"
     await reload()
@@ -953,41 +1016,41 @@ test("AC-C12 reload restores a live binding without Q8 or an action receipt and 
     await freshRead
     assert.equal(await bindingRow(page).count(), 0, "no saved UI authority survives reload")
     assert.equal(calls.filter(call => call.action === "detach").length, 0, "external detachment is a read, never a replay")
-  } finally { await finish() }
+  })
 })
 
 test("diagnostic capture drains a delayed structured argument before fixture reload", async () => {
-  const { page, diagnostics, reload, finish } = await open()
-  const started = Promise.withResolvers<void>(), release = Promise.withResolvers<void>()
-  page.prependListener("console", message => {
-    if (!message.text().startsWith("delayed reload diagnostic")) return
-    const argument = message.args()[1], evaluate = argument.evaluate.bind(argument)
-    argument.evaluate = async (expression, arg) => {
-      started.resolve()
-      await release.promise
-      return evaluate(expression, arg)
-    }
+  await withAttachment(async ({ page, diagnostics, reload }) => {
+    const started = Promise.withResolvers<void>(), release = Promise.withResolvers<void>()
+    page.prependListener("console", message => {
+      if (!message.text().startsWith("delayed reload diagnostic")) return
+      const argument = message.args()[1], evaluate = argument.evaluate.bind(argument)
+      argument.evaluate = async (expression, arg) => {
+        started.resolve()
+        await release.promise
+        return evaluate(expression, arg)
+      }
+    })
+    const drain = diagnostics.drain
+    // Hold the real JSHandle until the boundary drains it, or navigation destroys its context.
+    diagnostics.drain = () => { release.resolve(); return drain() }
+    page.once("framenavigated", () => release.resolve())
+    try {
+      await page.evaluate(() => console.debug("delayed reload diagnostic", { nested: { value: "retained" }, error: new Error("retained error") }))
+      await started.promise
+      await reload()
+      await page.waitForFunction(() => Boolean((window as any).integrationFixture))
+      await diagnostics.drain()
+      const entry = diagnostics.consoleEntries.find(entry => entry.text.startsWith("delayed reload diagnostic"))!
+      assert.deepEqual((entry.args[1] as any).nested, { value: "retained" })
+      assert.equal((entry.args[1] as any).error.message, "retained error")
+      assert.match((entry.args[1] as any).error.stack, /Error: retained error/)
+    } finally { release.resolve() }
   })
-  const drain = diagnostics.drain
-  // Hold the real JSHandle until the boundary drains it, or navigation destroys its context.
-  diagnostics.drain = () => { release.resolve(); return drain() }
-  page.once("framenavigated", () => release.resolve())
-  try {
-    await page.evaluate(() => console.debug("delayed reload diagnostic", { nested: { value: "retained" }, error: new Error("retained error") }))
-    await started.promise
-    await reload()
-    await page.waitForFunction(() => Boolean((window as any).integrationFixture))
-    await diagnostics.drain()
-    const entry = diagnostics.consoleEntries.find(entry => entry.text.startsWith("delayed reload diagnostic"))!
-    assert.deepEqual((entry.args[1] as any).nested, { value: "retained" })
-    assert.equal((entry.args[1] as any).error.message, "retained error")
-    assert.match((entry.args[1] as any).error.stack, /Error: retained error/)
-  } finally { release.resolve(); await finish() }
 })
 
 test("AC-C12 pending binding reads cannot publish into another session/Location or revive revoked authority", async () => {
-  const { page, calls, model, finish } = await open()
-  try {
+  await withAttachment(async ({ page, calls, model }) => {
     model.binding = "attached"
     await call(page, "event", "rpc.neuralnomads.blender.status_changed")
     await bindingDetach(page).waitFor()
@@ -1021,12 +1084,11 @@ test("AC-C12 pending binding reads cannot publish into another session/Location 
     await model.bindingRequests[4]!.fulfill({ json: { state: "none" } })
     await bindingRow(page).waitFor({ state: "hidden" })
     assert.equal(calls.some(call => call.action === "detach"), false)
-  } finally { await finish() }
+  })
 })
 
 test("AC-C12 receipts never grant Detach: fresh authority controls the picker, expiry/revocation and uncertain mutations reconcile once", async () => {
-  const { page, calls, model, finish } = await open()
-  try {
+  await withAttachment(async ({ page, calls, model }) => {
     model.holdAttach = true
     await launch(page)
     const dialog = page.getByRole("dialog", { name: label })
@@ -1058,12 +1120,11 @@ test("AC-C12 receipts never grant Detach: fresh authority controls the picker, e
     await call(page, "event", "rpc.neuralnomads.blender.status_changed")
     await page.waitForTimeout(350)
     assert.equal(calls.filter(call => call.action === "detach").length, 1, "no automatic mutation replay")
-  } finally { await finish() }
+  })
 })
 
 for (const kind of [...failureKinds, "extra-fields", "oversized-label"] as const) test(`AC-C12 binding ${kind} revokes attached and keeps renderer diagnostics confidential`, async () => {
-  const { page, model, finish } = await open()
-  try {
+  await withAttachment(async ({ page, model }) => {
     model.binding = "attached"
     await call(page, "reconnect")
     await bindingDetach(page).waitFor()
@@ -1078,12 +1139,11 @@ for (const kind of [...failureKinds, "extra-fields", "oversized-label"] as const
     model.bindingExtra = false; model.bindingLabel = "Scene"; model.failure = undefined
     await call(page, "open")
     await bindingDetach(page).waitFor()
-  } finally { await finish() }
+  })
 })
 
 for (const disconnect of ["disconnect", "transportDisconnect"]) test(`AC-C12 ${disconnect} aborts dirty trailing work until reconnect`, async () => {
-  const { page, model, calls, finish } = await open()
-  try {
+  await withAttachment(async ({ page, model, calls }) => {
     model.binding = "attached"
     await call(page, "reconnect")
     await bindingDetach(page).waitFor()
@@ -1103,5 +1163,5 @@ for (const disconnect of ["disconnect", "transportDisconnect"]) test(`AC-C12 ${d
     model.holdBinding = false
     await call(page, disconnect === "disconnect" ? "reconnect" : "open")
     await bindingDetach(page).waitFor()
-  } finally { await finish() }
+  })
 })

@@ -111,3 +111,8 @@ synthetic provider.
   after instance registration. Tests await that signal before connecting its native
   client: the document load event can precede module continuation, and a later
   `addInstance` publishes the fixture's initial client value.
+- Fixture owners use `runWithDiagnosticCleanup` from allocation through bootstrap,
+  test body and teardown, preserving the primary error and distinct observation and
+  cleanup failures. Failed setup closes owned contexts before rejecting. Attachment
+  failure snapshots and resource receipts stay in an owned TEMP directory; runner
+  output uses fixed phase/category labels. Never print raw observer snapshots.
