@@ -1084,23 +1084,31 @@ test("diagnostic capture retains real dispatcher output after drain while the or
   await withAttachment(async ({ page, diagnostics }) => {
     const legacy = captureHandleControl(page)
     const started = Promise.withResolvers<void>(), release = Promise.withResolvers<void>()
+    let armed = false, heldID: string | undefined
     page.prependListener("console", message => {
-      if (!message.text().includes("event batch")) return
+      if (!armed || heldID || !message.text().includes("event batch")) return
+      const tag = message.args().at(-1)!.toString(), token = diagnostics.transport.token
+      heldID = tag.slice(token.length, tag.indexOf("|", token.length))
       const argument = message.args()[4], evaluate = argument.evaluate.bind(argument)
       argument.evaluate = async (expression, arg) => { started.resolve(); await release.promise; return evaluate(expression, arg) }
     })
     await diagnostics.drain()
     await legacy.drain()
+    const before = new Set(diagnostics.transport.snapshots.keys())
+    armed = true
     try {
       await call(page, "event", "session.updated", { sessionID: "other-session" })
       await started.promise
       await page.reload()
       release.resolve()
-      await assert.rejects(legacy.drain, error => error instanceof assert.AssertionError && error.actual === 1 && error.expected === 0
+      // Other genuine renderer calls can also race reload; the original zero-loss
+      // assertion stays strict, while its negative control requires a positive loss.
+      await assert.rejects(legacy.drain, error => error instanceof assert.AssertionError && Number.isInteger(error.actual) && error.actual > 0 && error.expected === 0
         && error.message.includes("every console argument was serialized before teardown"))
       await page.waitForFunction(() => Boolean((window as any).integrationFixture))
       await diagnostics.drain()
-      const entry = diagnostics.consoleEntries.find(entry => entry.text.includes("event batch") && entry.args.some((value: any) => value?.size === 1))
+      assert.ok(heldID && !before.has(heldID), "the held real call was emitted after drainage")
+      const entry = diagnostics.consoleEntries.find(entry => entry.id === heldID && entry.text.includes("event batch") && entry.args.some((value: any) => value?.size === 1))
       assert.ok(entry, "the actual dispatcher message emitted after drain retained its structured value")
       const snapshot = diagnostics.transport.snapshots.get(entry.id!)
       assert.equal(diagnostics.transport.history.get(snapshot.uniqueId).retired, true)

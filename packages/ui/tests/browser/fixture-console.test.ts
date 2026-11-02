@@ -26,7 +26,7 @@ const server = createServer((request, response) => {
 before(async () => {
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
   origin = "http://127.0.0.1:" + (server.address() as any).port
-  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined, args: ["--site-per-process"] })
   armFixtureNavigationBudget(browser)
 })
 after(async () => {
@@ -231,7 +231,14 @@ for (const kind of ["worker", "oopif", "related-page", "untagged-main"] as const
     worker.onmessage = () => resolve(true)
     worker.postMessage("owned")
   }))
-  if (kind === "oopif") await page.goto(origin + "/cross")
+  if (kind === "oopif") {
+    await page.goto(origin + "/cross")
+    const witness = await browser.newBrowserCDPSession()
+    try {
+      const { targetInfos } = await witness.send("Target.getTargets")
+      assert.ok(targetInfos.some(target => target.type === "iframe"), "the refusal control created an actual out-of-process frame")
+    } finally { await witness.detach() }
+  }
   if (kind === "related-page") await page.context().newPage()
   if (kind === "untagged-main") await page.evaluate(() => console.dir({ nested: { owned: true } }))
   if (kind === "worker" || kind === "untagged-main") assert.equal(await refused.promise, true)
