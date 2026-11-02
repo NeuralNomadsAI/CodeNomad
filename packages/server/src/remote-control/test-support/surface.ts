@@ -5,6 +5,7 @@ import type { TestContext } from "node:test"
 import type { OpenRemoteTunnelOptions, RemoteTunnel } from "@codenomad/remote-tunnel"
 import { AuthManager } from "../../auth/manager"
 import { createLogger } from "../../logger"
+import { EventBus } from "../../events/bus"
 import { PreviewManager } from "../../previews/manager"
 import { createHttpServer } from "../../server/http-server"
 import type { PanelExtensionStore } from "../../panel-extensions/store"
@@ -77,7 +78,7 @@ export async function startRemoteSurface(t: TestContext, options: {
     panelExtensions: options.panelExtensions?.store,
     settings: stub,
     fileSystemBrowser: stub,
-    eventBus: stub,
+    eventBus: new EventBus(),
     serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", host: "127.0.0.1", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
     instanceStore: stub,
     speechService: stub,
