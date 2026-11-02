@@ -1,4 +1,7 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.sources.removeWarning": "Removing this plugin may interrupt its availability and connections in conversations that use it.",
+  "instanceServiceStatus.plugins.sources.removeGlobalWarning": "This may also affect conversations in other projects.",
+  "instanceServiceStatus.plugins.sources.removeRecovery": "Reinstalling may restore availability; a reload or reattachment may be needed. Interrupted operations may not resume.",
   "instanceServiceStatus.plugins.sources.add": "Add plugin",
   "instanceServiceStatus.plugins.sources.addTitle": "Add a plugin",
   "instanceServiceStatus.plugins.sources.spec": "Package",
@@ -29,6 +32,6 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "The {scope} OpenCode configuration is malformed. It was not changed.",
   "instanceServiceStatus.plugins.sources.errors.unavailable": "The {scope} configuration is unavailable for this location.",
   "instanceServiceStatus.plugins.sources.errors.timeout": "OpenCode did not answer in time. Nothing was added; try again.",
-  "instanceServiceStatus.plugins.sources.errors.remove": "{name} could not be removed from {scope}.",
+  "instanceServiceStatus.plugins.sources.errors.remove": "Removal of {name} from {scope} could not be confirmed. Refresh Plugins to check the actual configuration before trying again.",
   "instanceServiceStatus.plugins.sources.errors.removeStale": "{name} changed in the {scope} configuration since it was shown. Refresh and try again.",
 } as const

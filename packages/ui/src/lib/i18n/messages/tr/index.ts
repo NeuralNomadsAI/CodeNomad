@@ -17,6 +17,7 @@ import { missionsPanelMessages } from "./missions-panel"
 import { missionCreateMessages } from "./missions-create"
 import { permissionReceiptMessages } from "./permission-receipts"
 import { pluginSourceMessages } from "./plugin-sources"
+import { integrationMessages } from "./integrations"
 import { remoteAccessMessages } from "./remoteAccess"
 import { remoteControlMessages } from "./remoteControl"
 import { sessionMessages } from "./session"
@@ -49,6 +50,7 @@ export const trMessages = mergeMessageParts(
   sessionMessages,
   settingsMessages,
   pluginSourceMessages,
+  integrationMessages,
   serviceSupervisionMessages,
   missionSchedulingMessages,
   timeMessages,

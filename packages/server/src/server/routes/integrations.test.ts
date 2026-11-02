@@ -11,7 +11,7 @@ import { registerIntegrationRoutes } from "./integrations"
 
 const loadedSnapshot = (): PluginControlsSnapshot => pluginSnapshot({
   sources: [
-    { target: "@neuralnomads/opencode-fixture@0.1.0", scope: "global", entryIndex: 0, hasOptions: false, pluginId: "neuralnomads.fixture" },
+    { target: "@neuralnomads/opencode-fixture@0.1.0", scope: "global", path: "/config/opencode.jsonc", entryIndex: 0, hasOptions: false, pluginId: "neuralnomads.fixture" },
     { target: "@neuralnomads/opencode-slow", scope: "project", entryIndex: 0, hasOptions: false, pluginId: "neuralnomads.slow" },
   ],
   runtime: ["fixture", "slow"].map(id => ({ key: id, id: `neuralnomads.${id}`, features: { rpc: true as const },
@@ -61,6 +61,8 @@ describe("integrations route", () => {
     assert.deepEqual(body.integrations.map(item => [item.id, item.state, item.scopes]), [["fixture", "ok", ["global"]], ["slow", "unknown", ["project"]], ["other", "absent", []]])
     assert.deepEqual(body.integrations[0]!.status, { version: "0.1.0", host: { state: "absent", action: "install" } })
     assert.equal(body.integrations[0]!.version, "0.1.0")
+    assert.deepEqual(body.integrations[0]!.configuredSources, [{ scope: "global", entryIndex: 0 }])
+    assert.deepEqual(body.integrations[1]!.configuredSources, [], "only the scope's writable target is correlated")
     for (const field of ["plugin", "rpc", "sources", "package"]) assert.equal(field in body.integrations[0]!, false, `${field} stays on the server`)
     assert.deepEqual(calls.map(call => [call.rpcID, call.method, call.input, call.location]),
       [["neuralnomads.fixture", "status", {}, { directory: "/work" }], ["neuralnomads.slow", "status", {}, { directory: "/work" }]])

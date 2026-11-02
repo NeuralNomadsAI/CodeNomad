@@ -79,8 +79,10 @@ export class IntegrationCatalogSource {
     this.now = options.now ?? Date.now
   }
 
-  async read(): Promise<IntegrationCatalogView> {
+  async read(options: { refresh?: boolean } = {}): Promise<IntegrationCatalogView> {
     await (this.loaded ??= this.loadPersisted())
+    // Installation authorization consumes an existing catalog without network or persistence effects.
+    if (options.refresh === false) return this.view()
     const attempt = this.attempt
     const fresh = attempt !== undefined && this.now() < Math.max(attempt.at + (this.options.cacheMs ?? INTEGRATION_CATALOG_CACHE_MS), attempt.until ?? 0)
     if (!fresh) await (this.refreshing ??= this.refresh().finally(() => { this.refreshing = undefined }))

@@ -1,4 +1,5 @@
 import path from "node:path"
+import { createHmac, randomBytes } from "node:crypto"
 import { fileURLToPath } from "node:url"
 import { isDeepStrictEqual } from "node:util"
 import type { ConfigEntry, LocationRef, PluginInfo } from "@opencode/client"
@@ -93,6 +94,8 @@ export class PluginControlsError extends Error {
 
 export class PluginControls {
   private readonly mutationTails = new Map<string, Promise<void>>()
+  private readonly revisionKey = randomBytes(32)
+  private readonly connectionIdentities = new WeakMap<object, string>()
 
   constructor(private readonly options: {
     workspaceManager: PluginControlsWorkspaceManager
@@ -102,7 +105,21 @@ export class PluginControls {
 
   async read(workspaceId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<PluginControlsSnapshot> {
     const context = await this.readContext(workspaceId, location, signal)
-    return buildSnapshot(context)
+    const snapshot = buildSnapshot(context)
+    const documents = configDocuments(context).documents
+    await Promise.all(context.targets.map(async target => {
+      try {
+        const document = await readPluginControlDocument(target.ioPath, context.fileSystem)
+        const normalized = documents.find(entry => entry.path && samePath(context.paths, entry.path, target.path))
+        // Pair the displayed daemon declaration with the exact raw document. Substitutions and
+        // watcher lag must never authorize removal of different options at the same index.
+        if (!document.exists || !normalized || !isDeepStrictEqual(normalized.plugins, document.plugins)) return
+        snapshot.targets.find(entry => entry.scope === target.scope)!.expectedRevision = this.documentRevision(workspaceId, context, target, document)
+      } catch { /* Inventory remains readable; an unverifiable document has no removal authority. */ }
+    }))
+    assertCurrentConnection(context.connection)
+    signal?.throwIfAborted()
+    return snapshot
   }
 
   // Shared scope acquisition for native settings that have no native write API.
@@ -122,10 +139,11 @@ export class PluginControls {
     workspaceId: string,
     location: PluginControlLocation,
     scope: PluginControlScope,
-    edit: (document: PluginControlDocument, current: { entries: ConfigEntry[]; path: string; location: PluginControlLocation }) => string,
+    edit: (document: PluginControlDocument, current: { entries: ConfigEntry[]; path: string; location: PluginControlLocation }) => string | Promise<string>,
     // Aborts the daemon reads and, re-checked under the lock, the commit itself.
     signal?: AbortSignal,
     strictDocuments = false,
+    expectedRevision?: string,
   ): Promise<void> {
     const directory = location.directory.trim().replace(/[\\/]+$/, "").toLowerCase()
     const key = scope === "global" ? `${workspaceId}\nglobal` : `${workspaceId}\nproject\n${directory}`
@@ -139,13 +157,26 @@ export class PluginControls {
       if (!release) throw new PluginControlsError("Worktree deletion is in progress", "conflict")
       try {
         const document = await readPluginControlDocument(target.ioPath, context.fileSystem)
-        const updated = edit(document, { entries: context.entries, path: target.path, location: context.location })
+        if (expectedRevision !== undefined && expectedRevision !== this.documentRevision(workspaceId, context, target, document)) {
+          throw new PluginControlDocumentError("OpenCode configuration changed since confirmation", "conflict")
+        }
+        const updated = await edit(document, { entries: context.entries, path: target.path, location: context.location })
         await replacePluginControlDocument(document, updated, {
           beforeCommit: () => { assertCurrentConnection(context.connection); signal?.throwIfAborted() },
         }, context.fileSystem)
       } catch (error) { throw error instanceof PluginControlDocumentError ? mapDocumentError(error) : error }
       finally { release() }
     })
+  }
+
+  private documentRevision(workspaceId: string, context: ReadContext, target: ResolvedTarget, document: PluginControlDocument): string {
+    let connection = this.connectionIdentities.get(context.connection.client)
+    if (!connection) { connection = randomBytes(16).toString("hex"); this.connectionIdentities.set(context.connection.client, connection) }
+    return createHmac("sha256", this.revisionKey).update(JSON.stringify([
+      workspaceId, context.location, target.scope, target.path, document.requestedPath, document.writePath,
+      this.options.workspaceManager.getServiceWslDistro(workspaceId) ?? null, connection,
+      document.exists, document.mode, document.byteOrderMark, document.text,
+    ])).digest("hex")
   }
 
   /** Prepare both owned files before the first rename. Callers persist the intent

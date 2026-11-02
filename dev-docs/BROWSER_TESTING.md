@@ -111,3 +111,24 @@ synthetic provider.
   after instance registration. Tests await that signal before connecting its native
   client: the document load event can precede module continuation, and a later
   `addInstance` publishes the fixture's initial client value.
+- Fixture owners use `runWithDiagnosticCleanup` from allocation through bootstrap,
+  test body and teardown, preserving the primary error and distinct observation and
+  cleanup failures. Failed setup closes owned contexts before rejecting. Attachment
+  failure snapshots and resource receipts stay in an owned TEMP directory; runner
+  output uses fixed phase/category labels. Never print raw observer snapshots.
+- Attachment diagnostics use `fixture-console.ts` before bootstrap: each native
+  console notification carries its original arguments and a synchronous JSON copy
+  with Error message/stack, document nonce and sequence. Callback and string init
+  scripts explicitly compose the idempotent capture before application code.
+  A single ordered Chromium CDP channel owns console previews, browser network
+  logs, exceptions and context retirement. Completion follows native page closure,
+  requires both target retirement receipts, detaches its observer and reconciles
+  every received packet, context and message/copy association. Missing, duplicated,
+  malformed or unserializable diagnostics fail closed, as do workers, OOPIFs and
+  related application targets outside this fixture's coverage. Never substitute a
+  silence delay, a string-only copy or Playwright event completion for these receipts.
+  Playwright console events serve only as refusal/format witnesses; the test-only
+  preview/error adapter follows the installed Playwright Chromium contract and its
+  native text/type/cardinality regression must pass on dependency updates. Keep raw
+  values and rejection details in owned private TEMP evidence; public assertions
+  report fixed categories or sentinel names.

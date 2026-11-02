@@ -16,6 +16,10 @@ export type AlertDialogState = {
   dismissible?: boolean
   onConfirm?: () => void
   onCancel?: () => void
+  /** Opt-in guarded confirmations; timers belong to this exact dialog. */
+  confirmDelayMs?: number
+  expiresAfterMs?: number
+  returnFocus?: () => void
 
   // prompt-only
   inputLabel?: string
@@ -53,17 +57,26 @@ export function showAlertDialog(message: string, options?: Omit<AlertDialogState
   })
 }
 
-export function showConfirmDialog(message: string, options?: Omit<AlertDialogState, "message">): Promise<boolean> {
+export function showConfirmDialog(message: string, options?: Omit<AlertDialogState, "message">, signal?: AbortSignal): Promise<boolean> {
   const activeElement = typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null
   activeElement?.blur()
 
   return new Promise<boolean>((resolve) => {
-    replaceAlertDialog({
+    let expiry: ReturnType<typeof setTimeout> | undefined
+    if (signal?.aborted) { resolve(false); return }
+    const cancel = () => {
+      if (alertDialogState() === owned) dismissAlertDialog()
+      owned.resolve?.(false)
+    }
+    const owned: AlertDialogState = {
       type: "confirm",
       message,
       ...options,
-      resolve,
-    })
+      resolve: value => { clearTimeout(expiry); signal?.removeEventListener("abort", cancel); resolve(value) },
+    }
+    signal?.addEventListener("abort", cancel, { once: true })
+    replaceAlertDialog(owned)
+    if (options?.expiresAfterMs) expiry = setTimeout(cancel, options.expiresAfterMs)
   })
 }
 

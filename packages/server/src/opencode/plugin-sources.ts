@@ -116,7 +116,11 @@ export class PluginSources {
 
   async remove(workspaceId: string, request: PluginSourceRemoveRequest): Promise<PluginSourceMutationResponse> {
     const { scope, target, entryIndex } = request
-    await this.options.documents.editConfigDocument(workspaceId, request.location, scope, document => {
+    if (!/^[a-f0-9]{64}$/.test(request.expectedRevision ?? "")) {
+      throw new PluginSourcesError("OpenCode configuration confirmation is unavailable", "conflict", "stale")
+    }
+    try {
+      await this.options.documents.editConfigDocument(workspaceId, request.location, scope, document => {
       try {
         return removePluginSourceEntry(document, entryIndex, target)
       } catch (error) {
@@ -125,7 +129,11 @@ export class PluginSources {
         }
         throw error
       }
-    })
+      }, undefined, false, request.expectedRevision)
+    } catch (error) {
+      if (error instanceof PluginControlsError && error.kind === "conflict") throw new PluginSourcesError("OpenCode configuration changed since confirmation", "conflict", "stale")
+      throw error
+    }
     this.options.logger.info({ workspaceId, scope }, "Removed OpenCode plugin source")
     return { scope, spec: target, reloadPending: true }
   }

@@ -8,6 +8,7 @@ import { WorkspaceManager } from "./manager"
 import { nativeEventConnections, type ServiceConnection } from "./opencode-service"
 import { InstanceStreamStatus } from "../api-types"
 import { InstanceEventQueue } from "./instance-event-queue"
+import { integrationEventForRelay } from "../opencode/integrations/events"
 
 const RECONNECT_DELAY_MS = 1000
 const LOCATION_OWNER_CACHE_MS = 2000
@@ -146,8 +147,10 @@ export class InstanceEventBridge {
       try {
         const events = await this.options.workspaceManager.subscribeToSharedService(attempt.signal)
         let confirmed = false
-        for await (const event of events) {
+        for await (const incoming of events) {
           if (!current()) break
+          const event = integrationEventForRelay(incoming)
+          if (!event) continue
           if (!confirmed) {
             if (event.type !== "server.connected") {
               throw new Error(`Shared OpenCode event stream started with ${event.type}, expected server.connected`)

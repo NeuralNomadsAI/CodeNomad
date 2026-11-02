@@ -9,6 +9,7 @@ import type {
 import { serverApi } from "../lib/api-client"
 
 export interface PluginControlsState {
+  invalidationRevision?: number
   snapshot?: PluginControlsSnapshot
   loading: boolean
   refreshing: boolean
@@ -287,6 +288,7 @@ export class PluginControlsCache {
     const states = new Map<CacheRecord, PluginControlsState>()
     for (const record of active) {
       states.set(record, {
+        invalidationRevision: record.invalidationRevision,
         snapshot: record.snapshot,
         loading: record.loading,
         refreshing: record.refreshing,

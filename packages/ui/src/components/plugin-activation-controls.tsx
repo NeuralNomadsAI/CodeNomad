@@ -19,11 +19,15 @@ import { pluginSourcesStore, removableSources } from "../stores/plugin-sources"
 import { PluginRowActions } from "./plugin-row-actions"
 import { PluginSourceAdd } from "./plugin-source-add"
 import "../stores/plugin-controls-events"
+import { createIntegrationAttachment } from "./integration-attachment"
+import { integrations } from "../stores/integrations"
+import { createIntegrationHostInstallation } from "./integration-host-installation"
 
 interface PluginActivationControlsProps {
   instanceId: string
   location: PluginControlLocation
   active?: boolean
+  session?: { id: string; title?: string; metadata?: Record<string, unknown> }
 }
 
 const log = getLogger("session")
@@ -38,6 +42,28 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   const globalLabelId = `plugin-controls-${createUniqueId()}-global`
   const projectLabelId = `plugin-controls-${createUniqueId()}-project`
   const directory = createMemo(() => props.location.directory)
+  const attachment = createIntegrationAttachment({
+    get instanceId() { return props.instanceId }, get directory() { return directory() },
+    get session() { return props.session }, get active() { return props.active },
+  })
+  const catalogUnavailable = () => {
+    const value = attachment.state()
+    return value.status === "error" || (value.status === "ready" && value.refreshError) || attachment.response()?.catalog.state === "unavailable"
+  }
+  const installation = createIntegrationHostInstallation({
+    get instanceId() { return props.instanceId }, get directory() { return directory() },
+    get sessionId() { return props.session?.id }, get active() { return props.active }, entries: attachment.entries,
+  })
+  const installFor = (sources: readonly (PluginConfiguredSource & { scope: PluginControlScope })[]) => {
+    const entry = integrationFor(sources), action = entry && installation.action(entry.id)
+    return entry && action ? { action, run: () => installation.open(entry.id) } : undefined
+  }
+  const integrationFor = (sources: readonly (PluginConfiguredSource & { scope: PluginControlScope })[]) => attachment.entries().find(entry =>
+    entry.configuredSources.some(association => sources.some(source => source.scope === association.scope && source.entryIndex === association.entryIndex)))
+  const attachFor = (sources: readonly (PluginConfiguredSource & { scope: PluginControlScope })[]) => {
+    const entry = integrationFor(sources)
+    return entry && attachment.canAttach(entry.id) ? () => attachment.open(entry.id) : undefined
+  }
   let cachedLocation: PluginControlLocation | undefined
   const requestLocation = (): PluginControlLocation => {
     if (!cachedLocation || cachedLocation.directory !== directory()) {
@@ -46,6 +72,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     return cachedLocation
   }
   const state = createMemo(() => pluginControlsCache.state(props.instanceId, requestLocation()))
+  const consentEpoch = () => state().invalidationRevision
   const snapshot = createMemo(() => state().snapshot)
   const controls = createMemo(() => (
     snapshot()?.controls.filter((control) => !control.builtin && control.runtime?.source.type !== "builtin") ?? []
@@ -164,7 +191,10 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   const declarationsFor = (matches: (source: PluginConfiguredSource) => boolean) => (
     snapshot()?.configured.sources.filter(matches) ?? []
   )
-  const refresh = () => void pluginControlsCache.load(props.instanceId, requestLocation(), { force: true })
+  const refresh = () => {
+    void pluginControlsCache.load(props.instanceId, requestLocation(), { force: true })
+    void integrations.refreshDemanded(props.instanceId)
+  }
 
   const renderControl = (pluginId: string) => {
     // Key rows by ID, but read every displayed value from the current snapshot.
@@ -243,7 +273,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
             <Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content>
           </Tooltip.Portal>
         </Tooltip><PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={pluginId}
-          source={control()?.runtime?.source} removable={removable()} active={props.active} /></div>
+          source={control()?.runtime?.source} removable={removable()} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} attach={attachFor(removable())} installHost={installFor(removable())} /></div>
         {renderSwitch("global")}
         {renderSwitch("project")}
       </div>
@@ -271,7 +301,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           <Tooltip.Portal><Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content></Tooltip.Portal>
         </Tooltip>
         <PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} source={entry()?.source}
-          removable={removable()} active={props.active} />
+          removable={removable()} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} attach={attachFor(removable())} installHost={installFor(removable())} />
       </div>
     </div>
   }
@@ -301,7 +331,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           </span>
         </Show>
         <PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} removable={removable()}
-          refresh={state() === "unconfirmed" ? refresh : undefined} active={props.active} />
+          refresh={state() === "unconfirmed" ? refresh : undefined} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} attach={attachFor(removable())} installHost={installFor(removable())} />
       </div>
     </div>
   }
@@ -314,12 +344,21 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       <Show when={snapshot() && !snapshot()?.targets.some((target) => target.scope === "project")}>
         <span id={noticeId} class="sr-only">{t("instanceServiceStatus.plugins.scope.unavailable")}</span>
       </Show>
+      <Show when={catalogUnavailable()}>
+        <p class="right-panel-empty-text" role="status">{t("integrations.catalogUnavailable")}</p>
+      </Show>
+      <Show when={attachment.response()?.catalog.state === "stale"}>
+        <p class="right-panel-empty-text" role="status">{t("integrations.catalogStale", { fetchedAt: attachment.response()?.catalog.fetchedAt ?? "" })}</p>
+      </Show>
+      <Show when={attachment.unsupported()}><p class="right-panel-empty-text">{t("integrations.unsupported")}</p></Show>
+      {attachment.picker()}
 
       <div class="plugin-controls-header">
         <div class="plugin-controls-header-actions">
           <button
             type="button"
             class="icon-button-compact"
+            data-plugin-refresh
             title={t("instanceServiceStatus.plugins.refresh")}
             aria-label={t("instanceServiceStatus.plugins.refresh")}
             aria-busy={state().loading || state().refreshing}
@@ -363,7 +402,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
 }
 
 function sameSource(left: PluginConfiguredSource, right: PluginConfiguredSource): boolean {
-  return left.scope === right.scope && left.target === right.target && left.entryIndex === right.entryIndex && left.path === right.path
+  return left.scope === right.scope && left.target === right.target && left.entryIndex === right.entryIndex && left.path === right.path && left.expectedRevision === right.expectedRevision
 }
 
 function scopeChecked(control: PluginActivationControl, scope: PluginControlScope): boolean {

@@ -232,6 +232,7 @@ export class MissionControl {
       if (request.task.order !== undefined && request.task.order !== page.taskPage.order) return { available: false, reason: "changed" }
       return missionPanelPage(header, [page], request.cursor)
     }
+    if (this.options.documentReads) await projectMissionDocuments(this.options.documentReads, [mission])
     const map = compactMissionMap(mission)
     if (request.field === undefined) return missionPanelPage(header, [map], request.cursor)
     // Own root fields only: extension metadata survives as it does in compact maps.
@@ -538,7 +539,7 @@ export class MissionControl {
   update(input: MissionUpdateInput): Promise<{ mission: MissionMap }> {
     return this.mutate(async () => {
       if (this.options.documents) {
-        const mission = this.requireMission(await this.snapshot(), input.missionID)
+        const mission = this.requireRequestedMission(await this.snapshot(), input.missionID)
         if (mission.document) await requireMissionOneTimeDocument(this.options.documents, mission.id, mission.coordinatorSessionId)
       }
       return this.updateCurrent(input)
@@ -558,7 +559,7 @@ export class MissionControl {
     return this.mutate(async () => {
       let documents: MissionDocumentAccess | undefined
       if (this.options.documents) {
-        const mission = this.requireMission(await this.snapshot(), input.missionID)
+        const mission = this.requireRequestedMission(await this.snapshot(), input.missionID)
         if (mission.document) {
           documents = this.options.documents
           await requireMissionOneTimeDocument(documents, mission.id, mission.coordinatorSessionId)
@@ -1736,6 +1737,15 @@ export class MissionControl {
       templates: missionRecipeCatalog(),
       playbook: getMissionRecipe(mission.template, mission.taskMode),
     }
+  }
+
+  /** Control preflight can establish absence only from a healthy authoritative snapshot. */
+  private requireRequestedMission(snapshot: MissionSnapshot, missionID: string): MissionMap {
+    if (!snapshot.missions.some(mission => mission.id === missionID) && !snapshot.discardedEvents
+      && !snapshot.controlUnavailable && !snapshot.notificationUnavailable && !snapshot.cleanupUnavailable) {
+      throw new MissionControlError("Mission not found", "mission-not-found")
+    }
+    return this.requireMission(snapshot, missionID)
   }
 
   private requireMission(snapshot: MissionSnapshot, missionID: string): MissionMap {

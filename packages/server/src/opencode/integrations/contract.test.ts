@@ -168,6 +168,8 @@ const status = {
 }
 const offer = { offerID: "offer_abcdefgh", label: "scene.blend", protocol: "ok" }
 const advertise = { host: "127.0.0.1", port: 50_123, token: "a".repeat(64), script_handle: "blender:1", label: "scene.blend", protocol: 1, offer_key: "blender.1234" }
+const authority = { serviceGeneration: "service_1", registryGeneration: "registry_1", revision: 0 }
+const binding = { state: "attached", authority, binding: { offerID: offer.offerID, label: offer.label } }
 const rpcSamples: Record<string, Sample[]> = {
   "status.input": [ok("empty", {}), no("unknown key", { verbose: true }), ...notObjects],
   "status.output": [
@@ -241,6 +243,41 @@ const rpcSamples: Record<string, Sample[]> = {
   "attachHost.output": [ok("attached", { outcome: "attached" }), ok("unknown field (reader)", { outcome: "gone", why: "x" }), no("unknown outcome", { outcome: "unknown" })],
   "detachHost.input": [ok("detach", { sessionID: "ses_abc" }), no("missing session", {}), no("empty session", { sessionID: "" })],
   "detachHost.output": [ok("detached", { outcome: "detached" }), ok("none", { outcome: "none" }), no("unknown outcome", { outcome: "gone" })],
+  "bindingRead.input": [
+    ok("exact session", { sessionID: "ses_abc" }), ok("128-character session", { sessionID: "s".repeat(128) }),
+    no("missing session", {}), no("empty session", { sessionID: "" }), no("129-character session", { sessionID: "s".repeat(129) }),
+    no("trailing newline", { sessionID: "ses_abc\n" }), no("separator", { sessionID: "ses/abc" }),
+    no("dot", { sessionID: "ses.abc" }), no("unknown key", { sessionID: "ses_abc", force: true }), ...notObjects,
+  ],
+  "bindingRead.output": [
+    ok("attached", binding), ok("none with authority", { state: "none", authority }),
+    ok("unknown", { state: "unknown" }), ok("unknown with authority", { state: "unknown", authority }),
+    ok("safe integer ceiling", edit(binding, ["authority", "revision"], Number.MAX_SAFE_INTEGER)),
+    ok("120 code points", edit(binding, ["binding", "label"], emoji(120))),
+    ok("128-character generation", edit(binding, ["authority", "registryGeneration"], "a".repeat(128))),
+    ok("64-character offer", edit(binding, ["binding", "offerID"], "a".repeat(64))),
+    ...["attached", "none", "unknown"].flatMap(state => {
+      const base = state === "attached" ? binding : { state, authority }
+      return [no(`${state}: extra root`, { ...base, token: "secret" }),
+        no(`${state}: extra authority`, edit(base, ["authority", "token"], "secret")),
+        no(`${state}: null authority`, { ...base, authority: null }),
+        ...["serviceGeneration", "registryGeneration", "revision"].map(key => no(`${state}: missing ${key}`, edit(base, ["authority", key], REMOVE)))]
+    }),
+    no("attached without authority", edit(binding, ["authority"], REMOVE)),
+    no("none without authority", { state: "none" }), no("unknown with binding", { state: "unknown", binding: binding.binding }),
+    no("none with binding", { ...binding, state: "none" }), no("attached without binding", { state: "attached", authority }),
+    no("extra binding key", edit(binding, ["binding", "document"], "scene.blend")),
+    no("missing label", edit(binding, ["binding", "label"], REMOVE)), no("missing offer", edit(binding, ["binding", "offerID"], REMOVE)),
+    no("label path", edit(binding, ["binding", "label"], "C:\\scene.blend")),
+    no("label control", edit(binding, ["binding", "label"], "bad\n")),
+    no("empty label", edit(binding, ["binding", "label"], "")),
+    no("121 code points", edit(binding, ["binding", "label"], emoji(121))),
+    ...["", "short", "a".repeat(65), "offer_abc\n", "offer.abc"].map(value => no(`bad offer ${JSON.stringify(value)}`, edit(binding, ["binding", "offerID"], value))),
+    ...["serviceGeneration", "registryGeneration"].flatMap(key => ["", "a".repeat(129), "gen\n", "gen.bad", "gen/path"].map(value =>
+      no(`bad ${key} ${JSON.stringify(value)}`, edit(binding, ["authority", key], value)))),
+    ...[-1, 0.5, Number.MAX_SAFE_INTEGER + 1, "1"].map(value => no(`bad revision ${value}`, edit(binding, ["authority", "revision"], value))),
+    no("unknown state", { state: "available" }), no("missing state", { authority }), ...notObjects,
+  ],
   "advertise.input": [
     ok("announcement", advertise),
     ok("script handle with a path", { ...advertise, script_handle: "C:/scenes/a.blend" }),
@@ -323,11 +360,12 @@ describe("vendored specification", () => {
     const manifest = json("VENDORED.json")
     assert.match(manifest.revision, /^[0-9a-f]{40}$/)
     const root = new URL("../../../../../", import.meta.url)
-    for (const [path, { blob }] of Object.entries(manifest.files as Record<string, { blob: string }>)) {
+    for (const [path, { blob, sha256 }] of Object.entries(manifest.files as Record<string, { blob: string; sha256?: string }>)) {
       // Git blob ID of the LF-normalized content, so an autocrlf checkout still matches.
       const content = Buffer.from(readFileSync(fileURLToPath(new URL(path, root)), "utf8").replace(/\r\n/g, "\n"))
       const id = createHash("sha1").update(`blob ${content.length}\0`).update(content).digest("hex")
       assert.equal(id, blob, `${path} differs from the pinned revision`)
+      if (sha256) assert.equal(createHash("sha256").update(content).digest("hex"), sha256, `${path} SHA-256`)
     }
   })
 })

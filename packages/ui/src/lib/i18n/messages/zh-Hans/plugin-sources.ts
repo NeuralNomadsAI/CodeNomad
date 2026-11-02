@@ -1,4 +1,7 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.sources.removeWarning": "移除此插件可能中断使用它的对话中的可用性和连接。",
+  "instanceServiceStatus.plugins.sources.removeGlobalWarning": "这也可能影响其他项目中的对话。",
+  "instanceServiceStatus.plugins.sources.removeRecovery": "重新安装可能恢复可用性，但可能需要重新加载或重新附加。中断的操作可能无法继续。",
   "instanceServiceStatus.plugins.sources.add": "添加插件",
   "instanceServiceStatus.plugins.sources.addTitle": "添加插件",
   "instanceServiceStatus.plugins.sources.spec": "软件包",
@@ -29,6 +32,6 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "{scope} OpenCode 配置格式错误，未作更改。",
   "instanceServiceStatus.plugins.sources.errors.unavailable": "此位置无法使用{scope}配置。",
   "instanceServiceStatus.plugins.sources.errors.timeout": "OpenCode 未及时响应。未添加任何内容，请重试。",
-  "instanceServiceStatus.plugins.sources.errors.remove": "无法从{scope}移除 {name}。",
+  "instanceServiceStatus.plugins.sources.errors.remove": "无法确认已从{scope}移除 {name}。请先刷新插件以核实实际配置，再重新尝试。",
   "instanceServiceStatus.plugins.sources.errors.removeStale": "{name} 在显示后已在{scope}配置中更改。请刷新后重试。",
 } as const

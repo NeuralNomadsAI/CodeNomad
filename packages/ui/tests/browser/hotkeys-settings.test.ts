@@ -7,12 +7,21 @@ import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
+import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
+import { fixtureEventStream } from "./fixture-event-stream"
 import { commandHotkeyDefinitions, hotkeyDefinitions } from "../../src/lib/hotkey-definitions"
 
 let server: ViteDevServer, browser: Browser, url: string
+let events: Awaited<ReturnType<typeof fixtureEventStream>> | undefined
+async function closeEvents() {
+  const owned = events
+  events = undefined
+  await owned?.close()
+}
 before(async () => {
   const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
-  try {
+  let ready = false
+  await runWithDiagnosticCleanup({ run: async () => {
     server = await createServer({
       configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
       plugins: [shutdown.plugin, solid(), { name: "hotkeys-settings-fixture", configureServer(s) {
@@ -27,26 +36,54 @@ before(async () => {
     shutdown.own(server)
     await server.listen()
     url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
+    events = await fixtureEventStream(url)
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
     armFixtureNavigationBudget(browser)
-  } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
+    ready = true
+  }, diagnose: async () => {}, cleanup: async () => {
+    if (ready) return
+    try { await browser?.close() } finally {
+      try { await closeEvents() } finally { if (server) await server.close(); else await cache.dispose() }
+    }
+  }, onObservationError: () => console.error("hotkeys-startup-observation-failed"),
+  onCleanupError: () => console.error("hotkeys-startup-cleanup-failed") })
 }, { timeout: 60000 })
-after(async () => { try { await browser?.close() } finally { await server?.close() } })
+after(async () => {
+  try { await browser?.close() } finally {
+    try { await closeEvents() } finally { await server?.close() }
+  }
+})
 
 const row = (page: Page, id: string) => page.locator(`[data-hotkey-id="${id}"]`)
 async function open(mac = false, host: "web" | "electron" | "tauri" = "web") {
-  const context = await browser.newContext()
-  const page = await context.newPage(), errors: string[] = []
-  page.on("pageerror", error => errors.push(error.message))
-  if (mac) await page.addInitScript(() => Object.defineProperty(navigator, "platform", { value: "MacIntel" }))
-  if (host !== "web") await page.addInitScript(host => {
-    ;(window as any).__CODENOMAD_RUNTIME_HOST__ = host
-    ;(window as any).__CODENOMAD_WINDOW_CONTEXT__ = "local"
-  }, host)
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
-  await page.goto(url)
-  await page.waitForFunction(() => Boolean((window as any).fixture))
-  return { context, page, errors }
+  let context: Awaited<ReturnType<Browser["newContext"]>> | undefined, ready = false
+  let phase: "context" | "page" | "routes" | "navigation" | "readiness" = "context"
+  return runWithDiagnosticCleanup({
+    run: async () => {
+      context = await browser.newContext()
+      phase = "page"
+      const page = await context.newPage(), errors: string[] = []
+      page.on("pageerror", error => errors.push(error.message))
+      phase = "routes"
+      if (mac) await page.addInitScript(() => Object.defineProperty(navigator, "platform", { value: "MacIntel" }))
+      if (host !== "web") await page.addInitScript(host => {
+        ;(window as any).__CODENOMAD_RUNTIME_HOST__ = host
+        ;(window as any).__CODENOMAD_WINDOW_CONTEXT__ = "local"
+      }, host)
+      await page.route("**/api/**", route => route.fulfill({ json: {} }))
+      await events!.route(page)
+      phase = "navigation"
+      await page.goto(url)
+      phase = "readiness"
+      await page.waitForFunction(() => Boolean((window as any).fixture))
+      ready = true
+      return { context, page, errors }
+    },
+    diagnose: async () => { console.error("hotkeys-setup-failed", phase) },
+    cleanup: async () => { if (!ready) await context?.close() },
+    onObservationError: () => console.error("hotkeys-setup-observation-failed"),
+    onCleanupError: () => console.error("hotkeys-setup-cleanup-failed"),
+  })
 }
 async function bind(page: Page, id: string, keys: string) {
   await row(page, id).getByRole("button", { name: "Edit", exact: true }).click()
@@ -59,6 +96,36 @@ async function bind(page: Page, id: string, keys: string) {
 async function trigger(page: Page, keys: string) {
   await page.locator("#outside").focus()
   await page.keyboard.press(keys)
+}
+
+for (const stage of ["newPage", "goto", "waitForFunction"] as const) {
+  for (const secondary of [false, true]) test(`hotkeys setup closes immediately after ${stage} failure${secondary ? " with secondary failures" : ""}`, async t => {
+    const context = await browser.newContext(), page = await context.newPage()
+    const primary = new Error("setup sentinel"), stack = primary.stack
+    const close = context.close.bind(context), output: unknown[][] = []
+    t.mock.method(console, "error", (...args: unknown[]) => {
+      output.push(args)
+      if (secondary && args[0] === "hotkeys-setup-failed") throw new Error("private observation sentinel")
+    })
+    t.mock.method(browser, "newContext", async () => context)
+    t.mock.method(context, "newPage", async () => { if (stage === "newPage") throw primary; return page })
+    t.mock.method(page, "goto", async () => { if (stage === "goto") throw primary; return null })
+    t.mock.method(page, "waitForFunction", async () => { throw primary })
+    const closing = t.mock.method(context, "close", async () => {
+      await close()
+      if (secondary) throw new Error("private cleanup sentinel")
+    })
+    try {
+      await assert.rejects(open(), error => error === primary && (error as Error).stack === stack)
+      assert.equal(page.isClosed(), true, "setup closes before rejecting, without browser teardown")
+      assert.equal(browser.contexts().includes(context), false)
+      assert.equal(closing.mock.callCount(), 1)
+      assert.deepEqual(output, [
+        ["hotkeys-setup-failed", stage === "newPage" ? "page" : stage === "goto" ? "navigation" : "readiness"],
+        ...(secondary ? [["hotkeys-setup-observation-failed"], ["hotkeys-setup-cleanup-failed"]] : []),
+      ])
+    } finally { await close() }
+  })
 }
 
 test("assigns initially empty commands, persists, clears and resets them with live conflicts", async () => {
@@ -289,4 +356,44 @@ for (const [layout, key, code, physical, other] of [
     assert.equal(await page.getByRole("textbox", { name: "Prompt", exact: true }).evaluate(element => document.activeElement === element), true)
     assert.deepEqual(errors, [])
   } finally { await context.close() }
+})
+
+test("hotkeys owns a persistent native EventSource until context and event-server cleanup", async t => {
+  const context = await browser.newContext()
+  t.after(() => context.close())
+  const page = await context.newPage()
+  const previousEvents = events
+  events = await fixtureEventStream(url)
+  const owned = events, close = owned.close.bind(owned)
+  t.after(async () => {
+    try { if (events === owned) await closeEvents() } finally { events = previousEvents }
+  })
+  t.mock.method(browser, "newContext", async () => context)
+  t.mock.method(context, "newPage", async () => page)
+  await page.clock.install()
+  await page.addInitScript(() => localStorage.setItem("opencode:logger:namespaces", '["sse"]'))
+  let requests = 0
+  const failures: string[] = []
+  page.on("request", request => { if (request.resourceType() === "eventsource") requests++ })
+  page.on("requestfailed", request => { if (request.resourceType() === "eventsource") failures.push("stream-request-failed") })
+  page.on("console", message => { if (/MIME|scheduling reconnect|failed to connect/i.test(message.text())) failures.push("stream-console-error") })
+  const response = page.waitForResponse(response => response.request().resourceType() === "eventsource")
+  const opened = page.waitForEvent("console", message => message.text().includes("Events stream connected"))
+  const closing = t.mock.method(owned, "close", async () => {
+    assert.equal(page.isClosed(), true, "the page owns the connection lifetime")
+    await close()
+  })
+  try {
+    const fixture = await open()
+    assert.equal(fixture.context, context)
+    assert.equal(page.isClosed(), false, "successful setup transfers its context to the caller")
+    assert.equal((await response).headers()["content-type"], "text/event-stream")
+    await opened
+    await page.clock.runFor(1500)
+    assert.equal(requests, 1, "a live stream does not retry or hit the JSON fallback")
+    assert.deepEqual(failures, [])
+    assert.deepEqual(fixture.errors, [])
+  } finally { try { await context.close() } finally { await closeEvents() } }
+  await closeEvents()
+  assert.equal(closing.mock.callCount(), 1, "the suite releases only its owned event server once")
 })

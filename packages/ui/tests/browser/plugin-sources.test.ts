@@ -10,7 +10,7 @@ before(async () => {
   const fixture = await borrowFixture({
     name: "plugin-sources",
     routes: [
-      { path: "/fixture", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/plugin-sources.tsx\"></script></body></html>" },
+      { path: "/fixture", html: "<html><body><div id=\"root\"></div><script>window.EventSource=class{addEventListener(){}removeEventListener(){}close(){}}</script><script type=\"module\" src=\"/tests/browser/fixtures/plugin-sources.tsx\"></script></body></html>" },
     ],
   })
   url = fixture.url
@@ -88,10 +88,18 @@ test("adding a plugin defaults to Global, warns for Project and shows Installing
     const items = await page.getByRole("menuitem").allInnerTexts()
     assert.deepEqual(items.map(item => item.trim()), ["Update fixture-plugin@1.0.0", "Remove from Global"])
     await page.getByRole("menuitem", { name: "Remove from Global", exact: true }).click()
+    const removal = page.getByRole("dialog", { name: /Remove from Global.*fixture.package/ })
+    await removal.waitFor()
+    assert.match(await removal.innerText(), /other projects/)
+    assert.equal(await removal.getByRole("button", { name: "Cancel", exact: true }).evaluate(el => el === document.activeElement), true)
+    await page.waitForTimeout(650)
+    await removal.getByRole("button", { name: "Remove from Global", exact: true }).click()
     await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.type === "remove"))
-    assert.deepEqual(await calls(page, "remove"), [{ type: "remove", location: { directory: "/repo" }, scope: "global", target: "fixture-plugin@1.0.0", entryIndex: 1 }])
-    await page.evaluate(() => (window as any).fixture.notify())
+    assert.deepEqual(await calls(page, "remove"), [{ type: "remove", location: { directory: "/repo" }, scope: "global", target: "fixture-plugin@1.0.0", entryIndex: 1, expectedRevision: "a".repeat(64) }])
+    assert.equal(await row.count(), 1, "file success does not claim runtime stopped")
+    await page.evaluate(() => (window as any).fixture.unload("fixture-plugin@1.0.0"))
     await row.waitFor({ state: "detached" })
+    assert.equal(await page.locator("[data-plugin-refresh]").evaluate(el => el === document.activeElement), true)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -128,6 +136,110 @@ test("an install failure shows its native reference, and a refused spec stays in
     const details = await tooltip(page, '[data-package-target="missing-plugin@1.0.0"]')
     assert.match(details, /Failed — Plugin failed to load/)
     assert.match(details, /Error reference in the OpenCode log: err_fixture01/)
+  } finally { await page.close() }
+})
+
+test("removal consent is Cancel-first, delayed, expiring and revoked without effects", async () => {
+  const page = await browser.newPage({ viewport: { width: 620, height: 850 } })
+  try {
+    await page.clock.install()
+    await page.goto(url)
+    const add = await openAdd(page)
+    await add.getByLabel("Package", { exact: true }).fill("guarded-plugin")
+    await add.getByRole("button", { name: "Add", exact: true }).click()
+    await add.waitFor({ state: "hidden" })
+    await page.evaluate(() => (window as any).fixture.report("guarded-plugin", "active", { id: "guarded.plugin" }))
+    const row = page.locator('[data-plugin-id="guarded.plugin"]')
+    const launch = async () => {
+      await row.getByRole("button", { name: "Actions for guarded.plugin", exact: true }).click()
+      await page.getByRole("menuitem", { name: "Remove from Global", exact: true }).click()
+      const dialog = page.getByRole("dialog", { name: /Remove from Global.*guarded.plugin/ })
+      await dialog.waitFor()
+      return dialog
+    }
+    let dialog = await launch()
+    const confirm = dialog.getByRole("button", { name: "Remove from Global", exact: true })
+    assert.equal(await confirm.isDisabled(), true)
+    assert.match(await dialog.innerText(), /guarded-plugin/)
+    await page.keyboard.press("Enter")
+    await dialog.waitFor({ state: "hidden" })
+    assert.equal((await calls(page, "remove")).length, 0)
+    dialog = await launch()
+    await page.clock.fastForward(450)
+    assert.equal(await dialog.getByRole("button", { name: "Remove from Global", exact: true }).isDisabled(), true)
+    await page.clock.fastForward(150)
+    assert.equal(await dialog.getByRole("button", { name: "Remove from Global", exact: true }).isEnabled(), true)
+    assert.equal((await calls(page, "remove")).length, 0, "enabling never submits")
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
+    await dialog.waitFor({ state: "hidden" })
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Actions for guarded.plugin")
+    for (const action of ["expire", "changeRevision", "disconnect", "hide"] as const) {
+      dialog = await launch()
+      if (action === "expire") await page.clock.fastForward(120_001)
+      else if (action === "hide") await page.evaluate(() => (window as any).fixture.setActive(false))
+      else await page.evaluate(name => (window as any).fixture[name](), action)
+      await dialog.waitFor({ state: "hidden" })
+      assert.equal((await calls(page, "remove")).length, 0, action)
+      await page.evaluate(() => (window as any).fixture.setActive(true))
+    }
+    dialog = await launch()
+    await page.clock.fastForward(600)
+    await dialog.getByRole("button", { name: "Remove from Global", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.calls.filter((call: any) => call.type === "remove").length === 1)
+    assert.equal((await calls(page, "remove"))[0].expectedRevision, "c".repeat(64), "fresh confirmation captures the new revision")
+  } finally { await page.close() }
+})
+
+test("Project warning is scoped and a lost response reconciles once without replay", async () => {
+  const page = await browser.newPage({ viewport: { width: 620, height: 850 } })
+  try {
+    await page.goto(url)
+    const add = await openAdd(page)
+    await add.getByLabel("Scope", { exact: true }).selectOption("project")
+    await add.getByLabel("Package", { exact: true }).fill("project-plugin")
+    await add.getByRole("button", { name: "Add", exact: true }).click()
+    await add.waitFor({ state: "hidden" })
+    const row = page.locator('[data-source-target="project-plugin"]')
+    await row.getByRole("button", { name: "Actions for project-plugin", exact: true }).click()
+    await page.getByRole("menuitem", { name: "Remove from Project", exact: true }).click()
+    const dialog = page.getByRole("dialog", { name: /Remove from Project/ })
+    await dialog.waitFor()
+    assert.equal((await dialog.innerText()).includes("other projects"), false)
+    await page.evaluate(() => (window as any).fixture.loseRemovalResponse())
+    await page.waitForTimeout(650)
+    await dialog.getByRole("button", { name: "Remove from Project", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.type === "remove"))
+    await page.waitForFunction(() => JSON.stringify((window as any).fixture.toasts()).includes("could not be confirmed"))
+    await row.waitFor({ state: "detached" })
+    await page.evaluate(() => { (window as any).fixture.notify(); (window as any).fixture.disconnect() })
+    await page.waitForTimeout(300)
+    assert.equal((await calls(page, "remove")).length, 1)
+    assert.ok((await calls(page, "read")).length >= 2, "actual configuration is reread after uncertainty")
+  } finally { await page.close() }
+})
+
+for (const width of [390, 620]) test(`long removal target keeps both actions reachable at ${width}x400`, async () => {
+  const page = await browser.newPage({ viewport: { width, height: 400 } })
+  try {
+    await page.goto(url)
+    const add = await openAdd(page)
+    const spec = `github:example/${"long-target".repeat(44)}`
+    await add.getByLabel("Package", { exact: true }).fill(spec)
+    await add.getByRole("button", { name: "Add", exact: true }).click()
+    await add.waitFor({ state: "hidden" })
+    const row = page.locator('[data-source-target]').filter({ hasText: spec })
+    await row.getByRole("button", { name: `Actions for ${spec}`, exact: true }).click()
+    await page.getByRole("menuitem", { name: "Remove from Global", exact: true }).click()
+    const dialog = page.getByRole("dialog", { name: /Remove from Global/ })
+    await dialog.waitFor()
+    for (const name of ["Cancel", "Remove from Global"]) {
+      const bounds = await dialog.getByRole("button", { name, exact: true }).boundingBox()
+      assert.ok(bounds && bounds.y >= 0 && bounds.y + bounds.height <= 400, `${name} remains inside the viewport`)
+    }
+    await page.waitForTimeout(650)
+    await dialog.getByRole("button", { name: "Remove from Global", exact: true }).click()
+    await row.waitFor({ state: "detached" })
+    assert.equal((await calls(page, "remove")).length, 1)
   } finally { await page.close() }
 })
 
