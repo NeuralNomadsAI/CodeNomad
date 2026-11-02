@@ -92,11 +92,6 @@ const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<str
 
 // Track expansion state for ANY session that has children (not just top-level parents)
 const [expandedSessions, setExpandedSessions] = createSignal<Map<string, Set<string>>>(new Map())
-// Rows opened only to reveal subsession activity: transient, never persisted,
-// and handed to the user as soon as they toggle the row themselves.
-const autoExpandedSessions = new Map<string, Set<string>>()
-// `${rowId}\0${descendantId}` pairs the user collapsed while that descendant ran.
-const dismissedActivityReveals = new Map<string, Set<string>>()
 
 export type InstanceSessionIndicatorStatus = "permission" | SessionStatus
 
@@ -787,8 +782,6 @@ function setSessionStatus(
   status: SessionStatus,
   options: { retry?: SessionRetryState | null; force?: boolean } = {},
 ): void {
-  let expandAncestors = false
-
   withSession(instanceId, sessionId, (session) => {
     const admissionPending = session.generationAdmissionToken !== undefined && status === "idle"
     const generationRecovery = admissionPending
@@ -817,13 +810,7 @@ function setSessionStatus(
     }
     session.idleSince = getIdleSinceForStatusTransition(previous, status, session.idleSince)
     session.retry = retry
-
-    if (session.parentId && status === "working" && previous !== "working") {
-      expandAncestors = true
-    }
   })
-
-  if (expandAncestors) revealWorkingSubsession(instanceId, sessionId)
 }
 
 function getActiveParentSession(instanceId: string): Session | null {
@@ -902,15 +889,6 @@ function isSessionExpanded(instanceId: string, sessionId: string): boolean {
 
 function setSessionExpanded(instanceId: string, sessionId: string, expanded: boolean): void {
   addAuthoritativeKey(setAuthoritativeSessionExpansionKeys, getDraftKey(instanceId, sessionId))
-  autoExpandedSessions.get(instanceId)?.delete(sessionId)
-  if (!expanded) {
-    // Collapsing a busy branch dismisses it for the subsessions running now.
-    const dismissed = dismissedActivityReveals.get(instanceId) ?? new Set<string>()
-    for (const descendant of getDescendantSessions(instanceId, sessionId)) {
-      if (descendant.status === "working" || descendant.status === "compacting") dismissed.add(`${sessionId}\0${descendant.id}`)
-    }
-    if (dismissed.size) dismissedActivityReveals.set(instanceId, dismissed)
-  }
   setExpandedSessions((prev) => {
     const next = new Map(prev)
     const currentSet = next.get(instanceId) ?? new Set<string>()
@@ -933,8 +911,6 @@ function setSessionExpanded(instanceId: string, sessionId: string, expanded: boo
 function clearInstanceSessionExpansionState(instanceId: string): void {
   if (!instanceId) return
   const prefix = `${instanceId}:`
-  autoExpandedSessions.delete(instanceId)
-  dismissedActivityReveals.delete(instanceId)
   setExpandedSessions((prev) => {
     if (!prev.has(instanceId)) return prev
     const next = new Map(prev)
@@ -951,14 +927,10 @@ function hydrateSessionExpansion(instanceId: string, sessionIds: readonly string
   const authoritative = getAuthoritativeSessionExpansionIdsForInstance(instanceId)
   const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
   const restored = sessionIds.filter((id) => !authoritative.has(id) && !deleted.has(id))
-  // A reveal can race restore: restored rows are the user's own again, while
-  // reveals still pending stay open like other local changes.
-  const auto = autoExpandedSessions.get(instanceId)
-  for (const id of restored) auto?.delete(id)
   setExpandedSessions((prev) => {
     const current = prev.get(instanceId)
     const expanded = new Set(restored)
-    for (const id of current ?? []) if ((authoritative.has(id) || auto?.has(id)) && !deleted.has(id)) expanded.add(id)
+    for (const id of current ?? []) if (authoritative.has(id) && !deleted.has(id)) expanded.add(id)
     if (current?.size === expanded.size && [...expanded].every((id) => current.has(id))) return prev
     const next = new Map(prev)
     if (expanded.size) next.set(instanceId, expanded)
@@ -991,8 +963,6 @@ function ensureSessionAncestorsExpanded(instanceId: string, sessionId: string): 
   if (ancestorIds.length === 0) return
   for (const ancestorId of ancestorIds) {
     addAuthoritativeKey(setAuthoritativeSessionExpansionKeys, getDraftKey(instanceId, ancestorId))
-    // An explicit reveal (selection, navigation) makes the path the user's own.
-    autoExpandedSessions.get(instanceId)?.delete(ancestorId)
   }
   setExpandedSessions((prev) => {
     const next = new Map(prev)
@@ -1006,26 +976,20 @@ function ensureSessionAncestorsExpanded(instanceId: string, sessionId: string): 
 }
 
 /**
- * A subsession started working. Reveal it only inside the conversation this
- * instance is showing (the active session or its descendants); elsewhere the
- * collapsed ancestor shows a child-activity dot instead. Each project tab has
- * its own active session, so another tab of the same folder stays untouched.
+ * Reveal a descendant's path below the conversation this instance is showing.
+ * The list decides whether the visible row's activity transition warrants a reveal.
  */
-function revealWorkingSubsession(instanceId: string, sessionId: string): void {
+function revealSubsession(instanceId: string, sessionId: string): void {
   const active = activeSessionId().get(instanceId)
   if (!active) return
   const ancestors = getSessionAncestorIds(instanceId, sessionId)
   const start = ancestors.indexOf(active)
   if (start < 0) return
   const path = ancestors.slice(start)
-  const dismissed = dismissedActivityReveals.get(instanceId)
-  if (path.some((id) => dismissed?.has(`${id}\0${sessionId}`))) return
   const current = expandedSessions().get(instanceId)
   const missing = path.filter((id) => !current?.has(id))
   if (missing.length === 0) return
-  const auto = autoExpandedSessions.get(instanceId) ?? new Set<string>()
-  for (const id of missing) auto.add(id)
-  autoExpandedSessions.set(instanceId, auto)
+  for (const id of missing) addAuthoritativeKey(setAuthoritativeSessionExpansionKeys, getDraftKey(instanceId, id))
   setExpandedSessions((prev) => {
     const next = new Map(prev)
     next.set(instanceId, new Set([...missing, ...(prev.get(instanceId) ?? [])]))
@@ -1033,10 +997,9 @@ function revealWorkingSubsession(instanceId: string, sessionId: string): void {
   })
 }
 
-/** Expanded rows the user chose; automatic activity reveals are not restorable state. */
+/** All expanded rows are restorable, whether opened manually or by activity. */
 function getPersistentExpandedSessionIds(instanceId: string): string[] {
-  const auto = autoExpandedSessions.get(instanceId)
-  return [...(expandedSessions().get(instanceId) ?? [])].filter((id) => !auto?.has(id))
+  return [...(expandedSessions().get(instanceId) ?? [])]
 }
 
 function getVisibleSessionIds(instanceId: string): string[] {
@@ -1345,7 +1308,7 @@ export {
   ensureSessionExpanded,
   getSessionAncestorIds,
   ensureSessionAncestorsExpanded,
-  revealWorkingSubsession,
+  revealSubsession,
   getPersistentExpandedSessionIds,
   setActiveSessionFromList,
   isSessionMessagesLoading,

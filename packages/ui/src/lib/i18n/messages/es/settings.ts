@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.behavior.autoExpandActiveSubsessions.title": "Expandir subsesiones automáticamente",
+  "settings.behavior.autoExpandActiveSubsessions.info": "Cuando una rama visible y contraída de la conversación seleccionada pasa a trabajar, compactar o esperar una respuesta, se expande la ruta hasta sus subsesiones activas. Las subsesiones visibles siguen la misma regla a cualquier profundidad. Desactiva para que la actividad no abra ramas. Las ramas abiertas se guardan para restaurarlas.",
   "settings.usage.cached": "Últimas estadísticas guardadas · actualización pendiente",
   "settings.native.openFailed": "No se pudieron abrir las preferencias en su ventana. Reinicia o actualiza la aplicación CodeNomad e inténtalo de nuevo.",
   "settings.accounts.current": "Cuenta activa",

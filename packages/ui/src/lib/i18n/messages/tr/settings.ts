@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.behavior.autoExpandActiveSubsessions.title": "Alt oturumları otomatik genişlet",
+  "settings.behavior.autoExpandActiveSubsessions.info": "Seçili konuşmanın görünen kapalı bir dalı çalışıyor, sıkıştırılıyor veya girdi bekleniyor durumuna geçerse etkin alt oturumlarına giden yol açılır. Görünen alt oturumlar her derinlikte aynı kurala uyar. Etkinliğin dalları açmasını önlemek için kapatın. Açık dallar geri yüklemek üzere kaydedilir.",
   "settings.usage.cached": "Son kaydedilen istatistikler · yenileme bekleniyor",
   "settings.native.openFailed": "Tercihler kendi penceresinde açılamadı. CodeNomad uygulamasını yeniden başlatın veya güncelleyin, ardından tekrar deneyin.",
   "settings.accounts.current": "Etkin hesap",

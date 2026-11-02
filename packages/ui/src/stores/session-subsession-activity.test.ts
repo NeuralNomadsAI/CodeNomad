@@ -8,6 +8,7 @@ import {
   expandedSessions,
   getPersistentExpandedSessionIds,
   hydrateSessionExpansion,
+  revealSubsession,
   setActiveSession,
   setSessionExpanded,
   setSessionStatus,
@@ -38,53 +39,68 @@ const expanded = (instanceId: string) => [...(expandedSessions().get(instanceId)
 describe("subsession activity", () => {
   beforeEach(() => seed("tab-a", "tab-b"))
 
-  it("reveals a working subsession only inside the conversation each tab is showing", () => {
+  it("reveals a requested subsession only inside the conversation each tab is showing", () => {
     setActiveSession("tab-a", "parent")
     setActiveSession("tab-b", "other")
     setSessionStatus("tab-a", "grandchild", "working")
     setSessionStatus("tab-b", "grandchild", "working")
+    assert.deepEqual(expanded("tab-a"), [])
+    revealSubsession("tab-a", "grandchild")
+    revealSubsession("tab-b", "grandchild")
     // Tab A shows `parent`: only the path below it opens. Tab B shows another family: nothing moves.
     assert.deepEqual(expanded("tab-a"), ["child", "parent"])
     assert.deepEqual(expanded("tab-b"), [])
   })
 
-  it("keeps automatic reveals out of restorable state until the user takes them over", () => {
+  it("restores automatic reveals just like manual expansions", () => {
     setActiveSession("tab-a", "root")
     setSessionExpanded("tab-a", "other", true)
     setSessionStatus("tab-a", "child", "working")
+    revealSubsession("tab-a", "child")
     assert.deepEqual(expanded("tab-a"), ["other", "parent", "root"])
-    assert.deepEqual(getPersistentExpandedSessionIds("tab-a"), ["other"])
-    setSessionExpanded("tab-a", "parent", true)
-    assert.deepEqual(getPersistentExpandedSessionIds("tab-a").sort(), ["other", "parent"])
+    const saved = getPersistentExpandedSessionIds("tab-a")
+    assert.deepEqual(saved.sort(), ["other", "parent", "root"])
+    clearInstanceSessionExpansionState("tab-a")
+    hydrateSessionExpansion("tab-a", saved)
+    assert.deepEqual(expanded("tab-a"), ["other", "parent", "root"])
   })
 
   it("keeps restored and revealed rows when a reveal races restore hydration", () => {
     // The restored selection is seeded before the expansion snapshot is hydrated.
     setActiveSession("tab-a", "root")
     setSessionStatus("tab-a", "child", "working")
-    // The snapshot already held the user's `root`: it becomes theirs again.
+    revealSubsession("tab-a", "child")
+    // The snapshot held `root`; the live reveal of `parent` also survives hydration.
     hydrateSessionExpansion("tab-a", ["root"])
     assert.deepEqual(expanded("tab-a"), ["parent", "root"])
-    assert.deepEqual(getPersistentExpandedSessionIds("tab-a"), ["root"])
+    assert.deepEqual(getPersistentExpandedSessionIds("tab-a").sort(), ["parent", "root"])
 
     seed("tab-c")
     setActiveSession("tab-c", "root")
     setSessionStatus("tab-c", "child", "working")
+    revealSubsession("tab-c", "child")
     // An empty snapshot must not collapse a reveal for a still-running subsession.
     hydrateSessionExpansion("tab-c", [])
     assert.deepEqual(expanded("tab-c"), ["parent", "root"])
-    assert.deepEqual(getPersistentExpandedSessionIds("tab-c"), [])
+    assert.deepEqual(getPersistentExpandedSessionIds("tab-c").sort(), ["parent", "root"])
   })
 
-  it("does not reopen a branch the user collapsed for the same running subsession", () => {
+  it("allows revealing the same subsession after a manual collapse", () => {
     setActiveSession("tab-a", "root")
     setSessionStatus("tab-a", "child", "working")
+    revealSubsession("tab-a", "child")
     setSessionExpanded("tab-a", "parent", false)
-    setSessionStatus("tab-a", "child", "idle")
+    assert.deepEqual(expanded("tab-a"), ["root"])
+    // A repeated working status alone is unchanged; a new start reopens the path.
     setSessionStatus("tab-a", "child", "working")
     assert.deepEqual(expanded("tab-a"), ["root"])
+    setSessionStatus("tab-a", "child", "idle")
+    setSessionStatus("tab-a", "child", "working")
+    revealSubsession("tab-a", "child")
+    assert.deepEqual(expanded("tab-a"), ["parent", "root"])
     // Another subsession in the same branch is still revealed.
     setSessionStatus("tab-a", "grandchild", "working")
+    revealSubsession("tab-a", "grandchild")
     assert.deepEqual(expanded("tab-a"), ["child", "parent", "root"])
   })
 
