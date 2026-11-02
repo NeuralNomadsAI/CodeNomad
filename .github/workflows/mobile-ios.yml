@@ -1,0 +1,47 @@
+name: Mobile iOS SOURCE validation (no native build)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/mobile-ios.yml'
+      - 'packages/mobile-app/**'
+      - 'packages/ui/src/lib/i18n/messages/**/remoteAccess.ts'
+      - 'packages/ui/src/styles/tokens.css'
+      - 'packages/server/src/server/routes/auth-pages/login.html'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-ios-source-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-validation:
+    name: SOURCE validation only — not an iOS app build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+      - name: Install locked source dependencies without desktop lifecycle scripts
+        run: npm ci --ignore-scripts --workspace @codenomad/mobile-app --include-workspace-root --no-audit --no-fund
+      - name: Check launcher and source security contracts (no native execution)
+        run: npm run typecheck --workspace @codenomad/mobile-app
+      - name: Run offline source regressions and real launcher import-graph check
+        run: npm run test --workspace @codenomad/mobile-app
+      - name: Build bundled web launcher only
+        run: npm run build --workspace @codenomad/mobile-app
+      - name: Verify vendored iOS ABI identities without Apple tooling
+        run: npm run ios:verify --workspace @codenomad/mobile-app
+      - name: Select Rust for pure policy tests only
+        run: rustup toolchain install 1.94.0 --profile minimal
+      - name: Test locked URL and authority policy without Tauri or GTK compilation
+        run: cargo +1.94.0 test --locked --manifest-path packages/mobile-app/src-tauri/policy/Cargo.toml

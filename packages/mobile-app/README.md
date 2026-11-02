@@ -112,6 +112,9 @@ References: [manual dispatch prerequisites](https://docs.github.com/en/actions/h
 
 ## iOS — native component checks and future app build
 
+See [the stopped-experimentation state and Shantur handoff](IOS_HANDOFF.md).
+The iOS PR workflow validates source only on Linux; it does not build an iOS app.
+
 The app and Swift recovery package require **iOS 15.0 or newer**. Real SwiftRs/Tauri/Recovery modules and objects were compiled for Intel simulator and ARM64 device targets with SDK 26.2; this is **not an iOS application link or native FFI execution pass**. See [the source-owned Tauri C ABI correction, dependency pins and evidence](IOS_ABI.md). Local native iOS experimentation is stopped. The following commands describe future tooling, not an instruction to resume: agree a supported unsigned build contract first. The current `ios:build` requests distribution export and must not be used for default validation. A supported Mac with full Xcode (not just Command Line Tools), CocoaPods, Rust, Node/npm, and iOS Rust targets is required:
 
 ```text
