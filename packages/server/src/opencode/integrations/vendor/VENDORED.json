@@ -1,12 +1,12 @@
 {
   "repository": "https://github.com/NeuralNomadsAI/opencode-integrations",
-  "revision": "68eb8aa80a80e1ebee96a8ea7e9082f5eba86985",
-  "draft": "0.1",
+  "revision": "54d6e5d0f4c22e74d228822fcaaa0912818a8b46",
+  "draft": "0.2",
   "files": {
-    "packages/server/src/opencode/integrations/vendor/catalog.schema.json": { "source": "spec/schemas/catalog.schema.json", "blob": "425f7fbe16c8ada6ba2600058c7e843c3e973ddf" },
-    "packages/server/src/opencode/integrations/vendor/host.schema.json": { "source": "spec/schemas/host.schema.json", "blob": "07a52ccc7352dd1c0b878c88c31a0ce711941045" },
-    "packages/server/src/opencode/integrations/vendor/marker.schema.json": { "source": "spec/schemas/marker.schema.json", "blob": "c0b7d954a34769d1895815e0f2df380b1277c99b" },
-    "packages/server/src/opencode/integrations/vendor/rpc.schema.json": { "source": "spec/schemas/rpc.schema.json", "blob": "db1fa06d7d6e81ce28a2ebd6c978ba8942dbaa86" },
+    "packages/server/src/opencode/integrations/vendor/catalog.schema.json": { "source": "spec/schemas/catalog.schema.json", "blob": "ab087cc8f1e91315d2b5344f15eb4899286fb1b5" },
+    "packages/server/src/opencode/integrations/vendor/host.schema.json": { "source": "spec/schemas/host.schema.json", "blob": "71a2c8bb23564b847a7923458b8d5fc12109b8d8" },
+    "packages/server/src/opencode/integrations/vendor/marker.schema.json": { "source": "spec/schemas/marker.schema.json", "blob": "619c017c40e4d7a29a6ce095f26cd6e2c1a14620" },
+    "packages/server/src/opencode/integrations/vendor/rpc.schema.json": { "source": "spec/schemas/rpc.schema.json", "blob": "e17f86b05bccb0407354aac2ea90e520f16ca4ce", "sha256": "291ee28dd4f286b400ef914e85b69c6d6331272b07f0c648e32e0176285bbc47" },
     "scripts/fixtures/fake-integration/vendor/opencode_service.py": { "source": "packages/integration-kit/python/opencode_service.py", "blob": "7ad95a4e44b3277db381549e27ccefe719c05ead" }
   }
 }

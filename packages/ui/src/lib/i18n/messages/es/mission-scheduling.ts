@@ -44,6 +44,7 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.readFailed": "No se pudieron actualizar las programaciones. Se conserva la última vista; actualiza antes de actuar.",
   "missions.scheduleList.capacity": "Demasiados comandos sin confirmar. Resuelve una solicitud guardada antes de enviar otra.",
   "missions.scheduleList.uncertain": "Esta solicitud no está confirmada. Se conserva su identidad original. Actualiza la solicitud guardada; no se reenvía automáticamente.",
+  "missions.scheduleList.confirmedRefreshing": "Acción confirmada. Esperando la vista actualizada antes de otra acción. Usa Actualizar la solicitud guardada para volver a leer.",
   "missions.scheduleList.activate": "Esta acción requiere programación nativa. ¿Activar experimental.schedules en estos documentos de configuración?\n{paths}\nLa activación debe confirmarse antes de continuar. Se conserva un OFF explícito.",
   "missions.scheduleList.confirm.stop": "¿Detener «{title}» definitivamente? Se desactivan las futuras pasadas. Los efectos de herramientas iniciados pueden continuar; se conservan conversaciones y resultados.",
   "missions.scheduleList.confirm.delete": "¿Eliminar «{title}»? Se desactivan futuras pasadas antes de retirarla. Se conservan conversaciones y resultados. La limpieza sin confirmar sigue visible.",

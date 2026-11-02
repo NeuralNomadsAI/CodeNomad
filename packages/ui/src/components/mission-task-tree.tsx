@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createUniqueId } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import { AlertTriangle, ArrowUpRight, Check, ChevronRight, Circle, CircleDot, CircleSlash, Clock, MessageCircleQuestion, XCircle } from "lucide-solid"
 import type { MissionActorActivity, MissionPanelMap, MissionPanelTask } from "../../../server/src/api-types"
@@ -11,7 +11,8 @@ import { MissionGraph, orderMissionTasks } from "./mission-graph"
 import { createMissionRecoveryAction } from "./mission-recovery-button"
 import { missionPanelScroll } from "./mission-panel-scroll"
 import { useMissionPanelStore } from "./mission-panel-scope"
-import { MISSION_TASK_PAGE, type MissionTaskRequest } from "../../../server/src/missions/mission-panel-map"
+import type { MissionTaskRequest } from "../../../server/src/missions/mission-panel-map"
+import { SettingsInfoTip } from "./settings/settings-info-tip"
 
 export type MissionTaskState = "done" | "active" | "input" | "assigned" | "ready" | "waiting" | "blocked" | "failed" | "retired"
 
@@ -52,7 +53,7 @@ export function MissionTaskTree(props: {
   reading: (task: MissionPanelTask) => boolean; onRead: (task: MissionPanelTask) => void
   /** The task's exact owned conversation, once one is known. */
   conversation: (task: MissionPanelTask) => string | undefined; onOpenConversation: (sessionId: string) => void
-  disabled?: boolean; onRecoveryAdmitted?: () => void | Promise<void>
+  active?: boolean; disabled?: boolean; onRecoveryAdmitted?: () => void | Promise<void>
 }) {
   const missionStore = useMissionPanelStore()
   const { t } = useI18n()
@@ -62,18 +63,17 @@ export function MissionTaskTree(props: {
   const page = () => props.mission.taskPage
   const ordered = createMemo(() => page() ? props.mission.tasks : orderMissionTasks(props.mission.tasks))
   const total = () => page()?.total ?? ordered().length
-  // Rows in display order, and a gap for each run of tasks not loaded, its range in that order.
-  const entries = createMemo(() => {
-    const list: string[] = []
+  // Pins stay in the same tree. Continue at the first unread position, without
+  // turning each gap between pins into a separate row or control.
+  const nextOffset = createMemo(() => {
     let cursor = 0
     for (const task of ordered()) {
-      if (task.order !== undefined && task.order > cursor) list.push(`gap:${cursor}:${task.order}`)
-      list.push(`task:${task.id}`)
+      if (task.order !== undefined && task.order > cursor) return cursor
       if (task.order !== undefined) cursor = task.order + 1
     }
-    if (page() && total() > cursor) list.push(`gap:${cursor}:${total()}`)
-    return list
+    return page() && total() > cursor ? cursor : undefined
   })
+  const entries = createMemo(() => ordered().map(task => task.id))
   // Rows read their task and actor activity by identity: hundreds of rows stay linear.
   const byID = createMemo(() => new Map(props.mission.tasks.map(task => [task.id, task])))
   const activities = createMemo(() => new Map(props.activity?.map(value => [value.sessionId, value.state])))
@@ -88,21 +88,9 @@ export function MissionTaskTree(props: {
   const linked = () => props.mission.tasks.some(task => task.blockedBy.length || task.dependents)
   const read = () => missionStore.state(props.instanceId).taskReads?.[props.mission.id]
   const readFurther = (request: MissionTaskRequest) => void missionStore.loadTasks(props.instanceId, props.mission.id, request)
-  // Tasks needing action beyond the map's pins (`MissionTaskAttention`): those of its first
-  // omitted keys not shown, then each attention window after them that no read answered for
-  // this sequence (another sequence's windows cover none of it).
-  const attention = createMemo(() => {
-    const value = page()?.attention
-    if (!value?.omitted || ordered().length === total()) return undefined
-    const shown = new Set(props.mission.tasks.map(task => task.key)), known = value.keys ?? []
-    const unread = known.filter(key => !shown.has(key))
-    const coverage = missionStore.state(props.instanceId).taskAttention?.[props.mission.id]
-    const covered = new Set(coverage?.sequence === value.sequence ? coverage.windows : [])
-    const windows = Array.from({ length: Math.max(0, Math.ceil((value.omitted - known.length) / MISSION_TASK_PAGE)) },
-      (_, index) => known.length + index * MISSION_TASK_PAGE).filter(offset => !covered.has(offset))
-    const left = unread.length + windows.reduce((sum, offset) => sum + Math.min(MISSION_TASK_PAGE, value.omitted - offset), 0)
-    return left ? { left, counts: value.counts, request: (unread.length ? unread.some(key => key.length > 64) ? { attention: 0 } : { keys: unread } : { attention: windows[0] }) as MissionTaskRequest } : undefined
-  })
+  // The header supplies whole-mission counts. Ordinary windows do not identify
+  // their place in the attention sequence, so never label these counts as unread.
+  const attention = () => page()?.attention?.omitted && ordered().length < total() ? page()!.attention!.counts : undefined
   const omittedText = (task: MissionPanelTask) => {
     const value = omitted().get(task.key)
     return [value?.dependencies ? t(`missionsPanel.task.omittedDependencies.${value.dependencies === 1 ? "one" : "other"}`, { count: value.dependencies }) : "",
@@ -113,36 +101,33 @@ export function MissionTaskTree(props: {
   const scope = () => instances().get(props.instanceId)?.folder ?? props.instanceId
   const open = () => missionProjectView(scope()).tasksCollapsed !== true
   let root!: HTMLElement
-  const panelScrolls = missionPanelScroll(() => root)
+  const panelScrolls = missionPanelScroll(() => root, () => props.active ?? true)
+  const [sentinel, setSentinel] = createSignal<HTMLLIElement>()
+  const loadNext = () => {
+    const offset = nextOffset()
+    if (props.active !== false && open() && offset !== undefined && !read()?.loading) readFurther({ offset })
+  }
+  createEffect(() => {
+    const target = sentinel(), offset = nextOffset()
+    if (!target || props.active === false || !open() || offset === undefined || read()?.loading || read()?.failure) return
+    const observer = new IntersectionObserver(entries => {
+      // Reaching the manual fallback with the keyboard is not an activation.
+      if (entries.some(entry => entry.isIntersecting) && !target.contains(document.activeElement) && !read()?.failure) loadNext()
+    }, { root: panelScrolls() ? root.closest(".mission-control") : target.closest(".mission-flow"), rootMargin: "0px 0px 120px 0px" })
+    observer.observe(target)
+    onCleanup(() => observer.disconnect())
+  })
   return <section ref={root} class="mission-tree mission-disclosure" data-scroller={panelScrolls() ? "panel" : undefined}>
     <h3><button type="button" class="mission-disclosure-trigger" aria-expanded={open()} aria-controls={id}
       onClick={() => updateMissionProjectView(scope(), { tasksCollapsed: open() || undefined })}>
       <ChevronRight class="disclosure-chevron h-4 w-4" aria-hidden="true" /><span>{t("missionsPanel.tasks")}</span>
       <small>{total()}</small>
-    </button></h3>
+    </button><Show when={attention()}>{counts => <SettingsInfoTip text={t("missionsPanel.tasks.attention.counts", counts())} />}</Show></h3>
     <div id={id} hidden={!open()}>
     <Show when={total()} fallback={<p class="mission-control-empty-line">{t(props.mission.runState === "prepared"
       ? "missions.progress.prepared" : "missions.progress.noPlan")}</p>}>
-      {/* Not a gap of the order: tasks needing action that the pins could not hold, read by name. */}
-      <Show when={attention()}>{value => <p class="mission-tree-attention" role="status">
-        <AlertTriangle class="h-3.5 w-3.5" aria-hidden="true" />
-        <span>{t(`missionsPanel.tasks.attention.${value().left === 1 ? "one" : "other"}`, { count: value().left })}</span>
-        <small>{t("missionsPanel.tasks.attention.counts", value().counts)}</small>
-        <button type="button" class="window-text-button" disabled={read()?.loading}
-          onClick={() => readFurther(value().request)}>{t("missionsPanel.tasks.attention.show")}</button>
-      </p>}</Show>
       <div class="mission-flow" classList={{ "mission-flow-linked": linked() }}>
-        <ul ref={list} class="mission-tree-list"><For each={entries()}>{entry => {
-          if (entry.startsWith("gap:")) {
-            // A deliberate read of the next page of the display order, from the gap's start.
-            const [start, end] = entry.slice(4).split(":").map(Number)
-            return <li class="mission-tree-gap" data-start={start} data-end={end}>
-              <span>{t(`missionsPanel.tasks.omitted.${end - start === 1 ? "one" : "other"}`, { count: end - start })}</span>
-              <button type="button" class="window-text-button" disabled={read()?.loading}
-                onClick={() => readFurther({ offset: start })}>{t("missionsPanel.tasks.showMore")}</button>
-            </li>
-          }
-          const id = entry.slice(5)
+        <ul ref={list} class="mission-tree-list"><For each={entries()}>{id => {
           const task = () => byID().get(id)!
           const activity = () => {
             const actor = task().actorSessionId
@@ -176,7 +161,10 @@ export function MissionTaskTree(props: {
               <button type="button" class="window-text-button" disabled={action().disabled} aria-description={action().description}
                 onClick={() => void action().onSelect()}>{action().label}</button>{recovery.feedback}</div>}</Show>
           </li>
-        }}</For></ul>
+        }}</For><Show when={nextOffset() !== undefined && !read()?.failure}><li ref={setSentinel} class="mission-tree-more">
+          <button type="button" class="window-text-button" aria-disabled={read()?.loading || undefined}
+            onClick={loadNext}>{t("missionsPanel.tasks.showMore")}</button>
+        </li></Show></ul>
         <Show when={linked()}><MissionGraph tasks={ordered()} list={list} omitted={omitted()} /></Show>
       </div>
       <Show when={read()?.failure}>{failed =>

@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js"
+import { createSignal, untrack } from "solid-js"
 import type { IntegrationsResponse } from "../../../server/src/integration-types"
 
 /** Native events after which shown integrations are read again: integration RPC events, plugin and configuration changes. */
@@ -12,7 +12,7 @@ export function isIntegrationRefreshEvent(type: string): boolean {
 }
 
 /** A Location's integrations as last read: `loading` until the first answer; a failed read keeps the last one shown. */
-export type IntegrationsSnapshot = { status: "loading" } | { status: "error" } | { status: "ready"; response: IntegrationsResponse }
+export type IntegrationsSnapshot = { status: "loading" } | { status: "error" } | { status: "ready"; response: IntegrationsResponse; stale?: boolean; refreshError?: boolean }
 
 const LOADING: IntegrationsSnapshot = { status: "loading" }
 
@@ -20,6 +20,7 @@ interface Entry {
   instanceId: string
   directory: string
   demand: number
+  generation: number
   reading?: { dirty: boolean; controller: AbortController; promise: Promise<void> }
 }
 
@@ -54,10 +55,13 @@ export function createIntegrationsStore(
       try {
         do {
           reading.dirty = false
+          const generation = entry.generation
           const answer = await read(entry.instanceId, entry.directory, reading.controller.signal).then(
             (response): IntegrationsSnapshot => ({ status: "ready", response }), (): IntegrationsSnapshot => ({ status: "error" }))
           if (reading.controller.signal.aborted || entries.get(stateKey) !== entry) return
-          if (answer.status === "ready" || snapshots().get(stateKey)?.status !== "ready") publish(stateKey, answer)
+          if (generation !== entry.generation) continue
+          const previous = snapshots().get(stateKey)
+          publish(stateKey, answer.status === "error" && previous?.status === "ready" ? { ...previous, stale: true, refreshError: true } : answer)
         } while (reading.dirty && entry.demand > 0 && entries.get(stateKey) === entry)
       } finally {
         if (entry.reading === reading) entry.reading = undefined
@@ -69,6 +73,15 @@ export function createIntegrationsStore(
   const refreshDemanded = (instanceId?: string): Promise<void> => Promise.all([...entries].map(([stateKey, entry]) =>
     instanceId === undefined || entry.instanceId === instanceId ? refreshEntry(stateKey, entry) : undefined)).then(() => undefined)
 
+  const invalidate = (instanceId?: string): void => {
+    for (const [stateKey, entry] of entries) {
+      if (instanceId !== undefined && entry.instanceId !== instanceId) continue
+      entry.generation++
+      const previous = snapshots().get(stateKey)
+      if (previous?.status === "ready") publish(stateKey, { ...previous, stale: true })
+    }
+  }
+
   return {
     state(instanceId: string, directory: string): IntegrationsSnapshot {
       return snapshots().get(key(instanceId, directory)) ?? LOADING
@@ -77,10 +90,14 @@ export function createIntegrationsStore(
     demand(instanceId: string, directory: string): () => void {
       const stateKey = key(instanceId, directory)
       let entry = entries.get(stateKey)
-      if (!entry) entries.set(stateKey, entry = { instanceId, directory, demand: 0 })
+      if (!entry) entries.set(stateKey, entry = { instanceId, directory, demand: 0, generation: 0 })
       const tracked = entry
       tracked.demand += 1
-      void refreshEntry(stateKey, tracked)
+      if (tracked.demand === 1) {
+        const previous = untrack(() => snapshots().get(stateKey))
+        if (previous?.status === "ready") publish(stateKey, { ...previous, stale: true })
+        void refreshEntry(stateKey, tracked)
+      }
       let released = false
       return () => {
         if (released) return
@@ -89,13 +106,16 @@ export function createIntegrationsStore(
         if (tracked.demand > 0) return
         tracked.reading?.controller.abort()
         tracked.reading = undefined
-        entries.delete(stateKey)
+        if (entries.get(stateKey) === tracked) entries.delete(stateKey)
       }
     },
     refreshDemanded,
+    invalidate,
     /** A native event of `instanceId`: schedules one coalesced read of its demanded Locations when it may change them. */
     applyEvent(instanceId: string, type: string): void {
-      if (!isIntegrationRefreshEvent(type) || timers.has(instanceId)) return
+      if (!isIntegrationRefreshEvent(type)) return
+      invalidate(instanceId)
+      if (timers.has(instanceId)) return
       if (![...entries.values()].some(entry => entry.instanceId === instanceId)) return
       timers.set(instanceId, setTimer(() => {
         timers.delete(instanceId)

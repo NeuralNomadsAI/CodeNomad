@@ -29,7 +29,7 @@ export function MissionTracking(props: {
     <Show when={props.mission.panelCollections}>
       <MissionPanelPaging instanceId={props.instanceId} lane={`activity:${props.mission.id}`} />
     </Show>
-    <MissionTaskTree mission={props.mission} instanceId={props.instanceId} activity={observed()?.actors}
+    <MissionTaskTree mission={props.mission} instanceId={props.instanceId} activity={observed()?.actors} active={props.active}
       reading={task => props.reading(target("task", task.id))} onRead={task => props.read(target("task", task.id))}
       conversation={task => missionTaskConversation(props.mission, task, observed()?.family,
         missionDerivedTaskSession(props.instanceId, props.mission, task.key), [...props.mission.actors, ...missionStore.observedActors(props.instanceId, props.mission.id)])}

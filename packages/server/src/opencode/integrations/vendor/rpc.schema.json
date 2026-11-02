@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/NeuralNomadsAI/opencode-integrations/blob/main/spec/schemas/rpc.schema.json",
-  "title": "RPC status contract of an OpenCode integration (contract 1, draft 0.1)",
-  "description": "One definition per method input and output (`<method>.input`, `<method>.output`) and per event (`<event>.event`), each self-contained. Output definitions are reader schemas: unknown properties are allowed and ignored by readers; producers of this repository emit only the properties named here (packages/conformance checks the strict form). `advertise.input` and `withdraw.input` are validated by the plugin itself, which answers `refused` or `none` instead of an RPC validation error. Rules that need the marker (family-specific fields, marker equality) are enforced by packages/conformance.",
+  "title": "RPC status contract of an OpenCode integration (contract 1, draft 0.2)",
+  "description": "One self-contained definition per method input, output and event. Readers ignore unknown output properties except in bindingRead, whose input and output are closed at every level and validated locally with all patterns. Producers emit only the properties defined here. advertise and withdraw validate their own opaque input. Rules requiring the marker or current service/session authority are enforced by the plugin and conformance checks.",
   "$defs": {
     "status.input": {
       "type": "object",
@@ -151,6 +151,80 @@
       "properties": {
         "outcome": { "enum": ["detached", "none"] }
       }
+    },
+    "bindingRead.input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sessionID"],
+      "properties": { "sessionID": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$(?![\\s\\S])" } }
+    },
+    "bindingRead.output": {
+      "type": "object",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "authority", "binding"],
+          "properties": {
+            "state": { "const": "attached" },
+            "authority": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["serviceGeneration", "registryGeneration", "revision"],
+              "properties": {
+                "serviceGeneration": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}(?![\\s\\S])" },
+                "registryGeneration": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}(?![\\s\\S])" },
+                "revision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+              }
+            },
+            "binding": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["offerID", "label"],
+              "properties": {
+                "offerID": { "type": "string", "pattern": "^[A-Za-z0-9_-]{8,64}$(?![\\s\\S])" },
+                "label": { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[^/\\\\\\p{Cc}]+$" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "authority"],
+          "properties": {
+            "state": { "const": "none" },
+            "authority": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["serviceGeneration", "registryGeneration", "revision"],
+              "properties": {
+                "serviceGeneration": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}(?![\\s\\S])" },
+                "registryGeneration": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}(?![\\s\\S])" },
+                "revision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state"],
+          "properties": {
+            "state": { "const": "unknown" },
+            "authority": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["serviceGeneration", "registryGeneration", "revision"],
+              "properties": {
+                "serviceGeneration": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}(?![\\s\\S])" },
+                "registryGeneration": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}(?![\\s\\S])" },
+                "revision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+              }
+            }
+          }
+        }
+      ]
     },
     "advertise.input": {
       "type": "object",

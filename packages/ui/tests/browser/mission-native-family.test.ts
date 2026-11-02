@@ -131,6 +131,7 @@ async function setup(label: string, narrow = false, independent = false) {
     if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (pathname.endsWith("/schedule")) return route.fulfill({ json: { version: 1, projectID: "project" } })
     if (pathname === "/api/storage/config/ui") return route.fulfill({ json: { settings: { locale: narrow ? "he" : "en", showMessageTimeline: true } } })
+    if (pathname === "/api/workspaces/native-family/integrations") return route.fulfill({ json: { location, catalog: { state: "fresh" }, integrations: [] } })
     // CodeNomad's canonical bounded pruning routes, not guessed native URLs.
     if (pathname === "/api/workspaces/native-family/session-history/outline") {
       const input = outlineInputSchema.parse(request.postDataJSON()), messages = nativeHistory(input.sessionID)
@@ -270,6 +271,8 @@ test("production SessionList/SessionView select recursive children, steer/queue 
     await select(page, "A"); assert.equal(await composer(page).inputValue(), "Coordinator A draft")
     await select(page, "B"); assert.equal(await composer(page).inputValue(), "Sibling B draft")
     assert.equal(await selectedMission(page), "A")
+    assert.equal(requests.filter(item => item.path === "/api/workspaces/native-family/integrations").length, 1,
+      "same-Location navigation and session updates retain the integration demand")
     await ctx.drainRequestFailures(); assert.deepEqual(ctx.errors, []); assert.deepEqual(ctx.failures, [])
   } finally { await ctx.save(); ctx.release(); await page.close() }
 })

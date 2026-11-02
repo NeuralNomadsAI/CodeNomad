@@ -370,6 +370,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   })
   const listExpanded = () => missionProjectView(scope()).listExpanded === true
   const refreshLabel = () => props.t(controlRetry()?.pending() ? "missions.control.refreshResend" : "missions.control.refresh")
+  const reading = () => refreshing() || missionStore.reading(props.instanceId) || currentPassage.inventory()?.reading(props.instanceId)
+    || recurrence.loading() || scheduled.loading() || currentPassage.loading()
   /** Read-only reconciliation first; only a control still unconfirmed by that
    * read is resent, with its original identity, from this explicit click. */
   const refresh = async () => {
@@ -409,7 +411,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           </button>
           <button type="button" class="mission-control-icon-button" aria-label={refreshLabel()}
             title={refreshLabel()} disabled={state().status === "loading" || refreshing()} onClick={() => void refresh()}>
-            <Show when={state().status === "loading" || refreshing()} fallback={<RefreshCw class="h-4 w-4" />}>
+            <Show when={reading()} fallback={<RefreshCw class="h-4 w-4" />}>
               <Loader2 class="h-4 w-4 animate-spin" />
             </Show>
           </button>
@@ -520,9 +522,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       <Show when={missionStore.progress(props.instanceId, "cleanups").more || missionStore.progress(props.instanceId, "cleanups").failure}>
         <MissionPanelPaging instanceId={props.instanceId} lane="cleanups" />
       </Show>
-      <Show when={missionStore.progress(props.instanceId, "marks").more || missionStore.progress(props.instanceId, "marks").failure}>
-        <p role="status">{props.t("missionsPanel.pages.observations")}</p><MissionPanelPaging instanceId={props.instanceId} lane="marks" />
-      </Show>
+      <MissionPanelPaging instanceId={props.instanceId} lane="marks" />
       <Show when={cleanupPending()}><MissionCleanupPanel instanceId={props.instanceId} cleanups={state().cleanups ?? []}
         disabled={Boolean(editor()) || !["ready", "loading"].includes(state().status) || Boolean(state().cleanupUnavailable)} active={props.isActive?.() ?? true}
         refresh={() => missionStore.refresh(props.instanceId)} /></Show>

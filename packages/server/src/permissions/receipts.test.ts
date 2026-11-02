@@ -17,6 +17,7 @@ import { AutoAcceptManager } from "./auto-accept-manager"
 import { registerPermissionReceiptRoutes } from "../server/routes/permission-receipts"
 import { registerInstanceProxyRoutes } from "../server/http-server"
 import { WorktreeDeletionFence } from "../workspaces/worktree-session-evacuation"
+import { CODENOMAD_MISSIONS_RPC } from "../missions/rpc"
 
 const logger = { error() {}, warn() {}, debug() {}, trace() {}, isLevelEnabled: () => false } as unknown as Logger
 const pending = (id = "p", source = true) => ({ id, sessionID: "s", action: "shell", resources: ["git status"],
@@ -31,6 +32,14 @@ async function fixture() {
   const connection = {
     endpoint: { url: "http://127.0.0.1:4096", auth: { type: "basic", username: "opencode", password: "fixture-only" } },
     client: {
+      rpc: (definition: unknown) => {
+        assert.equal(definition, CODENOMAD_MISSIONS_RPC)
+        return { scheduleCarrierRead: async (input: { sessionID: string }, options: { location: { directory: string } }) => {
+          assert.deepEqual(input, { sessionID: "s" })
+          assert.deepEqual(options.location, { directory: "/project" })
+          throw { type: "rpc.unavailable", message: "RPC unavailable" }
+        } }
+      },
       debug: { location: { list: async () => [{ directory: "/project" }] } },
       config: { get: async () => [{ type: "directory", path: state.directory }] },
       session: { get: async () => ({ id: "s", location: { directory: "/project" } }) },

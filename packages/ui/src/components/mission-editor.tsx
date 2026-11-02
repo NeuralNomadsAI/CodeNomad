@@ -517,7 +517,7 @@ export function MissionEditor(props: {
     || mode() === "recurring" && (!sourceLocationReady() || !sourceInputBudget().sufficient)
   // In the panel, creation's body scrolls above a fixed footer unless the panel is too short (mission-create.css).
   let body: HTMLDivElement | undefined
-  const panelScrolls = kind === "create" ? missionPanelScroll(() => body) : () => false
+  const panelScrolls = kind === "create" ? missionPanelScroll(() => body, isActive) : () => false
 
   return <form class="mission-editor window-shell" classList={{ "mission-create": kind === "create" }} onSubmit={save} aria-label={t(`missions.control.${kind}`)}
     data-scroller={panelScrolls() ? "panel" : undefined}>

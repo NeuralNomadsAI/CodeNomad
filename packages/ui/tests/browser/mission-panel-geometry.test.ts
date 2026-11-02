@@ -214,11 +214,11 @@ test("a map of 500 tasks and 40 actors shows a page of rows, reads further on re
     // The map's page: its window of the display order and its pinned rows, the rest gaps.
     assert.deepEqual(await rows(), compactMissionMap(large[0]).tasks.map(task => task.key))
     assert.equal(await page.locator(".mission-tree > h3 .mission-disclosure-trigger small").innerText(), "500")
-    // Each deliberate read takes the first gap's page, in the order the map named.
-    for (let read = 0; await page.locator(".mission-tree-gap").count(); read++) {
+    // Each fallback reads the earliest missing window, with a single control.
+    for (let read = 0; await page.locator(".mission-tree-more").count(); read++) {
       assert.ok(read < 10, "at most one read a page")
       const before = (await rows()).length
-      await page.locator(".mission-tree-gap button").first().click()
+      await page.locator(".mission-tree-more button").evaluate((button: HTMLButtonElement) => button.click())
       await page.waitForFunction(count => document.querySelectorAll(".mission-tree-node").length > count, before)
     }
     assert.ok(requests.every(query => query.includes(`order=${compactMissionMap(large[0]).taskPage!.order}`)), requests.join(" "))

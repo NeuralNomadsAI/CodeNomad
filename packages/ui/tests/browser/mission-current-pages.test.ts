@@ -4,6 +4,7 @@ import { chromium, type Browser } from "playwright"
 import Fastify from "fastify"
 import { createServer, type Server } from "node:http"
 import { setTimeout as delay } from "node:timers/promises"
+import path from "node:path"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { selectMission } from "./mission-actions"
@@ -31,6 +32,11 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
   const errors: string[] = [], writes: string[] = [], selections: any[] = [], sizes: number[] = []
   const activityRows: unknown[] = []
   let failRawPage = false
+  let releaseActivity!: () => void, activityEntered!: () => void, holdActivity = true
+  const activityGate = new Promise<void>(resolve => { releaseActivity = resolve }), activityStarted = new Promise<void>(resolve => { activityEntered = resolve })
+  const screenshot = async (stage: string) => {
+    if (process.env.CODENOMAD_TEST_SCREENSHOTS) await page.screenshot({ path: path.join(process.env.CODENOMAD_TEST_SCREENSHOTS, `current-${owner}-activity-${stage}.png`) })
+  }
   page.on("pageerror", error => errors.push(error.message))
   try {
     let map = (await f.control.snapshot()).missions[0]
@@ -63,6 +69,9 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
       if (path.includes("/current")) {
         if (request.method() === "POST") selections.push(request.postDataJSON())
         const selector = request.method() === "POST" ? request.postDataJSON().selector : undefined
+        if (holdActivity && selector?.source === "activity" && selector.actorOffset === 160) {
+          holdActivity = false; activityEntered(); await activityGate
+        }
         if (failRawPage && selector?.text && selector.field === "actors" && selector.window?.offset === 1) {
           failRawPage = false
           return route.fulfill({ status: 503, json: { error: "Owned raw field retry" } })
@@ -95,8 +104,13 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     })
     await page.locator(".mission-tree").waitFor()
     assert.equal(selections.some(input => input.body), false, "initial tracking never requests prose or full passage bodies")
-    const gap = page.locator(".mission-tree-gap button").first()
-    if (await gap.count()) { await gap.click(); await page.waitForFunction(() => document.querySelectorAll(".mission-tree-node").length > 50) }
+    assert.equal(await page.locator(".mission-tree-gap").count(), 0)
+    assert.equal(await page.locator(".mission-tree-more button").count(), 1)
+    const initialRows = await page.locator(".mission-tree-node").count()
+    await page.locator(".mission-tree-more").scrollIntoViewIfNeeded()
+    await page.waitForFunction(count => document.querySelectorAll(".mission-tree-node").length > count, initialRows)
+    assert.ok(selections.some(input => input.selector.source === "tasks" && input.selector.task.offset > 0
+      && input.selector.task.missionID === map.id && input.source.owner === owner && input.source.missionID === map.id), "scroll continuation retains the exact passage owner")
     await page.evaluate(async ({ root, missionID, scheduleID, passageID, owner, taskID }) => {
       (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView(root, { reader: { missionId: missionID, kind: "task", itemId: taskID,
         recurrence: { instanceId: "fixture", projectID: "project", scheduleID, passageID, owner } } })
@@ -105,12 +119,26 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     await page.locator(".mission-reader details > summary").filter({ hasText: /^Task brief$/ }).click()
     await page.locator(".mission-reader").getByText(/Exact brief/).first().waitFor()
     assert.ok(selections.some(input => input.body?.kind === "task" && input.body.taskKey === map.tasks.at(-1)!.key && input.body.field === "brief"))
-    const activityMore = page.locator(".mission-control .mission-panel-paging").filter({ hasText: /160/ }).getByRole("button", { name: "Load more", exact: true })
+    const activityMore = page.locator(`.mission-control .mission-panel-paging[data-lane="activity:${map.id}"]`).getByRole("button", { name: "Load more", exact: true })
+    const geometry = () => page.locator(".mission-tree").evaluate(element => {
+      const box = element.getBoundingClientRect()
+      return { x: box.x, y: box.y, width: box.width, height: box.height }
+    })
+    await activityMore.scrollIntoViewIfNeeded()
+    const beforeActivity = await geometry()
+    await screenshot("before")
     await activityMore.click()
+    await activityStarted
+    await page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin').waitFor()
+    assert.deepEqual(await geometry(), beforeActivity, "passage-owned background reads preserve task-tree geometry")
+    assert.equal(await page.locator(".mission-control").getByText(/^Activity and requests cover|^Read in this traversal/).count(), 0)
+    await screenshot("during")
+    releaseActivity()
     await page.locator(".mission-control").getByText("Off-page current question", { exact: true }).waitFor().catch(async error => {
       throw new Error(`${error}\n${JSON.stringify({ activityRows, errors, selectors: selections.map(input => input.selector) })}\n${(await page.locator(".mission-control").innerText()).slice(0, 1000)}`)
     })
     assert.ok(selections.some(input => input.selector.source === "activity" && input.selector.actorOffset === 160))
+    await screenshot("after")
     await page.waitForFunction(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark") === "permission")
     const taskReads = selections.filter(input => input.selector.source === "tasks").length, bodyReads = selections.filter(input => input.body).length
     await f.control.update({ missionID: map.id, requestID: "notes-only", expectedRevision: map.revision, objective: map.objective, notes: "Unrelated root notes" })
@@ -121,6 +149,7 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     assert.equal(selections.filter(input => input.selector.source === "tasks").length, taskReads, "an unrelated journal revision does not storm expanded task pages")
     assert.equal(selections.filter(input => input.body).length, bodyReads, "an unchanged exact body retains its original digest")
     const source = (await f.read()).source!, headerSelector = { source: "mission", missionID: map.id, header: true }
+    assert.ok(selections.filter(input => input.selector.source === "tasks").every(input => JSON.stringify(input.source) === JSON.stringify(source)), "every task continuation retains the exact frozen source")
     const beforeFields = await f.page({ source, selector: headerSelector })
     await page.evaluate(async ({ root, missionID, scheduleID, passageID, owner }) => {
       (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView(root, { reader: { missionId: missionID, kind: "overview",
@@ -149,7 +178,7 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
       && (input.selector.source !== "mission" || input.selector.header || input.selector.field)), "no full-map or project fallback")
     assert.ok(sizes.every(size => size <= 65536)); assert.deepEqual(writes, []); assert.deepEqual(errors, [])
     t.diagnostic(JSON.stringify({ owner, tasks: map.tasks.length, initialBodies: 0, transfers: selections.length, largestBody: Math.max(...sizes), ...f.metrics() }))
-  } finally { await page.context().close(); await app.close(); await f.dispose() }
+  } finally { releaseActivity?.(); await page.context().close(); await app.close(); await f.dispose() }
 })
 
 for (const owner of ["daily", "scheduled"] as const) test(`${owner} covered page back aborts its held continuation without a false error after real 31 seconds`, { timeout: 90_000 }, async t => {

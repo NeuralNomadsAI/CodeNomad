@@ -39,11 +39,20 @@ test("structured method absence preserves legacy behavior; malformed and indeter
   }
 })
 
+test("a missing RPC client or callable ownership method stays closed", async () => {
+  for (const unavailable of [{}, { rpc: undefined }, { rpc: () => undefined }, { rpc: () => ({}) },
+    { rpc: () => ({ scheduleCarrierRead: undefined }) }, { rpc: () => ({ scheduleCarrierRead: false }) }]) {
+    await assert.rejects(assertOrdinaryMissionScheduleSession(unavailable as unknown as OpenCodeClient, session), denied(503))
+  }
+})
+
 test("public SDK qualified RpcError absence allows ordinary sessions without caching or generic HTTP fallback", async () => {
   let missing = true, reads = 0
   const sdk = OpenCode.make({ baseUrl: "http://isolated-sdk.invalid", fetch: async (input, init) => {
     const request = new Request(input, init)
+    assert.equal(request.method, "POST")
     assert.equal(new URL(request.url).pathname, "/api/rpc/codenomad.missions/scheduleCarrierRead")
+    assert.equal(new URL(request.url).searchParams.get("location[directory]"), session.location.directory)
     assert.deepEqual(await request.json(), { input: { sessionID: session.id } })
     reads++
     return missing ? Response.json({ _tag: "RpcError", type: "rpc.unavailable", message: "RPC unavailable" }, { status: 400 })

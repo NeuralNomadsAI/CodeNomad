@@ -44,6 +44,7 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.readFailed": "Les programmations n’ont pas pu être actualisées. Le dernier affichage est conservé ; actualisez avant d’agir.",
   "missions.scheduleList.capacity": "Trop de commandes non confirmées. Résolvez une requête enregistrée avant d’en envoyer une autre.",
   "missions.scheduleList.uncertain": "Cette requête reste non confirmée. Son identité d’origine est conservée. Actualisez la requête enregistrée ; aucun renvoi automatique.",
+  "missions.scheduleList.confirmedRefreshing": "Action confirmée. En attente de la vue actualisée avant une autre action. Utilisez Actualiser la requête enregistrée pour relire.",
   "missions.scheduleList.activate": "Cette action nécessite la programmation native. Activer experimental.schedules dans ces documents de configuration ?\n{paths}\nL’activation doit être confirmée avant de poursuivre cette action. Un OFF explicite est conservé.",
   "missions.scheduleList.confirm.stop": "Arrêter définitivement « {title} » ? Les futurs passages sont désactivés. Les effets d’outils engagés peuvent continuer ; conversations et résultats sont conservés.",
   "missions.scheduleList.confirm.delete": "Supprimer « {title} » ? Les futurs passages sont désactivés avant le retrait. Conversations et résultats sont conservés. Le nettoyage non confirmé reste visible.",

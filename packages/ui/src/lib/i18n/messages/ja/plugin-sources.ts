@@ -1,4 +1,7 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.sources.removeWarning": "このプラグインを削除すると、使用中の会話で利用や接続が中断される可能性があります。",
+  "instanceServiceStatus.plugins.sources.removeGlobalWarning": "他のプロジェクトの会話にも影響する可能性があります。",
+  "instanceServiceStatus.plugins.sources.removeRecovery": "再インストールで利用可能になる場合がありますが、再読み込みや再接続が必要なことがあります。中断した操作は再開されない場合があります。",
   "instanceServiceStatus.plugins.sources.add": "プラグインを追加",
   "instanceServiceStatus.plugins.sources.addTitle": "プラグインを追加",
   "instanceServiceStatus.plugins.sources.spec": "パッケージ",
@@ -29,6 +32,6 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "{scope} の OpenCode 設定の形式が正しくありません。変更されていません。",
   "instanceServiceStatus.plugins.sources.errors.unavailable": "この場所では {scope} の設定を利用できません。",
   "instanceServiceStatus.plugins.sources.errors.timeout": "OpenCode が時間内に応答しませんでした。何も追加されていません。もう一度お試しください。",
-  "instanceServiceStatus.plugins.sources.errors.remove": "{name} を{scope}から削除できませんでした。",
+  "instanceServiceStatus.plugins.sources.errors.remove": "{scope} からの {name} の削除を確認できませんでした。再試行前にプラグインを更新して実際の設定を確認してください。",
   "instanceServiceStatus.plugins.sources.errors.removeStale": "表示後に {scope} の設定で {name} が変更されました。更新してもう一度お試しください。",
 } as const
