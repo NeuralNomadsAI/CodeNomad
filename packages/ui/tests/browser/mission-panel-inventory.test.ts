@@ -9,6 +9,7 @@ import { MissionJournal, parseMissionEvent } from "../../../server/src/missions/
 import { registerMissionRoutes } from "../../../server/src/server/routes/missions"
 import { WorktreeDeletionFence } from "../../../server/src/workspaces/worktree-session-evacuation"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
+import path from "node:path"
 
 let browser: Browser, url: string
 before(async () => {
@@ -69,7 +70,8 @@ async function open() {
       bytes.push(response.rawPayload.length); return route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body })
     }
     if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: FIXTURE_PROJECT.id, projectCanonical: "/repo", location, schedules: [] }) })
-    if (path.endsWith("/missions/scheduled")) return route.fulfill({ json: { available: true, version: 1, projectID: FIXTURE_PROJECT.id, documents: [], page: { offset: 0, end: 0, total: 0 } } })
+    if (path.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: FIXTURE_PROJECT.id, schedules: [] } })
+    if (path.endsWith("/schedule") && request.method() === "GET") return route.fulfill({ json: { document: null, pending: false } })
     if (path.endsWith("/content")) {
       const response = await app.inject({ method: "GET", url: request.url().replace(/^.*\/api\/workspaces\/fixture\//, "/api/workspaces/workspace/") })
       return route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body })
@@ -143,6 +145,75 @@ test("601-actor selection keeps its header small and reaches real off-page Needs
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
     t.diagnostic(`off-page window roots ${f.native.slice(before).filter(item => item.startsWith("get:")).length}; largest body ${Math.max(...f.bytes)} bytes`)
   } finally { await f.close() }
+})
+
+for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geometry and nodes stable while the existing toolbar shows reads`, async () => {
+  const f = await open()
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  try {
+    await f.page.evaluate(async index => (await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { selected: `msn_inventory_${index}` }), index)
+    await f.page.locator(".mission-detail").waitFor()
+    await f.page.waitForFunction(async () => !(await import("/src/stores/missions.ts")).missionStore.reading("fixture"))
+    if (index === 0) {
+      await f.page.evaluate(async () => {
+        const store = (await import("/src/stores/missions.ts")).missionStore
+        for (let page = 0; store.progress("fixture", "marks").more; page++) {
+          if (page >= 8) throw new Error("Marks traversal did not finish")
+          await store.more("fixture", "marks")
+        }
+      })
+      assert.equal(await f.page.locator('.mission-panel-paging[data-lane="marks"]').count(), 1, "completed traversal retains its info slot")
+    }
+    const geometry = () => f.page.evaluate(() => [...document.querySelectorAll<HTMLElement>(
+      ".mission-control-header,.mission-action-bar,.mission-tree > h3,.mission-flow,.mission-panel-paging")].map(element => {
+      const box = element.getBoundingClientRect()
+      return [element.className, box.x, box.y, box.width, box.height, element.scrollTop]
+    }))
+    const buttons = () => f.page.locator(".mission-control button").allTextContents()
+    const before = await geometry(), labels = await buttons()
+    const stableNode = f.page.locator(index ? ".mission-tree-node" : ".mission-detail").first()
+    const node = await stableNode.elementHandle()
+    const screenshot = async (name: string) => {
+      if (process.env.CODENOMAD_TEST_SCREENSHOTS) await f.page.screenshot({ path: path.join(process.env.CODENOMAD_TEST_SCREENSHOTS, `${name}-${index}.png`) })
+    }
+    await screenshot("missions-before-refresh")
+    await f.page.route("**/missions/panel-page", async route => { await gate; return route.fallback() })
+    // Exercise the same event dispatcher as live plugin invalidations, not a
+    // manually animated spinner or a substitute test component.
+    await f.page.evaluate(() => (window as any).missionFixture.refresh())
+    await f.page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin').waitFor()
+    assert.deepEqual(await geometry(), before)
+    assert.deepEqual(await buttons(), labels)
+    assert.equal(await stableNode.evaluate((current, old) => current === old, node), true)
+    assert.equal(await f.page.locator(".mission-panel-paging p:not([role=status])").count(), 0)
+    assert.equal(await f.page.getByText(/^Activity and requests cover|^Read in this traversal/).count(), 0)
+    await screenshot("missions-during-refresh")
+    release()
+    await f.page.waitForFunction(async () => !(await import("/src/stores/missions.ts")).missionStore.reading("fixture"))
+    assert.deepEqual(await geometry(), before)
+    assert.deepEqual(await buttons(), labels)
+    await screenshot("missions-after-refresh")
+    assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
+  } finally { release?.(); await f.close() }
+})
+
+test("a schedule-only background read uses the same top-right indicator after panel reads settle", async () => {
+  const f = await open()
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  try {
+    await f.page.waitForFunction(async () => !(await import("/src/stores/missions.ts")).missionStore.reading("fixture"))
+    await f.page.route("**/missions/scheduled?**", async route => { await gate; return route.fallback() })
+    await f.page.evaluate(() => (window as any).missionFixture.refresh())
+    const spinner = f.page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin')
+    await spinner.waitFor()
+    await f.page.waitForFunction(async () => !(await import("/src/stores/missions.ts")).missionStore.reading("fixture"))
+    assert.equal(await spinner.isVisible(), true)
+    release()
+    await spinner.waitFor({ state: "detached" })
+    assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
+  } finally { release?.(); await f.close() }
 })
 
 test("cleanup discovery keeps a failed middle window through a passive first-window refresh and retries without a control effect", async () => {

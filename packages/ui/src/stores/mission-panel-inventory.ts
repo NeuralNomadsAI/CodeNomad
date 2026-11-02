@@ -397,7 +397,7 @@ export function createMissionPanelInventory(input: {
           unavailableReason: error instanceof MissionTaskPageReadError ? error.unavailableReason : undefined })
       } finally { if (own.headerReads.get(id) === job) own.headerReads.delete(id); changed() }
     }
-    own.headerReads.set(id, job); job.promise = Promise.resolve().then(run)
+    own.headerReads.set(id, job); job.promise = Promise.resolve().then(run); changed()
     return job.promise
   }
   const refresh = async (instanceId: string, initial = false, explicit = true) => {
@@ -418,6 +418,12 @@ export function createMissionPanelInventory(input: {
     return [...rows.values()].map(value => value.row)
   }
   return { ...base, bounded: true as const, progress, more, observations,
+    reading: (instanceId: string) => {
+      version(); const own = entries.get(instanceId), state = base.state(instanceId)
+      return state.status === "loading" || Boolean(own?.headerReads.size)
+        || [...(own?.lanes.values() ?? [])].some(lane => lane.loading)
+        || Object.values(state.taskReads ?? {}).some(read => read.loading)
+    },
     observedActors: (instanceId: string, id: string) => {
       version(); const own = entries.get(instanceId)
       return own ? (values(own, `activity:${id}`) as PanelObservation[]).filter(page => currentObservation(own, page)).flatMap(page => page.context.actors) : []

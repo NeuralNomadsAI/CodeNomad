@@ -66,8 +66,8 @@ test("a long mission's task group fills the panel to the window bottom with a si
     try {
       const detail = await selectMission(f.page, "Long migration")
       const flow = detail.locator(".mission-tree .mission-flow")
-      // The map's page of rows, then the gap of the tasks it does not hold, read further on request.
-      await flow.locator(".mission-tree-gap").waitFor({ state: "attached" })
+      // One continuation follows the continuous rows and loads on scrolling.
+      await flow.locator(".mission-tree-more").waitFor({ state: "attached" })
       assert.equal(await flow.locator(".mission-tree-node").count(), MISSION_TASK_PAGE)
       assert.equal(await detail.locator(".mission-tree .mission-disclosure-trigger small").innerText(), String(TASKS), "the group shows its task count")
       assert.equal(await scrolls(f.page, ".mission-tree .mission-flow"), true, `the task list scrolls at ${viewport.height}px`)
