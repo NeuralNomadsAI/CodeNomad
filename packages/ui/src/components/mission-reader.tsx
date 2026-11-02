@@ -2,7 +2,7 @@ import { For, Show, batch, createComputed, createEffect, createMemo, createSigna
 import { ArrowUpRight, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { missionStore } from "../stores/missions"
-import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
+import { missionProjectView, updateMissionProjectView, markMissionsFinishedSeen } from "../stores/mission-view-state"
 import { getSessionPreview, showSessionChatFor } from "../stores/session-previews"
 import { Markdown } from "./markdown"
 import { copyToClipboard } from "../lib/clipboard"
@@ -40,6 +40,8 @@ import { MissionBodyPending, missionReaderBody, useReaderValue, useReaderValues,
 import { missionReportHas, useReportBodies } from "./mission-report-prose"
 import { missionBodyPresent, missionOwnBody } from "../lib/mission-bodies"
 import type { MissionPanelMap, MissionReport } from "../../../server/src/api-types"
+import { MissionPanelPaging } from "./mission-panel-paging"
+import { createDocumentAttention } from "./session/session-idle-attention"
 
 // One bounded page per section, including raw artifacts. Leave shared Markdown/tool budgets alone.
 const READER_PAGE_SIZE = 9_000
@@ -159,6 +161,12 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   }
   const mission = () => target()?.recurrence ? passage()?.mission
     : missionStore.state(props.instanceId).missions.find(m => m.id === target()?.missionId)
+  const documentAttention = createDocumentAttention()
+  createEffect(() => {
+    const value = mission()
+    if (!value || value.status !== "completed" || target()?.recurrence || !documentAttention() || value.projectID !== projectID()) return
+    untrack(() => markMissionsFinishedSeen(JSON.stringify([props.scope, value.projectID]), [value.id], [value], true))
+  })
   const activity = () => target()?.recurrence ? passage()?.activity : missionStore.state(props.instanceId).activity
   const sectionSource = (label: string): MissionPassageSection | undefined => {
     const owner = target()?.recurrence, value = mission(), kind = target()?.kind
@@ -207,6 +215,19 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     return request && { key: JSON.stringify([props.instanceId, props.scope, value.projectID, value.id, page.order, request]), missionId: value.id, request }
   }, undefined, { equals: (left, right) => left?.key === right?.key })
   const [targetReads, setTargetReads] = createSignal(new Map<string, "loading" | "failed" | "read">())
+  const changeRequest = createMemo(() => {
+    const value = mission(), current = target()
+    if (!value || current?.kind !== "change" || current.recurrence || change() || !("panelCollections" in value)) return
+    return { key: JSON.stringify([props.instanceId, props.scope, value.id, value.panelCollections?.history?.digest, current.itemId]), lane: `field:${value.id}:history` }
+  })
+  const readChange = (wanted: NonNullable<ReturnType<typeof changeRequest>>) => {
+    setTargetReads(current => new Map(current).set(wanted.key, "loading"))
+    void missionStore.more(props.instanceId, wanted.lane, true).then(() => {
+      const result = missionStore.progress(props.instanceId, wanted.lane)
+      setTargetReads(current => new Map(current).set(wanted.key, result.total !== undefined && !result.failure ? "read" : "failed"))
+    })
+  }
+  createEffect(() => { const wanted = changeRequest(); if (wanted && !untrack(targetReads).has(wanted.key)) untrack(() => readChange(wanted)) })
   const readTarget = (wanted: NonNullable<ReturnType<typeof targetRequest>>) => {
     const settle = (status: "loading" | "failed" | "read") => setTargetReads(current => new Map(current).set(wanted.key, status))
     settle("loading")
@@ -219,19 +240,25 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     if (wanted && !untrack(targetReads).has(wanted.key)) untrack(() => readTarget(wanted))
   })
   const targetState = () => {
+    const history = changeRequest()
+    if (history) return targetReads().get(history.key) ?? "loading"
     const wanted = targetRequest()
     if (wanted) return targetReads().get(wanted.key) ?? "loading"
-    if (!target()?.recurrence && ["task", "report"].includes(target()?.kind ?? "") && !mission()) {
+    if (!target()?.recurrence && ["task", "report", "change"].includes(target()?.kind ?? "") && !mission()) {
       const status = missionStore.state(props.instanceId).status
       if (status === "error" || status === "unavailable") return "failed"
       if (status === "loading" || status === "idle") return "loading"
     }
   }
   const targetChanged = () => {
+    const history = changeRequest()
+    if (history) return missionStore.progress(props.instanceId, history.lane).failure === "changed"
     const wanted = targetRequest(), failure = wanted && missionStore.state(props.instanceId).taskReads?.[wanted.missionId]?.failure
     return failure?.reason === "changed" && JSON.stringify(failure.request) === JSON.stringify(wanted?.request)
   }
   const retryTarget = async () => {
+    const history = changeRequest()
+    if (history) { readChange(history); return }
     const wanted = targetRequest()
     if (wanted) { readTarget(wanted); return }
     const identity = JSON.stringify([props.instanceId, props.scope, target()])
@@ -258,7 +285,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     const value = mission(), currentTask = task()
     return value && currentTask && target()?.kind === "task"
       ? missionTaskConversation(value, currentTask, activity()?.missions.find(item => item.missionId === value.id)?.family,
-        missionDerivedTaskSession(props.instanceId, value, currentTask.key)) : undefined
+        missionDerivedTaskSession(props.instanceId, value, currentTask.key), [...value.actors, ...missionStore.observedActors(props.instanceId, value.id)]) : undefined
   }
   createEffect(() => { const value = mission(); if (value && target()?.kind === "task") demandMissionTaskSessions(props.instanceId, value) })
   const openActor = async (sessionId: string) => {
@@ -270,8 +297,9 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       const currentTask = task()
       if (!value || target()?.kind !== "task" || !currentTask) return false
       const family = activity()?.missions.find(item => item.missionId === value.id)?.family
-      return missionTaskConversation(value, currentTask, family, missionDerivedTaskSession(props.instanceId, value, currentTask.key)) === sessionId
-        && (value.coordinatorSessionId === sessionId || missionIncludesSession(value.actors, sessionId, family)
+      return missionTaskConversation(value, currentTask, family, missionDerivedTaskSession(props.instanceId, value, currentTask.key),
+        [...value.actors, ...missionStore.observedActors(props.instanceId, value.id)]) === sessionId
+        && (value.coordinatorSessionId === sessionId || missionIncludesSession([...value.actors, ...missionStore.observedActors(instanceId, value.id)], sessionId, family)
           || missionDerivedSessionIncludes(props.instanceId, value, sessionId))
     }
     const admitted = () => current() && intent === navigationIntent && authorized()
@@ -431,6 +459,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       </button>
     </header>
     <div class="window-body" ref={body}>
+      <Show when={!target()?.recurrence && mission() && "panelCollections" in mission()!}><MissionPanelPaging instanceId={props.instanceId} lane={`activity:${mission()!.id}`} /></Show>
       <Show when={navigationError()}><p role="alert">{t("sessionList.reload.error")}</p></Show>
       <Show when={target()?.recurrence && currentPassage.error()}><p role="status">{t(passage() ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
       <Show when={target()?.kind === "recurrence"}>

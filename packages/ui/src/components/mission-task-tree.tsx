@@ -100,7 +100,7 @@ export function MissionTaskTree(props: {
     const windows = Array.from({ length: Math.max(0, Math.ceil((value.omitted - known.length) / MISSION_TASK_PAGE)) },
       (_, index) => known.length + index * MISSION_TASK_PAGE).filter(offset => !covered.has(offset))
     const left = unread.length + windows.reduce((sum, offset) => sum + Math.min(MISSION_TASK_PAGE, value.omitted - offset), 0)
-    return left ? { left, counts: value.counts, request: (unread.length ? { keys: unread } : { attention: windows[0] }) as MissionTaskRequest } : undefined
+    return left ? { left, counts: value.counts, request: (unread.length ? unread.some(key => key.length > 64) ? { attention: 0 } : { keys: unread } : { attention: windows[0] }) as MissionTaskRequest } : undefined
   })
   const omittedText = (task: MissionPanelTask) => {
     const value = omitted().get(task.key)

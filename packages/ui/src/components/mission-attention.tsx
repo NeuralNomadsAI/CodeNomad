@@ -7,6 +7,8 @@ import { getFormQueue } from "../stores/forms"
 import { getPermissionQueue } from "../stores/instances"
 import { sessions } from "../stores/session-state"
 import { selectMissionAttention, type MissionObservedFamily } from "./mission-attention-model"
+import { missionStore } from "../stores/missions"
+import type { MissionAttentionItem } from "./mission-attention-model"
 
 /**
  * "Needs you": native Forms and permission requests still held by one of the
@@ -23,13 +25,22 @@ export const MissionAttention: Component<{
   onOpenActor: (sessionId: string, request?: { kind: "form" | "permission"; id: string }) => Promise<void>
 }> = (props) => {
   const { t } = useI18n()
-  const items = createMemo(() => selectMissionAttention({
-    actors: props.mission.actors,
+  const items = createMemo(() => {
+    const native = selectMissionAttention({
+    actors: [...props.mission.actors, ...missionStore.observedActors(props.instanceId, props.mission.id)],
     forms: getFormQueue(props.instanceId),
     permissions: getPermissionQueue(props.instanceId),
     tasks: props.mission.tasks,
     family: props.family,
-  }).filter(item => item.open && item.sessionId && item.kind !== "blocked"))
+    }).filter(item => item.open && item.sessionId && item.kind !== "blocked")
+    const observed: MissionAttentionItem[] = props.mission.panelCollections ? missionStore.observations(props.instanceId, props.mission.id).flatMap(page => page.requests.items.map(item => ({
+      id: `${item.kind}:${item.request.id}`, kind: item.kind, sessionId: item.request.sessionID, actorSessionId: item.actorSessionId, open: page.requests.state !== "unknown",
+      title: String(item.request.title ?? item.request.action ?? item.request.id),
+      ...(item.kind === "form" && Array.isArray(item.request.fields) ? { questions: item.request.fields.length } : {}),
+      ...(item.kind === "permission" && Array.isArray(item.request.resources) ? { resources: item.request.resources.filter((value): value is string => typeof value === "string") } : {}),
+    }))) : []
+    return [...new Map([...observed, ...native].map(item => [JSON.stringify([item.kind, item.id, item.sessionId]), item])).values()]
+  })
   // Native request IDs are scoped by kind/session and the containing mission.
   // Keep rows across display refetches, never across a different answer target.
   const rows = createMemo(() => new Map(items().map(item => [JSON.stringify([
@@ -38,6 +49,7 @@ export const MissionAttention: Component<{
   ]), item])))
   // Declared title, else the native conversation title; identifiers stay out of the card.
   const actorTitle = (sessionId: string) => props.mission.actors.find(actor => actor.sessionId === sessionId)?.title
+    || missionStore.observations(props.instanceId, props.mission.id).flatMap(page => page.context.actors).find(actor => actor.sessionId === sessionId)?.title
     || sessions().get(props.instanceId)?.get(sessionId)?.title
     || t(sessionId === props.mission.coordinatorSessionId ? "missions.control.actor.coordinator" : "missions.control.actor.specialist")
 
@@ -56,6 +68,7 @@ export const MissionAttention: Component<{
                 <span class="mission-needs-title" title={`${item().title} · ${detail()}`}>{item().title}</span>
                 <span class="sr-only">{detail()}</span>
                 <button type="button" class="window-action mission-needs-answer"
+                  disabled={!item().open}
                   aria-description={t("missions.control.attention.openActor", { actor: actorTitle(item().sessionId!) })}
                   onClick={() => {
                     const current = rows().get(key)

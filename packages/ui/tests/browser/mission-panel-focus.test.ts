@@ -3,7 +3,7 @@ import { after, before, test } from "node:test"
 import { chromium, type Browser, type Page, type Route } from "playwright"
 import type { MissionMap, MissionTask } from "../../../server/src/api-types"
 import { borrowFixture } from "./fixture-borrow"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { missionGeneralAction, missionPickerField, selectMission } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 

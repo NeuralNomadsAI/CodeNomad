@@ -1,5 +1,9 @@
 # Missions
 
+Pour un champ enregistré trop volumineux, choisissez **Lire les pages JSON brutes**. **Page précédente** et **Page suivante** lisent des parties exactes et bornées ; si la collection change, **Réessayer** reprend à la première page.
+
+Le sélecteur charge 50 résumés de mission à la fois ; **Charger davantage** poursuit la découverte. La recherche filtre uniquement les missions chargées. Seules les missions sélectionnées ou ciblées par le lecteur chargent leurs détails. Le nettoyage, l’activité et les demandes ont leurs propres compteurs et commandes **Charger davantage**. Les acteurs et demandes non lus restent inconnus, même après plusieurs fenêtres observées séparément. **Lire les champs enregistrés** donne accès aux acteurs, rapports, historiques, reçus et métadonnées par pages exactes. Une fenêtre en échec conserve son affichage ; **Réessayer** la relit, et une collection modifiée reprend à sa première fenêtre. Lire ne lance aucun travail. Les résultats historiques sont reconnus une seule fois grâce au compteur durable ; les nouvelles fins restent non vues jusqu’à leur affichage.
+
 Les Missions associent un plan de projet durable aux conversations natives OpenCode. Le coordinateur planifie et délègue ; l’arbre des tâches enregistre dépendances et résultats. Un plan enregistré, une entrée admise et une exécution observée sont des faits différents.
 
 ## Créer, puis démarrer explicitement {#create}

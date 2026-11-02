@@ -61,6 +61,12 @@ export function recordTaskRequest(cache: MissionTaskPageCache, request: MissionT
 /** The revision of the page each row or report value read further was answered at:
  * a body it describes is no older than that (`missionBodyRevision`). */
 const observed = new WeakMap<object, number>()
+const taskSources = new WeakMap<MissionPanelMap, string>()
+export function recordMissionTaskSource(map: MissionPanelMap, version: string): void { taskSources.set(map, version) }
+export function missionTaskSource(map: MissionPanelMap | undefined): string | undefined { return map && taskSources.get(map) }
+export function recordMissionRowRevision(rows: readonly object[], revision: number): void {
+  for (const row of rows) observed.set(row, revision)
+}
 
 /** Stores a page's answer to `request` at `revision`: its rows, reports and reads, each
  * unless the cache holds a later answer; the failures it answers go, and an attention

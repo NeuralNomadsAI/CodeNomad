@@ -416,6 +416,9 @@ OpenCode retains its own registration, authentication and logs.
 
 `build:supervision` compiles a universal x64/ARM64 `service-supervision-macos-native.c`
 helper with the macOS build toolchain and the desktop's 13.5 deployment target.
+It lands as `dist/host-lifetime/service-supervision-macos-native`, beside the
+module of the same name, so the server's import loader (`src/loader.ts`) resolves
+extensionless relative imports to their compiled `.js` file before the bare path.
 The packaged helper provides only `proc_pidinfo` identity and a pipe-owned
 `flock`; the runtime provisions content-addressed private copies of it, Node and the
 guard. The user installation consumes these built artifacts. Run focused logic

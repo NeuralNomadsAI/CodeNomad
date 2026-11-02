@@ -1,5 +1,9 @@
 # Missions
 
+For a persisted field too wide to read as rows, choose **Read raw JSON pages**. **Previous page** and **Next page** read exact, bounded parts of that field; a changed collection requires **Try again** from its first page.
+
+The picker loads 50 mission summaries at a time; **Load more** continues discovery. Search filters loaded missions only. Only selected or reader-targeted missions load their detail. Cleanup history, actor activity and request marks have their own loaded counts and **Load more** controls. Unread actors and requests remain unknown, even after several separately observed windows. **Read persisted fields** in the overview provides exact paged actor, report, history, receipt and extension metadata. A failed window keeps its last display and **Try again** retries it; a changed collection restarts from its first window. Reading or retrying never starts work. Historical completions are seeded once from the durable project finish counter; newly finished missions remain unseen until shown, including while discovery is incomplete.
+
 Missions pair a durable project plan with native OpenCode conversations. The coordinator plans and delegates; the task tree records dependencies and results. A saved plan, an admitted input and observed execution are different facts.
 
 ## Create, then explicitly start {#create}

@@ -3,8 +3,8 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
 import os from "node:os"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { fixtureEventStream } from "./fixture-event-stream"
+import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { chromium, type Browser, type Locator, type Page } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import { clickMissionAction, inlineMissionEntry, missionGeneralAction, missionPicker, missionPickerExpander, missionPickerField, missionPopupOption,
@@ -569,7 +569,7 @@ test("Enter in the creation form's depth field saves the depth without creating 
     await setup(page, "remote")
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
     await page.route("**/api/workspaces/fixture/missions**", route => {
-      if (route.request().method() === "GET") return route.fallback()
+      if (route.request().method() === "GET" || route.request().url().endsWith("/panel-page")) return route.fallback()
       writes.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() })
       return route.fulfill({ status: 503, json: { code: "creation-unavailable" } })
     })
@@ -826,7 +826,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
     })
     const refresh = async () => {
       value.revision++
-      const response = page.waitForResponse(response => response.url().endsWith("/missions"))
+      const response = waitForMissionPanelRefresh(page)
       await fixtureCall(page, "refresh")
       await response
       await page.waitForFunction(revision => (window as any).missionFixture.snapshot().missions[0]?.revision === revision
@@ -984,8 +984,10 @@ test("current report readers honor task-owned results instead of stale history c
   try {
     await setup(page)
     const value = mission("authoritative-report")
-    const stale = { ...value.reports[0], summary: "Superseded historical copy.", evidence: ["Obsolete evidence."] }
-    const current = { ...stale, summary: "Authoritative current task result.", evidence: ["Current source proof: exact bytes retained."], next: ["Proceed to independent review."] }
+    // Compact transport identities agree; the complete body still comes from the task's own result.
+    const prefix = "Shared compact excerpt. ".repeat(12)
+    const stale = { ...value.reports[0], summary: prefix + "Superseded historical copy.", evidence: ["Obsolete evidence."] }
+    const current = { ...stale, summary: prefix + "Authoritative current task result.", evidence: ["Current source proof: exact bytes retained."], next: ["Proceed to independent review."] }
     value.tasks[0].report = current
     value.reports = [stale]
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions([value]), generatedAt: 1, discardedEvents: 0 } }))
@@ -1076,7 +1078,7 @@ test("one Play control starts and resumes; partial Pause survives remount and St
     // The explicit panel refresh reconciles first, then resends the unconfirmed control with its original identity.
     assert.equal(await missionRefresh(page).getAttribute("aria-label"), "Refresh and resend the unconfirmed action")
     failMap = true
-    const failedRead = page.waitForResponse(response => response.request().method() === "GET" && response.url().endsWith("/missions") && response.status() === 503)
+    const failedRead = waitForMissionPanelRefresh(page)
     await missionRefresh(page).click()
     await failedRead
     await page.waitForFunction(() => !(document.querySelector('.mission-picker-actions > button:last-child') as HTMLButtonElement)?.disabled)
@@ -1129,7 +1131,7 @@ test("mission selection, focus and reader survive native invalidations, remount 
     await task.focus()
     revision++
     await fixtureCall(page, "refresh")
-    await page.waitForResponse(response => response.url().endsWith("/missions"))
+    await waitForMissionPanelRefresh(page)
     assert.equal(await task.evaluate(el => el === document.activeElement), true, "refreshed tree keeps its rows and focus")
     assert.ok(await page.locator(".mission-reader .window-body").evaluate(el => el.scrollTop) > 0)
     await fixtureCall(page, "mount", false)
@@ -1182,7 +1184,7 @@ test("edits keep drafts and original revision during refresh, and creation retri
     await page.locator("form.mission-editor textarea").first().fill("My edited objective")
     revision++
     await fixtureCall(page, "refresh")
-    await page.waitForResponse(response => response.url().endsWith("/missions"))
+    await waitForMissionPanelRefresh(page)
     assert.equal(await page.locator("form.mission-editor textarea").first().inputValue(), "My edited objective")
     await page.locator("form.mission-editor button[type=submit]").first().click()
     await page.getByRole("alert").waitFor()
@@ -1534,7 +1536,7 @@ test("native activity stays separate from the plan and refreshes only while a Mi
     assert.equal(await page.getByText("Assignment admitted", { exact: true }).count() > 0, true)
 
     const beforeToken = requests
-    const refreshed = page.waitForResponse(response => response.url().endsWith("/missions"))
+    const refreshed = waitForMissionPanelRefresh(page)
     await fixtureCall(page, "refresh")
     await refreshed
     assert.ok(requests > beforeToken)
@@ -1542,7 +1544,7 @@ test("native activity stays separate from the plan and refreshes only while a Mi
 
     await fixtureCall(page, "mount", false)
     const readerOwned = requests
-    const readerRefresh = page.waitForResponse(response => response.url().endsWith("/missions"))
+    const readerRefresh = waitForMissionPanelRefresh(page)
     await fixtureCall(page, "refresh")
     await readerRefresh
     assert.ok(requests > readerOwned, "the still-open central reader owns read-only refresh demand")
@@ -1552,7 +1554,7 @@ test("native activity stays separate from the plan and refreshes only while a Mi
     await fixtureCall(page, "refresh")
     await page.waitForTimeout(100)
     assert.equal(requests, hidden)
-    const visibleRefresh = page.waitForResponse(response => response.url().endsWith("/missions"))
+    const visibleRefresh = waitForMissionPanelRefresh(page)
     await fixtureCall(page, "mount", true)
     await visibleRefresh
     await taskState(page, "task-0", "active").waitFor()

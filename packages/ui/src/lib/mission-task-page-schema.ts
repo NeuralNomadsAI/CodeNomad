@@ -23,7 +23,7 @@ const nativeDecoder = (schema: Parameters<typeof SchemaRepresentation.fromJsonSc
 const binding = nativeDecoder(nativeCallBindingSchema), originalBinding = nativeDecoder(nativeTaskBindingSchema)
 const { observations: _observations, ...compactExecutionProperties } = nativeTaskExecutionSchema.properties
 const execution = nativeDecoder({ ...nativeTaskExecutionSchema, properties: compactExecutionProperties })
-const report = z.object({ id: short, taskKey: short, sessionId: short, outcome: z.enum(["completed", "blocked", "failed"]), createdAt: taskCount,
+const report = z.object({ id: short, taskKey: z.string().max(240), sessionId: short, outcome: z.enum(["completed", "blocked", "failed"]), createdAt: taskCount,
   excerpt: excerpt.optional(), bodies: bodies.optional(), late: z.boolean().optional(), decidedBy: z.enum(["human", "coordinator"]).optional(),
   nativeCall: z.custom<NonNullable<MissionPanelReport["nativeCall"]>>(value => Exit.isSuccess(binding(value))).optional(),
   delivery: z.enum(["coordinator-notification", "native-return", "coordinator-readout"]).optional(), notificationStatus: z.enum(["pending", "admitted"]).optional(),

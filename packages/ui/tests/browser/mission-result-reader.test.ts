@@ -3,7 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser } from "playwright"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
 import type { MissionMap, MissionReport, MissionTask } from "../../../server/src/api-types"
 import { missionMessages as en } from "../../src/lib/i18n/messages/en/missions"
 import { captureMissionView } from "./mission-view-capture"
@@ -162,7 +162,7 @@ test("decision readers name who decided: the coordinator's own decision, never s
   try {
     await page.route("**/api/**", route => {
       if (route.request().method() !== "GET") mutations.push(route.request().url())
-      return route.fulfill({ json: route.request().url().endsWith("/missions") ? listed(value)
+      return route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/missions") ? listed(value)
         : route.request().url().endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} })
     })
     await routeMissionContent(page, listedMissions)
@@ -216,7 +216,7 @@ test("comparison task and direct readers show verdict, model names and bounded c
   try {
     await page.route("**/api/**", route => {
       if (route.request().method() !== "GET") mutations.push(route.request().url())
-      return route.fulfill({ json: route.request().url().endsWith("/missions") ? listed(value)
+      return route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/missions") ? listed(value)
         : route.request().url().endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} })
     })
     await routeMissionContent(page, listedMissions)

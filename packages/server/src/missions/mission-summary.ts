@@ -26,6 +26,11 @@ export interface MissionSummary {
   finishSequence?: number
   revision: number
 }
+export type MissionInventorySummary = Omit<MissionSummary, "actorSessionIds"> & { actorCount: number }
+export function missionInventorySummary(summary: MissionSummary): MissionInventorySummary {
+  const { actorSessionIds, ...row } = summary
+  return { ...row, actorCount: actorSessionIds.length }
+}
 
 /** An objective's display label: whitespace runs collapsed (a newline kept), at most `MISSION_SUMMARY_OBJECTIVE` code points. */
 export function missionObjectiveLabel(objective: string): string {

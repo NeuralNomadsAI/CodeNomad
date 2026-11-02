@@ -143,21 +143,22 @@ try {
   const fixturePlugin = path.join(root, "fixture-plugin")
   await mkdir(fixturePlugin)
   // Test-only RPC drives the actual registered tool executors without relying on LLM decisions.
-  await writeFile(path.join(fixturePlugin, "index.ts"), `import { Effect } from 'effect';
-  export default { id: 'missions.fixture', effect: Effect.fn(function*(ctx) {
+  await writeFile(path.join(fixturePlugin, "index.ts"), `import { Plugin, Rpc } from '@opencode/plugin/effect'
+  import { Effect } from 'effect'
+  export default Plugin.define({ id: 'missions.fixture', effect: Effect.fn(function*(ctx) {
     yield* ctx.session.hook('http.request', event => Effect.sync(() => {
       event.request.headers.set('x-fixture-kind', event.kind)
       event.request.headers.set('x-fixture-session', event.sessionID)
     }))
-    yield* ctx.rpc.register(${JSON.stringify(invocation)}, { invoke: Effect.fn(function*(input) {
+    yield* ctx.rpc.register(Rpc.define(${JSON.stringify(invocation)}), { invoke: Effect.fn(function*(input) {
       const signal = yield* Effect.abortSignal
       const tool = (yield* ctx.tool.list()).find(tool => tool.id === 'mission_' + input.tool)
       if (!tool) throw new Error('Mission tool unavailable')
-      const result = yield* tool.execute(input.input, { sessionID: input.sessionID, messageID: 'msg_fixture',
+      const result = yield* tool.execute(input.input, { sessionID: input.sessionID, agent: 'build', messageID: 'msg_fixture',
         id: input.callID, progress: () => Effect.void, signal })
       return result.content
     }), panelShape: input => Effect.succeed(input) })
-  }) }`)
+  }) })`)
   process.env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
     model: "fixture/fixture", update: "disable", snapshots: false, permissions: [{ action: "*", resource: "*", effect: "allow" }],
     agents: { reviewer: { mode: "all", description: "Fixture reviewer" } },
@@ -266,6 +267,7 @@ try {
     return running
   }
   const coordinator = await client.session.create({ location, title: "Coordinator" })
+  const createPrepared = input => client.rpc(CODENOMAD_MISSIONS_RPC).create({ ...input, prepared: true }, { location })
   // Mission tools return compact readouts; checks below read the resulting map from the native snapshot.
   const invoke = async (tool, input, sessionID = coordinator.id, callID = `fixture-${tool}`) => {
     const result = JSON.parse(await client.rpc(invocation).invoke({ tool, input, sessionID, callID }, { location }))
@@ -493,8 +495,8 @@ try {
   // Native lifecycle RPC is the same typed capability brokered by the authenticated UI routes.
   gate("targeted missing-report recovery without task replay or duplicate model turn")
   stage = "lifecycle CRUD and transcript preservation"
-  const crudInput = { requestID: "native-crud-create", objective: "Keep this conversation", notes: "CRUD fixture", template: "custom" }
-  const crudCreated = await client.rpc(CODENOMAD_MISSIONS_RPC).create(crudInput, { location })
+  const crudInput = { requestID: "native-crud-create", objective: "Keep this conversation", notes: "CRUD fixture", template: "custom", prepared: true }
+  const crudCreated = await createPrepared(crudInput)
   const crudReplay = await client.rpc(CODENOMAD_MISSIONS_RPC).create(crudInput, { location })
   assert.equal(crudReplay.mission.id, crudCreated.mission.id)
   assert.equal(crudReplay.mission.coordinatorSessionId, crudCreated.mission.coordinatorSessionId)
@@ -569,9 +571,9 @@ try {
   gate("lifecycle CRUD replay, structured HTTP/RPC conflicts, tombstone and exact transcript preservation")
 
   stage = "optional managed specialist cleanup"
-  const cleanup = await client.rpc(CODENOMAD_MISSIONS_RPC).create({
+  const cleanup = await createPrepared({
     requestID: "native-cleanup-create", objective: "Clean only owned specialists", template: "custom",
-  }, { location })
+  })
   const cleanupCoordinator = cleanup.mission.coordinatorSessionId
   await play(cleanup.mission)
   const managedTask = await invoke("delegate", { ...task, missionID: cleanup.mission.id, taskKey: "managed-cleanup" }, cleanupCoordinator, "cleanup-managed")
@@ -607,7 +609,7 @@ try {
   // Twenty newer settled deletions push both earlier ones past the retained cleanup
   // history: native storage.remove clears their entries, their deletion records stay.
   for (let index = 0; index < 20; index++) {
-    const extra = await client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: `native-purge-${index}`, objective: `Purge fixture ${index}`, template: "custom" }, { location })
+    const extra = await createPrepared({ requestID: `native-purge-${index}`, objective: `Purge fixture ${index}`, template: "custom" })
     const purgeDeletion = {
       missionID: extra.mission.id, requestID: `native-purge-delete-${index}`, expectedRevision: extra.mission.revision,
     }
@@ -766,7 +768,7 @@ try {
   // A mission of 12 actors and 107 tasks: managed roots, revisions, a paged
   // mission.inspect, Pause/Play/Stop receipts for every actor through the typed
   // RPC outputs, and a cleanup deletion of every managed root.
-  const wide = (await client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: "native-wide", objective: "Many actors and tasks", template: "custom" }, { location })).mission
+  const wide = (await createPrepared({ requestID: "native-wide", objective: "Many actors and tasks", template: "custom" })).mission
   const wideCoordinator = wide.coordinatorSessionId
   await play(wide)
   const wideActors = []
@@ -818,6 +820,32 @@ try {
   // byte-bounded slices, independent of the current UI's list contract.
   const directPanel = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage({ source: "mission", missionID: wide.id }, { location })
   assert.equal(directPanel.available, true, JSON.stringify(directPanel))
+  const directoryWindow = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage({ source: "summaries", initial: true, window: { offset: 0 } }, { location })
+  assert.equal(directoryWindow.available, true)
+  assert.ok(Number.isSafeInteger(directoryWindow.finishHighWater))
+  assert.equal(directoryWindow.page.total, directoryWindow.window.end - directoryWindow.window.offset)
+  assert.ok(directoryWindow.page.total <= 50)
+  assert.ok(directoryWindow.page.pieces.every(piece => !piece.text.includes('"actorSessionIds"')))
+  const selectedHeader = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage({ source: "mission", missionID: wide.id, header: true }, { location })
+  assert.equal(selectedHeader.available, true)
+  assert.equal(selectedHeader.header, true)
+  const headerValue = JSON.parse(selectedHeader.page.pieces.map(piece => piece.text).join(""))
+  assert.deepEqual([headerValue.root.id, headerValue.root.actors, headerValue.root.tasks, headerValue.collections.actors.total], [wide.id, undefined, undefined, 12])
+  assert.equal(headerValue.control.pending, 0)
+  const actorWindow = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage({ source: "mission", missionID: wide.id, field: "actors", window: { offset: 1 } }, { location })
+  assert.equal(actorWindow.available, true)
+  assert.deepEqual([actorWindow.window.offset, actorWindow.window.end, actorWindow.window.total], [1, 12, 12])
+  const headerHTTP = await http({ method: "POST", url: `${missionURL}/panel-page`, payload: { source: "mission", missionID: wide.id, header: true } })
+  assert.ok(headerHTTP.rawPayload.length <= 65536)
+  assert.deepEqual(headerHTTP.json(), selectedHeader)
+  const rawInput = { source: "mission", missionID: wide.id, field: "actors", text: true, window: { offset: 0 } }
+  const rawRPC = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage(rawInput, { location })
+  assert.equal(rawRPC.available, true); assert.equal(rawRPC.text, true)
+  assert.deepEqual(JSON.parse(JSON.parse(rawRPC.page.pieces.map(piece => piece.text).join(""))), panelWide.actors)
+  const rawHTTP = await http({ method: "POST", url: `${missionURL}/panel-page`, payload: rawInput })
+  assert.ok(rawHTTP.rawPayload.length <= 65536); assert.deepEqual(rawHTTP.json(), rawRPC)
+  assert.deepEqual(headerValue.tasks.page, panelWide.taskPage)
+  gate("bounded inventory windows, durable finish baseline and selected header over native RPC plus HTTP")
   const activityContext = await client.rpc(CODENOMAD_MISSIONS_RPC).panelPage({ source: "activity", missionID: wide.id }, { location })
   assert.deepEqual([activityContext.available, activityContext.phase], [true, "context"])
   const livePanel = await http({ method: "POST", url: `${missionURL}/panel-page`, payload: { source: "activity", missionID: wide.id } })
@@ -873,7 +901,7 @@ try {
   // index builds once over them. Last stage: its damage probe must not leak.
   const history = []
   for (let index = 0; index < 100; index++) {
-    const created = await client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: `native-history-${index}`, objective: `Finished ${index}`, template: "custom" }, { location })
+    const created = await createPrepared({ requestID: `native-history-${index}`, objective: `Finished ${index}`, template: "custom" })
     await play(created.mission)
     const finished = await invoke("report", { missionID: created.mission.id, outcome: "completed", summary: `Finished ${index}`, final: true },
       created.mission.coordinatorSessionId, `history-${index}`)
@@ -908,7 +936,7 @@ try {
   } finally { seeding.close() }
   await client.location.reload({ signal: AbortSignal.timeout(20_000) })
   await until(async () => { try { return Boolean(await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })) } catch { return false } })
-  const live = (await client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: "native-history-live", objective: "Live beside history", template: "custom" }, { location })).mission
+  const live = (await createPrepared({ requestID: "native-history-live", objective: "Live beside history", template: "custom" })).mission
   const liveCoordinator = live.coordinatorSessionId
   await play(live)
   const liveTask = { missionID: live.id, taskKey: "history-work", title: "History work", brief: "Return evidence.", role: "reviewer", execution: task.execution, blockedBy: [] }

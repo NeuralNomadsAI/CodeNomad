@@ -5,7 +5,7 @@ import type { MissionActor, MissionActorActivity, MissionMap } from "../../../se
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
 import { borrowFixture } from "./fixture-borrow"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { inlineMissionEntry, missionPicker, missionPickerExpander, missionPickerField, missionToolbarAction, selectMission } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 
@@ -60,7 +60,7 @@ async function open(missions: () => MissionMap[], activity: () => Array<{ missio
 }
 const fixtureCall = (page: Page, method: string) => page.evaluate(method => (window as any).missionFixture[method](), method)
 async function refresh(page: Page) {
-  const response = page.waitForResponse(response => response.url().endsWith("/missions"))
+  const response = waitForMissionPanelRefresh(page)
   await fixtureCall(page, "refresh")
   await response
 }

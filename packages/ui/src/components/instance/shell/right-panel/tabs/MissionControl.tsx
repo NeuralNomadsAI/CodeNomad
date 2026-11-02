@@ -34,6 +34,7 @@ import { useMissionCurrentPassage } from "../../../../../stores/mission-recurren
 import { createMissionViewFence, createReportedChanges } from "../../../../../lib/mission-view-fence"
 import { sessionListRestored } from "../../../../../stores/session-list-restoration"
 import { createMissionScheduleList } from "../../../../mission-schedule-list"
+import { MissionPanelPaging } from "../../../../mission-panel-paging"
 
 interface MissionControlProps {
   instanceId: string
@@ -78,9 +79,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const rows = () => state().summaries
   const family = (id: string) => state().activity?.missions.find(item => item.missionId === id)?.family
   const includesSession = (value: MissionPanelMap, id: string) => value.coordinatorSessionId === id
-    || missionIncludesSession(value.actors, id, family(value.id)) || missionDerivedSessionIncludes(props.instanceId, value, id)
+    || missionIncludesSession([...value.actors, ...missionStore.observedActors(props.instanceId, value.id)], id, family(value.id))
+    || missionStore.observations(props.instanceId, value.id).some(page => page.requests.state !== "unknown" && page.requests.items.some(item => item.request.sessionID === id))
+    || missionDerivedSessionIncludes(props.instanceId, value, id)
   const directory = () => instances().get(props.instanceId)?.folder
   const projectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? state().projectID ?? missions()[0]?.projectID
+  const completionScope = () => JSON.stringify([scope(), projectID()])
   // A first list read that reports the instance's project is the view already shown: an operation
   // captured before it landed (a creation an agent submits right after opening the panel) still
   // completes here. One that reports another project is another view.
@@ -235,7 +239,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       const value = mission()?.id === target.missionId ? mission() : undefined
       const task = value?.tasks.find(task => task.id === target.itemId)
       const actor = value && target.kind === "task" ? task && missionTaskConversation(value, task, selectedFamily(),
-        missionDerivedTaskSession(props.instanceId, value, task.key)) : value?.coordinatorSessionId
+        missionDerivedTaskSession(props.instanceId, value, task.key), [...value.actors, ...missionStore.observedActors(props.instanceId, value.id)]) : value?.coordinatorSessionId
       if (!actor || !await openActor(actor, origin)) return
     }
     if (!origin.current()) return
@@ -288,9 +292,10 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const missionEntries = createMemo((): MissionPickerEntry[] => rows().map(value => {
     const observed = state().activity?.missions.find(item => item.missionId === value.id)
     const actors = value.actorSessionIds.map(sessionId => ({ sessionId }))
-    const mark = missionMark(value, { openRequests: openRequests(value.id, actors, state().activity), actorStates: observed?.actors.map(actor => actor.state),
+    const knownRequests = missionStore.observations(props.instanceId, value.id).reduce((sum, page) => sum + page.requests.items.length, 0)
+    const mark = missionMark(value, { openRequests: Math.max(knownRequests, openRequests(value.id, actors, state().activity)), actorStates: observed?.actors.map(actor => actor.state),
       coordinatorState: observed?.actors.find(actor => actor.sessionId === value.coordinatorSessionId)?.state,
-      seen: missionFinishedSeen(scope(), value) })
+      seen: missionFinishedSeen(completionScope(), value) })
     const stateText = props.t(value.status === "active" && (value.runState === "prepared" || value.runState === "paused")
       ? `missions.control.run.${value.runState}` : value.status === "active" && mark === "interrupted" ? "missionsPanel.state.interrupted"
         : value.status === "active" ? "missionsPanel.state.inProgress" : statusKey(value.status))
@@ -341,12 +346,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // the creation form hides the selected detail.
   const documentAttention = createDocumentAttention()
   createEffect(() => {
-    if (state().status !== "ready") return
+    if (!["ready", "loading", "error"].includes(state().status) || state().projectID !== projectID()) return
     const completed = rows().filter(value => value.status === "completed")
-    const shown = (props.isActive?.() ?? true) && documentAttention() && !creating() && selectedOneTime()?.status === "completed"
+    const shown = (props.isActive?.() ?? true) && documentAttention() && !creating() && selectedOneTime()?.projectID === projectID() && selectedOneTime()?.status === "completed"
       ? [selectedOneTime()!.id] : []
-    const viewScope = scope()
-    untrack(() => markMissionsFinishedSeen(viewScope, shown, completed))
+    const viewScope = completionScope()
+    untrack(() => markMissionsFinishedSeen(viewScope, shown, completed, true))
   })
   const listExpanded = () => missionProjectView(scope()).listExpanded === true
   const refreshLabel = () => props.t(controlRetry()?.pending() ? "missions.control.refreshResend" : "missions.control.refresh")
@@ -371,6 +376,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     <section class="mission-control" data-creating={creating() ? "" : undefined} aria-label={props.t("missions.control.title")}>
       <header class="mission-control-header">
         <MissionPicker entries={pickerEntries()} selectedKey={selectedKey()}
+          paging={() => <MissionPanelPaging instanceId={props.instanceId} lane="summaries" search />}
           expanded={listExpanded()} onExpandedChange={value => updateMissionProjectView(scope(), { listExpanded: value || undefined })}
           onSelect={entry => {
             const [kind, id] = [entry.key.slice(0, entry.key.indexOf(":")), entry.key.slice(entry.key.indexOf(":") + 1)]
@@ -429,7 +435,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           if (!saved && action.mission) forgetMissionView(scope(), action.mission.id)
           void missionStore.refresh(instanceId).then(() => {
             const id = saved?.id ?? scheduleID
-            if (id && current() && !editor() && rows().some(row => row.id === id)) selectMission(id)
+            if (id && current() && !editor()) selectMission(id)
           })
         }} />
       }}</Show>
@@ -445,7 +451,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
 
       {/* Nothing below the picker until a Mission is selected; its detail is a separate section. */}
       {/* A parked failed read keeps the stale banner and the refresh button instead. */}
-      <Show when={selectedRow() && !mission() && state().status !== "error"}><p role="status">{props.t("missions.control.loading")}</p></Show>
+       <Show when={selectedRow() && !mission() && state().status !== "error"}><p role="status">{props.t(missionStore.mapMissing(props.instanceId, selectedRow()!.id)
+         ? "missions.control.reader.missing" : "missions.control.loading")}</p></Show>
       <Show when={selectedOneTimeId()} keyed>{id => {
         // Keep the last known snapshot while the keyed detail is being disposed.
         const selected = createMemo<MissionPanelMap>(previous => missions().find(value => value.id === id) ?? previous!)
@@ -495,6 +502,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         </Match>
       </Switch></Show>
       <Show when={state().cleanupUnavailable}><p class="mission-control-stale" role="alert">{props.t("missions.cleanup.error.unconfirmed")}</p></Show>
+      <Show when={missionStore.progress(props.instanceId, "cleanups").more || missionStore.progress(props.instanceId, "cleanups").failure}>
+        <MissionPanelPaging instanceId={props.instanceId} lane="cleanups" />
+      </Show>
+      <Show when={missionStore.progress(props.instanceId, "marks").more || missionStore.progress(props.instanceId, "marks").failure}>
+        <p role="status">{props.t("missionsPanel.pages.observations")}</p><MissionPanelPaging instanceId={props.instanceId} lane="marks" />
+      </Show>
       <Show when={cleanupPending()}><MissionCleanupPanel instanceId={props.instanceId} cleanups={state().cleanups ?? []}
         disabled={Boolean(editor()) || !["ready", "loading"].includes(state().status) || Boolean(state().cleanupUnavailable)} active={props.isActive?.() ?? true}
         refresh={() => missionStore.refresh(props.instanceId)} /></Show>

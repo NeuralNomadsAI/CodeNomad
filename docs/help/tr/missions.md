@@ -1,5 +1,9 @@
 # Görevler
 
+Kaydedilen alan çok büyükse **Ham JSON sayfalarını oku** seçeneğini kullanın. **Önceki sayfa** ve **Sonraki sayfa** tam ve sınırlı parçalar okur; koleksiyon değişirse yeniden deneme ilk sayfadan başlar.
+
+Seçici her seferinde 50 görev özeti yükler; **Daha fazla yükle** keşfe devam eder. Arama yalnızca yüklenen görevleri filtreler. Yalnızca seçilen veya okuyucuda hedeflenen görevlerin ayrıntıları yüklenir. Temizlik, etkinlik ve isteklerin ayrı sayaçları ve yükleme kontrolleri vardır. Ayrı pencereler gözlemlense bile okunmayan aktör ve istekler bilinmiyor olarak kalır. **Kaydedilen alanları oku** aktörleri, raporları, geçmişi, alındıları ve meta verileri tam sayfalarla gösterir. Başarısız pencerede son görünüm korunur; yeniden deneme aynı pencereyi okur, değişen koleksiyon ilk pencereden başlar. Okuma iş başlatmaz. Geçmiş tamamlanmalar kalıcı proje sayacından yalnızca bir kez görülmüş sayılır; yeni tamamlanmalar gösterilene kadar görülmemiş kalır.
+
 Görevler, kalıcı bir proje planını OpenCode'un kendi konuşmalarıyla birleştirir. Koordinatör planı hazırlar ve işleri devreder; görev ağacı bağımlılıkları ve sonuçları kaydeder. Kaydedilmiş bir plan, kabul edilmiş bir girdi ve gözlemlenen yürütme birbirinden farklı olgulardır.
 
 ## Oluşturun, ardından açıkça başlatın {#create}

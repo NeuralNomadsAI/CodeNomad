@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile, lstat, realpath, unlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -35,7 +35,15 @@ async function temporary(ctx) {
   const temporaryRoot = process.platform === "win32" ? join(tmpdir(), "opencode") : tmpdir()
   await mkdir(temporaryRoot, { recursive: true })
   const directory = await mkdtemp(join(temporaryRoot, "codenomad-help-"))
-  ctx.after(() => rm(directory, { recursive: true, force: true }))
+  ctx.after(async () => {
+    const imageLink = join(directory, "source", "images")
+    const info = await lstat(imageLink).catch(error => { if (error.code !== "ENOENT") throw error })
+    if (info?.isSymbolicLink()) {
+      assert.equal(await realpath(imageLink), await realpath(resolve(root, "images")), "only this fixture's repository-image link is unlinked")
+      await unlink(imageLink)
+    }
+    await rm(directory, { recursive: true, force: true })
+  })
   return directory
 }
 

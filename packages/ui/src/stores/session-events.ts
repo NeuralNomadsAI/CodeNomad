@@ -40,7 +40,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, isSessionInWorkspaceScope, prependSessionListId, revealWorkingSubsession, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
+import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { showsRequestOfSession } from "./interruption-scope"
 import { getRetrySeconds } from "./session-status"
@@ -369,7 +369,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
     const fetched = createClientSession(info, instanceId)
 
     let updatedInstanceSessions: Map<string, Session> | undefined
-    let shouldExpandAncestors = false
 
     setSessions((prev) => {
       const next = new Map(prev)
@@ -397,10 +396,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       instanceSessions.set(sessionId, merged)
       next.set(instanceId, instanceSessions)
       updatedInstanceSessions = instanceSessions
-
-      if (merged.parentId && merged.status === "working" && (existing?.status ?? "idle") !== "working") {
-        shouldExpandAncestors = true
-      }
       return next
     })
 
@@ -408,8 +403,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
 
     const published = updatedInstanceSessions?.get(sessionId)
     if (published && !published.parentId) prependSessionListId(instanceId, sessionId)
-
-    if (shouldExpandAncestors) revealWorkingSubsession(instanceId, sessionId)
 
     return fetched
   } catch (error) {
