@@ -23,7 +23,7 @@ export function MissionTracking(props: {
   createEffect(() => { if (props.active) demandMissionTaskSessions(props.instanceId, props.mission, props.activity?.generatedAt) })
   return <>
     <MissionAttention mission={props.mission} family={observed()?.family} instanceId={props.instanceId} onOpenActor={props.onOpenActor} />
-    <MissionTaskTree mission={props.mission} instanceId={props.instanceId} activity={observed()?.actors}
+    <MissionTaskTree mission={props.mission} instanceId={props.instanceId} activity={observed()?.actors} active={props.active}
       reading={task => props.reading(target("task", task.id))} onRead={task => props.read(target("task", task.id))}
       conversation={task => missionTaskConversation(props.mission, task, observed()?.family,
         missionDerivedTaskSession(props.instanceId, props.mission, task.key))}
