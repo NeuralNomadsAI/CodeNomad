@@ -1,5 +1,7 @@
 # Missions
 
+The current passage of a daily or native schedule uses the same paged task tree and exact body readers. Read more tasks or activity explicitly; unobserved requests remain unknown. Overview, task, report, briefing and plan-change readers stay bound to the selected passage. Stored results retain their original passage and report identities when another passage starts.
+
 For a persisted field too wide to read as rows, choose **Read raw JSON pages**. **Previous page** and **Next page** read exact, bounded parts of that field; a changed collection requires **Try again** from its first page.
 
 The picker loads 50 mission summaries at a time; **Load more** continues discovery. Search filters loaded missions only. Only selected or reader-targeted missions load their detail. Cleanup history, actor activity and request marks have their own loaded counts and **Load more** controls. Unread actors and requests remain unknown, even after several separately observed windows. **Read persisted fields** in the overview provides exact paged actor, report, history, receipt and extension metadata. A failed window keeps its last display and **Try again** retries it; a changed collection restarts from its first window. Reading or retrying never starts work. Historical completions are seeded once from the durable project finish counter; newly finished missions remain unseen until shown, including while discovery is incomplete.

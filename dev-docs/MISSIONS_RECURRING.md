@@ -560,14 +560,50 @@ business tools run under those permissions alone. Preserve frozen profiles and t
 Both native descendants and passage-owned independent actors must be accounted
 for without inventing ancestry from task dependencies.
 
-The current-passage reader (`opencode/missions/native-recurrence-current.ts`, behind
-`recurrenceCurrent` and `recurrenceCurrentContent`) is read-only and takes one
-`missionView(passage.missionID)` observation of the passage's isolated journal: the
-map, the range's damage flags and the creation event that must carry the passage ID
-come from the same events, followed by the schedule re-read that refuses a changed
-passage. Its scans count the entries' canonical bytes against 32 MiB, so one read of
-a journal up to that size serves the full map; a larger passage journal answers
-`Current passage journal capacity`.
+Current passage display (`opencode/missions/native-recurrence-current.ts`) serves both
+daily and unified native schedules. `recurrenceCurrent` returns a bounded owner identity
+before any journal slice: project/Location, owner kind, schedule and passage IDs, immutable
+execution mission ID and the digest of frozen pending/profile/root evidence. Unified
+sources include configuration and time generations. `ownerRevision` separately fences
+publication across owner document changes without invalidating unchanged execution sources.
+
+`recurrenceCurrentPage` requires that exact source and an ordinary bounded header, task,
+field or activity selector. Body selectors use `readMissionContent` through the same
+64-KiB UTF-8 envelope and 16-KiB request boundary. Every transfer validates one accepted
+isolated mission range, including entry bounds, damage, coordinator/profile identity and
+the creation request carrying its passage ID. The owner is reread before publication.
+Journal range/event limits bound source work; headers never serialize the full passage
+map or concatenate all passage bodies. The isolated finish counter stays separate.
+
+The HTTP current routes recheck project, Location, connection, ownership and source around
+native observation. Their publication reread obtains only owner identity. Activity reuses
+the bounded context/observation paginator, with source checks on every native slice;
+separately observed windows retain partial/unknown coverage. Each native page request
+observes its range once. The archived daily reader also obtains map, damage and creation
+proof from one range observation, under its exact retained receipt.
+
+The UI reuses `createMissionPanelInventory` for selected passages, without project inventory
+discovery or project completion seeding. `MissionPanelScope` supplies that exact owner to
+the existing tree, graph, Needs-you, fields and row readers. Body cache identities include
+the passage source, and historical reports retain their exact report selectors. Explicit
+continuation/Retry, original deadlines, stream-slot ownership and last-good displays follow
+the ordinary panel contract. Unrelated journal revisions revalidate the header without
+rereading unchanged task windows or bodies. Daily archive readers keep receipt authority;
+scheduled inventory and schedule controls retain their document-owned paths.
+
+Each outstanding current body demand owns one monotonic 30-second deadline and
+cancellation signal across semantic content offsets, automatic restarts/revalidation
+and outer wire pieces. Assembly is staged before the final publication check. A
+fulfilled demand ends its operation; a later user extension or explicit Retry can
+start a fresh one. Need reductions and consumer releases reconsider aggregate coverage
+even during a running continuation: fresh covered demand ends that read immediately,
+while stale/invalidated data and outstanding peers keep their original operation.
+Every current pending promotion shares the store's stale/mark, exact expected digest and
+live-operation deadline eligibility, including accept, demand changes and completion.
+Ending an operation discards unpromoted current data and retains its last good display.
+Failed outstanding operations retain their budget through automatic revalidation.
+Technical details exposes the scoped persisted-field/raw-page reader for
+compact current maps; archived daily readers retain their receipt-bound sections.
 
 ## Settlement, result and watched cursors
 

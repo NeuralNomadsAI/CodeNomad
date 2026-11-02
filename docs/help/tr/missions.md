@@ -1,5 +1,7 @@
 # Görevler
 
+Günlük veya yerel zamanlamanın geçerli çalışması da aynı sayfalı görev ağacını ve tam içerik okuyucularını kullanır. Ek görevleri veya etkinliği açıkça yükleyin; gözlemlenmeyen istekler bilinmiyor olarak kalır. Genel bakış, görev, rapor, durum özeti ve plan değişikliği okuyucuları seçilen çalışmaya bağlı kalır. Başka bir çalışma başladığında kaydedilmiş sonuçlar özgün çalışma ve rapor kimliklerini korur.
+
 Kaydedilen alan çok büyükse **Ham JSON sayfalarını oku** seçeneğini kullanın. **Önceki sayfa** ve **Sonraki sayfa** tam ve sınırlı parçalar okur; koleksiyon değişirse yeniden deneme ilk sayfadan başlar.
 
 Seçici her seferinde 50 görev özeti yükler; **Daha fazla yükle** keşfe devam eder. Arama yalnızca yüklenen görevleri filtreler. Yalnızca seçilen veya okuyucuda hedeflenen görevlerin ayrıntıları yüklenir. Temizlik, etkinlik ve isteklerin ayrı sayaçları ve yükleme kontrolleri vardır. Ayrı pencereler gözlemlense bile okunmayan aktör ve istekler bilinmiyor olarak kalır. **Kaydedilen alanları oku** aktörleri, raporları, geçmişi, alındıları ve meta verileri tam sayfalarla gösterir. Başarısız pencerede son görünüm korunur; yeniden deneme aynı pencereyi okur, değişen koleksiyon ilk pencereden başlar. Okuma iş başlatmaz. Geçmiş tamamlanmalar kalıcı proje sayacından yalnızca bir kez görülmüş sayılır; yeni tamamlanmalar gösterilene kadar görülmemiş kalır.

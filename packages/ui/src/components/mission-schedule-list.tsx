@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal } from "solid-js"
+import { For, Show, createMemo, createSignal, createEffect, type JSX } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import { useMissionSchedules, unifiedScheduleHold, type UnifiedMissionSchedule } from "../stores/mission-schedules"
 import type { MissionPickerEntry } from "./mission-picker-model"
@@ -11,12 +11,15 @@ import { SettingsInfoTip } from "./settings/settings-info-tip"
 
 export function createMissionScheduleList(props: { instanceId: string; projectID?: string; directory: string;
   active: () => boolean; enabled: () => boolean; refresh: number; selected?: string; detailId: string;
-  onEdit: (id: string) => void; onDeleted: (id: string) => void; onOpenConversation: (id: string) => void }) {
+  onEdit: (id: string) => void; onDeleted: (id: string) => void; onOpenConversation: (id: string) => void;
+  tracking?: JSX.Element; passage?: { reading: boolean; onToggle(): void }; onPassage?: (id: string | undefined) => void;
+  selectedRequests?: { passageID: string; count: number } }) {
   const { t, locale } = useI18n()
   const [revision, setRevision] = createSignal(0)
   const list = useMissionSchedules({ instanceId: () => props.instanceId, projectID: () => props.projectID,
     directory: () => props.directory, active: props.active, refresh: () => props.refresh + revision(), selected: () => props.selected })
   const schedules = () => list.rows().filter(row => row.kind === "schedule")
+  createEffect(() => props.onPassage?.(schedules().find(row => row.id === props.selected)?.pendingPassage ? props.selected : undefined))
   const date = (value: number | null, zone?: string) => value === null ? t("missions.scheduleList.none")
     : new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short", ...(zone ? { timeZone: zone } : {}) }).format(value)
   const frequency = (doc: UnifiedMissionSchedule) => {
@@ -51,9 +54,12 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   const nextWake = (doc: UnifiedMissionSchedule) => `${t(doc.observation.kind === "check" ? "missions.scheduleList.nextCheck" : "missions.scheduleList.nextWake")} · ${date(doc.observation.nextDueAt, zoneOf(doc))}`
   const entries = createMemo((): MissionPickerEntry[] => schedules().map(doc => ({ key: `scheduled:${doc.id}`,
     title: doc.configuration.title,
-    mark: doc.blockReason ? "interrupted" : doc.pendingPassage ? "working" : doc.firstPlayedAt === null && doc.state === "paused" ? "prepared"
+    mark: doc.id === props.selected && doc.pendingPassage?.id === props.selectedRequests?.passageID && (props.selectedRequests?.count ?? 0) > 0 ? "permission"
+      : doc.blockReason ? "interrupted" : doc.pendingPassage ? "working" : doc.firstPlayedAt === null && doc.state === "paused" ? "prepared"
       : doc.state === "paused" ? "paused" : doc.state === "finished" ? "done" : "idle",
-    status: [t(`missions.scheduleList.state.${doc.state}`), frequency(doc), condition(doc), nextWake(doc)].filter(Boolean).join(" · ") })))
+    status: [t(`missions.scheduleList.state.${doc.state}`),
+      doc.id === props.selected && doc.pendingPassage?.id === props.selectedRequests?.passageID && (props.selectedRequests?.count ?? 0) > 0 ? t("missionsPanel.task.input") : "",
+      frequency(doc), condition(doc), nextWake(doc)].filter(Boolean).join(" · ") })))
   const refresh = () => setRevision(value => value + 1)
   const publishing = () => unifiedScheduleHold(JSON.stringify([props.instanceId, props.projectID, props.directory, props.selected]))?.phase === "publication"
   const view = () => <>
@@ -77,7 +83,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
       const editable = () => props.active() && props.enabled() && !list.error() && list.fresh(id)
         && !controls.held() && !controls.busy() && doc().availableActions.includes("configure")
       return <section id={props.detailId} class="mission-detail mission-unified-schedule" aria-label={doc().configuration.title}>
-        <MissionActionBar label={t("missionsPanel.picker.actions")} reading={expanded()} onToggleReader={() => expand(value => !value)}
+        <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.passage?.reading ?? expanded()} onToggleReader={() => props.passage ? props.passage.onToggle() : expand(value => !value)}
           primary={primary() ? action(primary()!) : undefined} stop={action("stop")} runNow={action("run-now")}
           onEdit={() => { if (editable()) props.onEdit(id) }} editDisabled={!editable()}
           onDelete={() => void controls.act("delete")} deleteDisabled={!controls.capable("delete")}
@@ -120,6 +126,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
           </li>}</For></ol></Show>
         </section>
         <MissionScheduleDiagnostics document={doc()} />
+        {props.tracking}
       </section>
     }}</Show>
   </>

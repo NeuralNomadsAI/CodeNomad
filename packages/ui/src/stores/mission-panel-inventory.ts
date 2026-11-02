@@ -34,6 +34,7 @@ export function createMissionPanelInventory(input: {
   scope(instanceId: string): string
   projectID?(instanceId: string): string | undefined
   capture?(instanceId: string): () => boolean
+  passage?: import("../../../server/src/missions/mission-current-source").MissionCurrentSource
 }) {
   const entries = new Map<string, Entry>(), [version, setVersion] = createSignal(0)
   const observationOwner = new WeakMap<object, { epoch: number; cycle: number; lane: string; offset: number }>()
@@ -49,6 +50,7 @@ export function createMissionPanelInventory(input: {
       base.invalidateTasks(id); changed()
     }
     own.originCurrent = input.capture?.(id) ?? (() => true)
+    if (input.passage) own.projectID = input.passage.projectID
     if (own.controller.signal.aborted) own.controller = new AbortController()
     return own
   }
@@ -96,7 +98,7 @@ export function createMissionPanelInventory(input: {
       owner = own.missionOwners.get(missionID)
       if (!owner) own.missionOwners.set(missionID, owner = new AbortController())
     }
-    return { projectID: own.projectID, deadline,
+    return { projectID: own.projectID, deadline, ...(input.passage ? { passage: input.passage } : {}),
       signal: AbortSignal.any([controller.signal, AbortSignal.timeout(Math.max(0, Math.ceil(deadline - performance.now()))), ...(owner ? [owner.signal] : [])]),
       current: () => origin() && entries.get(instanceId) === own && own.epoch === epoch && own.controller === controller && !controller.signal.aborted
         && (!missionID || own.missionOwners.get(missionID) === owner && [...own.owners.values()].some(item => item.id === missionID)),
@@ -290,6 +292,7 @@ export function createMissionPanelInventory(input: {
     if (header.root.id !== id || header.root.projectID !== own.projectID || header.root.revision !== answer.envelope.revision) throw new MissionTaskPageReadError("invalid")
     const previous = own.maps.get(id)
     let map: MissionPanelMap = { ...header.root, actors: header.coordinator ? [header.coordinator] : [], tasks: [], reports: [], history: [], panelControl: header.control,
+      ...(input.passage ? { panelPassage: input.passage } : {}),
       panelCollections: header.collections } as MissionPanelMap
     if (previous?.header.tasks.version === header.tasks.version && JSON.stringify(previous.header.tasks.pins) === JSON.stringify(header.tasks.pins)) {
       map = { ...map, tasks: previous.map.tasks, reports: previous.map.reports, taskPage: header.tasks.page }
@@ -322,13 +325,15 @@ export function createMissionPanelInventory(input: {
   const base = createMissionStore(async (instanceId, request): Promise<MissionDisplayResponse> => {
     const own = entry(instanceId)
     const life = scope(instanceId, own, undefined, own.refreshDeadline)
-    await readLane(instanceId, "summaries", { source: "summaries", window: { offset: 0 }, ...(own.baseline === undefined ? { initial: true as const } : {}) }, life)
-    await readLane(instanceId, "cleanups", { source: "cleanups", window: { offset: 0 } }, life).catch(() => {})
+    if (!input.passage) {
+      await readLane(instanceId, "summaries", { source: "summaries", window: { offset: 0 }, ...(own.baseline === undefined ? { initial: true as const } : {}) }, life)
+      await readLane(instanceId, "cleanups", { source: "cleanups", window: { offset: 0 } }, life).catch(() => {})
+    }
     const wanted = new Set([...own.owners.values()].map(owner => owner.id))
     const maps = [...own.maps.values()].filter(value => wanted.has(value.map.id)).map(value => value.map)
     if (!life.current()) throw new DOMException("Obsolete panel read", "AbortError")
     assertTaskReadLive(life.signal, life.deadline)
-    if (own.panel) void readLane(instanceId, "marks", { source: "marks", missionOffset: 0 }).catch(() => {})
+    if (own.panel && !input.passage) void readLane(instanceId, "marks", { source: "marks", missionOffset: 0 }).catch(() => {})
     const summaries = summaryRows(own, maps)
     return { available: true, version: 1, projectID: own.projectID!, generatedAt: Date.now(), discardedEvents: 0, missions: maps, summaries, panelDeadline: life.deadline, panelCurrent: life.current,
       activity: activity(own), cleanups: values(own, "cleanups") as NonNullable<Extract<MissionListResponse, { available: true }>["cleanups"]>,
@@ -360,7 +365,7 @@ export function createMissionPanelInventory(input: {
     await readLane(instanceId, key, selector, undefined, retry && offsetOf(selector) === 0 && orderOf(selector) === undefined).catch(() => {})
   }
   const stop = (own: Entry) => {
-    if (own.panel || [...own.owners.values()].some(item => item.reader)) return
+    if (own.panel || !input.passage && [...own.owners.values()].some(item => item.reader)) return
     own.controller.abort(); own.epoch++
   }
   const publishHeaders = (instanceId: string, own: Entry, deadline: number) => {

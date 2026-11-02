@@ -6,7 +6,7 @@ import { MissionAttention } from "./mission-attention"
 import { MissionTaskTree } from "./mission-task-tree"
 import { missionTaskConversation } from "./mission-task-navigation"
 import { MissionPanelPaging } from "./mission-panel-paging"
-import { missionStore } from "../stores/missions"
+import { useMissionPanelStore } from "./mission-panel-scope"
 
 /** Selected one-time Mission or exact admitted passage: open requests and the
  * dependency task tree. Prose stays in the reader, opened from the action bar. */
@@ -17,6 +17,7 @@ export function MissionTracking(props: {
   onOpenActor: (id: string, request?: { id: string; kind: "form" | "permission" }) => Promise<void>
   refresh: () => Promise<void>
 }) {
+  const missionStore = useMissionPanelStore()
   const observed = () => props.activity?.missions.find(value => value.missionId === props.mission.id)
   const target = (kind: MissionReaderTarget["kind"], itemId?: string): MissionReaderTarget => ({ missionId: props.mission.id, kind, itemId })
   // Native lifecycle invalidations (session.execution.*, inbox, Shell, Form and

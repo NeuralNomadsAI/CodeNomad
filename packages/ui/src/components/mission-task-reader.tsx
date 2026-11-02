@@ -15,6 +15,8 @@ import type { MissionContentSelector } from "../../../server/src/missions/missio
 import { MissionBodyPending, missionReaderBody, useReaderValue } from "./mission-reader-body"
 import { openMissionTask } from "./mission-task-open"
 import { MissionReportArtifact, MissionReportProse, useReportBodies } from "./mission-report-prose"
+import { useMissionPanelStore } from "./mission-panel-scope"
+import { MissionPanelPaging } from "./mission-panel-paging"
 
 /** Read-only task facts; dependency navigation changes only this window's reader target. */
 export function MissionTaskReader(props: {
@@ -23,10 +25,11 @@ export function MissionTaskReader(props: {
   recurrence?: MissionReaderTarget["recurrence"]
 }) {
   const { t } = useI18n()
+  const store = useMissionPanelStore()
   const byKey = (key: string) => props.mission.tasks.find(task => task.key === key)
   // A one-time mission's compact map holds a page of its tasks: one not held is read by key.
-  const paged = () => Boolean(props.mission.taskPage) && !props.recurrence
-  const navigate = (key: string) => void openMissionTask(props.instanceId, props.scope, () => props.mission, key, props.recurrence)
+  const paged = () => Boolean(props.mission.taskPage) && (!props.recurrence || Boolean(props.mission.panelPassage))
+  const navigate = (key: string) => void openMissionTask(props.instanceId, props.scope, () => props.mission, key, props.recurrence, store)
   const link = (key: string, label: string) => <button type="button" class="mission-task-link" disabled={!byKey(key) && !paged()}
     onClick={() => navigate(key)}>{t(label, { tasks: byKey(key)?.title ?? key, task: byKey(key)?.title ?? key })}</button>
   const latest = createMemo<MissionPanelReport | undefined>(() => missionTaskReport(props.mission, props.task))
@@ -37,8 +40,8 @@ export function MissionTaskReader(props: {
   createEffect(on(taskKey, () => setAllHistory(false), { defer: true }))
   const loadedReports = () => missionReports(props.mission).filter(report => report.taskKey === props.task.key).length
   const omittedHistory = () => paged() ? Math.max(0, (props.task.reportCount ?? 0) - loadedReports()) : 0
-  const wholeHistory = useReaderValue<MissionReport[]>({ instanceId: () => props.instanceId, mission: () => props.mission, oneTime: () => !props.recurrence,
-    active: allHistory, selector: () => allHistory() ? { kind: "task", taskKey: props.task.key, field: "reports" } : undefined })
+  const wholeHistory = useReaderValue<MissionReport[]>({ instanceId: () => props.instanceId, mission: () => props.mission, oneTime: () => !props.recurrence || Boolean(props.mission.panelPassage),
+    active: allHistory, selector: () => allHistory() && !props.mission.panelPassage ? { kind: "task", taskKey: props.task.key, field: "reports" } : undefined })
   const history = createMemo((): MissionPanelReport[] => {
     const whole = allHistory() && wholeHistory.settled() ? wholeHistory.value() : undefined
     return whole ? [...whole].filter(report => report.id !== latest()?.id).sort((left, right) => right.createdAt - left.createdAt || left.id.localeCompare(right.id))
@@ -56,7 +59,7 @@ export function MissionTaskReader(props: {
   const unblocks = createMemo(() => props.task.status === "completed" ? []
     : props.mission.tasks.filter(task => task.blockedBy.includes(props.task.key) && task.status !== "withdrawn" && !task.replacedByTaskKey))
   // A one-time mission's bodies come from the content route, a disclosure's only while open; a passage's from its own map.
-  const oneTime = () => !props.recurrence
+  const oneTime = () => !props.recurrence || Boolean(props.mission.panelPassage)
   const briefSelector = (): MissionContentSelector => ({ kind: "task", taskKey: props.task.key, field: "brief" })
   const [briefOpen, setBriefOpen] = createSignal(false)
   const [technicalOpen, setTechnicalOpen] = createSignal(false)
@@ -70,7 +73,7 @@ export function MissionTaskReader(props: {
     report: () => !latest() && props.task.status === "completed" ? readout() : undefined })
   const source = (section: MissionPassageSection["section"], report?: MissionPanelReport): MissionPassageSection | undefined => {
     const owner = props.recurrence
-    return owner ? { scheduleID: owner.scheduleID, passageID: owner.passageID, projectID: owner.projectID,
+    return owner && !props.mission.panelPassage ? { scheduleID: owner.scheduleID, passageID: owner.passageID, projectID: owner.projectID,
       missionID: props.mission.id, revision: props.mission.revision, kind: report ? "report" : "task",
       itemId: report?.id ?? props.task.id, section } : undefined
   }
@@ -104,7 +107,11 @@ export function MissionTaskReader(props: {
         <h3>{t("missions.progress.previousResults")}</h3>
         <Show when={!allHistory() && omittedHistory()}>{count => <p class="mission-task-omitted">
           <span>{t(`missionsPanel.task.historyOmitted.${count() === 1 ? "one" : "other"}`, { count: count() })}</span>{" "}
-          <button type="button" class="window-text-button" onClick={() => setAllHistory(true)}>{t("missionsPanel.task.showAllHistory")}</button></p>}</Show>
+           <button type="button" class="window-text-button" onClick={() => {
+             setAllHistory(true)
+             if (props.mission.panelPassage) void store.more(props.instanceId, `field:${props.mission.id}:reports`)
+           }}>{t("missionsPanel.task.showAllHistory")}</button></p>}</Show>
+        <Show when={allHistory() && props.mission.panelPassage}><MissionPanelPaging instanceId={props.instanceId} lane={`field:${props.mission.id}:reports`} /></Show>
         <Show when={allHistory() && !wholeHistory.settled()}>
           <MissionBodyPending failed={wholeHistory.failed()} onRetry={wholeHistory.retry} /></Show>
         <For each={history().map(report => report.id)}>{id => {

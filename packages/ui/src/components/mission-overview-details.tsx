@@ -1,7 +1,7 @@
 import { For, Show, createMemo } from "solid-js"
 import type { MissionPanelMap, MissionPanelReport } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
-import { missionStore } from "../stores/missions"
+import { useMissionPanelStore } from "./mission-panel-scope"
 import { updateMissionProjectView, type MissionReaderTarget } from "../stores/mission-view-state"
 import { MissionCleanupPanel } from "./mission-cleanup"
 import { MissionProfileSummary } from "./mission-profile-summary"
@@ -17,6 +17,7 @@ import { MissionPanelPaging } from "./mission-panel-paging"
 export function MissionOverviewDetails(props: {
   instanceId: string; scope: string; mission: MissionPanelMap; recurrence?: MissionReaderTarget["recurrence"]
 }) {
+  const missionStore = useMissionPanelStore()
   const { t, locale } = useI18n()
   const open = (kind: MissionReaderTarget["kind"], itemId: string) =>
     updateMissionProjectView(props.scope, { reader: { missionId: props.mission.id, kind, itemId, recurrence: props.recurrence } })
@@ -72,7 +73,7 @@ export function MissionOverviewDetails(props: {
         refresh={() => missionStore.refresh(props.instanceId)} />
     </Show>
     <details class="mission-report-technical"><summary>{t("missionsPanel.technical")}</summary>
-      <Show when={!props.recurrence}><MissionPanelFields instanceId={props.instanceId} mission={props.mission} /></Show>
+      <Show when={!props.recurrence || props.mission.panelPassage}><MissionPanelFields instanceId={props.instanceId} mission={props.mission} /></Show>
       <dl class="mission-technical">
         <dt>{t("missionsPanel.technical.mission")}</dt><dd><bdi>{props.mission.id}</bdi></dd>
         <dt>{t("missionsPanel.technical.coordinator")}</dt><dd><bdi>{props.mission.coordinatorSessionId}</bdi></dd>

@@ -10,7 +10,7 @@ export interface MissionReaderTarget {
   /** `playbook` only: the task-session policy whose coordinator contract is shown. */
   taskMode?: "native" | "independent"
   /** Exact isolated passage scope; never a native session selector. */
-  recurrence?: { instanceId: string; projectID: string; scheduleID: string; passageID: string }
+  recurrence?: { instanceId: string; projectID: string; scheduleID: string; passageID: string; owner?: "daily" | "scheduled" }
   /** Recurrence readers do not inherit a selected one-shot Mission's authority. */
   instanceId?: string
   projectID?: string

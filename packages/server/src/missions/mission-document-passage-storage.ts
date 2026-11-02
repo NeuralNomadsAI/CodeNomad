@@ -28,7 +28,9 @@ export function isolatedMissionPassageJournal(storage: MissionStorage, identity:
       await storage.set(target, value, fence)
     },
     scan: async ({ prefix, after, limit = 100 }) => {
-      const range = prefix === virtual ? "/" : prefix === `${virtual}/${missionID}/` ? `/${missionID}/` : undefined
+      // A passage owns exactly one mission. Validate every physical entry even
+      // for point-range observations, so foreign siblings cannot hide corruption.
+      const range = prefix === virtual || prefix === `${virtual}/${missionID}/` ? "/" : undefined
       if (!range || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error("Passage journal scan conflict")
       const nativeAfter = after === undefined ? undefined : `${physical}${suffix(after)}`
       const page = await storage.scan({ prefix: `${physical}${range}`, after: nativeAfter, limit })

@@ -171,7 +171,9 @@ for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geo
       return [element.className, box.x, box.y, box.width, box.height, element.scrollTop]
     }))
     const buttons = () => f.page.locator(".mission-control button").allTextContents()
+    const actions = () => f.page.locator(".mission-control-header button,.mission-action-bar button").allTextContents()
     const before = await geometry(), labels = await buttons()
+    const actionLabels = await actions()
     const stableNode = f.page.locator(index ? ".mission-tree-node" : ".mission-detail").first()
     const node = await stableNode.elementHandle()
     const screenshot = async (name: string) => {
@@ -192,7 +194,13 @@ for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geo
     release()
     await f.page.waitForFunction(async () => !(await import("/src/stores/missions.ts")).missionStore.reading("fixture"))
     assert.deepEqual(await geometry(), before)
-    assert.deepEqual(await buttons(), labels)
+    assert.deepEqual(await actions(), actionLabels)
+    // Re-observation starts fresh coverage; its continuation returns inside the
+    // reserved info slot without moving the panel or changing unrelated actions.
+    if (index === 0) {
+      assert.equal(await f.page.evaluate(async () => (await import("/src/stores/missions.ts")).missionStore.progress("fixture", "marks").more), true)
+      assert.equal(await f.page.locator('.mission-panel-paging[data-lane="marks"] button').innerText(), "Load more")
+    }
     await screenshot("missions-after-refresh")
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { release?.(); await f.close() }

@@ -13,6 +13,7 @@ import { isMissionActivityEvent, isMissionChangedEvent } from "./missions"
 import { copyMissionProfiles } from "./mission-creation-drafts"
 import { sessionListRestored } from "./session-list-restoration"
 import { eventRefreshDue, type RefreshUrgency } from "../lib/event-refresh-scheduler"
+import { createMissionPanelInventory } from "./mission-panel-inventory"
 
 export type RecurrenceDraft = Parameters<typeof serverApi.createMissionRecurrence>[1]
 const heldDrafts = new Map<string, Readonly<RecurrenceDraft>>()
@@ -28,6 +29,9 @@ interface RecurrenceEntry {
   projectID?: string
   directory: string
   scheduleID?: string
+  owner?: "daily" | "scheduled"
+  inventory?: ReturnType<typeof createMissionPanelInventory>
+  inventorySource?: string
   client: unknown
   generation: number
   snapshot?: MissionRecurrenceSnapshot
@@ -47,7 +51,7 @@ const cache = new Map<string, RecurrenceEntry>()
 const stoppedInstances = new Set<string>()
 const [cacheVersion, setCacheVersion] = createSignal(0)
 const changed = () => setCacheVersion(value => value + 1)
-const cacheKey = (instanceId: string, projectID: string | undefined, directory: string, scheduleID?: string) => JSON.stringify([instanceId, projectID, directory, scheduleID])
+const cacheKey = (instanceId: string, projectID: string | undefined, directory: string, scheduleID?: string, owner?: string) => JSON.stringify([instanceId, projectID, directory, scheduleID, owner ?? "daily"])
 
 function current(entry: RecurrenceEntry): boolean {
   const instance = instances().get(entry.instanceId)
@@ -62,6 +66,7 @@ function cancel(entry: RecurrenceEntry): void {
   entry.trailing = false
   entry.activityTrailing = false
   entry.controller?.abort()
+  entry.inventory?.setDemand(entry.instanceId, false)
   entry.controller = undefined
   changed()
 }
@@ -75,9 +80,9 @@ function read(entry: RecurrenceEntry): void {
   entry.controller = controller
   changed()
   const admitted = () => entry.controller === controller && !controller.signal.aborted && entry.demand > 0 && current(entry)
-  const request = entry.scheduleID ? serverApi.fetchMissionCurrentPassage(entry.instanceId, entry.scheduleID, controller.signal)
+  const request = entry.scheduleID ? serverApi.fetchMissionCurrentPassage(entry.instanceId, entry.scheduleID, controller.signal, entry.owner)
     : serverApi.fetchMissionRecurrence(entry.instanceId, controller.signal)
-  void request.then(value => {
+  void request.then(async value => {
     if (!admitted()) return
     if (value?.version !== 1 || typeof value.projectID !== "string"
       || entry.projectID && value.projectID !== entry.projectID) throw new Error("Foreign recurrence snapshot")
@@ -85,6 +90,23 @@ function read(entry: RecurrenceEntry): void {
       if (!("scheduleID" in value) || value.scheduleID !== entry.scheduleID
         || value.mission && (!value.passageID || value.mission.projectID !== value.projectID)) throw new Error("Foreign passage snapshot")
       entry.currentSnapshot = value
+      if (value.source) {
+        const source = value.source
+        const same = JSON.stringify(source) === entry.inventorySource
+        if (!same) {
+          entry.inventory?.clear(entry.instanceId)
+          entry.inventorySource = JSON.stringify(source)
+          entry.inventory = createMissionPanelInventory({ passage: source, scope: () => entry.directory, projectID: () => entry.projectID,
+            capture: () => () => current(entry) && entry.demand > 0 && JSON.stringify(entry.currentSnapshot?.source) === JSON.stringify(source),
+            read: (id, selector, scope) => serverApi.fetchMissionCurrentPanel(id, source, selector, scope),
+            tasks: (id, _mission, task, scope) => serverApi.fetchMissionCurrentTasks(id, source, task, scope) })
+        }
+        const inventory = entry.inventory!
+        inventory.setDemand(entry.instanceId, true); inventory.want(entry.instanceId, "passage", source.missionID, true)
+        await (same ? inventory.refresh(entry.instanceId) : inventory.ensure(entry.instanceId))
+        if (!admitted()) return
+        if (inventory.state(entry.instanceId).status !== "ready") throw new Error("Current passage header unavailable")
+      } else { entry.inventory?.clear(entry.instanceId); entry.inventory = undefined; entry.inventorySource = undefined }
     } else {
       if (!("schedules" in value) || !Array.isArray(value.schedules)) throw new Error("Foreign recurrence snapshot")
       entry.snapshot = value
@@ -128,22 +150,23 @@ interface ReadDemand {
   instanceId: () => string; projectID: () => string | undefined; directory: () => string
   active: () => boolean; refresh?: () => number
   scheduleID?: () => string | undefined
+  owner?: () => "daily" | "scheduled"
 }
 function useRecurrenceRead(props: ReadDemand) {
   const binding = createMemo(() => {
     const instanceId = props.instanceId()
-    return { instanceId, projectID: props.projectID(), directory: props.directory(), scheduleID: props.scheduleID?.(),
+    return { instanceId, projectID: props.projectID(), directory: props.directory(), scheduleID: props.scheduleID?.(), owner: props.owner?.() ?? "daily",
       active: props.active() && (!props.scheduleID || Boolean(props.scheduleID())) && sessionListRestored(instanceId),
       actualDirectory: instances().get(instanceId)?.folder, actualProjectID: instances().get(instanceId)?.metadata?.project?.id,
       client: instances().get(instanceId)?.client, generation: getOpenCodeInstanceGeneration(instanceId) }
   }, undefined, { equals: (a, b) => Boolean(a && a.instanceId === b.instanceId && a.projectID === b.projectID
-    && a.directory === b.directory && a.scheduleID === b.scheduleID && a.actualDirectory === b.actualDirectory && a.actualProjectID === b.actualProjectID
+    && a.directory === b.directory && a.scheduleID === b.scheduleID && a.owner === b.owner && a.actualDirectory === b.actualDirectory && a.actualProjectID === b.actualProjectID
     && a.active === b.active && a.client === b.client && a.generation === b.generation) })
   createEffect(() => {
     const identity = binding()
     if (!identity.active) return
     const entry = untrack(() => {
-      const key = cacheKey(identity.instanceId, identity.projectID, identity.directory, identity.scheduleID)
+      const key = cacheKey(identity.instanceId, identity.projectID, identity.directory, identity.scheduleID, identity.owner)
       let value = cache.get(key)
       if (!value || value.client !== identity.client || value.generation !== identity.generation) {
         if (value) cancel(value)
@@ -151,7 +174,7 @@ function useRecurrenceRead(props: ReadDemand) {
           const oldest = [...cache.values()].find(item => !item.demand)
           if (oldest) { cancel(oldest); cache.delete(oldest.key) }
         }
-        value = { key, instanceId: identity.instanceId, projectID: identity.projectID, directory: identity.directory, scheduleID: identity.scheduleID, client: identity.client,
+        value = { key, instanceId: identity.instanceId, projectID: identity.projectID, directory: identity.directory, scheduleID: identity.scheduleID, owner: identity.owner, client: identity.client,
           generation: identity.generation, error: stoppedInstances.has(identity.instanceId), demand: 0,
           stopped: stoppedInstances.has(identity.instanceId), trailing: false }
         cache.set(key, value)
@@ -165,13 +188,13 @@ function useRecurrenceRead(props: ReadDemand) {
     cacheVersion()
     const identity = binding()
     if (props.scheduleID && !identity.scheduleID) return
-    const entry = cache.get(cacheKey(identity.instanceId, identity.projectID, identity.directory, identity.scheduleID))
+    const entry = cache.get(cacheKey(identity.instanceId, identity.projectID, identity.directory, identity.scheduleID, identity.owner))
     return entry?.client === identity.client && entry?.generation === identity.generation && current(entry) ? entry : undefined
   }
   let previousRefresh: number | undefined, previousKey: string | undefined
   createEffect(() => {
     const identity = binding(), refresh = props.refresh?.()
-    const key = cacheKey(identity.instanceId, identity.projectID, identity.directory, identity.scheduleID)
+    const key = cacheKey(identity.instanceId, identity.projectID, identity.directory, identity.scheduleID, identity.owner)
     if (previousKey === key && previousRefresh !== refresh) untrack(() => {
       const entry = cache.get(key)
       if (entry) scheduleRefresh(entry)
@@ -181,7 +204,13 @@ function useRecurrenceRead(props: ReadDemand) {
   })
   return {
     snapshot: () => state()?.snapshot,
-    currentSnapshot: () => state()?.currentSnapshot,
+    currentSnapshot: () => {
+      const entry = state(), snapshot = entry?.currentSnapshot, inventory = entry?.inventory
+      if (!snapshot || !inventory) return snapshot
+      const shown = inventory.state(entry.instanceId)
+      return { ...snapshot, mission: shown.missions.find(map => map.id === snapshot.source?.missionID), activity: shown.activity }
+    },
+    inventory: () => state()?.inventory,
     error: () => state()?.error ?? false,
     stale: () => Boolean(state()?.snapshot && state()?.error),
     loading: () => Boolean(state()?.controller),
@@ -191,7 +220,7 @@ function useRecurrenceRead(props: ReadDemand) {
 export function useMissionRecurrence(props: Omit<ReadDemand, "scheduleID">) { return useRecurrenceRead(props) }
 export function useMissionCurrentPassage(props: ReadDemand & { scheduleID: () => string | undefined }) {
   const read = useRecurrenceRead(props)
-  return { snapshot: read.currentSnapshot, error: read.error, loading: read.loading }
+  return { snapshot: read.currentSnapshot, inventory: read.inventory, error: read.error, loading: read.loading }
 }
 
 serverEvents.on("instance.event", event => {

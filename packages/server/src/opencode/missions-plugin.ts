@@ -133,6 +133,7 @@ export interface MissionsPluginContext extends MissionCatalogClient {
         recurrenceRead(input: unknown): Promise<unknown>
         recurrenceCreate(input: unknown): Promise<unknown>
         recurrenceCurrent(input: unknown): Promise<unknown>
+        recurrenceCurrentPage(input: unknown): Promise<unknown>
         recurrenceCurrentContent(input: unknown): Promise<unknown>
         recurrencePassageRead(input: unknown): Promise<unknown>
         lifecycle(input: unknown, context: MutationContext): Promise<unknown>
@@ -257,6 +258,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       recurrenceRead: async () => { throw new Error("Native recurrence graph unavailable") },
       recurrenceCreate: async () => { throw new Error("Native recurrence graph unavailable") },
       recurrenceCurrent: async () => { throw new Error("Native recurrence graph unavailable") },
+      recurrenceCurrentPage: async () => { throw new Error("Native recurrence graph unavailable") },
       recurrenceCurrentContent: async () => { throw new Error("Native recurrence graph unavailable") },
       recurrencePassageRead: async () => { throw new Error("Native recurrence reader graph unavailable") },
       recover: async (input, context) => {
@@ -305,6 +307,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       recurrenceRead: tracked(handlers.recurrenceRead),
       recurrenceCreate: tracked(handlers.recurrenceCreate),
       recurrenceCurrent: tracked(handlers.recurrenceCurrent), recurrenceCurrentContent: tracked(handlers.recurrenceCurrentContent),
+      recurrenceCurrentPage: tracked(handlers.recurrenceCurrentPage),
       recurrencePassageRead: tracked(handlers.recurrencePassageRead),
       recover: tracked(handlers.recover), lifecycle: tracked(handlers.lifecycle),
       cleanupTarget: tracked(handlers.cleanupTarget), create: tracked(handlers.create),

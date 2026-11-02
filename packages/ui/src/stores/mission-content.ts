@@ -8,8 +8,9 @@ import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { createMissionContentStore, type MissionBodyConsumer, type MissionBodyRef, type MissionBodyState } from "./mission-content-store"
 import { missionBodyRevision, missionHistoryMark } from "./mission-task-pages"
 
-export const missionContent = createMissionContentStore((ref, query, signal) =>
-  serverApi.fetchMissionContent(ref.instanceId, ref.missionID, { ...ref.selector, ...query }, signal))
+export const missionContent = createMissionContentStore((ref, query, signal, deadline) =>
+  ref.passage ? serverApi.fetchMissionCurrentBody(ref.instanceId, ref.passage, { missionID: ref.missionID, ...ref.selector, ...query }, signal, deadline)
+    : serverApi.fetchMissionContent(ref.instanceId, ref.missionID, { ...ref.selector, ...query }, signal))
 
 /** A body a reader shows, the revision its descriptor is expected at, that descriptor
  * (absent when the map names no such body) and, for a body no descriptor describes, the
@@ -21,7 +22,7 @@ export interface MissionBodySource { ref: MissionBodyRef; revision: number; desc
  * older than that page never stands for its descriptor. */
 export function missionBodySource(instanceId: string, mission: MissionPanelMap, selector: MissionContentSelector): MissionBodySource {
   const descriptor = missionBodyDescriptor(mission, selector), mark = missionHistoryMark(mission, selector)
-  return { ref: { instanceId, projectID: mission.projectID, missionID: mission.id, selector }, revision: missionBodyRevision(mission, selector),
+  return { ref: { instanceId, projectID: mission.projectID, missionID: mission.id, selector, ...(mission.panelPassage ? { passage: mission.panelPassage } : {}) }, revision: missionBodyRevision(mission, selector),
     ...(descriptor ? { descriptor } : {}), ...(mark ? { mark } : {}) }
 }
 
@@ -67,18 +68,19 @@ export function useMissionBody(source: () => MissionBodySource | undefined, need
  * reports a failed read even while the last good value stays shown. */
 export function useMissionBodyValue<T>(source: () => MissionBodySource | undefined) {
   const read = useMissionBody(source)
-  const resolved = createMemo<{ value: T | undefined } | undefined>(() => {
+  const resolved = createMemo<{ value: T | undefined; invalid?: true } | undefined>(() => {
     const state = read.state(), body = state.body
     if (state.status === "missing") return { value: undefined }
     if (body && body.text.length === body.characters) {
-      try { return { value: (body.json ? JSON.parse(body.text) : body.text) as T } } catch { return undefined }
+      try { return { value: (body.json ? JSON.parse(body.text) : body.text) as T } }
+      catch { return source()?.ref.passage ? { value: undefined, invalid: true } : undefined }
     }
     return undefined
   })
   return {
     value: () => resolved()?.value,
-    settled: () => resolved() !== undefined,
-    failed: () => read.state().status === "error",
+    settled: () => resolved() !== undefined && !resolved()?.invalid,
+    failed: () => read.state().status === "error" || resolved()?.invalid === true,
     retry: read.retry,
   }
 }

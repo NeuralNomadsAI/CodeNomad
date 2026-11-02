@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { missionCurrentSourceSchema, missionCurrentPublicIdentitySchema, type MissionCurrentSource } from "../../../server/src/missions/mission-current-source"
 import { sha256 } from "@noble/hashes/sha2.js"
 import type { MissionTaskPageResponse, MissionTaskRequest } from "../../../server/src/missions/mission-panel-map"
 import type { MissionPanelPageRequest, MissionPanelPage } from "../../../server/src/missions/mission-panel-wire"
@@ -12,6 +13,7 @@ export { MissionTaskPageReadError, type MissionTaskPageFailure } from "./mission
 export const TASK_PAGE_RESPONSE_BYTES = 64 * 1024, TASK_PAGE_REQUEST_BYTES = 16 * 1024
 const cursorSchema = z.object({ digest, index: count, offset: count }).strict()
 const envelopeSchema = z.object({ available: z.literal(true), version: z.literal(1), projectID: z.string(), source: z.literal("tasks"),
+  passage: missionCurrentSourceSchema.optional(),
   missionID: z.string(), revision: count, discardedEvents: count, controlUnavailable: z.boolean(), notificationUnavailable: z.boolean(), cleanupUnavailable: z.boolean(),
   page: z.object({ digest, total: z.literal(1), pieces: z.array(z.object({ index: z.literal(0), offset: count, characters: count, text: z.string().min(1) }).strict()).min(1).max(50),
     next: cursorSchema.optional() }).strict(),
@@ -43,6 +45,11 @@ async function panelResponse(response: Response, signal: AbortSignal, budget: Mi
     return await body(response, signal, budget, failed)
   } catch (error) { failed(error); throw error }
   finally { if (response.body && !response.bodyUsed) await raceTaskRead(response.body.cancel(), signal).catch(() => {}) }
+}
+
+/** The passage owner is acquired before any external page selector is dispatched. */
+export async function readMissionCurrentIdentity(response: Response, signal: AbortSignal) {
+  return missionCurrentPublicIdentitySchema.parse(await panelResponse(response, signal, new MissionTaskWindowBudget(TASK_PAGE_RESPONSE_BYTES), () => {}))
 }
 
 function parseTaskJSON(text: string): unknown {
@@ -92,6 +99,7 @@ async function body(response: Response, signal: AbortSignal, budget: MissionTask
 export async function readMissionTaskPage(missionID: string, task: MissionTaskRequest, input: {
   projectID: string; current(): boolean; exchange(body: string): Promise<Response>; signal?: AbortSignal; deadline?: number
   context?: MissionTaskPageContext
+  passage?: MissionCurrentSource
   runTransfer?: <T>(read: () => Promise<T>) => Promise<T>
 }): Promise<MissionTaskPageResponse> {
   task = structuredClone(task)
@@ -128,7 +136,7 @@ export async function readMissionTaskPage(missionID: string, task: MissionTaskRe
     const decoded = envelopeSchema.safeParse(value)
     if (!decoded.success) throw new MissionTaskPageReadError("invalid")
     const result = decoded.data
-    if (result.projectID !== input.projectID || result.missionID !== missionID || first && (result.page.digest !== first.page.digest || result.revision !== first.revision
+    if (JSON.stringify(result.passage) !== JSON.stringify(input.passage) || result.projectID !== input.projectID || result.missionID !== missionID || first && (result.page.digest !== first.page.digest || result.revision !== first.revision
       || result.discardedEvents !== first.discardedEvents || result.controlUnavailable !== first.controlUnavailable
       || result.notificationUnavailable !== first.notificationUnavailable || result.cleanupUnavailable !== first.cleanupUnavailable)) throw new MissionTaskPageReadError("invalid")
     first ??= result
@@ -156,6 +164,7 @@ export async function readMissionTaskPage(missionID: string, task: MissionTaskRe
 }
 
 const panelEnvelope = z.object({ available: z.literal(true), version: z.literal(1), projectID: z.string().min(1).max(240),
+  passage: missionCurrentSourceSchema.optional(),
   source: z.enum(["summaries", "cleanups", "mission", "activity", "marks"]), missionID: z.string().optional(), field: z.string().optional(), part: z.enum(["receipts", "pending"]).optional(), text: z.literal(true).optional(),
   revision: count.optional(), header: z.literal(true).optional(), finishHighWater: count.optional(), phase: z.enum(["context", "observed"]).optional(), observedAt: z.number().finite().optional(),
   discardedEvents: count, controlUnavailable: z.boolean(), notificationUnavailable: z.boolean(), cleanupUnavailable: z.boolean(),
@@ -163,6 +172,7 @@ const panelEnvelope = z.object({ available: z.literal(true), version: z.literal(
   page: z.object({ digest, total: count.max(50), pieces: z.array(z.object({ index: count.max(49), offset: count, characters: count, text: z.string().min(1) }).strict()).max(50), next: cursorSchema.optional() }).strict(),
 }).strict()
 export interface MissionPanelReadScope {
+  passage?: MissionCurrentSource
   projectID?: string; signal?: AbortSignal; deadline?: number; current(): boolean
   onFinishHighWater?: (projectID: string, value: number) => void
 }
@@ -205,7 +215,7 @@ export async function readMissionPanelWindow(selector: Exclude<MissionPanelPageR
     if (!parsed.success) throw new MissionTaskPageReadError("invalid")
     const own = parsed.data, range = own.window
     const selectedRange = "window" in selector ? selector.window : undefined
-    if (own.source !== selector.source || input.projectID && own.projectID !== input.projectID
+    if (JSON.stringify(own.passage) !== JSON.stringify(input.passage) || own.source !== selector.source || input.projectID && own.projectID !== input.projectID
       || own.missionID !== (selector.source === "mission" || selector.source === "activity" ? selector.missionID : undefined)
       || own.field !== (selector.source === "mission" ? selector.field : undefined) || own.part !== (selector.source === "mission" ? selector.part : undefined) || own.text !== (selector.source === "mission" ? selector.text : undefined) || own.header !== (selector.source === "mission" ? selector.header : undefined)
       || (selector.source === "mission" || selector.source === "activity" ? own.revision === undefined : own.revision !== undefined)

@@ -75,10 +75,12 @@ export interface MissionRecurrenceSnapshot {
 
 export interface MissionRecurrenceCurrent {
   version: 1
+  ownerRevision?: number
   projectID: string
   scheduleID: string
   passageID: string | null
-  mission?: import("./missions/model").MissionMap
+  source?: import("./missions/mission-current-source").MissionCurrentSource
+  mission?: import("./missions/mission-panel-map").MissionPanelMap
   activity?: import("./missions/model").MissionActivityProjection
 }
 export type MissionRecurrenceCurrentContent = ReturnType<typeof import("./missions/recurrence-current").currentRecurrenceContent>

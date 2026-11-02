@@ -1,5 +1,7 @@
 # Missionen
 
+Der aktuelle Durchlauf eines täglichen oder nativen Zeitplans verwendet denselben seitenweisen Aufgabenbaum und dieselben Leser für exakte Inhalte. Weitere Aufgaben oder Aktivitäten werden ausdrücklich geladen; unbeobachtete Anfragen bleiben unbekannt. Übersicht, Aufgaben, Berichte, Lageberichte und Planänderungen bleiben an den ausgewählten Durchlauf gebunden. Gespeicherte Ergebnisse behalten ihre ursprüngliche Durchlauf- und Berichtsidentität, wenn ein anderer Durchlauf beginnt.
+
 Für ein zu großes gespeichertes Feld wählen Sie **JSON-Rohdaten seitenweise lesen**. **Vorherige Seite** und **Nächste Seite** lesen exakte, begrenzte Teile; bei einer geänderten Sammlung beginnt **Erneut versuchen** auf der ersten Seite.
 
 Die Auswahl lädt jeweils 50 Missionsübersichten; **Weitere laden** setzt die Suche fort. Die Suche filtert nur geladene Missionen. Nur ausgewählte oder im Leser angeforderte Missionen laden ihre Details. Bereinigung, Aktivität und Anfragen haben eigene Zähler und **Weitere laden**. Ungelesene Akteure und Anfragen bleiben unbekannt, auch nach mehreren getrennten Beobachtungen. **Gespeicherte Felder lesen** bietet exakte Seiten für Akteure, Berichte, Verlauf, Belege und Metadaten. Bei einem Fehler bleibt die letzte Anzeige; **Erneut versuchen** wiederholt das Fenster, eine geänderte Sammlung beginnt beim ersten Fenster. Lesen startet keine Arbeit. Historische Abschlüsse werden einmal anhand des dauerhaften Projektzählers erfasst; neue Abschlüsse bleiben bis zur Anzeige ungesehen.

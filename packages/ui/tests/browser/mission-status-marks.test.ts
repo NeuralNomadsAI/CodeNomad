@@ -8,6 +8,10 @@ import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { inlineMissionEntry, missionPicker, missionPickerExpander, missionPickerField, missionToolbarAction, selectMission } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
+import { recurrenceCurrentPageInput } from "../../../server/src/missions/recurrence-current"
+import { projectMissionPanel } from "../../../server/src/missions/mission-panel-projection"
+import { missionPanelPage } from "../../../server/src/missions/mission-panel-page"
+import { missionActivityContext } from "../../../server/src/missions/mission-activity-context"
 
 let browser: Browser, url: string
 before(async () => {
@@ -42,12 +46,27 @@ async function open(missions: () => MissionMap[], activity: () => Array<{ missio
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(missions()),
     generatedAt: Date.now(), discardedEvents: 0, activity: { generatedAt: Date.now(), missions: activity() } } }))
-  // A pending passage's current mission map: its coordinator and one independent actor.
+  // The real bounded source/projections include its coordinator and one independent actor.
+  const current = (id: string) => {
+    const schedule = schedules.find(item => item.id === id), passageID = schedule?.pending?.passageID ?? null
+    return { passageID, source: passageID ? { owner: "daily" as const, projectID: "project", scheduleID: id, passageID, missionID: passageID, digest: "a".repeat(43) } : undefined,
+      map: passageID ? mission(passageID, { coordinatorSessionId: schedule!.pending!.conversationID,
+        actors: [actor(schedule!.pending!.conversationID!), actor("ses_independent", "specialist")] }) : undefined }
+  }
   await page.route(url => url.pathname.endsWith("/current"), route => {
-    const id = new URL(route.request().url()).pathname.split("/").at(-2)!, schedule = schedules.find(item => item.id === id)
-    const passageID = schedule?.pending?.passageID ?? null
-    return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: id, passageID, ...(passageID ? { mission: mission(passageID, {
-      coordinatorSessionId: schedule!.pending!.conversationID, actors: [actor(schedule!.pending!.conversationID!), actor("ses_independent", "specialist")] }) } : {}) } })
+    const id = new URL(route.request().url()).pathname.split("/").at(-2)!, value = current(id)
+    return route.fulfill({ json: { version: 1, ownerRevision: 1, projectID: "project", scheduleID: id, passageID: value.passageID, ...(value.source ? { source: value.source } : {}) } })
+  })
+  await page.route(url => /\/current\/[^/]+\/page$/.test(url.pathname), route => {
+    const input = recurrenceCurrentPageInput.parse(route.request().postDataJSON()), { map, source } = current(input.source.scheduleID), selector = input.selector
+    assert.ok(map && source); assert.deepEqual(input.source, source)
+    if (selector.source === "summaries" || selector.source === "cleanups" || selector.source === "marks") throw Error("Unexpected project read")
+    const damage = { discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }
+    if (selector.source === "activity") return route.fulfill({ json: missionPanelPage({ projectID: "project", missionID: map.id, revision: map.revision,
+      ...damage, passage: source, source: "activity", phase: "observed", observedAt: 1 }, [{ context: missionActivityContext(map, damage), coverage: "unknown",
+      requests: { state: "unknown", items: [] }, activity: { actors: map.actors.map(actor => ({ sessionId: actor.sessionId, state: "unknown" })),
+        family: { state: "unknown", members: [] } } }], selector.cursor) })
+    return route.fulfill({ json: projectMissionPanel(map, selector, damage, { passage: source }) })
   })
   await page.route(url => url.pathname === "/api/workspaces/fixture/missions/recurrence", route => route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1,
     projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules }) }))

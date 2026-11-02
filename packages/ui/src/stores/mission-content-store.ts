@@ -1,9 +1,12 @@
 import { createSignal, type Accessor, type Setter } from "solid-js"
 import type { MissionBodyDescriptor, MissionContentResponse, MissionContentSelector } from "../../../server/src/missions/mission-content-wire"
 import { validMissionContentSlice } from "../lib/mission-content-slice"
+import { MissionTaskWindowBudget } from "../lib/mission-task-window-budget"
+import { assertTaskReadLive, raceTaskRead, TASK_READ_TIMEOUT_MS } from "../lib/mission-task-read-lifetime"
 
 /** One mission body: the mission it belongs to, where, and its selector. */
-export interface MissionBodyRef { instanceId: string; projectID: string; missionID: string; selector: MissionContentSelector }
+export interface MissionBodyRef { instanceId: string; projectID: string; missionID: string; selector: MissionContentSelector;
+  passage?: import("../../../server/src/missions/mission-current-source").MissionCurrentSource }
 /** A body's text from offset 0, cut from exactly one digest: never two values joined.
  * `mark`: the owner metadata it was read under (`MissionBodyConsumer.version`). */
 export interface MissionBody { digest: string; revision: number; characters: number; json: boolean; text: string; mark?: string }
@@ -12,7 +15,7 @@ export type MissionBodyStatus = "loading" | "ready" | "missing" | "error"
 /** `revision`: the mission revision of the last accepted answer. */
 export interface MissionBodyState { status: MissionBodyStatus; body?: MissionBody; revision?: number }
 
-export type MissionContentFetch = (ref: MissionBodyRef, query: { digest?: string; offset: number }, signal: AbortSignal) => Promise<MissionContentResponse>
+export type MissionContentFetch = (ref: MissionBodyRef, query: { digest?: string; offset: number }, signal: AbortSignal, deadline?: number) => Promise<MissionContentResponse>
 
 export interface MissionBodyConsumer {
   state: Accessor<MissionBodyState>
@@ -66,11 +69,13 @@ interface Entry {
   restarts: number
   consumers: Map<symbol, { need: number }>
   controller?: AbortController
+  /** Current passage logical demand, retained through automatic slices/revalidation and parked failures. */
+  operation?: { controller: AbortController; signal: AbortSignal; deadline: number }
   used: number
 }
 
 const keyOf = (ref: MissionBodyRef) => JSON.stringify([ref.instanceId, ref.projectID, ref.missionID, ref.selector.kind, ref.selector.field,
-  "taskKey" in ref.selector ? ref.selector.taskKey : "reportId" in ref.selector ? ref.selector.reportId : "change" in ref.selector ? ref.selector.change : null])
+  "taskKey" in ref.selector ? ref.selector.taskKey : "reportId" in ref.selector ? ref.selector.reportId : "change" in ref.selector ? ref.selector.change : null, ref.passage])
 
 /** The display cache of mission bodies read through the content route, per workspace,
  * project, mission and selector, each continuation pinned by its digest. */
@@ -97,9 +102,20 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     return !body || satisfies(entry, body.digest, body.revision) && marked(entry, body.mark)
   }
 
+  /** Current display provenance; pending values additionally require their live operation. */
+  const currentValueEligible = (entry: Entry, body: MissionBody) => !entry.stale
+    && (!entry.expected || body.digest === entry.expected.digest) && marked(entry, body.mark)
+    && (body !== entry.pending || Boolean(entry.operation && !entry.operation.signal.aborted && performance.now() < entry.operation.deadline))
+
+  const endOperation = (entry: Entry) => {
+    entry.operation?.controller.abort()
+    entry.operation = undefined
+    if (entry.ref.passage) entry.pending = undefined
+  }
   const cancel = (entry: Entry) => {
     entry.controller?.abort()
     entry.controller = undefined
+    endOperation(entry)
   }
   const drop = (entry: Entry) => {
     cancel(entry)
@@ -116,10 +132,11 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
   }
 
   const promote = (entry: Entry) => {
-    if (entry.pending && (!entry.display || covers(entry.pending, need(entry)))) {
-      entry.display = entry.pending
-      entry.pending = undefined
-    }
+    if (!entry.pending || entry.display && !covers(entry.pending, need(entry))) return false
+    if (entry.ref.passage && !currentValueEligible(entry, entry.pending)) return false
+    entry.display = entry.pending
+    entry.pending = undefined
+    return true
   }
 
   const accept = (entry: Entry, query: { digest?: string; offset: number }, response: MissionContentResponse, mark: string | undefined) => {
@@ -156,11 +173,19 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
       return
     }
     const slice = validMissionContentSlice(entry.ref.selector, query, response.content)
+    if (entry.ref.passage && entry.expected && slice.digest !== entry.expected.digest) throw new Error("Current passage body changed")
+    const validateJSON = (json: boolean, prefix = "") => {
+      if (!entry.ref.passage || !json || slice.next !== undefined) return
+      const budget = new MissionTaskWindowBudget()
+      if (prefix) budget.append(prefix, slice.characters)
+      budget.append(slice.text, slice.characters)
+    }
     if (!Number.isSafeInteger(response.revision)) throw new Error("Invalid mission content")
     const revision = response.revision!
     entry.answered = Math.max(entry.answered ?? 0, revision)
     entry.status = "ready"
     if (query.offset === 0) {
+      validateJSON(slice.json === true)
       settle(slice.digest, revision)
       const body = { digest: slice.digest, revision, characters: slice.characters, json: slice.json === true, text: slice.text, ...(mark === undefined ? {} : { mark }) }
       if (entry.display?.digest === body.digest) {
@@ -172,6 +197,8 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
       const body = owner && entry[owner]
       // Only the body this slice continues, at exactly its end, ever grows.
       if (!owner || !body || body.text.length !== slice.offset) return
+      if (entry.ref.passage && body.json !== (slice.json === true)) throw new Error("Current passage body encoding changed")
+      validateJSON(body.json, body.text)
       entry[owner] = { ...body, revision: Math.max(body.revision, revision), text: body.text + slice.text }
     }
     promote(entry)
@@ -180,16 +207,33 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
 
   const read = (entry: Entry, query: { digest?: string; offset: number }) => {
     const controller = new AbortController(), epoch = entry.epoch, mark = entry.mark
+    if (entry.ref.passage && !entry.operation) {
+      const controller = new AbortController()
+      entry.operation = { controller, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(TASK_READ_TIMEOUT_MS)]),
+        deadline: performance.now() + TASK_READ_TIMEOUT_MS }
+    }
+    const operation = entry.operation, signal = operation?.signal ?? controller.signal
     entry.controller = controller
     entry.sentMark = mark
-    // A read after a failure shows the body it reads for, never the failure it retries.
-    if (entry.status === "error") { entry.status = entry.display ? "ready" : "loading"; publish(entry) }
     // A late answer for a released, replaced or switched entry never publishes; one sent
     // before a recovery invalidation leaves that invalidation's fresh read to come.
     const admitted = () => entry.controller === controller && !controller.signal.aborted && entries.get(entry.key) === entry && entry.epoch === epoch
-    void fetch(entry.ref, query, controller.signal).then(response => {
+      && entry.operation === operation
+    const transfer = async () => {
+      assertTaskReadLive(signal, operation?.deadline)
+      // A read after a failure shows its body; an expired operation stays failed.
+      if (entry.status === "error") { entry.status = entry.display ? "ready" : "loading"; publish(entry) }
+      return raceTaskRead(fetch(entry.ref, query, signal, operation?.deadline), operation?.signal)
+    }
+    if (!operation && entry.status === "error") { entry.status = entry.display ? "ready" : "loading"; publish(entry) }
+    void (operation ? transfer() : fetch(entry.ref, query, controller.signal)).then(response => {
       if (!admitted()) return
-      accept(entry, query, response, mark)
+      assertTaskReadLive(signal, operation?.deadline)
+      // Validate/assemble current content off-display, then fence its promotion and publication.
+      const accepted = operation ? { ...entry } : entry
+      accept(accepted, query, response, mark)
+      assertTaskReadLive(signal, operation?.deadline)
+      if (operation) Object.assign(entry, accepted)
       publish(entry)
     }).catch(() => {
       if (!admitted()) return
@@ -205,16 +249,26 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     })
   }
 
-  /** One read at a time per body; demand that arrives meanwhile is served when it settles. */
+  /** Coalesce reads, completing fresh covered current demand before guarding a held transfer. */
   function pump(entry: Entry) {
-    if (entry.controller || !entry.consumers.size || entry.parked || entries.get(entry.key) !== entry) return
+    if (!entry.consumers.size || entries.get(entry.key) !== entry) return
+    const shown = entry.pending ?? entry.display
+    // Current aggregate demand can finish while a now-unnecessary continuation is held.
+    if (entry.ref.passage && shown && currentValueEligible(entry, shown) && covers(shown, need(entry))
+      && (!entry.pending || promote(entry))) {
+      cancel(entry) // Revokes both read and operation before any late result can publish.
+      entry.status = "ready"; entry.parked = false
+      publish(entry)
+      return true
+    }
+    if (entry.controller || entry.parked) return
     // A map that named another body while a read ran is served now.
     if (!fresh(entry)) entry.stale = true
-    const shown = entry.pending ?? entry.display
     if (entry.stale || !shown) {
-      if (!entry.stale && entry.status === "missing") return
-      read(entry, { offset: 0 })
+      if (!entry.stale && entry.status === "missing") { endOperation(entry); return }
+      read(entry, { offset: 0, ...(entry.ref.passage && entry.expected ? { digest: entry.expected.digest } : {}) })
     } else if (!covers(shown, need(entry))) read(entry, { digest: shown.digest, offset: shown.text.length })
+    else endOperation(entry)
   }
 
   /** `mark`: the first `version` of a body no descriptor describes, so its first read is sent under it. */
@@ -233,14 +287,21 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     owner.consumers.set(id, { need: 1 })
     owner.used = ++tick
     // New demand retries a parked failure.
-    if (owner.parked) { owner.parked = false; owner.stale = true }
+    if (owner.parked) { endOperation(owner); owner.parked = false; owner.stale = true }
     pump(owner)
     return {
       state: owner.state,
       need: characters => {
         const consumer = owner.consumers.get(id)
         if (!consumer || consumer.need === characters) return
+        const reduced = characters < consumer.need
+        if (owner.ref.passage && owner.parked && characters > consumer.need) {
+          endOperation(owner); owner.parked = false; owner.restarts = 0
+        }
         consumer.need = characters
+        if (owner.ref.passage && reduced && pump(owner)) return
+        try { assertTaskReadLive(owner.operation?.signal, owner.operation?.deadline) }
+        catch { owner.status = "error"; owner.parked = true; owner.pending = undefined; publish(owner); return }
         promote(owner)
         publish(owner)
         pump(owner)
@@ -273,13 +334,15 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
       },
       retry: () => {
         if (!owner.consumers.has(id) || owner.controller) return
+        endOperation(owner)
         owner.stale = true
         owner.parked = false
         owner.restarts = 0
         pump(owner)
       },
       release: () => {
-        if (!owner.consumers.delete(id) || owner.consumers.size) return
+        if (!owner.consumers.delete(id)) return
+        if (owner.consumers.size) { if (owner.ref.passage) pump(owner); return }
         owner.used = ++tick
         cancel(owner)
         if (!owner.display) drop(owner)

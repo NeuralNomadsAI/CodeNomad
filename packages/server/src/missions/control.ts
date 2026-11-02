@@ -7,11 +7,10 @@ import { missionToolInspection, type MissionToolInspectInput } from "./tool-insp
 import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "./mission-summary"
 import { readMissionContent, type MissionContentRequest, type MissionContentResult } from "./mission-content"
 import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
-import { compactMissionMap, missionTaskPage, missionPanelReports } from "./mission-compact-map"
+import { compactMissionMap, missionTaskPage } from "./mission-compact-map"
 import type { MissionTaskPageResult, MissionTaskRequest } from "./mission-panel-map"
-import { missionPanelPage, missionPanelWindow, missionPanelTextWindow, type MissionPanelPageRequest, type MissionPanelPageResult } from "./mission-panel-page"
-import { missionPanelHeader } from "./mission-panel-header"
-import { activityActorWindow, missionActivityContext, MISSION_ACTIVITY_ACTORS } from "./mission-activity-context"
+import { missionPanelPage, missionPanelWindow, type MissionPanelPageRequest, type MissionPanelPageResult } from "./mission-panel-page"
+import { projectMissionPanel } from "./mission-panel-projection"
 import {
   MISSION_SCHEMA_VERSION,
   missionPlanChanges,
@@ -225,30 +224,10 @@ export class MissionControl {
       notificationUnavailable: Boolean(view.notificationUnavailable), cleanupUnavailable: Boolean(view.cleanupUnavailable) }
     if (!view.mission) return { available: false, reason: damage.discardedEvents || damage.controlUnavailable
       || damage.notificationUnavailable || damage.cleanupUnavailable ? "damaged" : "mission-not-found" }
-    const mission = view.mission, header = { ...base, missionID, revision: mission.revision, ...damage }
-    if (request.source === "activity") {
-      const context = missionActivityContext(mission, damage)
-      if (request.actorOrder !== undefined && request.actorOrder !== context.actorPage.order) return { available: false, reason: "changed" }
-      return missionPanelPage({ ...header, phase: "context" }, [activityActorWindow(context, request.actorOffset ?? 0, MISSION_ACTIVITY_ACTORS)], request.cursor)
-    }
-    if (request.source === "tasks") {
-      const page = missionTaskPage(mission, request.task)
-      if (request.task.order !== undefined && request.task.order !== page.taskPage.order) return { available: false, reason: "changed" }
-      return missionPanelPage(header, [page], request.cursor)
-    }
-    if (this.options.documentReads) await projectMissionDocuments(this.options.documentReads, [mission])
-    if (mission.document?.dormant) return { available: false, reason: "mission-not-found" }
-    if (request.header) return missionPanelPage({ ...header, header: true }, [missionPanelHeader(mission)], request.cursor)
-    const map = request.window ? { ...compactMissionMap(mission), reports: missionPanelReports(mission), claims: mission.claims, frontier: mission.frontier } : compactMissionMap(mission)
-    if (request.field === undefined) return missionPanelPage(header, [map], request.cursor)
-    // Own root fields only: extension metadata survives as it does in compact maps.
-    if (!Object.prototype.hasOwnProperty.call(map, request.field)) return { available: false, reason: "field-not-found" }
-    const value = request.part ? mission.control?.[request.part] ?? [] : (map as unknown as Record<string, unknown>)[request.field]
-    const fieldHeader = { ...header, field: request.field, ...(request.part ? { part: request.part } : {}) }
-    if (request.text) return missionPanelTextWindow(fieldHeader, value, request.window!, request.cursor)
-    const values = Array.isArray(value) ? value : [value]
-    return request.window ? missionPanelWindow(fieldHeader, values, request.window, request.cursor)
-      : missionPanelPage(fieldHeader, values, request.cursor)
+    const mission = view.mission
+    if (request.source === "mission" && this.options.documentReads) await projectMissionDocuments(this.options.documentReads, [mission])
+    if (request.source === "mission" && mission.document?.dormant) return { available: false, reason: "mission-not-found" }
+    return projectMissionPanel(mission, request, damage)
   }
 
   /** One mission's range for display reconciliation, its map compact, with its own
