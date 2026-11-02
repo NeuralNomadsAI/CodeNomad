@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import ToolCall from "../../../src/components/tool-call"
+import VirtualFollowList from "../../../src/components/virtual-follow-list"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { applyUiSettings } from "./ui-settings"
 import { I18nProvider } from "../../../src/lib/i18n"
@@ -18,8 +19,9 @@ const originalPart = part()
 // shell tools collapsed instead of depending on the preset defaults.
 await applyUiSettings({ toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { bash: "collapsed" } } })
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
-  <div style={{ width: "650px", padding: "80px 0" }}>
-    <ToolCall toolCall={part()} messageId="message-fixture" instanceId="tool-fixture" sessionId="session-fixture" partVersion={version()} />
+  <div style={{ width: "650px", height: "700px" }}>
+    <VirtualFollowList items={() => ["tool-fixture"]} getKey={item => item} renderItem={() =>
+      <div style={{ padding: "80px 0" }}><ToolCall toolCall={part()} messageId="message-fixture" instanceId="tool-fixture" sessionId="session-fixture" partVersion={version()} /></div>} />
   </div>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {

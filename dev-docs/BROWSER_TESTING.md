@@ -46,6 +46,9 @@ Edits made while a daemon is serving are an accepted blind spot: every run
 binds a fresh daemon, so only a mid-run edit can be missed, and mid-run
 edits are the developer's own signal to restart the run.
 
+The daemon serves the browser's implicit `GET /favicon.ico` as a small PNG.
+Other missing resources retain their HTTP errors and strict browser collectors.
+
 ## Logs, cleanup and platform limits
 
 - A daemon's `daemon.log` lives in `$(tmpdir())/codenomad-fixture-run-*`
@@ -107,6 +110,19 @@ synthetic provider.
   and let the real connection close with its page. Never answer that path with
   the generic JSON fallback. Composer bootstrap awaits DOM readiness and its
   explicit rendered-fixture signal; stream headers are observed before navigation.
+- Panel-resize bootstrap installs `observeHeaderFixture` before navigation and uses
+  `fixtureEventStream` plus the exact session Yolo read. Failed initialization,
+  navigation and readiness close the page through `runWithDiagnosticCleanup`;
+  bounded bootstrap snapshots go to owned TEMP files. The rendered-fixture wait
+  retains its 30-second deadline. A held initial HTTP state read exercises that
+  deadline and its release control through the real Solid bootstrap.
+- Middle-button fixtures use `fixture-native-gesture.ts`: browser-native reveal,
+  a point inside the viewport and clipping ancestors, real hit testing, and a
+  trusted press captured by the original `.message-stream`. Native release and
+  capture cleanup run even after failed assertions. Targets preserve shell,
+  horizontal-code, transcript and summary ownership; left-button selection keeps
+  its own gesture. Tool copy actions hover the owning header before the native
+  click. Capture tests mount the real `VirtualFollowList` around isolated tools.
 - A fixture entry with top-level asynchronous restoration exposes its ready signal
   after instance registration. Tests await that signal before connecting its native
   client: the document load event can precede module continuation, and a later
