@@ -219,12 +219,15 @@ for (const width of [1500, 700]) test(`AC-E7 at ${width}px: attached conversatio
     assert.deepEqual(rowItems.map(item => item.trim()), ["Check updates for @fixture/blender", "Remove from Global", "Refresh plugin controls"])
     await page.keyboard.press("Escape")
     await page.getByRole("menuitem").first().waitFor({ state: "detached" })
+    assert.equal(await panelToggle(page).getAttribute("aria-expanded"), "true", "Escape closes the menu, not its floating drawer")
     await expandSection(page)
     assert.ok((await line(page, "plugin").getByRole("button").allTextContents()).length > 0, "the section keeps accessible plugin actions after its menu closes")
     await sectionMenu(page).click()
+    await page.waitForFunction(() => document.activeElement?.closest('[role="menu"]'))
     const sectionItems = await page.getByRole("menuitem").allInnerTexts()
     assert.deepEqual(sectionItems.map(item => item.trim()), ["Check updates for @fixture/blender", "Remove from Global", "Refresh plugin controls"])
     await page.keyboard.press("Escape")
+    assert.equal(await panelToggle(page).getAttribute("aria-expanded"), "true", "the section menu also owns Escape")
 
     // Another tab: nothing about the attachment is rendered anywhere.
     await statusTab(page).waitFor()

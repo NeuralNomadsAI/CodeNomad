@@ -30,7 +30,7 @@ export function PluginAddMenu(props: {
         title={t("instanceServiceStatus.plugins.sources.add")} aria-label={t("instanceServiceStatus.plugins.sources.add")}>
         <Plus class="h-3.5 w-3.5" aria-hidden="true" />
       </DropdownMenu.Trigger>
-      <DropdownMenu.Portal mount={trigger?.closest<HTMLElement>(".session-floating-drawer") ?? undefined}>
+      <DropdownMenu.Portal>
         <DropdownMenu.Content class="action-overflow-content" onCloseAutoFocus={event => {
           const action = afterClose; afterClose = undefined
           if (!action) return

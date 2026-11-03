@@ -79,6 +79,7 @@ import {
 } from "./shell/storage"
 import { useDrawerHostMeasure } from "./shell/useDrawerHostMeasure"
 import { HostedDrawer } from "./shell/HostedDrawer"
+import { isNestedDrawerSurface } from "./shell/drawer-events"
 import { useDrawerResize } from "./shell/useDrawerResize"
 import { clampEmbeddedDrawerWidth } from "./shell/drawer-layout"
 import { useSessionCache } from "./shell/useSessionCache"
@@ -266,7 +267,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       if (leftToggleButtonEl()?.contains(target) || rightToggleButtonEl()?.contains(target)) return
       // Menus, selectors and dialogs portal outside the drawer's DOM. Let their
       // own dismissal/selection finish instead of unmounting them on pointerdown.
-      if (target instanceof Element && target.closest('[role="menu"], [role="listbox"], [role="dialog"], [role="alertdialog"]')) return
+      if (isNestedDrawerSurface(target)) return
 
       const leftContent = leftDrawerContentEl()
       const rightContent = rightDrawerContentEl()

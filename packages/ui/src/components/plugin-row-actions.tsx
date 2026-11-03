@@ -139,7 +139,7 @@ export function PluginRowActions(props: {
           {icon(items()[0]!, busy())}
         </Show>
       </DropdownMenu.Trigger>
-      <DropdownMenu.Portal mount={trigger?.closest<HTMLElement>(".session-floating-drawer") ?? undefined}>
+      <DropdownMenu.Portal>
         <DropdownMenu.Content class="action-overflow-content" onCloseAutoFocus={() => {
           const action = afterClose; afterClose = undefined
           if (action) queueMicrotask(() => void action())
