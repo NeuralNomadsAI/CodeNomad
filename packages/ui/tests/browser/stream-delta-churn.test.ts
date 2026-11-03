@@ -1,36 +1,22 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
-import { fileURLToPath } from "node:url"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 before(async () => {
-  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
-    plugins: [shutdown.plugin, solid(), {
-      name: "stream-delta-churn",
-      enforce: "pre",
-      configureServer(vite) {
-        vite.middlewares.use("/stream-delta", async (_req, res) => {
-          res.setHeader("Content-Type", "text/html")
-          res.end(await vite.transformIndexHtml("/stream-delta", '<html><body><div id="root" style="display:flex;width:1100px;height:740px"></div><script type="module" src="/tests/browser/fixtures/stream-delta-churn.tsx"></script></body></html>'))
-        })
-      },
-    }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
-  }).catch(async error => { await cache.dispose(); throw error })
-  shutdown.own(server)
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/stream-delta`
+  const fixture = await borrowFixture({
+    name: "stream-delta-churn",
+    routes: [
+      { path: "/fixture", html: "<html><body><div id=\"root\" style=\"display:flex;width:1100px;height:740px\"></div><script type=\"module\" src=\"/tests/browser/fixtures/stream-delta-churn.tsx\"></script></body></html>" },
+    ],
+  })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close() })
 
 async function withPage(run: (page: Page) => Promise<void>) {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
