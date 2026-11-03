@@ -1324,6 +1324,83 @@ describe("OpenCode data projection", () => {
     }
   })
 
+  it("keeps a completed read-image part completed while later rounds stream", async () => {
+    const instanceId = "opencode-data-image-rounds"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    // Repro of the reported flip: read-image tool results completed in one
+    // round reverted to "running" (image gone) while the agent kept working in
+    // later rounds, healing only at settlement, then flipping again. The
+    // daemon always serves such parts completed (persisted at tool success),
+    // so any regression is a stale re-delivered `session.tool.called` — the
+    // reducer overwrites terminal state unconditionally.
+    const image = { type: "file", mime: "image/jpeg", uri: `data:image/jpeg;base64,${"A".repeat(64)}` }
+    const pageFor = (ids: string[]) => ({
+      data: ids.map((id, index) => ({
+        id, type: "assistant", agent: "build",
+        model: { providerID: "zhipuai-coding-plan", id: "glm-5.3" },
+        time: { created: index * 10 + 1, streamed: index * 10 + 2, completed: index * 10 + 8 },
+        content: [{
+          type: "tool", id: `tool-${id}`, name: "read", time: { created: index * 10 + 3, ran: index * 10 + 4, completed: index * 10 + 7 },
+          state: { status: "completed", input: { path: `/tmp/shot-${id}.png` }, metadata: {}, content: [{ type: "text", text: "Image read successfully" }, image] },
+        }],
+      })),
+      cursor: {},
+    })
+    stubAuthoritativeSession(client, sessionId, async () => pageFor(["step-1"]))
+    const apply = (type: string, data: Record<string, unknown>, created = 1) =>
+      applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+    const store = () => messageStoreBus.getOrCreate(instanceId)
+    const state = (messageId: string, partId: string) =>
+      (store().getMessage(messageId)?.parts[partId]?.data as any)?.state
+    const imageCount = (messageId: string, partId: string) => {
+      const content = state(messageId, partId)?.content
+      return Array.isArray(content) ? content.filter((item: any) => item?.type === "file").length : -1
+    }
+    try {
+      // Round 1 reads an image through the live event stream.
+      const round1 = { sessionID: sessionId, assistantMessageID: "step-1" }
+      apply("session.step.started", { ...round1, agent: "build", model: { providerID: "zhipuai-coding-plan", id: "glm-5.3" } }, 1)
+      apply("session.tool.input.started", { ...round1, id: "tool-step-1", name: "read" }, 2)
+      apply("session.tool.called", { ...round1, id: "tool-step-1", input: { path: "/tmp/shot-1.png" }, executed: false }, 3)
+      const completed = apply("session.tool.success", { ...round1, id: "tool-step-1", content: [{ type: "text", text: "Image read successfully" }, image], metadata: {} }, 4)
+      projectOpenCodeMessages(instanceId, sessionId, completed)
+      assert.equal(state("step-1", "tool-step-1")?.status, "completed")
+      assert.equal(imageCount("step-1", "tool-step-1"), 1, "the image content is resident")
+
+      // Round 2 streams and calls other tools; the settled read stays settled.
+      const round2 = { sessionID: sessionId, assistantMessageID: "step-2" }
+      apply("session.step.started", { ...round2, agent: "build", model: { providerID: "zhipuai-coding-plan", id: "glm-5.3" } }, 10)
+      apply("session.text.started", round2, 11)
+      apply("session.tool.input.started", { ...round2, id: "tool-step-2", name: "bash" }, 13)
+      const running = apply("session.tool.called", { ...round2, id: "tool-step-2", input: { command: "adb shell screencap" }, executed: false }, 14)
+      projectOpenCodeMessages(instanceId, sessionId, running)
+      assert.equal(state("step-2", "tool-step-2")?.status, "running", "round 2's tool runs")
+      assert.equal(state("step-1", "tool-step-1")?.status, "completed", "round 1's read stays completed")
+      assert.equal(imageCount("step-1", "tool-step-1"), 1)
+
+      // A stale `called` for the settled read — re-delivered after its success —
+      // must not regress it to "running" (which hid the image until the next
+      // settlement read healed it).
+      const stale = apply("session.tool.called", { ...round1, id: "tool-step-1", input: { path: "/tmp/shot-1.png" }, executed: false }, 15)
+      projectOpenCodeMessages(instanceId, sessionId, stale)
+      assert.equal(state("step-1", "tool-step-1")?.status, "completed", "a stale called never regresses a settled tool")
+      assert.equal(imageCount("step-1", "tool-step-1"), 1, "the image content stays")
+
+      // A later `called` for a still-streaming tool is legitimate and applies.
+      const round3 = { sessionID: sessionId, assistantMessageID: "step-3" }
+      apply("session.step.started", { ...round3, agent: "build", model: { providerID: "zhipuai-coding-plan", id: "glm-5.3" } }, 20)
+      apply("session.tool.input.started", { ...round3, id: "tool-step-3", name: "read" }, 21)
+      const called = apply("session.tool.called", { ...round3, id: "tool-step-3", input: { path: "/tmp/shot-3.png" }, executed: false }, 22)
+      projectOpenCodeMessages(instanceId, sessionId, called)
+      assert.equal(state("step-3", "tool-step-3")?.status, "running", "a fresh called still applies")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
   it("reconciles a stranded tool from a liveness-observed settlement", async () => {
     const instanceId = "opencode-data-liveness-settled"
     const sessionId = "session"
