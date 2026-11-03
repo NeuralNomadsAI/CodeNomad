@@ -262,11 +262,19 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
       if (parsed.data.action === "start" && deps.supervision) {
         if (!human) throw new Error("Human authentication required")
         const connection = owned.connection
-        await deps.supervision.missionPlay(connection, parsed.data.requestId, () => {
+        const authorize = () => {
           owned.current()
           if (recurrenceHumanSession(request, { auth: deps.auth!, remoteDevices: deps.remoteDevices })?.sessionId !== human.sessionId)
             throw new Error("Mission principal changed")
-        })
+        }
+        // The supervision default is a side effect of Play: a host where it is
+        // unavailable keeps its preference and still plays. A changed principal
+        // or connection still refuses before the lifecycle.
+        try { await deps.supervision.missionPlay(connection, parsed.data.requestId, authorize) }
+        catch (error) {
+          authorize()
+          request.log.warn({ err: error, missionID: params.data.missionID }, "Mission Play left service supervision unchanged")
+        }
         await owned.refresh(); owned.current()
       }
     })

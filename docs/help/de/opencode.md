@@ -37,7 +37,7 @@ Unter Windows laufen Überwachung und Wiederherstellung ohne Terminalfenster im 
 
 Vor dem ersten Mission-Start speichert **Beim ersten Mission-Start ausgeschaltet lassen** ein ausdrückliches Aus, ohne zuvor die Überwachung zu installieren.
 
-Unter **Einstellungen → OpenCode** installiert **OpenCode gestartet halten** eine Systemüberwachung auf dem Ausführungshost, gemeinsam für alle CodeNomad-Profile dieses Dienstes. Sie arbeitet unabhängig von Missions, auch bei geschlossenem CodeNomad. Der erste Mission-Start aktiviert sie, sofern Sie sie nicht vorher ausdrücklich ausschalten; das Erstellen einer pausierten Mission behält Ihre Auswahl bei. Pause, Stopp und Löschen einer Mission lassen diese Einstellung bestehen.
+Unter **Einstellungen → OpenCode** installiert **OpenCode gestartet halten** eine Systemüberwachung auf dem Ausführungshost, gemeinsam für alle CodeNomad-Profile dieses Dienstes. Sie arbeitet unabhängig von Missions, auch bei geschlossenem CodeNomad. Der erste Mission-Start aktiviert sie, sofern Sie sie nicht vorher ausdrücklich ausschalten; das Erstellen einer pausierten Mission behält Ihre Auswahl bei. Pause, Stopp und Löschen einer Mission lassen diese Einstellung bestehen. Ist die Überwachung auf dem Ausführungshost nicht verfügbar, führen **Starten** und **Fortsetzen** die Mission trotzdem aus und lassen die Einstellung unverändert.
 
 Beim Ausschalten wird die Überwachung entfernt; OpenCode läuft weiter und wird nicht mehr neu gestartet. Für einen dauerhaften Stopp zuerst ausschalten und dann OpenCode ausdrücklich stoppen. Bei aktiver Überwachung folgt auf `opencode service stop` ein Neustart.
 

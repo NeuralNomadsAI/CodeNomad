@@ -37,7 +37,7 @@ OpenCode 管理其全局服务注册、会话、消息和数据库。CodeNomad �
 
 在首次启动 Mission 前，**首次启动 Mission 时保持关闭** 可保存显式关闭的选择，无需先安装监管。
 
-在 **设置 → OpenCode** 中，**保持 OpenCode 运行** 会在执行主机上安装系统监管，由使用此服务的所有 CodeNomad 配置共享。它独立于 Missions 运行，即使 CodeNomad 已关闭也有效。若未提前显式关闭，首次启动 Mission 时会启用；创建暂停的 Mission 会保留此选择。暂停、停止或删除 Mission 均保留此偏好。
+在 **设置 → OpenCode** 中，**保持 OpenCode 运行** 会在执行主机上安装系统监管，由使用此服务的所有 CodeNomad 配置共享。它独立于 Missions 运行，即使 CodeNomad 已关闭也有效。若未提前显式关闭，首次启动 Mission 时会启用；创建暂停的 Mission 会保留此选择。暂停、停止或删除 Mission 均保留此偏好。若执行主机上无法使用监管，**开始** 和 **继续** 仍会运行 Mission，且不更改此偏好。
 
 关闭会移除监管，OpenCode 继续运行但不再被自动重启。如需持续停止，请先关闭此项，再显式停止 OpenCode。监管启用时，`opencode service stop` 后会重新启动。
 

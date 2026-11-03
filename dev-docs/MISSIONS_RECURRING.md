@@ -209,7 +209,8 @@ Human Play also calls the shared service-supervision default-ON path on its exac
 acquired connection. An explicit OFF remains OFF; creating, configuring, pausing,
 stopping and deleting a Mission preserve that service-wide preference. Supervision
 preparation precedes the signed control proof and native schedule dispatch. Runtime
-namespace/storage failures remain explicit at the product boundary; independent
+namespace/storage failures remain explicit at the schedule product boundary, while
+one-time Play and Resume continue without it ([Missions](MISSIONS.md#explicit-execution-controls)); independent
 OS protection and native calendar admission keep separate status contracts.
 
 Each technical wake enters an exact-file, own-process HTTP RPC with an eight-second

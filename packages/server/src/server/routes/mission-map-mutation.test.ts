@@ -86,6 +86,39 @@ test("immediate human Play defaults supervision on its exact fenced connection; 
   } finally { await app.close() }
 })
 
+test("Play and Resume reach the lifecycle when service supervision is unavailable on this host", async () => {
+  const h = harness(), app = Fastify({ logger: false })
+  let plays = 0
+  registerMissionRoutes(app, { workspaceManager: h.manager as never, worktreeDeletionFence: h.state.fence,
+    auth: { isAuthEnabled: () => true, getSessionFromRequest: () => ({ username: "human", sessionId: "cookie" }) },
+    supervision: { missionPlay: async (_connection, _id, authorize) => {
+      authorize(); plays++
+      throw new Error(plays === 1 ? "supervision-platform-unavailable" : "supervision-namespace-unavailable")
+    } },
+  })
+  try {
+    for (const requestId of ["play", "resume"]) {
+      const response = await app.inject({ method: "POST", url: routes[1].url, payload: { action: "start", expectedRevision: 1, requestId } })
+      assert.equal(response.statusCode, 200, requestId)
+    }
+    assert.equal(plays, 2)
+    assert.deepEqual(h.state.rpcs, ["lifecycle", "lifecycle"])
+  } finally { await app.close() }
+})
+
+test("a supervision failure after the connection was replaced still refuses Play before the lifecycle", async () => {
+  const h = harness(), app = Fastify({ logger: false })
+  registerMissionRoutes(app, { workspaceManager: h.manager as never, worktreeDeletionFence: h.state.fence,
+    auth: { isAuthEnabled: () => true, getSessionFromRequest: () => ({ username: "human", sessionId: "cookie" }) },
+    supervision: { missionPlay: async () => { h.state.current = false; throw new Error("supervision-namespace-unavailable") } },
+  })
+  try {
+    const response = await app.inject({ method: "POST", url: routes[1].url, payload: { action: "start", expectedRevision: 1, requestId: "play" } })
+    assert.equal(response.statusCode, 503)
+    assert.deepEqual(h.state.rpcs, [])
+  } finally { await app.close() }
+})
+
 test("existing map mutations keep their native contract without requiring document-creation capabilities", async () => {
   for (const route of routes) {
     const h = harness({ unsupportedDocuments: true })
