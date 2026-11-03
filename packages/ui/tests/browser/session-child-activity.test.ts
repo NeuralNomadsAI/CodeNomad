@@ -246,7 +246,7 @@ test("visible branches follow new chevron states recursively, restore all opened
   } finally { await page.close() }
 })
 
-test("buffered offscreen subsessions wait for a fresh transition while visible", async () => {
+test("mounted offscreen subsessions wait for a fresh transition while visible", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -258,13 +258,27 @@ test("buffered offscreen subsessions wait for a fresh transition while visible",
     await page.waitForFunction(() => Boolean((window as any).fixture))
     await page.evaluate(() => (window as any).fixture.status("work-grandchild", "working"))
     await row.waitFor()
+    // Native focus retention keeps a real row mounted even outside Virtua's current buffer.
+    await chevron.focus()
     const top = await row.evaluate(el => {
       const viewport = el.closest(".session-list")!
       return viewport.scrollTop + el.getBoundingClientRect().top - viewport.getBoundingClientRect().top
     })
-    await page.locator(".session-list-container").evaluate(el => { el.parentElement!.style.height = "40px" })
+    await page.locator(".session-list-container").evaluate((el, top) => {
+      el.parentElement!.style.height = "40px"
+      const viewport = el.querySelector<HTMLElement>(".session-list")!
+      // Keep this mounted row just outside the viewport.
+      viewport.scrollTop = Math.max(0, top - viewport.clientHeight - 4)
+    }, top)
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    await page.waitForFunction(() => {
+      const row = document.querySelector('[data-session-id="work-grandchild"]')?.getBoundingClientRect()
+      const viewport = document.querySelector(".session-list")?.getBoundingClientRect()
+      return row && viewport && row.top >= viewport.bottom
+    })
     await page.evaluate(() => (window as any).fixture.status("work-great-grandchild", "working"))
-    assert.equal(await chevron.getAttribute("aria-expanded"), "false", "a buffered row beyond the scroll viewport stays closed")
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    assert.equal(await chevron.getAttribute("aria-expanded"), "false", "a mounted row beyond the scroll viewport stays closed")
     await page.locator(".session-list").evaluate((el, top) => { el.scrollTop = top }, top)
     await page.waitForFunction(() => {
       const row = document.querySelector('[data-session-id="work-grandchild"]')?.getBoundingClientRect()
