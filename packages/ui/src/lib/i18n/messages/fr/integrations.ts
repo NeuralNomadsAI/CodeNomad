@@ -28,6 +28,8 @@ export const integrationMessages = {
   "integrations.host.detaching": "Détachement…",
   "integrations.host.detached": "Détachée : {label}",
   "integrations.host.info": "Détache uniquement cette conversation. L'application reste ouverte ; les autres conversations gardent leurs liaisons.",
+  "integrations.host.notice.detaching": "Détachement de {label}…",
+  "integrations.host.notice.unknown": "Liaison inconnue : {label}",
   "integrations.unavailableShort": "Attachement indisponible",
   "integrations.attach": "Attacher une application ouverte…",
   "integrations.conversation": "Conversation cible :",

@@ -974,9 +974,12 @@ test("lost host-detach response stays uncertain until an authoritative read, wit
     backend.observeRuntime(backend.state.runtime)
     await page.waitForTimeout(400)
     assert.equal(detachControls().length, 1); assert.equal(detachHosts(), 1)
-    assert.equal(await page.getByText("Detached: Fixture window").count(), 0)
+    const live = page.locator('.bundles-host-banner [aria-live="polite"]')
+    assert.equal(await live.innerText(), "Binding unknown: Fixture window")
     backend.state.uncertain = false; backend.release("state")
     await banner.waitFor({ state: "detached" })
+    await live.filter({ hasText: "Detached: Fixture window" }).waitFor()
+    assert.equal(await page.getByText("Binding unknown").count(), 0)
     assert.equal(detachControls().length, 1); assert.equal(detachHosts(), 1)
     await clean()
   } finally { backend.release("state"); await page.close() }
@@ -996,11 +999,55 @@ test("host banner info opens from the keyboard and closes with Escape; session c
     await page.keyboard.press("Escape")
     await tooltip.waitFor({ state: "hidden" })
     assert.equal(await info.evaluate(element => element === document.activeElement), true)
-    await page.evaluate(() => (window as any).fixture.show("ses_other"))
+    // The conversation changes before the click reaches the bridge.
+    await page.evaluate(async () => {
+      const button = document.querySelector<HTMLButtonElement>(".bundles-host-detach")!
+      await (window as any).fixture.show("ses_other"); button.click()
+    })
     await frame(page).locator("#ready").filter({ hasText: "ses_other" }).waitFor()
     await banner.waitFor({ state: "detached" })
+    await page.waitForTimeout(200)
     assert.equal(detachControls().length, 0); assert.equal(backend.state.detaches, 0); assert.equal(detachHosts(), 0)
     assert.equal(backend.state.binding.get("ses_work"), true)
+    // A detach admitted before a switch completes once; its answer never reaches the new mounting.
+    await page.evaluate(() => (window as any).fixture.show("ses_work"))
+    await frame(page).locator("#ready").filter({ hasText: "ses_work" }).waitFor()
+    await page.waitForFunction(() => (window as any).mountResponses >= 3)
+    const again = await attachedBanner(page)
+    backend.hold("control")
+    await again.getByRole("button", { name: "Detach", exact: true }).click()
+    await wait(() => detachControls().length === 1)
+    await page.evaluate(() => (window as any).fixture.show("ses_other"))
+    await frame(page).locator("#ready").filter({ hasText: "ses_other" }).waitFor()
+    backend.release("control")
+    await page.waitForTimeout(300)
+    assert.equal(detachControls().length, 1); assert.ok(detachHosts() <= 1)
+    assert.equal(await page.locator(".bundles-host-row").count(), 0)
+    assert.equal(await page.locator('.bundles-host-banner [aria-live="polite"]').innerText(), "")
     await clean()
-  } finally { await page.close() }
+  } finally { backend.release("control"); await page.close() }
+})
+
+test("a state answer computed before the detach cannot restore the row after the authoritative re-read", async () => {
+  const { page, clean } = await open()
+  let resume!: () => void
+  const gate = new Promise<void>(resolve => { resume = resolve })
+  try {
+    const banner = await attachedBanner(page)
+    let held = false
+    await page.route("**/bundles/state", async route => {
+      const response = await route.fetch()
+      held = true; await gate; await route.fulfill({ response })
+    }, { times: 1 })
+    const stale = frame(page).locator("body").evaluate(() => (window as any).readState())
+    await wait(() => held)
+    await banner.getByRole("button", { name: "Detach", exact: true }).click()
+    await banner.waitFor({ state: "detached" })
+    resume()
+    assert.equal((await stale).integrations[0].attachment.state, "attached", "the frame received the stale answer")
+    await page.waitForTimeout(200)
+    assert.equal(await page.locator(".bundles-host-row").count(), 0)
+    assert.equal(detachHosts(), 1)
+    await clean()
+  } finally { resume?.(); await page.close() }
 })

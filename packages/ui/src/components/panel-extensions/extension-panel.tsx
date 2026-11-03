@@ -88,7 +88,7 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
     frame?.contentWindow?.postMessage({ type: "codenomad:init" }, "*", [channel.port2])
   }
   const detaches = management && manifest.apiVersion === 4 && manifest.permissions.includes("bundles.manage") ? management : undefined
-  return <div class="panel-extension-surface">
+  return <div class="panel-extension-surface" classList={{ "has-host-banner": Boolean(detaches) }}>
     <Show when={detaches}>{host => <BundlesHostBanner controls={host().hostControls()} notice={host().hostNotice()}
       detach={integration => void host().detach(integration)} restoreFocus={() => { if (frame?.isConnected) frame.focus() }} />}</Show>
     <Show when={confirmation()} keyed>{view => <BundlesConfirmationView view={view}

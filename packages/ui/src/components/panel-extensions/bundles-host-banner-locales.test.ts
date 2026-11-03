@@ -13,13 +13,14 @@ import { integrationMessages as zhHans } from "../../lib/i18n/messages/zh-Hans/i
 
 test("host detach banner labels, states and info text exist and are translated in all ten locales", () => {
   const keys = ["integrations.host.region", "integrations.host.detach", "integrations.host.detaching", "integrations.host.detached",
-    "integrations.host.info", "integrations.binding.attached", "integrations.binding.unknown"]
+    "integrations.host.info", "integrations.host.notice.detaching", "integrations.host.notice.unknown",
+    "integrations.binding.attached", "integrations.binding.unknown"]
   for (const [locale, messages] of Object.entries({ de, en, es, fr, he, ja, ne, ru, tr, "zh-Hans": zhHans })) {
     for (const key of keys) {
       const value = (messages as Record<string, string | undefined>)[key]
       assert.ok(value?.trim(), `${locale}: ${key}`)
       if (locale !== "en") assert.notEqual(value, (en as Record<string, string>)[key], `${locale}: ${key} is translated`)
-      if (key.endsWith(".detached") || key.endsWith(".attached")) assert.ok(value!.includes("{label}"), `${locale}: ${key} keeps {label}`)
+      if (key.endsWith(".detached") || key.endsWith(".attached") || key.includes(".notice.")) assert.ok(value!.includes("{label}"), `${locale}: ${key} keeps {label}`)
     }
     // Terse state labels; the one explanatory sentence lives behind the info button.
     for (const key of ["integrations.host.detach", "integrations.host.detaching"]) assert.ok([...(messages as Record<string, string>)[key]!].length <= 24, `${locale}: ${key}`)

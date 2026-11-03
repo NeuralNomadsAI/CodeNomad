@@ -42,7 +42,7 @@ export const bundlesControlInputSchema = z.discriminatedUnion("command", [
   z.object({ ...mounted, command: z.literal("cancel"), planID: capability }).strict(),
   z.object({ ...mounted, command: z.literal("dispose") }).strict(),
   z.object({ ...mounted, command: z.literal("userRemount") }).strict(),
-  /** D24 host-banner click only; the author port has no route to this command. */
+  /** Host-banner click only; the author port has no route to this command. */
   z.object({ ...mounted, command: z.literal("detach"), integration }).strict(),
 ])
 /** `unknown` covers every post-submission doubt; `busy` transmits nothing. */

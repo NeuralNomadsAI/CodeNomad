@@ -542,18 +542,18 @@ the mounted exact package. Operation-specific preparation and dispatch use trust
   `resetCutoffForUserRemount()` is reserved to a trusted explicit user-remount action;
   automatic mounts preserve strikes/cutoff and every remount preserves rate history.
 
-The public `detach()` returns `invalid` and transmits nothing: an opaque-frame message is
-never proof of a user click. Local detach (D24) belongs to `BundlesHostBanner`, which
-`ExtensionPanel` renders outside the frame for managing extensions, one row per native
+The public `detach()` answers `invalid` and reaches no native seam, because a frame message
+carries no proof of a user click. Local detach belongs to `BundlesHostBanner`, which
+`ExtensionPanel` renders outside the frame for managing extensions: one row per native
 integration whose authoritative `bindingRead` reports `attached` for the displayed
-conversation. Its rows follow the parent's own observation of `state()` answers and one
-parent re-read after each detach; `readToken()` fences reads that started before a detach
-began or ended. Its single **Detach** click is the consent, with no confirmation window.
-`aria-disabled` keeps focus while in flight, a second activation is inert, and the row
-shows the uncertain state for a lost or refused response until the re-read settles it; never
-announce success before that read. Focus returns to the frame when a focused row
-disappears; a polite live region announces state changes; the one explanatory sentence
-sits behind a keyboard-openable `SettingsInfoTip`.
+conversation. The parent observes the frame's `state()` answers and re-reads once after
+each detach, adding no native IO of its own at mount; `readToken()` fences reads that started before
+a detach began or ended. The single **Detach** click is the consent. `aria-disabled` keeps
+focus while the request is in flight and makes further activations inert. A lost or refused
+response shows **Binding unknown** until the re-read settles it, and the detached
+announcement follows that read. Focus returns to the frame when a focused row disappears,
+a polite live region names each state change, and the one explanatory sentence sits behind
+a keyboard-openable `SettingsInfoTip`.
 
 The parent posts `POST /api/panel-extensions/:id/bundles/control` with
 `{ owner, mountID, command: "detach", integration }`. `BundlesTransport` checks the owner,
@@ -561,8 +561,8 @@ mount and management grant, debits the `manage` budget, answers `{ outcome: "bus
 a cutoff (`BundlesLifecycle.cutOff()`), while a confirmation plan holds the shared slot
 (`exclusive`) or while the same mount already detaches, then calls the in-process
 `BundlesActions.detach` builder exactly once. The answer is `detached`, `none`, `busy` or
-`unknown`; any doubt after native submission, including `NativeMutationUncertainError`, is
-`unknown`, never `none`. Nothing retries or replays it. `request({ action: "remove", ... })`
+`unknown`; every doubt after native submission, including `NativeMutationUncertainError`,
+is `unknown`. A further detach always needs a fresh click. `request({ action: "remove", ... })`
 uses the confirmed exact-source removal adapter above.
 
 Checks: `bundles-lifecycle.test.ts` exercises live store leases, target conflicts, expiry,

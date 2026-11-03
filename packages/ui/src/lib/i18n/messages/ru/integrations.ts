@@ -28,6 +28,8 @@ export const integrationMessages = {
   "integrations.host.detaching": "Отключение…",
   "integrations.host.detached": "Отключено: {label}",
   "integrations.host.info": "Отключает только этот разговор. Приложение остаётся открытым; другие разговоры сохраняют свои подключения.",
+  "integrations.host.notice.detaching": "Отключение {label}…",
+  "integrations.host.notice.unknown": "Подключение неизвестно: {label}",
   "integrations.unavailableShort": "Подключение недоступно",
   "integrations.attach": "Подключить открытое приложение…",
   "integrations.conversation": "Целевой разговор:",

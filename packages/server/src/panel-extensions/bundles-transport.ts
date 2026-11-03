@@ -235,7 +235,7 @@ export class BundlesTransport {
     return { ok: true }
   }
 
-  /** D24 local detach: the parent's own banner click is the consent, so this lane has no confirmation plan. */
+  /** Local detach: the parent's own banner click is the consent, so this lane has no confirmation plan. */
   private async detach(mounted: Mounted, extension: string, integration: string, signal: AbortSignal): Promise<BundlesDetachResult> {
     if (!this.lifecycle.budget.take(extension, "manage") || this.lifecycle.cutOff(extension) || this.lifecycle.exclusive
       || mounted.detaching) return { outcome: "busy" }

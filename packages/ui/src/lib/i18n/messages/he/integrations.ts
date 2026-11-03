@@ -28,6 +28,8 @@ export const integrationMessages = {
   "integrations.host.detaching": "מנתק…",
   "integrations.host.detached": "נותק: {label}",
   "integrations.host.info": "מנתק רק את השיחה הזו. היישום נשאר פתוח; שיחות אחרות שומרות על החיבורים שלהן.",
+  "integrations.host.notice.detaching": "מנתק את {label}…",
+  "integrations.host.notice.unknown": "החיבור אינו ידוע: {label}",
   "integrations.unavailableShort": "החיבור אינו זמין",
   "integrations.attach": "חיבור יישום פתוח…",
   "integrations.conversation": "שיחת יעד:",

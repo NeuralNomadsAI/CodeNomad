@@ -28,6 +28,8 @@ export const integrationMessages = {
   "integrations.host.detaching": "Bağlantı kesiliyor…",
   "integrations.host.detached": "Bağlantı kesildi: {label}",
   "integrations.host.info": "Yalnızca bu konuşmanın bağlantısını keser. Uygulama açık kalır; diğer konuşmalar bağlantılarını korur.",
+  "integrations.host.notice.detaching": "{label} bağlantısı kesiliyor…",
+  "integrations.host.notice.unknown": "Bağlantı bilinmiyor: {label}",
   "integrations.unavailableShort": "Bağlantı kullanılamıyor",
   "integrations.attach": "Açık bir uygulamayı bağla…",
   "integrations.conversation": "Hedef konuşma:",

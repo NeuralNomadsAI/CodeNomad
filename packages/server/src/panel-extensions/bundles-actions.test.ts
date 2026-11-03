@@ -1121,8 +1121,9 @@ test("host detach control drives the real builder: guards before IO, one capture
     assert.equal(f.state.updates.length, 1); assert.deepEqual(f.state.metadata, { unrelated: true })
     assert.equal(frames.length, 1, "no confirmation view or terminal event")
     f.state.session = "ses_other"
-    await assert.rejects(detach())
+    await assert.rejects(detach(), { message: /^(Bundles request unavailable|Stale bundles target)$/ })
     assert.equal(f.state.rpc.filter(method => method === "detachHost").length, 1)
+    assert.equal(f.state.updates.length, 1); assert.deepEqual(f.state.metadata, { unrelated: true })
   } finally { transport.dispose(); await f.cleanup() }
 })
 

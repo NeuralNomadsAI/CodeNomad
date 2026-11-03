@@ -57,7 +57,9 @@ async function harness(options: { readOnly?: boolean; backpressure?: boolean; cl
           dispatched.push(action); submitted()
         } }
     }, async detach(context, integration) {
-      await context.authority.revalidate(); context.authority.onSubmitted?.(); detached.push(integration)
+      await context.authority.revalidate()
+      if (refuseDispatch) throw new Error("secret-file-and-token")
+      context.authority.onSubmitted?.(); detached.push(integration)
       return { outcome: "detached" as const }
     } },
   })
@@ -577,7 +579,11 @@ test("host detach control: strict body 400, foreign owner/stale native 503, stal
     assert.equal(accepted.statusCode, 200); assert.equal(accepted.headers["cache-control"], "no-store")
     assert.deepEqual(accepted.json(), { outcome: "detached" }); assert.deepEqual(h.detached, ["blender"])
     assert.equal((await h.post("control", { owner: a.owner, mountID, command: "confirm", planID: "a".repeat(32) })).statusCode, 409)
-    h.set({ nativeLive: false })
+    h.set({ refuseDispatch: true })
+    const refused = await h.post("control", body)
+    assert.equal(refused.statusCode, 503); assert.deepEqual(refused.json(), { error: "Panel extension request unavailable" })
+    assert(!JSON.stringify(h.records).includes("secret-file-and-token"))
+    h.set({ refuseDispatch: false, nativeLive: false })
     assert.equal((await h.post("control", body)).statusCode, 503)
     assert.deepEqual(h.detached, ["blender"]); assert.equal(h.state().prepared, 0)
     assert(!JSON.stringify(h.records).includes(a.owner))

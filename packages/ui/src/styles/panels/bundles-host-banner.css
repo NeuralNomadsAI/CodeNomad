@@ -1,12 +1,14 @@
-/* Trusted D24 strip above an API 4 frame: one row per attached native integration. */
-.panel-extension-surface:has(> .bundles-host-banner) {
+/* Trusted host strip above an API 4 frame: one row per attached native integration. */
+.panel-extension-surface.has-host-banner {
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
-.panel-extension-surface:has(> .bundles-host-banner) > iframe {
+.panel-extension-surface.has-host-banner > iframe {
   flex: 1;
   height: auto;
+  min-height: 0;
 }
 
 .bundles-host-row {
@@ -35,7 +37,10 @@
   color: var(--text-muted);
 }
 
-.bundles-host-detach[aria-disabled="true"] {
-  opacity: 0.6;
-  cursor: default;
+/* aria-disabled keeps the in-flight button focusable. */
+.bundles-host-detach[aria-disabled="true"],
+.bundles-host-detach[aria-disabled="true"]:hover {
+  background-color: var(--surface-secondary);
+  opacity: 0.5;
+  cursor: not-allowed;
 }

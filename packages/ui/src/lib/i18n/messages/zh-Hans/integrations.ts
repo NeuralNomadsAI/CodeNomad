@@ -28,6 +28,8 @@ export const integrationMessages = {
   "integrations.host.detaching": "正在断开…",
   "integrations.host.detached": "已断开：{label}",
   "integrations.host.info": "仅断开此会话。应用保持打开，其他会话保留各自的连接。",
+  "integrations.host.notice.detaching": "正在断开 {label}…",
+  "integrations.host.notice.unknown": "绑定未知：{label}",
   "integrations.unavailableShort": "连接不可用",
   "integrations.attach": "连接已打开的应用…",
   "integrations.conversation": "目标会话：",
