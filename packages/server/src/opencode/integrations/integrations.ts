@@ -1,5 +1,6 @@
 import type { PluginControlLocation, PluginControlScope } from "../../api-types"
-import type { IntegrationsResponse, IntegrationView } from "../../integration-types"
+import type { IntegrationConnectionView, IntegrationsResponse, IntegrationView } from "../../integration-types"
+import type { IntegrationFamily, IntegrationStatus } from "./contract"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { locationRequestOptions } from "../compatibility/location"
 import { PluginControlsError, type PluginControls } from "../plugin-controls"
@@ -71,6 +72,10 @@ export class IntegrationsReader {
             (source.scope === "global" || source.scope === "project")
               && snapshot.targets.some(target => target.scope === source.scope && target.path === source.path)
               ? [{ scope: source.scope, entryIndex: source.entryIndex }] : []),
+          configuredRules: recognition.ambiguous ? [] : snapshot.configured.rules.flatMap(rule =>
+            rule.selector === entry.plugin && (rule.scope === "global" || rule.scope === "project")
+              && snapshot.targets.some(target => target.scope === rule.scope && target.path === rule.path)
+              ? [{ scope: rule.scope, entryIndex: rule.entryIndex }] : []),
           ...(source?.type === "package" && source.version ? { version: source.version } : {}),
           ...(source?.type === "package" && source.outdated ? { outdated: true as const } : {}),
           state: read.state,
@@ -78,7 +83,7 @@ export class IntegrationsReader {
             status: {
               version: read.status.integration.version,
               ...(read.status.host ? { host: read.status.host } : {}),
-              ...(read.status.connection ? { connection: read.status.connection } : {}),
+              ...(read.status.connection ? { connection: projectConnection(entry.family, read.status.connection) } : {}),
               ...(read.status.notices ? { notices: read.status.notices } : {}),
             },
           } : {}),
@@ -86,4 +91,13 @@ export class IntegrationsReader {
       }),
     }
   }
+}
+
+/**
+ * Integration surfaces never receive an aggregate binding state or count: a native integration keeps only its
+ * offer count, the other families only their connection state.
+ */
+function projectConnection(family: IntegrationFamily, connection: NonNullable<IntegrationStatus["connection"]>): IntegrationConnectionView {
+  if (family === "native") return connection.offers === undefined ? {} : { offers: connection.offers }
+  return connection.state === "attached" || connection.state === "available" ? {} : { state: connection.state }
 }

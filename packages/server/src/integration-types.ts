@@ -45,6 +45,8 @@ export interface IntegrationView {
   scopes: PluginControlScope[]
   /** Safe correlation to writable plugin-source rows; paths, targets and plugin IDs stay server-side. */
   configuredSources: Array<{ scope: PluginControlScope; entryIndex: number }>
+  /** Safe correlation to writable activation rules of its plugin ID (none when ambiguous). */
+  configuredRules: Array<{ scope: PluginControlScope; entryIndex: number }>
   /** Installed package version, when the runtime loaded it. */
   version?: string
   outdated?: true
@@ -53,10 +55,16 @@ export interface IntegrationView {
   status?: {
     version: string
     host?: NonNullable<IntegrationStatus["host"]>
-    connection?: NonNullable<IntegrationStatus["connection"]>
+    connection?: IntegrationConnectionView
     notices?: string[]
   }
 }
+
+/**
+ * `connection` without any aggregate binding fact: a native integration's offer count, or another family's
+ * connection state. Bindings are read per displayed conversation only.
+ */
+export type IntegrationConnectionView = { offers?: number; state?: Exclude<NonNullable<IntegrationStatus["connection"]>["state"], "attached" | "available"> }
 
 /** `GET /api/workspaces/:id/integrations?directory=` */
 export interface IntegrationsResponse {

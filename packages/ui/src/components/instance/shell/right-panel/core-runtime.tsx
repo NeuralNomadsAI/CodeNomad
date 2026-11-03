@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, lazy, on, onCleanup, type Accessor } from "solid-js"
+import { createEffect, createMemo, createSignal, lazy, on, onCleanup, type Accessor, type JSX } from "solid-js"
 import type { Instance } from "../../../../types/instance"
 import type { Session } from "../../../../types/session"
 import type { PromptInputApi } from "../../../prompt-input/types"
@@ -36,6 +36,7 @@ interface CoreRightPanelRuntimeOptions {
   customization: Accessor<RightPanelCustomization>
   onCustomizationChange: (updater: (current: RightPanelCustomization) => RightPanelCustomization) => void
   extraStatusSections: Accessor<readonly RightPanelSectionModule[]>
+  extraStatusContent?: Accessor<readonly (() => JSX.Element)[]>
 }
 
 export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOptions) {
@@ -91,6 +92,7 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
     renderStatusTab: () => <LazyStatusTab t={options.t} instanceId={options.instanceId} instance={options.instance}
       activeSession={options.activeSession} isActive={() => options.isActive() && options.rightPanelTab() === "status"}
       expandedItems={options.expandedItems} onExpandedItemsChange={options.onExpandedItemsChange}
-      customization={options.customization} onCustomizationChange={options.onCustomizationChange} extraSections={options.extraStatusSections()} />,
+      customization={options.customization} onCustomizationChange={options.onCustomizationChange} extraSections={options.extraStatusSections()}
+      extraContent={options.extraStatusContent?.()} />,
   })
 }

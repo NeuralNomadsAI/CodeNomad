@@ -115,6 +115,45 @@ describe("integrations route", () => {
     }
   })
 
+  it("correlates only the writable activation rules of a non-ambiguous integration's plugin", async () => {
+    const snapshot = loadedSnapshot()
+    snapshot.configured.rules = [
+      { selector: "neuralnomads.fixture", enabled: false, scope: "global", path: "/config/opencode.jsonc", entryIndex: 3, order: 0 },
+      { selector: "neuralnomads.fixture", enabled: true, scope: "project", path: "/elsewhere/opencode.jsonc", entryIndex: 1, order: 1 },
+      { selector: "neuralnomads.other", enabled: false, scope: "global", path: "/config/opencode.jsonc", entryIndex: 4, order: 0 },
+    ]
+    const { app } = harness({ snapshot: () => snapshot })
+    const items = (await app.inject({ method: "GET", url: "/api/workspaces/w1/integrations?directory=%2Fwork" })).json().integrations as IntegrationsResponse["integrations"]
+    assert.deepEqual(items.map(item => item.configuredRules), [[{ scope: "global", entryIndex: 3 }], [], [{ scope: "global", entryIndex: 4 }]])
+    await app.close()
+    snapshot.runtime.push(snapshot.runtime[0]!)
+    const ambiguous = harness({ snapshot: () => snapshot })
+    const first = (await ambiguous.app.inject({ method: "GET", url: "/api/workspaces/w1/integrations?directory=%2Fwork" })).json().integrations[0]
+    assert.deepEqual([first.ambiguous, first.configuredRules], [true, []])
+    await ambiguous.app.close()
+  })
+
+  it("never projects an aggregate binding state or count", async () => {
+    const status = (family: string, connection: unknown) => ({ contract: 1, integration: { id: "fixture", version: "0.1.0", family, spec: 0 },
+      ...(family === "native" ? { host: { state: "ok" } } : {}), connection })
+    for (const [family, connection, expected] of [
+      ["native", { state: "attached", offers: 2, attachedSessions: 7 }, { offers: 2 }],
+      ["native", { state: "none" }, {}],
+      ["vendor-mcp", { state: "connected", attachedSessions: 3 }, { state: "connected" }],
+      ["api", { state: "signed_out" }, { state: "signed_out" }],
+      ["api", { state: "attached", offers: 1 }, {}],
+    ] as const) {
+      const { app } = harness({ status: status(family, connection), catalog: { state: "fresh",
+        catalog: catalogOf(catalogEntry("fixture", { family })) } })
+      const response = await app.inject({ method: "GET", url: "/api/workspaces/w1/integrations?directory=%2Fwork" })
+      const item = response.json().integrations[0]
+      assert.equal(item.state, "ok", `${family} ${JSON.stringify(connection)}`)
+      assert.deepEqual(item.status.connection, expected, `${family} ${JSON.stringify(connection)}`)
+      assert.equal(response.body.includes("attachedSessions"), false)
+      await app.close()
+    }
+  })
+
   it("reports neither a declaration, a runtime nor a row association for a source shared by two integrations", async () => {
     const snapshot = pluginSnapshot({
       sources: [{ target: "@neuralnomads/opencode-slow", scope: "global", path: "/config/opencode.jsonc", entryIndex: 0, hasOptions: false, pluginId: "neuralnomads.fixture" }],
