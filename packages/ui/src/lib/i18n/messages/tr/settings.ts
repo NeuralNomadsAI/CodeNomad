@@ -1,5 +1,5 @@
 export const settingsMessages = {
-  "providerUsage.estimated": "Tahmin: 00:00 UTC'den beri kaydedilen adımlar, varsayılan günlük 200 isteğe göre. Adımlar istekleri yaklaşık yansıtır; diğer trafik ve değişken IP sınırları gerçek kota kullanımından farklı sonuç verebilir.",
+  "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "Tahmini sıfırlanma {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "Alt oturumları otomatik genişlet",
   "settings.behavior.autoExpandActiveSubsessions.info": "Seçili konuşmanın görünen kapalı bir dalı çalışıyor, sıkıştırılıyor veya girdi bekleniyor durumuna geçerse etkin alt oturumlarına giden yol açılır. Görünen alt oturumlar her derinlikte aynı kurala uyar. Etkinliğin dalları açmasını önlemek için kapatın. Açık dallar geri yüklemek üzere kaydedilir.",

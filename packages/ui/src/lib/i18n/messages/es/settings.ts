@@ -1,5 +1,5 @@
 export const settingsMessages = {
-  "providerUsage.estimated": "Estimación: pasos registrados desde las 00:00 UTC sobre una base supuesta de 200 solicitudes/día. Los pasos aproximan las solicitudes; otro tráfico y los límites variables por IP pueden diferir del uso real de la cuota.",
+  "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "Reinicio estimado {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "Expandir subsesiones automáticamente",
   "settings.behavior.autoExpandActiveSubsessions.info": "Cuando una rama visible y contraída de la conversación seleccionada pasa a trabajar, compactar o esperar una respuesta, se expande la ruta hasta sus subsesiones activas. Las subsesiones visibles siguen la misma regla a cualquier profundidad. Desactiva para que la actividad no abra ramas. Las ramas abiertas se guardan para restaurarlas.",
