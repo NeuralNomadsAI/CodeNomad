@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
-import { chromium, type Browser, type Page } from "playwright"
+import { chromium, type Browser, type Page, type Route } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import type { MissionMap } from "../../../server/src/api-types"
@@ -41,6 +41,12 @@ after(() => runWithDiagnosticCleanup({ run: async () => { await browser?.close()
   cleanup: async () => { await server?.close() }, onObservationError: () => {}, onCleanupError: error => console.error("revision fixture shutdown", error) }))
 
 type Input = { action: "start" | "pause" | "stop"; expectedRevision: number; requestId: string; graceful?: true }
+function controlInput(route: Route): Input {
+  const request = route.request()
+  assert.equal(request.method(), "POST")
+  assert.match(new URL(request.url()).pathname, /^\/api\/workspaces\/mission-visibility\/missions\/[^/]+\/control$/)
+  return request.postDataJSON() as Input
+}
 function mission(id = "revision"): MissionMap {
   return { version: 1, id, projectID: "fixture", projectCanonical: "/fixture", objective: `Lifecycle ${id}`, template: "custom",
     coordinatorSessionId: "ses_fixture", status: "active", runState: "running", actors: [{ sessionId: "ses_fixture", kind: "coordinator", managed: false,
@@ -86,7 +92,7 @@ test("real RightPanel discards only certified rejected intent; two revision conf
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", route => {
       if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: panelMissions([current]), generatedAt: current.revision, discardedEvents: 0 } })
-      const input = route.request().postDataJSON() as Input
+      const input = controlInput(route)
       calls.push(input)
       if (rejected++ < 2) {
         current = { ...current, revision: input.expectedRevision + 1 }
@@ -125,7 +131,7 @@ for (const code of [undefined, "request-conflict", "control-pending", "lost-ack"
       await page.route("**/api/**", route => route.fulfill({ json: {} }))
       await page.route("**/api/workspaces/mission-visibility/missions**", route => {
         if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: panelMissions([current]), generatedAt: current.revision, discardedEvents: 0 } })
-        const input = route.request().postDataJSON() as Input; calls.push(input)
+        const input = controlInput(route); calls.push(input)
         if (calls.length === 1) { current = { ...current, revision: 2 }; return code === "lost-ack" ? route.abort("connectionfailed") : route.fulfill({ status: 409, json: code ? { code } : {} }) }
         current = { ...current, revision: 3, runState: "paused" }
         return route.fulfill({ json: { mission: current } })
@@ -161,7 +167,7 @@ test("real RightPanel ignores late rejection after row disposal in a newly selec
         if (path.endsWith("/schedule")) return route.fulfill({ json: { document: null, pending: false } })
         return route.fulfill({ json: { available: true, missions: panelMissions([mission("one"), mission("two")]), generatedAt: reads, discardedEvents: 0 } })
       }
-      calls.push(route.request().postDataJSON() as Input); submitted(); await held
+      calls.push(controlInput(route)); submitted(); await held
       return route.fulfill({ status: 409, json: { code: "revision-conflict" } })
     })
     await open(page, "Lifecycle one")
@@ -195,7 +201,7 @@ test("real RightPanel does not refresh hidden demand on late lifecycle completio
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
       if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: panelMissions([mission()]), generatedAt: reads, discardedEvents: 0 } }) }
-      submitted(); await held
+      controlInput(route); submitted(); await held
       return route.fulfill({ status: 409, json: { code: "revision-conflict" } })
     })
     await open(page)
@@ -217,7 +223,7 @@ for (const action of ["pause", "stop"] as const) {
       await page.route("**/api/**", route => route.fulfill({ json: {} }))
       await page.route("**/api/workspaces/mission-visibility/missions**", route => {
         if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: panelMissions([current]), generatedAt: current.revision, discardedEvents: 0 } })
-        const input = route.request().postDataJSON() as Input; calls.push(input)
+        const input = controlInput(route); calls.push(input)
         current = { ...current, revision: current.revision + 1, runState: action === "pause" ? "paused" : "stopped", status: action === "stop" ? "stopped" : "active",
           control: { id: "evt_partial", missionID: current.id, requestID: input.requestId, expectedRevision: input.expectedRevision, action,
             ...(input.graceful ? { graceful: true } : {}),
@@ -248,12 +254,15 @@ for (const state of ["running", "form"] as const) test(`Pause lets ${state} work
   const page = await browser.newPage({ locale: "en-US" }), calls: Input[] = [], errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   let current = mission(), working = true
+  const observed = Promise.withResolvers<void>(), release = Promise.withResolvers<void>()
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
-    await page.route("**/api/workspaces/mission-visibility/missions**", route => {
+    await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
+      const request = route.request(), path = new URL(request.url())
+      if (request.method() === "GET" && path.searchParams.get("panelSource") === "summaries" && current.revision === 2) { observed.resolve(); await release.promise }
       if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: panelMissions([current]), generatedAt: current.revision, discardedEvents: 0,
         activity: { generatedAt: current.revision, missions: [{ missionId: current.id, actors: [{ sessionId: "ses_fixture", state: working ? state : "idle-without-report" }] }] } } })
-      const input = route.request().postDataJSON() as Input; calls.push(input)
+      const input = controlInput(route); calls.push(input)
       current = { ...current, revision: current.revision + 1, runState: "paused",
         control: { id: `evt_${calls.length}`, missionID: current.id, requestID: input.requestId, expectedRevision: input.expectedRevision, action: "pause",
           ...(input.graceful ? { graceful: true, targets: [] } : { targets: [{ sessionID: "ses_fixture", location: { directory: "/fixture" } }] }), pending: [] } }
@@ -263,13 +272,23 @@ for (const state of ["running", "form"] as const) test(`Pause lets ${state} work
     await pause(page).click()
     const interrupt = page.getByRole("button", { name: "Interrupt now", exact: true })
     await interrupt.waitFor()
+    await observed.promise
+    // The header can publish before the directory reconciliation finishes. Presence
+    // alone is not readiness: this is still the pending operation's Saving state.
+    assert.equal(await interrupt.isDisabled(), true)
+    assert.equal(await page.getByRole("status").filter({ hasText: "Saving…" }).count(), 1)
+    release.resolve()
+    await page.getByRole("status").filter({ hasText: "Pausing: the steps in progress are finishing." }).waitFor()
     assert.equal(await page.getByRole("status").filter({ hasText: "Pausing: the steps in progress are finishing." }).count(), 1)
     assert.deepEqual(calls.map(call => [call.action, call.graceful]), [["pause", true]], "Pause interrupts nothing")
+    assert.equal(calls[0].expectedRevision, 1)
     assert.equal(await page.getByRole("button", { name: "Resume mission", exact: true }).isEnabled(), true)
 
     await interrupt.click()
     await interrupt.waitFor({ state: "detached" })
     assert.deepEqual(calls.map(call => [call.action, call.graceful]), [["pause", true], ["pause", undefined]], "Interrupt now is an immediate Pause")
+    assert.equal(calls[1].expectedRevision, 2)
+    assert.notEqual(calls[1].requestId, calls[0].requestId)
     assert.equal(await page.getByText("Pausing: the steps in progress are finishing.").count(), 0)
 
     // Once nothing runs, a graceful Pause shows neither the status nor the action.
@@ -278,8 +297,10 @@ for (const state of ["running", "form"] as const) test(`Pause lets ${state} work
     working = false
     await missionRefresh(page).click(); await settled(page)
     assert.equal(await interrupt.count(), 0)
+    assert.equal(await page.getByText("Pausing: the steps in progress are finishing.").count(), 0)
+    assert.equal(calls.length, 2, "ordinary refresh reads send no lifecycle control")
     assert.deepEqual(errors, [])
-  } finally { await page.close() }
+  } finally { release.resolve(); await page.close() }
 })
 
 test("Stop asks for confirmation in a dialog: cancel and Escape never submit; confirmation submits once", async () => {
@@ -289,7 +310,7 @@ test("Stop asks for confirmation in a dialog: cancel and Escape never submit; co
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", route => {
       if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: panelMissions([current]), generatedAt: current.revision, discardedEvents: 0 } })
-      calls.push(route.request().postDataJSON() as Input)
+      calls.push(controlInput(route))
       current = { ...current, revision: 2, runState: "stopped", status: "stopped" }
       return route.fulfill({ json: { mission: current } })
     })
