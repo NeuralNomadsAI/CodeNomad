@@ -1,12 +1,12 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
-import { fileURLToPath } from "node:url"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser } from "playwright"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { fixtureEventStream } from "./fixture-event-stream"
 
 let browser: Browser, url: string
-let cache: Awaited<ReturnType<typeof createFixtureCache>>
+let events: Awaited<ReturnType<typeof fixtureEventStream>>
 before(async () => {
   const fixture = await borrowFixture({
       name: "session-child-activity",
@@ -15,16 +15,18 @@ before(async () => {
       ],
     })
   url = fixture.url
+  events = await fixtureEventStream(url)
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { try { await browser?.close() } finally { await cache?.dispose() } })
+after(async () => { try { await browser?.close() } finally { await events?.close() } })
 
 test("a collapsed parent's chevron carries visible subsession statuses without reshaping the list", async () => {
   const page = await browser.newPage()
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await events.route(page)
   const rows = () => page.locator(".session-item-base").evaluateAll(elements => elements.map(el => el.getAttribute("data-session-id")))
   const chevron = (sessionId: string) => page.locator(`[data-session-id="${sessionId}"] .session-item-expander`)
   const color = (sessionId: string) => chevron(sessionId).evaluate(el => getComputedStyle(el).color)
@@ -145,6 +147,7 @@ test("visible branches follow new chevron states recursively, restore all opened
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await events.route(page)
   const row = (id: string) => page.locator(`[data-session-id="${id}"]`)
   const chevron = (id: string) => row(id).locator(".session-item-expander")
   const expanded = () => chevron("work").getAttribute("aria-expanded")
@@ -251,29 +254,48 @@ test("buffered offscreen subsessions wait for a fresh transition while visible",
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await events.route(page)
   const row = page.locator('[data-session-id="work-grandchild"]')
   const chevron = row.locator(".session-item-expander")
+  const event = (sessionID: string, type: string) => page.evaluate(({ sessionID, type }) => (window as any).fixture.event(sessionID, type), { sessionID, type })
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture))
-    await page.evaluate(() => (window as any).fixture.status("work-grandchild", "working"))
+    // Virtua enables its offscreen buffer after measured content exceeds the viewport.
+    // Four rows overflow this initial port; the grandchild itself still fits inside it.
+    await page.locator(".session-list-container").evaluate(el => { el.parentElement!.style.height = "120px" })
+    await event("work-grandchild", "session.execution.started")
     await row.waitFor()
-    const top = await row.evaluate(el => {
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    const identity = await row.elementHandle()
+    const initial = await row.evaluate(el => {
       const viewport = el.closest(".session-list")!
-      return viewport.scrollTop + el.getBoundingClientRect().top - viewport.getBoundingClientRect().top
+      const row = el.getBoundingClientRect(), port = viewport.getBoundingClientRect()
+      return { top: viewport.scrollTop + row.top - port.top, overflows: viewport.scrollHeight > viewport.clientHeight,
+        fits: row.top >= port.top && row.bottom <= port.bottom }
     })
+    assert.equal(initial.overflows, true, "measured rows exceed the initial viewport")
+    assert.equal(initial.fits, true, "the grandchild starts fully visible")
     await page.locator(".session-list-container").evaluate(el => { el.parentElement!.style.height = "40px" })
-    await page.evaluate(() => (window as any).fixture.status("work-great-grandchild", "working"))
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    assert.equal(await identity!.evaluate(el => el.isConnected), true, "the real virtualizer retains the same buffered row after resizing")
+    assert.equal(await row.evaluate(el => el.getBoundingClientRect().top >= el.closest(".session-list")!.getBoundingClientRect().bottom), true, "the mounted row lies beyond the scroll viewport")
+    await event("work-great-grandchild", "session.execution.started")
+    assert.equal(await chevron.getAttribute("data-child-activity"), "working", "the native event reached the offscreen row")
     assert.equal(await chevron.getAttribute("aria-expanded"), "false", "a buffered row beyond the scroll viewport stays closed")
-    await page.locator(".session-list").evaluate((el, top) => { el.scrollTop = top }, top)
+    await page.locator(".session-list").evaluate((el, top) => { el.scrollTop = top }, initial.top)
     await page.waitForFunction(() => {
       const row = document.querySelector('[data-session-id="work-grandchild"]')?.getBoundingClientRect()
       const viewport = document.querySelector(".session-list")?.getBoundingClientRect()
       return row && viewport && row.top < viewport.bottom && row.bottom > viewport.top
     })
+    assert.equal(await identity!.evaluate(el => el.isConnected), true, "scrolling retains the row's activity observer")
     assert.equal(await chevron.getAttribute("aria-expanded"), "false", "scrolling into view alone does not open it")
-    await page.evaluate(() => (window as any).fixture.status("work-great-grandchild", "idle"))
-    await page.evaluate(() => (window as any).fixture.status("work-great-grandchild", "working"))
+    await event("work-great-grandchild", "session.execution.started")
+    assert.equal(await chevron.getAttribute("aria-expanded"), "false", "a repeated native working event is not a fresh transition")
+    await event("work-great-grandchild", "session.execution.succeeded")
+    await page.waitForFunction(() => document.querySelector('[data-session-id="work-grandchild"] .session-item-expander')?.getAttribute("data-child-activity") === "idle")
+    await event("work-great-grandchild", "session.execution.started")
     assert.equal(await chevron.getAttribute("aria-expanded"), "true")
     assert.deepEqual(errors, [])
   } finally { await page.close() }

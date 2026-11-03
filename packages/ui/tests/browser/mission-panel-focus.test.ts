@@ -11,7 +11,8 @@ let browser: Browser, url: string
 before(async () => {
   const fixture = await borrowFixture({ name: "mission-panel-focus", routes: [{ path: "/focus", html: '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0"><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-panel-focus.tsx"></script></body></html>' }] })
   url = fixture.url
-  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  // Full headless Chromium owns native tab focus; headless-shell keeps every tab focused.
+  browser = await chromium.launch({ channel: "chromium", executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close() })
@@ -102,7 +103,10 @@ for (const consumer of ["creation", "tree"] as const) {
           const cdp = await f.context.newCDPSession(f.page)
           await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: false })
           other = await f.context.newPage(); await other.bringToFront()
+          await f.page.waitForFunction(() => !document.hasFocus())
           assert.equal(await f.page.evaluate(() => document.hasFocus()), false, "the native document is genuinely unfocused")
+          assert.equal(await f.page.evaluate(() => document.visibilityState), "visible", "document focus is the only inactive-window guard")
+          assert.equal(await focus.evaluate(element => element === document.activeElement), true, "native blur retains the original control")
         }
         await audit(f.page)
         await f.page.evaluate(({ condition, selector }) => {
@@ -119,6 +123,17 @@ for (const consumer of ["creation", "tree"] as const) {
         if (condition !== "visible") await f.page.setViewportSize({ width: 1000, height: 420 })
         await frames(other ?? f.page)
         assert.equal(await f.page.evaluate(() => (window as any).focusAudit.writes.length), 0, `${condition} view leaves every scroll owner alone`)
+        if (condition === "window-unfocused") {
+          assert.equal(await f.page.evaluate(() => document.hasFocus()), false, "layout changes leave native focus with the other tab")
+          assert.equal(await visible(f.page), false, "the unfocused control needs a real scroll repair")
+          await f.page.bringToFront()
+          await f.page.waitForFunction(() => document.hasFocus())
+          assert.equal(await focus.evaluate(element => element === document.activeElement), true, "native refocus restores the same control")
+          await f.page.evaluate(selector => document.querySelector(selector)!.append(document.createElement("span")), region(consumer))
+          await frames(f.page)
+          assert(await f.page.evaluate(() => (window as any).focusAudit.writes.length > 0), "the same observation repairs the control after native focus returns")
+          assert.equal(await visible(f.page), true)
+        }
         assert.deepEqual(f.errors, [])
       } finally { await other?.close(); await f.close() }
     }
