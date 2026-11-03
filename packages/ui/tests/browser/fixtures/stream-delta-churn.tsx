@@ -10,7 +10,6 @@ import { ThemeProvider } from "../../../src/lib/theme"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { addInstance } from "../../../src/stores/instances"
 import { sessions, setSessions, setActiveSession, setProviders } from "../../../src/stores/session-state"
-import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
 import "../../../src/index.css"
 
@@ -67,40 +66,9 @@ const seedStream = (count: number, chunk: string, settle = false) => {
 }
 
 ;(window as any).streamDeltaFixture = {
-  /** Seeds `settled` complete replies plus one streaming reply, waits for
-   * renders to settle, then dispatches one more delta while a MutationObserver
-   * watches the transcript. Reports every childList mutation grouped by path. */
-  deltaMutations: async (settled = 3, count = 40) => {
-    const chunk = "x".repeat(80)
-    for (let index = 0; index < settled; index++) seedStream(8, `Settled reply ${index + 1}. `, true)
-    const mid = seedStream(count, chunk)
-    await new Promise(resolve => setTimeout(resolve, 400))
-    const root = document.getElementById("root")!
-    const mutations: { targetPath: string }[] = []
-    const describe = (element: Element | null, depth = 0): string => {
-      if (!element || depth > 6) return ""
-      const row = element.closest?.("[data-message-id]")?.getAttribute("data-message-id") ?? ""
-      const own = element.classList?.contains("message-action-group") ? "message-action-group" : ""
-      const parent = describe(element.parentElement, depth + 1)
-      const path = parent ? `${parent}>${own || element.tagName.toLowerCase()}` : own || element.tagName.toLowerCase()
-      return depth === 0 ? `${row} ${path}` : path
-    }
-    const observer = new MutationObserver(records => {
-      for (const record of records) {
-        if (record.type !== "childList") continue
-        mutations.push({ targetPath: describe(record.target instanceof Element ? record.target : null) })
-      }
-    })
-    observer.observe(root, { subtree: true, childList: true })
-    dispatch(encode("session.text.delta", { assistantMessageID: mid, ordinal: 0, delta: chunk }))
-    await new Promise(resolve => setTimeout(resolve, 400))
-    observer.disconnect()
-    const store = messageStoreBus.getOrCreate(instanceId)
-    const message = store.getMessage(mid)
-    const textLength = message?.partIds
-      .map(id => (message.parts[id].data as { text?: string }).text ?? "")
-      .join("").length
-    return { mutations, actionGroupMutations: mutations.filter(record => record.targetPath.includes("message-action-group")).length,
-      messageFound: Boolean(message), textLength }
-  },
+  seed: () => ({
+    settled: Array.from({ length: 3 }, (_, index) => seedStream(8, `Settled reply ${index + 1}. `, true)),
+    streaming: seedStream(40, "x".repeat(80)),
+  }),
+  delta: (mid: string) => dispatch(encode("session.text.delta", { assistantMessageID: mid, ordinal: 0, delta: "x".repeat(80) })),
 }
