@@ -9,6 +9,7 @@ import type {
   PluginRuntimeSource,
 } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
+import { integrationPlugin } from "../lib/integration-rows"
 import { integrations } from "../stores/integrations"
 import { pluginControlsCache } from "../stores/plugin-controls"
 import { pluginSourcesStore, removableSources } from "../stores/plugin-sources"
@@ -56,6 +57,12 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   const state = createMemo(() => pluginControlsCache.state(props.instanceId, requestLocation()))
   const consentEpoch = () => state().invalidationRevision
   const snapshot = createMemo(() => state().snapshot)
+  const nativeControls = createMemo(() => {
+    const value = integrations.state(props.instanceId, directory())
+    return new Set(value.status === "ready" ? value.response.integrations
+      .filter(entry => entry.family === "native" && !entry.ambiguous)
+      .map(entry => integrationPlugin(snapshot(), entry).control?.id).filter(Boolean) : [])
+  })
   const controls = createMemo(() => (
     snapshot()?.controls.filter((control) => !control.builtin && control.runtime?.source.type !== "builtin") ?? []
   ))
@@ -166,6 +173,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     const renderSwitch = (scope: PluginControlScope) => {
       const labelId = scope === "global" ? globalLabelId : projectLabelId
       return <PluginActivationSwitch instanceId={props.instanceId} location={requestLocation()} control={control()} scope={scope}
+        lockedReason={scope === "project" && nativeControls().has(pluginId) ? t("integrations.section.scopeGlobalOnly") : undefined}
         available={isAvailable(scope)} active={props.active} describedBy={isAvailable(scope) ? labelId : `${labelId} ${noticeId}`}
         label={bidi(t("instanceServiceStatus.plugins.toggleAriaLabel", { name: `${pluginId} — ${scopeLabel(scope)}` }))} />
     }

@@ -311,6 +311,10 @@ test("AC-E2 native actions from the section: switches, update, remove, host inst
     assert.equal(await project.getAttribute("aria-disabled"), "true")
     await project.click({ force: true })
     assert.equal((await fx(page, "mutations")).length, 2)
+    const pluginProject = page.locator('[data-plugin-id="neuralnomads.blender"] [data-scope="project"] input')
+    assert.equal(await pluginProject.getAttribute("aria-disabled"), "true", "the Plugins row shares the native Global-only constraint")
+    await pluginProject.click({ force: true })
+    assert.equal((await fx(page, "mutations")).length, 2)
 
     // Menu: Check/Update, Remove and Refresh only; Check runs at once.
     await body(page, "blender").getByRole("button", { name: "Actions for OpenCode for Blender", exact: true }).click()
@@ -417,6 +421,8 @@ test("AC-C5 confirmations: Cancel first, <500 ms no effect, ≥600 ms confirms, 
       await button.click()
       const dialog = confirmation(page, /^Install in application…/)
       await dialog.waitFor()
+      await page.clock.runFor(20)
+      await page.waitForFunction(() => document.querySelector(".alert-dialog .button-secondary") === document.activeElement)
       return { dialog, confirm: dialog.getByRole("button", { name: "Install in application…", exact: true }) }
     }
     let { dialog, confirm } = await launch()

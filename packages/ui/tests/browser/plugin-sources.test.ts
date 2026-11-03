@@ -88,7 +88,7 @@ test("adding a plugin defaults to Global, warns for Project and shows Installing
 
     await row.getByRole("button", { name: "Actions for fixture.package", exact: true }).click()
     const items = await page.getByRole("menuitem").allInnerTexts()
-    assert.deepEqual(items.map(item => item.trim()), ["Update fixture-plugin@1.0.0", "Remove from Global"])
+    assert.deepEqual(items.map(item => item.trim()), ["Update fixture-plugin@1.0.0", "Remove from Global", "Refresh plugin controls"])
     await page.getByRole("menuitem", { name: "Remove from Global", exact: true }).click()
     const removal = page.getByRole("dialog", { name: /Remove from Global.*fixture.package/ })
     await removal.waitFor()

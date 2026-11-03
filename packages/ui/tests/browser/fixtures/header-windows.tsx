@@ -84,6 +84,7 @@ let viewAction: (action: string) => boolean
 const [immersive, setImmersive] = createSignal(false)
 const [active, setActive] = createSignal(true)
 function Fixture() {
+  const instance = instances().get(id)!
   viewAction = useViewMenu(menuInstance)
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
   useAppLifecycle({
@@ -98,11 +99,11 @@ function Fixture() {
   <div style={{ height: "100vh", display: "flex", "flex-direction": "column" }}>
     <button id="outside">Outside target</button>
     <AlertDialog />
-    <Show when={instances().get(id)}>{instance => <InstanceShell instance={instance()} isActiveInstance={active()} escapeInDebounce={escapeInDebounce()}
+    <Show when={instances().has(id)}><InstanceShell instance={instance} isActiveInstance={active()} escapeInDebounce={escapeInDebounce()}
       paletteCommands={() => [{ id: "fixture", label: "Fixture command", description: "Execute the fixture", category: "System", action: () => {} }]}
       onExecuteCommand={() => { executions++ }} onCloseSession={() => {}} onNewSession={() => {}}
       handleSidebarAgentChange={async () => {}} handleSidebarModelChange={async () => {}} tabBarOffset={0}
-      mobileFullscreenMode={immersive()} onEnterMobileFullscreen={() => setImmersive(true)} onExitMobileFullscreen={() => setImmersive(false)} />}</Show>
+      mobileFullscreenMode={immersive()} onEnterMobileFullscreen={() => setImmersive(true)} onExitMobileFullscreen={() => setImmersive(false)} /></Show>
   </div>
   )
 }

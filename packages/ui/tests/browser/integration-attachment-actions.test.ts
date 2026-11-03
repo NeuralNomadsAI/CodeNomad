@@ -413,7 +413,7 @@ test("AC-C16 successful detach receipt cannot claim none; an old action cannot d
 
 for (const action of ["attach", "detach"] as const) test(`AC-C16 a lost ${action} reply from A cannot block the current Detach in B`, async () => {
   await withAttachment(async ({ page, model, calls }) => {
-    model.bindingBySession.session = { state: action === "detach" ? "attached" : "none", label: "Scene" }
+    model.bindingBySession.session = action === "detach" ? { state: "attached", label: "Scene" } : { state: "none" }
     model.bindingBySession.other = { state: "attached", label: "Other scene" }
     await call(page, "reconnect")
     await waitConversation(page, action === "detach" ? "attached" : "available")
