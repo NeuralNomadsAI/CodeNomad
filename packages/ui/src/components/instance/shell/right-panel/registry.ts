@@ -30,6 +30,8 @@ export interface RightPanelSectionModule extends RightPanelItem {
   renderInfo?: () => JSX.Element
   /** Accessible name of the section's region, when it differs from the trigger's text. */
   regionLabel?: string
+  /** A changed non-empty key expands the section once; a user collapse holds until the key changes again. */
+  autoExpandKey?: () => string | undefined
   render: () => JSX.Element
 }
 

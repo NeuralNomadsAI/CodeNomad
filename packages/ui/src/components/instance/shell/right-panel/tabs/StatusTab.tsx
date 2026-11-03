@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, createUniqueId, on, type Accessor, type Component, type JSX } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, createUniqueId, on, untrack, type Accessor, type Component, type JSX } from "solid-js"
 import type { LocationRef, ShellInfo } from "@opencode/client"
 import {
   DragDropProvider,
@@ -95,6 +95,8 @@ const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => 
     </div>
   )
 }
+
+const autoExpandedKeys = new WeakMap<Accessor<string[]>, Map<string, string>>()
 
 const StatusTab: Component<StatusTabProps> = (props) => {
   const isSectionExpanded = (id: string) => props.expandedItems().includes(id)
@@ -281,6 +283,22 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     }))
   }
 
+
+  // An expected action expands its section once per key; a later user collapse holds until the key changes,
+  // across the tab's remounts (the expanded set belongs to the panel).
+  let autoExpanded = autoExpandedKeys.get(props.expandedItems)
+  if (!autoExpanded) autoExpandedKeys.set(props.expandedItems, autoExpanded = new Map())
+  createEffect(() => {
+    const additions: string[] = []
+    for (const section of allStatusSections()) {
+      const key = section.autoExpandKey?.()
+      if (!key) { autoExpanded!.delete(section.id); continue }
+      if (autoExpanded!.get(section.id) === key) continue
+      autoExpanded!.set(section.id, key)
+      if (!untrack(props.expandedItems).includes(section.id)) additions.push(section.id)
+    }
+    if (additions.length) props.onExpandedItemsChange([...untrack(props.expandedItems), ...additions])
+  })
 
   const handleSectionDragEnd = ({ draggable, droppable }: SolidDndDragEvent) => {
     if (!droppable) return

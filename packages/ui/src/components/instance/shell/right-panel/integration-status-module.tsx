@@ -1,4 +1,5 @@
-import { Show, createEffect, createMemo, on, onCleanup, type Accessor } from "solid-js"
+import { Show, createEffect, createMemo, createSignal, on, onCleanup, untrack, type Accessor } from "solid-js"
+import { integrationAutoExpandKey } from "../../../integration-section-state"
 import type { IntegrationView } from "../../../../../../server/src/integration-types"
 import { integrations } from "../../../../stores/integrations"
 import { pluginControlsCache } from "../../../../stores/plugin-controls"
@@ -25,6 +26,9 @@ interface IntegrationStatusModuleOptions {
   isActive: Accessor<boolean>
 }
 
+/** Status announcements closer than this are read as one. */
+export const INTEGRATION_ANNOUNCE_DELAY_MS = 500
+
 const pluginsTrigger = (from?: Element | null) =>
   (from?.closest(".status-tab-container") ?? document).querySelector<HTMLElement>('[data-status-section-trigger="plugins"]')
 
@@ -44,11 +48,22 @@ export function createIntegrationStatusModule(options: IntegrationStatusModuleOp
     onCleanup(integrations.demand(options.instanceId, value))
     onCleanup(pluginControlsCache.acquireDemand(options.instanceId, { directory: value }))
   }))
+  // One polite region per Status tab: changes are grouped, never announced per event.
+  const [announcement, setAnnouncement] = createSignal("")
+  let queued: string[] = []
+  let announceTimer: ReturnType<typeof setTimeout> | undefined
+  const announce = (message: string) => {
+    queued.push(message)
+    clearTimeout(announceTimer)
+    announceTimer = setTimeout(() => { setAnnouncement(queued.join(" ")); queued = [] }, INTEGRATION_ANNOUNCE_DELAY_MS)
+  }
+  onCleanup(() => clearTimeout(announceTimer))
   const attachment = createIntegrationAttachment({
     instanceId: options.instanceId,
     get directory() { return directory() },
     get session() { return session() },
     get active() { return options.isActive() },
+    onMessage: announce,
   })
   const installation = createIntegrationHostInstallation({
     instanceId: options.instanceId,
@@ -83,6 +98,7 @@ export function createIntegrationStatusModule(options: IntegrationStatusModuleOp
       renderStatus: () => <Show when={facts(id)}>{value => <IntegrationSectionStatus t={options.t} state={value().state} />}</Show>,
       renderHeaderActions: () => <IntegrationDocsButton t={options.t} docs={entry(id)?.docs} />,
       renderInfo: () => <Show when={entry(id)}>{value => <IntegrationInfoButton t={options.t} entry={value()} state={facts(id)!.state} />}</Show>,
+      autoExpandKey: () => { const value = facts(id); return value ? integrationAutoExpandKey(value.state) : undefined },
       render: () => <IntegrationSection t={options.t} entry={() => entry(id)} context={context} />,
     }
     cache.set(id, value)
@@ -90,11 +106,50 @@ export function createIntegrationStatusModule(options: IntegrationStatusModuleOp
   }
   const sections = createMemo(() => ids().map(section))
 
+  // Appearances, disappearances and label changes, after the first read of a Location.
+  let known: Map<string, string> | undefined
+  const names = new Map<string, string>()
+  const labels = createMemo(() => ids().map(id => `${id}\0${facts(id)?.state.label ?? ""}`).join("\n"))
+  createEffect(on(directory, () => { known = undefined }, { defer: true }))
+  createEffect(on(labels, value => {
+    if (!response()) return
+    for (const item of untrack(response)!.integrations) names.set(item.id, item.displayName)
+    const current = new Map(value ? value.split("\n").map(line => line.split("\0") as [string, string]) : [])
+    if (known) {
+      for (const [id, label] of current) {
+        const name = names.get(id) ?? id
+        if (!known.has(id)) announce(options.t("integrations.announce.added", { name }))
+        else if (known.get(id) !== label && label) announce(options.t("integrations.announce.state", { name, state: options.t(`integrations.state.${label}`) }))
+      }
+      for (const id of known.keys()) if (!current.has(id)) announce(options.t("integrations.announce.removed", { name: names.get(id) ?? id }))
+    }
+    known = current
+  }))
+
+  // A section that disappears with focus inside hands it to the Plugins trigger, without any mutation.
+  let focusedSection: string | undefined
+  const trackFocus = (event: FocusEvent) => {
+    focusedSection = (event.target as Element | null)?.closest?.("[data-status-section]")?.getAttribute("data-status-section") ?? undefined
+  }
+  document.addEventListener("focusin", trackFocus)
+  onCleanup(() => document.removeEventListener("focusin", trackFocus))
+  createEffect(on(ids, (current, previous) => {
+    const lost = focusedSection && previous?.some(id => integrationSectionId(id) === focusedSection && !current.includes(id))
+    if (!lost) return
+    queueMicrotask(() => {
+      const active = document.activeElement
+      if (!active || active === document.body || !active.isConnected) pluginsTrigger()?.focus()
+    })
+  }, { defer: true }))
+
   return createMemo<RightPanelModule>(() => ({
     id: "integration-status",
     displayNameKey: "",
     origin: "first-party",
     statusSections: sections(),
-    renderStatusExtras: () => attachment.picker(),
+    renderStatusExtras: () => <>
+      {attachment.picker()}
+      <div class="sr-only" role="status" aria-live="polite" data-integration-announcements>{announcement()}</div>
+    </>,
   }))
 }
