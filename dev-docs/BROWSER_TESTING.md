@@ -87,6 +87,11 @@ synthetic provider.
 - Tests that need stateful middleware (SSE feeds driven by the test, custom
   Vite transform hooks, configs that diverge from the canonical daemon
   config) keep their own server and live in the heavy tier.
+- Mission dataset routes use `missionPanelRoute` (also installed by the Mission
+  navigation-budget wrapper); persistent automation contexts wrap their routes
+  explicitly. Mutation collectors match the exact HTTP method and path. Hold the
+  intended panel source independently of schedule reads, and await lifecycle
+  feedback settlement before asserting its final status.
 - Before pointer/keyboard selection in a Monaco diff, wait for its computed
   diff decoration (`.line-insert` in the Git fixture), then locate the line.
   Plain model text can paint before the worker result inserts deleted-code view
