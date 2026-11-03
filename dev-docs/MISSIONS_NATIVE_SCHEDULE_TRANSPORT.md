@@ -59,8 +59,7 @@ failure remains uncertain. Error results contain fixed codes, keeping credential
 native exception text and endpoint authentication out of logs and model messages.
 
 Never add lifecycle calls, CLI children, default registration discovery, alternate
-namespace lookup or standalone fallback to the wake transport. A running service
-can be contacted independently of the supervision preference. Effective
+namespace lookup or standalone fallback to the wake transport. Effective
 `experimental.schedules`, service ownership and autonomous admission remain
 distinct receiver guards.
 

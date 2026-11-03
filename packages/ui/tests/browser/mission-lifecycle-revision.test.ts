@@ -152,6 +152,31 @@ for (const code of [undefined, "request-conflict", "control-pending", "lost-ack"
   })
 }
 
+for (const runState of ["prepared", "paused"] as const) {
+  test(`real RightPanel settles a ${runState === "prepared" ? "Play" : "Resume"} whose lost reply the saved control confirms`, async () => {
+    const page = await browser.newPage({ locale: "en-US" }), calls: Input[] = []
+    let current: MissionMap = { ...mission(), runState }
+    try {
+      await page.route("**/api/**", route => route.fulfill({ json: {} }))
+      await page.route("**/api/workspaces/mission-visibility/missions**", route => {
+        if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: panelMissions([current]), generatedAt: current.revision, discardedEvents: 0 } })
+        const input = controlInput(route); calls.push(input)
+        current = { ...current, revision: 2, runState: "running", control: { id: "evt_start", missionID: current.id, requestID: input.requestId,
+          expectedRevision: input.expectedRevision, action: "start", targets: [{ sessionID: "ses_fixture", location: { directory: "/fixture" } }], pending: [], completedRevision: 2 } }
+        return route.abort("connectionfailed")
+      })
+      await open(page)
+      await missionToolbarAction(page, runState === "prepared" ? "Start mission" : "Resume mission").click()
+      await page.waitForFunction(() => { const button = document.querySelector<HTMLButtonElement>('.mission-action-bar [aria-label="Pause mission"]'); return Boolean(button && !button.disabled) })
+      await settled(page)
+      assert.equal(await page.getByRole("alert").filter({ hasText: "Action not yet confirmed" }).count(), 0)
+      assert.equal(await check(page).count(), 0)
+      assert.equal(await retryOffered(page), false, "a confirmed request is never offered for resend")
+      assert.equal(calls.length, 1)
+    } finally { await page.close() }
+  })
+}
+
 test("real RightPanel ignores late rejection after row disposal in a newly selected mission", async () => {
   const page = await browser.newPage({ locale: "en-US" }), calls: Input[] = []
   let release!: () => void, submitted!: () => void, reads = 0

@@ -2,7 +2,7 @@ import { z } from "zod"
 import { SupervisionError, supervisionStatus, type SupervisionObservation, type SupervisionStatus, type SupervisionTarget } from "./service-supervision-contract"
 import type { ServiceSupervisionStore } from "./service-supervision-store"
 import type { ServiceConnection } from "../workspaces/opencode-service"
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 
 export const supervisionSettingsControlSchema = z.object({
   serviceKey: z.string().regex(/^[a-f0-9]{64}$/), requestID: z.string().uuid(),
@@ -51,18 +51,6 @@ export class ServiceSupervisionSettings {
     if ((await scope.store.read()).reconciledRevision !== next.revision) throw new SupervisionError("busy")
   }
 
-  /** Product Play pins the already authorized connection. The resolver must prove
-   * that its Settings namespace is this service before changing the preference. */
-  async missionPlay(connection: ServiceConnection, requestID: string, authorize: () => void): Promise<SupervisionSettingsResponse> {
-    authorize(); connection.assertCurrent()
-    const scope = await this.acquire(connection), manifest = await scope.store.read()
-    const hex = createHash("sha256").update(`${manifest.key}\0${requestID}`).digest("hex")
-    const id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`
-    return new ServiceSupervisionSettings(async () => scope).firstPlay({ serviceKey: manifest.key, requestID: id }, () => {
-      authorize(); connection.assertCurrent()
-    })
-  }
-
   async read(input: { serviceKey?: string; requestID?: string } = {}): Promise<SupervisionSettingsResponse> {
     const scope = await this.acquire()
     return this.snapshot(scope, input)
@@ -83,26 +71,6 @@ export class ServiceSupervisionSettings {
     // Retry repairs it at the same revision. Deferred Linux linger rollback is
     // reconciled separately by the adapter's status/startup acquisition.
     if (manifest.desired !== "unset" && (input.action === "retry" || manifest.reconciledRevision !== manifest.revision))
-      await this.reconcile(scope, manifest.revision, check)
-    check()
-    return this.snapshot(scope, input)
-  }
-
-  /** Internal first-Play seam. Call only after human Play admission on this exact
-   * acquired service; creating/reading a Mission never calls it. Explicit OFF wins. */
-  async firstPlay(input: { serviceKey: string; requestID: string }, authorize: () => void): Promise<SupervisionSettingsResponse> {
-    if (!z.object({ serviceKey: z.string().regex(/^[a-f0-9]{64}$/), requestID: z.string().uuid() }).strict().safeParse(input).success)
-      throw new SupervisionError("invalid")
-    authorize()
-    const scope = await this.acquire()
-    const check = () => { authorize(); scope.assertCurrent() }
-    const before = await this.checkKey(scope, input.serviceKey)
-    check()
-    if (before.desired !== "unset") return this.snapshot(scope, input)
-    const manifest = await scope.store.control({ action: "first-play", requestID: input.requestID,
-      expectedRevision: before.revision }, check)
-    check()
-    if (manifest.desired === "on" && manifest.reconciledRevision !== manifest.revision)
       await this.reconcile(scope, manifest.revision, check)
     check()
     return this.snapshot(scope, input)

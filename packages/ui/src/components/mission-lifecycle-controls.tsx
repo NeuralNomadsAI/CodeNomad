@@ -50,6 +50,15 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
   /** A graceful Pause whose running steps are still finishing. */
   const pausing = () => !terminal() && state() === "paused" && (props.mission.panelControl ?? props.mission.control)?.action === "pause"
     && Boolean((props.mission.panelControl ?? props.mission.control)?.graceful) && Boolean(props.working)
+  // A read showing this exact request saved with nothing pending confirms it;
+  // nothing is resent. Absence alone never resolves an unconfirmed request.
+  createEffect(() => {
+    const record = retry(), control = props.mission.panelControl ?? props.mission.control
+    if (!record || busy() || !control || durableRequest()) return
+    if (control.requestID === record.input.requestId && control.action === record.input.action
+      && control.expectedRevision === record.input.expectedRevision && Boolean(control.graceful) === Boolean(record.input.graceful))
+      missionLifecycleIntents.finish(record, "acknowledged")
+  })
   const retryBlocked = () => {
     const request = durableRequest() ?? retry()?.input
     return !request || !missionLifecycleIntents.canReserve(identity(), props.mission.id, request)

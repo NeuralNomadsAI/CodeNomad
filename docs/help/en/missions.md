@@ -16,7 +16,7 @@ Missions pair a durable project plan with native OpenCode conversations. The coo
 4. Expand **Options** for **Playbook**, **Notes**, **Agents and models**, **Task sessions**, the project's **Subsession nesting depth**, saved briefs and optional followed conversations. With **Compare two models**, the **Model A** and **Model B** selectors appear in the main form.
 5. Choose **Create**. Select the paused entry, review it, then use ▶ **Start** when ready. Immediate, unconditional work starts one mission; a delayed, recurring or conditional policy arms native scheduling.
 
-**Create saves a paused Mission.** Work and native calendars are armed only by Play; creating or saving a brief preserves the shared service-supervision preference. Creation belongs to the selected project/Location and records the requested profiles and task-session policy. Validation appears beside the affected field; a refusal that says nothing was sent keeps the draft for correction. A one-time coordinator can also prepare a separate follow-up: it appears as **Prepared** and starts from its own ▶ action.
+**Create saves a paused Mission.** Work and native calendars are armed only by Play. Creation belongs to the selected project/Location and records the requested profiles and task-session policy. Validation appears beside the affected field; a refusal that says nothing was sent keeps the draft for correction. A one-time coordinator can also prepare a separate follow-up: it appears as **Prepared** and starts from its own ▶ action.
 
 Saved one-time missions retain their execution controls, task tree, conversations and final reports. Existing daily schedules remain listed with their daily controls and [daily timing rules](#existing-daily-schedules). Select the entry and use the controls available for that object.
 
@@ -208,7 +208,7 @@ Creation time also bounds eligible daily work. **Run now**, when offered on an e
 
 ## Lifetime and service restarts {#lifetime}
 
-The **i** beside **Technical details** explains technical activity and costs. In **Settings → OpenCode**, supervision keeps status and errors visible; its **i** holds routine explanations.
+The **i** beside **Technical details** explains technical activity and costs.
 
 For a native schedule, expand **Technical details** to identify its **Principal carrier** and **Reconciliation carrier**, their native calendars and any **Cleanup awaiting reconciliation**. These technical conversations have no composer action and stay out of ordinary conversation/source pickers. Technical wakes, titles and compaction use the local model without provider HTTP requests; native events/statistics can still include them, while actual passages keep their ordinary model costs. Compaction bounds the processed context with the same conversation/calendar identity. Stored native messages and events can grow until explicit cleanup of a finished schedule; the 30 retained Mission results are separate. The depth control shows the path under **OpenCode configuration file:** when available and labels its **Project write target** separately.
 
@@ -222,8 +222,6 @@ For a native schedule, expand **Technical details** to identify its **Principal 
 | Existing daily schedule | Its plugin clock runs with CodeNomad closed while the service lives. A service restart leaves it **Interrupted**; explicit **Resume** reconciles its pending run and rearms its daily clock. |
 
 For native schedules, explicit Pause, Stop, failed work and uncertain outcomes keep their admission barriers after restart. Inspect the retained passage and original request; use **Check passage** or **Refresh saved request** where offered, then **Resume** only when the state permits it. A native continuation is observed under its existing identity. Proven failure or an end without a report requires human recovery; incomplete proof keeps the passage uncertain. Never use a restart to retry engaged tool effects.
-
-[Keep OpenCode running](opencode.md#service-supervision) separately supervises the shared service on its execution host. First Mission Play enables it unless you saved OFF; creating a paused Mission preserves that choice. Turning it off leaves OpenCode running without automatic relaunch. Windows, macOS and WSL use the login boundary; native Linux uses user lingering subject to permissions. Sleep, hibernation, WSL idle lifetime and external-host control limit availability; inspect the supervision status independently of the schedule.
 
 Missions work with the desktop apps and with a standalone CodeNomad [server](server.md). When the panel shows **Mission Control is unavailable**, its message names the cause:
 
