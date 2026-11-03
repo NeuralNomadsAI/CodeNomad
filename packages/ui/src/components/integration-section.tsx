@@ -118,7 +118,7 @@ function IntegrationSectionBody(props: { t: Translate; entry: Accessor<Integrati
     void integrations.refreshDemanded(context.instanceId)
   }
   const renderSwitch = (scope: PluginControlScope) => <PluginActivationSwitch instanceId={context.instanceId} location={context.location()}
-    control={facts().plugin.control} scope={scope} active={context.active()} name={name()}
+    control={facts().plugin.control} scope={scope} active={context.active()} name={name()} caption={scopeLabel(scope)}
     available={scope === "global" || projectAvailable()}
     lockedReason={scope === "project" && props.entry().family === "native" ? t("integrations.section.scopeGlobalOnly") : undefined}
     label={`⁨${t("instanceServiceStatus.plugins.toggleAriaLabel", { name: `${name()} — ${scopeLabel(scope)}` })}⁩`} />

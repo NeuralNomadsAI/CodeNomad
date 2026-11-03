@@ -1,4 +1,4 @@
-import { createSignal, onCleanup } from "solid-js"
+import { Show, createSignal, onCleanup } from "solid-js"
 import Switch from "@suid/material/Switch"
 import type { PluginActivationControl, PluginControlLocation, PluginControlScope } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
@@ -49,6 +49,8 @@ export function PluginActivationSwitch(props: {
   active?: boolean
   /** Shown but not writable here, with this reason as its tooltip; it stays focusable. */
   lockedReason?: string
+  /** A visible scope caption, for surfaces without column headers. */
+  caption?: string
 }) {
   const { t } = useI18n()
   let disposed = false
@@ -72,7 +74,8 @@ export function PluginActivationSwitch(props: {
     }
   }
   return (
-    <div class="plugin-control-switch" data-scope={props.scope} title={props.lockedReason}>
+    <div class="plugin-control-switch" data-scope={props.scope} data-locked={props.lockedReason ? "" : undefined} title={props.lockedReason}>
+      <Show when={props.caption}><span class="plugin-control-switch-caption" aria-hidden="true">{props.caption}</span></Show>
       <Switch
         checked={props.control ? pluginScopeChecked(props.control, props.scope) : false}
         disabled={!props.available}
