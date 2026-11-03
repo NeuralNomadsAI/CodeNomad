@@ -253,6 +253,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       focused: document.hasFocus(),
     })) return
 
+    if (currentSession.generationRecovery === "interrupted") markSessionIdleSeen(props.instanceId, currentSession.id)
     const seenIdleEntries = getSeenIdleEntries(currentSession, preferences().keepUnseenSubagentIdleStatus)
     for (const entry of seenIdleEntries) {
       const timerKey = `${props.instanceId}:${entry.id}:${entry.idleSince}`

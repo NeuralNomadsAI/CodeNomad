@@ -38,6 +38,7 @@ const workspace = (occurrence: number, draft: string): RestorableWorkspaceTabSta
   },
   unseenIdleSince: { "session-1": occurrence + 20 },
   generationRecovery: { "session-1": occurrence === 0 ? "working" : "interrupted" },
+  seenInterruptions: { "session-1": occurrence + 10, "acknowledged-only": occurrence + 15 },
 })
 const graphSnapshot = (): ClientSnapshotV1 => ({
   version: 1,

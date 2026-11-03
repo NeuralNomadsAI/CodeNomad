@@ -9,9 +9,11 @@ Reasoning and tool headers show how long each step took, counting live while it 
 ## Find and navigate conversations {#navigate-conversations}
 
 1. Select a row under **Sessions**, or use **New session** to start a parent conversation.
-2. Expand a parent's chevron to see its subsessions. A collapsed chevron shows its descendants' most urgent state: needing input, working, or recently finished (idle); its tooltip counts them.
+2. Expand a parent's chevron to see its subsessions. A collapsed chevron shows its descendants' most urgent state: needing input, working, interrupted or idle; its accessible label counts them.
 3. Use **Search sessions…**, **Main sessions** / **Subsessions**, the worktree filter and **Activity**, **Name** or **Worktree** sorting to narrow the list. In search results, drag across the rows' checkboxes to select or clear several conversations at once.
 4. Use the sidebar's **Back** and **Forward** to revisit conversations you displayed.
+
+Click an **Idle** or **Interrupted** badge (**Clear**) to acknowledge it without opening the conversation, or press Enter/Space while it is focused. With a mouse or pen, press a badge and drag across others to clear several; touch drags keep scrolling. A collapsed parent's idle/interrupted chevron works the same way for its descendants: clear it first, then click again to expand. Working and pending input/permission indicators stay visible. Viewing an interrupted session also clears its badge. Acknowledgements are saved with this window's session state; a new interruption shows the badge again. Clearing only changes the indicator; the reload arrow still reloads messages.
 
 Normal browsing is hierarchical; search/filter results are flat entries with each conversation's own identity and worktree. In **Settings → General**, **Automatically expand subsessions** is enabled by default. A visible collapsed row opens the paths to its active subsessions when its chevron changes to working, compacting or awaiting input, provided it is selected or belongs to the selected conversation's descendants. The same rule applies at every depth. Scrolling an already active row into view leaves it closed until a new transition. Disable the option to keep activity from opening branches; manual expansion and explicit navigation remain available. Open branches, including automatically opened ones, are saved for restoration.
 

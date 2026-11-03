@@ -1,4 +1,5 @@
 import type { Session, SessionStatus } from "../types/session"
+import { reconcileSessionInterruptionBoundary } from "./session-interruption-seen"
 
 export type GenerationRecoveryState = "pending" | "interrupted"
 export type PersistedGenerationRecovery = "working" | "interrupted"
@@ -68,6 +69,17 @@ export function getPersistedGenerationRecovery(
 }
 
 export function mergeFetchedSessionRuntimeState(
+  fetched: Session,
+  captured: Session | undefined,
+  latest: Session | undefined,
+  deleted = false,
+): Session | null {
+  const merged = mergeRuntimeState(fetched, captured, latest, deleted)
+  if (merged) reconcileSessionInterruptionBoundary(merged.instanceId, merged)
+  return merged
+}
+
+function mergeRuntimeState(
   fetched: Session,
   captured: Session | undefined,
   latest: Session | undefined,

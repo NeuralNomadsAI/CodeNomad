@@ -83,11 +83,13 @@ test("a collapsed parent's chevron carries visible subsession statuses without r
       ;(window as any).fixture.status("other-grandchild", "idle")
     })
     await settlesOn("other-child", "--session-status-idle-fg")
-    assert.equal(await chevron("other-child").getAttribute("aria-label"), "Expand session — 1 subsession idle")
+    assert.equal(await chevron("other-child").getAttribute("aria-label"), "Clear 1 subsession idle")
     await chevron("other-child").click()
-    await page.locator('[data-session-id="other-grandchild"] .session-idle').waitFor()
+    await chevron("other-child").click()
+    await page.locator('[data-session-id="other-grandchild"]').waitFor()
     assert.equal(await chevron("other-child").getAttribute("data-child-activity"), null)
     await chevron("other").click()
+    await page.evaluate(() => (window as any).fixture.idle("other-grandchild", Date.now()))
     await settlesOn("other", "--session-status-idle-fg")
     assert.equal(await chevron("other").locator(".disclosure-chevron").evaluate(el => getComputedStyle(el).animationName), "none")
     if (process.env.CODENOMAD_CHILD_ACTIVITY_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_CHILD_ACTIVITY_CAPTURE })
@@ -102,7 +104,7 @@ test("a collapsed parent's chevron carries visible subsession statuses without r
       ;(window as any).fixture.status("other-child", "idle")
     })
     await settlesOn("other", "--session-status-idle-fg")
-    assert.equal(await chevron("other").getAttribute("aria-label"), "Expand session — 2 subsessions idle")
+    assert.equal(await chevron("other").getAttribute("aria-label"), "Clear 2 subsessions idle")
     await page.evaluate(() => {
       ;(window as any).fixture.seen("other-child")
       ;(window as any).fixture.seen("other-grandchild")
@@ -126,8 +128,11 @@ test("a collapsed parent's chevron carries visible subsession statuses without r
     })
     assert.equal(await chevron("other").getAttribute("data-child-activity"), null)
 
-    // Neither interrupted nor retrying badges may be misrepresented as green idle.
-    for (const extra of [{ generationRecovery: "interrupted" }, { retry: { attempt: 1, message: "Retry", next: 0 } }]) {
+    // Interrupted carries its own colour; retrying stays out of the idle projection.
+    await page.evaluate(() => (window as any).fixture.idle("other-grandchild", Date.now(), { generationRecovery: "interrupted" }))
+    await settlesOn("other", "--status-warning")
+    assert.equal(await chevron("other").getAttribute("aria-label"), "Clear 1 subsession interrupted")
+    for (const extra of [{ retry: { attempt: 1, message: "Retry", next: 0 } }]) {
       await page.evaluate(extra => (window as any).fixture.idle("other-grandchild", Date.now(), extra), extra)
       assert.equal(await chevron("other").getAttribute("data-child-activity"), null)
     }
