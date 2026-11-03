@@ -23,7 +23,7 @@ $source=$source.Replace('[datetimeoffset]::UtcNow','$global:CooldownNow').Replac
 $script=Join-Path $Root 'guard.ps1'; [IO.File]::WriteAllText($script,$source)
 $key='a'*64; $directory=Join-Path $Root $key; [void][IO.Directory]::CreateDirectory($directory)
 $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-$descriptor=@{v=1;key=$key;directory=$directory;script=$script;powershell='unused.exe';node=$script;probe=$script}
+$descriptor=@{v=1;key=$key;directory=$directory;script=$script;powershell='unused.exe';launcher=$script;node=$script;probe=$script}
 [IO.File]::WriteAllText((Join-Path $directory 'windows.json'),($descriptor|ConvertTo-Json -Compress))
 $manifest=@{v=1;key=$key;revision=1;desired='on';namespace=@{platform='win32';user=$sid}}
 [IO.File]::WriteAllText((Join-Path $directory 'manifest.json'),($manifest|ConvertTo-Json -Depth 4 -Compress))
@@ -33,7 +33,7 @@ function Import-Module { param($Name) Assert ($Name.EndsWith('ScheduledTasks.psd
 function Get-ScheduledTask {
   param($TaskPath,$TaskName,$ErrorAction)
   $kind=if($TaskName.EndsWith('-Main')){'Main'}else{'Recovery'}
-  return [pscustomobject]@{Description=$marker;Actions=@([pscustomobject]@{Execute=$d.powershell;Arguments=(Arguments $kind);WorkingDirectory=$Directory});Principal=@{UserId=$sid};State=$(if($kind -eq 'Main'){$global:MainState}else{'Ready'})}
+  return [pscustomobject]@{Description=$marker;Actions=@([pscustomobject]@{Execute=$d.launcher;Arguments=(ActionArguments $kind);WorkingDirectory=$Directory});Principal=@{UserId=$sid};State=$(if($kind -eq 'Main'){$global:MainState}else{'Ready'})}
 }
 function Export-ScheduledTask {
   param($TaskPath,$TaskName)

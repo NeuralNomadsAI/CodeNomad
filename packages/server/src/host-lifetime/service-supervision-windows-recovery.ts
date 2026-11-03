@@ -7,12 +7,13 @@ import type { WindowsSupervisionRuntime } from "./service-supervision-windows"
 export async function readWindowsRecovery(runtime: WindowsSupervisionRuntime, directory: string, key: string): Promise<string | undefined> {
   const quote = (text: string) => `'${text.replaceAll("'", "''")}'`
   const name = `CodeNomad-OpenCode-${key}-Recovery`
-  const args = `-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${runtime.script}" -Directory "${directory}" -Key ${key} -Mode Recovery`
+  if (!runtime.launcher) return undefined
+  const args = `"${runtime.powershell}" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${runtime.script}" -Directory "${directory}" -Key ${key} -Mode Recovery`
   const script = `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue';
     Import-Module (Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/Modules/ScheduledTasks/ScheduledTasks.psd1');
     $t=Get-ScheduledTask -TaskPath '\\' -TaskName ${quote(name)} -ErrorAction Stop;
     if($t.Description -ne ${quote(`CodeNomad OpenCode supervision v1 key=${key} root=${directory}`)} -or
-      $t.Actions.Count -ne 1 -or $t.Actions[0].Execute -ne ${quote(runtime.powershell)} -or
+      $t.Actions.Count -ne 1 -or $t.Actions[0].Execute -ne ${quote(runtime.launcher)} -or
       $t.Actions[0].Arguments -ne ${quote(args)} -or $t.Actions[0].WorkingDirectory -ne ${quote(directory)} -or
       $t.State -eq 'Disabled'){throw 'ownership'};
     $sid=[string]$t.Principal.UserId; if($sid -notmatch '^S-1-'){

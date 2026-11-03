@@ -33,6 +33,8 @@ OpenCode 管理其全局服务注册、会话、消息和数据库。CodeNomad �
 
 ## 保持 OpenCode 运行 {#service-supervision}
 
+在 Windows 上，监督和恢复在后台运行，不会打开终端窗口。CodeNomad 更新会保留已保存的选择和正在运行的 OpenCode 服务；更新后的任务操作会在后续启动时生效。
+
 在首次启动 Mission 前，**首次启动 Mission 时保持关闭** 可保存显式关闭的选择，无需先安装监管。
 
 在 **设置 → OpenCode** 中，**保持 OpenCode 运行** 会在执行主机上安装系统监管，由使用此服务的所有 CodeNomad 配置共享。它独立于 Missions 运行，即使 CodeNomad 已关闭也有效。若未提前显式关闭，首次启动 Mission 时会启用；创建暂停的 Mission 会保留此选择。暂停、停止或删除 Mission 均保留此偏好。
