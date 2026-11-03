@@ -327,8 +327,8 @@ scheduling use the same controls. Structural/template guards and their explanati
 come from the document; incomplete native observation also fences editing. The
 execution-journal format exposes objective/notes edits. A unified immediate preparation
 also edits title, playbook, requested profiles and task mode before its first admission.
-Before first Play, that journal-bound preparation also converts between immediate,
-delayed, recurring and conditional policies under its original preparation intent.
+Before first Play, that journal-bound preparation also converts between no launch
+criteria and schedule/event criteria under its original preparation intent.
 Its immutable creation binding stays attached; calendar ownership makes the empty
 journal dormant and hides its panel row. Returning to immediate restores that row.
 Calendar deletion retires the exact dormant journal revision before document compaction.
@@ -352,7 +352,7 @@ H9 editing uses the document projection and the mutator's fresh guards:
 
 | Document state | Editable configuration |
 | --- | --- |
-| Before first launch, with complete observation and no unresolved intent | Title, objective, notes, profiles, task mode, sources, timing and limits; template while no task has ever been created. |
+| Before first launch, with complete observation and no unresolved intent | Title, objective, notes, profiles, task mode, sources, launch criteria and end; template while no task has ever been created. |
 | Between recurring passages, paused or running, with no pending passage/wake/control | Future-passage configuration under the same structural guard. An armed calendar reconciles its replacement before admission; a paused document stays paused. |
 | Admitted passage, or an already launched one-time preparation | Objective and notes through the recorded text-edit contract; admitted inputs, profiles, task briefs and identities stay frozen. |
 | Uncertain admission/control, incomplete integrity evidence, or terminal document | Read-only until its owning reconciliation/recovery permits editing. |
@@ -364,10 +364,10 @@ their phase and absolute end. Editor reopen restores the loaded draft; conflict
 reload and original-receipt reconciliation keep their contracts below.
 
 Editor drafts retain decoded stored-policy metadata, frozen preview time and the loaded
-baseline through panel remounts. Saved delays retain their absolute one-shot instant;
-Every previews use the current native next slot's phase, with first-Play end bounds
-and consumed launch quota retained. A paused or unknown interval phase stays explicitly
-unavailable. An explicit conflict reload adopts the current configuration and keeps one
+baseline through panel remounts. Saved legacy delays retain their absolute one-shot
+instant; legacy interval previews use the current native next slot's phase, with
+first-Play end bounds and consumed passage limits retained. A paused or unknown
+interval phase stays explicitly unavailable. An explicit conflict reload adopts the current configuration and keeps one
 comparison containing only the preceding user fields. Refreshing observation at the same revision
 preserves those editable fields.
 
@@ -391,7 +391,8 @@ That explicit action rereads the original receipt and resumes only its retained
 configure request, payload and revision. Remounts retain uncertainty and require
 another positive read before offering that retry.
 
-Source choices use explicit project pages on demand. Schedule documents page by eight;
+Source choices use explicit project pages on demand, one reader per event kind listed
+in the criteria (`mission-editor-sources.ts`). Schedule documents page by eight;
 conversation choices use native session pages, and local branch choices use the owned
 directory's bounded local ref listing (`GET /api/workspaces/:id/git-branches`, at most
 200 refs under `refs/heads/`, including branches without a worktree). The read uses
@@ -411,9 +412,10 @@ Selection retains the unified Mission ID across immediate/calendar conversions o
 from another window. A positive document read selects its owning representation;
 the selected unified object retains point-read demand beyond the loaded document page.
 
-`components/mission-schedule-list.tsx` shows saved frequency/source, desired and
-observed calendar states, native next wake/check, slot end, tracked source checks,
-global launched quota, successes and retained history. Civil times use the saved
+`components/mission-schedule-list.tsx` shows one summary per launch criterion
+(`mission-scheduling-summary.ts`) and only-with-news, desired and observed calendar
+states, native next wake/check, end, tracked source checks, launched passages (with
+a legacy limit), successes and retained history. Civil times use the saved
 zone. Each history entry opens its retained native coordinator; the selected pending
 passage exposes its conversation. The overview toggle reveals saved instructions.
 
@@ -446,11 +448,12 @@ same user intention under its original view fences. Read-only recovery of activa
 retains the publication barrier and leaves the next Play explicit. Never replay an
 action or continue Play automatically from recovered activation or display publication.
 
-`mission-scheduling-decode.ts` reconstructs the controlled draft from a validated
-stored policy. Exact cron equivalence selects daily/weekday/monthly controls;
-other single expressions stay advanced. Each unchanged timing, condition and end
-group retains its original representation, so editing a quota or source preserves
-the native temporal generation. Multi-zone/richer multi calendars and precision
+`mission-scheduling-decode.ts` reconstructs criteria rows from a validated stored
+policy, including legacy frequency/condition documents. Exact cron equivalence
+selects every-N-hours/daily/weekday/monthly shortcuts; other expressions stay
+advanced. An unchanged draft returns the stored policy byte-for-byte and each
+unedited row keeps its stored criterion, so adding an event or an end preserves
+the native temporal generation. Retired legacy options, mixed zones and precision
 beyond the controls stay in an explicit retained-policy view, with a deliberate
 full-policy replacement action. A branch bound to another directory keeps its
 identity visible and blocks submission. Validation errors open the disclosure.
@@ -1185,7 +1188,7 @@ answers mutations with 405 and writes `browser-report.json` to the absolute
 
 ## Agent conventions
 
-- Mission sections use `components/mission-disclosure.tsx` and the shared `.disclosure-chevron`. Keep disclosure/selection/reader identities in the native per-window layout via `stores/mission-view-state.ts`, independent of refreshed snapshot object identity; the window keeps every toggled section and a mission persists the newest toggles one layout value holds. Long mission content uses `components/mission-reader.tsx` above the transcript; its chrome follows `.window-*`. Mission styles live under `styles/panels/mission-*.css`. Recurring setup/list geometry lives in `styles/panels/mission-recurrence.css`. Template and execution mode are orthogonal; recurring drafts record the chosen template, optional verbatim notes and exact coordinator/playbook-role profiles for future passages, under H9 editing guards. Recurring uses the same brief-only library, never storing clock, watch or invocation state in a brief. Daily CREATE and UI share `recurrenceReadBudget` / `recurrenceInputBudget`, with exact native Location room; never raise a ceiling automatically. Creation is one screen (`components/mission-editor.tsx`, `styles/panels/mission-create.css`): the shared objective/instructions draft, an editable title prefilled from its first sentence (≤60, `missions/mission-title.ts`), a folded Scheduling section defaulting to immediate/without a condition and exposing frequency, source condition, end limits, saved zone and preview, and everything else under one collapsed Options disclosure (catalog-backed profile selectors stay lazily nested), except Compare's required Model A/B selectors in the main form. The panel's Create button heads the form, which replaces the current-mission line, the list and the selected detail; these stay mounted but hidden (`.mission-control[data-creating]` in `mission-control.css`, `MissionPicker` `creating`) so pending controls and retries survive. Options include the project's native nesting depth (`mission-subagent-depth.tsx`, shared with Preferences). The Playbook select's `aria-describedby` names the selected playbook's one-sentence description (`missions.control.template.<id>.description`), shown directly under it. The form fills the panel below its header as a column whose body is the only scroller, with the footer below that scrollport at the panel bottom: asynchronous content (depth reads, catalogs) never moves Create from under an aimed click, and focus scrolling never hides a field behind the footer. Banners the panel still shows while creating (stale map, unconfirmed cleanup) are ordered above the form, so they shrink the body instead. When the header, banners and footer leave the body less than its minimum, the whole form scrolls in the panel with the footer after it (`mission-panel-scroll.ts`). The footer's Save as brief takes the footer's `button-secondary` template; elsewhere it is a `.window-text-button`. The footer has a single **Create** submit: creation stores a paused Mission; one-time Missions and schedules start only through their separate explicit Play. Validation stays inline beside its field.
+- Mission sections use `components/mission-disclosure.tsx` and the shared `.disclosure-chevron`. Keep disclosure/selection/reader identities in the native per-window layout via `stores/mission-view-state.ts`, independent of refreshed snapshot object identity; the window keeps every toggled section and a mission persists the newest toggles one layout value holds. Long mission content uses `components/mission-reader.tsx` above the transcript; its chrome follows `.window-*`. Mission styles live under `styles/panels/mission-*.css`. Recurring setup/list geometry lives in `styles/panels/mission-recurrence.css`. Template and execution mode are orthogonal; recurring drafts record the chosen template, optional verbatim notes and exact coordinator/playbook-role profiles for future passages, under H9 editing guards. Recurring uses the same brief-only library, never storing clock, watch or invocation state in a brief. Daily CREATE and UI share `recurrenceReadBudget` / `recurrenceInputBudget`, with exact native Location room; never raise a ceiling automatically. Creation is one screen (`components/mission-editor.tsx`, `styles/panels/mission-create.css`): the shared objective/instructions draft, an editable title prefilled from its first sentence (≤60, `missions/mission-title.ts`), a folded Scheduling section defaulting to no launch criteria and exposing the Launch when criteria list, only-with-news, end, saved zone and preview, and everything else under one collapsed Options disclosure (catalog-backed profile selectors stay lazily nested), except Compare's required Model A/B selectors in the main form. The panel's Create button heads the form, which replaces the current-mission line, the list and the selected detail; these stay mounted but hidden (`.mission-control[data-creating]` in `mission-control.css`, `MissionPicker` `creating`) so pending controls and retries survive. Options include the project's native nesting depth (`mission-subagent-depth.tsx`, shared with Preferences). The Playbook select's `aria-describedby` names the selected playbook's one-sentence description (`missions.control.template.<id>.description`), shown directly under it. The form fills the panel below its header as a column whose body is the only scroller, with the footer below that scrollport at the panel bottom: asynchronous content (depth reads, catalogs) never moves Create from under an aimed click, and focus scrolling never hides a field behind the footer. Banners the panel still shows while creating (stale map, unconfirmed cleanup) are ordered above the form, so they shrink the body instead. When the header, banners and footer leave the body less than its minimum, the whole form scrolls in the panel with the footer after it (`mission-panel-scroll.ts`). The footer's Save as brief takes the footer's `button-secondary` template; elsewhere it is a `.window-text-button`. The footer has a single **Create** submit: creation stores a paused Mission; one-time Missions and schedules start only through their separate explicit Play. Validation stays inline beside its field.
 - One-time and current daily/native-scheduled readers show bodies through `useMissionBody`/`useReaderValue` (§Body display). Never feed cached display values into admission, mutations or lost-acknowledgement checks. Answer presence from descriptors (`missionBodyPresent`, `missionReportHas`) and labels from bounded excerpts and `decidedBy`. New bodies belong in `MISSION_BODY_FIELDS`; never add prose to compact rows. Restrict compacting and paging to display projections (`list`, `mission`, `panelPage`, exact current passage pages and their routes); keep authority maps full. Current passage body keys carry the exact source and report readers retain immutable report IDs. Browser fixtures serve actual bounded projections/content from their own full maps and retain every report in the mission's own `reports`, as the reducer does.
 - A compact map holds a page of its tasks and their reports (§Task pages). Never derive a whole-mission fact (task counts, Needs you, activity, owed work, whether a task or report exists) from its `tasks` or `reports`: use `taskPage`, `actorEvidence`, `actors`, the activity projection and the summary rows. Navigation to a task the map does not hold reads it (`openMissionTask`, `missionStore.loadTasks`) instead of being disabled, and every row the server sends stays within its budget: a new unbounded task, report or change field is a body or a count, never a list in a row. Keep `missionTaskOrder` the only display order, shared by the server's pages and the tree.
 - Editor input copies and receipt checks use exact descriptor-pinned content with their original map revision and request identity (§User-journey regression checks). Unified-document projections stay whole in compact maps: `MissionDocumentSummary` carries bounded configuration metadata and input digests; editor text comes from the schedule or content route.
