@@ -207,20 +207,8 @@ export function createIntegrationAttachment(props: {
       </Dialog.Content>
     </Dialog.Portal>
   </Dialog>}</Show>
-  const available = () => props.active !== false && Boolean(props.session) && entries().some(attachable)
-  const unsupported = () => response()?.integrations.some(entry => entry.family === "native" && entry.state === "ok" && entry.status?.host?.state === "unsupported")
-  const indicator = () => <Show when={props.active !== false && props.session}>
-    <div class="integration-bindings"><For each={bindingEntries()}>{entry => {
-      const label = () => { const value = binding(entry.id); return value.state === "attached" ? value.label : undefined }
-      return <Show when={label()}><div class="integration-binding" data-integration-binding={entry.id}>
-        <span class="integration-binding-label"><bdi>{entry.app.name}</bdi>: <bdi>{label()}</bdi></span>
-        <button type="button" class="window-text-button" onClick={() => void detach(entry.id)}>{t("integrations.detach")}</button>
-      </div></Show>
-    }}</For></div>
-  </Show>
   return {
-    available, unsupported, indicator, canAttach: canOpen, openAny: () => { const first = entries().find(attachable); if (first) void open(first.id) },
-    entries, response, state, open, picker, canOpen, detach, refresh, binding, hintLabel,
+    entries, open, picker, canOpen, detach, refresh, binding, hintLabel,
     /** A mutation for the displayed conversation is in flight. */
     busy: (integrationId: string) => integrationBindings.busy(target(integrationId)) || detaching().has(integrationId),
     /** A submitted action's effect is unknown until the next explicit read. */

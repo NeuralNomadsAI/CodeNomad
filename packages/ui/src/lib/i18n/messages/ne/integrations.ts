@@ -14,7 +14,6 @@ export const integrationMessages = {
   "integrations.detachedObserved": "यहाँ “{label}” छुट्याउने अनुरोध पूरा भयो।",
   "integrations.binding.unknown": "जडान अज्ञात छ",
   "integrations.binding.attached": "{label} सँग जोडिएको",
-  "integrations.unavailableShort": "जडान उपलब्ध छैन",
   "integrations.attach": "खुला अनुप्रयोग जोड्नुहोस्…",
   "integrations.conversation": "लक्षित कुराकानी:",
   "integrations.application": "अनुप्रयोग र कागजात",

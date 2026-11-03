@@ -14,7 +14,6 @@ export const integrationMessages = {
   "integrations.detachedObserved": "Demande de détachement terminée ici pour « {label} ».",
   "integrations.binding.unknown": "Liaison inconnue",
   "integrations.binding.attached": "Attaché à {label}",
-  "integrations.unavailableShort": "Attachement indisponible",
   "integrations.attach": "Attacher une application ouverte…",
   "integrations.conversation": "Conversation cible :",
   "integrations.application": "Application et document",

@@ -14,7 +14,6 @@ export const integrationMessages = {
   "integrations.detachedObserved": "Trennungsanfrage für „{label}“ hier abgeschlossen.",
   "integrations.binding.unknown": "Verbindung unbekannt",
   "integrations.binding.attached": "Mit {label} verbunden",
-  "integrations.unavailableShort": "Verbindung nicht verfügbar",
   "integrations.attach": "Geöffnete Anwendung verbinden…",
   "integrations.conversation": "Zielunterhaltung:",
   "integrations.application": "Anwendung und Dokument",

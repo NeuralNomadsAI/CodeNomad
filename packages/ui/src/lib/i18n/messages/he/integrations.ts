@@ -14,7 +14,6 @@ export const integrationMessages = {
   "integrations.detachedObserved": "בקשת הניתוק של ״{label}״ הושלמה כאן.",
   "integrations.binding.unknown": "החיבור אינו ידוע",
   "integrations.binding.attached": "מחובר אל {label}",
-  "integrations.unavailableShort": "החיבור אינו זמין",
   "integrations.attach": "חיבור יישום פתוח…",
   "integrations.conversation": "שיחת יעד:",
   "integrations.application": "יישום ומסמך",

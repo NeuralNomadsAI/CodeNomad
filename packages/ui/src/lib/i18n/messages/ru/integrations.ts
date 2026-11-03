@@ -14,7 +14,6 @@ export const integrationMessages = {
   "integrations.detachedObserved": "Запрос отключения «{label}» здесь завершён.",
   "integrations.binding.unknown": "Подключение неизвестно",
   "integrations.binding.attached": "Подключено к {label}",
-  "integrations.unavailableShort": "Подключение недоступно",
   "integrations.attach": "Подключить открытое приложение…",
   "integrations.conversation": "Целевой разговор:",
   "integrations.application": "Приложение и документ",

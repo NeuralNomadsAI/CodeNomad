@@ -14,7 +14,6 @@ export const integrationMessages = {
   "integrations.detachedObserved": "此处已完成“{label}”的断开请求。",
   "integrations.binding.unknown": "绑定未知",
   "integrations.binding.attached": "已连接到 {label}",
-  "integrations.unavailableShort": "连接不可用",
   "integrations.attach": "连接已打开的应用…",
   "integrations.conversation": "目标会话：",
   "integrations.application": "应用和文档",

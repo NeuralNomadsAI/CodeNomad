@@ -14,7 +14,6 @@ export const integrationMessages = {
   "integrations.detachedObserved": "“{label}” için bağlantı kesme isteği burada tamamlandı.",
   "integrations.binding.unknown": "Bağlantı bilinmiyor",
   "integrations.binding.attached": "{label} ile bağlı",
-  "integrations.unavailableShort": "Bağlantı kullanılamıyor",
   "integrations.attach": "Açık bir uygulamayı bağla…",
   "integrations.conversation": "Hedef konuşma:",
   "integrations.application": "Uygulama ve belge",

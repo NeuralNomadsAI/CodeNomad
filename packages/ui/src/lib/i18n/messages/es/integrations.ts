@@ -14,7 +14,6 @@ export const integrationMessages = {
   "integrations.detachedObserved": "La solicitud de desvinculación de «{label}» terminó aquí.",
   "integrations.binding.unknown": "Vínculo desconocido",
   "integrations.binding.attached": "Vinculado a {label}",
-  "integrations.unavailableShort": "Vinculación no disponible",
   "integrations.attach": "Vincular una aplicación abierta…",
   "integrations.conversation": "Conversación de destino:",
   "integrations.application": "Aplicación y documento",

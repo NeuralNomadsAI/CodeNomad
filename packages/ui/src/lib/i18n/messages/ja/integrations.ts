@@ -14,7 +14,6 @@ export const integrationMessages = {
   "integrations.detachedObserved": "ここで「{label}」の切断要求が完了しました。",
   "integrations.binding.unknown": "接続状態不明",
   "integrations.binding.attached": "{label} に接続中",
-  "integrations.unavailableShort": "接続を利用できません",
   "integrations.attach": "開いているアプリを接続…",
   "integrations.conversation": "接続先の会話：",
   "integrations.application": "アプリとドキュメント",
