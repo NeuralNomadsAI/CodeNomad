@@ -11,6 +11,7 @@ import type {
   PluginRuntimeSource,
 } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
+import { integrationForSources } from "../lib/integration-rows"
 import { getLogger } from "../lib/logger"
 import { showToastNotification } from "../lib/notifications"
 import { HttpResponseError } from "../lib/retryable-file-search"
@@ -58,8 +59,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     const entry = integrationFor(sources), action = entry && installation.action(entry.id)
     return entry && action ? { action, run: () => installation.open(entry.id) } : undefined
   }
-  const integrationFor = (sources: readonly (PluginConfiguredSource & { scope: PluginControlScope })[]) => attachment.entries().find(entry =>
-    entry.configuredSources.some(association => sources.some(source => source.scope === association.scope && source.entryIndex === association.entryIndex)))
+  const integrationFor = (sources: readonly (PluginConfiguredSource & { scope: PluginControlScope })[]) => integrationForSources(attachment.entries(), sources)
   const attachFor = (sources: readonly (PluginConfiguredSource & { scope: PluginControlScope })[]) => {
     const entry = integrationFor(sources)
     return entry && attachment.canAttach(entry.id) ? () => attachment.open(entry.id) : undefined

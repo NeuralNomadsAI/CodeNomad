@@ -4,6 +4,7 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import { locationRequestOptions } from "../compatibility/location"
 import { PluginControlsError, type PluginControls } from "../plugin-controls"
 import type { IntegrationCatalogSource } from "./catalog"
+import { isIntegrationDocsUrl } from "./docs-url"
 import { recognizeIntegrations } from "./recognition"
 import { readIntegrationStatuses, type IntegrationStatusRead } from "./status"
 
@@ -56,9 +57,15 @@ export class IntegrationsReader {
           family: entry.family,
           summary: entry.summary,
           app: entry.app,
-          docs: entry.docs,
+          ...(isIntegrationDocsUrl(entry.docs, entry.id) ? { docs: entry.docs } : {}),
           catalogStatus: entry.status,
           configured: recognition.ways.length > 0,
+          // A retained `id`/`-id` rule alone is neither a declaration nor a loaded plugin.
+          plugin: {
+            declared: recognition.sources.length > 0,
+            ...(recognition.runtime ? { runtime: recognition.runtime.state.status === "failed" ? "failed" as const : "loaded" as const } : {}),
+          },
+          ...(recognition.ambiguous ? { ambiguous: true as const } : {}),
           scopes,
           configuredSources: recognition.sources.flatMap(source =>
             (source.scope === "global" || source.scope === "project")

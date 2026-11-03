@@ -30,7 +30,8 @@ describe("integration recognition", () => {
       { name: "Git prefix", snapshot: pluginSnapshot({ sources: [source(`${GIT}path:/integrations/fixture`)] }), ways: ["git"] },
       { name: "disabled by its exact rule", snapshot: pluginSnapshot({
         sources: [source("file:///builds/fixture")],
-        rules: [{ selector: "-neuralnomads.fixture", enabled: false, scope: "project", entryIndex: 1, order: 1 }] }), ways: ["plugin"] },
+        // The snapshot normalizes `-neuralnomads.fixture` into the selector and `enabled: false`.
+        rules: [{ selector: "neuralnomads.fixture", enabled: false, scope: "project", entryIndex: 1, order: 1 }] }), ways: ["plugin"] },
     ]
     for (const { name, snapshot, ways } of cases) {
       const [fixture] = recognizeIntegrations(catalog, snapshot)
@@ -55,6 +56,48 @@ describe("integration recognition", () => {
     assert.deepEqual(two.slice(0, 2).map(recognition => recognition.ambiguous), [true, true])
     const other = recognizeIntegrations(catalog, pluginSnapshot({ sources: [source("@neuralnomads/opencode-mail", { pluginId: "neuralnomads.other" })] }))
     assert.equal(other[2]!.ambiguous, true)
+  })
+
+  it("recognises a disabled plugin by its normalized rule only, never by an enabling or raw `-id` selector", () => {
+    const rule = (selector: string, enabled: boolean) => ({ selector, enabled, scope: "global" as const, entryIndex: 0, order: 0 })
+    const read = (rules: ReturnType<typeof rule>[]) => recognizeIntegrations(catalog, pluginSnapshot({ rules }))[0]!
+    const disabled = read([rule("neuralnomads.fixture", false)])
+    assert.deepEqual(disabled.ways, ["plugin"])
+    assert.deepEqual(disabled.sources, [])
+    assert.deepEqual(disabled.scopes, ["global"])
+    assert.deepEqual(read([rule("neuralnomads.fixture", true)]).ways, [])
+    assert.deepEqual(read([rule("-neuralnomads.fixture", false)]).ways, [], "snapshots never carry a raw `-id` selector")
+  })
+
+  it("attributes a package that failed before exporting its ID through exactly one source of its exact target", async () => {
+    const target = "@neuralnomads/opencode-fixture@^0.1"
+    const failed = runtime("unused", { id: undefined, source: { type: "package", target }, state: { status: "failed", error: "private" } })
+    const read = (entries: PluginRuntimeInventoryEntry[], targets = [target]) => recognizeIntegrations(catalog,
+      pluginSnapshot({ sources: targets.map(item => source(item)), runtime: entries }))
+    assert.equal(read([failed])[0]!.runtime, failed)
+    assert.equal(read([failed])[0]!.ambiguous, false)
+    assert.equal((await readIntegrationStatuses(read([failed]), async () => assert.fail("failed packages have no RPC")))[0]!.state, "failed")
+    assert.equal(read([{ ...failed, source: { type: "package", target: `${target}-other` } }])[0]!.runtime, undefined)
+    assert.equal(read([{ ...failed, state: { status: "active" } }])[0]!.runtime, undefined, "only a failure can lack its ID")
+    const shared = read([failed], [target, target])[0]!
+    assert.equal(shared.runtime, undefined, "a failure shared by two sources is attributed to neither")
+    assert.equal(shared.ambiguous, true)
+  })
+
+  it("marks two runtime candidates as ambiguous, without any status call", async () => {
+    const target = "@neuralnomads/opencode-fixture@^0.1"
+    const failed = runtime("unused", { id: undefined, source: { type: "package", target }, state: { status: "failed", error: "private" } })
+    for (const [name, entries, targets] of [
+      ["two failures", [failed, failed], [target]],
+      ["two loaded plugins", [runtime("neuralnomads.fixture"), runtime("neuralnomads.fixture")], [target]],
+      ["runtime only", [runtime("neuralnomads.fixture"), runtime("neuralnomads.fixture")], []],
+    ] as const) {
+      const recognition = recognizeIntegrations(catalog, pluginSnapshot({ sources: targets.map(item => source(item)), runtime: [...entries] }))
+      assert.equal(recognition[0]!.ambiguous, true, name)
+      assert.equal(recognition[0]!.runtime, undefined, name)
+      assert.deepEqual(recognition[0]!.ways.includes("plugin"), true, name)
+      assert.equal((await readIntegrationStatuses(recognition, async () => assert.fail("ambiguous packages have no RPC")))[0]!.state, "non-conforming", name)
+    }
   })
 
   it("designates integrations for a spec being added by package name or Git prefix only", () => {

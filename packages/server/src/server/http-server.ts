@@ -63,6 +63,8 @@ import { IntegrationCatalogSource } from "../opencode/integrations/catalog"
 import { IntegrationsReader } from "../opencode/integrations/integrations"
 import { IntegrationAttachments } from "../opencode/integrations/attachments"
 import { registerIntegrationAttachmentRoutes } from "./routes/integration-attachments"
+import { IntegrationInstaller } from "../opencode/integrations/install"
+import { registerIntegrationInstallRoutes } from "./routes/integration-install"
 import { WebSearchSettings } from "../opencode/websearch-settings"
 import { ServiceUsage } from "../opencode/service-usage"
 import { registerServiceUsageRoutes } from "./routes/service-usage"
@@ -356,8 +358,10 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerPluginControlRoutes(app, { controls: configurationControls })
   const integrationCatalog = deps.integrationCatalog ?? new IntegrationCatalogSource({ logger: apiLogger })
   const integrations = new IntegrationsReader({ controls: configurationControls, workspaceManager: deps.workspaceManager, catalog: integrationCatalog })
-  registerPluginSourceRoutes(app, { sources: new PluginSources({ documents: configurationControls, logger: apiLogger, catalog: integrationCatalog }) })
+  const pluginSources = new PluginSources({ documents: configurationControls, logger: apiLogger, catalog: integrationCatalog })
+  registerPluginSourceRoutes(app, { sources: pluginSources })
   registerIntegrationRoutes(app, { integrations })
+  registerIntegrationInstallRoutes(app, { installer: new IntegrationInstaller({ controls: configurationControls, workspaceManager: deps.workspaceManager, catalog: integrationCatalog, sources: pluginSources }) })
   registerIntegrationAttachmentRoutes(app, { attachments: new IntegrationAttachments({ controls: configurationControls, workspaceManager: deps.workspaceManager, catalog: integrationCatalog }) })
   registerWebSearchSettingsRoutes(app, new WebSearchSettings(configurationControls))
   registerSubagentDepthSettingsRoutes(app, new SubagentDepthSettings(configurationControls, deps.workspaceManager))

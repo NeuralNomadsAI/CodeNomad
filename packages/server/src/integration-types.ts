@@ -19,17 +19,25 @@ export type {
 export type { IntegrationCatalogState } from "./opencode/integrations/catalog"
 export type { IntegrationRuntimeState } from "./opencode/integrations/status"
 
-/** One catalog integration in a Location, without the catalog's internal `plugin`, `rpc` and `sources`. */
+/** One catalog integration in a Location, without the catalog's plugin ID, `rpc`, `sources` and `package`. */
 export interface IntegrationView {
   id: string
   displayName: string
   family: IntegrationFamily
   summary: IntegrationCatalogEntry["summary"]
   app: IntegrationCatalogEntry["app"]
-  docs: string
+  /** The catalog's documentation link, only when it is the integration's reviewed GitHub page. */
+  docs?: string
   catalogStatus: IntegrationCatalogEntry["status"]
   /** Recognised in the effective configuration, enabled or not. */
   configured: boolean
+  /**
+   * `declared`: at least one recognised source declaration (Global, Project or inherited); `runtime`: the native
+   * inventory loaded it or it failed to load, absent otherwise. Activation rules alone set neither.
+   */
+  plugin: { declared: boolean; runtime?: "loaded" | "failed" }
+  /** A source designates another integration too, or loaded under another plugin ID: attributed to none. */
+  ambiguous?: true
   /** Writable scopes that declare it or a rule for its plugin. */
   scopes: PluginControlScope[]
   /** Safe correlation to writable plugin-source rows; paths, targets and plugin IDs stay server-side. */

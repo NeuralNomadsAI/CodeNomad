@@ -23,6 +23,7 @@ function harness(options: {
   catalog?: IntegrationCatalogView
   owns?: (call: number) => boolean
   assertCurrent?: () => void
+  status?: unknown
 } = {}) {
   const calls: Array<{ rpcID: string; method: string; input: unknown; location: unknown }> = []
   let ownership = 0
@@ -31,7 +32,7 @@ function harness(options: {
       call: async (request: { rpcID: string; method: string; input: unknown; location: unknown }) => {
         calls.push(request)
         if (request.rpcID === "neuralnomads.slow") return new Promise(() => undefined)
-        return { output: { contract: 1, integration: { id: "fixture", version: "0.1.0", family: "native", spec: 0 }, host: { state: "absent", action: "install" } } }
+        return { output: options.status ?? { contract: 1, integration: { id: "fixture", version: "0.1.0", family: "native", spec: 0 }, host: { state: "absent", action: "install" } } }
       },
     },
   }
@@ -63,7 +64,13 @@ describe("integrations route", () => {
     assert.equal(body.integrations[0]!.version, "0.1.0")
     assert.deepEqual(body.integrations[0]!.configuredSources, [{ scope: "global", entryIndex: 0 }])
     assert.deepEqual(body.integrations[1]!.configuredSources, [], "only the scope's writable target is correlated")
-    for (const field of ["plugin", "rpc", "sources", "package"]) assert.equal(field in body.integrations[0]!, false, `${field} stays on the server`)
+    assert.deepEqual(body.integrations.map(item => item.plugin), [
+      { declared: true, runtime: "loaded" }, { declared: true, runtime: "loaded" }, { declared: false },
+    ])
+    assert.deepEqual(body.integrations.map(item => item.ambiguous), [undefined, undefined, undefined])
+    assert.equal(body.integrations[0]!.docs, "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/fixture")
+    for (const field of ["rpc", "sources", "package"]) assert.equal(field in body.integrations[0]!, false, `${field} stays on the server`)
+    assert.equal(JSON.stringify(body).includes("neuralnomads."), false, "plugin and RPC IDs stay on the server")
     assert.deepEqual(calls.map(call => [call.rpcID, call.method, call.input, call.location]),
       [["neuralnomads.fixture", "status", {}, { directory: "/work" }], ["neuralnomads.slow", "status", {}, { directory: "/work" }]])
     await app.close()
@@ -76,6 +83,51 @@ describe("integrations route", () => {
     }
     assert.equal(calls.length, 0)
     await app.close()
+  })
+
+  it("separates declarations, retained rules, native loading and failures from the ambiguity flag", async () => {
+    for (const kind of ["rule", "runtime-only", "failed", "ambiguous", "marker-mismatch"] as const) {
+      const snapshot = loadedSnapshot()
+      snapshot.runtime = snapshot.runtime.filter(item => item.id === "neuralnomads.fixture")
+      snapshot.configured.sources = snapshot.configured.sources.filter(item => item.pluginId === "neuralnomads.fixture")
+      if (kind === "rule" || kind === "runtime-only") snapshot.configured.sources = []
+      if (kind === "rule") {
+        snapshot.runtime = []
+        snapshot.configured.rules = [{ selector: "neuralnomads.fixture", enabled: false, scope: "global", entryIndex: 0, order: 0 }]
+      }
+      if (kind === "failed") {
+        snapshot.runtime[0] = { ...snapshot.runtime[0]!, id: undefined, source: { type: "package", target: snapshot.configured.sources[0]!.target },
+          state: { status: "failed", error: "private failure" } }
+        delete snapshot.configured.sources[0]!.pluginId
+      }
+      if (kind === "ambiguous") snapshot.runtime.push(snapshot.runtime[0]!)
+      const { app, calls } = harness({ snapshot: () => snapshot, ...(kind === "marker-mismatch" ? { status: { contract: 1,
+        integration: { id: "fixture-other", version: "0.1.0", family: "native", spec: 0 } } } : {}) })
+      const item = (await app.inject({ method: "GET", url: "/api/workspaces/w1/integrations?directory=%2Fwork" })).json().integrations[0]
+      assert.deepEqual(item.plugin, kind === "rule" || kind === "runtime-only" ? kind === "rule" ? { declared: false } : { declared: false, runtime: "loaded" }
+        : { declared: true, ...(kind === "ambiguous" ? {} : { runtime: kind === "failed" ? "failed" : "loaded" }) }, kind)
+      assert.equal(item.configured, true, kind)
+      assert.equal(item.ambiguous, kind === "ambiguous" ? true : undefined, kind)
+      assert.equal(item.state, kind === "rule" ? "inactive" : kind === "failed" ? "failed"
+        : kind === "ambiguous" || kind === "marker-mismatch" ? "non-conforming" : "ok", kind)
+      assert.equal(calls.length, kind === "runtime-only" || kind === "marker-mismatch" ? 1 : 0, kind)
+      await app.close()
+    }
+  })
+
+  it("omits a documentation link outside the integration's reviewed GitHub page", async () => {
+    const tree = "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/fixture"
+    for (const [docs, kept] of [
+      [tree, true], ["https://github.com/NeuralNomadsAI/opencode-integrations/blob/main/integrations/fixture/plugin/README.md", true],
+      [tree.replace("/fixture", "/other"), false], [`${tree}?next=https://evil.test`, false], ["https://evil.test/docs", false],
+      [tree.replace("https:", "http:"), false], [tree.replace("github.com", "user@github.com"), false],
+    ] as const) {
+      const { app } = harness({ catalog: { state: "fresh", catalog: catalogOf(catalogEntry("fixture", { docs })) } })
+      const item = (await app.inject({ method: "GET", url: "/api/workspaces/w1/integrations?directory=%2Fwork" })).json().integrations[0]
+      assert.equal(item.docs, kept ? docs : undefined, docs)
+      assert.equal("docs" in item, kept, docs)
+      await app.close()
+    }
   })
 
   it("refuses a Location the workspace does not own, before and after the RPC calls", async () => {

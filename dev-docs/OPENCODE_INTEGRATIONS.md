@@ -79,13 +79,22 @@ UTF-8 JSON within `integrationCatalogSchema`.
 `opencode/integrations/recognition.ts` recognises a configured integration from the authoritative plugin snapshot
 (`PluginControls.read`), enabled or not, without reading OpenCode's cache. A source is the catalog integration `X`
 when its registry package (or the target of an `npm:` alias) is `X.package`, when the runtime loaded it as
-`X.plugin`, or when its spec starts with a prefix of `X.sources.git`; an exact `-X.plugin` rule also designates it,
-since `plugin.list` omits disabled plugins. A source that designates two integrations, or that loaded under another
-plugin ID, is ambiguous.
+`X.plugin`, or when its spec starts with a prefix of `X.sources.git`; a disabling rule for `X.plugin` (the snapshot
+normalizes `-X.plugin` to `{ selector: X.plugin, enabled: false }`) also designates it, since `plugin.list` omits
+disabled plugins. A package that failed before exporting its plugin ID is `X`'s runtime entry when exactly one
+recognised source has its exact package target. A source that designates two integrations, one that loaded under
+another plugin ID, a failure shared by several sources, or two runtime candidates make the integration ambiguous:
+no runtime entry is attributed and no RPC is called.
 
 `GET /api/workspaces/:id/integrations?directory=[&workspaceID=]` (`server/routes/integrations.ts`,
-`IntegrationsReader`) answers every catalog entry for an owned Location, without the catalog's `plugin`, `rpc`,
-`sources` and `package`, with one `state` (`IntegrationRuntimeState`):
+`IntegrationsReader`) answers every catalog entry for an owned Location, without the catalog's plugin ID, `rpc`,
+`sources` and `package`. `docs` is present only when `isIntegrationDocsUrl` (`opencode/integrations/docs-url.ts`)
+accepts it: the raw canonical `https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/<id>`
+or `…/blob/main/integrations/<id>/plugin/README.md` of the same ID. Each entry carries the installation facts
+`plugin: { declared, runtime? }` (`declared`: at least one recognised source; `runtime`: `loaded` or `failed` from
+the native inventory, absent otherwise; a retained `id`/`-id` rule alone sets neither), `ambiguous: true` for an
+ambiguous recognition (distinct from a marker mismatch, which keeps its attribution), and one `state`
+(`IntegrationRuntimeState`):
 
 - `absent` (not configured), `inactive` (configured, not loaded: disabled or not installed yet), `failed`;
 - for a loaded one, the fixed `status` method under the catalog's RPC ID, at most 4 calls in flight and 8 s each
@@ -104,6 +113,34 @@ loaded, are duplicates whatever their form (registry or Git). With the catalog u
 
 `IntegrationView.configuredSources` associates an integration with its writable plugin-source rows by `scope` and
 `entryIndex` only. The source must belong to that scope's exact write target; inherited declarations stay read-only.
+A Plugins row belongs to an integration only when exactly one unambiguous entry claims it (`lib/integration-rows.ts`).
+
+### Installation by catalog ID
+
+`POST /api/workspaces/:id/integrations/:integrationId/install?directory=` (`server/routes/integration-install.ts`,
+`IntegrationInstaller` in `opencode/integrations/install.ts`) takes the strict body `{ scope: "global" | "project" }`
+and the strict query `{ directory }`; any other field is 400. The server builds the spec `<package>@<range>` from
+the current catalog (a valid `stale` one included) and writes it with `PluginSources.add` and its serialized queue,
+without `expectedRevision`. It answers `{ scope, spec, reloadPending: true }` or `{ error, code }`:
+
+- 503 `unavailable`: no valid catalog, no service connection, or a replaced connection; 503 `timeout`: the add
+  deadline passed before any write;
+- 404 `not-found`: an ID outside the catalog; 422 `global-only`: a `native` integration in Project;
+- 409 `ambiguous`: an ambiguous recognition; 409 `duplicate`: a recognised declaration or runtime entry, or a
+  duplicate found by `PluginSources.add` in either scope (its `conflict`/`duplicate` refusal), including a write the
+  daemon has not reloaded yet; retained `id`/`-id` rules of an earlier removal never block;
+- 403 `forbidden`: a Location the workspace does not own.
+
+Ownership and `assertCurrent` are checked before the write and again after it. A refusal after the write leaves an
+uncertain outcome: the client reconciles through a new read and never replays the request. Logs carry only the
+fixed code: never the spec, a path or a native error.
+
+`lib/integrations-api.ts` `installIntegration` sends the request once and checks the answer's shape.
+`pluginSourcesStore.installIntegration` (`stores/plugin-sources.ts`) reserves the attempt before transmission and
+shows its hint only once the server confirms the returned spec: that Plugins row is `pending` for
+`PLUGIN_SOURCE_PENDING_TIMEOUT_MS` (120 s), then `unconfirmed`. A refused or lost answer leaves no hint. Either way it
+invalidates the plugin snapshot and refreshes the demanded integrations reads. `installation(instance, location,
+integration)` derives `active`/`failed` from `plugin.runtime`, otherwise the hint or `unconfirmed` for a declaration.
 
 ## Application attachment
 
@@ -283,7 +320,13 @@ Commands:
   and `packages/ui/src/stores/integrations-store.test.ts` (event coalescing, no polling).
   `packages/ui/src/stores/integration-bindings-store.test.ts` checks shared exact-target demand, immediate authority
   revocation, generation fences, trailing reads, native/renderer disconnect suspension and captured mutation cleanup.
-  `catalog-fixture.ts` builds conforming catalog entries and plugin snapshots.
+  `catalog-fixture.ts` builds conforming catalog entries and plugin snapshots; `catalog-pinned-fixture.ts` reads
+  `fixtures/catalog-54d6e5d.json`, the published catalog of revision `54d6e5d`, checked against its Git blob ID.
+- `node --import tsx --test packages/server/src/opencode/integrations/docs-url.test.ts
+  packages/server/src/server/routes/integration-install.test.ts`: the documentation link check against the pinned
+  catalog and URL attacks; installation through the real route, `PluginSources` and configuration documents on disk
+  (every refusal code without writing, `stale` catalogs, the queue's duplicate in either scope, reinstall over retained
+  rules, strict inputs, ownership and connection before and after the write, and captured logs free of paths and specs).
 - `node --import tsx scripts/test-integrations-recognition-native.mjs <absolute-cli>`: the fake integration loaded
   (`ok`), its marker-mismatch variant (`non-conforming`), a third disabled by its exact rule (`inactive`, recognised)
   and an absent entry, against a real daemon; only loaded integrations are called, under catalog RPC IDs; a

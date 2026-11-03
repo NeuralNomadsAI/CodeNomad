@@ -9,8 +9,8 @@ export const INTEGRATION_STATUS_CONCURRENCY = 4
 
 /**
  * `absent`: not configured; `inactive`: configured but not loaded (disabled, or not installed yet); `failed`: the
- * runtime failed to load it; `unsupported`: loaded without the status RPC; `non-conforming`: ambiguous source,
- * marker mismatch or an output outside the contract; `unknown`: no answer in time, or another failure; `ok`: a
+ * runtime failed to load it; `unsupported`: loaded without the status RPC; `non-conforming`: ambiguous source
+ * (also flagged on the view, without any call), marker mismatch or an output outside the contract; `unknown`: no answer in time, or another failure; `ok`: a
  * conforming status.
  */
 export type IntegrationRuntimeState = "absent" | "inactive" | "failed" | "unsupported" | "non-conforming" | "unknown" | "ok"

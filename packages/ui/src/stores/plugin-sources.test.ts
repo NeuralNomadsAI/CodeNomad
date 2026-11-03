@@ -5,25 +5,38 @@ import { PLUGIN_SOURCE_PENDING_TIMEOUT_MS, PluginSourcesStore, removableSources 
 
 const location = { directory: "/repo" }
 
-function harness(options: { failRemove?: boolean } = {}) {
+function harness(options: { failRemove?: boolean; install?: (resolve: (value: unknown) => void, reject: (error: unknown) => void) => void } = {}) {
   let now = 1_000
   const timers: Array<{ at: number; run: () => void }> = []
   const calls: unknown[] = []
   const invalidations: string[] = []
+  const refreshes: string[] = []
   const store = new PluginSourcesStore({
+    installIntegration: (instanceId, directory, integrationId, scope) => {
+      calls.push(["install", instanceId, directory, integrationId, scope])
+      return new Promise((resolve, reject) => options.install
+        ? options.install(resolve as (value: unknown) => void, reject)
+        : resolve({ scope, spec: `@neuralnomads/opencode-${integrationId}@^0.1`, reloadPending: true }))
+    },
     addPluginSource: async (instanceId, payload) => { calls.push(["add", instanceId, payload]); return { scope: payload.scope, spec: payload.spec, reloadPending: true } },
     removePluginSource: async (instanceId, payload) => {
       calls.push(["remove", instanceId, payload])
       if (options.failRemove) throw new Error("stale")
       return { scope: payload.scope, spec: payload.target, reloadPending: true }
     },
-  }, instanceId => invalidations.push(instanceId), () => now, (run, delay) => timers.push({ at: now + delay, run }))
+  }, instanceId => invalidations.push(instanceId), () => now, (run, delay) => timers.push({ at: now + delay, run }),
+  instanceId => refreshes.push(instanceId))
   const advance = (ms: number) => {
     now += ms
-    for (const timer of timers.splice(0).filter(item => item.at <= now)) timer.run()
+    const due = timers.filter(item => item.at <= now)
+    for (const timer of due) timers.splice(timers.indexOf(timer), 1)
+    for (const timer of due) timer.run()
   }
-  return { store, calls, invalidations, advance }
+  return { store, calls, invalidations, refreshes, advance }
 }
+
+const fixture = (plugin: { declared: boolean; runtime?: "loaded" | "failed" }) => ({ id: "fixture", plugin })
+const SPEC = "@neuralnomads/opencode-fixture@^0.1"
 
 describe("plugin sources store", () => {
   it("keeps an added source pending for the named window, then marks it not confirmed", async () => {
@@ -38,6 +51,61 @@ describe("plugin sources store", () => {
     assert.equal(store.state("instance", location, "fixture-plugin@1"), "unconfirmed")
     assert.equal(store.state("instance", location, "never-added"), "unconfirmed")
     assert.equal(store.state("instance", { directory: "/other" }, "fixture-plugin@1"), "unconfirmed", "tracking is per location")
+  })
+
+  it("installs an integration by ID once, then tracks the returned spec as pending until the inventory loads it", async () => {
+    const { store, calls, invalidations, refreshes, advance } = harness()
+    assert.deepEqual(await store.installIntegration("instance", location, "fixture", "global"), { scope: "global", spec: SPEC, reloadPending: true })
+    assert.deepEqual(calls, [["install", "instance", "/repo", "fixture", "global"]], "the client names the ID and scope only")
+    assert.deepEqual(invalidations, ["instance"])
+    assert.deepEqual(refreshes, ["instance"], "the integrations read is refreshed after the write")
+    assert.deepEqual(store.addedSpecs("instance", location).map(item => [item.spec, item.scope]), [[SPEC, "global"]])
+    assert.equal(store.state("instance", location, SPEC), "pending", "the Plugins row of the returned spec is pending")
+    assert.equal(store.installation("instance", location, fixture({ declared: true })), "pending")
+    advance(60_000)
+    assert.equal(store.installation("instance", location, fixture({ declared: true, runtime: "loaded" })), "active")
+    assert.equal(store.installation("instance", location, fixture({ declared: true, runtime: "failed" })), "failed")
+    assert.equal(store.installation("instance", { directory: "/other" }, fixture({ declared: false })), undefined, "tracking is per location")
+    assert.equal(store.installation("instance", location, { id: "other", plugin: { declared: false } }), undefined)
+  })
+
+  it("marks an install not confirmed once the 120 s window passes without the plugin loading", async () => {
+    const { store, advance } = harness()
+    await store.installIntegration("instance", location, "fixture", "global")
+    advance(PLUGIN_SOURCE_PENDING_TIMEOUT_MS)
+    assert.equal(store.installation("instance", location, fixture({ declared: true })), "pending")
+    advance(1)
+    assert.equal(store.installation("instance", location, fixture({ declared: true })), "unconfirmed")
+    assert.equal(store.state("instance", location, SPEC), "unconfirmed")
+    assert.equal(store.installation("instance", location, fixture({ declared: true, runtime: "loaded" })), "active", "a late load is still active")
+  })
+
+  it("shows no hint before the server confirms, and none after a refused or lost answer, without replaying", async () => {
+    let settle: { resolve: (value: unknown) => void; reject: (error: unknown) => void } | undefined
+    const { store, calls, invalidations, refreshes } = harness({ install: (resolve, reject) => { settle = { resolve, reject } } })
+    const sent = store.installIntegration("instance", location, "fixture", "global")
+    assert.deepEqual(store.addedSpecs("instance", location), [], "reserved before transmission, shown only once submitted")
+    assert.equal(store.installation("instance", location, fixture({ declared: false })), undefined)
+    settle!.reject(new Error("connection reset"))
+    await assert.rejects(sent, /connection reset/)
+    assert.deepEqual(store.addedSpecs("instance", location), [])
+    assert.equal(store.installation("instance", location, fixture({ declared: true })), "unconfirmed", "a write the reread shows is unconfirmed, never pending")
+    assert.deepEqual([calls.length, invalidations, refreshes], [1, ["instance"], ["instance"]], "one transmission, then reconciliation")
+    const mismatch = store.installIntegration("instance", location, "fixture", "global")
+    settle!.resolve({ scope: "project", spec: SPEC, reloadPending: true })
+    await assert.rejects(mismatch, /could not be confirmed/)
+    assert.deepEqual(store.addedSpecs("instance", location), [])
+    assert.equal(calls.length, 2)
+  })
+
+  it("drops an install hint when its source is removed or its instance stops", async () => {
+    const { store } = harness()
+    await store.installIntegration("instance", location, "fixture", "global")
+    await store.remove("instance", location, { target: SPEC, scope: "global", entryIndex: 0, hasOptions: false, expectedRevision: "a".repeat(64) })
+    assert.equal(store.installation("instance", location, fixture({ declared: false })), undefined)
+    await store.installIntegration("instance", location, "fixture", "global")
+    store.clearInstance("instance")
+    assert.equal(store.installation("instance", location, fixture({ declared: true })), "unconfirmed")
   })
 
   it("removes exactly the displayed declaration, tracks it while saving and forgets its pending add", async () => {
