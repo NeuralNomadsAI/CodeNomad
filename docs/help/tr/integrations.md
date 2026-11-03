@@ -78,7 +78,7 @@ Komut tanımları ve yerel konfigürasyon devralımı için [OpenCode komutları
 
 Bildirimi veya yüklenmiş/başarısız eklentisi olan her tanınan entegrasyonun **Durum** içinde kendi bölümü vardır; devre dışı veya kuruluyor olması bunu değiştirmez. Belirsiz bir kaynak Eklentiler'de **Uyumsuz durum** gösterir. Her entegrasyon güncelleme, kaldırma ve yenileme işlemleriyle Eklentiler satırını korur. Sürümü ve eklenti denetimlerini gövdede görmek için bölümü açın; ad ve durum başlıkta **Belgeler** ve **i** yanında görünür kalır. **i** açılır penceresi ayrıntıları istek üzerine gösterir: Enter/Boşluk ile açın, Escape ile kapatın.
 
-Durum özelleştirmesinde tüm bölümleri gizleyebilir ve sürükleyerek ya da Yukarı/Aşağı tuşlarıyla sıralayabilirsiniz. Görünürlük ve sıra yeniden yüklemelerde ve entegrasyon geçici olarak yokken korunur. Odaklanmış bölüm kaybolursa odak Eklentiler'e döner.
+Durum özelleştirmesinde tüm bölümleri gizleyebilir ve sürükleyerek ya da Yukarı/Aşağı tuşlarıyla sıralayabilirsiniz. Görünürlük ve sıra yeniden yüklemelerde ve entegrasyon geçici olarak yokken korunur. Odaklanmış bölüm kaybolursa odak Eklentiler'e, Eklentiler gizliyse başka bir görünür Durum bölümüne döner.
 
 Katalogdan kurulum, uygulama bölümünü kurma/güncelleme, bağlama ve kaldırma onay gerektirir. İlk odak **İptal** üzerindedir; onay işlemi 600 ms sonra kullanılabilir. Etkinleştirme ve eklenti güncellemeleri doğrudan çalışır.
 
@@ -90,7 +90,7 @@ Belgeyi uygulamanın entegrasyonundan sunun, **Durum → entegrasyon → Konuşm
 
 Kabul edilmiş işlem hedef konuşma görüntülenirken sonucunu veya hatasını korur; gezinme işlem kaydını kapatır. Güncel bağlantı yetkili okumayı izler. Yanıt kaybı, zaman aşımı veya bağlantı kesilmesi sonrası **Durum belirsiz**, gerçek durumu okumak için **Yenile** sunar. Görünümü yenilemek için isteği asla tekrar göndermeyin.
 
-Kayıtlı Q8 meta verileri yalnızca yeniden bağlama önerisi sunar: **Yeniden bağla**, seçicide ancak aynı entegrasyon ve etikete sahip teklif varsa görünür ve açık onay gerektirir. Güncel bağlantının yetkili bilgisi, entegrasyonun oturum bazındaki okumasından gelir.
+Seçicide açık uygulamalar açıkça okunduktan sonra kayıtlı Q8 meta verileri, proje, konuşma ve bağlantı nesli aynı kaldığı sürece aynı entegrasyon ve doğrulanmış belge etiketi için seçicide veya **Konuşma** satırında **Yeniden bağla** önerebilir. Yeniden bağlama açık onay gerektirir; gezinme veya verilerin geçersiz kılınması öneriyi temizler. Güncel bağlantının yetkili bilgisi, entegrasyonun oturum bazındaki okumasından gelir.
 
 Entegrasyon bölümünden veya Eklentiler satırından kaldırma aynı bildirimi ve kapsam onayını kullanır. Konuşma sayımı veya otomatik bağlantı kesme yapılmadan kaldırılır.
 

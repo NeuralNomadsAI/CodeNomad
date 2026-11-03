@@ -78,7 +78,7 @@ In **Status → Plugins**, **+** opens **Add an integration…** or **Add a plug
 
 Each recognised integration with a declaration or a loaded/failed plugin has its own section in **Status**, including disabled or installing integrations. An ambiguous source shows **Non-conforming** in Plugins. Every integration keeps its Plugins row with update, remove and refresh actions. Expand its integration section to see the version and plugin controls in the body; its name and status stay visible in the header, beside **Documentation** and **i**. The **i** popover provides details on demand: open it with Enter/Space and close it with Escape.
 
-Use Status customisation to hide sections or reorder them by dragging or with Up/Down keys, including the other Status sections. Visibility and order persist across reloads and temporary absence of an integration. If a section disappears while focused, focus returns to Plugins.
+Use Status customisation to hide sections or reorder them by dragging or with Up/Down keys, including the other Status sections. Visibility and order persist across reloads and temporary absence of an integration. If a section disappears while focused, focus returns to Plugins, or another visible Status section when Plugins is hidden.
 
 Catalogue installation, application-part installation/update, attachment and removal require confirmation. **Cancel** is focused first; the confirming action becomes available after 600 ms. Activation and plugin updates run directly.
 
@@ -90,7 +90,7 @@ The section's **Conversation** row reads the current binding for the displayed c
 
 An admitted action keeps its result or error while the target conversation stays displayed; navigation dismisses its receipt. Live attachment follows the authoritative read. **Uncertain state** after a lost response, timeout or disconnection offers **Refresh** to read the actual state. Never replay the request to refresh the display.
 
-Saved Q8 metadata supplies only a reattach suggestion: **Reattach** appears in the picker only for an offer with the same integration and label, and requires explicit confirmation. Current binding authority comes from the integration's per-session read.
+After explicitly reading open applications in the picker, saved Q8 metadata can suggest **Reattach** in the picker or the **Conversation** row for the same integration and validated document label, while the project, conversation and connection generation remain unchanged. Reattachment requires explicit confirmation; navigation or invalidation clears the suggestion. Current binding authority comes from the integration's per-session read.
 
 Removal from the integration section or its Plugins row uses the same scoped declaration and confirmation. Removal proceeds without a conversation census or automatic detach.
 

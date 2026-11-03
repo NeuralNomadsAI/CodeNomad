@@ -291,6 +291,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     const additions: string[] = []
     for (const section of allStatusSections()) {
       const key = section.autoExpandKey?.()
+      if (key === null) continue
       if (!key) { autoExpanded!.delete(section.id); continue }
       if (autoExpanded!.get(section.id) === key) continue
       autoExpanded!.set(section.id, key)

@@ -655,6 +655,33 @@ test("AC-E3 focus remains visible when a focused integration disappears and Plug
   } finally { await page.close() }
 })
 
+test("AC-E6 a user collapse holds through passive refreshes; a different expected action expands once", async () => {
+  const { page, model } = await open(routes => {
+    routes.model.integrations[0] = integrationView("blender", { status: { version: "0.1.0", host: { state: "absent", action: "install" }, connection: { offers: 0 } } })
+  })
+  try {
+    await body(page, "blender").waitFor()
+    await collapse(page, "blender")
+    await notify(page)
+    assert.equal(await trigger(page, "blender").getAttribute("aria-expanded"), "false")
+    model.integrations[0] = integrationView("blender", { status: { version: "0.1.0", host: { state: "outdated", action: "update" }, connection: { offers: 0 } } })
+    await notify(page)
+    await body(page, "blender").waitFor()
+    await collapse(page, "blender")
+    await notify(page)
+    assert.equal(await trigger(page, "blender").getAttribute("aria-expanded"), "false")
+    model.integrations[0] = integrationView("blender")
+    model.bindings["first:blender"] = { state: "attached", label: "scene.blend" }
+    await notify(page)
+    await waitLabel(page, "blender", "Attached")
+    await body(page, "blender").waitFor()
+    await collapse(page, "blender")
+    await notify(page)
+    await waitLabel(page, "blender", "Attached")
+    assert.equal(await trigger(page, "blender").getAttribute("aria-expanded"), "false", "authority reconciliation preserves the user's collapse")
+  } finally { await page.close() }
+})
+
 test("AC-C3 Q8 hints are bounded display data and only matching fresh picker offers suggest reattachment", async () => {
   const { page, count } = await open()
   try {

@@ -78,7 +78,7 @@ Dans **Statut → Plugins**, **+** propose **Ajouter une intégration…** ou **
 
 Chaque intégration reconnue ayant une déclaration ou un plugin chargé/en échec possède sa section **Statut**, même désactivée ou en cours d’installation. Une source ambiguë affiche **Non conforme** dans Plugins. Chaque intégration conserve sa ligne Plugins et ses actions de mise à jour, retrait et actualisation. Dépliez sa section pour voir la version et les contrôles du plugin dans le corps ; son nom et son état restent visibles dans l’en-tête, près de **Documentation** et **i**. Le popover **i** révèle les précisions à la demande : Entrée/Espace l’ouvre, Échap le ferme.
 
-La personnalisation de Statut permet de masquer les sections et de les réordonner par glisser-déposer ou avec les touches Haut/Bas, y compris les autres sections Statut. Le masquage et l’ordre persistent aux rechargements et à l’absence temporaire d’une intégration. Si une section disparaît avec le focus, celui-ci revient à Plugins.
+La personnalisation de Statut permet de masquer les sections et de les réordonner par glisser-déposer ou avec les touches Haut/Bas, y compris les autres sections Statut. Le masquage et l’ordre persistent aux rechargements et à l’absence temporaire d’une intégration. Si une section disparaît avec le focus, celui-ci revient à Plugins, ou à une autre section Statut visible si Plugins est masqué.
 
 L’installation depuis le catalogue, l’installation/mise à jour de la partie application, l’attachement et le retrait demandent confirmation. **Annuler** reçoit le focus ; l’action de confirmation devient disponible après 600 ms. L’activation et les mises à jour du plugin s’exécutent directement.
 
@@ -90,7 +90,7 @@ La ligne **Conversation** de la section lit la liaison de la conversation affich
 
 Une action admise conserve son résultat ou son erreur tant que la conversation cible reste affichée ; naviguer ferme son reçu. La liaison actuelle suit la lecture faisant autorité. **État incertain** après une réponse perdue, un délai dépassé ou une coupure propose **Actualiser** pour relire l’état réel. Ne rejouez jamais la demande pour rafraîchir l’affichage.
 
-La métadonnée Q8 sauvegardée fournit uniquement une suggestion de rattachement : **Rattacher** apparaît dans le sélecteur seulement pour une offre de même intégration et de même étiquette, avec confirmation explicite. L’autorité sur la liaison actuelle provient de la lecture par session de l’intégration.
+Après une lecture explicite des applications ouvertes dans le sélecteur, la métadonnée Q8 sauvegardée peut proposer **Rattacher** dans le sélecteur ou la ligne **Conversation** pour la même intégration et une étiquette de document validée, tant que le projet, la conversation et la génération de connexion restent identiques. Le rattachement demande confirmation explicite ; une navigation ou une invalidation efface la suggestion. L’autorité sur la liaison actuelle provient de la lecture par session de l’intégration.
 
 Le retrait depuis la section d’intégration ou sa ligne Plugins utilise la même déclaration et confirmation avec portée. Il s’effectue sans recensement des conversations ni détachement automatique.
 

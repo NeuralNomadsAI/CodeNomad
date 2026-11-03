@@ -78,7 +78,7 @@ En **Estado → Plugins**, **+** ofrece **Añadir una integración…** o **Aña
 
 Cada integración reconocida con una declaración o un plugin cargado/con error tiene su sección en **Estado**, incluso desactivada o instalándose. Una fuente ambigua muestra **No conforme** en Plugins. Cada integración conserva su fila de Plugins con acciones de actualización, eliminación y refresco. Despliega su sección para ver la versión y los controles del plugin en el cuerpo; nombre y estado siguen visibles en la cabecera junto a **Documentación** e **i**. El popover **i** muestra detalles a petición: se abre con Intro/Espacio y se cierra con Escape.
 
-La personalización de Estado permite ocultar todas las secciones y reordenarlas arrastrando o con las teclas Arriba/Abajo. La visibilidad y el orden persisten al recargar y durante la ausencia temporal de una integración. Si desaparece una sección enfocada, el foco vuelve a Plugins.
+La personalización de Estado permite ocultar todas las secciones y reordenarlas arrastrando o con las teclas Arriba/Abajo. La visibilidad y el orden persisten al recargar y durante la ausencia temporal de una integración. Si desaparece una sección enfocada, el foco vuelve a Plugins, o a otra sección de Estado visible si Plugins está oculto.
 
 Instalar desde el catálogo, instalar/actualizar la parte de la aplicación, vincular y quitar requieren confirmación. **Cancelar** recibe el foco inicial; la acción de confirmación se habilita tras 600 ms. La activación y las actualizaciones del plugin se ejecutan directamente.
 
@@ -90,7 +90,7 @@ La fila **Conversación** consulta el vínculo de la conversación mostrada. **V
 
 Una acción admitida conserva su resultado o error mientras siga visible la conversación de destino; navegar cierra su recibo. El vínculo actual sigue la consulta autoritativa. **Estado incierto** tras perder una respuesta, agotar el tiempo o desconectarse ofrece **Actualizar** para consultar el estado real. Nunca repitas la solicitud para refrescar la pantalla.
 
-Los metadatos Q8 guardados solo ofrecen una sugerencia para volver a vincular: **Volver a vincular** aparece en el selector únicamente si coinciden integración y etiqueta y requiere confirmación explícita. La autoridad sobre el vínculo actual procede de la consulta por sesión de la integración.
+Tras consultar explícitamente las aplicaciones abiertas en el selector, los metadatos Q8 guardados pueden ofrecer **Volver a vincular** en el selector o la fila **Conversación** para la misma integración y una etiqueta de documento validada, mientras se mantengan el proyecto, la conversación y la generación de conexión. Volver a vincular requiere confirmación explícita; navegar o invalidar los datos borra la sugerencia. La autoridad sobre el vínculo actual procede de la consulta por sesión de la integración.
 
 Quitar desde la sección de integración o su fila de Plugins usa la misma declaración y confirmación de ámbito. Se realiza sin censar conversaciones ni desvincularlas automáticamente.
 

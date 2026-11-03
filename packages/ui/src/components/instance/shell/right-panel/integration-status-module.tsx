@@ -102,6 +102,8 @@ export function createIntegrationStatusModule(options: IntegrationStatusModuleOp
       renderInfo: () => <Show when={entry(id)}>{value => <IntegrationInfoButton t={options.t} entry={value()} state={facts(id)!.state} />}</Show>,
       autoExpandKey: () => {
         const value = facts(id), key = value && integrationAutoExpandKey(value.state)
+        const conversation = value?.state.conversation?.state
+        if (!key && (conversation === "unknown" || conversation === "uncertain")) return null
         return key === "attached" ? `${key}:${session()?.id}` : key
       },
       render: () => <IntegrationSection t={options.t} entry={() => entry(id)} context={context} />,

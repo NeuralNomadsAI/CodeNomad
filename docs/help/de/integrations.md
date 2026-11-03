@@ -78,7 +78,7 @@ Unter **Status → Plugins** öffnet **+** die Auswahl **Integration hinzufügen
 
 Jede erkannte Integration mit einer Deklaration oder einem geladenen/fehlgeschlagenen Plugin hat einen eigenen Abschnitt in **Status**, auch deaktiviert oder während der Installation. Eine mehrdeutige Quelle zeigt **Nicht konform** in Plugins. Jede Integration behält ihre Plugins-Zeile mit Aktualisieren, Entfernen und Statusaktualisierung. Klappen Sie den Abschnitt auf, um Version und Plugin-Steuerung im Inhalt zu sehen. Name und Status bleiben im Kopf neben **Dokumentation** und **i** sichtbar. Das **i**-Popover zeigt Details auf Anfrage: mit Eingabe/Leertaste öffnen, mit Escape schließen.
 
-Über die Status-Anpassung lassen sich alle Statusabschnitte ausblenden und per Ziehen oder mit den Tasten Auf/Ab umordnen. Sichtbarkeit und Reihenfolge bleiben bei Neuladen und vorübergehend fehlenden Integrationen erhalten. Verschwindet ein fokussierter Abschnitt, kehrt der Fokus zu Plugins zurück.
+Über die Status-Anpassung lassen sich alle Statusabschnitte ausblenden und per Ziehen oder mit den Tasten Auf/Ab umordnen. Sichtbarkeit und Reihenfolge bleiben bei Neuladen und vorübergehend fehlenden Integrationen erhalten. Verschwindet ein fokussierter Abschnitt, kehrt der Fokus zu Plugins zurück, oder zu einem anderen sichtbaren Statusabschnitt, wenn Plugins ausgeblendet ist.
 
 Kataloginstallation, Installation/Aktualisierung des Anwendungsteils, Verbinden und Entfernen erfordern eine Bestätigung. **Abbrechen** erhält zuerst den Fokus; die Bestätigungsaktion wird nach 600 ms verfügbar. Aktivierung und Plugin-Updates werden direkt ausgeführt.
 
@@ -90,7 +90,7 @@ Die Zeile **Unterhaltung** liest die aktuelle Verbindung der angezeigten Unterha
 
 Eine gestartete Aktion behält Ergebnis oder Fehler, solange die Zielunterhaltung angezeigt bleibt; Navigation schließt ihren Beleg. Die aktuelle Verbindung folgt der maßgeblichen Abfrage. **Status ungewiss** nach verlorener Antwort, Zeitüberschreitung oder Verbindungsabbruch bietet **Aktualisieren**, um den tatsächlichen Zustand zu lesen. Wiederholen Sie niemals die Anfrage, um die Anzeige zu aktualisieren.
 
-Gespeicherte Q8-Metadaten liefern ausschließlich einen Vorschlag zum erneuten Verbinden: **Erneut verbinden** erscheint im Auswahlfenster nur für ein Angebot mit gleicher Integration und Bezeichnung und erfordert eine ausdrückliche Bestätigung. Maßgeblich für die aktuelle Verbindung ist die sitzungsbezogene Abfrage der Integration.
+Nach einer ausdrücklichen Abfrage der geöffneten Anwendungen im Auswahlfenster können gespeicherte Q8-Metadaten **Erneut verbinden** im Auswahlfenster oder in der Zeile **Unterhaltung** für dieselbe Integration und eine validierte Dokumentbezeichnung anbieten, solange Projekt, Unterhaltung und Verbindungsgeneration gleich bleiben. Erneutes Verbinden erfordert eine ausdrückliche Bestätigung; Navigation oder Invalidierung entfernt den Vorschlag. Maßgeblich für die aktuelle Verbindung ist die sitzungsbezogene Abfrage der Integration.
 
 Entfernen im Integrationsabschnitt oder in dessen Plugins-Zeile verwendet dieselbe Deklaration und bereichsgebundene Bestätigung. Der Vorgang erfolgt ohne Erfassung der Unterhaltungen oder automatisches Trennen.
 
