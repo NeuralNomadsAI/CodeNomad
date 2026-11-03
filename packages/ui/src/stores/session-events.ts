@@ -44,7 +44,7 @@ import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, invali
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { showsRequestOfSession } from "./interruption-scope"
 import { getRetrySeconds } from "./session-status"
-import { observeSessionInterruption } from "./session-interruption-seen"
+import { observeSessionInterruption, retireSessionInterruptionBoundary } from "./session-interruption-seen"
 import { tGlobal } from "../lib/i18n"
 
 import { fetchSessions, loadMessages, refreshSessionCatalog, removeSessionRuntimeState } from "./session-api"
@@ -182,6 +182,7 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
     event.type.startsWith("session.reasoning.") ||
     event.type.startsWith("session.tool.")
   ) {
+    if (event.type === "session.execution.started") retireSessionInterruptionBoundary(instanceId, sessionId)
     advanceNativeLifecycle(instanceId, sessionId)
     // Ordinary work replaces the backoff: the next attempt has started.
     dismissRetryToast(instanceId, sessionId)

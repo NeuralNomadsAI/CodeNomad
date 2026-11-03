@@ -59,6 +59,13 @@ const settledPast = (session: Interruptible, seen: number) => session.runtimeSta
   && session.generationRecovery !== "interrupted" && (session.outcome === "succeeded" || session.outcome === "failed")
   && (session.time?.idle ?? 0) > seen
 
+/** A subsequent native run cannot inherit the pending association of an earlier clear. */
+export function retireSessionInterruptionBoundary(instanceId: string, sessionId: string): void {
+  const boundaries = eventBoundaries.get(instanceId)
+  boundaries?.delete(sessionId)
+  if (!boundaries?.size) eventBoundaries.delete(instanceId)
+}
+
 /** Called only after the runtime merge admits native metadata for publication. */
 export function reconcileSessionInterruptionBoundary(instanceId: string, session: Interruptible): void {
   const event = eventBoundaries.get(instanceId)?.get(session.id)
@@ -70,8 +77,7 @@ export function reconcileSessionInterruptionBoundary(instanceId: string, session
   }
   if (!event || idle < event.provisional || session.outcome !== "interrupted") return
   // Covering metadata retires the association even when it describes a later run.
-  eventBoundaries.get(instanceId)!.delete(session.id)
-  if (!eventBoundaries.get(instanceId)!.size) eventBoundaries.delete(instanceId)
+  retireSessionInterruptionBoundary(instanceId, session.id)
   const busy = session.time?.busy
   if (busy === undefined || busy > event.provisional) return
   // Extend a matching clear only for a run that had already started at the event.
@@ -95,9 +101,7 @@ export function captureSeenInterruptions(instanceId: string, sessions: readonly 
 }
 
 export function clearSessionSeenInterruption(instanceId: string, sessionId: string): void {
-  const boundaries = eventBoundaries.get(instanceId)
-  boundaries?.delete(sessionId)
-  if (!boundaries?.size) eventBoundaries.delete(instanceId)
+  retireSessionInterruptionBoundary(instanceId, sessionId)
   update(instanceId, entries => entries.delete(sessionId))
 }
 

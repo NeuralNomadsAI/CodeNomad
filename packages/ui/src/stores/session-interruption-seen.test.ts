@@ -184,11 +184,13 @@ describe("seen native interruptions", () => {
     }
   })
 
-  for (const { name, busy, idle, unseen } of [
-    { name: "preserves the current clear when held metadata belongs to an intermediate interruption", busy: 25, idle: 30, unseen: false },
-    { name: "shows a missed later run when no metadata for the acknowledged interruption ever returns", busy: 35, idle: 40, unseen: true },
+  for (const { name, busy, idle, unseen, started } of [
+    { name: "preserves the current clear when held metadata belongs to an intermediate interruption", busy: 25, idle: 30, unseen: false, started: false },
+    { name: "keeps the same-run equal busy and idle timestamp cleared", busy: 30, idle: 30, unseen: false, started: false },
+    { name: "shows a missed later run when no metadata for the acknowledged interruption ever returns", busy: 35, idle: 40, unseen: true, started: false },
+    { name: "shows a missed later interruption after an observed equal-timestamp higher-sequence start", busy: 30, idle: 40, unseen: true, started: true },
   ]) it(name, async () => {
-    const instanceId = `seen-held-metadata-${idle}`
+    const instanceId = `seen-held-metadata-${busy}-${idle}`
     let releaseInfo!: (value: unknown) => void
     const heldInfo = new Promise(resolve => { releaseInfo = resolve })
     let requested!: () => void
@@ -214,7 +216,7 @@ describe("seen native interruptions", () => {
       await infoRequested
       await handleNativeSessionEvent(instanceId, {
         id: "current", created: 30, type: "session.execution.interrupted",
-        durable: { aggregateID: "session", seq: 1, version: 1 },
+        durable: { aggregateID: "session", seq: 30, version: 1 },
         data: { sessionID: "session", reason: "user" }, location: { directory: "/work" },
       })
       const current = () => sessions().get(instanceId)!.get("session")!
@@ -226,6 +228,15 @@ describe("seen native interruptions", () => {
       assert.equal(current().time.idle, 20, "native metadata keeps its existing merge authority")
       const watermarkAfterOlderMetadata = captureSeenInterruptions(instanceId, [current()])
       assert.equal(isSessionInterruptionUnseen(instanceId, current()), false)
+      if (started) {
+        await handleNativeSessionEvent(instanceId, {
+          id: "later-start", created: 30, type: "session.execution.started",
+          durable: { aggregateID: "session", seq: 31, version: 1 },
+          data: { sessionID: "session" }, location: { directory: "/work" },
+        })
+        assert.equal(current().status, "working", "the later start has native lifecycle authority")
+        assert.deepEqual(captureSeenInterruptions(instanceId, [current()]), { session: 30 }, "a run start preserves the clear watermark")
+      }
       await refreshSessionRuntimeStatus(instanceId)
       assert.equal(current().time.idle, idle)
       assert.equal(current().time.busy, busy)

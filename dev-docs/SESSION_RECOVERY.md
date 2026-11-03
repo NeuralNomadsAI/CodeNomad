@@ -60,6 +60,8 @@ SessionInfo catches up. The accepted runtime merge retires that association once
 the native idle boundary reaches the event timestamp. It extends a gap-time clear
 only when native `time.busy` identifies a run started at or before the acknowledged
 event; a later or unknown run start leaves the watermark unchanged.
+An observed `session.execution.started` retires the pending association while
+preserving the clear, including when successive native events share a timestamp.
 Acknowledgements stay monotonic through older metadata, and later event
 continuations preserve intervening clears. A newer native idle boundary shows
 interrupted attention again; the same or an older boundary preserves acknowledgement
