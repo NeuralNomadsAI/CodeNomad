@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "providerUsage.estimated": "Schätzung: aufgezeichnete Schritte seit 00:00 UTC bei angenommenen 200 Anfragen/Tag. Schritte nähern Anfragen an; anderer Datenverkehr und variable IP-Limits können die tatsächliche Kontingentnutzung abweichen lassen.",
+  "providerUsage.estimatedReset": "Geschätzte Rücksetzung {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "Untersitzungen automatisch aufklappen",
   "settings.behavior.autoExpandActiveSubsessions.info": "Wenn ein sichtbarer eingeklappter Zweig unter der ausgewählten Unterhaltung zu Arbeit, Komprimierung oder Eingabe erforderlich wechselt, wird der Pfad zu seinen aktiven Untersitzungen aufgeklappt. Sichtbare Untersitzungen folgen derselben Regel auf jeder Ebene. Deaktivieren, damit Aktivität keine Zweige öffnet. Geöffnete Zweige werden zur Wiederherstellung gespeichert.",
   "settings.usage.cached": "Zuletzt gespeicherte Statistik · Aktualisierung ausstehend",

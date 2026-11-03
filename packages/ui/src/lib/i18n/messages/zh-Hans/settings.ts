@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "providerUsage.estimated": "估算：自 00:00 UTC 起记录的步骤数，以假定的每天 200 次请求为参考。步骤数近似请求数；其他流量和动态 IP 限制可能使其与实际配额用量不同。",
+  "providerUsage.estimatedReset": "预计重置时间 {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "自动展开子会话",
   "settings.behavior.autoExpandActiveSubsessions.info": "当所选对话中可见的折叠分支切换为工作中、压缩中或等待输入时，展开通向其活动子会话的路径。可见子会话在各个深度都遵循同一规则。禁用后，活动不会打开分支。已打开的分支会保存以供恢复。",
   "settings.usage.cached": "上次保存的统计数据 · 等待刷新",

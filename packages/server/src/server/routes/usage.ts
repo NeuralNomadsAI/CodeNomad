@@ -6,6 +6,8 @@ import { createNativeCodexUsage } from "../../usage/native-codex"
 import { claudeCodeAuthEntry, claudeCodeCredential, type ClaudeCodeHost } from "../../usage/claude-credential"
 import { readUsageCredentials } from "../../usage/native-credentials"
 import { getProviderUsage, resolveUsageProvider } from "../../usage/service"
+import { estimateOpenCodeFreeUsage, isOpenCodeFreeModel, openCodeFreeWindow } from "../../usage/opencode-free-estimate"
+import type { ServiceConnection } from "../../workspaces/opencode-service"
 
 const UsageParamsSchema = z.object({ providerId: z.string().trim().min(1) })
 const UsageQuerySchema = z.object({
@@ -64,8 +66,10 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
           }
           signal.throwIfAborted()
           connection.assertCurrent()
-          const provider = resolveUsageProvider(params.data.providerId)
-          const native = !provider || provider.id === "codex"
+          const free = isOpenCodeFreeModel(params.data.providerId, modelId)
+          const provider = free ? null : resolveUsageProvider(params.data.providerId)
+          const native = free ? await openCodeFreeUsage(connection, params.data.providerId, modelId, signal)
+            : !provider || provider.id === "codex"
             ? await nativeCodexUsage(connection, { instanceId, sessionId, directory: location.directory,
               providerId: params.data.providerId, modelId }, signal)
             : null
@@ -115,6 +119,12 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
       }
     },
   )
+}
+
+async function openCodeFreeUsage(connection: ServiceConnection, providerId: string, modelId: string | undefined, signal: AbortSignal) {
+  const now = Date.now(), { from, to } = openCodeFreeWindow(now)
+  const stats = to === from ? { models: [] } : await connection.client.session.stats({ from, to, timezone: "UTC", tools: "none" }, { signal })
+  return estimateOpenCodeFreeUsage(stats, providerId, modelId, now)
 }
 
 async function boundedRead<T>(operation: () => Promise<T>, signal: AbortSignal): Promise<T> {

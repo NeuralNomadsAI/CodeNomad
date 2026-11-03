@@ -12,6 +12,7 @@ import { clearProviderUsageCache } from "../../usage/service"
 function harness() {
   const expires = Date.now() + 3600000
   const state = { nativeCalls: [] as string[], quotaCalls: 0, directory: "/wsl/repo", switched: false, oldEndpoint: false, fail: false,
+    stale: false, statsMissing: false, freeSteps: 42, statsQuery: undefined as URLSearchParams | undefined, statsGate: undefined as (() => Promise<void>) | undefined,
     daemonEnvironment: { HOME: "/home/dev" } as Record<string, string>, hostFiles: new Map<string, { path: string }>(),
     integrations: {} as Record<string, string> }
   const logs: string[] = []
@@ -20,6 +21,19 @@ function harness() {
   const client = OpenCode.make({ baseUrl: "http://isolated-native.invalid", fetch: async (input) => {
     const url = new URL(String(input)); state.nativeCalls.push(url.pathname)
     if (state.fail) throw new Error("secret-refresh Authorization secret-token")
+    if (url.pathname === "/api/experimental/session/stats") {
+      state.statsQuery = url.searchParams
+      await state.statsGate?.()
+      if (state.statsMissing) return Response.json({}, { status: 404 })
+      const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+      return Response.json({ data: { range: { from: Number(url.searchParams.get("from")), to: Number(url.searchParams.get("to")) },
+        sessions: 1, subagents: 0, prompts: 1, steps: 248, tokens, cost: 0, tools: { mode: "none" }, activeDays: 1, streak: 1, activity: [], models: [
+        { model: { providerID: "opencode", id: "big-pickle" }, steps: state.freeSteps, tokens, cost: 0 },
+        { model: { providerID: "opencode", id: "example-free" }, steps: 8, tokens, cost: 0 },
+        { model: { providerID: "opencode", id: "paid" }, steps: 99, tokens, cost: 0 },
+        { model: { providerID: "other", id: "example-free" }, steps: 99, tokens, cost: 0 },
+      ] } })
+    }
     if (url.pathname === "/api/session/missing") return Response.json({ _tag: "SessionNotFoundError", sessionID: "missing" }, { status: 404 })
     if (url.pathname.startsWith("/api/session/")) return Response.json({ data: { id: "session", location: { directory: state.directory } } })
     if (url.pathname.startsWith("/api/provider/")) {
@@ -41,7 +55,7 @@ function harness() {
     { status: state.oldEndpoint ? 404 : 200 })
     return Response.json({}, { status: 404 })
   } })
-  const connection = { client, assertCurrent: () => {} } as ServiceConnection
+  const connection = { client, assertCurrent: () => { if (state.stale) throw new Error("stale connection") } } as ServiceConnection
   const manager: UsageRouteDeps["workspaceManager"] = {
     get: id => id === "instance" ? workspace : undefined,
     getSharedServiceConnection: async () => connection,
@@ -54,6 +68,68 @@ function harness() {
   return { app, state, logs }
 }
 const url = "/api/usage/openai?instanceId=instance&sessionId=session&modelId=gpt-5"
+const freeUrl = "/api/usage/opencode?instanceId=instance&sessionId=session&modelId=big-pickle"
+
+test("free estimate reads only service-wide daily stats after session ownership, without credentials", async () => {
+  const { app, state } = harness()
+  try {
+    state.directory = "/foreign"
+    assert.equal((await app.inject(freeUrl)).statusCode, 403)
+    assert.equal(state.statsQuery, undefined)
+    state.directory = "/wsl/repo"
+    const response = await app.inject(freeUrl)
+    assert.equal(response.statusCode, 200, response.body)
+    assert.equal(response.json().estimated, true)
+    assert.equal(response.json().windows.daily.usedPercent, 25)
+    assert.equal(response.json().windows.daily.valueLabel, "50 / 200")
+    const query = state.statsQuery!
+    assert.equal(query.get("timezone"), "UTC")
+    assert.equal(query.get("tools"), "none")
+    assert.equal(Number(query.get("from")) % 86400000, 0)
+    assert.ok(Number(query.get("to")) - Number(query.get("from")) < 86400000)
+    assert.equal(query.has("project"), false)
+    assert.ok(state.nativeCalls.every(path => path.startsWith("/api/session/") || path === "/api/experimental/session/stats"))
+  } finally { await app.close() }
+})
+
+test("free estimates fence session movement and reconnect during the stats read", async () => {
+  for (const change of ["move", "reconnect"]) {
+    const { app, state } = harness()
+    let started!: () => void, release!: () => void
+    const entered = new Promise<void>(resolve => { started = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    state.statsGate = async () => { started(); await gate }
+    try {
+      const response = app.inject(freeUrl)
+      await entered
+      if (change === "move") state.directory = "/foreign"
+      else state.stale = true
+      release()
+      assert.equal((await response).statusCode, change === "move" ? 403 : 503)
+    } finally { release(); await app.close() }
+  }
+})
+
+test("missing stats or invalid step counts report unavailable rather than unused quota", async () => {
+  const { app, state } = harness()
+  try {
+    state.statsMissing = true
+    assert.equal((await app.inject(freeUrl)).statusCode, 503)
+    state.statsMissing = false; state.freeSteps = -1
+    assert.equal((await app.inject(freeUrl)).statusCode, 503)
+  } finally { await app.close() }
+})
+
+test("exact UTC midnight has zero elapsed usage without querying a future time", async t => {
+  t.mock.method(Date, "now", () => Date.UTC(2026, 10, 3))
+  const { app, state } = harness()
+  try {
+    const response = await app.inject(freeUrl)
+    assert.equal(response.statusCode, 200, response.body)
+    assert.equal(response.json().windows.daily.usedPercent, 0)
+    assert.equal(state.statsQuery, undefined)
+  } finally { await app.close() }
+})
 
 test("rejects missing/unknown workspace and missing/foreign session before credential access", async () => {
   const { app, state } = harness()

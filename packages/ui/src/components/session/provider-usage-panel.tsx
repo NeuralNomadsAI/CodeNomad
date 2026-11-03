@@ -114,7 +114,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
     if (!resetAt) return null
     const date = new Date(resetAt)
     if (!Number.isFinite(date.getTime())) return null
-    return t("providerUsage.resets", { time: date.toLocaleString([], { dateStyle: "short", timeStyle: "short" }) })
+    return t(usage()?.estimated ? "providerUsage.estimatedReset" : "providerUsage.resets", { time: date.toLocaleString([], { dateStyle: "short", timeStyle: "short" }) })
   }
 
   const barColor = (percent: number | null) => {
@@ -189,6 +189,9 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
         </Show>
       </Show>
       <Show when={usage()?.supported && usage()?.configured && usage()?.ok && entries().length > 0}>
+        <Show when={usage()?.estimated}>
+          <div class="mt-1 text-[10px] text-tertiary">{t("providerUsage.estimated")}</div>
+        </Show>
         <div class="mt-2 truncate text-right text-sm font-semibold text-secondary">{usage()?.providerName ?? props.providerId}</div>
       </Show>
     </div>
