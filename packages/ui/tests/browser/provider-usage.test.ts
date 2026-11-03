@@ -69,7 +69,7 @@ test("free-model usage shows an estimate and estimated reset, then clears them o
       windows: { daily: { usedPercent: 21, remainingPercent: 79, windowSeconds: 86400, resetAt: Date.UTC(2026, 10, 4), valueLabel: "42 / 200" } },
     } })
     await page.getByText("42 / 200", { exact: true }).waitFor()
-    await page.getByText(/Estimate: recorded steps/).waitFor()
+    await page.getByText("(estimation)").waitFor()
     await page.getByText(/Estimated reset/).waitFor()
     assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "21")
     await page.evaluate(() => (window as any).usageFixture.select({ providerId: "openai", modelId: "gpt-5" }))
