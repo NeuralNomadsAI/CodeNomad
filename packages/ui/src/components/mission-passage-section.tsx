@@ -33,10 +33,10 @@ export function MissionPassageSectionContent(props: { instanceId: string; source
       const parsed = result
       if (parsed.version !== 1 || parsed.projectID !== projectID || parsed.missionID !== missionID || parsed.scheduleID !== source.scheduleID
         || parsed.passageID !== source.passageID || parsed.revision !== source.revision || parsed.page !== page
-        || !Number.isSafeInteger(parsed.pageCount) || parsed.pageCount < 1 || parsed.pageCount > 64 || page >= parsed.pageCount
-        || typeof parsed.sourceText !== "string" || parsed.sourceText.length > 9_001
+        || !Number.isSafeInteger(parsed.pageCount) || parsed.pageCount < 1 || page >= parsed.pageCount
+        || typeof parsed.sourceText !== "string" || parsed.sourceText.length > 3_001
         // The bounded Markdown-page projection (as for archived passages) is optional display context.
-        || parsed.markdownText !== null && (typeof parsed.markdownText !== "string" || parsed.markdownText.length > 9_116)) throw new Error("Passage source changed")
+        || parsed.markdownText !== null && (typeof parsed.markdownText !== "string" || parsed.markdownText.length > 3_116)) throw new Error("Passage source changed")
       if (cache.size >= 128 && !cache.has(key)) cache.delete(cache.keys().next().value!)
       cache.set(key, parsed); setValue(parsed); props.onPageCount(parsed.pageCount)
     }).catch(() => { if (current) setError(true) })

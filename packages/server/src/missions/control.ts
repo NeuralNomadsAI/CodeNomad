@@ -9,8 +9,8 @@ import { readMissionContent, type MissionContentRequest, type MissionContentResu
 import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
 import { compactMissionMap, missionTaskPage } from "./mission-compact-map"
 import type { MissionTaskPageResult, MissionTaskRequest } from "./mission-panel-map"
-import { missionPanelPage, type MissionPanelPageRequest, type MissionPanelPageResult } from "./mission-panel-page"
-import { activityActorWindow, missionActivityContext, MISSION_ACTIVITY_ACTORS } from "./mission-activity-context"
+import { missionPanelPage, missionPanelWindow, type MissionPanelPageRequest, type MissionPanelPageResult } from "./mission-panel-page"
+import { projectMissionPanel } from "./mission-panel-projection"
 import {
   MISSION_SCHEMA_VERSION,
   missionPlanChanges,
@@ -195,7 +195,7 @@ export class MissionControl {
 
   /** Opt-in byte-bounded display reads. Directory reads use only index hints, never
    * open mission maps. Mission and task reads point-read exactly their named range.
-   * The existing list/mission readers remain the current UI's compatibility contract. */
+    * List/mission readers retain explicit compatibility and reconciliation callers. */
   async panelPage(request: MissionPanelPageRequest): Promise<MissionPanelPageResult> {
     const base = { projectID: this.options.project.id, source: request.source }
     if (request.source === "marks") {
@@ -206,11 +206,14 @@ export class MissionControl {
         cleanupUnavailable: value.damage.cleanupUnavailable }, [{ missionPage: { order: value.order, offset: value.offset, end: value.end, total: value.total }, contexts: value.contexts }], request.cursor)
     }
     if (request.source === "summaries" || request.source === "cleanups") {
+      const finishHighWater = request.source === "summaries" && request.initial && !request.cursor ? await this.journal.finishHighWater() : undefined
       return this.journal.readHints(hints => {
         const aggregate = hints.aggregate()
-        return missionPanelPage({ ...base, discardedEvents: aggregate.discardedEvents,
+        const header = { ...base, ...(finishHighWater === undefined ? {} : { finishHighWater }), discardedEvents: aggregate.discardedEvents,
           controlUnavailable: aggregate.controlUnavailable, notificationUnavailable: aggregate.notificationUnavailable,
-          cleanupUnavailable: aggregate.cleanupUnavailable }, request.source === "summaries" ? hints.summaries() : hints.cleanups(), request.cursor)
+          cleanupUnavailable: aggregate.cleanupUnavailable }
+        const values = request.source === "summaries" ? request.window ? hints.inventorySummaries() : hints.summaries() : hints.cleanups(Boolean(request.window))
+        return request.window ? missionPanelWindow(header, values, request.window, request.cursor) : missionPanelPage(header, values, request.cursor)
       })
     }
     const missionID = request.source === "tasks" ? request.task.missionID : request.missionID
@@ -221,23 +224,10 @@ export class MissionControl {
       notificationUnavailable: Boolean(view.notificationUnavailable), cleanupUnavailable: Boolean(view.cleanupUnavailable) }
     if (!view.mission) return { available: false, reason: damage.discardedEvents || damage.controlUnavailable
       || damage.notificationUnavailable || damage.cleanupUnavailable ? "damaged" : "mission-not-found" }
-    const mission = view.mission, header = { ...base, missionID, revision: mission.revision, ...damage }
-    if (request.source === "activity") {
-      const context = missionActivityContext(mission, damage)
-      if (request.actorOrder !== undefined && request.actorOrder !== context.actorPage.order) return { available: false, reason: "changed" }
-      return missionPanelPage({ ...header, phase: "context" }, [activityActorWindow(context, request.actorOffset ?? 0, MISSION_ACTIVITY_ACTORS)], request.cursor)
-    }
-    if (request.source === "tasks") {
-      const page = missionTaskPage(mission, request.task)
-      if (request.task.order !== undefined && request.task.order !== page.taskPage.order) return { available: false, reason: "changed" }
-      return missionPanelPage(header, [page], request.cursor)
-    }
-    const map = compactMissionMap(mission)
-    if (request.field === undefined) return missionPanelPage(header, [map], request.cursor)
-    // Own root fields only: extension metadata survives as it does in compact maps.
-    if (!Object.prototype.hasOwnProperty.call(map, request.field)) return { available: false, reason: "field-not-found" }
-    const value = (map as unknown as Record<string, unknown>)[request.field]
-    return missionPanelPage({ ...header, field: request.field }, Array.isArray(value) ? value : [value], request.cursor)
+    const mission = view.mission
+    if (request.source === "mission" && this.options.documentReads) await projectMissionDocuments(this.options.documentReads, [mission])
+    if (request.source === "mission" && mission.document?.dormant) return { available: false, reason: "mission-not-found" }
+    return projectMissionPanel(mission, request, damage)
   }
 
   /** One mission's range for display reconciliation, its map compact, with its own
@@ -538,7 +528,7 @@ export class MissionControl {
   update(input: MissionUpdateInput): Promise<{ mission: MissionMap }> {
     return this.mutate(async () => {
       if (this.options.documents) {
-        const mission = this.requireMission(await this.snapshot(), input.missionID)
+        const mission = this.requireRequestedMission(await this.snapshot(), input.missionID)
         if (mission.document) await requireMissionOneTimeDocument(this.options.documents, mission.id, mission.coordinatorSessionId)
       }
       return this.updateCurrent(input)
@@ -558,7 +548,7 @@ export class MissionControl {
     return this.mutate(async () => {
       let documents: MissionDocumentAccess | undefined
       if (this.options.documents) {
-        const mission = this.requireMission(await this.snapshot(), input.missionID)
+        const mission = this.requireRequestedMission(await this.snapshot(), input.missionID)
         if (mission.document) {
           documents = this.options.documents
           await requireMissionOneTimeDocument(documents, mission.id, mission.coordinatorSessionId)
@@ -1736,6 +1726,15 @@ export class MissionControl {
       templates: missionRecipeCatalog(),
       playbook: getMissionRecipe(mission.template, mission.taskMode),
     }
+  }
+
+  /** Control preflight can establish absence only from a healthy authoritative snapshot. */
+  private requireRequestedMission(snapshot: MissionSnapshot, missionID: string): MissionMap {
+    if (!snapshot.missions.some(mission => mission.id === missionID) && !snapshot.discardedEvents
+      && !snapshot.controlUnavailable && !snapshot.notificationUnavailable && !snapshot.cleanupUnavailable) {
+      throw new MissionControlError("Mission not found", "mission-not-found")
+    }
+    return this.requireMission(snapshot, missionID)
   }
 
   private requireMission(snapshot: MissionSnapshot, missionID: string): MissionMap {

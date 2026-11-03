@@ -32,6 +32,7 @@ for (const restored of ["selectedScheduled", "selected"] as const) test(`passive
   await page.route("**/api/storage/config/ui", route => route.fulfill({ json: { settings: { locale: "en" } } }))
   await page.route("**/api/workspaces/fixture/missions**", async route => {
     const request = route.request(), link = new URL(request.url()), pathname = link.pathname
+    if (pathname.endsWith("/panel-page")) return route.fulfill({ json: await f.control.panelPage(request.postDataJSON()) })
     if (request.method() !== "GET") { writes.push(pathname); return route.fulfill({ status: 405, json: {} }) }
     reads.push(link)
     if (pathname.endsWith("/capabilities")) return route.fulfill({ json: { api: { available: true }, enabled: true,

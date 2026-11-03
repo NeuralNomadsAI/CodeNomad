@@ -130,11 +130,151 @@ test("a collapsed parent's chevron carries visible subsession statuses without r
       assert.equal(await chevron("other").getAttribute("data-child-activity"), null)
     }
 
-    // A subsession of the viewed conversation is revealed below it.
+    // A new activity in the viewed conversation reveals it without pointer interaction.
+    await page.mouse.move(1100, 850)
     await page.evaluate(() => (window as any).fixture.status("work-child", "working"))
     await page.locator('[data-session-id="work-child"]').waitFor()
     assert.deepEqual((await rows()).slice(0, 2), ["work", "work-child"])
     assert.deepEqual(await page.locator('[data-session-id="work"]').boundingBox(), workBox)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("visible branches follow new chevron states recursively, restore all opened levels and can be disabled in General", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  const row = (id: string) => page.locator(`[data-session-id="${id}"]`)
+  const chevron = (id: string) => row(id).locator(".session-item-expander")
+  const expanded = () => chevron("work").getAttribute("aria-expanded")
+  const status = (value: string) => page.evaluate(value => (window as any).fixture.status("work-grandchild", value), value)
+  const settled = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const option = page.getByRole("checkbox", { name: "Automatically expand subsessions", exact: true })
+    assert.equal(await option.isChecked(), true, "enabled by default in General")
+
+    // A transition opens every required level without hover.
+    await page.mouse.move(1100, 850)
+    await status("working")
+    await row("work-grandchild").waitFor()
+    assert.equal(await expanded(), "true")
+    const saved = await page.evaluate(() => (window as any).fixture.expanded() as string[])
+    assert.deepEqual(saved.sort(), ["work", "work-child"])
+    await page.evaluate(saved => (window as any).fixture.restore(saved), saved)
+    await row("work-grandchild").waitFor()
+
+    // The visible grandchild is not selected. Its own chevron now becomes active:
+    // only that branch needs opening, while its ancestors are already expanded.
+    await page.evaluate(() => (window as any).fixture.status("work-great-grandchild", "working"))
+    await row("work-great-grandchild").waitFor()
+    assert.equal(await chevron("work-grandchild").getAttribute("aria-expanded"), "true")
+    await chevron("work-grandchild").click()
+    await settled()
+    assert.equal(await chevron("work-grandchild").getAttribute("aria-expanded"), "false")
+    await page.evaluate(() => (window as any).fixture.status("work-great-grandchild", "idle"))
+    await page.evaluate(() => (window as any).fixture.form("work-great-grandchild", true))
+    await row("work-great-grandchild").waitFor()
+    // Keep the next root-level transition independent of that recursive helper.
+    await page.evaluate(() => {
+      ;(window as any).fixture.form("work-great-grandchild", false)
+      ;(window as any).fixture.status("work-great-grandchild", "idle")
+    })
+    // A newly created recursive agent beneath a visible leaf opens that leaf too.
+    await page.evaluate(() => (window as any).fixture.add("work-deep-agent", "work-great-grandchild", "working"))
+    await row("work-deep-agent").waitFor()
+    await page.evaluate(() => (window as any).fixture.status("work-deep-agent", "idle"))
+
+    // Manual collapse itself is not a new status; a later start of the same helper reopens it.
+    await chevron("work").click()
+    await settled()
+    assert.equal(await expanded(), "false")
+    await row("work").locator(".session-item-title").hover()
+    await status("working")
+    await settled()
+    assert.equal(await expanded(), "false")
+    await status("idle")
+    await status("working")
+    await row("work-grandchild").waitFor()
+
+    // Turning it off blocks both work and requests.
+    await chevron("work").click()
+    await option.uncheck()
+    assert.equal(await page.evaluate(() => (window as any).fixture.preferences().autoExpandActiveSubsessions), false)
+    await row("work").locator(".session-item-title").hover()
+    await status("idle")
+    await status("compacting")
+    await page.evaluate(() => (window as any).fixture.permission("work-grandchild", true))
+    await settled()
+    assert.equal(await expanded(), "false")
+    assert.equal(await chevron("work").getAttribute("data-child-activity"), "permission")
+    await chevron("work").click()
+    await row("work-grandchild").waitFor()
+    await chevron("work").click()
+
+    // Re-enabling during an existing request is not a status transition either.
+    await option.check()
+    await row("work").locator(".session-item-title").hover()
+    await settled()
+    assert.equal(await expanded(), "false")
+    await page.evaluate(() => {
+      ;(window as any).fixture.permission("work-grandchild", false)
+      ;(window as any).fixture.status("work-grandchild", "idle")
+    })
+    await page.evaluate(() => (window as any).fixture.form("work-grandchild", true))
+    await row("work-grandchild").waitFor()
+
+    // A permission arriving after work started is a new chevron state too.
+    await chevron("work").click()
+    await row("work").locator(".session-item-title").hover()
+    await page.evaluate(() => (window as any).fixture.form("work-grandchild", false))
+    await page.evaluate(() => (window as any).fixture.permission("work-grandchild", true))
+    await row("work-grandchild").waitFor()
+
+    // Pointer position is irrelevant to a new transition.
+    await chevron("work").click()
+    await row("work").locator(".session-item-title").hover()
+    await page.mouse.move(1100, 850)
+    await page.evaluate(() => (window as any).fixture.permission("work-grandchild", false))
+    await status("working")
+    await settled()
+    await row("work-grandchild").waitFor()
+    assert.equal(await expanded(), "true")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("buffered offscreen subsessions wait for a fresh transition while visible", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  const row = page.locator('[data-session-id="work-grandchild"]')
+  const chevron = row.locator(".session-item-expander")
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.status("work-grandchild", "working"))
+    await row.waitFor()
+    const top = await row.evaluate(el => {
+      const viewport = el.closest(".session-list")!
+      return viewport.scrollTop + el.getBoundingClientRect().top - viewport.getBoundingClientRect().top
+    })
+    await page.locator(".session-list-container").evaluate(el => { el.parentElement!.style.height = "40px" })
+    await page.evaluate(() => (window as any).fixture.status("work-great-grandchild", "working"))
+    assert.equal(await chevron.getAttribute("aria-expanded"), "false", "a buffered row beyond the scroll viewport stays closed")
+    await page.locator(".session-list").evaluate((el, top) => { el.scrollTop = top }, top)
+    await page.waitForFunction(() => {
+      const row = document.querySelector('[data-session-id="work-grandchild"]')?.getBoundingClientRect()
+      const viewport = document.querySelector(".session-list")?.getBoundingClientRect()
+      return row && viewport && row.top < viewport.bottom && row.bottom > viewport.top
+    })
+    assert.equal(await chevron.getAttribute("aria-expanded"), "false", "scrolling into view alone does not open it")
+    await page.evaluate(() => (window as any).fixture.status("work-great-grandchild", "idle"))
+    await page.evaluate(() => (window as any).fixture.status("work-great-grandchild", "working"))
+    assert.equal(await chevron.getAttribute("aria-expanded"), "true")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

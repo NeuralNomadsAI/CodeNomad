@@ -71,7 +71,7 @@ export async function readMissionPanelObservation(request: Request, input: {
       || result.page.total !== 1 || !result.page.pieces.length || result.page.digest !== digest) throw new MissionPanelObservationError("Foreign mission activity context")
     const { page: _page, available: _available, version: _version, ...own } = result
     const keys = Object.keys(own) as Array<keyof typeof own>
-    if (header && (keys.length !== Object.keys(header).length || keys.some(key => own[key] !== header![key]))) throw new MissionPanelObservationError("Changed mission activity header")
+    if (header && (keys.length !== Object.keys(header).length || keys.some(key => key === "passage" ? JSON.stringify(own[key]) !== JSON.stringify(header![key]) : own[key] !== header![key]))) throw new MissionPanelObservationError("Changed mission activity header")
     header ??= own
     for (const piece of result.page.pieces) {
       // 160 records with existing journal string bounds fit below this assembly bound,

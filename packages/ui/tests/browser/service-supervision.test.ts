@@ -6,17 +6,33 @@ import { chromium, type Browser, type Page } from "playwright"
 import type { SupervisionSettingsControl, SupervisionSettingsResponse } from "../../../server/src/api-types"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { fixtureEventStream } from "./fixture-event-stream"
+import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 import { serviceSupervisionMessages as messages } from "../../src/lib/i18n/messages/en/service-supervision"
 
 let browser: Browser, url: string
+let events: Awaited<ReturnType<typeof fixtureEventStream>> | undefined
+async function closeEvents() {
+  const owned = events
+  events = undefined
+  await owned?.close()
+}
 before(async () => {
   const fixture = await borrowFixture({ name: "service-supervision", routes: [{ path: "/fixture",
     html: '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/service-supervision.tsx"></script></body></html>' }] })
   url = fixture.url
-  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
-  armFixtureNavigationBudget(browser)
+  let ready = false
+  await runWithDiagnosticCleanup({ run: async () => {
+    events = await fixtureEventStream(url)
+    browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+    armFixtureNavigationBudget(browser)
+    ready = true
+  }, diagnose: async () => {}, cleanup: async () => {
+    if (!ready) { try { await browser?.close() } finally { await closeEvents() } }
+  }, onObservationError: () => console.error("supervision-startup-observation-failed"),
+  onCleanupError: () => console.error("supervision-startup-cleanup-failed") })
 })
-after(async () => { await browser?.close() })
+after(async () => { try { await browser?.close() } finally { await closeEvents() } })
 const key = "a".repeat(64), otherKey = "b".repeat(64)
 const initial = (): SupervisionSettingsResponse => ({ serviceKey: key, desired: "unset", revision: 0,
   state: "off", cause: null, serviceResponding: true })
@@ -66,6 +82,7 @@ async function setup(page: Page) {
     return route.fulfill({ json: { ...state, request: { requestID: input.requestID,
       state: input.action === "retry" ? "unknown" : "recorded", action: input.action, appliedRevision: state.revision } } })
   })
+  await events!.route(page)
   return { writes, queries, errors, held, state: (next: Partial<SupervisionSettingsResponse>) => { state = { ...state, ...next } },
     mode: (next: typeof mode) => { mode = next }, readFailure: (value: boolean) => { failRead = value },
     reads: () => reads, maxInFlight: () => maxInFlight, holdRead: () => { holdRead = true },
@@ -358,4 +375,42 @@ test("a malformed acknowledgement retains the original action instead of treatin
     assert.deepEqual(fixture.writes[1], fixture.writes[0])
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
+})
+
+test("supervision owns a persistent native EventSource until page and event-server cleanup", async t => {
+  const page = await browser.newPage()
+  t.after(() => page.close())
+  const previousEvents = events
+  events = await fixtureEventStream(url)
+  const owned = events, close = owned.close.bind(owned)
+  t.after(async () => {
+    try { if (events === owned) await closeEvents() } finally { events = previousEvents }
+  })
+  await page.clock.install()
+  await page.addInitScript(() => localStorage.setItem("opencode:logger:namespaces", '["sse"]'))
+  let requests = 0
+  const failures: string[] = []
+  page.on("request", request => { if (request.resourceType() === "eventsource") requests++ })
+  page.on("requestfailed", request => { if (request.resourceType() === "eventsource") failures.push("stream-request-failed") })
+  page.on("console", message => { if (/MIME|scheduling reconnect|failed to connect/i.test(message.text())) failures.push("stream-console-error") })
+  const response = page.waitForResponse(response => response.request().resourceType() === "eventsource")
+  const opened = page.waitForEvent("console", message => message.text().includes("Events stream connected"))
+  const closing = t.mock.method(owned, "close", async () => {
+    assert.equal(page.isClosed(), true, "the page owns the connection lifetime")
+    await close()
+  })
+  try {
+    const fixture = await setup(page)
+    await page.goto(url)
+    await page.getByRole("status").filter({ hasText: /^Off$/ }).waitFor()
+    assert.equal((await response).headers()["content-type"], "text/event-stream")
+    await opened
+    await page.clock.runFor(1500)
+    assert.equal(requests, 1, "a live stream does not retry or hit the JSON fallback")
+    assert.deepEqual(failures, [])
+    assert.deepEqual(fixture.errors, [])
+    assert.equal(fixture.writes.length, 0)
+  } finally { try { await page.close() } finally { await closeEvents() } }
+  await closeEvents()
+  assert.equal(closing.mock.callCount(), 1, "the suite releases only its owned event server once")
 })

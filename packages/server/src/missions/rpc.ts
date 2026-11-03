@@ -13,6 +13,7 @@ import { MISSION_BRIEFING_CONTENT, MISSION_EXCERPT_MAX, MISSION_LATE_REPORT_ROWS
 import { missionBriefingResponsesSchema, missionBriefingSnapshotSchema } from "./briefing"
 import { taskExecutionModeRpcSchema, taskGenerationSchema, nativeTaskBindingSchema, nativeTaskExecutionSchema, nativeCallBindingSchema } from "./native-wire-schema"
 import { recurrenceCurrentContentWire } from "./recurrence-current"
+import { missionCurrentSourceWire } from "./mission-current-source"
 import { recurrencePassageReadWire } from "./recurrence-reader-contract"
 import { recurrenceScheduleChangedSchema } from "./recurrence-events"
 import { recurrenceNativeControlWire, recurrenceSnapshotOutput, recurrenceControlStatusWire, recurrenceControlRequestWire } from "./recurrence-control-contract"
@@ -322,12 +323,14 @@ export const CODENOMAD_MISSIONS_RPC = {
     recurrenceRunNowStatus: { input: RECURRENCE_RUN_NOW_STATUS_REQUEST, output: RECURRENCE_RUN_NOW_OUTPUT },
 
     recurrenceCurrent: {
-      input: { type: "object", properties: { scheduleID: { type: "string", minLength: 3, maxLength: 100 } }, required: ["scheduleID"], additionalProperties: false },
+      input: { type: "object", properties: { scheduleID: { type: "string", minLength: 3, maxLength: 100 }, owner: { type: "string", enum: ["daily", "scheduled"] } }, required: ["scheduleID"], additionalProperties: false },
       output: { type: "object", properties: {
         version: { type: "integer", const: 1 }, projectID: { type: "string" }, projectCanonical: { type: "string" }, location,
-        scheduleID: { type: "string", minLength: 3, maxLength: 100 }, passageID: { type: ["string", "null"], minLength: 3, maxLength: 100 }, mission: sharedMissionMap,
-      }, required: ["version", "projectID", "projectCanonical", "location", "scheduleID", "passageID"], additionalProperties: false },
+        ownerRevision: { type: "integer", minimum: 0 }, scheduleID: { type: "string", minLength: 3, maxLength: 100 }, passageID: { type: ["string", "null"], minLength: 3, maxLength: 100 }, source: missionCurrentSourceWire,
+      }, required: ["version", "projectID", "projectCanonical", "location", "scheduleID", "passageID", "ownerRevision"], additionalProperties: false },
     },
+    recurrenceCurrentPage: { input: { type: "object", properties: { source: missionCurrentSourceWire, selector: missionPanelPageInputSchema,
+      body: { type: "object" } }, required: ["source", "selector"], additionalProperties: false }, output: missionPanelPageOutputSchema },
     recurrenceCurrentContent: recurrenceCurrentContentWire,
     recurrenceSnapshot: {
       input: { type: "object", properties: {}, additionalProperties: false },

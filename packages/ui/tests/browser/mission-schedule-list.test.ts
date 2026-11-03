@@ -5,7 +5,7 @@ import { createServer, type Server } from "node:http"
 import path from "node:path"
 import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { NativeMissionDocumentStore } from "../../../server/src/missions/mission-document-store"
 import { missionDocumentChanges as changes } from "../../../server/src/missions/mission-document-state"
 import { missionScheduleView } from "../../../server/src/missions/mission-schedule-view"
@@ -95,6 +95,7 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
     }
     const body = request.postDataJSON(); posts.push({ ...body, target })
     if (target.endsWith("/schedule-settings")) {
+      assert.equal(body.expectedDocumentRevision, doc!.revision, "activation uses the revision admitted by the UI")
       activation = body
       doc = await store.change(doc!.id, doc!.revision, () => true, value => { value.scheduleActivation = { requestID: body.requestID,
         expectedRevision: body.expectedDocumentRevision, authority: "a".repeat(64), state: "ready", targets: [], effectiveOrigin: "/private/config/opencode.jsonc" } })
@@ -104,7 +105,7 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
     }
     if (body.action === "create") doc = await store.create("msn_schedule", { ...config, ...body.configuration }, Date.now(), () => true)
     else if (body.action === "delete") deleted = true
-    else doc = await store.change(doc!.id, doc!.revision, () => true, value => {
+    else doc = await store.change(doc!.id, body.expectedRevision, () => true, value => {
       if (body.action === "play") { changes.play(value, body.requestID, Date.now(), []); value.synchronization = null }
       if (body.action === "pause") value.state = "paused"
       if (body.action === "resume") value.state = "running"
@@ -141,6 +142,11 @@ const technicalCalendars = () => (["principal", "reconciliation"] as const).map(
   timeGeneration: 1, scheduleID: `sch_${role}_${"a".repeat(90)}`, sessionID: `ses_cn_schedule_${role}_${"b".repeat(90)}`,
   highWater: 2, pendingWake: null, wakePreparing: null }))
 const button = (page: Page, name: string) => detail(page).getByRole("button", { name, exact: true })
+const deferred = () => {
+  let resolve!: () => void
+  const promise = new Promise<void>(yes => { resolve = yes })
+  return { promise, resolve }
+}
 async function select(page: Page) {
   await page.getByRole("combobox").click()
   await page.getByRole("option").filter({ hasText: "Inspect local changes" }).click()
@@ -242,13 +248,79 @@ test("informed activation lists exact paths and its lost ACK never sends Play au
     assert.match(await dialog.innerText(), /experimental.schedules.*\/private\/config\/opencode.jsonc/s)
     await dialog.getByRole("button", { name: "Start", exact: true }).click()
     await button(page, "Refresh saved request").waitFor()
+    // Receipt settlement releases the hold before its parent's list revalidation.
+    // Wait for that exact activated revision to traverse the real response/render path.
+    const refreshed = page.waitForResponse(async response => response.request().method() === "GET"
+      && new URL(response.url()).pathname.endsWith("/missions/scheduled")
+      && (await response.json()).schedules?.some((row: any) => row.id === f.doc.id && row.revision === f.doc.revision))
     await button(page, "Refresh saved request").click()
     await button(page, "Refresh saved request").waitFor({ state: "detached" })
+    await (await refreshed).finished()
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     assert.equal(f.posts.length, 1); assert.equal(f.posts[0].target.endsWith("/schedule-settings"), true)
-    f.lost = undefined; await click(page, "Play"); await button(page, "Pause").waitFor()
+    f.lost = undefined; await click(page, "Play"); await button(page, "Pause").waitFor().catch(async error => {
+      throw new Error(`${error}\n${JSON.stringify({ posts: f.posts, reads: f.reads, document: f.doc })}\n${await detail(page).innerText()}\n${f.errors.join("\n")}`)
+    })
     assert.deepEqual(f.posts.map(post => post.action), [undefined, "play"])
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
+})
+
+for (const scenario of ["control ACK", "recovered control", "activation ACK", "recovered activation"] as const)
+test(`confirmed publication barrier retains ${scenario} across stale inventory and remount`, async () => {
+  const page = await browser.newPage(), activation = scenario.includes("activation")
+  const f = await setup(page, { seed: true, enabled: !activation })
+  const old = deferred(), fresh = deferred(), started = deferred(), following = deferred()
+  let inventories = 0
+  try {
+    await select(page)
+    const stale = structuredClone(f.result().document)
+    await page.route("**/missions/scheduled?*", async route => {
+      const first = ++inventories === 1
+      if (first) { started.resolve(); await old.promise }
+      else { following.resolve(); await fresh.promise }
+      await route.fulfill({ json: { version: 1, projectID: "project", schedules: [first ? stale : f.result().document] } })
+    })
+    await page.evaluate(() => (window as any).missionFixture.refresh()); await started.promise
+    if (scenario.startsWith("recovered")) f.lost = activation ? "activation" : "play"
+    await click(page, "Play")
+    if (activation) await page.getByRole("dialog").getByRole("button", { name: "Start", exact: true }).click()
+    if (scenario.startsWith("recovered")) {
+      await detail(page).getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor()
+      await button(page, "Refresh saved request").click()
+      await detail(page).getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor({ state: "detached" })
+      assert.equal(await button(page, "Start").isDisabled(), true, "a recovered effect cannot admit a new Start before its revision is published")
+    }
+    await detail(page).getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
+    const count = f.posts.length, confirmedRevision = f.doc.revision
+    assert.ok(confirmedRevision > stale!.revision!, JSON.stringify({ confirmedRevision, staleRevision: stale!.revision, posts: f.posts }))
+    assert.equal(await button(page, "Start").isDisabled(), true)
+    assert.equal(await button(page, "Edit selected mission").isDisabled(), true)
+    assert.doesNotMatch(await detail(page).innerText(), /This request is unconfirmed/)
+    old.resolve(); await following.promise
+    assert.equal(await button(page, "Start").isDisabled(), true, "an older in-flight publication cannot clear the confirmed minimum")
+    await button(page, "Start").evaluate(element => element.dispatchEvent(new MouseEvent("click", { bubbles: true })))
+    await button(page, "Edit selected mission").evaluate(element => element.dispatchEvent(new MouseEvent("click", { bubbles: true })))
+    assert.equal(await page.locator("form.mission-editor").count(), 0)
+    assert.equal(f.posts.length, count)
+    await page.evaluate(() => (window as any).missionFixture.mount(false))
+    await page.evaluate(() => (window as any).missionFixture.mount(true))
+    await detail(page).getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
+    assert.equal(await button(page, "Start").isDisabled(), true)
+    assert.equal(f.posts.length, count, "remount retains the obligation and never resubmits")
+    fresh.resolve()
+    await button(page, "Refresh saved request").waitFor({ state: "detached" })
+    if (scenario === "recovered activation") {
+      assert.equal(f.posts.length, 1, "recovered activation keeps Play explicit")
+      f.lost = undefined
+      await click(page, "Play")
+      await button(page, "Pause").and(page.locator(":enabled")).waitFor()
+      assert.equal(f.posts.at(-1)!.expectedRevision, confirmedRevision)
+    } else await button(page, "Pause").and(page.locator(":enabled")).waitFor()
+    assert.deepEqual(f.posts.map(item => item.action), activation ? [undefined, "play"] : ["play"])
+    assert.equal(f.posts.filter(item => item.action === "play").length, 1)
+    assert.deepEqual(f.errors, [])
+  } finally { old.resolve(); fresh.resolve(); await page.close() }
 })
 
 test("missing calendar capability keeps Play grey and explains the limit", async () => {
@@ -258,6 +330,43 @@ test("missing calendar capability keeps Play grey and explains the limit", async
     await detail(page).getByRole("status").filter({ hasText: "Scheduling is unavailable" }).waitFor()
     assert.equal(await button(page, "Start").isDisabled(), true)
     assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("a confirmed activation stays known through read failure and stale recovery until explicit fresh publication", async () => {
+  const page = await browser.newPage(), f = await setup(page, { seed: true, enabled: false })
+  try {
+    await select(page)
+    const stale = structuredClone(f.result().document)
+    f.lost = "activation"
+    await click(page, "Play")
+    await page.getByRole("dialog").getByRole("button", { name: "Start", exact: true }).click()
+    await detail(page).getByRole("status").filter({ hasText: "This request is unconfirmed" }).waitFor()
+    let mode: "failed" | "stale" | "current" = "failed"
+    await page.route("**/missions/scheduled?*", route => route.fulfill(mode === "failed" ? { status: 503, json: {} }
+      : { json: { version: 1, projectID: "project", schedules: [mode === "stale" ? stale : f.result().document] } }))
+    await button(page, "Refresh saved request").click()
+    await page.getByRole("status").filter({ hasText: "Mission schedules could not be refreshed" }).waitFor()
+    await detail(page).getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
+    assert.doesNotMatch(await detail(page).innerText(), /This request is unconfirmed/)
+    assert.equal(await button(page, "Start").isDisabled(), true)
+    const receiptReads = f.reads.filter(url => url.includes("/schedule-settings")).length
+    mode = "stale"
+    const oldResponse = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/scheduled") && response.status() === 200)
+    await button(page, "Refresh saved request").click(); await oldResponse
+    await page.evaluate(() => (window as any).missionFixture.mount(false))
+    await page.evaluate(() => (window as any).missionFixture.mount(true))
+    await detail(page).getByRole("status").filter({ hasText: "Action confirmed" }).waitFor()
+    assert.equal(await button(page, "Start").isDisabled(), true)
+    assert.equal(f.posts.length, 1)
+    mode = "current"
+    await button(page, "Refresh saved request").click()
+    await button(page, "Refresh saved request").waitFor({ state: "detached" })
+    assert.equal(f.reads.filter(url => url.includes("/schedule-settings")).length, receiptReads, "known effects recover with display reads only")
+    f.lost = undefined
+    await click(page, "Play"); await button(page, "Pause").and(page.locator(":enabled")).waitFor()
+    assert.deepEqual(f.posts.map(item => item.action), [undefined, "play"])
+    assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
 
@@ -349,6 +458,7 @@ for (const alreadyReading of [false, true]) test(`a passive list refresh between
   try {
     // The schedule and journal inventories load independently. A native click on
     // the global Refresh button is admitted only after its journal read finishes.
+    await page.waitForFunction(() => (window as any).missionFixture.snapshot().status === "loading")
     assert.equal(await page.getByRole("button", { name: "Refresh mission map", exact: true }).isDisabled(), true)
     releaseJournal()
     await page.getByRole("button", { name: "Refresh mission map", exact: true }).and(page.locator(":enabled")).waitFor()

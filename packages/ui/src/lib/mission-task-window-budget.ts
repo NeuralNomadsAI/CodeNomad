@@ -13,6 +13,7 @@ export const TASK_WINDOW_DEPTH = 24
 /** Scan before concatenation / JSON.parse: unknown metadata is subject to the same
  * bounded text, structural-token and nesting budgets as known compact fields. */
 export class MissionTaskWindowBudget {
+  constructor(private readonly maximum = TASK_WINDOW_CHARACTERS) {}
   private characters = 0
   private bytes = 0
   private tokens = 0
@@ -23,13 +24,13 @@ export class MissionTaskWindowBudget {
 
   transfer(bytes: number): void {
     this.wireBytes += bytes
-    if (this.wireBytes > TASK_WINDOW_WIRE_BYTES) throw new MissionTaskPageReadError("too-large")
+    if (this.wireBytes > this.maximum * 8) throw new MissionTaskPageReadError("too-large")
   }
   append(text: string, advertised: number): void {
     this.characters += text.length
-    if (advertised > TASK_WINDOW_CHARACTERS || this.characters > TASK_WINDOW_CHARACTERS) throw new MissionTaskPageReadError("too-large")
+    if (advertised > this.maximum || this.characters > this.maximum) throw new MissionTaskPageReadError("too-large")
     this.bytes += new TextEncoder().encode(text).length // a single transfer's bounded piece
-    if (this.bytes > TASK_WINDOW_UTF8_BYTES) throw new MissionTaskPageReadError("too-large")
+    if (this.bytes > 3 * this.maximum) throw new MissionTaskPageReadError("too-large")
     for (const char of text) {
       if (this.quoted) {
         if (this.escaped) this.escaped = false

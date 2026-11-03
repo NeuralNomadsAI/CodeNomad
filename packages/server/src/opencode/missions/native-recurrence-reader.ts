@@ -29,16 +29,13 @@ export const readNativeRecurrencePage = Effect.fn("missions.readNativeRecurrence
   if (!receipt) throw new Error("Archived recurrence receipt unavailable")
   const bound = canonicalAuthority(receipt), graph = yield* Effect.context<never>()
   const run = <A>(effect: Effect.Effect<A, unknown>) => Effect.runPromise(effect.pipe(Effect.provide(graph)))
-  let bytes = 0
   const storage: MissionStorage = {
     get: async () => { throw new Error("Archived reader uses bounded journal scans only") },
     set: async () => { throw new Error("Archived reader is read-only") },
     scan: async input => {
       assertLocation()
       const page = await run(ctx.storage.scan(input)) as Awaited<ReturnType<MissionStorage["scan"]>>
-      // ponytail: 32 MiB across two bounded journal passes; larger journals fail visibly rather than truncate results.
-      for (const entry of page.entries) bytes += Buffer.byteLength(canonicalAuthority(entry.value, 256 * 1024), "utf8")
-      if (bytes > 32 * 1024 * 1024) throw new Error("Archived recurrence journal capacity")
+      for (const entry of page.entries) canonicalAuthority(entry.value, 256 * 1024)
       assertLocation()
       return page
     },

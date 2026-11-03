@@ -103,6 +103,15 @@ export class MissionJournal {
     }, read))
   }
 
+  /** Initial panel discovery boundary, ordered against every finish and surviving purge.
+   * Read before directory traversal; gaps count too. Corruption/unavailability rejects. */
+  finishHighWater(): Promise<number> {
+    return runMissionExclusive(`append:${this.projectToken}`, async () => {
+      const value = await this.storage.get(missionFinishCounterKey(this.projectToken))
+      return value === undefined ? 0 : parseFinishCounter(value, this.projectID)
+    })
+  }
+
   /** Every ordinary write attempt, before it starts: the index re-reads that mission. */
   private written(missionID: string): void {
     if (this.storage.isolated) return

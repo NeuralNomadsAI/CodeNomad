@@ -1,9 +1,9 @@
 import { z } from "zod"
 
-// OpenCode integrations, spec draft 0.1 (NeuralNomadsAI/opencode-integrations, spec/; dev-docs/OPENCODE_INTEGRATIONS.md).
+// OpenCode integrations, spec draft 0.2 (NeuralNomadsAI/opencode-integrations, spec/; dev-docs/OPENCODE_INTEGRATIONS.md).
 // Each schema accepts exactly what its JSON Schema in `vendor/` accepts (parity test). Rules JSON Schema cannot
 // express, such as catalog uniqueness, are separate refinements named below.
-export const INTEGRATION_SPEC_DRAFT = "0.1"
+export const INTEGRATION_SPEC_DRAFT = "0.2"
 export const INTEGRATION_SPEC_VERSION = 0
 export const INTEGRATION_CONTRACT_VERSION = 1
 /** Key of the static marker in an integration package's `package.json`. */
@@ -16,7 +16,7 @@ export const INTEGRATION_FAMILIES = ["native", "vendor-mcp", "api"] as const
 export type IntegrationFamily = (typeof INTEGRATION_FAMILIES)[number]
 /** Methods every family registers, then the native-only ones (spec/rpc-contract.md, RPC-1). */
 export const INTEGRATION_STATUS_METHODS = ["status"] as const
-export const INTEGRATION_NATIVE_METHODS = ["status", "installHost", "hosts", "attachHost", "detachHost", "advertise", "withdraw"] as const
+export const INTEGRATION_NATIVE_METHODS = ["status", "installHost", "hosts", "attachHost", "detachHost", "bindingRead", "advertise", "withdraw"] as const
 export const INTEGRATION_EVENTS = ["status_changed", "hosts_changed"] as const
 
 // JSON Schema `pattern` is a Unicode ECMAScript expression and `minLength`/`maxLength` count code points,
@@ -130,10 +130,22 @@ export const integrationCatalogSchema = integrationCatalogDocumentSchema.superRe
 })
 export type IntegrationCatalog = z.infer<typeof integrationCatalogSchema>
 
-// rpc.schema.json. Inputs are strict; outputs are reader schemas that accept and drop unknown fields (RPC-1b).
+// rpc.schema.json. Inputs are strict; outputs drop unknown fields except bindingRead, closed at every level.
 const empty = () => z.object({}).strict()
 const outcome = <const T extends readonly [string, ...string[]]>(values: T) => z.object({ outcome: z.enum(values) })
 const display = (max: number) => text(DISPLAY, { min: 1, max })
+
+const bindingAuthority = z.object({
+  serviceGeneration: text("^[A-Za-z0-9_-]{1,128}(?![\\s\\S])"),
+  registryGeneration: text("^[A-Za-z0-9_-]{1,128}(?![\\s\\S])"),
+  revision: integer(0, Number.MAX_SAFE_INTEGER),
+}).strict()
+const bindingReadOutput = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("attached"), authority: bindingAuthority,
+    binding: z.object({ offerID: text("^[A-Za-z0-9_-]{8,64}$(?![\\s\\S])"), label: display(120) }).strict() }).strict(),
+  z.object({ state: z.literal("none"), authority: bindingAuthority }).strict(),
+  z.object({ state: z.literal("unknown"), authority: bindingAuthority.optional() }).strict(),
+])
 
 export const integrationStatusSchema = z.object({
   contract: z.literal(INTEGRATION_CONTRACT_VERSION),
@@ -194,6 +206,8 @@ export const integrationRpcSchemas = {
   "attachHost.output": outcome(["attached", "busy", "gone", "refused"]),
   "detachHost.input": z.object({ sessionID: text(SESSION_ID) }).strict(),
   "detachHost.output": outcome(["detached", "none"]),
+  "bindingRead.input": z.object({ sessionID: text("^[A-Za-z0-9_-]{1,128}$(?![\\s\\S])") }).strict(),
+  "bindingRead.output": bindingReadOutput,
   "advertise.input": integrationAdvertiseInputSchema,
   "advertise.output": outcome(["accepted", "renewed", "refused"]),
   "withdraw.input": z.object({ offer_key: text(OFFER_KEY), token: text(TOKEN) }).strict(),

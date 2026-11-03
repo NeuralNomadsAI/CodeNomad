@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Locator, type Page } from "playwright"
 import type { MissionMap, MissionReport, MissionTask } from "../../../server/src/api-types"
@@ -53,6 +53,7 @@ async function setup(value = mission()) {
     const pathname = new URL(route.request().url()).pathname
     requests.push(`${route.request().method()} ${pathname}`)
     if (route.request().method() !== "GET") mutations.push(route.request().url())
+    if (pathname.endsWith("/session/coordinator/message")) return route.fulfill({ json: { data: [], cursor: { next: null } } })
     if (/\/session\/(actor|native-parent)$/.test(pathname)) return route.fulfill({ json: { data: nativeSession(pathname.split("/").at(-1)!) } })
     const content = missionContentFixture(route.request().url(), route.request().method(), [current])
     if (content) return route.fulfill({ json: content })
@@ -176,6 +177,7 @@ test("current task result does not promote a late return, but retains its native
   const current = mission(), late: MissionReport = { ...current.reports[0], id: "late", createdAt: 3, late: true,
     delivery: "native-return", notificationStatus: "pending", summary: "Latest result" }
   current.tasks[1].lateReports = [late]
+  current.reports.push(late) // the journal retains every nested late report in the mission history
   const f = await setup(current)
   try {
     await show(f.page)
@@ -240,7 +242,7 @@ test(`task reader never falls back to the coordinator for ${actor ?? "missing"} 
     assert.equal(await reader.getByRole("button", { name: /^Open / }).count(), 0)
     assert.equal((await f.page.evaluate(() => (window as any).taskReader.snapshot())).active, "coordinator")
     assert.deepEqual(sessionReads(f.requests), [], "no coordinator or session hydration fallback")
-    assert(f.requests.filter(request => request === DERIVATION).length <= 1, "at most one bounded delegation read")
+    assert(f.requests.filter(request => request === DERIVATION).length <= 1, `at most one bounded delegation read: ${JSON.stringify(f.requests)}`)
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { await f.page.close() }
 })

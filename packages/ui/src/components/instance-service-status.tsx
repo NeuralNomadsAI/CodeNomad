@@ -6,6 +6,7 @@ import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { getActiveCatalogLocation } from "../stores/sessions"
 import { PluginActivationControls } from "./plugin-activation-controls"
+import { activeSessionId, sessions } from "../stores/session-state"
 
 const log = getLogger("session")
 
@@ -65,6 +66,11 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
 
   const isMcpLoading = () => isLoading() || !hasMcpMetadata()
   const pluginLocation = createMemo(() => getActiveCatalogLocation(instance().id) ?? { directory: instance().folder })
+  const attachmentSession = createMemo(() => {
+    const id = activeSessionId().get(instance().id)
+    const session = id ? sessions().get(instance().id)?.get(id) : undefined
+    return session?.location.directory === pluginLocation().directory ? session : undefined
+  })
 
 
   const [pendingMcpActions, setPendingMcpActions] = createSignal<Record<string, "connect" | "disconnect">>({})
@@ -192,6 +198,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
             instanceId={instance().id}
             location={pluginLocation()}
             active={props.pluginsActive}
+            session={attachmentSession()}
           />
         </Show>
       </Show>

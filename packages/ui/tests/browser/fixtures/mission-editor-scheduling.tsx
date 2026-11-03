@@ -1,4 +1,4 @@
-import { Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { Show, createEffect, createSignal, onCleanup, untrack } from "solid-js"
 import { render } from "solid-js/web"
 import { MissionEditor } from "../../../src/components/mission-editor"
 import type { MissionEditorAction } from "../../../src/stores/mission-editor-state"
@@ -39,7 +39,7 @@ function Fixture() {
   }
   createEffect(() => {
     if (!prepared()) return
-    activateMissionDemand("fixture")
+    untrack(() => activateMissionDemand("fixture"))
     onCleanup(() => deactivateMissionDemand("fixture"))
   })
   const Lifecycle = (props: { mission: MissionPanelMap }) => {

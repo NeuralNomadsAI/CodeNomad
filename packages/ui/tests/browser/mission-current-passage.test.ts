@@ -3,7 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { chromium, type Browser } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -15,9 +15,15 @@ import type { MissionRecurrenceSnapshot } from "../../src/stores/mission-recurre
 type RecurrenceWireSnapshot = MissionRecurrenceSnapshot & { projectCanonical: string; location: { directory: string } }
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { currentRecurrenceContent } from "../../../server/src/missions/recurrence-current"
+import { recurrenceCurrentPageInput } from "../../../server/src/missions/recurrence-current"
 import { captureMissionView } from "./mission-view-capture"
 import { missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
+import { projectMissionPanel } from "../../../server/src/missions/mission-panel-projection"
+import { missionPanelPage } from "../../../server/src/missions/mission-panel-page"
+import { contentDigest } from "../../../server/src/missions/content-digest"
+import { readMissionContent } from "../../../server/src/missions/mission-content"
+import { missionActivityContext } from "../../../server/src/missions/mission-activity-context"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -44,8 +50,8 @@ const mission: MissionMap = { version: 1, id: "msn_passage", projectID: "project
     { id: "tsk_first", key: "first", title: "Review commits", brief: "Bounded source brief", role: "specialist", blockedBy: [], status: "completed", actorSessionId: "ses_task", createdAt: 1, updatedAt: 3, outstandingExecution: false,
       report: { id: "rpt_first", taskKey: "first", sessionId: "ses_task", outcome: "completed", summary: "Exact isolated result", evidence: ["Evidence:start\n" + "long ".repeat(1900) + "Evidence:end"], next: ["Next review"], createdAt: 3 } },
     { id: "tsk_second", key: "second", title: "Next task has no actor", brief: "Second task brief", role: "specialist", blockedBy: ["first"], status: "ready", createdAt: 1, updatedAt: 3, outstandingExecution: false },
-  ], reports: [], briefing: { version: 1, id: "brf_current", requestID: "briefing_request", assessedRevision: 3, createdAt: 3, summary: "Exact passage briefing",
-    achieved: [{ text: "Reviewed", taskKeys: ["first"] }], ongoing: [], obstacles: [], next: [{ text: "Continue", taskKeys: ["second"] }] } as never }
+  ], reports: [], briefing: { id: "brf_current", requestID: "briefing_request", basedOnRevision: 3, basedOnUpdatedAt: 3, createdAt: 3, summary: "Exact passage briefing",
+    achieved: [{ text: "Reviewed", taskKeys: ["first"] }], ongoing: [], obstacles: [], next: [{ text: "Continue", taskKeys: ["second"] }] } }
 
 test("actual MissionControl reuses the current task tree and attention, with briefing and identifiers in the central exact-source reader", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1200, height: 950 } }), errors: string[] = [], writes: string[] = []
@@ -61,10 +67,35 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     if (path.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (path === "/api/events") return route.continue()
     if (path === "/api/storage/config/ui") return route.fulfill({ json: { settings: { locale: "en" } } })
+    if (/\/rec_current\/current\/[^/]+\/page$/.test(path)) {
+      const parsed = recurrenceCurrentPageInput.safeParse(route.request().postDataJSON())
+      if (!parsed.success) return route.fulfill({ status: 400, json: { error: "Invalid display selector" } })
+      const input = parsed.data, selector = input.selector
+      if (input.source.passageID !== passageID) return route.fulfill({ json: { available: false, reason: "changed" } })
+      if (fail) return route.fulfill({ status: 503, json: { error: "Unknown coverage" } })
+      const current = { ...mission, reports: [...mission.reports, ...mission.tasks.flatMap(task => task.report ? [task.report] : [])] }
+      const damage = { discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }
+      if (input.body) {
+        sourceReads.push({ ...input.body, scheduleID: input.source.scheduleID, passageID: input.source.passageID })
+        return route.fulfill({ json: missionPanelPage({ source: "mission", field: "body", missionID: mission.id, projectID: "project", revision: mission.revision,
+          ...damage, passage: input.source, window: { offset: 0, end: 1, total: 1, order: contentDigest(JSON.stringify(input.body)) } },
+        [{ available: true, ...readMissionContent("project", input.body, current) }], selector.cursor) })
+      }
+      if (selector.source === "activity") {
+        const context = missionActivityContext(mission, damage)
+        return route.fulfill({ json: missionPanelPage({ source: "activity", missionID: mission.id, projectID: "project", revision: mission.revision, ...damage,
+          passage: input.source, phase: "observed", observedAt: 4 }, [{ context, coverage: observed ? "observed" : "unknown",
+          requests: { state: observed ? "observed" : "unknown", items: [] }, activity: { actors: [{ sessionId: "ses_coordinator", state: "unknown" }, { sessionId: "ses_task", state: "running" }],
+            family: { state: observed ? "observed" : "unknown", members: [{ sessionId: "ses_coordinator", actorSessionId: "ses_coordinator", kind: "declared" },
+              { sessionId: "ses_task", parentSessionId: "ses_coordinator", actorSessionId: "ses_task", kind: "declared" },
+              { sessionId: "ses_child", parentSessionId: "ses_task", actorSessionId: "ses_task", kind: "ordinary" }] } } }], selector.cursor) })
+      }
+      return route.fulfill({ json: projectMissionPanel(current, selector, damage, { passage: input.source }) })
+    }
     if (route.request().method() !== "GET") writes.push(path)
     if (path.endsWith("/missions")) {
       if (route.request().method() === "POST") {
-        ordinary = { ...mission, id: "msn_ordinary", objective: route.request().postDataJSON().objective, tasks: [], reports: [] }
+        ordinary = { ...mission, id: "msn_ordinary", objective: route.request().postDataJSON().objective, tasks: [], reports: [], briefing: undefined }
         return route.fulfill({ json: { mission: ordinary } })
       }
       return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(ordinary ? [ordinary] : []), generatedAt: 1, discardedEvents: 0 } })
@@ -76,14 +107,9 @@ test("actual MissionControl reuses the current task tree and attention, with bri
       history: passageID ? [] : [{ passageID: "pas_current", dueAt: 1, settledAt: 4, outcome: "completed" }] }] } satisfies RecurrenceWireSnapshot) })
     if (path.endsWith("/rec_current/current")) {
       reads++
-      if (!passageID) return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: "rec_current", passageID: null } })
-      return fail ? route.fulfill({ status: 503, json: { error: "Unknown coverage" } }) : route.fulfill({ json: { version: 1, projectID: "project", scheduleID: "rec_current", passageID, mission,
-        activity: { generatedAt: 4, missions: [{ missionId: mission.id, actors: [{ sessionId: "ses_coordinator", state: "unknown" }, { sessionId: "ses_task", state: "running" }],
-          family: { state: observed ? "observed" : "unknown", members: [
-            { sessionId: "ses_coordinator", actorSessionId: "ses_coordinator", kind: "declared" },
-            { sessionId: "ses_task", parentSessionId: "ses_coordinator", actorSessionId: "ses_task", kind: "declared" },
-            { sessionId: "ses_child", parentSessionId: "ses_task", actorSessionId: "ses_task", kind: "ordinary" },
-          ] } }] } } })
+      if (!passageID) return route.fulfill({ json: { version: 1, ownerRevision: 4, projectID: "project", scheduleID: "rec_current", passageID: null } })
+      return fail ? route.fulfill({ status: 503, json: { error: "Unknown coverage" } }) : route.fulfill({ json: { version: 1, ownerRevision: 4, projectID: "project", scheduleID: "rec_current", passageID,
+        source: { owner: "daily", projectID: "project", scheduleID: "rec_current", passageID, missionID: mission.id, digest: "a".repeat(43) } } })
     }
     if (path.endsWith(`/rec_current/current/${passageID}/content`)) {
       const query = Object.fromEntries(new URL(route.request().url()).searchParams)
@@ -136,19 +162,26 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     await page.locator(".mission-reader").getByText("Exact passage briefing", { exact: true }).waitFor()
     assert.equal(await overview.getAttribute("aria-pressed"), "true")
     assert.equal(reads, 1, "reader joins the existing visible snapshot demand")
+    const historical = mission.tasks[0].report!
+    mission.reports.push(historical)
+    mission.tasks[0].report = { ...historical, id: "rpt_newer", summary: "Newer result must not replace the historical body", createdAt: 4 }
     await page.locator(".mission-briefing-sources").getByRole("button", { name: "Review commits" }).click()
     await page.locator(".mission-reader").getByText("Exact isolated result", { exact: true }).waitFor()
+    assert.equal(await page.locator(".mission-reader").getByText("Newer result must not replace the historical body", { exact: true }).count(), 0)
+    mission.tasks[0].report = historical
     const target = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("/fixture").reader)
     assert.deepEqual(target?.recurrence, { instanceId: "fixture", projectID: "project", scheduleID: "rec_current", passageID: "pas_current" })
-    assert.ok(sourceReads.some(input => input.kind === "report" && input.itemId === "rpt_first" && input.section === "summary"), "result reader reads the exact isolated report page")
-    assert.ok(sourceReads.every(input => input.scheduleID === "rec_current" && input.passageID === "pas_current" && input.revision === 4 && input.page === 0))
+    assert.ok(sourceReads.some(input => input.kind === "report" && input.reportId === "rpt_first" && input.field === "summary"), "result reader reads the exact isolated report body")
+    assert.ok(sourceReads.every(input => input.scheduleID === "rec_current" && input.passageID === "pas_current" && input.missionID === mission.id))
     const evidence = page.locator(".mission-reader article").filter({ has: page.getByRole("heading", { name: "Evidence", exact: true }) })
+    const readsBeforeDraft = sourceReads.length
     await evidence.locator("input[type=number]").fill("2")
-    assert.equal(sourceReads.some(input => input.section === "evidence" && input.page === 1), false, "typing a remote numeric draft does not submit its first digit")
+    assert.equal(await evidence.getByText(/Evidence:end/).count(), 0, "typing a remote numeric draft does not commit its page")
+    assert.equal(sourceReads.length, readsBeforeDraft)
     await evidence.locator("input[type=number]").press("Enter")
     await evidence.getByText(/Evidence:end/).waitFor()
-    assert.ok(sourceReads.some(input => input.kind === "report" && input.itemId === "rpt_first" && input.section === "evidence" && input.page === 1))
-    assert.ok((await evidence.locator("pre").innerText()).length <= 9_001)
+    assert.ok(sourceReads.some(input => input.kind === "report" && input.reportId === "rpt_first" && input.field === "evidence"))
+    assert.ok((await evidence.innerText()).length < 9_500)
     await captureMissionView(page, "current-report-desktop")
     if (process.env.CODENOMAD_CURRENT_PASSAGE_EVIDENCE) {
       await mkdir(process.env.CODENOMAD_CURRENT_PASSAGE_EVIDENCE, { recursive: true })

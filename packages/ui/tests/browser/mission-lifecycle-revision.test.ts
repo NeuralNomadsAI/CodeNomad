@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -43,7 +43,8 @@ after(() => runWithDiagnosticCleanup({ run: async () => { await browser?.close()
 type Input = { action: "start" | "pause" | "stop"; expectedRevision: number; requestId: string; graceful?: true }
 function mission(id = "revision"): MissionMap {
   return { version: 1, id, projectID: "fixture", projectCanonical: "/fixture", objective: `Lifecycle ${id}`, template: "custom",
-    coordinatorSessionId: "ses_fixture", status: "active", runState: "running", actors: [], frontier: [], claims: [], revision: 1,
+    coordinatorSessionId: "ses_fixture", status: "active", runState: "running", actors: [{ sessionId: "ses_fixture", kind: "coordinator", managed: false,
+      title: "Coordinator", roles: ["coordinator"], location: { directory: "/fixture" }, joinedAt: 1 }], frontier: [], claims: [], revision: 1,
     createdAt: 1, updatedAt: 1, history: [], historyTruncated: false, tasks: [], reports: [] }
 }
 const fixture = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) =>
@@ -134,7 +135,7 @@ for (const code of [undefined, "request-conflict", "control-pending", "lost-ack"
       // Never a second Pause or a fresh Stop while the exact request is unresolved.
       assert.equal(await pause(page).count(), 0); assert.equal(await check(page).count(), 1)
       assert.equal(await stop(page).isDisabled(), true); assert.equal(await retryOffered(page), true)
-      const reread = page.waitForResponse(value => value.url().endsWith("/missions"))
+      const reread = waitForMissionPanelRefresh(page)
       await fixture(page, "event", "session.execution.started"); await reread; await settled(page)
       assert.equal(calls.length, 1, "native invalidation reads never resend")
       await retry(page)

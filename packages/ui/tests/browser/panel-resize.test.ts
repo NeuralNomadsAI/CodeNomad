@@ -1,27 +1,117 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
+import { mkdtemp, readFile, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { chromium, type Browser, type Page } from "playwright"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
+import { fixtureEventStream } from "./fixture-event-stream"
+import { observeHeaderFixture } from "./header-fixture-diagnostics"
+import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 
 let browser: Browser, url: string
+let events: Awaited<ReturnType<typeof fixtureEventStream>> | undefined
+async function disposeFixture() {
+  const owned = events
+  events = undefined
+  try { await browser?.close() } finally { await owned?.close() }
+}
 before(async () => {
+  let ready = false
+  await runWithDiagnosticCleanup({ run: async () => {
   const fixture = await borrowFixture({ name: "panel-resize", routes: [{ path: "/fixture",
     html: '<html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/header-windows.tsx"></script></body></html>',
   }] })
   url = fixture.url + "?drawerWidth=1"
+  events = await fixtureEventStream(url)
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
+  ready = true
+  }, diagnose: async () => {}, cleanup: async () => { if (!ready) await disposeFixture() },
+  onObservationError: () => console.error("panel-resize-setup-observation-failed"),
+  onCleanupError: () => console.error("panel-resize-setup-cleanup-failed") })
 })
-after(async () => { await browser?.close() })
+after(disposeFixture)
 
 async function openPage(hasTouch = false) {
-  const page = await browser.newPage({ viewport: { width: 1600, height: 900 }, hasTouch })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
-  await page.goto(url)
-  await page.waitForFunction(() => Boolean((window as any).fixture))
-  return page
+  let page: Page | undefined, diagnostics: ReturnType<typeof observeHeaderFixture> | undefined, ready = false
+  return runWithDiagnosticCleanup({ run: async () => {
+    page = await browser.newPage({ viewport: { width: 1600, height: 900 }, hasTouch })
+    diagnostics = observeHeaderFixture(page)
+    await diagnostics.install()
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await events!.route(page)
+    await page.route("**/workspaces/header-windows/yolo/sessions/session", route => route.request().method() === "GET"
+      ? route.fulfill({ json: { enabled: false } }) : route.continue())
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    ready = true
+    return page
+  }, diagnose: async () => {
+    const directory = await mkdtemp(join(process.env.CODENOMAD_TEST_TEMP || tmpdir(), "panel-resize-failure-"))
+    let snapshot = ""
+    await diagnostics?.diagnose(message => { snapshot = message })
+    await writeFile(join(directory, "bootstrap.json"), snapshot)
+    console.error("panel-resize-bootstrap-failed", directory)
+  },
+  cleanup: async () => { diagnostics?.detach(); if (!ready) await page?.close() },
+  onObservationError: () => console.error("panel-resize-observation-failed"),
+  onCleanupError: () => console.error("panel-resize-cleanup-failed") })
 }
+
+for (const stage of ["addInitScript", "goto", "waitForFunction"] as const) {
+  for (const secondary of [false, true]) test(`panel setup closes after ${stage} failure (secondary=${secondary})`, async t => {
+    const page = await browser.newPage(), primary = new Error("panel setup sentinel"), stack = primary.stack
+    t.mock.method(browser, "newPage", async () => page)
+    t.mock.method(page, stage, async () => { throw primary })
+    const close = page.close.bind(page)
+    t.mock.method(page, "close", async () => { await close(); if (secondary) throw new Error("cleanup sentinel") })
+    t.mock.method(console, "error", () => { if (secondary) throw new Error("diagnostic sentinel") })
+    await assert.rejects(openPage(), error => error === primary)
+    assert.equal(primary.stack, stack)
+    assert.equal(page.isClosed(), true)
+    for (const event of ["console", "pageerror", "requestfailed", "response", "framenavigated"]) {
+      assert.equal((page as any).listenerCount(event), 0, `observer detached ${event}`)
+    }
+  })
+}
+
+for (const release of [false, true]) test(`a held initial HTTP read ${release ? "publishes when released" : "retains the original readiness deadline"}`, async t => {
+  const page = await browser.newPage(), route = page.route.bind(page), install = page.addInitScript.bind(page)
+  const diagnostics: unknown[][] = []
+  let releaseRead!: () => void, held = false
+  const pending = new Promise<void>(resolve => { releaseRead = resolve })
+  t.mock.method(browser, "newPage", async () => page)
+  t.mock.method(console, "error", (...args: unknown[]) => { diagnostics.push(args) })
+  t.mock.method(page, "route", async (pattern: Parameters<Page["route"]>[0], handler: Parameters<Page["route"]>[1]) => route(pattern, async (request, original) => {
+    if (new URL(request.request().url()).pathname === "/api/storage/state/ui") { held = true; await pending }
+    await handler(request, original)
+  }))
+  await page.exposeBinding("releasePanelRead", (_source, phase) => { if (release && phase === "preferences-before") releaseRead() })
+  t.mock.method(page, "addInitScript", async (script: any) => {
+    await install(script)
+    await install(() => {
+      const boot = (window as any).__headerFixtureBoot, mark = boot.mark
+      boot.mark = (phase: string, detail: string) => { mark(phase, detail); void (window as any).releasePanelRead(phase) }
+    })
+  })
+  try {
+    if (release) {
+      await openPage()
+      assert.equal(await page.evaluate(() => Boolean((window as any).fixture)), true)
+    } else {
+      await assert.rejects(openPage(), /30000ms exceeded/)
+      const directory = diagnostics.find(entry => entry[0] === "panel-resize-bootstrap-failed")![1] as string
+      const report = JSON.parse(await readFile(join(directory, "bootstrap.json"), "utf8"))
+      assert.equal(report.snapshot.fixture, "undefined")
+      assert.equal(report.snapshot.boot.at(-1).phase, "preferences-before")
+      assert.ok(report.snapshot.boot.some((entry: any) => entry.phase === "render-after"))
+      assert.equal(page.isClosed(), true)
+    }
+    assert.equal(held, true, "the control holds the real initial HTTP read")
+  } finally { releaseRead(); await page.close() }
+})
 
 async function startDrag(page: Page, side: "left" | "right") {
   const handle = page.locator(`.session-resize-handle--${side}`)

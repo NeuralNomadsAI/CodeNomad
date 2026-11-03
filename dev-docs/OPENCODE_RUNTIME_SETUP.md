@@ -270,13 +270,14 @@ and service are removed after actual process exit.
 
 `WindowsServiceSupervision` is the internal execution-host adapter. Its caller
 supplies the acquired service namespace, private store, durable owned runtime and
-native path-only environment. Its immutable private `windows.json` descriptor
-contains the PowerShell/Node/probe paths and minimal host roots. The build target
+native path-only environment. Its private `windows.json` descriptor
+pins the PowerShell/Node/probe/GUI-launcher paths and minimal host roots. The build target
 `npm run build:supervision --workspace @neuralnomads/codenomad` bundles the read-only
-probe and copies the PowerShell guard into `dist/host-lifetime/`. On acquisition,
+probe, copies the PowerShell guard and compiles the Windows GUI launcher with the
+Windows .NET Framework compiler into `dist/host-lifetime/`. On acquisition,
 the resolver provisions `%LOCALAPPDATA%/CodeNomadServiceSupervision` with a private
 current-SID/SYSTEM DACL, preserving existing ACLs. Its service directory holds
-immutable content-addressed copies of the bundled Node, probe and guard; the private
+immutable content-addressed copies of the bundled Node, probe, guard and launcher; the private
 descriptor pins their paths across package replacement. Artifact size admission
 uses a 256 MiB bound with the same complete ancestor/owner/DACL checks as metadata.
 Unsafe storage leaves supervision unavailable. Explicit executable selection and
@@ -284,6 +285,19 @@ verified CodeNomad installation publish the validated target under the service-w
 revision/admission lock. Before an explicit service restart, publication completes
 before the CLI stop/start operation. Passive reads preserve the selected target;
 a different service channel resolves its own independent manifest and preference.
+
+Windows startup and host/WSL acquisition upgrade descriptors without a launcher.
+The adapter verifies the pinned artifact hashes, provisions the current guard and
+launcher, then migrates only exact owned task actions under `admission.lock`.
+Both task definitions pass the complete ownership/policy check before either
+action changes. The descriptor pins the exact pending old/new artifact paths
+before action updates, and clears its `previousScript` marker after strict
+current-action read-back of both definitions.
+Partial upgrades retain those artifacts across package replacement and accept
+only their exact old/new actions on retry. Preference, revision,
+receipt, selected binary, principal, settings and trigger phase stay intact.
+Absent tasks stay absent. Active guards retain their process until it exits;
+subsequent task starts use the upgraded action.
 
 `service-supervision-target.ts` binds the absolute native executable to complete
 SHA256 bytes and, for the exact published npm layout, the package manifest and
@@ -296,7 +310,12 @@ custom-image replacements require explicit selection publication. A healthy
 incumbent survives installation and target publication unchanged. The shared server
 selection/install/restart seams supply the same contract to Electron and Tauri.
 
-Main uses PowerShell and native `CreateProcessW` with independent NUL stdio and a
+Task Scheduler executes the GUI-subsystem launcher for both Main and Recovery.
+It starts PowerShell with `CreateNoWindow=true`, `UseShellExecute=false` and hidden
+startup style, waits for its exit and propagates its exit status. PowerShell also
+receives `-WindowStyle Hidden`. Adapter activation/registration and native probes
+use their existing hidden-process launch paths. Main uses native `CreateProcessW`
+with `CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT`, independent NUL stdio and a
 foreground child handle. Main has IgnoreNew and unlimited execution time; Recovery
 has Queue, event/logon/60-second triggers and a ten-second OS deadline. Ownership
 read-back checks names, marker, action, principal, settings and trigger policy.
@@ -416,6 +435,9 @@ OpenCode retains its own registration, authentication and logs.
 
 `build:supervision` compiles a universal x64/ARM64 `service-supervision-macos-native.c`
 helper with the macOS build toolchain and the desktop's 13.5 deployment target.
+It lands as `dist/host-lifetime/service-supervision-macos-native`, beside the
+module of the same name, so the server's import loader (`src/loader.ts`) resolves
+extensionless relative imports to their compiled `.js` file before the bare path.
 The packaged helper provides only `proc_pidinfo` identity and a pipe-owned
 `flock`; the runtime provisions content-addressed private copies of it, Node and the
 guard. The user installation consumes these built artifacts. Run focused logic

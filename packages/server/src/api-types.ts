@@ -75,10 +75,12 @@ export interface MissionRecurrenceSnapshot {
 
 export interface MissionRecurrenceCurrent {
   version: 1
+  ownerRevision?: number
   projectID: string
   scheduleID: string
   passageID: string | null
-  mission?: import("./missions/model").MissionMap
+  source?: import("./missions/mission-current-source").MissionCurrentSource
+  mission?: import("./missions/mission-panel-map").MissionPanelMap
   activity?: import("./missions/model").MissionActivityProjection
 }
 export type MissionRecurrenceCurrentContent = ReturnType<typeof import("./missions/recurrence-current").currentRecurrenceContent>
@@ -217,6 +219,8 @@ export interface ProviderUsageResponse {
   windows: Record<string, ProviderUsageWindow>
   fetchedAt: number
   unavailableReason?: "openai-token-sharing-unsupported"
+  /** Computed locally from recorded activity because the provider publishes no counter. */
+  estimated?: true
 }
 
 export type WorktreeKind = "root" | "worktree"
@@ -530,6 +534,8 @@ export interface PluginConfiguredSource {
   hasOptions: boolean
   /** The runtime plugin this declaration loaded, when the inventory reports it. */
   pluginId?: string
+  /** Opaque confirmed-document identity, present on writable removal descriptors. */
+  expectedRevision?: string
 }
 
 export type PluginScopeRuleState = "default" | "enabled" | "disabled"
@@ -549,6 +555,8 @@ export interface PluginControlTarget {
   scope: PluginControlScope
   path: string
   exists: boolean
+  /** Opaque identity of the current raw document and authenticated connection. */
+  expectedRevision?: string
 }
 
 export interface PluginControlsSnapshot {

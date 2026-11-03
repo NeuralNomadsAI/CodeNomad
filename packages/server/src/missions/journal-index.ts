@@ -1,8 +1,8 @@
 import { compareEvents, type MissionCleanup, type MissionEvent } from "./model"
-import { orderMissionCleanups } from "./cleanup-projection"
+import { orderMissionCleanups, SETTLED_CLEANUP_HISTORY, MAX_PROJECTED_CLEANUPS } from "./cleanup-projection"
 import { missionWorkRemains } from "../opencode/missions/lifetime"
 import type { MissionView } from "./journal"
-import { missionSummary, type MissionSummary } from "./mission-summary"
+import { missionSummary, missionInventorySummary, type MissionSummary, type MissionInventorySummary } from "./mission-summary"
 import { activityActorWindow, missionActivityContext, MISSION_MARK_ACTORS, MISSION_MARK_MISSIONS,
   type MissionActivityContext } from "./mission-activity-context"
 import { contentDigest } from "./content-digest"
@@ -48,9 +48,10 @@ export interface MissionIndexHints {
   aggregate(): { discardedEvents: number; controlUnavailable: boolean; notificationUnavailable: boolean
     cleanupUnavailable: boolean; latestUpdatedAt: number }
   /** The snapshot's displayed cleanup history: every pending deletion, then the 20 newest settled. */
-  cleanups(): MissionCleanup[]
+  cleanups(allPending?: boolean): MissionCleanup[]
   /** One panel row per live map, in snapshot order. */
   summaries(): MissionSummary[]
+  inventorySummaries(): MissionInventorySummary[]
   /** Lightweight mark contexts, up to 16 missions and 10 actors each; no range rereads. */
   activity(offset: number): { contexts: MissionActivityContext[]; order: string; offset: number; end: number; total: number }
 }
@@ -292,18 +293,22 @@ function hints(state: State, live: () => void): MissionIndexHints {
       }
       return result
     },
-    cleanups: () => {
+    cleanups: (allPending = false) => {
       live()
       // Each range's history is its own displayed slice; the global newest
       // settled ones are among them. Flattening in group order gives the stable
       // sort the full projection's tie order.
       return orderMissionCleanups(entries().filter(entry => entry.cleanups.length).sort(compareGroups)
-        .flatMap(entry => entry.cleanups.map(cleanup => ({ ...cleanup, reasons: [...cleanup.reasons] }))))
+        .flatMap(entry => entry.cleanups.map(cleanup => ({ ...cleanup, reasons: [...cleanup.reasons] }))), SETTLED_CLEANUP_HISTORY, allPending ? Infinity : MAX_PROJECTED_CLEANUPS)
     },
     summaries: () => {
       live()
       return entries().filter(entry => entry.summary).sort(compareEntries)
         .map(({ summary }) => ({ ...summary!, actorSessionIds: [...summary!.actorSessionIds] }))
+    },
+    inventorySummaries: () => {
+      live()
+      return entries().filter(entry => entry.summary).sort(compareEntries).map(entry => missionInventorySummary(entry.summary!))
     },
     activity: offset => {
       live()

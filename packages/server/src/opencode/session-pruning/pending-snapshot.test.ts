@@ -182,7 +182,16 @@ test("untested, custom and missing version labels do not block a capable reader"
 
 test("production entry shares one presence lifecycle for old/new RPCs, never double-registers and disposes scopes", async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-pending-entry-"))
-  t.after(() => fs.rm(directory, { recursive: true, force: true }))
+  let close = async () => {}
+  t.after(async () => {
+    try {
+      await close()
+    } finally {
+      t.mock.restoreAll()
+      t.mock.timers.reset()
+      await fs.rm(directory, { recursive: true, force: true })
+    }
+  })
   const a = path.join(directory, "abc.lease"), b = path.join(directory, "def.lease")
   let monotonic = 0
   t.mock.method(performance, "now", () => monotonic)
@@ -220,8 +229,7 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
     get: (target, property) => Reflect.get(target, property) ?? unused,
   }) as unknown as Plugin.Context
   const scope = await Effect.runPromise(Scope.make())
-  const close = () => Effect.runPromise(Scope.close(scope, Exit.void))
-  t.after(close)
+  close = () => Effect.runPromise(Scope.close(scope, Exit.void))
   await Effect.runPromise(desktopPlugin(directory).effect(ctx).pipe(Effect.provideService(Scope.Scope, scope)))
   assert.equal(entries.length, 0)
   assert.deepEqual(designTransforms, ["agent", "skill"])

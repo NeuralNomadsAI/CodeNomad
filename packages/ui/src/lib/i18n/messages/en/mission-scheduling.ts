@@ -44,6 +44,7 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.readFailed": "Mission schedules could not be refreshed. The last display is kept; refresh before acting.",
   "missions.scheduleList.capacity": "Too many unconfirmed commands. Resolve a saved request before sending another.",
   "missions.scheduleList.uncertain": "This request is unconfirmed. Its original identity is kept. Refresh the saved request; nothing is resent automatically.",
+  "missions.scheduleList.confirmedRefreshing": "Action confirmed. Waiting for the updated view before another action. Use Refresh saved request to retry the read.",
   "missions.scheduleList.activate": "This action requires native scheduling. Enable experimental.schedules in these configuration documents?\n{paths}\nActivation must be confirmed before this action proceeds. An explicit OFF is preserved.",
   "missions.scheduleList.confirm.stop": "Stop “{title}” permanently? Future passages are disabled. Engaged tool effects may continue; conversations and results are kept.",
   "missions.scheduleList.confirm.delete": "Delete “{title}”? Future passages are disabled before removal. Conversations and results are kept. Unconfirmed cleanup remains visible.",

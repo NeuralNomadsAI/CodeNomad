@@ -8,8 +8,7 @@ import { missionBodySource, useMissionBodyValue, type MissionBodySource } from "
 /** A string body a reader section pages through the content route. */
 export type MissionReaderBody = MissionBodySource
 
-/** The body of a one-time mission at `selector`; undefined for a passage, whose readers
- * keep its own map and archived pages. */
+/** A compact display body's descriptor, for a project mission or exact current passage. */
 export function missionReaderBody(instanceId: string, mission: MissionPanelMap | undefined, oneTime: boolean,
   selector: MissionContentSelector): MissionReaderBody | undefined {
   return mission && oneTime ? missionBodySource(instanceId, mission, selector) : undefined
@@ -19,7 +18,7 @@ interface ReaderValueProps {
   instanceId: () => string
   mission: () => MissionPanelMap | undefined
   oneTime: () => boolean
-  /** Where the body is; undefined when the map records none. A passage's comes from its own map. */
+  /** Where the body is; undefined when the map records none. */
   selector: () => MissionContentSelector | undefined
   /** False while the body is hidden (a closed disclosure): nothing is read and nothing settles. */
   active?: () => boolean
@@ -29,9 +28,8 @@ interface ReaderValueProps {
  * a failure shows beside the last good value, with an explicit retry. */
 export interface MissionBodyRead { settled: boolean; failed: boolean; onRetry: () => void }
 
-/** A body shown whole (a list, artifact, briefing or plan-change pair): a one-time
- * mission's through the content route, a passage's from its own map. An absent body is
- * settled and empty. */
+/** A body shown whole (a list, artifact, briefing or plan-change pair), from its exact
+ * content source when compact. An absent body is settled and empty. */
 export function useReaderValue<T>(props: ReaderValueProps) {
   const read = useMissionBodyValue<T | undefined>(() => {
     const selector = props.selector(), mission = props.mission()

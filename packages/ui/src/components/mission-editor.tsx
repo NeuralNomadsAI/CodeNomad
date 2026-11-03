@@ -50,6 +50,8 @@ export function MissionEditor(props: {
   onShowPlaybook?: (template: MissionPanelMap["template"], taskMode: MissionTaskMode) => void
   onRecurrenceSaved?: () => void
   onRecurrenceRefresh?: () => void
+  /** Whether a passive scheduling read is pending, for the panel's update indicator. */
+  onReading?: (reading: boolean) => void
   /** On unmount: the idle draft to reopen, null to reopen as opened (an edit still reading
    * its fields), or undefined while a request is in flight or held. */
   onDispose?: (draft?: MissionEditorDraft | null) => void
@@ -157,7 +159,7 @@ export function MissionEditor(props: {
   }
   const errorFor = (field: FieldError["field"]) => fieldError()?.field === field ? fieldError()!.message : undefined
   const schedule = createMissionEditorScheduling({ instanceId: props.instanceId, directory: props.directory, action, draft,
-    scope: scheduleScope, active: isActive, captureView: () => {
+    scope: scheduleScope, owner: identity, active: isActive, captureView: () => {
       const view = captureView(), operation = props.captureOperation?.() ?? (() => true)
       const generation = getOpenCodeInstanceGeneration(props.instanceId)
       return () => view() && operation() && props.action === action && getOpenCodeInstanceGeneration(props.instanceId) === generation
@@ -167,6 +169,8 @@ export function MissionEditor(props: {
       setProfiles(copyMissionProfiles(config.profiles)); setTaskMode(config.taskMode); setWatched(config.watchedConversationIDs)
       setCustomProfiles(true); setCustomTaskMode(true)
     }, captureDraft: () => captureDraft(), onSaved: (mission, scheduleID) => props.onSaved(mission, scheduleID) })
+  createEffect(() => props.onReading?.(schedule.revalidating()))
+  onCleanup(() => props.onReading?.(false))
   const mode = () => schedule.scheduling().frequency === "immediate" && schedule.scheduling().condition === "none" ? "once" : "recurring"
   const immediateFollowed = () => mode() === "once" && watched().length > 0
   const immediateCreationFollowed = () => kind === "create" && immediateFollowed()
@@ -486,7 +490,7 @@ export function MissionEditor(props: {
       </Show>
     </details>
     <MissionScheduling draft={schedule.scheduling()} directory={schedule.directory()} sources={sourceChoices.sources()}
-      capability={schedule.capability()} origin={schedule.origin()} lockReason={structuralReason()} disabled={structuralLocked()}
+      capability={schedule.capability()} lockReason={structuralReason()} disabled={structuralLocked()}
       persisted={schedule.document()?.firstPlayedAt != null ? { firstPlayedAt: schedule.document()!.firstPlayedAt!,
         oneShotAt: schedule.document()!.oneShotAt, slotEndsAt: schedule.document()!.slotEndsAt,
         nextDueAt: schedule.document()!.observation.nextDueAt, launchedCount: schedule.document()!.launchedCount } : undefined}
@@ -517,7 +521,7 @@ export function MissionEditor(props: {
     || mode() === "recurring" && (!sourceLocationReady() || !sourceInputBudget().sufficient)
   // In the panel, creation's body scrolls above a fixed footer unless the panel is too short (mission-create.css).
   let body: HTMLDivElement | undefined
-  const panelScrolls = kind === "create" ? missionPanelScroll(() => body) : () => false
+  const panelScrolls = kind === "create" ? missionPanelScroll(() => body, isActive) : () => false
 
   return <form class="mission-editor window-shell" classList={{ "mission-create": kind === "create" }} onSubmit={save} aria-label={t(`missions.control.${kind}`)}
     data-scroller={panelScrolls() ? "panel" : undefined}>

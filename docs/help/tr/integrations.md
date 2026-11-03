@@ -72,3 +72,28 @@ Beceri kullanılabilirliği küresel bir CodeNomad beceri kataloğundan değil, 
 Aktif Location için komutlar OpenCode'den keşfedilir. Kendi yerel tanımları yürütme davranışını seçebilir; menü bir paket yükleyicisi veya sınırsız bir yapılandırma düzenleyicisi değildir. CodeNomad, yerel özel komut gönderiminden önce profilin oturum ortamını uygular; başarısız bir ortam güncellemesi gönderimi engeller. `/btw`, sıradan bir özel komut değil, CodeNomad'in ayrı geçici soru akışıdır.
 
 Komut tanımları ve yerel konfigürasyon devralımı için [OpenCode komutları dokümantasyonu](https://opencode.ai/v2/docs/commands/)'yi kullanın. Yapılandırma değişikliklerinden sonra öncelikle ilgili yüzeyi yenileyin/yeniden açın; açık yapılandırma yeniden yüklemesini yalnızca çalışma zamanının hâlâ buna ihtiyacı varsa kullanın. Kabul edilmesi muhtemel bir komutu asla yalnızca ekranını yenilemek için tekrar oynatmayın.
+## Açık bir uygulamayı bağla {#application-attachment}
+
+Belgeyi uygulamanın entegrasyonundan sunun, ardından konuşma başlığında (veya ek işlemler menüsünde) ya da Eklentiler satırı menüsünde **Açık bir uygulamayı bağla…** seçeneğini kullanın. İşlem yalnızca teklif bildiren etkin bir yerel entegrasyonda görünür. Uygulama ve belgeyi seçin, hedef konuşmayı ve değişiklik uyarısını denetleyin, ardından **Bağlantıyı onayla** seçeneğini kullanın. İlk odak İptal'dedir. Uygulama, uzak bağlantılarda da OpenCode makinesinde çalışır. Desteklenmeyen WSL dahil desteklenmeyen sunucular işlem yerine yardım gösterir.
+
+Konuşma başlığı, hem geniş hem dar düzende uygulama adı ve belge etiketiyle kalıcı bir bağlantı göstergesi sunar. Görüntülenen konuşmanın güncel bağlantısını okur. Doğrulanmamış durumda **Bağlantı bilinmiyor** görünür; bağlantı olmadığı doğrulandığında gösterge gizlenir. **Bu konuşmanın bağlantısını kes** yalnızca güncel ve yetkili bir okuma tam olarak bu oturumun bağlı olduğunu doğruladığında kullanılabilir. Diğer istemciler bağlantıları değiştirebildiğinden yerel değişiklikler ve yeniden bağlantılar bu durumu yeniler.
+
+Kabul edilmiş işlemin sonucu veya hatası, hedef konuşma görüntülenirken yerel değişikliklerde ve yeniden bağlantılarda korunur. Bağlama ve bağlantı kesme tamamlanma mesajları, tamamlanan isteği açıklayan yerel işlem kayıtlarıdır. Bağlantı göstergesi ve bağlantı kesmenin kullanılabilirliği, oturumun güncel ve yetkili durumuna göre belirlenir. Gezinme kayıtları kapatır.
+
+Kayıtlı Q8 meta verileri yalnızca yeniden bağlama önerisi sunar: **Yeniden bağla**, seçicide ancak aynı entegrasyon ve etikete sahip teklif varsa görünür ve açık onay gerektirir. Güncel bağlantının yetkili bilgisi, entegrasyonun oturum bazındaki okumasından gelir.
+
+Eklentiler, katalog kullanılamadığında bir bildirim veya eskiyse alınma zamanı ile son geçerli kataloğu gösterir. Yeniden denemek için yenileyin.
+
+Kaldırma uyarısı eklentiyi ve tam kapsamı adlandırır. **İptal** odaklanır; **Genel/Proje kapsamından kaldır** 600 ms sonra kullanılabilir ve açık bir işlem gerektirir. Kullanan konuşmalarda kullanılabilirliği ve bağlantıları kesebilir; Genel kapsam diğer projeleri de etkileyebilir. Gönderimden önce iptal, süre dolması veya gezinme hiçbir şeyi değiştirmez. Yalnızca onaylanan bildirim kaldırılır; kurallar, önbellek, uygulama dosyaları ve kayıtlı bağlantı ipuçları korunur. Yapılandırma değişirse yeniden seçim ve onay gerekir. Başarı bildirimin kaldırıldığını belirtir; çalışma durumu OpenCode yeniden yüklemesini izler. Yanıt kaybolursa yeniden denemeden önce yenileyip yapılandırmayı kontrol edin. Yeniden kurulum kullanılabilirliği geri getirebilir; yeniden yükleme veya bağlama gerekebilir ve kesilen işlemler devam etmeyebilir.
+
+## Uygulama entegrasyonunu kurun veya güncelleyin {#application-installation}
+
+**Durum → Eklentiler** içinde entegrasyonun kendi satırının menüsünü açıp **Uygulama entegrasyonunu kur…** veya **Uygulama entegrasyonunu güncelle…** seçeneğini kullanın. İşlem, etkin bir yerel entegrasyonun güncel durumu kurulum veya güncelleme istediğinde görünür. Konuşma veya sunulan belge olmadan da kullanılabilir.
+
+Onay, uygulamayı ve yükleyiciyi sağlayan **entegrasyon paketinin sürümünü** belirtir. İkisini ve makine uyarısını denetleyin: kurulum OpenCode'un çalıştığı makinede yapılır; bu uzak bir makine olabilir. İlk odak **İptal** üzerindedir. Devam etmek için açıkça onaylayın. Onaydan önce proje, Location veya konuşma değiştirmek, yeniden bağlanmak ya da ilgili yerel değişiklikleri almak bekleyen onayı iptal eder; güncel ayrıntıları incelemek için işlemi yeniden açın.
+
+WSL, açık bir uygulama uyumlu görünse bile uygulama içine kurulumu her zaman reddeder. Uygulamayı desteklenen bir makinede açın.
+
+Sonuç, entegrasyonun kurulduğunu, güncellendiğini, zaten güncel olduğunu, reddedildiğini veya başarısız olduğunu bildirir. Kurulum veya güncellemeden sonra uygulamayı açıp entegrasyonunu denetleyin; konuşmayı [Açık bir uygulamayı bağla](#application-attachment) ile ayrıca bağlayın. Kurulum başarısı yükleyici isteğinin sonucunu anlatır; çalışan uygulamanın kullanılabilirliği uygulamanın durumundan anlaşılır.
+
+İstekler asla otomatik olarak yeniden denenmez. Ret veya başarısızlıktan sonra yeni bir işlem seçmeden önce uygulamayı kontrol edin. Bir hata sonucu belirsiz bırakırsa o isteği tekrarlamayın: önce uygulamayı inceleyin, ardından gerekirse yeni bir işlem ve onay başlatın.

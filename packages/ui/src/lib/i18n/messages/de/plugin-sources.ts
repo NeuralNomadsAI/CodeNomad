@@ -1,4 +1,7 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.sources.removeWarning": "Das Entfernen dieses Plugins kann seine Verfügbarkeit und Verbindungen in den verwendenden Unterhaltungen unterbrechen.",
+  "instanceServiceStatus.plugins.sources.removeGlobalWarning": "Auch Unterhaltungen in anderen Projekten können betroffen sein.",
+  "instanceServiceStatus.plugins.sources.removeRecovery": "Eine Neuinstallation kann die Verfügbarkeit wiederherstellen; eventuell sind Neuladen oder erneutes Verbinden nötig. Unterbrochene Vorgänge werden möglicherweise nicht fortgesetzt.",
   "instanceServiceStatus.plugins.sources.add": "Plugin hinzufügen",
   "instanceServiceStatus.plugins.sources.addTitle": "Plugin hinzufügen",
   "instanceServiceStatus.plugins.sources.spec": "Paket",
@@ -29,6 +32,6 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "Die OpenCode-Konfiguration {scope} ist fehlerhaft. Sie wurde nicht geändert.",
   "instanceServiceStatus.plugins.sources.errors.unavailable": "Die Konfiguration {scope} ist für diesen Ort nicht verfügbar.",
   "instanceServiceStatus.plugins.sources.errors.timeout": "OpenCode hat nicht rechtzeitig geantwortet. Es wurde nichts hinzugefügt; versuchen Sie es erneut.",
-  "instanceServiceStatus.plugins.sources.errors.remove": "{name} konnte nicht aus {scope} entfernt werden.",
+  "instanceServiceStatus.plugins.sources.errors.remove": "Das Entfernen von {name} aus {scope} konnte nicht bestätigt werden. Aktualisieren Sie Plugins und prüfen Sie die Konfiguration vor einem neuen Versuch.",
   "instanceServiceStatus.plugins.sources.errors.removeStale": "{name} hat sich in der Konfiguration {scope} seit der Anzeige geändert. Aktualisieren Sie und versuchen Sie es erneut.",
 } as const

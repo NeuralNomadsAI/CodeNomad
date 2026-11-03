@@ -43,23 +43,33 @@ describe("plugin sources store", () => {
   it("removes exactly the displayed declaration, tracks it while saving and forgets its pending add", async () => {
     const { store, calls, invalidations } = harness()
     await store.add("instance", location, "project", "fixture-plugin")
-    const source = { target: "fixture-plugin", scope: "project" as const, path: "/repo/.opencode/opencode.jsonc", entryIndex: 2, hasOptions: false }
+    const source = { target: "fixture-plugin", scope: "project" as const, path: "/repo/.opencode/opencode.jsonc", entryIndex: 2, hasOptions: false, expectedRevision: "a".repeat(64) }
     const removal = store.remove("instance", location, source)
     assert.equal(store.isRemoving("instance", location, source), true)
     await store.remove("instance", location, source)
     await removal
     assert.equal(store.isRemoving("instance", location, source), false)
-    assert.deepEqual(calls.slice(1), [["remove", "instance", { location, scope: "project", target: "fixture-plugin", entryIndex: 2 }]], "one request while saving")
+    assert.deepEqual(calls.slice(1), [["remove", "instance", { location, scope: "project", target: "fixture-plugin", entryIndex: 2, expectedRevision: source.expectedRevision }]], "one request while saving")
     assert.equal(store.addedSpecs("instance", location).length, 0)
     assert.deepEqual(invalidations, ["instance", "instance"])
   })
 
   it("releases a failed removal and still reconciles", async () => {
     const { store, invalidations } = harness({ failRemove: true })
-    const source = { target: "x", scope: "global" as const, path: "/g/opencode.jsonc", entryIndex: 0, hasOptions: false }
+    const source = { target: "x", scope: "global" as const, path: "/g/opencode.jsonc", entryIndex: 0, hasOptions: false, expectedRevision: "b".repeat(64) }
     await assert.rejects(store.remove("instance", location, source))
     assert.equal(store.isRemoving("instance", location, source), false)
     assert.deepEqual(invalidations, ["instance"])
+  })
+
+  it("drops a superseded Installing hint after a lost removal response, leaving inventory to reconcile", async () => {
+    const { store, calls, invalidations } = harness({ failRemove: true })
+    await store.add("instance", location, "global", "x")
+    const source = { target: "x", scope: "global" as const, entryIndex: 0, hasOptions: false, expectedRevision: "a".repeat(64) }
+    await assert.rejects(store.remove("instance", location, source))
+    assert.deepEqual(store.addedSpecs("instance", location), [])
+    assert.equal(calls.length, 2, "one add and one removal, no replay")
+    assert.deepEqual(invalidations, ["instance", "instance"])
   })
 
   it("forgets an instance's added sources when it stops", async () => {

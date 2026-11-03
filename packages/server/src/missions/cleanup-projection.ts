@@ -101,12 +101,12 @@ export function projectMissionCleanups(events: readonly MissionEvent[]): Mission
 }
 
 /** Newest first: every pending cleanup, then the `settled` newest settled ones. */
-export function orderMissionCleanups(results: MissionCleanup[], settled = SETTLED_CLEANUP_HISTORY): MissionCleanup[] {
+export function orderMissionCleanups(results: MissionCleanup[], settled = SETTLED_CLEANUP_HISTORY, limit = MAX_PROJECTED_CLEANUPS): MissionCleanup[] {
   results.sort((a, b) => b.createdAt - a.createdAt || a.deletionID.localeCompare(b.deletionID))
   // Pending intents come first, so newer completed deletions never push one out of the display window.
   const pending = (item: MissionCleanup) => item.pending > 0 || item.documentPending === true
   return [...results.filter(pending), ...results.filter(item => !pending(item)).slice(0, settled)]
-    .slice(0, MAX_PROJECTED_CLEANUPS)
+    .slice(0, limit)
 }
 
 function projectDeletion(deletion: MissionDeletedEvent, group: readonly MissionEvent[], objective: string): MissionCleanup {

@@ -97,6 +97,7 @@ export async function acquireWslSupervision(input: {
   store = new ServiceSupervisionStore(root, initialManifest.namespace, initialManifest.target, policy, undefined,
     update => mutateWslSupervisionFile(wsl, update))
   let runtime = await readWindowsSupervisionRuntime(store, policy)
+  const preparing = !runtime || !runtime.launcher || Boolean(runtime.previousScript)
   if (!runtime) {
     const windowsEnvironment = { SystemRoot: system, WINDIR: system, COMSPEC: path.join(system, "System32/cmd.exe") } as WindowsSupervisionRuntime["environment"]
     for (const key of ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP"] as const) {
@@ -115,7 +116,7 @@ export async function acquireWslSupervision(input: {
   if (!(await lstat(await map(binary))).isFile()) throw new SupervisionError("invalid")
   current()
   const adapter = new WindowsServiceSupervision(store, runtime, policy, artifactPolicy)
-  await adapter.prepareRuntime()
+  if (preparing) await adapter.prepareRuntime()
   if (!await supervisionTargetReady(selectedTarget, map)) throw new SupervisionError("conflict")
   current()
   return { store, adapter, selectedTarget, assertCurrent: current }

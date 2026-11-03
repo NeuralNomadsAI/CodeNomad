@@ -16,7 +16,7 @@ Object.assign(globalThis, { window: {
 } })
 const { initializeClientState } = await import("./client-state")
 await initializeClientState()
-const { markMissionsFinishedSeen, missionDisclosureOpen, missionFinishedSeen, missionProjectView, setMissionDisclosureOpen, updateMissionProjectView } = await import("./mission-view-state")
+const { markMissionsFinishedSeen, seedMissionFinishedSeen, missionDisclosureOpen, missionFinishedSeen, missionProjectView, setMissionDisclosureOpen, updateMissionProjectView } = await import("./mission-view-state")
 const playbookReader = { missionId: "debug", kind: "playbook", taskMode: "independent" } as const
 
 // The completions a project lists at the end, with whether each reads as seen.
@@ -75,6 +75,23 @@ async function projectControls() {
 }
 
 if (reload) {
+  if (process.env.MISSION_COLLISION_CHECK) test("legacy collision positives survive reload before the originally viewed row is discovered", () => {
+    const { folder, scope, rows } = JSON.parse(process.env.MISSION_COLLISION_CHECK!)
+    assert.deepEqual(rows.map((row: ReturnType<typeof completion>) => missionFinishedSeen(scope, row)), [true, false, true, true])
+    seedMissionFinishedSeen(scope, 100, folder, [rows[3]])
+    assert.equal(missionFinishedSeen(scope, rows[2]), true)
+    seedMissionFinishedSeen(scope, 101, folder, [rows[2]])
+    assert.deepEqual(rows.map((row: ReturnType<typeof completion>) => missionFinishedSeen(scope, row)), [true, false, true, true])
+    assert.equal(missionFinishedSeen(scope, { id: "later", finishSequence: 5 }), false)
+  })
+  if (process.env.MISSION_UPGRADE_CHECK) test("a partial folder upgrade retains undiscovered positive exceptions across reload", () => {
+    const { folder, scope, rows } = JSON.parse(process.env.MISSION_UPGRADE_CHECK!)
+    assert.deepEqual(rows.map((row: ReturnType<typeof completion>) => missionFinishedSeen(scope, row)), [true, false, true])
+    seedMissionFinishedSeen(scope, 99, folder, rows.slice(1))
+    assert.deepEqual(rows.map((row: ReturnType<typeof completion>) => missionFinishedSeen(scope, row)), [true, false, true])
+    seedMissionFinishedSeen(scope, 100, folder, rows)
+    assert.equal(missionFinishedSeen(scope, { id: "later", finishSequence: 4 }), false)
+  })
   if (process.env.MISSION_SEEN_EXPECTED) test("a fresh window keeps every seen completion and every unseen one, and the newest toggled sections", () => {
     assert.deepEqual(seen(listed), JSON.parse(process.env.MISSION_SEEN_EXPECTED!))
     assert.equal(missionFinishedSeen("project", completion(6_000)), false, "a later completion starts unseen")
@@ -90,6 +107,56 @@ if (reload) {
     assert.equal(missionProjectView("unknown-playbook").reader, undefined)
   })
 } else {
+  test("discovering a colliding legacy positive first preserves the original seen mission and unopened boundary", () => {
+    const folder = "/legacy-collision", scope = JSON.stringify([folder, "project"])
+    const rows = [{ id: "historical", finishSequence: 1 }, { id: "unopened", finishSequence: 2 },
+      { id: "msn_6afe5522b1991b38a5536702", finishSequence: 3 }, { id: "msn_25cb5286530d0229edc48088", finishSequence: 4 }]
+    markMissionsFinishedSeen(folder, [], rows.slice(0, 1)); markMissionsFinishedSeen(folder, [rows[2].id], rows)
+    seedMissionFinishedSeen(scope, 4, folder, rows.slice(0, 1))
+    assert.equal(missionFinishedSeen(scope, rows[2]), true)
+    seedMissionFinishedSeen(scope, 99, folder, [rows[3]])
+    assert.deepEqual(rows.map(row => missionFinishedSeen(scope, row)), [true, false, true, true])
+    reloadWith({ MISSION_COLLISION_CHECK: JSON.stringify({ folder, scope, rows }) })
+  })
+  test("folder completion upgrade keeps boundary and pending positives through partial discovery and reload", () => {
+    const folder = "old-folder-upgrade", scope = JSON.stringify([folder, "project"]), rows = range(0, 3)
+    markMissionsFinishedSeen(folder, [], rows.slice(0, 1))
+    markMissionsFinishedSeen(folder, [rows[2].id], rows)
+    seedMissionFinishedSeen(scope, 3, folder, rows.slice(0, 1))
+    assert.equal(missionFinishedSeen(scope, rows[1]), false, "new key must inherit the old unopened boundary")
+    assert.equal(missionFinishedSeen(scope, rows[2]), true, "pending ID evidence stays seen before its exact row is discovered")
+    reloadWith({ MISSION_UPGRADE_CHECK: JSON.stringify({ folder, scope, rows }) })
+    seedMissionFinishedSeen(scope, 30, folder, rows.slice(1))
+    assert.deepEqual(rows.map(row => missionFinishedSeen(scope, row)), [true, false, true])
+    reloadWith({ MISSION_UPGRADE_CHECK: JSON.stringify({ folder, scope, rows }) })
+    const same = "same-key-positive-upgrade"
+    markMissionsFinishedSeen(same, [], rows.slice(0, 1)); markMissionsFinishedSeen(same, [rows[2].id], rows)
+    seedMissionFinishedSeen(same, 3, undefined, rows)
+    assert.deepEqual(rows.map(row => missionFinishedSeen(same, row)), [true, false, true])
+  })
+  test("partial inventory seeds once from the durable finish boundary and never marks an undiscovered new finish seen", () => {
+    const old = { id: "old", finishSequence: 1 }, deleted = { id: "deleted", finishSequence: 2 }, fresh = { id: "fresh", finishSequence: 3 }, shown = { id: "shown", finishSequence: 4 }
+    seedMissionFinishedSeen("partial", 2)
+    markMissionsFinishedSeen("partial", [], [old], true)
+    assert.equal(missionFinishedSeen("partial", deleted), true, "later discovered historical completion is already seen")
+    assert.equal(missionFinishedSeen("partial", fresh), false)
+    markMissionsFinishedSeen("partial", [shown.id], [shown], true)
+    assert.equal(missionFinishedSeen("partial", fresh), false, "a later shown page cannot cover the missing new completion")
+    seedMissionFinishedSeen("partial", 4)
+    markMissionsFinishedSeen("partial", [], [old, deleted], true)
+    assert.equal(missionFinishedSeen("partial", fresh), false, "later traversal/refresh never reseeds")
+    assert.equal(missionFinishedSeen("partial", shown), true, "partial pages retain explicitly shown IDs")
+  })
+  test("a stored whole-inventory watermark keeps unseen finishes while partial views record exact seen sequences", () => {
+    const historical = { id: "historical", finishSequence: 2 }, fresh = { id: "fresh", finishSequence: 3 }
+    markMissionsFinishedSeen("migration", [], [historical])
+    seedMissionFinishedSeen("migration", 9)
+    assert.equal(missionFinishedSeen("migration", historical), true)
+    assert.equal(missionFinishedSeen("migration", fresh), false)
+    markMissionsFinishedSeen("migration", [fresh.id], [fresh], true)
+    assert.equal(missionFinishedSeen("migration", fresh), true)
+    assert.equal(missionFinishedSeen("migration", { id: "unloaded", finishSequence: 4 }), false)
+  })
   test("a playbook reader survives a reload, and one naming no playbook does not", () => {
     updateMissionProjectView("project", { reader: playbookReader })
     updateMissionProjectView("unknown-playbook", { reader: { missionId: "toString", kind: "playbook" } })

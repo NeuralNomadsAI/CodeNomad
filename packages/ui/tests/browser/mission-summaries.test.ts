@@ -4,7 +4,7 @@ import { chromium, type Browser, type Page } from "playwright"
 import type { MissionActor, MissionMap } from "../../../server/src/api-types"
 import { missionSummary } from "../../../server/src/missions/mission-summary"
 import { borrowFixture } from "./fixture-borrow"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { inlineMissionEntry, missionDetail, missionRefresh, missionToolbarAction, selectMission } from "./mission-actions"
 import { routeMissionContent, panelMissions } from "./mission-content-fixture"
 
@@ -45,7 +45,7 @@ async function open() {
   await page.route("**/missions/scheduled?*", route => route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } }))
   await page.route(target => target.pathname === "/api/workspaces/fixture/missions", route => {
     const query = new URL(route.request().url()).searchParams
-    requests.push(query)
+    if (query.get("panelHeader") === "true" || query.get("panelSource") === "summaries" && requests.length === 0) requests.push(query)
     const include = (query.get("include") ?? "").split(",").filter(Boolean)
     const listed = maps.filter(value => value.status === "active" || include.includes(value.id))
     return route.fulfill({ json: { available: true, version: 1, projectID: "project", generatedAt: Date.now(), discardedEvents: 0, cleanups: [],
@@ -67,8 +67,10 @@ async function panel(maps: MissionMap[], answer: (include: string[], read: numbe
   await page.route("**/missions/scheduled?*", route => route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } }))
   await page.route(target => target.pathname === "/api/workspaces/fixture/missions", async route => {
     const include = (new URL(route.request().url()).searchParams.get("include") ?? "").split(",").filter(Boolean)
-    includes.push(include)
-    const status = await answer(include, includes.length)
+    const query = new URL(route.request().url()).searchParams
+    const measured = query.get("panelHeader") === "true" || query.get("panelSource") === "summaries" && includes.length === 0
+    if (measured) includes.push(include)
+    const status = measured ? await answer(include, includes.length) : undefined
     if (status) return route.fulfill({ status, json: { error: "unavailable" } })
     const listed = maps.filter(value => value.status === "active" || include.includes(value.id))
     return route.fulfill({ json: { available: true, version: 1, projectID: "project", generatedAt: 2, discardedEvents: 0, cleanups: [], missions: panelMissions(listed),
@@ -160,20 +162,23 @@ test("hiding the panel cancels the follow-up an obsolete include answer would st
     while (!heldB) await page.waitForTimeout(10)
     await choose(page, "A")
     await fixtureCall("active", false)
+    const admitted = includes.length
     assert.deepEqual(await page.evaluate(async () => (await import("/src/stores/missions.ts" as string)).missionStore.demandedInstanceIds()), [])
     releaseB()
     await page.waitForFunction(() => (window as any).missionFixture.snapshot().status === "ready")
     await page.waitForTimeout(300)
-    assert.deepEqual(includes, [[], ["A"], ["B"]], "the hidden panel reads nothing more")
+    assert.equal(includes.length, admitted, "hiding retires reads already admitted by the independent selection header")
     // Activation reads the current include.
     await fixtureCall("active", true)
-    while (includes.length < 4) await page.waitForTimeout(10)
-    assert.deepEqual(includes[3], ["A"])
+    while (includes.length <= admitted) await page.waitForTimeout(10)
+    assert.deepEqual(includes[admitted], ["A"])
     await shownDetail(page, "Objective A").waitFor()
     // A central reader is demand of its own, with the panel hidden.
     await fixtureCall("active", false)
     race = false
+    const readerRead = page.waitForRequest(request => request.url().endsWith("/missions/panel-page") && request.postDataJSON()?.header && request.postDataJSON()?.missionID === "B")
     await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("fixture", { reader: { missionId: "B", kind: "overview" } }))
+    await readerRead
     await page.locator(".mission-reader").getByText("Closed B summary").waitFor()
     assert.ok(includes.at(-1)!.includes("B"), "the reader's map was read")
   } finally { releaseB(); await page.close() }
@@ -187,10 +192,10 @@ test("closed missions list as rows with their marks and open their full map only
     await (await inlineMissionEntry(page, "Objective stopped")).waitFor()
     assert.deepEqual(await Promise.all(["Objective open", "Objective failed", "Objective done", "Objective stopped"].map(title => mark(page, title))),
       ["working", "interrupted", "idle", "idle"], "rows alone carry every closed mark")
-    assert.equal(requests[0]?.toString(), "", "the first read cannot know the backend lists summaries")
+    assert.equal(requests[0]?.get("panelSource"), "summaries", "discovery starts with a bounded summary window")
 
     await selectMission(page, "Objective failed")
-    assert.deepEqual([requests.at(-1)?.get("include"), requests.at(-1)?.get("summaries")], ["failed", "v1"])
+    assert.deepEqual([requests.at(-1)?.get("include"), requests.at(-1)?.get("panelHeader")], ["failed", "true"])
     await missionToolbarAction(page, "Recover interrupted mission").waitFor()
     await missionDetail(page).locator('.mission-tree li[data-task-key="work"]').waitFor()
     // The included closed map serves the readers: its overview, then its task.
@@ -201,7 +206,7 @@ test("closed missions list as rows with their marks and open their full map only
 
     // Refreshes keep the held rows (omitted, same version) and re-read the selection.
     const reads = requests.length
-    const refreshed = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/missions"))
+    const refreshed = waitForMissionPanelRefresh(page)
     await missionRefresh(page).click()
     await refreshed
     assert.ok(requests.length > reads)

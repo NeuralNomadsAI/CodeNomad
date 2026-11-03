@@ -23,11 +23,13 @@ function MissionPickerList(props: {
   const [query, setQuery] = createSignal("")
   const [overflowing, setOverflowing] = createSignal(false)
   const filtered = createMemo(() => filterMissionPickerEntries(props.entries, query()))
-  const [active, setActive] = createSignal(Math.max(0, filtered().findIndex(entry => entry.key === props.selectedKey)))
+  const [activeKey, setActiveKey] = createSignal(props.selectedKey ?? filtered()[0]?.key)
+  const active = () => Math.max(0, filtered().findIndex(entry => entry.key === activeKey()))
+  const byKey = createMemo(() => new Map(filtered().map(entry => [entry.key, entry])))
   const optionId = (index: number) => `${props.id}-option-${index}`
   const activeId = () => props.popup && filtered()[active()] ? optionId(active()) : undefined
   let scroller!: HTMLUListElement, search: HTMLInputElement | undefined
-  createEffect(() => { if (active() >= filtered().length) setActive(0) })
+  createEffect(() => { if (!byKey().has(activeKey() ?? "")) setActiveKey(filtered()[0]?.key) })
   createEffect(() => {
     let frame = 0
     const measure = () => { frame = 0; if (scroller.isConnected) setOverflowing(scroller.scrollHeight > scroller.clientHeight + 1) }
@@ -43,7 +45,7 @@ function MissionPickerList(props: {
   const key = (event: KeyboardEvent) => {
     if (composing(event)) return false
     const count = filtered().length
-    const move = (index: number) => { event.preventDefault(); setActive(Math.min(Math.max(index, 0), Math.max(count - 1, 0))) }
+    const move = (index: number) => { event.preventDefault(); setActiveKey(filtered()[Math.min(Math.max(index, 0), Math.max(count - 1, 0))]?.key) }
     if (event.key === "ArrowDown") move(active() + 1)
     else if (event.key === "ArrowUp") move(active() - 1)
     else if (event.key === "Home") move(0)
@@ -65,19 +67,19 @@ function MissionPickerList(props: {
         onKeyDown={event => { if (props.popup) key(event) }} />
     </Show>
     <ul ref={scroller} id={props.id} class="mission-picker-options" role={props.popup ? "listbox" : undefined} aria-label={props.label}>
-      <For each={filtered()} fallback={<li class="mission-picker-empty" role={props.popup ? "presentation" : undefined}>{t("missionsPanel.picker.noMatch")}</li>}>
-        {(entry, index) => <Show when={props.popup} fallback={<li>
-          <button type="button" class="mission-picker-option" classList={{ "mission-picker-option-selected": entry.key === props.selectedKey }}
-            aria-current={entry.key === props.selectedKey ? "true" : undefined} title={describe(entry)} onClick={() => props.onSelect(entry)}>
-            <Mark entry={entry} /><bdi class="mission-picker-title">{entry.title}</bdi><span class="sr-only">{entry.status}</span>
+      <For each={filtered().map(entry => entry.key)} fallback={<li class="mission-picker-empty" role={props.popup ? "presentation" : undefined}>{t("missionsPanel.picker.noMatch")}</li>}>
+        {(key, index) => <Show when={byKey().get(key)}>{entry => <Show when={props.popup} fallback={<li>
+          <button type="button" class="mission-picker-option" classList={{ "mission-picker-option-selected": key === props.selectedKey }}
+            aria-current={key === props.selectedKey ? "true" : undefined} title={describe(entry())} onClick={() => props.onSelect(entry())}>
+            <Mark entry={entry()} /><bdi class="mission-picker-title">{entry().title}</bdi><span class="sr-only">{entry().status}</span>
           </button></li>}>
-          <li id={optionId(index())} role="option" class="mission-picker-option" aria-selected={entry.key === props.selectedKey}
-            classList={{ "mission-picker-option-selected": entry.key === props.selectedKey, "mission-picker-option-active": index() === active() }}
-            title={describe(entry)} onPointerDown={event => { if (event.target !== search) event.preventDefault() }}
-            onPointerMove={() => setActive(index())} onClick={() => props.onSelect(entry)}>
-            <Mark entry={entry} /><bdi class="mission-picker-title">{entry.title}</bdi><span class="sr-only">{entry.status}</span>
+          <li id={optionId(index())} role="option" class="mission-picker-option" aria-selected={key === props.selectedKey}
+            classList={{ "mission-picker-option-selected": key === props.selectedKey, "mission-picker-option-active": key === activeKey() }}
+            title={describe(entry())} onPointerDown={event => { if (event.target !== search) event.preventDefault() }}
+            onPointerMove={() => setActiveKey(key)} onClick={() => props.onSelect(entry())}>
+            <Mark entry={entry()} /><bdi class="mission-picker-title">{entry().title}</bdi><span class="sr-only">{entry().status}</span>
           </li>
-        </Show>}
+        </Show>}</Show>}
       </For>
     </ul>
   </div>
@@ -94,6 +96,7 @@ export function MissionPicker(props: {
   /** The creation form replaces the current-mission line and list. */
   creating?: boolean
   trailing?: JSX.Element
+  paging?: () => JSX.Element
 }) {
   const { t } = useI18n()
   const inlineId = createUniqueId(), popupId = createUniqueId()
@@ -161,6 +164,7 @@ export function MissionPicker(props: {
         <div class="mission-picker-popup">
           <MissionPickerList id={popupId} popup label={t("missions.control.mapLabel")} entries={props.entries}
             selectedKey={props.selectedKey} onSelect={entry => choose(entry, true)} bind={setApi} />
+          {props.paging?.()}
         </div>
       </Show>
     </div>
@@ -168,6 +172,7 @@ export function MissionPicker(props: {
       <div class="mission-picker-inline">
         <MissionPickerList id={inlineId} label={t("missions.control.mapLabel")} entries={props.entries}
           selectedKey={props.selectedKey} onSelect={entry => choose(entry, false)} />
+        {props.paging?.()}
       </div>
     </Show>
   </div>

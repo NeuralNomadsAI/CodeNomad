@@ -15,10 +15,11 @@ import "../../../src/index.css"
 import { markSessionListsRestored } from "./session-list-restored"
 
 await initializeClientState()
+const directory = new URLSearchParams(window.location.search).get("directory") ?? "/fixture"
 markSessionListsRestored("fixture")
-addInstance({ id: "fixture", folder: "/fixture", port: 0, pid: 0, proxyPath: "/workspaces/fixture/instance", status: "ready",
+addInstance({ id: "fixture", folder: directory, port: 0, pid: 0, proxyPath: "/workspaces/fixture/instance", status: "ready",
   client: sdkManager.createClient("fixture", "/workspaces/fixture/instance", () => true),
-  metadata: { project: { id: "project", directory: "/fixture", canonical: "/fixture" } } })
+  metadata: { project: { id: "project", directory, canonical: directory } } })
 setSessions(previous => new Map(previous).set("fixture", new Map(["ses_task", "ses_coordinator"].map(id => [id, {
   id, instanceId: "fixture", parentId: id === "ses_task" ? "ses_coordinator" : null, title: id, status: "idle", runtimeStatusKnown: true,
   agent: "build", model: { providerId: "fixture", modelId: "fixture" }, projectID: "project", cost: 0,
@@ -39,7 +40,7 @@ function Fixture() {
   } } })
   return <main style={{ display: "flex", height: "100vh" }}>
     <aside style={{ width: "390px", overflow: "auto" }}><MissionControl instanceId="fixture" isActive={active} activeSessionId={() => "ses_existing"} t={t} /></aside>
-    <div class="mission-transcript-surface"><Show when={missionProjectView("/fixture").reader}><MissionReader instanceId="fixture" scope="/fixture" /></Show></div>
+    <div class="mission-transcript-surface"><Show when={missionProjectView(directory).reader}><MissionReader instanceId="fixture" scope={directory} /></Show></div>
   </main>
 }
 render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigProvider>, document.getElementById("root")!)

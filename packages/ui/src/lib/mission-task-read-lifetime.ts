@@ -1,8 +1,10 @@
+import type { MissionUnavailableReason } from "../../../server/src/missions/model"
+
 /** One task read, from store admission (including its serialized wait) to publication. */
 export const TASK_READ_TIMEOUT_MS = 30_000
 export type MissionTaskPageFailure = "changed" | "unavailable" | "invalid" | "damaged" | "too-large" | "deadline"
 export class MissionTaskPageReadError extends Error {
-  constructor(readonly reason: MissionTaskPageFailure) { super(`Mission task page: ${reason}`) }
+  constructor(readonly reason: MissionTaskPageFailure, readonly unavailableReason?: MissionUnavailableReason) { super(`Mission task page: ${reason}`) }
 }
 export function assertTaskReadLive(signal?: AbortSignal, deadline = Infinity): void {
   signal?.throwIfAborted()

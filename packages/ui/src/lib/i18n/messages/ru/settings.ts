@@ -1,4 +1,8 @@
 export const settingsMessages = {
+  "providerUsage.estimated": "(estimation)",
+  "providerUsage.estimatedReset": "Предполагаемый сброс {time}",
+  "settings.behavior.autoExpandActiveSubsessions.title": "Автоматически раскрывать подсессии",
+  "settings.behavior.autoExpandActiveSubsessions.info": "Когда видимая свёрнутая ветвь выбранного разговора переходит к работе, компактизации или ожиданию ввода, раскрывается путь к её активным подсессиям. Видимые подсессии следуют тому же правилу на любой глубине. Отключите, чтобы активность не открывала ветви. Открытые ветви сохраняются для восстановления.",
   "settings.usage.cached": "Последняя сохранённая статистика · ожидание обновления",
   "settings.native.openFailed": "Не удалось открыть настройки в их окне. Перезапустите или обновите приложение CodeNomad и повторите попытку.",
   "settings.accounts.current": "Активный аккаунт",

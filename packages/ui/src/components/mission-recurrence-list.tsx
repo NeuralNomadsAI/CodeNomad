@@ -305,5 +305,5 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
       </section>
     }}</Show>
   </>
-  return { entries, view }
+  return { entries, view, loading }
 }

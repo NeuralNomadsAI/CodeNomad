@@ -13,6 +13,7 @@ export interface PluginSourceRemoveRequest {
   scope: PluginControlScope
   target: string
   entryIndex: number
+  expectedRevision: string
 }
 
 /** Durable configured state only: the daemon reports loading through `plugin.list` afterwards. */

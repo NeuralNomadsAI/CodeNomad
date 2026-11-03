@@ -44,11 +44,10 @@ import { registerPreviewRoutes } from "./routes/previews"
 import { registerUsageRoutes } from "./routes/usage"
 import { registerMissionRoutes } from "./routes/missions"
 import { replyMissionHumanAnswer } from "./routes/mission-human-answer"
-import { HUMAN_ANSWER_HEADER, isHumanAnswerProofPayload } from "../missions/human-answer"
+import { HUMAN_ANSWER_HEADER } from "../missions/human-answer"
 import { registerMissionRecurrenceControl } from "./routes/mission-recurrence-control"
 import { registerMissionRecurrenceControlStatus } from "./routes/mission-recurrence-control-status"
 import { registerMissionRecurrenceManual } from "./routes/mission-recurrence-manual"
-import { isRecurrenceProofPayload } from "../missions/recurrence-control-proof"
 import { registerPanelExtensionRoutes } from "./routes/panel-extensions"
 import { registerPanelExtensionAssetRoutes } from "./routes/panel-extension-assets"
 import { registerPanelExtensionWorkItemRoutes } from "./routes/panel-extension-work-items"
@@ -62,6 +61,8 @@ import { registerPluginSourceRoutes } from "./routes/plugin-sources"
 import { registerIntegrationRoutes } from "./routes/integrations"
 import { IntegrationCatalogSource } from "../opencode/integrations/catalog"
 import { IntegrationsReader } from "../opencode/integrations/integrations"
+import { IntegrationAttachments } from "../opencode/integrations/attachments"
+import { registerIntegrationAttachmentRoutes } from "./routes/integration-attachments"
 import { WebSearchSettings } from "../opencode/websearch-settings"
 import { ServiceUsage } from "../opencode/service-usage"
 import { registerServiceUsageRoutes } from "./routes/service-usage"
@@ -90,6 +91,8 @@ import type { RemoteControlManager } from "../remote-control/manager"
 import { gateRemoteRequest, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { isRemoteRequest } from "../remote-control/request-origin"
 import { routedPath } from "./routed-path"
+import { redactSecrets, registerRequestLogging } from "./request-logging"
+export { redactSecrets, registerRequestLogging } from "./request-logging"
 import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaScriptImports } from "../previews/runtime-bridge"
 import { PREVIEW_SANDBOX_FLAGS } from "../previews/sandbox"
 import { parsePreviewUpgradePath } from "../previews/upgrade-path"
@@ -352,8 +355,10 @@ export function createHttpServer(deps: HttpServerDeps) {
   const configurationControls = new PluginControls({ workspaceManager: deps.workspaceManager, worktreeDeletionFence, logger: apiLogger })
   registerPluginControlRoutes(app, { controls: configurationControls })
   const integrationCatalog = deps.integrationCatalog ?? new IntegrationCatalogSource({ logger: apiLogger })
+  const integrations = new IntegrationsReader({ controls: configurationControls, workspaceManager: deps.workspaceManager, catalog: integrationCatalog })
   registerPluginSourceRoutes(app, { sources: new PluginSources({ documents: configurationControls, logger: apiLogger, catalog: integrationCatalog }) })
-  registerIntegrationRoutes(app, { integrations: new IntegrationsReader({ controls: configurationControls, workspaceManager: deps.workspaceManager, catalog: integrationCatalog }) })
+  registerIntegrationRoutes(app, { integrations })
+  registerIntegrationAttachmentRoutes(app, { attachments: new IntegrationAttachments({ controls: configurationControls, workspaceManager: deps.workspaceManager, catalog: integrationCatalog }) })
   registerWebSearchSettingsRoutes(app, new WebSearchSettings(configurationControls))
   registerSubagentDepthSettingsRoutes(app, new SubagentDepthSettings(configurationControls, deps.workspaceManager))
   const imageSettings = new ImageSettings(configurationControls, deps.workspaceManager)
@@ -1416,51 +1421,6 @@ function sanitizeInstanceProxyRequestHeaders(
 function sanitizeInstanceProxyResponseHeaders(headers: Record<string, string | string[] | undefined>) {
   const blocked = new Set(["proxy-authenticate", "set-cookie", "set-cookie2", "www-authenticate"])
   return Object.fromEntries(Object.entries(headers).filter(([key]) => !blocked.has(key.toLowerCase())))
-}
-
-/** Request completion logging; trace payloads always pass through [redactSecrets]. */
-export function registerRequestLogging(app: FastifyInstance, apiLogger: Logger) {
-  app.addHook("onRequest", (request, _reply, done) => {
-    ;(request as FastifyRequest & { __logMeta?: { start: bigint } }).__logMeta = {
-      start: process.hrtime.bigint(),
-    }
-    done()
-  })
-
-  app.addHook("onResponse", (request, reply, done) => {
-    const meta = (request as FastifyRequest & { __logMeta?: { start: bigint } }).__logMeta
-    const durationMs = meta ? Number((process.hrtime.bigint() - meta.start) / BigInt(1_000_000)) : undefined
-    const base = {
-      method: request.method,
-      url: request.url,
-      status: reply.statusCode,
-      durationMs,
-    }
-    apiLogger.debug(base, "HTTP request completed")
-    if (apiLogger.isLevelEnabled("trace")) {
-      apiLogger.trace({
-        ...base,
-        params: redactSecrets(request.params),
-        query: redactSecrets(request.query),
-        body: typeof request.body === "string" || request.url.startsWith("/api/panel-extensions") ? "<redacted>" : redactSecrets(request.body),
-      }, "HTTP request payload")
-    }
-    done()
-  })
-}
-
-export function redactSecrets(value: unknown): unknown {
-  if (value === null || value === undefined) return value
-  if (Array.isArray(value)) return value.map(redactSecrets)
-  if (typeof value !== "object") return value
-  if (Buffer.isBuffer(value)) return "<redacted>"
-  if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return "<redacted>"
-  if (isRecurrenceProofPayload(value as Record<string, unknown>)
-    || isHumanAnswerProofPayload(value as Record<string, unknown>)) return "<redacted>"
-  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
-    key,
-    /(authorization|cookie|key|code|token|password|secret|principal)/i.test(key) ? "<redacted>" : redactSecrets(entry),
-  ]))
 }
 
 async function allDirectoriesOwned(manager: InstanceProxyWorkspaceManager, workspaceId: string, directories: string[]) {

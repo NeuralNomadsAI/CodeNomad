@@ -1,6 +1,6 @@
-import { For, Show, createMemo, createSignal } from "solid-js"
+import { For, Show, createMemo, createSignal, createEffect, type JSX } from "solid-js"
 import { useI18n } from "../lib/i18n"
-import { useMissionSchedules, type UnifiedMissionSchedule } from "../stores/mission-schedules"
+import { useMissionSchedules, unifiedScheduleHold, type UnifiedMissionSchedule } from "../stores/mission-schedules"
 import type { MissionPickerEntry } from "./mission-picker-model"
 import { decodeMissionSchedulingPolicy } from "./mission-scheduling-decode"
 import { createMissionScheduleControls } from "./mission-schedule-controls"
@@ -11,12 +11,15 @@ import { SettingsInfoTip } from "./settings/settings-info-tip"
 
 export function createMissionScheduleList(props: { instanceId: string; projectID?: string; directory: string;
   active: () => boolean; enabled: () => boolean; refresh: number; selected?: string; detailId: string;
-  onEdit: (id: string) => void; onDeleted: (id: string) => void; onOpenConversation: (id: string) => void }) {
+  onEdit: (id: string) => void; onDeleted: (id: string) => void; onOpenConversation: (id: string) => void;
+  tracking?: JSX.Element; passage?: { reading: boolean; onToggle(): void }; onPassage?: (id: string | undefined) => void;
+  selectedRequests?: { passageID: string; count: number } }) {
   const { t, locale } = useI18n()
   const [revision, setRevision] = createSignal(0)
   const list = useMissionSchedules({ instanceId: () => props.instanceId, projectID: () => props.projectID,
     directory: () => props.directory, active: props.active, refresh: () => props.refresh + revision(), selected: () => props.selected })
   const schedules = () => list.rows().filter(row => row.kind === "schedule")
+  createEffect(() => props.onPassage?.(schedules().find(row => row.id === props.selected)?.pendingPassage ? props.selected : undefined))
   const date = (value: number | null, zone?: string) => value === null ? t("missions.scheduleList.none")
     : new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short", ...(zone ? { timeZone: zone } : {}) }).format(value)
   const frequency = (doc: UnifiedMissionSchedule) => {
@@ -51,14 +54,18 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   const nextWake = (doc: UnifiedMissionSchedule) => `${t(doc.observation.kind === "check" ? "missions.scheduleList.nextCheck" : "missions.scheduleList.nextWake")} · ${date(doc.observation.nextDueAt, zoneOf(doc))}`
   const entries = createMemo((): MissionPickerEntry[] => schedules().map(doc => ({ key: `scheduled:${doc.id}`,
     title: doc.configuration.title,
-    mark: doc.blockReason ? "interrupted" : doc.pendingPassage ? "working" : doc.firstPlayedAt === null && doc.state === "paused" ? "prepared"
+    mark: doc.id === props.selected && doc.pendingPassage?.id === props.selectedRequests?.passageID && (props.selectedRequests?.count ?? 0) > 0 ? "permission"
+      : doc.blockReason ? "interrupted" : doc.pendingPassage ? "working" : doc.firstPlayedAt === null && doc.state === "paused" ? "prepared"
       : doc.state === "paused" ? "paused" : doc.state === "finished" ? "done" : "idle",
-    status: [t(`missions.scheduleList.state.${doc.state}`), frequency(doc), condition(doc), nextWake(doc)].filter(Boolean).join(" · ") })))
+    status: [t(`missions.scheduleList.state.${doc.state}`),
+      doc.id === props.selected && doc.pendingPassage?.id === props.selectedRequests?.passageID && (props.selectedRequests?.count ?? 0) > 0 ? t("missionsPanel.task.input") : "",
+      frequency(doc), condition(doc), nextWake(doc)].filter(Boolean).join(" · ") })))
   const refresh = () => setRevision(value => value + 1)
+  const publishing = () => unifiedScheduleHold(JSON.stringify([props.instanceId, props.projectID, props.directory, props.selected]))?.phase === "publication"
   const view = () => <>
     <Show when={list.error()}><p role="status" class="mission-control-stale">{t("missions.scheduleList.readFailed")}</p></Show>
     <Show when={list.selectionError()}>{error => <p class="mission-control-stale" role="status">
-      {t(error() === "pending" ? "missions.scheduleList.uncertain" : "missions.scheduleList.readFailed")}
+      {t(error() === "pending" ? publishing() ? "missions.scheduleList.confirmedRefreshing" : "missions.scheduleList.uncertain" : "missions.scheduleList.readFailed")}
     </p>}</Show>
     <Show when={list.next()}><button type="button" class="window-text-button" disabled={list.loading() || !props.active()}
       onClick={list.more}>{t("missions.scheduleList.more")}</button></Show>
@@ -73,10 +80,12 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
       const action = (name: "play" | "resume" | "pause" | "stop" | "run-now") => ({ key: name, label: controls.label(name),
         disabled: !controls.capable(name), onSelect: () => controls.act(name) })
       const zone = () => zoneOf(doc())
+      const editable = () => props.active() && props.enabled() && !list.error() && list.fresh(id)
+        && !controls.held() && !controls.busy() && doc().availableActions.includes("configure")
       return <section id={props.detailId} class="mission-detail mission-unified-schedule" aria-label={doc().configuration.title}>
-        <MissionActionBar label={t("missionsPanel.picker.actions")} reading={expanded()} onToggleReader={() => expand(value => !value)}
+        <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.passage?.reading ?? expanded()} onToggleReader={() => props.passage ? props.passage.onToggle() : expand(value => !value)}
           primary={primary() ? action(primary()!) : undefined} stop={action("stop")} runNow={action("run-now")}
-          onEdit={() => props.onEdit(id)} editDisabled={!props.enabled() || list.error() || !list.fresh(id) || !!controls.held() || controls.busy() || !doc().availableActions.includes("configure")}
+          onEdit={() => { if (editable()) props.onEdit(id) }} editDisabled={!editable()}
           onDelete={() => void controls.act("delete")} deleteDisabled={!controls.capable("delete")}
           onOpenConversation={doc().pendingPassage ? () => props.onOpenConversation(doc().pendingPassage!.coordinatorSessionID) : undefined}
           secondary={<>
@@ -84,7 +93,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
             <Show when={controls.held()}><button type="button" class="window-text-button" disabled={controls.busy()} onClick={() => void controls.reconcile()}>{t("missions.scheduling.readReceipt")}</button></Show>
           </>}
           feedback={<>
-            <Show when={controls.held()}><p role="status">{t("missions.scheduleList.uncertain")}</p></Show>
+            <Show when={controls.held()}><p role="status">{t(controls.publishing() ? "missions.scheduleList.confirmedRefreshing" : "missions.scheduleList.uncertain")}</p></Show>
             <Show when={controls.feedback()}>{key => <p role="status">{t(key())}</p>}</Show>
             <Show when={controls.capability() === "missing"}><p role="status">{t("missions.scheduling.capability.missing")}</p></Show>
             <Show when={controls.capability() === "activatable"}><p role="status">{t("missions.scheduleList.runNowRequiresEnabled")}</p></Show>
@@ -117,11 +126,12 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
           </li>}</For></ol></Show>
         </section>
         <MissionScheduleDiagnostics document={doc()} />
+        {props.tracking}
       </section>
     }}</Show>
   </>
   const ownsSession = (sessionID: string) => schedules().some(doc => doc.id === props.selected
     && (doc.pendingPassage?.coordinatorSessionID === sessionID || doc.history.some(item => item.coordinatorSessionID === sessionID)))
-  return { entries, view, refresh, ownsSession,
+  return { entries, view, refresh, ownsSession, loading: list.loading,
     representation: (id: string) => list.error() || list.loading() || !list.fresh(id) ? undefined : list.rows().find(row => row.id === id)?.kind }
 }

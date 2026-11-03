@@ -37,6 +37,9 @@ type Whole<T> = { value: () => T | undefined; settled: () => boolean; read: () =
  * report, field by field, its summary paged. Readers of one report share its reads. */
 export function useReportBodies(props: ReportSource) {
   const owned = () => {
+    // Passage results are selected by immutable report ID, never by a task's
+    // mutable current-report copy or aggregate late-report body.
+    if (props.mission()?.panelPassage) return undefined
     const report = props.report(), tasks = props.mission()?.tasks ?? []
     if (!report) return undefined
     const current = tasks.find(task => task.report?.id === report.id)
@@ -82,7 +85,7 @@ export function MissionReportProse(props: ReportProps & { source: (label: string
   const bodies = useReportBodies(source(props))
   const listSection = (label: string, field: "next" | "evidence") => <Show when={missionReportHas(props.mission, props.report, field)}>
     <MissionReaderSection label={label} text={bodies[field].settled() ? (bodies[field].value() ?? []).join("\n\n") : ""}
-      read={bodies[field].read()} identity={props.identity} instanceId={props.instanceId} source={props.source(label)} />
+      read={bodies[field].read()} commitPage={Boolean(props.mission.panelPassage)} identity={props.identity} instanceId={props.instanceId} source={props.source(label)} />
   </Show>
   return <>
     <Show when={missionReportHas(props.mission, props.report, "summary")}><MissionReaderSection label="missions.control.summary" text={bodies.summary().text}
@@ -100,5 +103,5 @@ export function MissionReportArtifact(props: ReportProps & { active: boolean; so
   const bodies = useReportBodies(source(props, () => props.active))
   return <Show when={missionReportHas(props.mission, props.report, "artifact")}><MissionReaderSection label="missions.control.artifact" raw
     text={bodies.artifact.settled() ? JSON.stringify(bodies.artifact.value(), null, 2) : ""} read={bodies.artifact.read()}
-    identity={props.identity} instanceId={props.instanceId} source={props.source} /></Show>
+    commitPage={Boolean(props.mission.panelPassage)} identity={props.identity} instanceId={props.instanceId} source={props.source} /></Show>
 }

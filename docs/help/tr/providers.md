@@ -50,6 +50,8 @@ Görünürlük ve sık kullanılanlar, CodeNomad'in seçicilerini düzenler; mod
 
 Etkin görüşmenin sağlayıcı planı pencereleri, sıfırlama süreleri ve desteklenen bakiyeler için sağ paneldeki **Kullanım** öğesini kullanın. Bu sağlayıcı okumaları, mesaj başına **Tokenlar** ve maliyet tahminlerinden farklıdır: abonelik kotası, görünür konuşma dökümünden hesaplanan bir fatura değildir. Eksik, eski veya bilinmeyen bir okuma, sıfır kullanım veya kalan kapasitenin kanıtı değildir. **Ayarlar → Gelişmiş** içindeki **Sağlayıcı kredi bakiyesi** ek bakiye ekranını kontrol eder.
 
+Ücretsiz OpenCode Zen modelleri için **Kullanım**, bu hizmette 00:00 UTC'den beri kaydedilen adımları, varsayılan günlük 200 isteğe göre tahmin eder; sonraki UTC gece yarısı tahmini sıfırlanma zamanıdır. Adımlar istekleri yaklaşık yansıtır; diğer trafik ve değişken IP sınırları gerçek kota kullanımından farklı sonuç verebilir.
+
 OpenAI, ChatGPT oturum açma yöntemlerinden biri için kullanım verisi sağlamaz: Kullanım, kota pencereleri göstermek yerine bunu belirtir. Sohbet etmek yine çalışır ve aynı girişle yeniden bağlanmak bu okumayı geri getirmez.
 
 Kullanım, seçili OpenCode kimlik bilgisini izler. Claude, `anthropic`/`claude` üzerinden OpenCode Anthropic OAuth girişini kullanır. OpenCode'un **Claude Agent** sağlayıcısı (`claude-agent`) ve `claude-code` sağlayıcısı, WSL dağıtımı dahil daemon ana bilgisayarındaki Claude Code girişini kullanır: önce `CLAUDE_CODE_OAUTH_TOKEN`, sonra kayıtlı giriş; dosya deposunu `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` veya `~/.claude` belirler; native macOS Keychain kullanılabilir. CodeNomad bir Claude girişini diğerinin yerine kullanmaz.

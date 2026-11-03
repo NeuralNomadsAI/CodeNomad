@@ -44,6 +44,7 @@ export const missionSchedulingMessages = {
   "missions.scheduleList.readFailed": "Zeitpläne konnten nicht aktualisiert werden. Die letzte Anzeige bleibt erhalten; vor Aktionen aktualisieren.",
   "missions.scheduleList.capacity": "Zu viele unbestätigte Befehle. Klären Sie eine gespeicherte Anfrage vor der nächsten.",
   "missions.scheduleList.uncertain": "Diese Anfrage ist unbestätigt. Ihre ursprüngliche Identität bleibt erhalten. Gespeicherte Anfrage aktualisieren; kein automatisches erneutes Senden.",
+  "missions.scheduleList.confirmedRefreshing": "Aktion bestätigt. Vor einer weiteren Aktion wird auf die aktualisierte Ansicht gewartet. Verwenden Sie Gespeicherte Anfrage aktualisieren zum erneuten Lesen.",
   "missions.scheduleList.activate": "Diese Aktion erfordert native Zeitplanung. experimental.schedules in diesen Konfigurationsdokumenten aktivieren?\n{paths}\nDie Aktivierung muss vor dieser Aktion bestätigt werden. Ein ausdrückliches OFF bleibt erhalten.",
   "missions.scheduleList.confirm.stop": "„{title}“ endgültig stoppen? Künftige Durchläufe werden deaktiviert. Bereits ausgelöste Werkzeugeffekte können weiterlaufen; Gespräche und Ergebnisse bleiben erhalten.",
   "missions.scheduleList.confirm.delete": "„{title}“ löschen? Künftige Durchläufe werden vor dem Entfernen deaktiviert. Gespräche und Ergebnisse bleiben erhalten. Unbestätigte Bereinigung bleibt sichtbar.",

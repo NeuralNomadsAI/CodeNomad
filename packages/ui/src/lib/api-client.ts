@@ -85,8 +85,13 @@ import { missionLifecycleRequest, type MissionLifecycleInput } from "./mission-l
 import { authenticatedFetch } from "./auth-recovery"
 import { CODENOMAD_API_BASE as API_BASE } from "./api-base"
 import { backgroundReads } from "./background-read-queue"
-import { readMissionTaskPage } from "./mission-task-page-read"
-import { assertTaskReadLive, TASK_READ_TIMEOUT_MS } from "./mission-task-read-lifetime"
+import { readMissionTaskPage, readMissionPanelWindow, readMissionCurrentIdentity, type MissionPanelReadScope } from "./mission-task-page-read"
+import type { MissionCurrentSource } from "../../../server/src/missions/mission-current-source"
+import type { MissionPanelPageRequest } from "../../../server/src/missions/mission-panel-wire"
+import type { MissionContentRequest } from "../../../server/src/missions/mission-content-wire"
+import { TASK_WINDOW_CHARACTERS } from "./mission-task-window-budget"
+import { validMissionContentSlice } from "./mission-content-slice"
+import { assertTaskReadLive, TASK_READ_TIMEOUT_MS, MissionTaskPageReadError } from "./mission-task-read-lifetime"
 import type { MissionTaskPageContext } from "./mission-task-page-schema"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
 
@@ -116,6 +121,22 @@ const sseLogger = getLogger("sse")
 // status read that Restart/Start await, so a stalled daemon read cannot hold it.
 function secondaryRead<T>(signal: AbortSignal | undefined, read: () => Promise<T>, priority: "normal" | "visible" = "visible"): Promise<T> {
   return backgroundReads.run(signal ?? new AbortController().signal, read, priority)
+}
+
+function currentPassageTransport(instanceId: string, source: MissionCurrentSource, scope: MissionPanelReadScope, body?: MissionContentRequest) {
+  source = structuredClone(source)
+  body = body && structuredClone(body)
+  const deadline = Math.min(scope.deadline ?? Infinity, performance.now() + TASK_READ_TIMEOUT_MS)
+  const signal = AbortSignal.any([...(scope.signal ? [scope.signal] : []), AbortSignal.timeout(Math.max(0, Math.ceil(deadline - performance.now())))])
+  return { ...scope, projectID: source.projectID, passage: source, signal, deadline, runTransfer: <T>(read: () => Promise<T>) => secondaryRead(signal, read),
+    exchange: (selector: string) => {
+      assertTaskReadLive(signal, deadline)
+      if (!scope.current()) throw new DOMException("Obsolete passage read", "AbortError")
+      const payload = JSON.stringify({ source, selector: JSON.parse(selector), ...(body ? { body } : {}) })
+      if (new TextEncoder().encode(payload).length > 16384) throw new MissionTaskPageReadError("invalid")
+      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(source.scheduleID)}/current/${encodeURIComponent(source.passageID)}/page`
+      return authenticatedFetch(API_BASE ? new URL(path, API_BASE).toString() : path, { method: "POST", body: payload, signal, credentials: "include", headers: { "Content-Type": "application/json" } })
+    } }
 }
 
 function normalizeHeaders(headers: HeadersInit | undefined): Record<string, string> {
@@ -175,7 +196,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   const method = (init?.method ?? "GET").toUpperCase()
   const startedAt = Date.now()
-  logHttp(`${method} ${path}`)
+  const sensitive = /\/plugin-sources(?:[?/#]|$)/.test(path)
+  const logPath = sensitive ? "/api/workspaces/:id/plugin-sources" : path
+  logHttp(`${method} ${logPath}`)
 
   try {
     const response = await authenticatedFetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
@@ -183,17 +206,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       const body = await response.clone().json().catch(() => undefined)
       const code = typeof body?.code === "string" && body.code.length <= 100 ? body.code : undefined
       const message = await readErrorMessage(response)
-      logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
+      logHttp(`${method} ${logPath} -> ${response.status}`, { durationMs: Date.now() - startedAt, ...(sensitive ? {} : { error: message }) })
       throw new HttpResponseError(message || `Request failed with ${response.status}`, response.status, response.headers.get("Retry-After"), code, body)
     }
     const duration = Date.now() - startedAt
-    logHttp(`${method} ${path} -> ${response.status}`, { durationMs: duration })
+    logHttp(`${method} ${logPath} -> ${response.status}`, { durationMs: duration })
     if (response.status === 204) {
       return undefined as T
     }
     return (await response.json()) as T
   } catch (error) {
-    logHttp(`${method} ${path} failed`, { durationMs: Date.now() - startedAt, error })
+    logHttp(`${method} ${logPath} failed`, { durationMs: Date.now() - startedAt, ...(sensitive ? {} : { error }) })
     throw error
   }
 }
@@ -735,12 +758,17 @@ export const serverApi = {
   readInstanceData(id: string): Promise<InstanceData> {
     return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)
   },
-  fetchMissions(instanceId: string, input: { include?: readonly string[]; summariesVersion?: string } = {}): Promise<MissionListResponse> {
-    const params = new URLSearchParams()
-    if (input.include?.length) params.set("include", input.include.join(","))
-    if (input.summariesVersion) params.set("summaries", input.summariesVersion)
-    const query = params.toString()
-    return request<MissionListResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions${query ? `?${query}` : ""}`)
+  fetchMissionPanel(instanceId: string, selector: Exclude<import("../../../server/src/missions/mission-panel-wire").MissionPanelPageRequest, { source: "tasks" }>, scope: MissionPanelReadScope) {
+    const deadline = Math.min(scope.deadline ?? Infinity, performance.now() + TASK_READ_TIMEOUT_MS)
+    const signal = AbortSignal.any([...(scope.signal ? [scope.signal] : []), AbortSignal.timeout(Math.max(0, Math.ceil(deadline - performance.now())))])
+    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/panel-page`
+    return readMissionPanelWindow(selector, { ...scope, signal, deadline, runTransfer: read => secondaryRead(signal, read), exchange: body => {
+      if (!scope.current()) throw new DOMException("Obsolete panel read", "AbortError")
+      assertTaskReadLive(signal, deadline)
+      return authenticatedFetch(API_BASE ? new URL(path, API_BASE).toString() : path, {
+        method: "POST", body, signal, credentials: "include", headers: { "Content-Type": "application/json" },
+      })
+    } })
   },
   /** One mission's compact map and cleanups, for display reconciliation (lost acknowledgements, cleanup retries). */
   fetchMission(instanceId: string, missionId: string): Promise<MissionReadResponse> {
@@ -808,8 +836,36 @@ export const serverApi = {
   fetchMissionAdmission(instanceId: string, missionId: string): Promise<MissionReadResponse<MissionMap>> {
     return request<MissionReadResponse<MissionMap>>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/admission`)
   },
-  fetchMissionCurrentPassage(instanceId: string, scheduleID: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrent> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current`, { signal })
+  fetchMissionCurrentPassage(instanceId: string, scheduleID: string, signal?: AbortSignal, owner: "daily" | "scheduled" = "daily"): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrent> {
+    const deadline = performance.now() + TASK_READ_TIMEOUT_MS
+    const live = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(TASK_READ_TIMEOUT_MS)])
+    return secondaryRead(live, async () => {
+      assertTaskReadLive(live, deadline)
+      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current${owner === "scheduled" ? "?owner=scheduled" : ""}`
+      return readMissionCurrentIdentity(await authenticatedFetch(API_BASE ? new URL(path, API_BASE).toString() : path, { signal: live, credentials: "include" }), live)
+    })
+  },
+  fetchMissionCurrentPanel(instanceId: string, source: MissionCurrentSource, selector: Exclude<MissionPanelPageRequest, { source: "tasks" }>, scope: MissionPanelReadScope) {
+    return readMissionPanelWindow(selector, currentPassageTransport(instanceId, source, scope))
+  },
+  fetchMissionCurrentTasks(instanceId: string, source: MissionCurrentSource, task: import("../../../server/src/missions/mission-panel-map").MissionTaskRequest, scope: MissionPanelReadScope) {
+    return readMissionTaskPage(source.missionID, task, currentPassageTransport(instanceId, source, scope))
+  },
+  async fetchMissionCurrentBody(instanceId: string, source: MissionCurrentSource, body: MissionContentRequest, signal: AbortSignal, deadline = performance.now() + TASK_READ_TIMEOUT_MS) {
+    source = structuredClone(source)
+    body = structuredClone(body)
+    const answer = await readMissionPanelWindow({ source: "mission", missionID: source.missionID, field: "body", window: { offset: 0 } },
+      currentPassageTransport(instanceId, source, { signal, deadline, current: () => !signal.aborted }, body))
+    if (answer.values.length !== 1) throw new MissionTaskPageReadError("invalid")
+    const value = answer.values[0] as import("../../../server/src/missions/mission-content-wire").MissionContentResponse
+    if (!value || !value.available || value.projectID !== source.projectID || !("missionID" in value) || value.missionID !== source.missionID) throw new MissionTaskPageReadError("invalid")
+    if ("content" in value) {
+      if (!Number.isSafeInteger(value.content.characters) || value.content.characters > TASK_WINDOW_CHARACTERS) throw new MissionTaskPageReadError("too-large")
+      const { missionID: _mission, digest, offset, ...selector } = body
+      validMissionContentSlice(selector, { offset, digest }, value.content)
+    }
+    assertTaskReadLive(signal, deadline)
+    return value
   },
   fetchMissionCurrentContent(instanceId: string, input: import("../../../server/src/missions/recurrence-current").RecurrenceCurrentContentInput, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrentContent> {
     const { scheduleID, passageID, ...query } = input

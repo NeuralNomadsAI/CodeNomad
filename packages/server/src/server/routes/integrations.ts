@@ -27,11 +27,11 @@ export function registerIntegrationRoutes(app: FastifyInstance, deps: Integratio
     } catch (error) {
       if (error instanceof PluginControlsError) {
         const status = error.kind === "not-found" ? 404 : error.kind === "forbidden" ? 403 : error.kind === "invalid" ? 422 : error.kind === "conflict" ? 409 : 503
-        if (status >= 500) request.log.warn({ err: error, workspaceId: request.params.id }, "OpenCode integrations unavailable")
+        if (status >= 500) request.log.warn({ status }, "OpenCode integrations unavailable")
         return reply.code(status).send({ error: error.message })
       }
       if (controller.signal.aborted) return reply.code(499).send({ error: "Request closed" })
-      request.log.error({ err: error, workspaceId: request.params.id }, "OpenCode integrations read failed")
+      request.log.error("OpenCode integrations read failed")
       return reply.code(500).send({ error: "OpenCode integrations read failed" })
     } finally {
       reply.raw.removeListener("close", abort)

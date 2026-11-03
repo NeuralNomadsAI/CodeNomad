@@ -1,4 +1,7 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.sources.removeWarning": "Удаление плагина может прервать его доступность и подключения в использующих его беседах.",
+  "instanceServiceStatus.plugins.sources.removeGlobalWarning": "Это также может затронуть беседы в других проектах.",
+  "instanceServiceStatus.plugins.sources.removeRecovery": "Повторная установка может восстановить доступность; может потребоваться перезагрузка или повторное подключение. Прерванные операции могут не возобновиться.",
   "instanceServiceStatus.plugins.sources.add": "Добавить плагин",
   "instanceServiceStatus.plugins.sources.addTitle": "Добавить плагин",
   "instanceServiceStatus.plugins.sources.spec": "Пакет",
@@ -29,6 +32,6 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "Конфигурация OpenCode {scope} повреждена. Она не изменена.",
   "instanceServiceStatus.plugins.sources.errors.unavailable": "Конфигурация {scope} недоступна для этого расположения.",
   "instanceServiceStatus.plugins.sources.errors.timeout": "OpenCode не ответил вовремя. Ничего не добавлено; попробуйте ещё раз.",
-  "instanceServiceStatus.plugins.sources.errors.remove": "Не удалось удалить {name} из {scope}.",
+  "instanceServiceStatus.plugins.sources.errors.remove": "Удаление {name} из {scope} не подтверждено. Обновите плагины и проверьте конфигурацию перед новой попыткой.",
   "instanceServiceStatus.plugins.sources.errors.removeStale": "{name} изменился в конфигурации {scope} после показа. Обновите и попробуйте ещё раз.",
 } as const

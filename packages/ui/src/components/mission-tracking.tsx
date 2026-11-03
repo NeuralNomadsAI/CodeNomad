@@ -1,10 +1,12 @@
-import { createEffect } from "solid-js"
+import { Show, createEffect } from "solid-js"
 import { demandMissionTaskSessions, missionDerivedTaskSession } from "../stores/mission-task-sessions"
 import type { MissionActivityProjection, MissionPanelMap } from "../../../server/src/api-types"
 import type { MissionReaderTarget } from "../stores/mission-view-state"
 import { MissionAttention } from "./mission-attention"
 import { MissionTaskTree } from "./mission-task-tree"
 import { missionTaskConversation } from "./mission-task-navigation"
+import { MissionPanelPaging } from "./mission-panel-paging"
+import { useMissionPanelStore } from "./mission-panel-scope"
 
 /** Selected one-time Mission or exact admitted passage: open requests and the
  * dependency task tree. Prose stays in the reader, opened from the action bar. */
@@ -15,6 +17,7 @@ export function MissionTracking(props: {
   onOpenActor: (id: string, request?: { id: string; kind: "form" | "permission" }) => Promise<void>
   refresh: () => Promise<void>
 }) {
+  const missionStore = useMissionPanelStore()
   const observed = () => props.activity?.missions.find(value => value.missionId === props.mission.id)
   const target = (kind: MissionReaderTarget["kind"], itemId?: string): MissionReaderTarget => ({ missionId: props.mission.id, kind, itemId })
   // Native lifecycle invalidations (session.execution.*, inbox, Shell, Form and
@@ -23,10 +26,13 @@ export function MissionTracking(props: {
   createEffect(() => { if (props.active) demandMissionTaskSessions(props.instanceId, props.mission, props.activity?.generatedAt) })
   return <>
     <MissionAttention mission={props.mission} family={observed()?.family} instanceId={props.instanceId} onOpenActor={props.onOpenActor} />
-    <MissionTaskTree mission={props.mission} instanceId={props.instanceId} activity={observed()?.actors}
+    <Show when={props.mission.panelCollections}>
+      <MissionPanelPaging instanceId={props.instanceId} lane={`activity:${props.mission.id}`} />
+    </Show>
+    <MissionTaskTree mission={props.mission} instanceId={props.instanceId} activity={observed()?.actors} active={props.active}
       reading={task => props.reading(target("task", task.id))} onRead={task => props.read(target("task", task.id))}
       conversation={task => missionTaskConversation(props.mission, task, observed()?.family,
-        missionDerivedTaskSession(props.instanceId, props.mission, task.key))}
+        missionDerivedTaskSession(props.instanceId, props.mission, task.key), [...props.mission.actors, ...missionStore.observedActors(props.instanceId, props.mission.id)])}
       onOpenConversation={id => void props.onOpenActor(id)}
       disabled={props.disabled || !props.active || props.readOnly} onRecoveryAdmitted={props.readOnly ? undefined : props.refresh} />
   </>
