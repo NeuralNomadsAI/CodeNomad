@@ -25,6 +25,8 @@ export interface IntegrationRecognition {
    * sources, or two runtime candidates. Such sources and the runtime entry are then left unattributed.
    */
   ambiguous: boolean
+  /** Every source that designated an ambiguous integration, attributed or not. */
+  candidates: PluginConfiguredSource[]
 }
 
 /**
@@ -90,7 +92,7 @@ export function recognizeIntegrations(catalog: IntegrationCatalog, snapshot: Plu
     if (candidates.length > 0 || rules.some(rule => !rule.enabled)) ways.add("plugin")
     const control = snapshot.controls.find(candidate => candidate.id === entry.plugin)
     const scopes = [...new Set([...sources, ...(ways.has("plugin") ? rules : [])].map(item => item.scope))]
-    return { entry, ways: [...ways], sources, scopes, control, runtime, ambiguous }
+    return { entry, ways: [...ways], sources, scopes, control, runtime, ambiguous, candidates: [] }
   })
   const shared = (source: PluginConfiguredSource) => (designated.get(source)?.size ?? 0) > 1
   for (const recognition of recognitions) {
@@ -98,6 +100,7 @@ export function recognizeIntegrations(catalog: IntegrationCatalog, snapshot: Plu
     // An ambiguous integration keeps its flag and ways, but is attributed neither the shared or foreign sources nor a
     // runtime entry: those may belong to another integration.
     if (!recognition.ambiguous) continue
+    recognition.candidates = recognition.sources
     recognition.runtime = undefined
     recognition.sources = recognition.sources.filter(source => !shared(source)
       && (source.pluginId === undefined || source.pluginId === recognition.entry.plugin))

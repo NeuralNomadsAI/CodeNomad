@@ -71,6 +71,8 @@ export interface IntegrationsResponse {
   location: PluginControlLocation
   catalog: { state: IntegrationCatalogState; fetchedAt?: string }
   integrations: IntegrationView[]
+  /** Writable source rows that designate an ambiguous integration: their Plugins rows are non-conforming. */
+  ambiguousSources: Array<{ scope: PluginControlScope; entryIndex: number }>
 }
 
 export type IntegrationHostsResponse = import("./opencode/integrations/contract").IntegrationRpcValue<"hosts.output">

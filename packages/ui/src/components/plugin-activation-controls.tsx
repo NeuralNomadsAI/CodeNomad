@@ -9,16 +9,13 @@ import type {
   PluginRuntimeSource,
 } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
-import { integrationForSources } from "../lib/integration-rows"
+import { integrations } from "../stores/integrations"
 import { pluginControlsCache } from "../stores/plugin-controls"
 import { pluginSourcesStore, removableSources } from "../stores/plugin-sources"
 import { PluginActivationSwitch } from "./plugin-activation-switch"
 import { PluginRowActions } from "./plugin-row-actions"
 import { PluginSourceAdd } from "./plugin-source-add"
 import "../stores/plugin-controls-events"
-import { createIntegrationAttachment } from "./integration-attachment"
-import { integrations } from "../stores/integrations"
-import { createIntegrationHostInstallation } from "./integration-host-installation"
 
 interface PluginActivationControlsProps {
   instanceId: string
@@ -34,27 +31,21 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   const globalLabelId = `plugin-controls-${createUniqueId()}-global`
   const projectLabelId = `plugin-controls-${createUniqueId()}-project`
   const directory = createMemo(() => props.location.directory)
-  const attachment = createIntegrationAttachment({
-    get instanceId() { return props.instanceId }, get directory() { return directory() },
-    get session() { return props.session }, get active() { return props.active },
+  createEffect(() => {
+    const instanceId = props.instanceId, location = directory()
+    if (props.active === false || !location) return
+    onCleanup(integrations.demand(instanceId, location))
   })
-  const catalogUnavailable = () => {
-    const value = attachment.state()
-    return value.status === "error" || (value.status === "ready" && value.refreshError) || attachment.response()?.catalog.state === "unavailable"
+  // A source that designates an ambiguous integration belongs to none: its row says so.
+  const nonConforming = (sources: readonly Pick<PluginConfiguredSource, "scope" | "entryIndex">[]) => {
+    const value = integrations.state(props.instanceId, directory())
+    return value.status === "ready" && sourcesOverlap(value.response.ambiguousSources ?? [], sources)
   }
-  const installation = createIntegrationHostInstallation({
-    get instanceId() { return props.instanceId }, get directory() { return directory() },
-    get sessionId() { return props.session?.id }, get active() { return props.active }, entries: attachment.entries,
-  })
-  const installFor = (sources: readonly (PluginConfiguredSource & { scope: PluginControlScope })[]) => {
-    const entry = integrationFor(sources), action = entry && installation.action(entry.id)
-    return entry && action ? { action, run: () => installation.open(entry.id) } : undefined
-  }
-  const integrationFor = (sources: readonly (PluginConfiguredSource & { scope: PluginControlScope })[]) => integrationForSources(attachment.entries(), sources)
-  const attachFor = (sources: readonly (PluginConfiguredSource & { scope: PluginControlScope })[]) => {
-    const entry = integrationFor(sources)
-    return entry && attachment.canAttach(entry.id) ? () => attachment.open(entry.id) : undefined
-  }
+  const nonConformingLabel = (sources: readonly Pick<PluginConfiguredSource, "scope" | "entryIndex">[]) => (
+    <Show when={nonConforming(sources)}>
+      <span class="integration-state-badge badge-shape" data-integration-state="nonConforming">{t("integrations.state.nonConforming")}</span>
+    </Show>
+  )
   let cachedLocation: PluginControlLocation | undefined
   const requestLocation = (): PluginControlLocation => {
     if (!cachedLocation || cachedLocation.directory !== directory()) {
@@ -186,8 +177,8 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           <Tooltip.Portal>
             <Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content>
           </Tooltip.Portal>
-        </Tooltip><PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={pluginId}
-          source={control()?.runtime?.source} removable={removable()} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} attach={attachFor(removable())} installHost={installFor(removable())} /></div>
+        </Tooltip>{nonConformingLabel(declarationsFor(matchesControl))}<PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={pluginId}
+          source={control()?.runtime?.source} removable={removable()} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} /></div>
         {renderSwitch("global")}
         {renderSwitch("project")}
       </div>
@@ -214,8 +205,9 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{target}</bdi></Tooltip.Trigger>
           <Tooltip.Portal><Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content></Tooltip.Portal>
         </Tooltip>
+        {nonConformingLabel(declarationsFor(source => source.target === target))}
         <PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} source={entry()?.source}
-          removable={removable()} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} attach={attachFor(removable())} installHost={installFor(removable())} />
+          removable={removable()} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} />
       </div>
     </div>
   }
@@ -244,8 +236,9 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
             <Loader2 class="h-3 w-3 animate-spin" aria-hidden="true" />{t("instanceServiceStatus.plugins.sources.pendingLabel")}
           </span>
         </Show>
+        {nonConformingLabel(declarationsFor(source => source.target === target))}
         <PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} removable={removable()}
-          refresh={state() === "unconfirmed" ? refresh : undefined} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} attach={attachFor(removable())} installHost={installFor(removable())} />
+          refresh={state() === "unconfirmed" ? refresh : undefined} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} />
       </div>
     </div>
   }
@@ -258,15 +251,6 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       <Show when={snapshot() && !snapshot()?.targets.some((target) => target.scope === "project")}>
         <span id={noticeId} class="sr-only">{t("instanceServiceStatus.plugins.scope.unavailable")}</span>
       </Show>
-      <Show when={catalogUnavailable()}>
-        <p class="right-panel-empty-text" role="status">{t("integrations.catalogUnavailable")}</p>
-      </Show>
-      <Show when={attachment.response()?.catalog.state === "stale"}>
-        <p class="right-panel-empty-text" role="status">{t("integrations.catalogStale", { fetchedAt: attachment.response()?.catalog.fetchedAt ?? "" })}</p>
-      </Show>
-      <Show when={attachment.unsupported()}><p class="right-panel-empty-text">{t("integrations.unsupported")}</p></Show>
-      {attachment.picker()}
-
       <div class="plugin-controls-header">
         <div class="plugin-controls-header-actions">
           <button
@@ -313,6 +297,10 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     return t(`instanceServiceStatus.plugins.scope.${value}`)
   }
 
+}
+
+function sourcesOverlap(left: readonly Pick<PluginConfiguredSource, "scope" | "entryIndex">[], right: readonly Pick<PluginConfiguredSource, "scope" | "entryIndex">[]): boolean {
+  return left.some(source => right.some(other => other.scope === source.scope && other.entryIndex === source.entryIndex))
 }
 
 export function sameSource(left: PluginConfiguredSource, right: PluginConfiguredSource): boolean {

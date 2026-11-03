@@ -3,7 +3,7 @@ import { describe, it } from "node:test"
 import type { IntegrationsResponse } from "../../../server/src/integration-types"
 import { createIntegrationsStore, INTEGRATION_EVENT_COALESCE_MS, isIntegrationRefreshEvent } from "./integrations-store.ts"
 
-const response = (state: "fresh" | "unavailable" = "fresh"): IntegrationsResponse => ({ location: { directory: "/work" }, catalog: { state }, integrations: [] })
+const response = (state: "fresh" | "unavailable" = "fresh"): IntegrationsResponse => ({ location: { directory: "/work" }, catalog: { state }, integrations: [], ambiguousSources: [] })
 
 /** A store on a manual clock whose reads answer when the test says so. */
 function fixture() {

@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, onCleanup } from "solid-js"
 import { DropdownMenu } from "@kobalte/core/dropdown-menu"
-import { Download, Link, MoreHorizontal, PackageSearch, RefreshCw, Trash2 } from "lucide-solid"
+import { Download, MoreHorizontal, PackageSearch, RefreshCw, Trash2 } from "lucide-solid"
 import type { PluginConfiguredSource, PluginControlLocation, PluginControlScope, PluginRuntimeSource } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { showToastNotification } from "../lib/notifications"
@@ -15,8 +15,6 @@ type Item =
   | { kind: "package"; action: "check" | "update"; target: string }
   | { kind: "remove"; source: RemovableSource }
   | { kind: "refresh" }
-  | { kind: "attach" }
-  | { kind: "installHost" }
 
 export const PLUGIN_SOURCE_CONFIRM_EXPIRY_MS = 120_000
 
@@ -32,15 +30,13 @@ export function PluginRowActions(props: {
   active?: boolean
   consentEpoch?: number
   sessionId?: string
-  attach?: () => void | Promise<void>
-  installHost?: { action: "install" | "update"; run: () => void | Promise<void> }
   /** Integration surfaces never show configuration paths. */
   hidePaths?: boolean
   /** Receives focus when the menu's trigger is gone or disabled; the surface's Refresh button otherwise. */
   focusFallback?: () => HTMLElement | null | undefined
 }) {
   const { t } = useI18n()
-  let attachAfterClose: (() => void | Promise<void>) | undefined
+  let afterClose: (() => void | Promise<void>) | undefined
   let generation = 0
   let confirmation: AbortController | undefined
   let trigger: HTMLButtonElement | undefined
@@ -78,14 +74,11 @@ export function PluginRowActions(props: {
     ...(pkg() ? [{ kind: "package" as const, action: pkg()!.outdated ? "update" as const : "check" as const, target: pkg()!.target }] : []),
     ...props.removable.filter(source => source.expectedRevision).map(source => ({ kind: "remove" as const, source })),
     ...(props.refresh ? [{ kind: "refresh" as const }] : []),
-    ...(props.attach ? [{ kind: "attach" as const }] : []),
-    ...(props.installHost ? [{ kind: "installHost" as const }] : []),
   ])
   const packageLabel = (item: Extract<Item, { kind: "package" }>) => t(`settings.pluginPackages.${item.action}`, { target: item.target })
   const label = (item: Item) => item.kind === "package" ? packageLabel(item)
     : item.kind === "remove" ? t("instanceServiceStatus.plugins.sources.remove", { scope: scopeLabel(item.source.scope) })
-      : item.kind === "installHost" ? t(`integrations.installHost.${props.installHost?.action ?? "install"}`)
-        : t(item.kind === "attach" ? "integrations.attach" : "instanceServiceStatus.plugins.refresh")
+      : t("instanceServiceStatus.plugins.refresh")
   const hint = (item: Item) => item.kind === "package" ? t("settings.pluginPackages.shared")
     : item.kind === "remove" ? (props.hidePaths ? item.source.target : `${item.source.target}\n${item.source.path ?? ""}`) : undefined
   const triggerLabel = () => {
@@ -127,17 +120,14 @@ export function PluginRowActions(props: {
         : "instanceServiceStatus.plugins.sources.errors.remove", { name: source.target, scope: scopeLabel(source.scope) }) })
     })
   }
-  const run = (item: Item) => item.kind === "package" ? runPackage(item) : item.kind === "remove" ? (attachAfterClose = () => runRemove(item.source))
-    : item.kind === "attach" ? (attachAfterClose = props.attach)
-      : item.kind === "installHost" ? (attachAfterClose = props.installHost?.run) : props.refresh?.()
+  const run = (item: Item) => item.kind === "package" ? runPackage(item) : item.kind === "remove" ? (afterClose = () => runRemove(item.source)) : props.refresh?.()
 
   const icon = (item: Item, pulse = false) => item.kind === "package"
     ? (item.action === "update"
       ? <Download class="h-3.5 w-3.5" classList={{ "animate-pulse": pulse }} aria-hidden="true" />
       : <PackageSearch class="h-3.5 w-3.5" classList={{ "animate-pulse": pulse }} aria-hidden="true" />)
     : item.kind === "remove" ? <Trash2 class="h-3.5 w-3.5" aria-hidden="true" />
-      : item.kind === "installHost" ? <Download class="h-3.5 w-3.5" aria-hidden="true" />
-      : item.kind === "attach" ? <Link class="h-3.5 w-3.5" aria-hidden="true" /> : <RefreshCw class="h-3.5 w-3.5" aria-hidden="true" />
+      : <RefreshCw class="h-3.5 w-3.5" aria-hidden="true" />
 
   return <Show when={items().length > 0}>
     <DropdownMenu placement="bottom-end" gutter={4}>
@@ -151,7 +141,7 @@ export function PluginRowActions(props: {
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content class="action-overflow-content" onCloseAutoFocus={() => {
-          const action = attachAfterClose; attachAfterClose = undefined
+          const action = afterClose; afterClose = undefined
           if (action) queueMicrotask(() => void action())
         }}>
           <For each={items()}>{item => (

@@ -68,6 +68,7 @@ describe("integrations route", () => {
       { declared: true, runtime: "loaded" }, { declared: true, runtime: "loaded" }, { declared: false },
     ])
     assert.deepEqual(body.integrations.map(item => item.ambiguous), [undefined, undefined, undefined])
+    assert.deepEqual(body.ambiguousSources, [])
     assert.equal(body.integrations[0]!.docs, "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/fixture")
     for (const field of ["rpc", "sources", "package"]) assert.equal(field in body.integrations[0]!, false, `${field} stays on the server`)
     assert.equal(JSON.stringify(body).includes("neuralnomads."), false, "plugin and RPC IDs stay on the server")
@@ -160,7 +161,9 @@ describe("integrations route", () => {
       runtime: [{ key: "x", id: "neuralnomads.fixture", features: { rpc: true }, source: { type: "package", target: "@neuralnomads/opencode-slow", version: "0.1.0" }, state: { status: "active" } }],
     })
     const { app, calls } = harness({ snapshot: () => snapshot })
-    const items = (await app.inject({ method: "GET", url: "/api/workspaces/w1/integrations?directory=%2Fwork" })).json().integrations
+    const body = (await app.inject({ method: "GET", url: "/api/workspaces/w1/integrations?directory=%2Fwork" })).json()
+    const items = body.integrations
+    assert.deepEqual(body.ambiguousSources, [{ scope: "global", entryIndex: 0 }], "the shared row is marked non-conforming once")
     for (const item of items.slice(0, 2)) {
       assert.deepEqual([item.ambiguous, item.plugin, item.configuredSources, item.scopes, item.state, item.configured],
         [true, { declared: false }, [], [], "non-conforming", true], item.id)
@@ -201,7 +204,7 @@ describe("integrations route", () => {
   it("lists nothing while the catalog is unavailable", async () => {
     const { app, calls } = harness({ catalog: { state: "unavailable", catalog: catalogOf() } })
     const body = (await app.inject({ method: "GET", url: "/api/workspaces/w1/integrations?directory=%2Fwork" })).json() as IntegrationsResponse
-    assert.deepEqual(body, { location: { directory: "/work" }, catalog: { state: "unavailable" }, integrations: [] })
+    assert.deepEqual(body, { location: { directory: "/work" }, catalog: { state: "unavailable" }, ambiguousSources: [], integrations: [] })
     assert.equal(calls.length, 0)
     await app.close()
   })

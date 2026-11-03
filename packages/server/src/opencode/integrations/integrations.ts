@@ -44,9 +44,16 @@ export class IntegrationsReader {
     } catch (error) {
       throw new PluginControlsError("OpenCode service connection changed", "unavailable", { cause: error })
     }
+    const writable = (source: { scope: string; path?: string }): source is { scope: PluginControlScope; path?: string } =>
+      (source.scope === "global" || source.scope === "project") && snapshot.targets.some(target => target.scope === source.scope && target.path === source.path)
+    const ambiguousSources = new Map<string, { scope: PluginControlScope; entryIndex: number }>()
+    for (const source of recognitions.flatMap(recognition => recognition.candidates)) {
+      if (writable(source)) ambiguousSources.set(`${source.scope}:${source.entryIndex}`, { scope: source.scope, entryIndex: source.entryIndex })
+    }
     return {
       location: owned,
       catalog: { state: catalog.state, ...(catalog.fetchedAt ? { fetchedAt: catalog.fetchedAt } : {}) },
+      ambiguousSources: [...ambiguousSources.values()],
       integrations: recognitions.map((recognition, index): IntegrationView => {
         const { entry } = recognition
         const read: IntegrationStatusRead = statuses[index]!
