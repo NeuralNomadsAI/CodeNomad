@@ -7,6 +7,8 @@ export interface RightPanelItem {
   label?: string
   order: number
   alwaysVisible?: boolean
+  /** Without a saved rank, placed after this item and the items of the same anchor that directly follow it. */
+  after?: string
 }
 
 export interface RightPanelTabModule extends RightPanelItem {
@@ -15,9 +17,19 @@ export interface RightPanelTabModule extends RightPanelItem {
 
 export interface RightPanelSectionModule extends RightPanelItem {
   tooltipKey: string
+  /** External tooltip text; never registered in the application's i18n catalogue. */
+  tooltip?: string
   defaultExpanded?: boolean
   /** Non-interactive inline content, shown only while collapsed. */
   renderSummary?: () => JSX.Element
+  /** Non-interactive state shown inside the trigger, collapsed or expanded. */
+  renderStatus?: () => JSX.Element
+  /** Controls placed before the section's information button. */
+  renderHeaderActions?: () => JSX.Element
+  /** Replaces the tooltip information button. */
+  renderInfo?: () => JSX.Element
+  /** Accessible name of the section's region, when it differs from the trigger's text. */
+  regionLabel?: string
   render: () => JSX.Element
 }
 
@@ -28,6 +40,8 @@ export interface RightPanelModule {
   origin: "first-party" | "external"
   tabs?: readonly RightPanelTabModule[]
   statusSections?: readonly RightPanelSectionModule[]
+  /** Rendered once by the Status tab while it is shown, for shared windows and announcements. */
+  renderStatusExtras?: () => JSX.Element
 }
 
 export interface RightPanelCustomization {
@@ -76,18 +90,33 @@ export function applyRightPanelItemCustomization<T extends RightPanelItem>(
   hiddenIds: readonly string[],
 ): T[] {
   const hidden = new Set(hiddenIds)
-  const visible = items.filter((item) => item.alwaysVisible || !hidden.has(item.id))
-  return sortRightPanelItems(visible.length > 0 ? visible : items.slice(0, 1), orderedIds)
+  // Sort before hiding, so an unranked item keeps its anchor while the anchor is hidden.
+  const sorted = sortRightPanelItems(items, orderedIds)
+  const visible = sorted.filter((item) => item.alwaysVisible || !hidden.has(item.id))
+  return visible.length > 0 ? visible : sortRightPanelItems(items.slice(0, 1), orderedIds)
 }
 
-export function moveRightPanelItem(orderedIds: readonly string[], allIds: readonly string[], id: string, direction: -1 | 1): string[] {
-  const order = normalizeOrder(orderedIds, allIds)
-  const index = order.indexOf(id)
-  const nextIndex = index + direction
-  if (index === -1 || nextIndex < 0 || nextIndex >= order.length) return order
-  const next = [...order]
-  ;[next[index], next[nextIndex]] = [next[nextIndex], next[index]]
+/**
+ * Moves only `sourceId` next to `targetId` (before it when moving up, after it when moving down) in the saved order.
+ * `displayedIds` is the shown order; saved IDs it does not show (unknown, hidden or momentarily absent) keep their place.
+ */
+export function reorderStatusSections(orderedIds: readonly string[], displayedIds: readonly string[], sourceId: string, targetId: string): string[] {
+  const order = materializeOrder(orderedIds, displayedIds)
+  const sourceIndex = displayedIds.indexOf(sourceId)
+  const targetIndex = displayedIds.indexOf(targetId)
+  if (sourceIndex === -1 || targetIndex === -1 || sourceId === targetId) return order
+  const next = order.filter((id) => id !== sourceId)
+  const at = next.indexOf(targetId)
+  next.splice(sourceIndex < targetIndex ? at + 1 : at, 0, sourceId)
   return next
+}
+
+/** Keyboard reorder: swaps `id` with its shown neighbour, through the same algorithm as dragging. */
+export function moveRightPanelItem(orderedIds: readonly string[], displayedIds: readonly string[], id: string, direction: -1 | 1): string[] {
+  const index = displayedIds.indexOf(id)
+  const target = displayedIds[index + direction]
+  if (index === -1 || target === undefined) return materializeOrder(orderedIds, displayedIds)
+  return reorderStatusSections(orderedIds, displayedIds, id, target)
 }
 
 export function setRightPanelItemHidden(hiddenIds: readonly string[], id: string, hidden: boolean): string[] {
@@ -98,21 +127,31 @@ export function setRightPanelItemHidden(hiddenIds: readonly string[], id: string
 }
 
 function sortRightPanelItems<T extends RightPanelItem>(items: readonly T[], orderedIds: readonly string[]): T[] {
+  const byDefault = [...items].sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
   const rank = new Map(orderedIds.map((id, index) => [id, index]))
-  return [...items].sort((left, right) => {
-    const leftRank = rank.get(left.id)
-    const rightRank = rank.get(right.id)
-    if (leftRank !== undefined || rightRank !== undefined) {
-      return (leftRank ?? Number.MAX_SAFE_INTEGER) - (rightRank ?? Number.MAX_SAFE_INTEGER)
-    }
-    return left.order - right.order || left.id.localeCompare(right.id)
-  })
+  if (!byDefault.some((item) => rank.has(item.id))) return byDefault
+  const ranked = byDefault.filter((item) => rank.has(item.id)).sort((left, right) => rank.get(left.id)! - rank.get(right.id)!)
+  const unranked = byDefault.filter((item) => !rank.has(item.id))
+  const result = [...ranked, ...unranked.filter((item) => !item.after)]
+  for (const item of unranked.filter((entry) => entry.after)) {
+    const anchor = result.findIndex((entry) => entry.id === item.after)
+    if (anchor === -1) { result.push(item); continue }
+    let at = anchor + 1
+    while (at < result.length && result[at]!.after === item.after) at++
+    result.splice(at, 0, item)
+  }
+  return result
 }
 
-function normalizeOrder(orderedIds: readonly string[], allIds: readonly string[]): string[] {
-  const known = new Set(allIds)
-  const ordered = orderedIds.filter((id, index) => known.has(id) && orderedIds.indexOf(id) === index)
-  return [...ordered, ...allIds.filter((id) => !ordered.includes(id))]
+/** The saved order with each shown ID it lacks inserted after its shown predecessor. */
+function materializeOrder(orderedIds: readonly string[], displayedIds: readonly string[]): string[] {
+  const order = orderedIds.filter((id, index) => orderedIds.indexOf(id) === index)
+  displayedIds.forEach((id, index) => {
+    if (order.includes(id)) return
+    const previous = displayedIds.slice(0, index).reverse().find((entry) => order.includes(entry))
+    order.splice(previous === undefined ? 0 : order.indexOf(previous) + 1, 0, id)
+  })
+  return order
 }
 
 function readStringArray(value: unknown): string[] {

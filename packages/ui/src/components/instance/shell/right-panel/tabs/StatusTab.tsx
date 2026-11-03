@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, on, type Accessor, type Component } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, createUniqueId, on, type Accessor, type Component, type JSX } from "solid-js"
 import type { LocationRef, ShellInfo } from "@opencode/client"
 import {
   DragDropProvider,
@@ -23,7 +23,7 @@ import SessionGoalLine from "../../../../session/session-goal-line"
 import InstanceServiceStatus from "../../../../instance-service-status"
 import { togglePermissionAutoAcceptForSession } from "../../../../../stores/instances"
 import { isPermissionAutoAcceptEnabled } from "../../../../../stores/permission-auto-accept"
-import { applyRightPanelItemCustomization, type RightPanelCustomization, type RightPanelSectionModule } from "../registry"
+import { applyRightPanelItemCustomization, reorderStatusSections, type RightPanelCustomization, type RightPanelSectionModule } from "../registry"
 import { createCoreStatusSectionManifest } from "../core-plugin"
 import { shellStore } from "../../../../../stores/shells"
 import { showConfirmDialog } from "../../../../../stores/alerts"
@@ -44,6 +44,7 @@ interface StatusTabProps {
   customization: Accessor<RightPanelCustomization>
   onCustomizationChange: (updater: (current: RightPanelCustomization) => RightPanelCustomization) => void
   extraSections?: readonly RightPanelSectionModule[]
+  extraContent?: readonly (() => JSX.Element)[]
 }
 
 interface SortableStatusSectionProps {
@@ -54,30 +55,42 @@ interface SortableStatusSectionProps {
 
 const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => {
   const sortable = createSortable(props.section.id)
+  const regionLabelId = createUniqueId()
+  const tooltip = () => props.section.tooltip ?? props.t(props.section.tooltipKey)
   return (
-    <div ref={sortable} class={`right-panel-section-draggable ${sortable.isActiveDraggable ? "right-panel-section-draggable-active" : ""}`}>
+    <div ref={sortable} class={`right-panel-section-draggable ${sortable.isActiveDraggable ? "right-panel-section-draggable-active" : ""}`}
+      data-status-section={props.section.id}>
       <Accordion.Item value={props.section.id} class="right-panel-accordion-item">
         <Accordion.Header class="right-panel-accordion-header-row">
-          <Accordion.Trigger class="right-panel-accordion-trigger">
+          <Accordion.Trigger class="right-panel-accordion-trigger" data-status-section-trigger={props.section.id}>
             <span class="section-left">
               <ChevronRight class="right-panel-accordion-chevron disclosure-chevron" />
-              <span class="section-label">{props.t(props.section.labelKey)}</span>
+              <span class="section-label">{props.section.label ?? props.t(props.section.labelKey)}</span>
             </span>
+            <Show when={props.section.renderStatus}>{(status) => status()()}</Show>
             <Show when={!props.expanded && props.section.renderSummary}>
               {(summary) => <span class="right-panel-section-summary">{summary()()}</span>}
             </Show>
           </Accordion.Trigger>
-          <Tooltip openDelay={200} gutter={4} placement="top">
-            <Tooltip.Trigger as="button" type="button" class="section-info-trigger" aria-label={props.t(props.section.tooltipKey)}>
-              <Info class="section-info-icon" />
-            </Tooltip.Trigger>
-            <Tooltip.Portal>
-              <Tooltip.Content class="section-info-tooltip">{props.t(props.section.tooltipKey)}</Tooltip.Content>
-            </Tooltip.Portal>
-          </Tooltip>
+          <Show when={props.section.renderHeaderActions}>{(actions) => actions()()}</Show>
+          <Show when={props.section.renderInfo} fallback={
+            <Tooltip openDelay={200} gutter={4} placement="top">
+              <Tooltip.Trigger as="button" type="button" class="section-info-trigger" aria-label={tooltip()}>
+                <Info class="section-info-icon" />
+              </Tooltip.Trigger>
+              <Tooltip.Portal>
+                <Tooltip.Content class="section-info-tooltip">{tooltip()}</Tooltip.Content>
+              </Tooltip.Portal>
+            </Tooltip>
+          }>{(info) => info()()}</Show>
           <GripVertical class="right-panel-section-grip" aria-hidden="true" />
         </Accordion.Header>
-        <Accordion.Content class="right-panel-accordion-content">{props.section.render()}</Accordion.Content>
+        <Show when={props.section.regionLabel}>
+          {(name) => <span id={regionLabelId} class="sr-only">{name()}</span>}
+        </Show>
+        <Accordion.Content class="right-panel-accordion-content" {...(props.section.regionLabel ? { "aria-labelledby": regionLabelId } : {})}>
+          {props.section.render()}
+        </Accordion.Content>
       </Accordion.Item>
     </div>
   )
@@ -261,14 +274,13 @@ const StatusTab: Component<StatusTabProps> = (props) => {
   const moveSection = (sourceId: string, targetId: string) => {
     if (!sourceId || sourceId === targetId) return
     const ids = statusSections().map((section) => section.id)
-    const sourceIndex = ids.indexOf(sourceId)
-    const targetIndex = ids.indexOf(targetId)
-    if (sourceIndex === -1 || targetIndex === -1) return
-    const next = [...ids]
-    const [moved] = next.splice(sourceIndex, 1)
-    next.splice(targetIndex, 0, moved)
-    props.onCustomizationChange((current) => ({ ...current, statusSectionOrder: next }))
+    if (!ids.includes(sourceId) || !ids.includes(targetId)) return
+    props.onCustomizationChange((current) => ({
+      ...current,
+      statusSectionOrder: reorderStatusSections(current.statusSectionOrder, ids, sourceId, targetId),
+    }))
   }
+
 
   const handleSectionDragEnd = ({ draggable, droppable }: SolidDndDragEvent) => {
     if (!droppable) return
@@ -297,6 +309,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           </DragDropSensors>
         </DragDropProvider>
       </Accordion.Root>
+      <For each={props.extraContent ?? []}>{(render) => render()}</For>
       <ShellOutputDialog
         open={Boolean(outputShell())}
         instanceId={outputShell()?.instanceId ?? props.instanceId}
