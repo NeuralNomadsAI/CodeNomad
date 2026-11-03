@@ -13,7 +13,7 @@ import { useSessionRowOverflow } from "./session-row-overflow"
 import { showToastNotification } from "../lib/notifications"
 import { useI18n } from "../lib/i18n"
 import { toggleSweepClear, toggleSweepGroup } from "../lib/toggle-sweep"
-import { isSessionInterruptionUnseen } from "../stores/session-interruption-seen"
+import { isSessionInterruptionUnseen, markSessionInterruptionSeen } from "../stores/session-interruption-seen"
 import { showConfirmDialog } from "../stores/alerts"
 import {
   deleteSession,
@@ -447,6 +447,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     const session = sessionStateSessions().get(props.instanceId)?.get(sessionId)
     if (!session) return
     batch(() => {
+      markSessionInterruptionSeen(props.instanceId, session)
       markSessionIdleSeen(props.instanceId, sessionId)
       clearSessionIdleFade(props.instanceId, sessionId)
     })

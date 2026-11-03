@@ -161,7 +161,7 @@ describe("seen native interruptions", () => {
       await refreshSessionRuntimeStatus(instanceId)
       const current = () => sessions().get(instanceId)!.get("session")!
       assert.equal(current().time.idle, 200)
-      markSessionIdleSeen(instanceId, "session")
+      markSessionInterruptionSeen(instanceId, current())
       assert.equal(isSessionInterruptionUnseen(instanceId, current()), false)
       resolveActive({})
       await active
@@ -169,7 +169,7 @@ describe("seen native interruptions", () => {
       assert.equal(isSessionInterruptionUnseen(instanceId, current()), false, "the delayed handler preserves the clear")
       await refreshSessionRuntimeStatus(instanceId)
       assert.equal(isSessionInterruptionUnseen(instanceId, current()), false, "reconnect preserves the clear")
-      markSessionIdleSeen(instanceId, "session")
+      markSessionInterruptionSeen(instanceId, current())
       nativeIdle = 201
       await refreshSessionRuntimeStatus(instanceId)
       assert.equal(isSessionInterruptionUnseen(instanceId, current()), true, "a real later boundary is never hidden by an invented one")
@@ -220,7 +220,7 @@ describe("seen native interruptions", () => {
         data: { sessionID: "session", reason: "user" }, location: { directory: "/work" },
       })
       const current = () => sessions().get(instanceId)!.get("session")!
-      markSessionIdleSeen(instanceId, "session")
+      markSessionInterruptionSeen(instanceId, current())
       assert.deepEqual(captureSeenInterruptions(instanceId, [current()]), { session: 30 })
       assert.equal(isSessionInterruptionUnseen(instanceId, current()), false)
       releaseInfo(olderInfo)
@@ -295,18 +295,27 @@ describe("seen native interruptions", () => {
     } finally { clearInstanceSeenInterruptions(instanceId) }
   })
 
-  it("shares acknowledgement with viewed idle markers and leaves live/input states alone", () => {
+  it("viewing clears only Idle markers; explicit acknowledgement leaves live/input states alone", () => {
     const instanceId = "seen-viewed"
     const items = [session({ idleSince: 5 }), session({ id: "child", parentId: "session", idleSince: 5 }),
+      session({ id: "idle", parentId: "session", idleSince: 5, generationRecovery: null, outcome: "succeeded" }),
       session({ id: "working", status: "working" }), session({ id: "permission", pendingPermission: true }),
       session({ id: "question", pendingForm: true })]
     setSessions(previous => new Map(previous).set(instanceId, new Map(items.map(item => [item.id, item]))))
     try {
       markViewedSessionIdleSeen(instanceId, "session", true)
-      assert.equal(isSessionInterruptionUnseen(instanceId, sessions().get(instanceId)!.get("session")!), false)
+      assert.equal(isSessionInterruptionUnseen(instanceId, sessions().get(instanceId)!.get("session")!), true)
       assert.equal(isSessionInterruptionUnseen(instanceId, sessions().get(instanceId)!.get("child")!), true)
+      assert.equal(sessions().get(instanceId)!.get("session")!.idleSince, null)
+      assert.equal(sessions().get(instanceId)!.get("idle")!.idleSince, 5, "unviewed subagent Idle stays")
       markViewedSessionIdleSeen(instanceId, "session", false)
-      for (const item of items) markSessionIdleSeen(instanceId, item.id)
+      assert.equal(sessions().get(instanceId)!.get("idle")!.idleSince, null, "viewed subagent Idle clears")
+      assert.equal(isSessionInterruptionUnseen(instanceId, sessions().get(instanceId)!.get("child")!), true)
+      assert.deepEqual(captureSeenInterruptions(instanceId, items), {}, "viewing writes no interruption watermark")
+      for (const item of items) {
+        markSessionInterruptionSeen(instanceId, item)
+        markSessionIdleSeen(instanceId, item.id)
+      }
       assert.deepEqual(captureSeenInterruptions(instanceId, items), { session: 10, child: 10 })
       assert.equal(sessions().get(instanceId)!.get("session")!.idleSince, null)
     } finally {
