@@ -31,17 +31,17 @@ En Windows, un ejecutable WSL seleccionado se ejecuta dentro de su distribución
 
 OpenCode es propietario de su registro global de servicio, sesiones, mensajes y base de datos. CodeNomad no crea una base de datos privada de OpenCode por ventana o proyecto. Cerrar una pestaña de proyecto cierra ese proyecto en CodeNomad; las sesiones siguen ejecutándose en OpenCode y vuelven a aparecer al reabrir el proyecto. CodeNomad nunca descarga las Locations nativas. Cerrar una ventana entera, salir o recargar conserva las conexiones de proyecto para restaurarlas; ni esas acciones ni el apagado del backend detienen el daemon compartido. Consulta [Proyectos](projects.md).
 
-## Mantener OpenCode iniciado {#service-supervision}
+## Iniciar OpenCode al iniciar sesión {#service-supervision}
 
-En Windows, la supervisión y la recuperación se ejecutan en segundo plano sin ventanas de terminal. Las actualizaciones de CodeNomad conservan tu elección guardada y el servicio OpenCode en ejecución; las acciones actualizadas de las tareas se aplican en los siguientes inicios.
+En **Configuración → OpenCode**, **Iniciar OpenCode al iniciar sesión** hace que el sistema inicie el servicio OpenCode en segundo plano cuando inicias sesión, incluso con CodeNomad cerrado. Permanece desactivado hasta que lo actives, se aplica desde tu próximo inicio de sesión y afecta a tu cuenta en el equipo que ejecuta el servidor CodeNomad. Inicia el ejecutable elegido en la tarjeta **Binario de OpenCode**; elegir otro ejecutable nativo lo actualiza; si no, sigue iniciando el anterior.
 
-En **Ajustes → OpenCode**, **Mantener OpenCode iniciado** instala supervisión del sistema en el host de ejecución, compartida por todos los perfiles CodeNomad que usan el servicio. Funciona incluso con CodeNomad cerrado y permanece desactivada hasta que la actives.
+| Sistema | Qué inicia OpenCode | Tras un fallo |
+| --- | --- | --- |
+| Windows | Una tarea programada oculta para tu cuenta, sin contraseña ni derechos de administrador. Un ejecutable de WSL se inicia en su distribución. | No se reinicia. |
+| macOS | Un LaunchAgent. | macOS lo reinicia. |
+| Linux | Un servicio de usuario de systemd que se inicia al iniciar sesión, sin activar linger. | systemd lo reinicia. |
 
-Desactivar retira la supervisión mientras OpenCode sigue funcionando y ya no se reiniciará. Para detenerlo de forma duradera, desactiva primero y luego detén OpenCode explícitamente. Con supervisión activa, `opencode service stop` provoca un reinicio.
-
-**En marcha · supervisión activa** exige un supervisor activo y un servicio OpenCode saludable. **Instalado · servicio iniciándose**, **Instalando o retirando la supervisión…** y **Fallo de supervisión** distinguen los estados. Un servicio que responde por sí solo deja la supervisión sin confirmar. Los detalles muestran la causa, último intento, reintento del supervisor y comprobación de recuperación del sistema cuando se conocen. **Comprobar supervisión** solo lee; **Reintentar supervisión** repara explícitamente la instalación solicitada. Una acción no confirmada conserva la solicitud original; **Reintentar acción original** reenvía solo esa acción exacta. Una revisión cambiada se actualiza para revisión en lugar de sobrescribirse.
-
-Windows, macOS y WSL arrancan tras iniciar sesión. WSL necesita reenvío localhost para la distribución elegida. En Linux nativo, linger inicia **todos los servicios de usuario habilitados** antes de iniciar sesión y los mantiene tras cerrarla. Al desactivar, se restaura linger solo si CodeNomad lo activó y ninguna otra supervisión lo necesita; se conservan los ajustes personales. Si restaurar linger pudiera detener los procesos OpenCode liberados mientras no hay ninguna sesión de usuario abierta, la restauración se aplaza y sigue visible con **Reintentar supervisión**. Reintenta cuando haya una sesión de usuario abierta o hayan terminado los procesos OpenCode liberados, permitiendo una restauración segura. Si Linux exige permiso, autoriza en el host de ejecución y reintenta; la preferencia solicitada permanece guardada. El sistema controla suspensión e hibernación. Un host indisponible o no compatible muestra un control desactivado con explicación.
+Desactivarlo solo retira esa tarea, ese LaunchAgent o ese servicio; un OpenCode en ejecución sigue funcionando. Si el ajuste no se puede cambiar, aparece un error debajo: elige el programa nativo de OpenCode en lugar de un script envoltorio, o revisa el programador de tareas o los servicios de usuario del sistema, y vuelve a intentarlo. **No disponible en este sistema** aparece cuando el servidor CodeNomad se ejecuta dentro de WSL o en otro sistema sin inicio al iniciar sesión.
 
 ## Actualizar, reiniciar o recargar {#maintenance}
 

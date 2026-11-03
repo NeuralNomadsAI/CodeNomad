@@ -31,17 +31,17 @@ On Windows, a selected WSL executable runs inside its chosen distribution. Insta
 
 OpenCode owns its global service registration, sessions, messages and database. CodeNomad does not create a private OpenCode database per window or project. Closing a project tab closes that project in CodeNomad; sessions continue in OpenCode and reappear when you reopen the project. CodeNomad never unloads native Locations. Closing a whole window, quitting or reloading preserves project connections for restoration; neither those actions nor backend shutdown stops the shared daemon. See [Projects](projects.md).
 
-## Keep OpenCode running {#service-supervision}
+## Start OpenCode at login {#service-supervision}
 
-On Windows, supervision and recovery run in the background without terminal windows. CodeNomad updates preserve your saved choice and the running OpenCode service; updated task actions apply on subsequent starts.
+In **Settings → OpenCode**, **Start OpenCode at login** has your operating system start the OpenCode service in the background when you sign in, even with CodeNomad closed. It is off until you turn it on, takes effect at your next sign-in and applies to your account on the computer running the CodeNomad server. It starts the executable selected in the **OpenCode Binary** card; selecting another native executable updates it, otherwise it keeps starting the previous one.
 
-In **Settings → OpenCode**, **Keep OpenCode running** installs OS supervision on the execution host, shared by every CodeNomad profile using that service. It works even with CodeNomad closed and stays off until you turn it on.
+| System | What starts OpenCode | After a crash |
+| --- | --- | --- |
+| Windows | A hidden scheduled task for your account, without password or administrator rights. A WSL executable starts in its distribution. | Not restarted. |
+| macOS | A LaunchAgent. | Restarted by macOS. |
+| Linux | A systemd user service started at login, without enabling lingering. | Restarted by systemd. |
 
-Turning it off removes supervision while OpenCode continues running and will no longer be restarted. For a durable service stop, turn it off first, then stop OpenCode explicitly. With supervision on, `opencode service stop` is followed by a restart.
-
-**Running · supervision active** requires an active OS supervisor and a healthy OpenCode service. **Installed · service starting**, **Installing or removing supervision…** and **Supervision failed** describe different states. A responding OpenCode service alone leaves supervision unconfirmed. Failure details show the cause, last attempt, supervisor retry and OS recovery safety check when known. **Check supervision status** only reads; **Retry supervision** explicitly repairs the requested setup. An unconfirmed action retains its original request; **Retry original action** resends only that exact action. A changed revision is refreshed for review rather than overwritten.
-
-Windows, macOS and WSL start after login. WSL requires localhost forwarding for the selected distribution. On native Linux, enabling lingering starts **all enabled user services** before login and keeps them after logout. Turning supervision off restores lingering only when CodeNomad enabled it and no other supervision needs it; personal lingering settings are preserved. If restoring lingering could stop the released OpenCode processes while no user session is open, restoration is deferred and remains visible with **Retry supervision**. Retry once a user session is open or the released OpenCode processes have exited, allowing safe restoration. If Linux requires permission, authorize on the execution host and retry; the requested preference remains saved. Sleep and hibernation remain OS-controlled. Unavailable or unsupported execution hosts show a disabled control with an explanation.
+Turning it off removes only that task, LaunchAgent or service; a running OpenCode keeps running. If the setting cannot be changed, an error appears under it: select the native OpenCode program rather than a script wrapper, or check the system's task scheduler or user services, then try again. **Unavailable on this system** appears when the CodeNomad server runs inside WSL or on another system without login start.
 
 ## Update, restart or reload {#maintenance}
 

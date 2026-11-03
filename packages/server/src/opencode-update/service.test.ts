@@ -51,9 +51,9 @@ test("offline registry retains local required-update diagnosis", async () => {
   await assert.rejects(service.upgrade(), (error: unknown) => error instanceof OpenCodeUpdateError && error.code === "update_check_failed")
 })
 
-test("verified upgrade publishes without restarting; explicit restart publishes before stop and refuses a failed publication", async () => {
+test("verified upgrade refreshes the login start without restarting; restart leaves it alone", async () => {
   const order: string[] = []
-  let installed = minimum, daemon = minimum, fail = false
+  let installed = minimum, daemon = minimum
   const endpoint = () => {
     const value = { url: "http://127.0.0.1:12345" }
     rememberRuntime(value, { version: daemon, pid: 123, discovery: "info" })
@@ -63,32 +63,28 @@ test("verified upgrade publishes without restarting; explicit restart publishes 
     resolveLatestVersion: async () => "99.0.0",
     probeBinary: () => ({ valid: true, version: installed }),
     upgradeBinary: async () => { order.push("install"); installed = "99.0.0"; return { success: true, version: installed } },
-    publishSupervisionTarget: async check => { check(); order.push("publish"); if (fail) throw new Error("publication-failed") },
+    refreshLoginStart: async () => { order.push("refresh") },
     lifecycle: async () => ({ discover: async () => endpoint(), ensure: async () => { throw new Error("unexpected-start") },
       restart: async () => { order.push("restart"); daemon = installed; return endpoint() } }),
   }))
   await service.upgrade()
-  assert.deepEqual(order, ["install", "publish"])
+  assert.deepEqual(order, ["install", "refresh"])
   assert.equal(daemon, minimum)
   order.length = 0
-  fail = true
-  await assert.rejects(service.start(true), /publication-failed/)
-  assert.deepEqual(order, ["publish"])
-  fail = false; order.length = 0
   await service.start(true)
-  assert.deepEqual(order, ["publish", "restart"])
+  assert.deepEqual(order, ["restart"])
 })
 
-test("first installation publishes the newly resolved absolute executable rather than the absent command", async () => {
-  let selected = "opencode2", version: string | undefined, publications = 0
+test("first installation refreshes the login start once the absolute executable resolves; a failed refresh keeps the upgrade", async () => {
+  let selected = "opencode2", version: string | undefined, refreshes = 0
   const service = new OpenCodeUpdateService(deps({
     resolveBinary: () => ({ path: selected, label: "fixture" }),
     probeBinary: () => version ? { valid: true, version } : { valid: false, missing: true },
     upgradeBinary: async (_binary, target) => { selected = "C:\\npm prefix\\opencode.exe"; version = target; return { success: true, version: target } },
-    publishSupervisionTarget: async check => { check(); publications++; assert.equal(selected, "C:\\npm prefix\\opencode.exe") },
+    refreshLoginStart: async () => { refreshes++; assert.equal(selected, "C:\\npm prefix\\opencode.exe"); throw new Error("refresh-failed") },
   }))
   assert.equal((await service.upgrade()).success, true)
-  assert.equal(publications, 1)
+  assert.equal(refreshes, 1)
 })
 
 test("custom and WSL executables remain user managed", async () => {

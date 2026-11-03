@@ -59,23 +59,20 @@ test("every map mutation enters the worktree-deletion fence before its single na
   }
 })
 
-test("one-time Play and Resume never consult service supervision", async () => {
+test("one-time Play and Resume need no route-specific human proof", async () => {
   const h = harness(), app = Fastify({ logger: false })
-  let human = true, plays = 0
-  // A stray supervision dependency must stay unused by the lifecycle route.
+  let human = true
   const deps: Parameters<typeof registerMissionRoutes>[1] = { workspaceManager: h.manager as never, worktreeDeletionFence: h.state.fence,
     auth: { isAuthEnabled: () => true, getSessionFromRequest: () => human ? { username: "human", sessionId: "cookie" } : null } }
-  registerMissionRoutes(app, Object.assign(deps, { supervision: { missionPlay: async () => { plays++; throw new Error("supervision-platform-unavailable") } } }))
+  registerMissionRoutes(app, deps)
   try {
     const post = (action: string, requestId: string) => app.inject({ method: "POST", url: routes[1].url,
       payload: { action, expectedRevision: 1, requestId } })
     assert.equal((await post("start", "play")).statusCode, 200)
     assert.equal((await post("pause", "pause")).statusCode, 200)
-    // No supervision-specific human proof: the production authentication hook,
-    // outside this route, still admits the request.
+    // The production authentication hook, outside this route, admits the request.
     human = false
     assert.equal((await post("start", "resume")).statusCode, 200)
-    assert.equal(plays, 0)
     assert.deepEqual(h.state.rpcs, ["lifecycle", "lifecycle", "lifecycle"])
   } finally { await app.close() }
 })

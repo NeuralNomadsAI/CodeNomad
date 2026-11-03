@@ -682,12 +682,11 @@ export const serverApi = {
   fetchOpenCodeUpdateStatus(options: { recheck?: boolean } = {}): Promise<OpenCodeUpdateStatus> {
     return request<OpenCodeUpdateStatus>(options.recheck ? "/api/opencode/update?recheck=1" : "/api/opencode/update")
   },
-  getServiceSupervision(options: { serviceKey?: string; requestID?: string } = {}): Promise<import("../../../server/src/api-types").SupervisionSettingsResponse> {
-    const query = new URLSearchParams(options).toString()
-    return request(`/api/opencode/supervision${query ? `?${query}` : ""}`)
+  getOpenCodeLoginStart(): Promise<import("../../../server/src/api-types").LoginStartResponse> {
+    return request("/api/opencode/login-start")
   },
-  controlServiceSupervision(input: import("../../../server/src/api-types").SupervisionSettingsControl): Promise<import("../../../server/src/api-types").SupervisionSettingsResponse> {
-    return request("/api/opencode/supervision", { method: "POST", body: JSON.stringify(input) })
+  setOpenCodeLoginStart(input: import("../../../server/src/api-types").LoginStartControl): Promise<import("../../../server/src/api-types").LoginStartResponse> {
+    return request("/api/opencode/login-start", { method: "POST", body: JSON.stringify(input) })
   },
   updateOpenCode(options: { replaceLegacy?: { path: string; version: string } } = {}): Promise<OpenCodeUpdateResponse> {
     return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST",

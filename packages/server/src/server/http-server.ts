@@ -70,8 +70,8 @@ import { registerWebSearchSettingsRoutes } from "./routes/websearch-settings"
 import { SubagentDepthSettings } from "../opencode/subagent-depth-settings"
 import { NativeScheduleSettingsActivation } from "../opencode/native-schedule-settings-activation"
 import { NativeScheduleCapabilityReader } from "../opencode/native-schedule-capability"
-import { createServiceSupervisionSettings } from "../host-lifetime/service-supervision-resolver"
-import { registerServiceSupervisionRoutes } from "./routes/service-supervision"
+import { createOpenCodeLoginStart } from "../host-lifetime/opencode-login-start"
+import { registerOpenCodeLoginStartRoutes } from "./routes/opencode-login-start"
 import { registerSubagentDepthSettingsRoutes } from "./routes/subagent-depth-settings"
 import { ImageSettings } from "../opencode/image-settings"
 import { registerImageSettingsRoutes } from "./routes/image-settings"
@@ -364,15 +364,15 @@ export function createHttpServer(deps: HttpServerDeps) {
   const imageSettings = new ImageSettings(configurationControls, deps.workspaceManager)
   registerImageSettingsRoutes(app, imageSettings)
   registerServiceUsageRoutes(app, new ServiceUsage(deps.workspaceManager, deps.settings))
-  const supervision = createServiceSupervisionSettings(deps.settings, deps.workspaceManager)
-  registerServiceSupervisionRoutes(app, { service: supervision, auth: deps.authManager, remoteDevices: deps.remoteControlManager })
-  registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, publishSupervisionTarget: () => supervision.selectBinary() })
+  const loginStart = createOpenCodeLoginStart(deps.settings, deps.workspaceManager)
+  registerOpenCodeLoginStartRoutes(app, { loginStart, auth: deps.authManager, remoteDevices: deps.remoteControlManager })
+  registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, refreshLoginStart: () => loginStart.refresh() })
   const accounts = new ProviderAccountsService(deps.settings)
   const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts)
   app.addHook("onClose", async () => stopQuotaObserver())
   registerProviderAccountsRoutes(app, { accounts, workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerOpenCodeUpdateRoutes(app, {
-    service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager, supervision),
+    service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager, loginStart),
     logger: apiLogger,
   })
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })

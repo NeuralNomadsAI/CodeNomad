@@ -12,7 +12,8 @@ import { SettingsReadError } from "../../settings/yaml-doc-store"
 interface RouteDeps {
   settings: SettingsService
   logger: Logger
-  publishSupervisionTarget?: () => Promise<void>
+  /** An installed login start follows an explicit executable change; its failure never refuses the save. */
+  refreshLoginStart?: () => Promise<void>
 }
 
 const ValidateBinarySchema = z.object({
@@ -53,6 +54,10 @@ export function enforceSpeechCredentialPairing(body: unknown, currentSpeech?: un
   return patch
 }
 
+async function refreshLoginStart(deps: RouteDeps) {
+  await deps.refreshLoginStart?.().catch(error => deps.logger.warn?.({ err: error }, "Failed to update the OpenCode login start"))
+}
+
 export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
   // Full-document access
   app.get("/api/storage/config", async () => sanitizeConfigDoc(deps.settings.getDoc("config")))
@@ -70,7 +75,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
       }
       const saved = deps.settings.mergePatchDoc("config", body)
       if (body && typeof body === "object" && "server" in body && body.server && typeof body.server === "object"
-        && "opencodeBinary" in body.server) await deps.publishSupervisionTarget?.()
+        && "opencodeBinary" in body.server) await refreshLoginStart(deps)
       return sanitizeConfigDoc(saved)
     } catch (error) {
       reply.code(400)
@@ -108,7 +113,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
         : request.body ?? {}
       const saved = deps.settings.mergePatchOwner("config", request.params.owner, processed)
       if (request.params.owner === "server" && processed && typeof processed === "object" && "opencodeBinary" in processed)
-        await deps.publishSupervisionTarget?.()
+        await refreshLoginStart(deps)
       return sanitizeConfigOwner(request.params.owner, saved)
     } catch (error) {
       reply.code(error instanceof MissionPreferenceConflictError ? 409 : error instanceof SettingsReadError ? 503 : 400)

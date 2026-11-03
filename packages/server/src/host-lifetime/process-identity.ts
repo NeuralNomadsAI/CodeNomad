@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process"
 import { readFile } from "node:fs/promises"
 import path from "node:path"
-import { lookupMacosProcess } from "./service-supervision-macos-native"
+import { lookupMacosProcess } from "./process-identity-macos"
 import { validateOwner, type Owner } from "./protocol"
 
 export type ProcessState = { state: "live"; startIdentity: string } | { state: "dead" | "unknown" }

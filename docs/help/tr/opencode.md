@@ -31,17 +31,17 @@ Windows'ta seçilen bir WSL yürütülebilir dosyası, seçilen dağıtımın i�
 
 OpenCode, küresel hizmet kaydına, oturumlarına, mesajlarına ve veritabanına sahiptir. CodeNomad, pencere veya proje başına özel bir OpenCode veritabanı oluşturmaz. Proje sekmesini kapatmak projeyi CodeNomad'de kapatır; oturumlar OpenCode'da devam eder ve projeyi yeniden açtığınızda yeniden görünür. CodeNomad yerel Location bağlamlarını hiçbir zaman kaldırmaz. Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek proje bağlantılarını geri yükleme için korur; ne bu eylemler ne de arka ucun kapanması paylaşılan arka plan programını durdurur. Bkz. [Projeler](projects.md).
 
-## OpenCode'u çalışır tut {#service-supervision}
+## Oturum açılışında OpenCode'u başlat {#service-supervision}
 
-Windows'ta gözetim ve kurtarma, terminal penceresi açmadan arka planda çalışır. CodeNomad güncellemeleri kayıtlı seçiminizi ve çalışan OpenCode hizmetini korur; güncellenen görev eylemleri sonraki başlatmalarda uygulanır.
+**Ayarlar → OpenCode** içindeki **Oturum açılışında OpenCode'u başlat**, oturum açtığınızda işletim sisteminin OpenCode hizmetini arka planda başlatmasını sağlar; CodeNomad kapalıyken de çalışır. Siz açana kadar kapalı kalır, bir sonraki oturum açılışınızda etkinleşir ve CodeNomad sunucusunu çalıştıran bilgisayardaki hesabınız için geçerlidir. **OpenCode Binary** kartında seçilen yürütülebilir dosyayı başlatır; başka bir yerel yürütülebilir dosya seçmek onu günceller, aksi halde öncekini başlatmaya devam eder.
 
-**Ayarlar → OpenCode** içindeki **OpenCode'u çalışır tut**, yürütme sunucusuna işletim sistemi gözetimi kurar; bu hizmeti kullanan tüm CodeNomad profillerinde paylaşılır. CodeNomad kapalıyken de çalışır ve siz açana kadar kapalı kalır.
+| Sistem | OpenCode'u ne başlatır | Çökmeden sonra |
+| --- | --- | --- |
+| Windows | Hesabınız için gizli bir zamanlanmış görev; parola veya yönetici hakkı gerekmez. Bir WSL yürütülebilir dosyası kendi dağıtımında başlar. | Yeniden başlatılmaz. |
+| macOS | Bir LaunchAgent. | macOS yeniden başlatır. |
+| Linux | Oturum açılışında başlayan bir systemd kullanıcı hizmeti; linger etkinleştirilmez. | systemd yeniden başlatır. |
 
-Kapatmak gözetimi kaldırır; OpenCode çalışmaya devam eder ancak yeniden başlatılmaz. Kalıcı durdurma için önce bunu kapatın, sonra OpenCode'u açıkça durdurun. Gözetim açıkken `opencode service stop` sonrasında yeniden başlatılır.
-
-**Çalışıyor · gözetim etkin**, etkin bir sistem gözetmeni ve sağlıklı OpenCode hizmeti gerektirir. **Kurulu · hizmet başlatılıyor**, **Gözetim kuruluyor veya kaldırılıyor…** ve **Gözetim başarısız** farklı durumları belirtir. Yalnızca hizmetin yanıt vermesi gözetimi doğrulamaz. Biliniyorsa neden, son deneme, gözetmen yeniden denemesi ve sistem kurtarma güvenlik denetimi gösterilir. **Gözetim durumunu denetle** yalnızca okur; **Gözetimi yeniden dene** istenen kurulumu açıkça onarır. Onaylanmamış işlem özgün isteği korur; **Özgün işlemi yeniden dene** yalnızca aynı işlemi yeniden gönderir. Değişen ayar sürümü üzerine yazılmak yerine inceleme için yenilenir.
-
-Windows, macOS ve WSL oturum açıldıktan sonra başlar. WSL seçili dağıtım için localhost yönlendirmesi gerektirir. Yerel Linux'ta linger, **etkin tüm kullanıcı hizmetlerini** oturum açılmadan başlatır ve oturum kapandıktan sonra çalışır tutar. Kapatılırken linger yalnızca CodeNomad etkinleştirmişse ve başka gözetim gerektirmiyorsa geri alınır; kişisel ayarlar korunur. Kullanıcı oturumu açık değilken linger ayarını geri almak gözetimden bırakılan OpenCode süreçlerini durdurabilecekse geri alma ertelenir ve **Gözetimi yeniden dene** ile görünür kalır. Bir kullanıcı oturumu açıldığında veya gözetimden bırakılan OpenCode süreçleri sonlandığında ve güvenli geri alma mümkün olduğunda yeniden deneyin. Linux izin isterse yürütme sunucusunda izin verip yeniden deneyin; istenen tercih kayıtlı kalır. Uyku ve hazırda bekletmeyi işletim sistemi yönetir. Kullanılamayan veya desteklenmeyen sunucularda açıklamalı devre dışı kontrol gösterilir.
+Kapatmak yalnızca o görevi, LaunchAgent'ı veya hizmeti kaldırır; çalışan bir OpenCode çalışmaya devam eder. Ayar değiştirilemezse altında bir hata görünür: betik sarmalayıcı yerine yerel OpenCode programını seçin ya da sistemin görev zamanlayıcısını veya kullanıcı hizmetlerini denetleyin, ardından yeniden deneyin. CodeNomad sunucusu WSL içinde veya oturum açılışında başlatma olmayan başka bir sistemde çalıştığında **Bu sistemde kullanılamaz.** görünür.
 
 ## Güncelleme, yeniden başlatma veya yeniden yükleme {#maintenance}
 
