@@ -123,8 +123,8 @@ describe("integrations route", () => {
     const { app, calls } = harness({ snapshot: () => snapshot })
     const items = (await app.inject({ method: "GET", url: "/api/workspaces/w1/integrations?directory=%2Fwork" })).json().integrations
     for (const item of items.slice(0, 2)) {
-      assert.deepEqual([item.ambiguous, item.plugin, item.configuredSources, item.state, item.configured],
-        [true, { declared: false }, [], "non-conforming", true], item.id)
+      assert.deepEqual([item.ambiguous, item.plugin, item.configuredSources, item.scopes, item.state, item.configured],
+        [true, { declared: false }, [], [], "non-conforming", true], item.id)
       assert.equal("version" in item, false, item.id)
     }
     assert.equal(calls.length, 0)

@@ -56,6 +56,7 @@ describe("integration recognition", () => {
     assert.deepEqual(two.slice(0, 2).map(recognition => recognition.ambiguous), [true, true])
     const other = recognizeIntegrations(catalog, pluginSnapshot({ sources: [source("@neuralnomads/opencode-mail", { pluginId: "neuralnomads.other" })] }))
     assert.equal(other[2]!.ambiguous, true)
+    assert.deepEqual([other[2]!.sources, other[2]!.runtime, other[2]!.scopes], [[], undefined, []], "a source loaded under a foreign ID stays unattributed")
   })
 
   it("recognises a disabled plugin by its normalized rule only, never by an enabling or raw `-id` selector", () => {

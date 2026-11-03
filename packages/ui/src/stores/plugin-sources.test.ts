@@ -116,6 +116,19 @@ describe("plugin sources store", () => {
     assert.equal(store.installation("instance", location, fixture({ declared: true })), "unconfirmed")
   })
 
+  it("never lets failed reservations crowd out a later confirmed hint", async () => {
+    const options = { failAdd: false, install: (_resolve: unknown, reject: (error: unknown) => void) => reject(new Error("lost")) }
+    const { store } = harness(options)
+    // A confirmed hint first, then as many failed reservations as the tracker holds.
+    await store.add("instance", location, "global", "first-plugin")
+    options.failAdd = true
+    for (let index = 0; index < 100; index += 1) {
+      await assert.rejects(store.installIntegration("instance", location, "fixture", "global"))
+      await assert.rejects(store.add("instance", location, "global", `plugin-${index}`))
+    }
+    assert.equal(store.state("instance", location, "first-plugin"), "pending", "failed reservations are consumed, never retained")
+  })
+
   it("drops an install hint when its source is removed or its instance stops", async () => {
     const { store } = harness()
     await store.installIntegration("instance", location, "fixture", "global")

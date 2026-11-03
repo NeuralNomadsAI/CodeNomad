@@ -101,6 +101,8 @@ export function recognizeIntegrations(catalog: IntegrationCatalog, snapshot: Plu
     recognition.runtime = undefined
     recognition.sources = recognition.sources.filter(source => !shared(source)
       && (source.pluginId === undefined || source.pluginId === recognition.entry.plugin))
+    const rules = recognition.ways.includes("plugin") ? snapshot.configured.rules.filter(rule => rule.selector === recognition.entry.plugin) : []
+    recognition.scopes = [...new Set([...recognition.sources, ...rules].map(item => item.scope))]
   }
   return recognitions
 }
