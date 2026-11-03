@@ -8,8 +8,9 @@ import { readLocationRef, sameLocation } from "../opencode/compatibility/locatio
 import type { PanelExtensionStore } from "./store"
 import type { BundlesActions, BundlesAction, BundlesHostContext } from "./bundles-actions"
 import { BundlesLifecycle, BundlesStalePlanError, type BundlesMount, type BundlesAck, type BundlesConfirmation } from "./bundles-lifecycle"
-import type { BundlesChange, BundlesMountInput, BundlesManageInput, BundlesControlInput } from "./bundles-contract"
+import type { BundlesChange, BundlesMountInput, BundlesManageInput, BundlesControlInput, BundlesDetachResult } from "./bundles-contract"
 import type { IntegrationCatalogSource } from "../opencode/integrations/catalog"
+import { NativeMutationUncertainError } from "../opencode/native-mutation-authority"
 import { isIntegrationDocsUrl } from "./bundles-docs"
 
 export type BundlesPrivateEvent = { mountID: string; view: BundlesConfirmation | null } | { mountID: string; change: BundlesChange }
@@ -18,7 +19,7 @@ export interface BundlesTransportDeps {
   store: Pick<PanelExtensionStore, "captureReadAuthority">
   catalog: Pick<IntegrationCatalogSource, "read">
   workspaceManager: Pick<WorkspaceManager, "getSharedServiceConnection" | "ownsLocation">
-  actions: Pick<BundlesActions, "prepare" | "accepts">
+  actions: Pick<BundlesActions, "prepare" | "accepts" | "detach">
   eventBus: Pick<EventBus, "onEvent">
   lifecycle?: BundlesLifecycle
   readTimeoutMs?: number
@@ -30,6 +31,7 @@ interface Owner {
 interface Mounted {
   owner: Owner; context: BundlesHostContext; mount: BundlesMount; canManage: boolean; dispose(): void
   pending?: { requestID: string; afterAck(): void }
+  detaching?: boolean
 }
 const opaque = () => randomBytes(32).toString("hex")
 function refused(): never { throw new Error("Bundles request unavailable") }
@@ -209,7 +211,7 @@ export class BundlesTransport {
     return result.ack
   }
 
-  async control(request: FastifyRequest, extension: string, input: BundlesControlInput, signal: AbortSignal = AbortSignal.timeout(19_000)): Promise<{ ok: true }> {
+  async control(request: FastifyRequest, extension: string, input: BundlesControlInput, signal: AbortSignal = AbortSignal.timeout(19_000)): Promise<{ ok: true } | BundlesDetachResult> {
     const mounted = this.ownedMount(request, extension, input, input.command === "confirm")
     signal.throwIfAborted()
     // Disposal removes authority; navigation must remain able to do it after native/consent staleness.
@@ -220,6 +222,7 @@ export class BundlesTransport {
       return { ok: true }
     }
     this.assertMounted(mounted)
+    if (input.command === "detach") return this.detach(mounted, extension, input.integration, signal)
     switch (input.command) {
       case "start": {
         if (mounted.pending?.requestID !== input.requestID) refused()
@@ -230,6 +233,26 @@ export class BundlesTransport {
       case "userRemount": this.lifecycle.resetCutoffForUserRemount(extension); mounted.dispose(); break
     }
     return { ok: true }
+  }
+
+  /** D24 local detach: the parent's own banner click is the consent, so this lane has no confirmation plan. */
+  private async detach(mounted: Mounted, extension: string, integration: string, signal: AbortSignal): Promise<BundlesDetachResult> {
+    if (!this.lifecycle.budget.take(extension, "manage") || this.lifecycle.cutOff(extension) || this.lifecycle.exclusive
+      || mounted.detaching) return { outcome: "busy" }
+    mounted.detaching = true
+    let submitted = false
+    const authority = mounted.context.authority
+    const context: BundlesHostContext = { ...mounted.context, authority: { signal: authority.signal,
+      assertCurrent: () => authority.assertCurrent(), revalidate: () => authority.revalidate(),
+      onSubmitted: () => { submitted = true; authority.onSubmitted?.() } } }
+    try {
+      const { outcome } = await this.deps.actions.detach(context, integration, AbortSignal.any([signal, mounted.mount.signal]))
+      return { outcome }
+    } catch (error) {
+      // Never report `none` under doubt; without submission nothing was transmitted.
+      if (submitted || error instanceof NativeMutationUncertainError) return { outcome: "unknown" }
+      throw error
+    } finally { mounted.detaching = false }
   }
 
   async openDocs(request: FastifyRequest, extension: string, input: { owner: string; mountID: string; integration: string }, signal: AbortSignal) {

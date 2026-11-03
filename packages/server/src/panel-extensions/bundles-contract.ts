@@ -42,10 +42,15 @@ export const bundlesControlInputSchema = z.discriminatedUnion("command", [
   z.object({ ...mounted, command: z.literal("cancel"), planID: capability }).strict(),
   z.object({ ...mounted, command: z.literal("dispose") }).strict(),
   z.object({ ...mounted, command: z.literal("userRemount") }).strict(),
+  /** D24 host-banner click only; the author port has no route to this command. */
+  z.object({ ...mounted, command: z.literal("detach"), integration }).strict(),
 ])
+/** `unknown` covers every post-submission doubt; `busy` transmits nothing. */
+export const bundlesDetachResultSchema = z.object({ outcome: z.enum(["detached", "none", "unknown", "busy"]) }).strict()
 export type BundlesMountInput = z.infer<typeof bundlesMountInputSchema>
 export type BundlesManageInput = z.infer<typeof bundlesManageInputSchema>
 export type BundlesControlInput = z.infer<typeof bundlesControlInputSchema>
+export type BundlesDetachResult = z.infer<typeof bundlesDetachResultSchema>
 
 export const bundlesCatalogResultSchema = catalogState.extend({ integrations: z.array(z.object({
   id: entry.id, displayName: entry.displayName, family: entry.family, summary: entry.summary,

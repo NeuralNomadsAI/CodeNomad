@@ -5,14 +5,16 @@ import { EventBus } from "../events/bus"
 import { BundlesTransport } from "./bundles-transport"
 import { BundlesLifecycle, type BundlesConfirmation } from "./bundles-lifecycle"
 import { catalogEntry, catalogOf } from "../opencode/integrations/catalog-fixture"
+import { NativeMutationUncertainError } from "../opencode/native-mutation-authority"
 
 const extension = "test.bundles", digest = "a".repeat(64)
 const request = (session = "human") => ({ headers: { cookie: session } }) as FastifyRequest
 const turn = () => new Promise<void>(resolve => setImmediate(resolve))
 function harness() {
   let principal: string | null = "human", directory = "/project", owned = true, current = true, at = 0
-  let prepared = 0, dispatched = 0, reads = 0, disposed = 0
-  let stalled: Promise<void> | undefined
+  let prepared = 0, dispatched = 0, reads = 0, disposed = 0, detaches = 0, transmitted = 0
+  let stalled: Promise<void> | undefined, detachWait: Promise<void> | undefined
+  let detachFailure: "before" | "after" | "uncertain" | undefined, detachOutcome: "detached" | "none" = "detached"
   const leases: AbortController[] = [], bus = new EventBus()
   const connection = { assertCurrent() { if (!current) throw new Error("secret connection") }, client: { session: {
     async get() { reads++; await stalled; return { id: "ses_test", title: "Conversation", location: { directory } } },
@@ -32,6 +34,14 @@ function harness() {
       return { target, display: { action: "install", integration: "Blender", scope: "global", version: "1", conversation: "Conversation" },
         async readTarget() { await context.authority.revalidate(); return target },
         async dispatch(authority, submitted) { outer.throwIfAborted(); await authority.revalidate(); authority.assertCurrent(); dispatched++; submitted() } }
+    }, async detach(context, integration, outer) {
+      detaches++; assert.equal(integration, "blender"); assert.equal(context.sessionID, "ses_test")
+      await detachWait; outer.throwIfAborted(); await context.authority.revalidate(); context.authority.assertCurrent()
+      if (detachFailure === "before") throw new Error("secret refusal")
+      context.authority.onSubmitted?.(); transmitted++
+      if (detachFailure === "after") throw new Error("secret lost response")
+      if (detachFailure === "uncertain") throw new NativeMutationUncertainError()
+      return { outcome: detachOutcome }
     } },
   })
   const frames: string[] = []
@@ -44,8 +54,13 @@ function harness() {
     { owner, digest, instanceId: "instance", sessionID: "ses_test" }, AbortSignal.timeout(1000))
   const manage = (owner: string, mountID: string) => transport.manage(request(), extension,
     { owner, mountID, method: "request", input: { action: "install", integration: "blender", scope: "global" } })
-  return { transport, bus, frames, leases, open, mount, manage, request,
-    state: () => ({ prepared, dispatched, reads, disposed }), advance(ms: number) { at += ms },
+  const detach = (owner: string, mountID: string, req = request()) => transport.control(req, extension,
+    { owner, mountID, command: "detach", integration: "blender" })
+  return { transport, bus, frames, leases, open, mount, manage, detach, request,
+    state: () => ({ prepared, dispatched, reads, disposed, detaches, transmitted }), advance(ms: number) { at += ms },
+    setDetach(options: { wait?: Promise<void>; failure?: typeof detachFailure; outcome?: typeof detachOutcome }) {
+      detachWait = options.wait; detachFailure = options.failure; detachOutcome = options.outcome ?? "detached"
+    },
     set(options: { principal?: string | null; directory?: string; owned?: boolean; current?: boolean; stalled?: Promise<void> }) {
       if ("principal" in options) principal = options.principal!
       if (options.directory !== undefined) directory = options.directory
@@ -217,4 +232,106 @@ test("expired auth releases its owner and a repeated old close cannot revoke a r
     assert.equal((await h.manage(owner, next.mountID)).outcome, "confirming")
     close()
   } finally { h.transport.dispose() }
+})
+
+async function cancelTimes(h: ReturnType<typeof harness>, owner: string, mounted: { mountID: string }, times: number) {
+  for (let index = 0; index < times; index++) {
+    const ack = await h.manage(owner, mounted.mountID)
+    assert.equal(ack.outcome, "confirming")
+    if (ack.outcome !== "confirming") return
+    await h.transport.control(request(), extension, { owner, ...mounted, command: "start", requestID: ack.requestID })
+    await turn()
+    const views = h.frames.map(frame => JSON.parse(frame.split("data: ")[1])).filter(event => event.view)
+    await h.transport.control(request(), extension, { owner, ...mounted, command: "cancel", planID: views.at(-1).view.planID })
+  }
+}
+
+test("host detach control is owner-forced, transmits once per click and debits the manage budget; the author lane transmits nothing", async () => {
+  const h = harness()
+  try {
+    const a = h.open(), b = h.open(), mounted = await h.mount(a.owner)
+    await assert.rejects(h.detach(b.owner, mounted.mountID))
+    await assert.rejects(h.detach(a.owner, mounted.mountID, request("other")))
+    await assert.rejects(h.transport.control(request(), "other.extension", { owner: a.owner, ...mounted, command: "detach", integration: "blender" }))
+    for (let index = 0; index < 3; index++) {
+      assert.deepEqual(await h.transport.manage(request(), extension, { owner: a.owner, ...mounted, method: "detach", input: { integration: "blender" } }), { outcome: "invalid" })
+    }
+    assert.equal(h.state().detaches, 0, "author detach requests never reach the native seam")
+    assert.deepEqual(await h.detach(a.owner, mounted.mountID), { outcome: "detached" })
+    assert.deepEqual(h.state(), { ...h.state(), detaches: 1, transmitted: 1, prepared: 0 })
+    assert.equal(a.frames.length, 1, "no confirmation view or private event")
+    // Three author refusals and one host detach: six manage attempts remain this minute.
+    for (let index = 0; index < 6; index++) assert(h.transport.lifecycle.budget.take(extension, "manage"))
+    assert.deepEqual(await h.detach(a.owner, mounted.mountID), { outcome: "busy" })
+    assert.equal(h.state().transmitted, 1)
+  } finally { h.transport.dispose() }
+})
+
+test("active cut-off and an open confirmation answer busy with zero transmission and no control", async () => {
+  const h = harness()
+  try {
+    const a = h.open(), mounted = await h.mount(a.owner)
+    const ack = await h.manage(a.owner, mounted.mountID)
+    assert.equal(ack.outcome, "confirming")
+    assert.deepEqual(await h.detach(a.owner, mounted.mountID), { outcome: "busy" }, "one plan holds the shared slot")
+    if (ack.outcome === "confirming") await h.transport.control(request(), extension, { owner: a.owner, ...mounted, command: "start", requestID: ack.requestID })
+    await turn()
+    const view = a.frames.map(frame => JSON.parse(frame.split("data: ")[1])).find(event => event.view).view
+    await h.transport.control(request(), extension, { owner: a.owner, ...mounted, command: "cancel", planID: view.planID })
+    assert.equal(h.transport.lifecycle.cutOff(extension), false)
+    await cancelTimes(h, a.owner, mounted, 2)
+    assert.equal(h.transport.lifecycle.cutOff(extension), true)
+    const views = a.frames.length
+    assert.deepEqual(await h.detach(a.owner, mounted.mountID), { outcome: "busy" })
+    assert.equal(a.frames.length, views); assert.equal(h.state().detaches, 0)
+    h.advance(300_001)
+    assert.equal(h.transport.lifecycle.cutOff(extension), false)
+    assert.deepEqual(await h.detach(a.owner, mounted.mountID), { outcome: "detached" })
+  } finally { h.transport.dispose() }
+})
+
+test("a second concurrent detach is busy; the per-mount flag releases in finally without automatic retry", async () => {
+  const h = harness()
+  try {
+    const a = h.open(), mounted = await h.mount(a.owner)
+    let release!: () => void
+    h.setDetach({ wait: new Promise(resolve => { release = resolve }) })
+    const first = h.detach(a.owner, mounted.mountID)
+    await turn()
+    assert.deepEqual(await h.detach(a.owner, mounted.mountID), { outcome: "busy" })
+    release()
+    assert.deepEqual(await first, { outcome: "detached" })
+    assert.deepEqual([h.state().detaches, h.state().transmitted], [1, 1])
+    h.setDetach({ failure: "before" })
+    await assert.rejects(h.detach(a.owner, mounted.mountID))
+    assert.equal(h.state().transmitted, 1)
+    h.setDetach({ outcome: "none" })
+    assert.deepEqual(await h.detach(a.owner, mounted.mountID), { outcome: "none" }, "a refusal released the flag")
+    assert.deepEqual([h.state().detaches, h.state().transmitted], [3, 2])
+  } finally { h.transport.dispose() }
+})
+
+test("lost or uncertain submission answers unknown, never none; pre-submission refusal and closed sessions or Locations refuse", async () => {
+  for (const failure of ["after", "uncertain"] as const) {
+    const h = harness()
+    try {
+      const a = h.open(), mounted = await h.mount(a.owner)
+      h.setDetach({ failure })
+      assert.deepEqual(await h.detach(a.owner, mounted.mountID), { outcome: "unknown" }, failure)
+      assert.equal(h.state().transmitted, 1)
+    } finally { h.transport.dispose() }
+  }
+  for (const change of ["location", "deleted", "ownership", "consent"] as const) {
+    const h = harness()
+    try {
+      const a = h.open(), mounted = await h.mount(a.owner)
+      if (change === "location") h.set({ directory: "/another-owned-project" })
+      else if (change === "ownership") h.set({ owned: false })
+      else if (change === "consent") h.leases[0].abort()
+      else h.bus.publish({ type: "instance.event", instanceId: "instance", event: { type: "session.deleted", data: { sessionID: "ses_test" } } } as never)
+      await assert.rejects(h.detach(a.owner, mounted.mountID), change)
+      assert.equal(h.state().transmitted, 0, change)
+      await assert.rejects(h.detach(a.owner, mounted.mountID), `${change}: the mount stays revoked`)
+    } finally { h.transport.dispose() }
+  }
 })

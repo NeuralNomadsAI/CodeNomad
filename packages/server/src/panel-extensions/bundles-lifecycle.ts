@@ -71,11 +71,17 @@ export class BundlesLifecycle {
   /** Only an explicit trusted user remount calls this; mounting itself preserves all budgets and strikes. */
   resetCutoffForUserRemount(extension: string): void { this.strikes.delete(extension) }
 
+  /** Repeated-cancellation cutoff; trusted direct controls answer `busy` while it lasts. */
+  cutOff(extension: string): boolean { return (this.strikes.get(extension)?.until ?? 0) > this.time.now() }
+
+  /** One confirmation plan holds the shared slot. */
+  get exclusive(): boolean { return this.active !== undefined }
+
   /** Synchronous ACK reservation. Call afterAck only after posting the ACK to the captured port. */
   request(owner: BundlesMount, prepare: (signal: AbortSignal) => Promise<BundlesPrepared>): { ack: BundlesAck; afterAck(): void } {
     const refused = (outcome: "busy" | "invalid") => ({ ack: { outcome } as BundlesAck, afterAck() {} })
     try { owner.signal.throwIfAborted(); owner.authority.assertCurrent() } catch { return refused("invalid") }
-    if (!this.budget.take(owner.extension, "manage") || this.active || (this.strikes.get(owner.extension)?.until ?? 0) > this.time.now()) return refused("busy")
+    if (!this.budget.take(owner.extension, "manage") || this.active || this.cutOff(owner.extension)) return refused("busy")
     const pending: Pending = { owner, requestID: opaque(), planID: opaque(), deadline: this.time.now() + BUNDLES_PLAN_MS,
       phase: "reserved", controller: new AbortController(), removeAbort() {} }
     const revoke = () => this.finish(pending, "failed")

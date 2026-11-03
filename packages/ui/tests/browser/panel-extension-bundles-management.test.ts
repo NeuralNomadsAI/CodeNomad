@@ -926,3 +926,81 @@ test("reconnected automatic mounts preserve cutoff; trusted reload on a disposed
     } finally { await page.close() }
   }
 })
+
+async function attachedBanner(page: Page) {
+  backend.state.binding.set("ses_work", true)
+  await frame(page).locator("body").evaluate(() => (window as any).readState())
+  const banner = page.getByRole("group", { name: "Attached applications", exact: true })
+  await banner.getByText("Attached to Fixture window").waitFor()
+  return banner
+}
+const detachControls = () => backend.requests.filter(request => request.body?.command === "detach")
+const detachHosts = () => backend.state.rpc.filter(method => method === "detachHost").length
+
+test("AC-C16 panel: repeated iframe-only detach requests transmit nothing; one host-banner activation is exactly one detachHost", async () => {
+  const { page, clean } = await open()
+  try {
+    const banner = await attachedBanner(page), button = banner.getByRole("button", { name: "Detach", exact: true })
+    for (let round = 0; round < 2; round++) {
+      assert.deepEqual(await frame(page).locator("body").evaluate(() => Promise.all([1, 2, 3].map(() => (window as any).call("detach", { integration: "fixture" })))),
+        Array(3).fill({ outcome: "invalid" }))
+    }
+    await frame(page).locator("body").evaluate(() => (window as any).rawPort.postMessage({ type: "api4:request", id: 950, capability: "bundles",
+      method: "detach", input: { integration: "fixture", command: "detach", userActivation: true } }))
+    await page.waitForTimeout(100)
+    assert.equal(detachControls().length, 0); assert.equal(backend.state.detaches, 0); assert.equal(detachHosts(), 0)
+    assert.equal(await page.getByRole("dialog").count(), 0); assert.equal(await button.isEnabled(), true)
+    await button.dblclick()
+    await banner.waitFor({ state: "detached" })
+    assert.equal(detachControls().length, 1); assert.equal(backend.state.detaches, 1); assert.equal(detachHosts(), 1)
+    assert.deepEqual(backend.state.rpcInputs.filter(call => call.method === "detachHost").map(call => call.input), [{ sessionID: "ses_work" }])
+    assert.equal(backend.state.binding.get("ses_FOREIGN_SESSION_7ce0"), true, "another conversation keeps its binding")
+    assert.equal(await page.locator('[aria-live="polite"]').filter({ hasText: "Detached: Fixture window" }).count(), 1)
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("title")), "Bundles fixture", "focus returns to the frame")
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    await clean()
+  } finally { await page.close() }
+})
+
+test("lost host-detach response stays uncertain until an authoritative read, with no replay or optimistic success", async () => {
+  const { page, clean } = await open()
+  try {
+    const banner = await attachedBanner(page), button = banner.getByRole("button", { name: "Detach", exact: true })
+    backend.state.uncertain = true; backend.hold("state")
+    await button.click()
+    await banner.getByText("Binding unknown").waitFor()
+    assert.equal(await button.getAttribute("aria-disabled"), "true")
+    await button.evaluate(element => { (element as HTMLButtonElement).click(); (element as HTMLButtonElement).click() })
+    backend.observeRuntime(backend.state.runtime)
+    await page.waitForTimeout(400)
+    assert.equal(detachControls().length, 1); assert.equal(detachHosts(), 1)
+    assert.equal(await page.getByText("Detached: Fixture window").count(), 0)
+    backend.state.uncertain = false; backend.release("state")
+    await banner.waitFor({ state: "detached" })
+    assert.equal(detachControls().length, 1); assert.equal(detachHosts(), 1)
+    await clean()
+  } finally { backend.release("state"); await page.close() }
+})
+
+test("host banner info opens from the keyboard and closes with Escape; session change disposes it before any transmission", async () => {
+  const { page, clean } = await open()
+  try {
+    const banner = await attachedBanner(page)
+    assert.equal(await page.locator('.bundles-host-banner [role="status"]').getAttribute("aria-live"), "polite")
+    const info = banner.getByRole("img", { name: /^Detaches this conversation only\./ })
+    await banner.getByRole("button", { name: "Detach", exact: true }).focus()
+    await page.keyboard.press("Shift+Tab")
+    assert.equal(await info.evaluate(element => element === document.activeElement), true)
+    const tooltip = page.getByRole("tooltip").filter({ hasText: "Detaches this conversation only." })
+    await tooltip.waitFor()
+    await page.keyboard.press("Escape")
+    await tooltip.waitFor({ state: "hidden" })
+    assert.equal(await info.evaluate(element => element === document.activeElement), true)
+    await page.evaluate(() => (window as any).fixture.show("ses_other"))
+    await frame(page).locator("#ready").filter({ hasText: "ses_other" }).waitFor()
+    await banner.waitFor({ state: "detached" })
+    assert.equal(detachControls().length, 0); assert.equal(backend.state.detaches, 0); assert.equal(detachHosts(), 0)
+    assert.equal(backend.state.binding.get("ses_work"), true)
+    await clean()
+  } finally { await page.close() }
+})

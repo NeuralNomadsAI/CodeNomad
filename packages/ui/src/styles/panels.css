@@ -36,6 +36,7 @@
 @import "./panels/mission-preferences.css";
 @import "./panels/mission-cleanup.css";
 @import "./panels/panel-extensions.css";
+@import "./panels/bundles-host-banner.css";
 @import "./panels/control-hover.css";
 @import "./panels/git-history.css";
 @import "./panels/workspace-tree.css";

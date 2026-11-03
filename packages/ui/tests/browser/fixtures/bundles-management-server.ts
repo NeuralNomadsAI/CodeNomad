@@ -47,7 +47,7 @@ export async function bundlesManagementServer() {
   const file = path.join(global, "opencode.jsonc"), entry = catalogEntry("fixture"), spec = `${entry.package}@${entry.range}`
   const catalogEntries = [entry]
   const state = { current: true, owned: true, runtime: [] as any[], rpc: [] as string[], updates: [] as unknown[], packages: [] as unknown[],
-    metadata: {} as Record<string, unknown>, location: project, fail: false, prepares: 0, offset: 0, sessionLists: 0,
+    metadata: {} as Record<string, unknown>, location: project, fail: false, prepares: 0, detaches: 0, offset: 0, sessionLists: 0,
     catalogState: "fresh" as "fresh" | "stale" | "unavailable",
     host: { state: "absent", action: "install" } as Record<string, string>, nativeGeneration: 1,
     binding: new Map<string, boolean>(), rpcInputs: [] as Array<{ method: string; input: any }>, uncertain: false, holdTerminal: false,
@@ -69,6 +69,11 @@ export async function bundlesManagementServer() {
         if (state.uncertain) throw new Error("PRIVATE_TRANSPORT_LOST_AFTER_SUBMISSION")
       }
       if (method === "installHost") state.host = { state: "ok", partVersion: "0.1.0" }
+      if (method === "detachHost") {
+        const attached = state.binding.delete(input.sessionID)
+        if (state.uncertain) throw new Error("PRIVATE_TRANSPORT_LOST_AFTER_SUBMISSION")
+        return { output: { outcome: attached ? "detached" : "none" } }
+      }
       return { output: method === "status" ? { contract: 1, integration: { id: "fixture", version: "0.1.0", family: "native", spec: 0 },
          host: state.host, connection: { state: "available", offers: 1, attachedSessions: 6137 } }
         : method === "hosts" ? { offers: [{ offerID: "offer_fixture", label: state.offerLabel, document: state.offerDocument, protocol: "ok" }] }
@@ -101,7 +106,8 @@ export async function bundlesManagementServer() {
   }, clearTimeout(key) { const timer = timers.get(key as object); if (timer) clearTimeout(timer.native); timers.delete(key as object) } })
   const transport = new BundlesTransport({ eventBus: bus, store, workspaceManager: manager, lifecycle, catalog,
     auth: { getSessionFromRequest(req) { return req.headers.cookie?.includes("human=fixture") ? { username: "human", sessionId: "fixture" } : null } },
-    actions: { accepts: action => actions.accepts(action), prepare(...args) { state.prepares++; return actions.prepare(...args) } } })
+    actions: { accepts: action => actions.accepts(action), prepare(...args) { state.prepares++; return actions.prepare(...args) },
+      detach(...args) { state.detaches++; return actions.detach(...args) } } })
   app.addHook("onRequest", (request, reply, done) => {
     if (request.url.startsWith("/api/events")) {
       const write = reply.raw.write.bind(reply.raw)
@@ -140,7 +146,7 @@ export async function bundlesManagementServer() {
       catalogEntries.splice(0, catalogEntries.length, entry)
       entry.displayName = "OpenCode for fixture"
       state.offerLabel = "Fixture window"; state.offerDocument = "Scene.blend"; state.conversation = "Work"
-      state.rpc = []; state.rpcInputs = []; state.updates = []; state.packages = []; state.prepares = 0; state.sessionLists = 0
+      state.rpc = []; state.rpcInputs = []; state.updates = []; state.packages = []; state.prepares = 0; state.detaches = 0; state.sessionLists = 0
       state.metadata = { foreign: "FOREIGN_SESSION_7ce0" }; state.binding = new Map([["ses_FOREIGN_SESSION_7ce0", true]])
       state.runtime = installed ? [{ id: entry.plugin, source: { type: "package", target: spec, version: "0.1.0" }, features: {}, state: { status: "active" },
         privateToken: "FOREIGN_TOKEN_96aa" }] : []

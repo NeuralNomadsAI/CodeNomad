@@ -16,6 +16,7 @@ import { PluginPackages } from "../opencode/plugin-packages"
 import { NativeMutationUncertainError } from "../opencode/native-mutation-authority"
 import { BundlesTransport } from "./bundles-transport"
 import { EventBus } from "../events/bus"
+import { INTEGRATION_ATTACHMENT_METADATA_KEY } from "../integration-types"
 import { setTimeout as delay } from "node:timers/promises"
 
 function deferred() {
@@ -726,7 +727,7 @@ test("management attach completes under controlled session latency with bounded 
           try { await prepared.dispatch(...args) } catch (error) { failure = error; throw error }
           finally { elapsed = performance.now() - start; measuring = false; done.resolve() }
         } }
-    } },
+    }, detach: (...args) => f.actions.detach(...args) },
   })
   const request = {} as any, extension = "test.bundles"
   transport.openStream(request, {}, text => { const value = JSON.parse(text.split("data: ")[1]); frames.push(value); if (value.view) ready.resolve() })
@@ -1087,4 +1088,53 @@ test("reinstall lost writer reply remains uncertain after real submission and li
     assert.equal(adds, 1); assert.equal(writes, 1); assert.equal(confirmation.events.length, 1)
     assert.deepEqual(f.state.rpc, []); assert.deepEqual(f.state.updates, []); assert.deepEqual(f.state.packageUpdates, [])
   } finally { confirmation?.lifecycle.dispose(); await f.cleanup() }
+})
+
+async function detachTransport(f: Awaited<ReturnType<typeof fixture>>, clock: { now: number }) {
+  const lifecycle = new BundlesLifecycle({ now: () => clock.now, setTimeout: () => ({}), clearTimeout() {} })
+  const transport = new BundlesTransport({ lifecycle, eventBus: new EventBus(), workspaceManager: f.manager, catalog: f.catalog,
+    auth: { getSessionFromRequest: () => ({ sessionId: "human", username: "human" }) },
+    store: { async captureReadAuthority() { return { canManage: true, signal: f.abort.signal,
+      assertCurrent: () => f.abort.signal.throwIfAborted(), async revalidate() { f.abort.signal.throwIfAborted() }, dispose() {} } } },
+    actions: { accepts: action => f.actions.accepts(action), prepare: (...args) => f.actions.prepare(...args), detach: (...args) => f.actions.detach(...args) } })
+  const request = {} as any, frames: any[] = []
+  transport.openStream(request, {}, text => frames.push(JSON.parse(text.split("data: ")[1])))
+  const owner = frames[0].owner
+  const mounted = { owner, ...await transport.mount(request, "test.bundles",
+    { owner, digest: "a".repeat(64), instanceId: "w", sessionID: "ses_fixture" }, AbortSignal.timeout(1000)) }
+  return { transport, lifecycle, frames, detach: () => transport.control(request, "test.bundles", { ...mounted, command: "detach", integration: "fixture" }) }
+}
+
+test("host detach control drives the real builder: guards before IO, one captured-session detachHost, Q8 wiped and other keys kept", async () => {
+  const f = await fixture(true), clock = { now: 0 }
+  const { transport, lifecycle, frames, detach } = await detachTransport(f, clock)
+  try {
+    f.state.metadata = { unrelated: true, [INTEGRATION_ATTACHMENT_METADATA_KEY]: { integration: "fixture", label: "Fixture window", attachedAt: 1 } }
+    for (let index = 0; index < 10; index++) lifecycle.budget.take("test.bundles", "manage")
+    f.state.rpc.length = 0
+    assert.deepEqual(await detach(), { outcome: "busy" })
+    assert.deepEqual(f.state.rpc, [], "budget refusal precedes every native read"); assert.deepEqual(f.state.updates, [])
+    clock.now = 60_001
+    assert.deepEqual(await detach(), { outcome: "detached" })
+    assert.deepEqual(f.state.rpc.filter(method => ["detachHost", "attachHost", "installHost"].includes(method)), ["detachHost"])
+    assert.deepEqual((f.state.rpcInputs as any[]).filter(call => call.method === "detachHost").map(call => call.input), [{ sessionID: "ses_fixture" }])
+    assert.equal(f.state.updates.length, 1); assert.deepEqual(f.state.metadata, { unrelated: true })
+    assert.equal(frames.length, 1, "no confirmation view or terminal event")
+    f.state.session = "ses_other"
+    await assert.rejects(detach())
+    assert.equal(f.state.rpc.filter(method => method === "detachHost").length, 1)
+  } finally { transport.dispose(); await f.cleanup() }
+})
+
+test("host detach revoked after real native submission answers unknown and skips the Q8 continuation", async () => {
+  const f = await fixture(true)
+  const { transport, detach } = await detachTransport(f, { now: 0 })
+  try {
+    f.state.metadata = { unrelated: true, [INTEGRATION_ATTACHMENT_METADATA_KEY]: { integration: "fixture", label: "Fixture window", attachedAt: 1 } }
+    const before = structuredClone(f.state.metadata)
+    f.state.onRpc = method => { if (method === "detachHost") f.abort.abort() }
+    assert.deepEqual(await detach(), { outcome: "unknown" })
+    assert.equal(f.state.rpc.filter(method => method === "detachHost").length, 1)
+    assert.deepEqual(f.state.updates, []); assert.deepEqual(f.state.metadata, before)
+  } finally { transport.dispose(); await f.cleanup() }
 })

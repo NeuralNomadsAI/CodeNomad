@@ -9,6 +9,7 @@ import { useApi4Channel, type Api4Host } from "./api4-channel"
 import { resolveCssColor } from "../../lib/css-color"
 import { createBundlesManagement } from "./bundles-management"
 import { BundlesConfirmationView } from "./bundles-confirmation"
+import { BundlesHostBanner } from "./bundles-host-banner"
 import type { BundlesConfirmation } from "../../lib/bundles-private-events"
 
 export function ExtensionPanel(props: {
@@ -86,7 +87,10 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
     }
     frame?.contentWindow?.postMessage({ type: "codenomad:init" }, "*", [channel.port2])
   }
+  const detaches = management && manifest.apiVersion === 4 && manifest.permissions.includes("bundles.manage") ? management : undefined
   return <div class="panel-extension-surface">
+    <Show when={detaches}>{host => <BundlesHostBanner controls={host().hostControls()} notice={host().hostNotice()}
+      detach={integration => void host().detach(integration)} restoreFocus={() => { if (frame?.isConnected) frame.focus() }} />}</Show>
     <Show when={confirmation()} keyed>{view => <BundlesConfirmationView view={view}
       displayed={management!.displayed} confirm={management!.confirm} cancel={management!.cancel} />}</Show>
     <Show when={failed()}><p role="status">{t("panelExtensions.error")}</p></Show>

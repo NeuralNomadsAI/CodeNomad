@@ -256,3 +256,18 @@ test("checked admission unwinds caller cancellation while ignored late native re
   assert.equal(f.dispatched, 0); assert.equal(f.events.length, 1)
   assert.equal((f.events[0] as any).outcome, "failed")
 })
+
+test("cutOff and exclusive getters track strikes, expiry, explicit remount reset and the shared plan slot per extension", async () => {
+  const f = fixture(), other = fixture(f.time, f.lifecycle, "test.other")
+  assert.equal(f.lifecycle.cutOff("test.one"), false); assert.equal(f.lifecycle.exclusive, false)
+  for (let index = 0; index < 3; index++) {
+    await f.open(); assert.equal(f.lifecycle.exclusive, true)
+    f.lifecycle.cancel(f.owner, f.view!.planID); assert.equal(f.lifecycle.exclusive, false)
+  }
+  assert.equal(f.lifecycle.cutOff("test.one"), true); assert.equal(other.lifecycle.cutOff("test.other"), false)
+  assert.equal(f.request().ack.outcome, "busy")
+  f.time.advance(300_000); assert.equal(f.lifecycle.cutOff("test.one"), false)
+  for (let index = 0; index < 3; index++) { await f.open(); f.lifecycle.cancel(f.owner, f.view!.planID) }
+  assert.equal(f.lifecycle.cutOff("test.one"), true)
+  f.lifecycle.resetCutoffForUserRemount("test.one"); assert.equal(f.lifecycle.cutOff("test.one"), false)
+})

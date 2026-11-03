@@ -18,7 +18,7 @@ async function harness(options: { readOnly?: boolean; backpressure?: boolean; cl
   let prepared = 0, disposed = 0, leaseLive = true, nativeLive = true, owned = true, directory = "/private/project", at = 0
   let refusePrepare = false, staleTarget = false, refuseDispatch = false, replacement = false, unregistered = 0, unregisteredConnection = 0
   let stall: Promise<void> | undefined, dispatchWait: Promise<void> | undefined, prepareWait: Promise<void> | undefined
-  const dispatched: BundlesAction[] = [], preparedActions: BundlesAction[] = [], leases: AbortController[] = []
+  const dispatched: BundlesAction[] = [], preparedActions: BundlesAction[] = [], leases: AbortController[] = [], detached: string[] = []
   let nativeReads = 0
   const entry = catalogEntry("blender")
   const catalog = { snapshot: () => ({ state: "fresh" as const, catalog: catalogOf(entry) }) }
@@ -56,6 +56,9 @@ async function harness(options: { readOnly?: boolean; backpressure?: boolean; cl
           if (refuseDispatch) throw new Error("secret-file-and-token")
           dispatched.push(action); submitted()
         } }
+    }, async detach(context, integration) {
+      await context.authority.revalidate(); context.authority.onSubmitted?.(); detached.push(integration)
+      return { outcome: "detached" as const }
     } },
   })
   registerRequestLogging(app, logger)
@@ -95,7 +98,7 @@ async function harness(options: { readOnly?: boolean; backpressure?: boolean; cl
     return { ...lane, owner, response }
   }
   const post = (method: string, payload: Record<string, unknown>, cookie = "human") => app.inject({ method: "POST", url: `${base}/${method}`, headers: { cookie }, payload })
-  return { app, bus, transport, records, open, post, leases, dispatched, preparedActions, entry,
+  return { app, bus, transport, records, open, post, leases, dispatched, preparedActions, entry, detached,
     setCatalog(state: typeof catalogState, wait?: Promise<void>) { catalogState = state; catalogWait = wait },
     state: () => ({ prepared, disposed, nativeReads, unregistered, unregisteredConnection }), advance(ms: number) { at += ms },
     setLive(value: boolean) { leaseLive = value }, setStall(value: Promise<void> | undefined) { stall = value },
@@ -142,11 +145,12 @@ test("read-only authenticated docs mounts resolve fresh/stale catalogue URLs, ne
           : method === "attach" ? { integration: "blender", offerID: "offer_fixture" } : { integration: "blender" }
       assert.equal((await h.post("manage", { owner: a.owner, mountID, method, input: nested })).statusCode, 503)
     }
-    for (const command of ["start", "displayed", "confirm", "cancel", "userRemount"]) {
-      const extra = command === "start" ? { requestID: "a".repeat(32) } : command === "userRemount" ? {} : { planID: "a".repeat(32) }
+    for (const command of ["start", "displayed", "confirm", "cancel", "userRemount", "detach"]) {
+      const extra = command === "start" ? { requestID: "a".repeat(32) } : command === "userRemount" ? {}
+        : command === "detach" ? { integration: "blender" } : { planID: "a".repeat(32) }
       assert.equal((await h.post("control", { owner: a.owner, mountID, command, ...extra })).statusCode, 503)
     }
-    assert.equal(h.state().prepared, 0); assert.deepEqual(h.dispatched, [])
+    assert.equal(h.state().prepared, 0); assert.deepEqual(h.dispatched, []); assert.deepEqual(h.detached, [])
     assert(!JSON.stringify(h.records).includes("PRIVATE_DOCS_SENTINEL")); assert(!JSON.stringify(h.records).includes(a.owner))
     assert(h.records.some(record => JSON.stringify(record).includes(`${base.replace(extension, ":id")}/openDocs`)))
     assert.deepEqual((await h.post("control", { owner: a.owner, mountID, command: "dispose" })).json(), { ok: true })
@@ -554,4 +558,29 @@ test("checked HTTP confirmation acknowledges fresh admission without waiting nat
     ])
     a.close(); await a.response
   } finally { release?.(); await h.close() }
+})
+
+test("host detach control: strict body 400, foreign owner/stale native 503, stale plan stays 409, one transmission per accepted call", async () => {
+  const h = await harness()
+  try {
+    const a = await h.open(), b = await h.open()
+    const { mountID } = (await h.post("mount", { owner: a.owner, digest, instanceId: "instance", sessionID: "ses_test" })).json()
+    const body = { owner: a.owner, mountID, command: "detach", integration: "blender" }
+    for (const payload of [{ ...body, sessionID: "ses_other" }, { ...body, userActivation: true }, { ...body, offerID: "opaque_offer" },
+      { ...body, integration: "../blender" }, { owner: a.owner, mountID, command: "detach" }, { ...body, input: { integration: "blender" } }]) {
+      assert.equal((await h.post("control", payload)).statusCode, 400)
+    }
+    assert.equal((await h.post("control", { ...body, owner: b.owner })).statusCode, 503)
+    assert.equal((await h.post("control", body, "another-human")).statusCode, 503)
+    assert.deepEqual(h.detached, [])
+    const accepted = await h.post("control", body)
+    assert.equal(accepted.statusCode, 200); assert.equal(accepted.headers["cache-control"], "no-store")
+    assert.deepEqual(accepted.json(), { outcome: "detached" }); assert.deepEqual(h.detached, ["blender"])
+    assert.equal((await h.post("control", { owner: a.owner, mountID, command: "confirm", planID: "a".repeat(32) })).statusCode, 409)
+    h.set({ nativeLive: false })
+    assert.equal((await h.post("control", body)).statusCode, 503)
+    assert.deepEqual(h.detached, ["blender"]); assert.equal(h.state().prepared, 0)
+    assert(!JSON.stringify(h.records).includes(a.owner))
+    a.close(); b.close(); await Promise.all([a.response, b.response])
+  } finally { await h.close() }
 })

@@ -1,14 +1,58 @@
-import { bundlesManageInputSchema, type BundlesControlInput } from "../../../../server/src/panel-extensions/bundles-contract"
+import { createSignal } from "solid-js"
+import { bundlesManageInputSchema, type BundlesCatalogResult, type BundlesControlInput, type BundlesStateResult } from "../../../../server/src/panel-extensions/bundles-contract"
 import { bundlesPrivateEvents, type BundlesConfirmation } from "../../lib/bundles-private-events"
 import { PanelExtensionHttpError, panelExtensionsApi4 } from "../../lib/panel-extensions-api"
 import { pluginSourcesStore } from "../../stores/plugin-sources"
 import { openBundlesDocs } from "./bundles-docs-opener"
 
-type Command = BundlesControlInput extends infer T ? T extends BundlesControlInput ? Omit<T, "owner" | "mountID"> : never : never
+type Control = Exclude<BundlesControlInput, { command: "detach" }>
+type Command = Control extends infer T ? T extends Control ? Omit<T, "owner" | "mountID"> : never : never
+/** One trusted host-banner row per authoritatively attached native integration. */
+export interface BundlesHostControl { integration: string; name: string; label: string; phase: "attached" | "detaching" | "unknown" }
+export type BundlesHostNotice = { key: "integrations.host.detaching" | "integrations.binding.unknown" | "integrations.host.detached"; label: string }
 const inputs = new Map(bundlesManageInputSchema.options.map(option => [option.shape.method.value, option.shape.input]))
 export function createBundlesManagement(props: { id: string; instanceId: string; digest: string; sessionID: string | null
   current(): boolean; send(value: unknown): void; show(view: BundlesConfirmation | undefined): void }) {
   const lifetime = new AbortController()
+  const [hostControls, setHostControls] = createSignal<readonly BundlesHostControl[]>([])
+  const [hostNotice, setHostNotice] = createSignal<BundlesHostNotice>()
+  const names = new Map<string, string>()
+  // Reads that started before a detach began or ended cannot overwrite its result.
+  let epoch = 0
+  const find = (integration: string) => hostControls().find(control => control.integration === integration)
+  const put = (integration: string, next?: BundlesHostControl) => setHostControls(list => next
+    ? list.some(control => control.integration === integration) ? list.map(control => control.integration === integration ? next : control) : [...list, next]
+    : list.filter(control => control.integration !== integration))
+  const observeState = (token: number, state: BundlesStateResult, own = false) => {
+    if (closed || token !== epoch) return
+    const present = new Set<string>()
+    for (const item of state.integrations) {
+      if (item.family !== "native") continue
+      present.add(item.id)
+      const current = find(item.id)
+      if (current?.phase === "detaching" && !own) continue
+      if (item.attachment.state === "attached") {
+        put(item.id, { integration: item.id, name: names.get(item.id) ?? item.id, label: item.attachment.label, phase: "attached" })
+      } else if (item.attachment.state === "none") {
+        put(item.id)
+        if (current && current.phase !== "attached") setHostNotice({ key: "integrations.host.detached", label: current.label })
+      } else if (current) {
+        put(item.id, { ...current, phase: "unknown" }); setHostNotice({ key: "integrations.binding.unknown", label: current.label })
+      }
+    }
+    for (const control of hostControls()) if (!present.has(control.integration)) put(control.integration)
+  }
+  const reread = async () => {
+    const token = epoch
+    try {
+      if (!props.sessionID || closed || !props.current()) throw new Error("Bundles unavailable")
+      const state = await panelExtensionsApi4.bundlesState({ instanceId: props.instanceId, id: props.id, digest: props.digest }, props.sessionID,
+        AbortSignal.any([lifetime.signal, AbortSignal.timeout(19_000)]))
+      if (props.current()) observeState(token, state, true)
+    } catch {
+      for (const control of hostControls()) if (control.phase === "detaching") put(control.integration, { ...control, phase: "unknown" })
+    }
+  }
   const trackingOwner = {}
   const attempts = new Map<string, ReturnType<typeof pluginSourcesStore.begin>>()
   let captured: { owner: string; mountID: string } | undefined, closed = false, release: (() => void) | undefined, releaseOwner: (() => void) | undefined
@@ -27,7 +71,7 @@ export function createBundlesManagement(props: { id: string; instanceId: string;
   const dispose = () => {
     if (closed) return
     const old = captured
-    closed = true; captured = undefined; lifetime.abort(); release?.(); releaseOwner?.(); show(undefined)
+    closed = true; captured = undefined; lifetime.abort(); release?.(); releaseOwner?.(); show(undefined); setHostControls([])
     pluginSourcesStore.clearOwner(trackingOwner); attempts.clear()
     if (old) void panelExtensionsApi4.bundlesControl(props.id, { ...old, command: "dispose" }, AbortSignal.timeout(19_000)).catch(() => {})
   }
@@ -62,7 +106,35 @@ export function createBundlesManagement(props: { id: string; instanceId: string;
     })
   })().catch(error => { dispose(); throw error })
   return {
-    mount, dispose,
+    mount, dispose, hostControls, hostNotice,
+    readToken: () => epoch,
+    observeState: (token: number, state: BundlesStateResult) => observeState(token, state),
+    observeCatalog(catalog: BundlesCatalogResult) {
+      for (const entry of catalog.integrations) names.set(entry.id, entry.displayName)
+      setHostControls(list => list.map(control => ({ ...control, name: names.get(control.integration) ?? control.name })))
+    },
+    /** Only the trusted banner button calls this: one click, one transmission, never replayed. */
+    async detach(integration: string) {
+      const current = find(integration), envelope = captured
+      if (!envelope || closed || !props.current() || current?.phase !== "attached") return
+      epoch++
+      put(integration, { ...current, phase: "detaching" }); setHostNotice({ key: "integrations.host.detaching", label: current.label })
+      let outcome: "detached" | "none" | "unknown" | "busy"
+      try {
+        outcome = (await panelExtensionsApi4.bundlesDetach(props.id, { ...envelope, command: "detach", integration },
+          AbortSignal.timeout(19_000))).outcome
+      } catch { outcome = "unknown" }
+      if (closed || captured !== envelope) return
+      epoch++
+      const latest = find(integration)
+      if (outcome === "busy") { if (latest) put(integration, { ...latest, phase: "attached" }); return }
+      if (outcome === "unknown" && latest) {
+        put(integration, { ...latest, phase: "unknown" }); setHostNotice({ key: "integrations.binding.unknown", label: latest.label })
+      }
+      // Success follows the authoritative re-read only.
+      if (props.current()) props.send({ type: "bundles:changed", kind: "state" })
+      await reread()
+    },
     async openDocs(integration: string, signal: AbortSignal) {
       if (closed || signal.aborted || !props.current()) return { outcome: "unavailable" as const }
       if (!captured) { void mount().catch(() => {}); return { outcome: "busy" as const } }

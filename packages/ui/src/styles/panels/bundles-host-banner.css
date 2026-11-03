@@ -1,0 +1,41 @@
+/* Trusted D24 strip above an API 4 frame: one row per attached native integration. */
+.panel-extension-surface:has(> .bundles-host-banner) {
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-extension-surface:has(> .bundles-host-banner) > iframe {
+  flex: 1;
+  height: auto;
+}
+
+.bundles-host-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: var(--control-height);
+  padding-inline: var(--space-sm);
+  background: var(--surface-canvas);
+  border-bottom: 1px solid var(--border-divider);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.bundles-host-name {
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.bundles-host-state {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.bundles-host-detach[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: default;
+}

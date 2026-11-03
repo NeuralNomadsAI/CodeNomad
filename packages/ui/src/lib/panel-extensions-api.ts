@@ -7,7 +7,8 @@ import type { AssetTarget, AssetsResult, AssetReadResult } from "../../../server
 import type { GenerationTarget, ImagesResult } from "../../../server/src/opencode/session-pruning/assets-gallery-contract"
 import type { PanelConversationStatus, PanelImagesStatus, PanelPreferencesSetStatus } from "../../../server/src/panel-extensions/contract"
 import type { ImagesConversationRequest, ImagesConversationResponse } from "../../../server/src/server/routes/images-conversation-contract"
-import { bundlesCatalogResultSchema, bundlesStateHostResultSchema, bundlesHostsResultSchema, bundlesDocsHostResultSchema } from "../../../server/src/panel-extensions/bundles-contract"
+import { bundlesCatalogResultSchema, bundlesStateHostResultSchema, bundlesHostsResultSchema, bundlesDocsHostResultSchema,
+  bundlesDetachResultSchema } from "../../../server/src/panel-extensions/bundles-contract"
 import type { BundlesMountInput, BundlesManageInput, BundlesControlInput } from "../../../server/src/panel-extensions/bundles-contract"
 import type { BundlesAck } from "../../../server/src/panel-extensions/bundles-lifecycle"
 import { z } from "zod"
@@ -42,8 +43,10 @@ export const panelExtensionsApi4 = {
     z.object({ mountID: opaque }).strict().parse(await api4<unknown>(id, "bundles/mount", input, signal)),
   bundlesManage: async (id: string, input: BundlesManageInput, signal: AbortSignal): Promise<BundlesAck> =>
     bundlesAck.parse(await api4<unknown>(id, "bundles/manage", input, signal)),
-  bundlesControl: async (id: string, input: BundlesControlInput, signal: AbortSignal) =>
+  bundlesControl: async (id: string, input: Exclude<BundlesControlInput, { command: "detach" }>, signal: AbortSignal) =>
     z.object({ ok: z.literal(true) }).strict().parse(await api4<unknown>(id, "bundles/control", input, signal)),
+  bundlesDetach: async (id: string, input: Extract<BundlesControlInput, { command: "detach" }>, signal: AbortSignal) =>
+    bundlesDetachResultSchema.parse(await api4<unknown>(id, "bundles/control", input, signal)),
   bundlesCatalog: async ({ id, ...authority }: Authority, sessionID: string, signal: AbortSignal) =>
     bundlesCatalogResultSchema.parse(await api4<unknown>(id, "bundles/catalog", { ...authority, sessionID }, signal)),
   bundlesState: async ({ id, ...authority }: Authority, sessionID: string, signal: AbortSignal) =>

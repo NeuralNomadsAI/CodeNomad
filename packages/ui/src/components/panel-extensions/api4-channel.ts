@@ -131,13 +131,18 @@ export function useApi4Channel(props: {
       catalog: async (input, signal) => {
         empty.parse(input)
         if (!session || !bundlesCurrent()) throw new Error("Bundles unavailable")
-        return { result: await panelExtensionsApi4.bundlesCatalog(authority, session, signal) }
+        const result = await panelExtensionsApi4.bundlesCatalog(authority, session, signal)
+        if (bundlesCurrent() && !signal.aborted) props.management?.observeCatalog(result)
+        return { result }
       },
       state: async (input, signal) => {
         empty.parse(input)
         if (!session || !bundlesCurrent()) throw new Error("Bundles unavailable")
+        // The host banner reads the same authoritative answer; the frame only triggers the read.
+        const token = props.management?.readToken()
         const result = await panelExtensionsApi4.bundlesState(authority, session, signal)
         if (!bundlesCurrent() || signal.aborted) throw new Error("Bundles unavailable")
+        if (token !== undefined) props.management?.observeState(token, result)
         return { result: projectBundlesInstallationState(props.instanceId, result) }
       },
       hosts: async (input, signal) => {
@@ -195,7 +200,7 @@ export function useApi4Channel(props: {
       },
     }),
   }))
-  if (granted("bundles.manage") && props.management) {
+  if (granted("bundles.read") && granted("bundles.manage") && props.management) {
     for (const method of ["request", "setActive", "installHost", "attach", "detach"]) {
       methods.get("bundles")!.set(method, async (input, signal) => {
         if (!bundlesCurrent()) throw new Error("Bundles unavailable")

@@ -242,7 +242,7 @@ exact package before and after IO. Never add a permission registry, generic RPC 
 | `opencode.designAgent` | none | while enabled, this backend's leases request the Design agent (`opencode/design/demand.ts`) |
 | `panel.preferences` | `preferences.get()`, `preferences.set(object)` | the server profile's store, per extension |
 | `bundles.read` (draft) | `bundles.catalog()`, `bundles.state()`, `bundles.hosts({ integration })`, `bundles.openDocs({ integration })`, `bundles.onChanged(listener)` | the conversation captured by the mounted host; fixed integration readers, exact-session `bindingRead` and canonical catalogue documentation |
-| `bundles.manage` (requires `bundles.read`) | `bundles.request({ action, integration, scope })`, `bundles.setActive({ integration, scope, enabled })`, `bundles.installHost({ integration })`, `bundles.attach({ integration, offerID })`, `bundles.detach({ integration })` | authenticated parent-owned mount and backend confirmation lifecycle; `request` supports install/update/remove; `detach` returns `invalid` |
+| `bundles.manage` (requires `bundles.read`) | `bundles.request({ action, integration, scope })`, `bundles.setActive({ integration, scope, enabled })`, `bundles.installHost({ integration })`, `bundles.attach({ integration, offerID })`, `bundles.detach({ integration })` | authenticated parent-owned mount and backend confirmation lifecycle; `request` supports install/update/remove; `detach` returns `invalid`; the host banner owns local detach |
 
 ```js
 const status = await codenomad.images.status()
@@ -542,17 +542,37 @@ the mounted exact package. Operation-specific preparation and dispatch use trust
   `resetCutoffForUserRemount()` is reserved to a trusted explicit user-remount action;
   automatic mounts preserve strikes/cutoff and every remount preserves rate history.
 
-The draft public transport returns `invalid` for `detach()`, whose opaque-frame
-explicit-action boundary remains unqualified. The internal local detach builder remains
-a trusted in-process entry point. `request({ action: "remove", ... })` uses the confirmed
-exact-source removal adapter above.
+The public `detach()` returns `invalid` and transmits nothing: an opaque-frame message is
+never proof of a user click. Local detach (D24) belongs to `BundlesHostBanner`, which
+`ExtensionPanel` renders outside the frame for managing extensions, one row per native
+integration whose authoritative `bindingRead` reports `attached` for the displayed
+conversation. Its rows follow the parent's own observation of `state()` answers and one
+parent re-read after each detach; `readToken()` fences reads that started before a detach
+began or ended. Its single **Detach** click is the consent, with no confirmation window.
+`aria-disabled` keeps focus while in flight, a second activation is inert, and the row
+shows the uncertain state for a lost or refused response until the re-read settles it; never
+announce success before that read. Focus returns to the frame when a focused row
+disappears; a polite live region announces state changes; the one explanatory sentence
+sits behind a keyboard-openable `SettingsInfoTip`.
+
+The parent posts `POST /api/panel-extensions/:id/bundles/control` with
+`{ owner, mountID, command: "detach", integration }`. `BundlesTransport` checks the owner,
+mount and management grant, debits the `manage` budget, answers `{ outcome: "busy" }` during
+a cutoff (`BundlesLifecycle.cutOff()`), while a confirmation plan holds the shared slot
+(`exclusive`) or while the same mount already detaches, then calls the in-process
+`BundlesActions.detach` builder exactly once. The answer is `detached`, `none`, `busy` or
+`unknown`; any doubt after native submission, including `NativeMutationUncertainError`, is
+`unknown`, never `none`. Nothing retries or replays it. `request({ action: "remove", ... })`
+uses the confirmed exact-source removal adapter above.
 
 Checks: `bundles-lifecycle.test.ts` exercises live store leases, target conflicts, expiry,
 quota/cutoff boundaries and revocation across awaits. `tests/browser/bundles-confirmation.test.ts`
 uses the actual Solid modal, document bridge, MessagePort and channel with a parent-only
 admission driver: ACK ordering, 30-second human wait, guarded activation, terminal events,
 state coalescing and disposed/revoked owners. Malformed and undeclared raw-management rejection stays covered
-by `panel-extension-bundles.test.ts`.
+by `panel-extension-bundles.test.ts`. `bundles-transport.test.ts` covers the detach guard order,
+cutoff, concurrency and `unknown` answers; `panel-extension-bundles-management.test.ts` counts
+zero `detachHost` calls for repeated frame requests and exactly one for a banner double-click.
 
 ### Sandbox
 
