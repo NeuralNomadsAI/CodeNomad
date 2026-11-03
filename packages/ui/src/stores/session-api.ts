@@ -84,6 +84,7 @@ import {
 const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
 import { mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
+import { clearSessionSeenInterruption } from "./session-interruption-seen"
 import { listMessageWindow } from "./session-message-pages"
 import {
   MESSAGE_WINDOW_PAGE_SIZE,
@@ -1329,6 +1330,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
 
 function removeSessionRuntimeState(instanceId: string, sessionId: string, authoritative = true): void {
   cancelSessionGenerationAdmissions(instanceId, sessionId)
+  clearSessionSeenInterruption(instanceId, sessionId)
   if (authoritative) markSessionDeletedAuthoritative(instanceId, sessionId)
   deleteSessionAttachments(instanceId, sessionId)
   clearSessionDraftPrompt(instanceId, sessionId)

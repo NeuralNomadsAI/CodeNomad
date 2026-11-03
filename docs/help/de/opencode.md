@@ -35,9 +35,7 @@ OpenCode verwaltet seine globale Dienstregistrierung, Sitzungen, Nachrichten und
 
 Unter Windows laufen Überwachung und Wiederherstellung ohne Terminalfenster im Hintergrund. CodeNomad-Updates erhalten Ihre gespeicherte Auswahl und den laufenden OpenCode-Dienst; aktualisierte Aufgabenaktionen gelten bei den nächsten Starts.
 
-Vor dem ersten Mission-Start speichert **Beim ersten Mission-Start ausgeschaltet lassen** ein ausdrückliches Aus, ohne zuvor die Überwachung zu installieren.
-
-Unter **Einstellungen → OpenCode** installiert **OpenCode gestartet halten** eine Systemüberwachung auf dem Ausführungshost, gemeinsam für alle CodeNomad-Profile dieses Dienstes. Sie arbeitet unabhängig von Missions, auch bei geschlossenem CodeNomad. Der erste Mission-Start aktiviert sie, sofern Sie sie nicht vorher ausdrücklich ausschalten; das Erstellen einer pausierten Mission behält Ihre Auswahl bei. Pause, Stopp und Löschen einer Mission lassen diese Einstellung bestehen.
+Unter **Einstellungen → OpenCode** installiert **OpenCode gestartet halten** eine Systemüberwachung auf dem Ausführungshost, gemeinsam für alle CodeNomad-Profile dieses Dienstes. Sie arbeitet auch bei geschlossenem CodeNomad und bleibt aus, bis Sie sie einschalten.
 
 Beim Ausschalten wird die Überwachung entfernt; OpenCode läuft weiter und wird nicht mehr neu gestartet. Für einen dauerhaften Stopp zuerst ausschalten und dann OpenCode ausdrücklich stoppen. Bei aktiver Überwachung folgt auf `opencode service stop` ein Neustart.
 

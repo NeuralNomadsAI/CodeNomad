@@ -133,21 +133,6 @@ test("fixed failure survives refresh and Retry reconciles the same revision with
   assert.doesNotMatch(JSON.stringify(unknown), /private-observer-error/)
 })
 
-test("first Play defaults only unset to ON; an explicit OFF and another pending ON remain untouched", async t => {
-  const f = await fixture(t)
-  const first = await f.service.firstPlay({ serviceKey: f.key, requestID: randomUUID() }, () => {})
-  assert.equal(first.desired, "on"); assert.equal(first.state, "running")
-  await f.service.control(f.control("off", 1), () => {})
-  const before = await f.store.read(), effects = f.effects
-  await f.service.firstPlay({ serviceKey: f.key, requestID: randomUUID() }, () => {})
-  assert.deepEqual(await f.store.read(), before)
-  assert.equal(f.effects, effects)
-  const on = await f.store.control({ requestID: randomUUID(), expectedRevision: 2, action: "on" })
-  await f.service.firstPlay({ serviceKey: f.key, requestID: randomUUID() }, () => {})
-  assert.deepEqual(await f.store.read(), on)
-  assert.equal(f.effects, effects)
-})
-
 test("key, context and human fences refuse mutations; schema refuses UI command strings and internal controls", async t => {
   const f = await fixture(t), on = f.control("on", 0)
   await assert.rejects(f.service.control({ ...on, serviceKey: "0".repeat(64) }, () => {}), /conflict/)
@@ -201,26 +186,6 @@ test("guard diagnostics are revision-fenced, retain actual backoff and cannot co
   assert.equal(missing.state, "failing"); assert.equal(missing.cause, "artifact-missing")
   assert.equal(missing.recoveryNextTickAt, tick); assert.equal(missing.serviceResponding, true)
   assert.equal(supervisionStatus(manifest, { ...observation, revision: 0, recoveryNextTickAt: tick }).recoveryNextTickAt, undefined)
-})
-
-test("product Play pins the acquired service and uses one deterministic receipt while preserving OFF", async t => {
-  const f = await fixture(t), connection = { assertCurrent() {} }
-  const service = new ServiceSupervisionSettings(async expected => {
-    assert.equal(expected, connection)
-    return f.acquire()
-  })
-  await service.missionPlay(connection as never, "mission-play-original", () => {})
-  const before = await f.store.read()
-  assert.equal(before.receipt?.control.action, "first-play")
-  assert.equal(before.desired, "on")
-  await service.missionPlay(connection as never, "mission-play-original", () => {})
-  assert.deepEqual(await f.store.read(), before)
-  await f.service.control(f.control("off", 1), () => {})
-  await service.missionPlay(connection as never, "another-play", () => {})
-  assert.equal((await f.store.read()).desired, "off")
-  const effects = f.effects
-  await assert.rejects(service.missionPlay(connection as never, "revoked-play", () => { throw new Error("revoked") }), /revoked/)
-  assert.equal(f.effects, effects)
 })
 
 test("Settings HTTP requires a live human before acquisition; strict inputs and fixed errors preserve privacy", async t => {

@@ -57,10 +57,10 @@ export function markSessionIdleFadeStarted(instanceId: string, sessionId: string
   })
 }
 
-export function clearSessionIdleFade(instanceId: string, sessionId: string, idleSince: number): void {
+export function clearSessionIdleFade(instanceId: string, sessionId: string, idleSince?: number): void {
   const key = idleFadeKey(instanceId, sessionId)
   setIdleFades((prev) => {
-    if (prev.get(key) !== idleSince) return prev
+    if (!prev.has(key) || (idleSince !== undefined && prev.get(key) !== idleSince)) return prev
     const next = new Map(prev)
     next.delete(key)
     return next

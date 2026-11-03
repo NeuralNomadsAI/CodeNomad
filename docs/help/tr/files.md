@@ -30,7 +30,7 @@ Kaydetme, bağlantılı çalışma ağacı dahil göz atılan çalışma kopyas�
 
 Kaydedilmemiş kaynak taslakları okuyucu kapatıldığında veya değiştirildiğinde, proje örneği, dizin ve yol kapsamında arayüz belleğinde korunur. Dosya sistemi yenilemeleri bunları sessizce değiştirmez. Bu kalıcı dosya deposu değildir: istemciyi yeniden başlatmadan/yüklemeden önce önemli düzenlemeleri kaydedin veya kopyalayın. Okuma/yazma hataları taslağı korur. Açık **Yenile** eylemi kaydedilmemiş düzenlemeleri atmadan önce uyarır.
 
-Okuyucunun sonundaki kapatma düğmesi konuşmaya döner; ileti düzenleyicisi okuyucunun altında kullanılabilir kalır. Oturumu/çalışma ağacını değiştirmek seçili okuyucuyu temizler, taslağı kaydetme garantisi vermez. Tarayıcı önizlemesi okuyucunun yerini alır; dosya açmak bu görünümü sohbet moduna döndürür.
+Okuyucunun sonundaki kapatma düğmesi konuşmaya döner; ileti düzenleyicisi okuyucunun altında kullanılabilir kalır. Paneli **Sağ panel** ile gizlemek ya da panel için fazla dar bir pencere, okuyucuyu açılan genişlikle açık bırakır; paneli yeniden göstermek onu olduğu gibi korur. Oturumu/çalışma ağacını değiştirmek seçili okuyucuyu temizler, taslağı kaydetme garantisi vermez. Tarayıcı önizlemesi okuyucunun yerini alır; dosya açmak bu görünümü sohbet moduna döndürür.
 
 ## Salt okunur ve sınırlı önizlemeler {#preview-limits}
 

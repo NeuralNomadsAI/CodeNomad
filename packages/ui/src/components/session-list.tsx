@@ -1,9 +1,9 @@
-import { Component, For, Show, createSignal, createMemo, createEffect, JSX, on, onCleanup } from "solid-js"
+import { Component, For, Show, batch, createSignal, createMemo, createEffect, JSX, on, onCleanup } from "solid-js"
 import { focusInterruption } from "../stores/interruption-navigation"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
-import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
+import { clearSessionIdleFade, getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
 import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronRight, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
 import { childActivityKind, childActivityLabel } from "./session-child-activity"
 import LoadErrorState from "./load-error-state"
@@ -12,7 +12,8 @@ import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overfl
 import { useSessionRowOverflow } from "./session-row-overflow"
 import { showToastNotification } from "../lib/notifications"
 import { useI18n } from "../lib/i18n"
-import { toggleSweepGroup } from "../lib/toggle-sweep"
+import { toggleSweepClear, toggleSweepGroup } from "../lib/toggle-sweep"
+import { isSessionInterruptionUnseen } from "../stores/session-interruption-seen"
 import { showConfirmDialog } from "../stores/alerts"
 import {
   deleteSession,
@@ -21,6 +22,7 @@ import {
   isSessionExpanded,
   loadMessages,
   loading,
+  markSessionIdleSeen,
   renameSession,
   sessions as sessionStateSessions,
   setActiveSessionFromList,
@@ -135,8 +137,9 @@ const SessionList: Component<SessionListProps> = (props) => {
   const sessionListError = createMemo(() => getSessionListError(props.instanceId))
   const descendantActivity = createMemo(() => collectDescendantActivity(
     sessionStateSessions().get(props.instanceId),
-    session => !session.retry && session.generationRecovery !== "interrupted"
+    session => !session.retry && !isSessionInterruptionUnseen(props.instanceId, session)
       && shouldShowSessionStatus(props.instanceId, session.id, now(), preferences().keepUnseenSubagentIdleStatus),
+    session => isSessionInterruptionUnseen(props.instanceId, session),
   ))
 
   createEffect(() => {
@@ -439,6 +442,25 @@ const SessionList: Component<SessionListProps> = (props) => {
     }
   }
 
+  // Acknowledges a finished row: its Interrupted and Idle badges hide until a new boundary.
+  const clearSessionStatus = (sessionId: string) => {
+    const session = sessionStateSessions().get(props.instanceId)?.get(sessionId)
+    if (!session) return
+    batch(() => {
+      markSessionIdleSeen(props.instanceId, sessionId)
+      clearSessionIdleFade(props.instanceId, sessionId)
+    })
+  }
+
+  // The collapsed terminal indicator acknowledges every finished descendant.
+  const clearDescendantStatus = (sessionId: string) => {
+    batch(() => {
+      for (const descendant of getDescendantSessions(props.instanceId, sessionId)) {
+        clearSessionStatus(descendant.id)
+      }
+    })
+  }
+
   const closeRenameDialog = () => {
     setRenameTarget(null)
   }
@@ -597,7 +619,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       return activity ? childActivityKind(activity) : undefined
     })
     createEffect(on(activityKind, (kind, previous) => {
-      if (kind === previous || !kind || kind === "idle" || rowProps.expanded
+      if (kind === previous || !kind || kind === "idle" || kind === "interrupted" || rowProps.expanded
         || props.enableFilterBar || !preferences().autoExpandActiveSubsessions) return
       const active = props.activeSessionId
       if (!active || (!isActive() && !getSessionAncestorIds(props.instanceId, sessionId()).includes(active))) return
@@ -620,7 +642,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     }
     const title = () => rowProps.session.title || t("sessionList.session.untitled")
     const status = () => getSessionStatus(props.instanceId, sessionId())
-    const interrupted = () => rowProps.session.generationRecovery === "interrupted"
+    const interrupted = () => isSessionInterruptionUnseen(props.instanceId, rowProps.session)
     const retry = () => getSessionRetry(props.instanceId, sessionId())
     const statusLabel = () => {
       if (interrupted()) return t("sessionList.status.interrupted")
@@ -670,6 +692,22 @@ const SessionList: Component<SessionListProps> = (props) => {
         message: retryState.message,
         attempt: String(retryState.attempt),
       })
+    }
+    // Only finished states are acknowledged; work and input requests always stay visible.
+    const statusClearable = () => !needsInput() && !retry() && status() === "idle"
+    const statusContent = () => (
+      <>
+        {needsInput() ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
+        <span class="session-item-status-label">{statusText()}</span>
+      </>
+    )
+    const childStatusClearable = () => {
+      const activity = childActivity()
+      return Boolean(activity) && (childActivityKind(activity!) === "idle" || childActivityKind(activity!) === "interrupted")
+    }
+    const selectRow = () => {
+      selectSession(sessionId())
+      if (needsInput()) focusInterruption(props.instanceId, sessionId())
     }
  
     const isSelected = () => selectedSessionIds().has(sessionId())
@@ -758,11 +796,15 @@ const SessionList: Component<SessionListProps> = (props) => {
             <button
               type="button"
               class={`session-item-expander opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
-              onClick={() => rowProps.onToggleExpand?.()}
+              onClick={() => childStatusClearable() ? clearDescendantStatus(sessionId()) : rowProps.onToggleExpand?.()}
               aria-expanded={Boolean(rowProps.expanded)}
-              aria-label={expanderLabel(rowProps.expanded ? "collapseAriaLabel" : "expandAriaLabel")}
-              title={expanderLabel(rowProps.expanded ? "collapseTitle" : "expandTitle")}
+              aria-label={childStatusClearable()
+                ? t("sessionList.status.clearAriaLabel", { status: childActivityLabel(t, childActivity()!) })
+                : expanderLabel(rowProps.expanded ? "collapseAriaLabel" : "expandAriaLabel")}
+              title={childStatusClearable() ? t("sessionList.status.clear") : expanderLabel(rowProps.expanded ? "collapseTitle" : "expandTitle")}
               data-child-activity={childActivity() ? childActivityKind(childActivity()!) : undefined}
+              data-toggle-sweep={childStatusClearable() ? toggleSweepGroup("session-status-clear") : undefined}
+              ref={(element) => toggleSweepClear(element, () => clearDescendantStatus(sessionId()))}
             >
               <ChevronRight class="disclosure-chevron w-3.5 h-3.5" />
             </button>
@@ -770,7 +812,7 @@ const SessionList: Component<SessionListProps> = (props) => {
           <button
             type="button"
             class="session-item-select"
-            onClick={() => { selectSession(sessionId()); if (needsInput()) focusInterruption(props.instanceId, sessionId()) }}
+            onClick={selectRow}
             title={title()}
             aria-current={isActive() ? "true" : undefined}
           >
@@ -778,25 +820,47 @@ const SessionList: Component<SessionListProps> = (props) => {
               <Bot class="session-item-kind-icon w-4 h-4 flex-shrink-0" aria-hidden="true" />
             </Show>
             <span class="session-item-title session-item-title--clamp" dir="auto">{title()}</span>
-            <span class="session-item-badges">
-              <Show when={showStatus()}>
-                <span
-                  class={`status-indicator session-status session-status-list ${statusClassName()} notranslate`}
-                  title={statusTooltip()}
-                  translate="no"
-                >
-                  {needsInput() ? <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" /> : <span class="status-dot" />}
-                  <span class="session-item-status-label">{statusText()}</span>
-                </span>
-              </Show>
-              <Show when={showWorktreeBadge()}>
-                <span class="status-indicator session-status-list worktree-indicator" title={t("sessionList.worktree.tooltip", { worktree: worktreeSlug() })}>
-                  <Split class="w-3.5 h-3.5" aria-hidden="true" />
-                  <span class="worktree-indicator-label">{worktreeSlug()}</span>
-                </span>
-              </Show>
-            </span>
           </button>
+          {/* Badges sit beside the select button so a clearable one can be its own button;
+              the rest of the badge area still selects the row. */}
+          <span
+            class="session-item-badges"
+            onClick={(event) => { if (!(event.target as Element).closest("button")) selectRow() }}
+          >
+            <Show when={showStatus()}>
+              <Show
+                when={statusClearable()}
+                fallback={
+                  <span
+                    class={`status-indicator session-status session-status-list ${statusClassName()} notranslate`}
+                    title={statusTooltip()}
+                    translate="no"
+                  >
+                    {statusContent()}
+                  </span>
+                }
+              >
+                <button
+                  type="button"
+                  class={`status-indicator session-status session-status-list session-status-clearable ${statusClassName()} notranslate`}
+                  title={t("sessionList.status.clear")}
+                  aria-label={t("sessionList.status.clearAriaLabel", { status: statusText() })}
+                  translate="no"
+                  data-toggle-sweep={toggleSweepGroup("session-status-clear")}
+                  ref={(element) => toggleSweepClear(element)}
+                  onClick={() => clearSessionStatus(sessionId())}
+                >
+                  {statusContent()}
+                </button>
+              </Show>
+            </Show>
+            <Show when={showWorktreeBadge()}>
+              <span class="status-indicator session-status-list worktree-indicator" title={t("sessionList.worktree.tooltip", { worktree: worktreeSlug() })}>
+                <Split class="w-3.5 h-3.5" aria-hidden="true" />
+                <span class="worktree-indicator-label">{worktreeSlug()}</span>
+              </span>
+            </Show>
+          </span>
           <div class="session-item-actions">
             <div class="session-item-inline-actions" inert={compactActions()}>
               <For each={actionItems}>{(item) => (

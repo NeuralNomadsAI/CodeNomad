@@ -35,9 +35,7 @@ OpenCode possède l’enregistrement global de son service, ses sessions, messag
 
 Sous Windows, la supervision et la récupération s’exécutent en arrière-plan sans fenêtre de terminal. Les mises à jour de CodeNomad conservent votre choix et le service OpenCode en cours ; les actions des tâches mises à jour s’appliquent aux démarrages suivants.
 
-Avant tout lancement de Mission, **Rester désactivé au premier Play** enregistre un OFF explicite sans installer d'abord la supervision.
-
-Dans **Paramètres → OpenCode**, **Garder OpenCode démarré** installe une supervision système sur l'hôte d'exécution, partagée par tous les profils CodeNomad utilisant ce service. Elle fonctionne indépendamment des Missions, même CodeNomad fermé. Le premier Play d'une Mission l'active, sauf désactivation explicite préalable ; créer une Mission en pause conserve ce choix. Pause, Arrêter ou Supprimer une Mission conserve cette préférence.
+Dans **Paramètres → OpenCode**, **Garder OpenCode démarré** installe une supervision système sur l'hôte d'exécution, partagée par tous les profils CodeNomad utilisant ce service. Elle fonctionne même CodeNomad fermé et reste désactivée tant que vous ne l'activez pas.
 
 La désactivation retire la supervision tandis qu'OpenCode continue de fonctionner et ne sera plus relancé. Pour un arrêt durable, désactivez d'abord cette préférence, puis arrêtez explicitement OpenCode. Avec la supervision active, `opencode service stop` est suivi d'un redémarrage.
 

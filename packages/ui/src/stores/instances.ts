@@ -97,6 +97,7 @@ import { invalidateFilesystemCaches, queueFilesystemInvalidation } from "../lib/
 import { detachInstanceTabMembership, openInstanceTabIds, requestInstanceTabClose } from "./app-tab-membership"
 import { waitForLatestWorkspaceLoadResult } from "./workspace-load-readiness"
 import { clearInstanceAttachments } from "./attachments"
+import { clearInstanceSeenInterruptions } from "./session-interruption-seen"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { getUnavailableWorkspaceIds } from "./app-session-reconciliation"
 import { getAbortReason } from "./app-session-restore-timeout"
@@ -1576,6 +1577,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   clearCacheForInstance(id)
   messageStoreBus.unregisterInstance(id)
   clearInstanceDraftPrompts(id)
+  clearInstanceSeenInterruptions(id)
   clearSessionListRequestState(id)
   forgetSessionListRestoration(id)
   clearSessionCatalogState(id)

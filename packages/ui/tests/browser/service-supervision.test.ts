@@ -256,7 +256,7 @@ test("reads coalesce, stale observations are withheld, hidden sections make no r
   } finally { await page.close() }
 })
 
-test("all ten narrow locale layouts render translated controls, including the first-Play opt-out", async () => {
+test("all ten narrow locale layouts render translated controls", async () => {
   for (const locale of ["en", "fr", "de", "es", "he", "ja", "ne", "ru", "tr", "zh-Hans"]) {
     const { serviceSupervisionMessages: messages } = await import(`../../src/lib/i18n/messages/${locale}/service-supervision.ts`)
     const title = messages["settings.supervision.title"]
@@ -272,8 +272,11 @@ test("all ten narrow locale layouts render translated controls, including the fi
       await capture(page, locale)
       fixture.state({ desired: "unset", revision: 0, cause: null })
       await page.getByRole("button", { name: messages["settings.supervision.refresh"], exact: true }).click()
-      await page.getByRole("button", { name: messages["settings.supervision.keepOff"], exact: true }).waitFor()
-      assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true, `${locale}: opt-out fits`)
+      // The refreshed never-chosen preference drops the earlier cause and its Retry.
+      await page.getByRole("button", { name: messages["settings.supervision.retry"], exact: true }).waitFor({ state: "detached" })
+      await page.getByRole("status").getByText(messages["settings.supervision.state.off"], { exact: true }).waitFor()
+      assert.equal(await page.locator(".settings-info-actions button").count(), 1, `${locale}: never chosen is plain Off`)
+      assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true, `${locale}: Off fits`)
       assert.deepEqual(fixture.errors, [])
     } finally { await page.close() }
   }
@@ -345,16 +348,15 @@ test("a remounted card observes completion of the control still owned by its pri
   } finally { fixture.release(); await page.close() }
 })
 
-test("explicit OFF can be saved before first Play without installing supervision", async () => {
+test("a never-chosen preference reads Off and only the switch turns supervision on", async () => {
   const page = await browser.newPage()
   const fixture = await setup(page)
   try {
     await page.goto(url)
-    await page.getByRole("button", { name: "Keep off at first Mission Play", exact: true }).click()
-    await page.getByRole("button", { name: "Keep off at first Mission Play", exact: true }).waitFor({ state: "detached" })
-    assert.deepEqual(fixture.writes.map(item => item.action), ["off"])
+    await page.getByRole("status").filter({ hasText: /^Off$/ }).waitFor()
     assert.equal(await page.getByRole("switch").isChecked(), false)
-    assert.equal(await page.getByRole("button", { name: "Keep off at first Mission Play", exact: true }).count(), 0)
+    assert.deepEqual(await page.locator(".settings-info-actions button").allInnerTexts(), ["Check supervision status"])
+    assert.deepEqual(fixture.writes, [])
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
 })
