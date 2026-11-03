@@ -54,18 +54,21 @@ watermarks keyed by session ID and the native `time.idle` boundary. The shared
 visible, focused conversation uses that path too. Native outcome, recovery,
 admission and pending-request facts keep their existing authority.
 
-The native interruption event invalidates the prior acknowledgement and records
-its monotonic terminal boundary (`max(event.created, previous idle + 1)`) while
-SessionInfo catches up. Clearing during that gap therefore covers the subsequent
-metadata read. A newer native idle boundary shows interrupted attention again;
+The native interruption event claims acknowledgement authority before its activity
+read. It invalidates the prior acknowledgement and uses the event timestamp while
+SessionInfo catches up. The accepted runtime merge binds a gap-time clear to the
+confirmed native idle boundary; later event continuations preserve intervening
+acknowledgements. A newer native idle boundary shows interrupted attention again;
 the same or an older boundary preserves acknowledgement across refresh/reconnect.
 Work and pending input/permission always retain priority.
 
 `seenInterruptions` persists beside idle and recovery markers in window client
 state, including each session's content-addressed leaf. Capture and hydration use
-the existing session-marker budgets and unavailable-session preservation; live
-event tombstones fence late snapshot hydration. Instance removal releases the
-in-memory markers. Restoration revalidates recovery separately against native
+native graph byte/partition budgets and unavailable-session preservation; live
+event tombstones fence late snapshot hydration. Native settlement past an
+acknowledged boundary drops its marker. Authoritative deletion and inventory
+pruning release both per-session maps; instance removal releases the whole scope.
+Restoration revalidates recovery separately against native
 activity/outcome while preserving the acknowledged boundary.
 
 ## Validation

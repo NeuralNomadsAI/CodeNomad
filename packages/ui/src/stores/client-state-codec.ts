@@ -138,6 +138,15 @@ function normalizeExpandedSessionIds(value: unknown, budget: StringBudget): stri
   return result
 }
 
+// Acknowledgements are irrecoverable user state. Native graph byte/partition
+// budgets bound their persistence independently of recoverable runtime markers.
+function normalizeSeenInterruptions(value: unknown): Record<string, number> | null {
+  if (!isRecord(value)) return null
+  return Object.fromEntries(Object.entries(value).filter(([id, boundary]) =>
+    safeKey(id) && id.trim().length > 0 && id.length <= MAX_ID
+    && takeNumber(boundary, 0, Number.MAX_SAFE_INTEGER) !== undefined)) as Record<string, number>
+}
+
 function normalizeWorkspaceTab(
   value: Record<string, unknown>,
   identity: WorkspaceIdentity,
@@ -164,8 +173,7 @@ function normalizeWorkspaceTab(
     value.generationRecovery ?? {}, MAX_RECOVERY, budget,
     (entry) => entry as PersistedGenerationRecovery,
     (entry) => entry === "working" || entry === "interrupted")
-  const seenInterruptions = normalizeRecord(value.seenInterruptions, MAX_RECOVERY, budget,
-    (entry) => takeNumber(entry, 0, Number.MAX_SAFE_INTEGER))
+  const seenInterruptions = normalizeSeenInterruptions(value.seenInterruptions)
   const expandedSessionIds = value.expandedSessionIds === undefined
     ? undefined
     : normalizeExpandedSessionIds(value.expandedSessionIds, budget)

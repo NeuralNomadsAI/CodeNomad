@@ -5,16 +5,16 @@ import type { Session } from "../types/session"
 // only hides its badge: the native outcome and the recovery marker stay untouched, a
 // later boundary shows the badge again, and refreshes, which keep the boundary, do not.
 type Seen = Map<string, Map<string, number | null>>
-type Interruptible = Pick<Session, "id" | "generationRecovery" | "time" | "status" | "pendingPermission" | "pendingForm" | "retry">
+type Interruptible = Pick<Session, "id" | "generationRecovery" | "time" | "status" | "pendingPermission" | "pendingForm" | "retry" | "outcome" | "runtimeStatusKnown">
 
 const [seenInterruptions, setSeenInterruptions] = createSignal<Seen>(new Map())
-const eventBoundaries = new Map<string, Map<string, number>>()
+const eventBoundaries = new Map<string, Map<string, { baseline: number; provisional: number }>>()
 
 /** Tracks every change, for persistence. */
 export const seenInterruptionsRevision = seenInterruptions
 
 const boundary = (instanceId: string, session: Interruptible) => Math.max(
-  session.time?.idle ?? 0, eventBoundaries.get(instanceId)?.get(session.id) ?? 0,
+  session.time?.idle ?? 0, eventBoundaries.get(instanceId)?.get(session.id)?.provisional ?? 0,
 )
 
 function update(instanceId: string, change: (entries: Map<string, number | null>) => boolean): void {
@@ -43,14 +43,41 @@ export function markSessionInterruptionSeen(instanceId: string, session: Interru
   })
 }
 
-/** Native terminal boundaries advance monotonically, including within one millisecond.
- * Keep the event's boundary until SessionInfo catches up, so that read preserves a clear. */
+/** Event authority precedes asynchronous reads. A provisional boundary covers metadata lag. */
 export function observeSessionInterruption(instanceId: string, session: Interruptible, created: number): void {
-  const boundaries = eventBoundaries.get(instanceId) ?? new Map<string, number>()
-  boundaries.set(session.id, Math.max(created, boundary(instanceId, session) + 1))
-  eventBoundaries.set(instanceId, boundaries)
+  const boundaries = eventBoundaries.get(instanceId) ?? new Map()
+  const baseline = session.time?.idle ?? 0
+  if (baseline < created) boundaries.set(session.id, { baseline, provisional: created })
+  else boundaries.delete(session.id)
+  if (boundaries.size) eventBoundaries.set(instanceId, boundaries)
+  else eventBoundaries.delete(instanceId)
   // A tombstone fences late snapshot hydration of this new event.
   update(instanceId, (entries) => { entries.set(session.id, null); return true })
+}
+
+const settledPast = (session: Interruptible, seen: number) => session.runtimeStatusKnown
+  && session.generationRecovery !== "interrupted" && (session.outcome === "succeeded" || session.outcome === "failed")
+  && (session.time?.idle ?? 0) > seen
+
+/** Called only after the runtime merge admits native metadata for publication. */
+export function reconcileSessionInterruptionBoundary(instanceId: string, session: Interruptible): void {
+  const event = eventBoundaries.get(instanceId)?.get(session.id)
+  const idle = session.time?.idle ?? 0
+  const seen = seenInterruptions().get(instanceId)?.get(session.id)
+  if ((seen != null || event) && settledPast(session, seen ?? event!.baseline)) {
+    clearSessionSeenInterruption(instanceId, session.id)
+    return
+  }
+  if (!event || idle <= event.baseline || session.outcome !== "interrupted") return
+  eventBoundaries.get(instanceId)!.delete(session.id)
+  if (!eventBoundaries.get(instanceId)!.size) eventBoundaries.delete(instanceId)
+  // Rebind a clear made in the metadata gap to the proven boundary, even when
+  // the event timestamp was later. A subsequent native boundary must show again.
+  update(instanceId, entries => {
+    if (entries.get(session.id) !== event.provisional) return false
+    entries.set(session.id, idle)
+    return true
+  })
 }
 
 /** Saved with the window's session markers, including while recovery is being revalidated. */
@@ -60,9 +87,16 @@ export function captureSeenInterruptions(instanceId: string, sessions: readonly 
   if (!entries) return result
   for (const session of sessions) {
     const seen = entries.get(session.id)
-    if (seen != null) result[session.id] = seen
+    if (seen != null && !settledPast(session, seen)) result[session.id] = seen
   }
   return result
+}
+
+export function clearSessionSeenInterruption(instanceId: string, sessionId: string): void {
+  const boundaries = eventBoundaries.get(instanceId)
+  boundaries?.delete(sessionId)
+  if (!boundaries?.size) eventBoundaries.delete(instanceId)
+  update(instanceId, entries => entries.delete(sessionId))
 }
 
 export function hydrateSeenInterruptions(instanceId: string, markers: Readonly<Record<string, number>> | undefined): void {

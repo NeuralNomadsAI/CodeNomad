@@ -104,7 +104,7 @@ function speakCompletedAssistantText(instanceId: string, sessionId: string): voi
   }
 }
 
-function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent): void {
+function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent): void | Promise<void> {
   if (handlePruningEvent(instanceId, event)) return
   switch (event.type) {
     case "form.created":
@@ -146,13 +146,12 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
       ensureSessionStatus(instanceId, event.data.sessionID, "compacting", event.location?.directory)
       return
     case "session.compaction.failed":
-      void reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
+      return reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
         failed: true,
         directory: event.location?.directory,
       })
-      return
     case "session.execution.interrupted":
-      void reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
+      return reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
         failed: true,
         interruptedAt: event.created,
         refreshMessages: true,
@@ -161,14 +160,12 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
         notify: event.data.reason === "inactivity",
         directory: event.location?.directory,
       })
-      return
     case "session.execution.succeeded":
-      void reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
+      return reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
         failed: false,
         notify: true,
         directory: event.location?.directory,
       })
-      return
     case "session.retry.scheduled":
       handleRetryScheduled(instanceId, event)
       return
@@ -203,6 +200,9 @@ async function reconcileTerminalNativeSessionStatus(
   options: { failed: boolean; interruptedAt?: number; refreshMessages?: boolean; notify?: boolean; directory?: string },
 ): Promise<void> {
   const generation = advanceNativeLifecycle(instanceId, sessionId)
+  // Claim this event before any refresh can expose its badge for acknowledgement.
+  const current = sessions().get(instanceId)?.get(sessionId)
+  if (current && options.interruptedAt !== undefined) observeSessionInterruption(instanceId, current, options.interruptedAt)
   let activeSessions: Record<string, unknown> | null = null
   try {
     activeSessions = await getRootClient(instanceId).session.active()
@@ -220,8 +220,6 @@ async function reconcileTerminalNativeSessionStatus(
   }
 
   if (options.interruptedAt !== undefined) {
-    const current = sessions().get(instanceId)?.get(sessionId)
-    if (current) observeSessionInterruption(instanceId, current, options.interruptedAt)
     withSession(instanceId, sessionId, (session) => { session.generationRecovery = "interrupted" })
   }
   setTerminalNativeSessionStatus(instanceId, sessionId, options.failed, options.directory)
