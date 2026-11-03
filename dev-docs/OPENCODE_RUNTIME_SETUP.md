@@ -205,9 +205,10 @@ the absolute executable selection before using these internal APIs.
 `ServiceSupervisionStore` stores a bounded 64 KiB manifest below a caller-provisioned
 private service-wide root. Revision-checked controls persist intent before OS effects;
 fresh adapter read-back acknowledges its revision separately. An exact retained
-request receipt reconciles a lost reply. An absent receipt stays unknown. First Play
-sets an unset choice to ON; explicit OFF persists across subsequent Plays. Reads and
-binary selection preserve the preference. OFF can fence an unfinished ON; stale
+request receipt reconciles a lost reply. An absent receipt stays unknown. A never-chosen
+preference is OFF; only an explicit Settings ON enables supervision, and a saved ON stays
+ON. Reads and binary selection preserve the preference. Retained
+`first-play` receipts parse as ON receipts. OFF can fence an unfinished ON; stale
 acknowledgements and stale ON requests conflict.
 
 Windows mutations and Start admission share an OS `FileShare.None` handle on
@@ -235,15 +236,13 @@ ON still requested. Explicit Retry reconciles that same revision and preserves i
 original receipt. A later OFF fences an older attempt's diagnostics. Passive reads
 and acknowledged request replays observe supervision resources; Linux also completes
 an already requested, deferred linger rollback when its safety checks allow it.
-The internal first-Play
-entry sets an unset preference to ON and preserves every existing explicit choice.
 
 The Settings route registrar in `server/routes/service-supervision.ts` defines
 `GET|POST /api/opencode/supervision`, using the existing live human-session check.
 Responses expose the key, preference, revision, protection state, fixed cause,
 responding-service flag, known attempt/backoff and optional exact receipt status.
 Its POST input permits ON, OFF and Retry; executable paths, arbitrary commands and
-internal first-Play/binary-selection controls stay behind the execution-host seam.
+internal binary-selection controls stay behind the execution-host seam.
 The production HTTP server registers these routes under its authentication hook.
 The shared response/control types are exported by `api-types.ts`.
 
@@ -256,11 +255,6 @@ native macOS. Windows UNC selections resolve the registered WSL distro spelling,
 native account/UID and canonical Linux roots through the selected distro.
 Missing/ambiguous namespaces, unqualified platforms and unsupported command wrappers return a fixed
 unavailable response.
-Mission Play additionally pins its already-authorized service connection, registration
-PID/URL and credential. The immediate, daily and unified Play paths default only an
-unset service preference to ON; paused creation, passive reads and other controls
-preserve it. Human/connection/physical-root checks surround the operation. Signed
-schedule proofs are issued after supervision preparation.
 
 Focused checks: `node --import tsx --test
 packages/server/src/host-lifetime/service-supervision.test.ts`. Native exact-file

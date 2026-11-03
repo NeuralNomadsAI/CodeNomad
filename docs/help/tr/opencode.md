@@ -35,9 +35,7 @@ OpenCode, küresel hizmet kaydına, oturumlarına, mesajlarına ve veritabanına
 
 Windows'ta gözetim ve kurtarma, terminal penceresi açmadan arka planda çalışır. CodeNomad güncellemeleri kayıtlı seçiminizi ve çalışan OpenCode hizmetini korur; güncellenen görev eylemleri sonraki başlatmalarda uygulanır.
 
-İlk Mission başlatılmadan önce **İlk Mission başlatılırken kapalı tut**, önce gözetim kurmadan açık bir KAPALI tercihi kaydeder.
-
-**Ayarlar → OpenCode** içindeki **OpenCode'u çalışır tut**, yürütme sunucusuna işletim sistemi gözetimi kurar; bu hizmeti kullanan tüm CodeNomad profillerinde paylaşılır. Missions'tan bağımsızdır ve CodeNomad kapalıyken de çalışır. Önceden açıkça kapatmadıysanız ilk Mission başlatma işlemi etkinleştirir; duraklatılmış Mission oluşturmak seçimi korur. Mission duraklatmak, durdurmak veya silmek bu tercihi değiştirmez. Yürütme sunucusunda gözetim kullanılamıyorsa **Başlat** ve **Sürdür** Mission'ı yine çalıştırır ve tercihi değiştirmez.
+**Ayarlar → OpenCode** içindeki **OpenCode'u çalışır tut**, yürütme sunucusuna işletim sistemi gözetimi kurar; bu hizmeti kullanan tüm CodeNomad profillerinde paylaşılır. CodeNomad kapalıyken de çalışır ve siz açana kadar kapalı kalır.
 
 Kapatmak gözetimi kaldırır; OpenCode çalışmaya devam eder ancak yeniden başlatılmaz. Kalıcı durdurma için önce bunu kapatın, sonra OpenCode'u açıkça durdurun. Gözetim açıkken `opencode service stop` sonrasında yeniden başlatılır.
 

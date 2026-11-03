@@ -63,8 +63,7 @@ Explicit Pause, terminal Stop, proven failure and a proven end without a report
 retain their admission barriers and human recovery controls. Incomplete native
 correlation or uncertain effects keep the original pending record and block a new
 passage. Native continuation is observed under its original identity. The technical
-wake joins the exact existing service; OS supervision owns service availability
-through its independent shared preference ([runtime setup](OPENCODE_RUNTIME_SETUP.md#service-supervision-primitives-and-native-adapters)).
+wake joins the exact existing service.
 
 The authenticated product seam is `POST /api/workspaces/:id/missions/scheduled`
 for paused creation, and `GET|POST /api/workspaces/:id/missions/:missionID/schedule`
@@ -204,14 +203,6 @@ before native effects. It acknowledges the reconciliation calendar before arming
 principals. Temporal edits preserve retired proofs until cleanup, while relative
 origins, the first Play and admitted counts remain durable. A first Play on a
 calendar-backed policy requires ready settings activation. Creation remains paused.
-
-Human Play also calls the shared service-supervision default-ON path on its exact
-acquired connection. An explicit OFF remains OFF; creating, configuring, pausing,
-stopping and deleting a Mission preserve that service-wide preference. Supervision
-preparation precedes the signed control proof and native schedule dispatch. Runtime
-namespace/storage failures remain explicit at the schedule product boundary, while
-one-time Play and Resume continue without it ([Missions](MISSIONS.md#explicit-execution-controls)); independent
-OS protection and native calendar admission keep separate status contracts.
 
 Each technical wake enters an exact-file, own-process HTTP RPC with an eight-second
 deadline. A read-only preflight freezes complete fan-in coverage before a dispatch

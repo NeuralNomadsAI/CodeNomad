@@ -59,63 +59,24 @@ test("every map mutation enters the worktree-deletion fence before its single na
   }
 })
 
-test("immediate human Play defaults supervision on its exact fenced connection; Pause and revoked Play leave it alone", async () => {
-  const h = harness(), app = Fastify({ logger: false }), connection = await h.manager.getSharedServiceConnection()
-  h.manager.getSharedServiceConnection = async () => connection
-  let human = true, plays = 0, revoke = false
-  registerMissionRoutes(app, { workspaceManager: h.manager as never, worktreeDeletionFence: h.state.fence,
-    auth: { isAuthEnabled: () => true, getSessionFromRequest: () => human ? { username: "human", sessionId: "cookie" } : null },
-    supervision: { missionPlay: async (exact, _id, authorize) => {
-      assert.equal(exact, connection); assert.ok(h.state.entries > 0)
-      authorize(); plays++; if (revoke) human = false; authorize()
-      return {} as never
-    } },
-  })
-  try {
-    const post = (action: string) => app.inject({ method: "POST", url: routes[1].url,
-      payload: { action, expectedRevision: 1, requestId: action } })
-    assert.equal((await post("start")).statusCode, 200)
-    assert.equal(plays, 1); assert.deepEqual(h.state.rpcs, ["lifecycle"])
-    assert.equal((await post("pause")).statusCode, 200)
-    assert.equal(plays, 1)
-    revoke = true
-    assert.equal((await post("start")).statusCode, 503)
-    assert.equal(h.state.rpcs.length, 2)
-    assert.equal((await post("start")).statusCode, 401)
-    assert.equal(plays, 2)
-  } finally { await app.close() }
-})
-
-test("Play and Resume reach the lifecycle when service supervision is unavailable on this host", async () => {
+test("one-time Play and Resume never consult service supervision", async () => {
   const h = harness(), app = Fastify({ logger: false })
-  let plays = 0
-  registerMissionRoutes(app, { workspaceManager: h.manager as never, worktreeDeletionFence: h.state.fence,
-    auth: { isAuthEnabled: () => true, getSessionFromRequest: () => ({ username: "human", sessionId: "cookie" }) },
-    supervision: { missionPlay: async (_connection, _id, authorize) => {
-      authorize(); plays++
-      throw new Error(plays === 1 ? "supervision-platform-unavailable" : "supervision-namespace-unavailable")
-    } },
-  })
+  let human = true, plays = 0
+  // A stray supervision dependency must stay unused by the lifecycle route.
+  const deps: Parameters<typeof registerMissionRoutes>[1] = { workspaceManager: h.manager as never, worktreeDeletionFence: h.state.fence,
+    auth: { isAuthEnabled: () => true, getSessionFromRequest: () => human ? { username: "human", sessionId: "cookie" } : null } }
+  registerMissionRoutes(app, Object.assign(deps, { supervision: { missionPlay: async () => { plays++; throw new Error("supervision-platform-unavailable") } } }))
   try {
-    for (const requestId of ["play", "resume"]) {
-      const response = await app.inject({ method: "POST", url: routes[1].url, payload: { action: "start", expectedRevision: 1, requestId } })
-      assert.equal(response.statusCode, 200, requestId)
-    }
-    assert.equal(plays, 2)
-    assert.deepEqual(h.state.rpcs, ["lifecycle", "lifecycle"])
-  } finally { await app.close() }
-})
-
-test("a supervision failure after the connection was replaced still refuses Play before the lifecycle", async () => {
-  const h = harness(), app = Fastify({ logger: false })
-  registerMissionRoutes(app, { workspaceManager: h.manager as never, worktreeDeletionFence: h.state.fence,
-    auth: { isAuthEnabled: () => true, getSessionFromRequest: () => ({ username: "human", sessionId: "cookie" }) },
-    supervision: { missionPlay: async () => { h.state.current = false; throw new Error("supervision-namespace-unavailable") } },
-  })
-  try {
-    const response = await app.inject({ method: "POST", url: routes[1].url, payload: { action: "start", expectedRevision: 1, requestId: "play" } })
-    assert.equal(response.statusCode, 503)
-    assert.deepEqual(h.state.rpcs, [])
+    const post = (action: string, requestId: string) => app.inject({ method: "POST", url: routes[1].url,
+      payload: { action, expectedRevision: 1, requestId } })
+    assert.equal((await post("start", "play")).statusCode, 200)
+    assert.equal((await post("pause", "pause")).statusCode, 200)
+    // No supervision-specific human proof: the production authentication hook,
+    // outside this route, still admits the request.
+    human = false
+    assert.equal((await post("start", "resume")).statusCode, 200)
+    assert.equal(plays, 0)
+    assert.deepEqual(h.state.rpcs, ["lifecycle", "lifecycle", "lifecycle"])
   } finally { await app.close() }
 })
 

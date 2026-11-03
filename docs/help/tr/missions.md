@@ -16,7 +16,7 @@ Görevler, kalıcı bir proje planını OpenCode'un kendi konuşmalarıyla birle
 4. **Rehber**, **Notlar**, **Ajanlar ve modeller**, **Görev oturumları**, projenin **Alt oturum iç içe geçme derinliği** ayarı, kayıtlı özetler ve isteğe bağlı takip edilen konuşmalar için **Seçenekler** bölümünü genişletin. **İki modeli karşılaştır** seçildiğinde **Model A** ve **Model B** seçicileri ana formda görünür.
 5. **Oluştur** eylemini seçin. Duraklatılmış kaydı seçip inceleyin, ardından hazır olduğunuzda ▶ **Başlat** eylemini kullanın. Hemen başlayan koşulsuz iş tek bir görev başlatır; gecikmeli, yinelenen veya koşullu bir ilke yerel zamanlamayı etkinleştirir.
 
-**Oluştur, duraklatılmış bir Görev kaydeder.** İş ve yerel takvimler yalnızca başlatma eylemiyle etkinleştirilir; oluşturmak veya özet kaydetmek, paylaşılan hizmet gözetimi tercihini korur. Oluşturma seçili proje/Location kapsamındadır ve istenen profillerle görev oturumu ilkesini kaydeder. Doğrulama ilgili alanın yanında görünür; hiçbir şey gönderilmediğini belirten bir ret, taslağı düzeltme için korur. Tek seferlik koordinatör ayrı bir devam görevi de hazırlayabilir: **Hazır** olarak görünür ve kendi ▶ eylemiyle başlar.
+**Oluştur, duraklatılmış bir Görev kaydeder.** İş ve yerel takvimler yalnızca başlatma eylemiyle etkinleştirilir. Oluşturma seçili proje/Location kapsamındadır ve istenen profillerle görev oturumu ilkesini kaydeder. Doğrulama ilgili alanın yanında görünür; hiçbir şey gönderilmediğini belirten bir ret, taslağı düzeltme için korur. Tek seferlik koordinatör ayrı bir devam görevi de hazırlayabilir: **Hazır** olarak görünür ve kendi ▶ eylemiyle başlar.
 
 Kayıtlı tek seferlik görevler yürütme kontrollerini, görev ağacını, konuşmalarını ve nihai raporlarını korur. Mevcut günlük zamanlamalar günlük kontrolleri ve [günlük zamanlama kurallarıyla](#existing-daily-schedules) listede kalır. Kaydı seçip o nesne için sunulan kontrolleri kullanın.
 
@@ -208,7 +208,7 @@ Oluşturulma zamanı da uygun günlük işleri sınırlar. Mevcut günlük kayı
 
 ## Çalışma ömrü ve hizmet yeniden başlatmaları {#lifetime}
 
-**Teknik ayrıntılar** yanındaki **i**, teknik etkinliği ve maliyetleri açıklar. **Ayarlar → OpenCode** altında gözetim durumu ve hatalar görünür kalır; genel açıklamalar **i** içindedir.
+**Teknik ayrıntılar** yanındaki **i**, teknik etkinliği ve maliyetleri açıklar.
 
 Yerel bir zamanlamada **Teknik ayrıntılar** bölümünü genişleterek **Ana taşıyıcı** ve **Uzlaştırma taşıyıcısı** bilgilerini, bunların yerel takvimlerini ve varsa **Temizlik uzlaştırma bekliyor** durumunu görebilirsiniz. Bu teknik konuşmalarda mesaj yazma eylemi bulunmaz ve bunlar olağan konuşma ve kaynak seçicilerinde görünmez. Teknik uyanmalar, başlıklar ve bağlam sıkıştırma, sağlayıcılara HTTP isteği göndermeden yerel modeli kullanır; yerel olaylar ve istatistikler bunları yine de içerebilir, ancak gerçek geçişlerin olağan model maliyetleri korunur. Bağlam sıkıştırma, konuşma ve takvim kimliğini koruyarak işlenen bağlamı sınırlar. Saklanan yerel mesajlar ve olaylar, tamamlanmış bir zamanlama açıkça temizlenene kadar birikebilir; saklanan 30 Mission sonucu ayrıdır. Derinlik denetimi, kullanılabilir olduğunda yolu **OpenCode yapılandırma dosyası:** altında gösterir ve **Projenin yazma hedefi** bilgisini ayrıca belirtir.
 
@@ -222,8 +222,6 @@ Yerel bir zamanlamada **Teknik ayrıntılar** bölümünü genişleterek **Ana t
 | Mevcut günlük zamanlama | Hizmet yaşadığı sürece eklenti saati CodeNomad kapalıyken çalışır. Hizmet yeniden başlatılırsa **Kesintiye uğradı** durumunda kalır; açık **Sürdür** eylemi bekleyen çalıştırmayı uzlaştırır ve günlük saati yeniden etkinleştirir. |
 
 Yerel zamanlamalarda açık duraklatma, durdurma, başarısız iş ve belirsiz sonuçlar, yeniden başlatmadan sonra kabul engellerini korur. Korunan geçişi ve özgün isteği inceleyin; sunulduğunda **Çalıştırmayı denetle** veya **Kayıtlı isteği yenile** eylemini kullanın, ardından yalnızca durum izin veriyorsa **Sürdür** eylemini seçin. Yerel devam, mevcut kimliği altında gözlemlenir. Kanıtlanmış başarısızlık veya raporsuz sonlanma insan müdahalesiyle kurtarma gerektirir; eksik kanıt geçişi belirsiz bırakır. Başlatılmış araç etkilerini tekrarlamak için asla yeniden başlatma kullanmayın.
-
-[OpenCode'u çalışır tut](opencode.md#service-supervision), paylaşılan hizmeti yürütme ana bilgisayarında ayrıca gözetir. KAPALI tercihini kaydetmediyseniz ilk Görev başlatma bunu etkinleştirir; duraklatılmış Görev oluşturmak bu seçimi korur. Kapatmak, OpenCode'u otomatik yeniden başlatma olmadan çalışır bırakır. Windows, macOS ve WSL oturum açma sınırını kullanır; yerel Linux izinlere bağlı kullanıcı linger özelliğini kullanır. Uyku, hazırda bekletme, WSL'nin boşta kalma ömrü ve harici ana bilgisayarın denetimi kullanılabilirliği sınırlar; gözetim durumunu zamanlamadan bağımsız inceleyin.
 
 Görevler masaüstü uygulamalarıyla ve bağımsız bir CodeNomad [sunucusuyla](server.md) çalışır. Panel **Görev Kontrolü kullanılamıyor** gösterdiğinde mesajı nedeni belirtir:
 

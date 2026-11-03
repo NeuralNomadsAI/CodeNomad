@@ -43,7 +43,7 @@ test("real cookie human Play uses exact selected YAML; lost ACK performs one rec
     const selected = canonicalScope("stable", yaml, base, base)
     const auth = new AuthManager({ configPath: base, username: "human", password: "offline", generateToken: false }, pino({ level: "silent" }) as never)
     const human = auth.createSession("human"), workspace = {}, location = { directory }
-    let controlCalls = 0, reads = 0
+    let controlCalls = 0, reads = 0, plays = 0
     const requestID = "request_one"
     const client = { location: { get: async () => ({ ...location, project: { id: "project", canonical: directory } }) },
       rpc: () => ({ recurrenceControl: async (input: { sessionID: string; requestID: string; profileSource: { configYamlPath: string } }) => {
@@ -60,6 +60,8 @@ test("real cookie human Play uses exact selected YAML; lost ACK performs one rec
           outcome: "committed", state: "running", revision: 1, controlsComplete: true }
       } }) }
     registerMissionRecurrenceControl(app, { auth, bridgeToken: "existing-bridge-token", fence: new WorktreeDeletionFence(),
+      // Play never consults service supervision: a stray dependency must stay unused.
+      supervision: { missionPlay: async () => { plays++; throw new Error("supervision-platform-unavailable") } },
       settings: { configYamlPathForAuthority: () => yaml, getProfileScope: () => selected },
       manager: { get: () => workspace, getServiceLocation: () => location, getServiceDirectoryForPath: async () => directory,
         getSharedServiceConnection: async () => ({ client, assertCurrent: () => {} }), ownsLocation: async () => true,
@@ -71,7 +73,7 @@ test("real cookie human Play uses exact selected YAML; lost ACK performs one rec
     const response = await app.inject({ method: "POST", url, payload, headers: { cookie: `${auth.getCookieName()}=${human.id}` } })
     assert.equal(response.statusCode, 200)
     assert.equal(response.json().outcome, "committed")
-    assert.deepEqual([controlCalls, reads], [1, 1])
+    assert.deepEqual([controlCalls, reads, plays], [1, 1, 0])
     assert(!response.body.includes(human.id))
     assert(!response.body.includes(yaml))
   } finally { await app.close(); await rm(base, { recursive: true, force: true }) }

@@ -46,11 +46,6 @@ export function ServiceSupervisionCard() {
         <button type="button" class="window-action" disabled={settings.busy()} onClick={() => void settings.refresh()}>
           {t("settings.supervision.refresh")}
         </button>
-        <Show when={settings.snapshot()?.desired === "unset"}>
-          <button type="button" class="window-action" disabled={disabled()} onClick={() => void settings.save("off")}>
-            {t("settings.supervision.keepOff")}
-          </button>
-        </Show>
         <Show when={settings.operation()?.state === "uncertain"} fallback={
           <Show when={settings.snapshot()?.cause && settings.snapshot()?.desired !== "unset"}>
             <button type="button" class="window-action" disabled={disabled()} onClick={() => void settings.save("retry")}>
