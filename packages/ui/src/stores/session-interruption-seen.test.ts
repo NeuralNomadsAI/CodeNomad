@@ -184,7 +184,65 @@ describe("seen native interruptions", () => {
     }
   })
 
-  it("binds a gap-time clear to confirmed metadata rather than an event timestamp", () => {
+  it("preserves the current clear when held metadata belongs to an intermediate interruption", async () => {
+    const instanceId = "seen-held-metadata"
+    let releaseInfo!: (value: unknown) => void
+    const heldInfo = new Promise(resolve => { releaseInfo = resolve })
+    let requested!: () => void
+    const infoRequested = new Promise<void>(resolve => { requested = resolve })
+    let reads = 0
+    let nativeIdle = 30
+    const client = {
+      session: {
+        active: async () => ({}),
+        get: () => {
+          if (++reads === 1) { requested(); return heldInfo }
+          return Promise.resolve({ ...session({ instanceId }), parentID: undefined, time: { created: 1, updated: nativeIdle, idle: nativeIdle } })
+        },
+      },
+      message: { list: async () => ({ data: [], cursor: {} }) },
+    } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setSessions(previous => new Map(previous).set(instanceId, new Map([["session", session({ instanceId })]])))
+    const refresh = refreshSessionRuntimeStatus(instanceId)
+    const olderInfo = { ...session({ instanceId }), parentID: undefined, time: { created: 1, updated: 20, idle: 20 } }
+    try {
+      await infoRequested
+      await handleNativeSessionEvent(instanceId, {
+        id: "current", created: 30, type: "session.execution.interrupted",
+        durable: { aggregateID: "session", seq: 1, version: 1 },
+        data: { sessionID: "session", reason: "user" }, location: { directory: "/work" },
+      })
+      const current = () => sessions().get(instanceId)!.get("session")!
+      markSessionIdleSeen(instanceId, "session")
+      assert.deepEqual(captureSeenInterruptions(instanceId, [current()]), { session: 30 })
+      assert.equal(isSessionInterruptionUnseen(instanceId, current()), false)
+      releaseInfo(olderInfo)
+      await refresh
+      assert.equal(current().time.idle, 20, "native metadata keeps its existing merge authority")
+      const watermarkAfterOlderMetadata = captureSeenInterruptions(instanceId, [current()])
+      assert.equal(isSessionInterruptionUnseen(instanceId, current()), false)
+      await refreshSessionRuntimeStatus(instanceId)
+      assert.equal(current().time.idle, 30)
+      assert.equal(isSessionInterruptionUnseen(instanceId, current()), false, "refresh without a new terminal event keeps the clear")
+      assert.deepEqual(watermarkAfterOlderMetadata, { session: 30 }, "older metadata never lowers the acknowledgement")
+      nativeIdle = 31
+      await refreshSessionRuntimeStatus(instanceId)
+      assert.equal(isSessionInterruptionUnseen(instanceId, current()), true, "a genuinely newer native boundary shows again")
+    } finally {
+      releaseInfo(olderInfo)
+      await refresh
+      messageStoreBus.unregisterInstance(instanceId)
+      setSessions(previous => { const next = new Map(previous); next.delete(instanceId); return next })
+      clearInstanceDeletedSessionAuthority(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+      clearInstanceSeenInterruptions(instanceId)
+    }
+  })
+
+  it("keeps a gap-time clear until metadata covers the event timestamp", () => {
     const instanceId = "seen-confirmed"
     try {
       const previous = session({ instanceId })
@@ -192,11 +250,14 @@ describe("seen native interruptions", () => {
       markSessionInterruptionSeen(instanceId, previous)
       const confirmed = session({ instanceId, time: { created: 1, updated: 30, idle: 20 } })
       const merged = mergeFetchedSessionRuntimeState(confirmed, previous, previous)!
-      assert.deepEqual(captureSeenInterruptions(instanceId, [merged]), { session: 20 })
+      assert.deepEqual(captureSeenInterruptions(instanceId, [merged]), { session: 30 })
       assert.equal(isSessionInterruptionUnseen(instanceId, merged), false)
-      assert.equal(isSessionInterruptionUnseen(instanceId, session({ time: { created: 1, updated: 31, idle: 21 } })), true)
-      const settled = session({ instanceId, generationRecovery: null, outcome: "succeeded", time: { created: 1, updated: 32, idle: 22 } })
-      mergeFetchedSessionRuntimeState(settled, merged, merged)
+      const covered = mergeFetchedSessionRuntimeState(session({ instanceId, time: { created: 1, updated: 40, idle: 40 } }), merged, merged)!
+      assert.deepEqual(captureSeenInterruptions(instanceId, [covered]), { session: 40 }, "covering metadata can advance the acknowledgement")
+      assert.equal(isSessionInterruptionUnseen(instanceId, covered), false)
+      assert.equal(isSessionInterruptionUnseen(instanceId, session({ time: { created: 1, updated: 41, idle: 41 } })), true)
+      const settled = session({ instanceId, generationRecovery: null, outcome: "succeeded", time: { created: 1, updated: 42, idle: 42 } })
+      mergeFetchedSessionRuntimeState(settled, covered, covered)
       assert.equal(seenInterruptionsRevision().get(instanceId)?.size ?? 0, 0)
     } finally { clearInstanceSeenInterruptions(instanceId) }
   })

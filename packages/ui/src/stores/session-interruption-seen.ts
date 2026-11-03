@@ -68,11 +68,11 @@ export function reconcileSessionInterruptionBoundary(instanceId: string, session
     clearSessionSeenInterruption(instanceId, session.id)
     return
   }
-  if (!event || idle <= event.baseline || session.outcome !== "interrupted") return
+  if (!event || idle < event.provisional || session.outcome !== "interrupted") return
   eventBoundaries.get(instanceId)!.delete(session.id)
   if (!eventBoundaries.get(instanceId)!.size) eventBoundaries.delete(instanceId)
-  // Rebind a clear made in the metadata gap to the proven boundary, even when
-  // the event timestamp was later. A subsequent native boundary must show again.
+  // Only metadata covering the event can consume its provisional association.
+  // The matching acknowledgement can only advance to this proven boundary.
   update(instanceId, entries => {
     if (entries.get(session.id) !== event.provisional) return false
     entries.set(session.id, idle)

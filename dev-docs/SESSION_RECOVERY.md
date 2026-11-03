@@ -56,8 +56,9 @@ admission and pending-request facts keep their existing authority.
 
 The native interruption event claims acknowledgement authority before its activity
 read. It invalidates the prior acknowledgement and uses the event timestamp while
-SessionInfo catches up. The accepted runtime merge binds a gap-time clear to the
-confirmed native idle boundary; later event continuations preserve intervening
+SessionInfo catches up. The accepted runtime merge binds a gap-time clear once the
+native idle boundary reaches the event timestamp, preserving a monotonic
+acknowledgement through older metadata; later event continuations preserve intervening
 acknowledgements. A newer native idle boundary shows interrupted attention again;
 the same or an older boundary preserves acknowledgement across refresh/reconnect.
 Work and pending input/permission always retain priority.
