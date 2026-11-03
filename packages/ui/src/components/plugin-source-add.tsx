@@ -1,6 +1,5 @@
-import { Show, createSignal, createUniqueId } from "solid-js"
+import { Show, createEffect, createSignal, createUniqueId, on } from "solid-js"
 import { Popover } from "@kobalte/core/popover"
-import { Plus } from "lucide-solid"
 import type { PluginControlLocation, PluginControlScope } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
@@ -10,27 +9,30 @@ import { pluginSourcesStore } from "../stores/plugin-sources"
 
 const log = getLogger("session")
 
-/** Header icon of the Plugins surface: a transient window that adds one registry or Git package
- * to a scope's OpenCode configuration. Success is shown by the row, never here. */
+/** "Add a plugin…" of the Plugins "+" menu: a transient window, anchored to that menu's trigger, that adds one
+ * registry or Git package to a scope's OpenCode configuration. Success is shown by the row, never here. */
 export function PluginSourceAdd(props: {
   instanceId: string
   location: PluginControlLocation
   projectAvailable: boolean
   active?: boolean
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  anchor: () => HTMLElement | undefined
 }) {
   const { t } = useI18n()
   const id = createUniqueId()
-  const [open, setOpen] = createSignal(false)
   const [spec, setSpec] = createSignal("")
   const [scope, setScope] = createSignal<PluginControlScope>("global")
   const [pending, setPending] = createSignal(false)
   const [error, setError] = createSignal<string>()
   const scopeLabel = (value: PluginControlScope) => t(`instanceServiceStatus.plugins.scope.${value}`)
+  const setOpen = (next: boolean) => props.onOpenChange(next)
+  createEffect(on(() => props.open, open => { if (open) { setSpec(""); setScope("global"); setError(undefined) } }))
 
   const openChange = (next: boolean) => {
     if (pending()) return
     setOpen(next)
-    if (next) { setSpec(""); setScope("global"); setError(undefined) }
   }
 
   const submit = async (event: SubmitEvent) => {
@@ -53,13 +55,10 @@ export function PluginSourceAdd(props: {
   }
 
   return (
-    <Popover placement="bottom-start" gutter={4} open={open()} onOpenChange={openChange}>
-      <Popover.Trigger type="button" class="icon-button-compact" disabled={props.active === false}
-        title={t("instanceServiceStatus.plugins.sources.add")} aria-label={t("instanceServiceStatus.plugins.sources.add")}>
-        <Plus class="h-3.5 w-3.5" aria-hidden="true" />
-      </Popover.Trigger>
+    <Popover placement="bottom-start" gutter={4} open={props.open} onOpenChange={openChange} anchorRef={props.anchor}>
       <Popover.Portal>
-        <Popover.Content class="window-shell plugin-source-add" aria-busy={pending()}>
+        <Popover.Content class="window-shell plugin-source-add" aria-busy={pending()}
+          onCloseAutoFocus={event => { event.preventDefault(); const anchor = props.anchor(); if (anchor?.isConnected) anchor.focus() }}>
           <header class="window-header">
             <Popover.Title class="window-title">{t("instanceServiceStatus.plugins.sources.addTitle")}</Popover.Title>
           </header>

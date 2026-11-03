@@ -14,7 +14,7 @@ import { pluginControlsCache } from "../stores/plugin-controls"
 import { pluginSourcesStore, removableSources } from "../stores/plugin-sources"
 import { PluginActivationSwitch } from "./plugin-activation-switch"
 import { PluginRowActions } from "./plugin-row-actions"
-import { PluginSourceAdd } from "./plugin-source-add"
+import { PluginAddMenu } from "./plugin-add-menu"
 import "../stores/plugin-controls-events"
 
 interface PluginActivationControlsProps {
@@ -266,7 +266,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
             <RefreshCw class="h-3.5 w-3.5" classList={{ "animate-spin": state().loading || state().refreshing }} aria-hidden="true" />
           </button>
           <Show when={snapshot()}>
-            <PluginSourceAdd instanceId={props.instanceId} location={requestLocation()} projectAvailable={projectAvailable()} active={props.active} />
+            <PluginAddMenu instanceId={props.instanceId} location={requestLocation()} projectAvailable={projectAvailable()} active={props.active} />
           </Show>
         </div>
         <span id={globalLabelId} class="plugin-control-scope-label">{scopeLabel("global")}</span>
