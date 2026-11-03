@@ -35,23 +35,28 @@ export async function prepareSupervisionRoot(root: string, powershell: string, p
   await policy.verify(root, true)
 }
 
+export const windowsSupervisionSources = { node: process.execPath,
+  script: fileURLToPath(new URL("../../dist/host-lifetime/service-supervision-windows.ps1", import.meta.url)),
+  probe: fileURLToPath(new URL("../../dist/host-lifetime/service-supervision-probe.cjs", import.meta.url)),
+  ...(process.platform === "win32" ? { launcher: fileURLToPath(new URL("../../dist/host-lifetime/service-supervision-windows-launcher.exe", import.meta.url)) } : {}) }
+
 /** Immutable content-addressed copies outlive backend/package replacement.
- * A published descriptor pins its version; another profile never rewrites it. */
+ * Descriptors pin these artifacts; Windows action migration preserves the namespace. */
 export async function provisionSupervisionRuntime(directory: string, policy: StoragePolicy = supervisionArtifactPolicy,
-  sources = { node: process.execPath,
-    script: fileURLToPath(new URL("../../dist/host-lifetime/service-supervision-windows.ps1", import.meta.url)),
-    probe: fileURLToPath(new URL("../../dist/host-lifetime/service-supervision-probe.cjs", import.meta.url)) }) {
+  sources: { node: string; script: string; probe: string; launcher?: string } = windowsSupervisionSources) {
   const destination = path.join(directory, "runtime")
   await mkdir(destination, { mode: 0o700 }).catch(error => { if (error.code !== "EEXIST") throw error })
   await policy.verify(destination, true)
-  const result = {} as Record<keyof typeof sources, string>
-  for (const key of ["node", "script", "probe"] as const) {
-    const source = sources[key], stat = await lstat(source)
+  const result = {} as Record<"node" | "script" | "probe", string> & { launcher?: string }
+  for (const key of ["node", "script", "probe", "launcher"] as const) {
+    const source = sources[key]
+    if (!source) continue
+    const stat = await lstat(source)
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 256 * 1024 * 1024) throw new SupervisionError("unsafe-storage")
     const bytes = await readFile(source)
     if (bytes.length !== stat.size) throw new SupervisionError("conflict")
     const hash = createHash("sha256").update(bytes).digest("hex")
-    const file = path.join(destination, `${hash}${key === "node" ? ".exe" : key === "script" ? ".ps1" : ".cjs"}`)
+    const file = path.join(destination, `${hash}${key === "node" || key === "launcher" ? ".exe" : key === "script" ? ".ps1" : ".cjs"}`)
     try { await lstat(file) } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
       const temporary = path.join(destination, `${randomUUID()}.tmp`)

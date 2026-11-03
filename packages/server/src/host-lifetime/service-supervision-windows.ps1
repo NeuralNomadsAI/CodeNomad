@@ -1,6 +1,7 @@
 param([Parameter(Mandatory=$true)][string]$Directory,
   [Parameter(Mandatory=$true)][string]$Key,
-  [ValidateSet('install','remove','observe','Main','Recovery')][string]$Mode,
+  [ValidateSet('install','remove','observe','upgrade','Main','Recovery')][string]$Mode,
+  [string]$Launcher,
   [long]$Revision=-1)
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
@@ -36,13 +37,24 @@ function Atomic($name,$value) {
     if ([IO.File]::Exists($file)) { [IO.File]::Replace($tmp,$file,[NullString]::Value) } else { [IO.File]::Move($tmp,$file) }
   } finally { if ([IO.File]::Exists($tmp)) { [IO.File]::Delete($tmp) } }
 }
-$d=ReadJson (Join-Path $Directory 'windows.json') 32768
-if ($d.v -ne 1 -or $d.key -ne $Key -or $d.directory -ne $Directory -or $d.script -ne $PSCommandPath) { exit 1 }
+$descriptorText=$null
+$d=ReadJson (Join-Path $Directory 'windows.json') 32768 ([ref]$descriptorText)
+$previous=$d.previousScript
+if ($d.v -ne 1 -or $d.key -ne $Key -or $d.directory -ne $Directory) { exit 1 }
+if ($Mode -eq 'upgrade' -and !$d.launcher) {
+  $previous=$d.script; $d.script=$PSCommandPath
+  if ($Launcher -notmatch '^[A-Za-z]:\\' -or $Launcher -match '[\x00-\x1f"]' -or ![IO.File]::Exists($Launcher)) { exit 1 }
+  $d|Add-Member -NotePropertyName launcher -NotePropertyValue $Launcher
+  $d|Add-Member -NotePropertyName previousScript -NotePropertyValue $previous
+}
+if ($d.script -ne $PSCommandPath -or !$d.launcher -or ($Mode -eq 'upgrade' -and $d.launcher -ne $Launcher)) { exit 1 }
 $main="CodeNomad-OpenCode-$Key-Main"; $recovery="CodeNomad-OpenCode-$Key-Recovery"
 $marker="CodeNomad OpenCode supervision v1 key=$Key root=$Directory"
-function Arguments($kind) {
-  return "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$($d.script)`" -Directory `"$Directory`" -Key $Key -Mode $kind"
+function Arguments($kind,$script=$d.script,$hidden=$true) {
+  $window=if($hidden){' -WindowStyle Hidden'}else{''}
+  return "-NoLogo -NoProfile -NonInteractive$window -ExecutionPolicy Bypass -File `"$script`" -Directory `"$Directory`" -Key $Key -Mode $kind"
 }
+function ActionArguments($kind) { return "`"$($d.powershell)`" "+(Arguments $kind) }
 Import-Module (Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/Modules/ScheduledTasks/ScheduledTasks.psd1')
 function Subscription {
   return "<QueryList><Query Id=`"0`" Path=`"Microsoft-Windows-TaskScheduler/Operational`"><Select Path=`"Microsoft-Windows-TaskScheduler/Operational`">*[System[(EventID=201 or EventID=203)] and EventData[Data[@Name='TaskName']='\$main' and Data[@Name='ResultCode']!='0']]</Select></Query></QueryList>"
@@ -54,9 +66,12 @@ function Owned($name,$kind) {
     $sid=[string]$t.Principal.UserId
     if ($sid -notmatch '^S-1-') { $sid=[Security.Principal.NTAccount]::new($sid).Translate([Security.Principal.SecurityIdentifier]).Value }
   }
-  if ($t -and ($t.Description -ne $marker -or $t.Actions.Count -ne 1 -or
-    $t.Actions[0].Execute -ne $d.powershell -or $t.Actions[0].Arguments -ne (Arguments $kind) -or
-    $t.Actions[0].WorkingDirectory -ne $Directory -or $sid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)) { throw 'foreign-task' }
+  if ($t) {
+    $current=$t.Actions[0].Execute -eq $d.launcher -and $t.Actions[0].Arguments -eq (ActionArguments $kind)
+    $legacy=$Mode -eq 'upgrade' -and $previous -and $t.Actions[0].Execute -eq $d.powershell -and $t.Actions[0].Arguments -eq (Arguments $kind $previous $false)
+    if ($t.Description -ne $marker -or $t.Actions.Count -ne 1 -or (!$current -and !$legacy) -or
+      $t.Actions[0].WorkingDirectory -ne $Directory -or $sid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { throw 'foreign-task' }
+  }
   if ($t) {
     $text=Export-ScheduledTask -TaskPath '\' -TaskName $name
     if ($text.Length -gt 32768) { throw 'bounded-task' }
@@ -93,6 +108,30 @@ function Tasks {
 }
 try {
   if ($Mode -eq 'observe') { Tasks|ConvertTo-Json -Compress; exit 0 }
+  if ($Mode -eq 'upgrade') {
+    $gate=Gate
+    try {
+      $m=Manifest; if ($m.revision -ne $Revision) { throw 'revision-conflict' }
+      $currentText=$null; $null=ReadJson (Join-Path $Directory 'windows.json') 32768 ([ref]$currentText)
+      if ($currentText -cne $descriptorText) { throw 'runtime-conflict' }
+      # Validate BOTH definitions before replacing only their action. Partial
+      # publication accepts only these exact old/new actions on the next attempt.
+      $a=Owned $main 'Main'; $b=Owned $recovery 'Recovery'
+      # Pin the exact old/new artifact identities before the first action write.
+      # A package replacement resumes this pending definition with those bytes.
+      Atomic 'windows.json' $d
+      foreach ($entry in @(@($a,'Main'),@($b,'Recovery'))) {
+        if ($entry[0]) {
+          Set-ScheduledTask -TaskPath '\' -TaskName ($entry[0].TaskName) -Action (New-ScheduledTaskAction -Execute $d.launcher -Argument (ActionArguments $entry[1]) -WorkingDirectory $Directory)|Out-Null
+        }
+      }
+      $previous=$null; $tasks=Tasks
+      $d.PSObject.Properties.Remove('previousScript')
+      Atomic 'windows.json' $d
+      $tasks|ConvertTo-Json -Compress
+    } finally { $gate.Dispose() }
+    exit 0
+  }
   if ($Mode -eq 'install') {
     $gate=Gate
     try {
@@ -102,7 +141,7 @@ try {
       $principal=New-ScheduledTaskPrincipal -UserId $sid -LogonType Interactive -RunLevel Limited
       if (!$a) {
         $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([timespan]::Zero) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-        Register-ScheduledTask -TaskPath '\' -TaskName $main -Action (New-ScheduledTaskAction -Execute $d.powershell -Argument (Arguments 'Main') -WorkingDirectory $Directory) -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $sid) -Principal $principal -Settings $settings -Description $marker|Out-Null
+        Register-ScheduledTask -TaskPath '\' -TaskName $main -Action (New-ScheduledTaskAction -Execute $d.launcher -Argument (ActionArguments 'Main') -WorkingDirectory $Directory) -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $sid) -Principal $principal -Settings $settings -Description $marker|Out-Null
       }
       if (!$b) {
         $subscription=Subscription
@@ -110,7 +149,7 @@ try {
         $event.Enabled=$true; $event.Subscription=$subscription
         $periodic=New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1)) -RepetitionInterval (New-TimeSpan -Minutes 1)
         $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 10) -MultipleInstances Queue -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-        Register-ScheduledTask -TaskPath '\' -TaskName $recovery -Action (New-ScheduledTaskAction -Execute $d.powershell -Argument (Arguments 'Recovery') -WorkingDirectory $Directory) -Trigger @($event,(New-ScheduledTaskTrigger -AtLogOn -User $sid),$periodic) -Principal $principal -Settings $settings -Description $marker|Out-Null
+        Register-ScheduledTask -TaskPath '\' -TaskName $recovery -Action (New-ScheduledTaskAction -Execute $d.launcher -Argument (ActionArguments 'Recovery') -WorkingDirectory $Directory) -Trigger @($event,(New-ScheduledTaskTrigger -AtLogOn -User $sid),$periodic) -Principal $principal -Settings $settings -Description $marker|Out-Null
       }
       foreach ($t in @((Owned $main 'Main'),(Owned $recovery 'Recovery'))) { Enable-ScheduledTask -InputObject $t|Out-Null }
       Start-ScheduledTask -InputObject (Owned $main 'Main')
@@ -170,7 +209,7 @@ try {
       $m=Manifest; if ($m.desired -ne 'on' -or $m.revision -ne $rev) { exit 0 }
       $a=Owned $main 'Main'; $b=Owned $recovery 'Recovery'
       if (!$a -or !$b -or $a.State -in @('Running','Queued')) { exit 0 }
-      foreach ($file in @($d.script,$d.node,$d.probe)) { if (![IO.File]::Exists($file)) { throw 'artifact-missing' } }
+      foreach ($file in @($d.script,$d.node,$d.probe,$d.launcher)) { if (![IO.File]::Exists($file)) { throw 'artifact-missing' } }
       Atomic 'last-start.json' @{key=$Key;at=[datetime]::UtcNow.ToString('o')}
       Start-ScheduledTask -InputObject $a
     } finally { if ($gate) { $gate.Dispose() } }
@@ -179,7 +218,7 @@ try {
 } catch { @{state='failing';cause='windows-resource-operation';line=$_.InvocationInfo.ScriptLineNumber}|ConvertTo-Json -Compress; exit 1 }
 
 # Main owns a foreground handle for the entire ON lifetime. CreateProcessW uses
-# only CREATE_UNICODE_ENVIRONMENT: no breakaway, detached flag or finally-kill.
+# CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, with independent NUL stdio.
 $guard=$null
 try { $guard=[IO.File]::Open((Join-Path $Directory 'guard.lock'),'OpenOrCreate','ReadWrite','None') } catch { exit 1 }
 Add-Type -TypeDefinition @'
@@ -275,7 +314,7 @@ try {
         $argv=if($d.wsl){@($again.launch)}else{@('serve','--service')}
         if ($d.wsl -and ($argv.Count -lt 12 -or $argv[0] -ne '--distribution' -or $argv[1] -ne $d.wsl.distro -or $argv[2] -ne '--user' -or $argv[3] -ne $d.wsl.account)) { throw 'wsl-launch-identity' }
         $command=if($d.wsl){[Text.StringBuilder]::new((( @($binary)+$argv | ForEach-Object { QuoteArgument ([string]$_) }) -join ' '))}else{[Text.StringBuilder]::new("`"$binary`" serve --service")}
-        if (![CodeNomadForeground]::CreateProcessW($binary,$command,[IntPtr]::Zero,[IntPtr]::Zero,$true,0x400,$memory,$Directory,[ref]$startup,[ref]$child)) { throw 'spawn-failed' }
+        if (![CodeNomadForeground]::CreateProcessW($binary,$command,[IntPtr]::Zero,[IntPtr]::Zero,$true,0x08000400,$memory,$Directory,[ref]$startup,[ref]$child)) { throw 'spawn-failed' }
         $hosting='hosted'
       } catch { $cause='start-failed'; $next=[datetime]::UtcNow.AddSeconds($backoff); $backoff=[math]::Min(30,$backoff*2) }
       finally { if ($gate) { $gate.Dispose() } }

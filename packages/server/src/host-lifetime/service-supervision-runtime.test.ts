@@ -13,7 +13,7 @@ test("durable runtime copies are immutable, shared and usable after package remo
   t.after(() => rm(root, { recursive: true, force: true }))
   const source = path.join(root, "package"), owned = path.join(root, "owned")
   await mkdir(source); await mkdir(owned)
-  const sources = { node: path.join(source, "node.exe"), script: path.join(source, "guard.ps1"), probe: path.join(source, "probe.cjs") }
+  const sources = { node: path.join(source, "node.exe"), script: path.join(source, "guard.ps1"), probe: path.join(source, "probe.cjs"), launcher: path.join(source, "launcher.exe") }
   for (const [key, file] of Object.entries(sources)) await writeFile(file, `owned-${key}`)
   const policy = { async verify(file: string, directory: boolean) {
     const stat = await lstat(file)
