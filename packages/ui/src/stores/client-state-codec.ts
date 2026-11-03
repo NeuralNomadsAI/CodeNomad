@@ -10,6 +10,7 @@ export interface RestorableWorkspaceTabState {
   drafts: Record<string, string>; attachments: Record<string, RestorableAttachment[]>
   scrollSnapshots: Record<string, ScrollSnapshot>; unseenIdleSince: Record<string, number>
   generationRecovery: Record<string, PersistedGenerationRecovery>
+  seenInterruptions?: Record<string, number>
   expandedSessionIds?: string[]
   outlineIndexes?: Record<string, PersistedOutline>
   sessionCatalog?: PersistedSessionCatalogEntry[]
@@ -163,6 +164,8 @@ function normalizeWorkspaceTab(
     value.generationRecovery ?? {}, MAX_RECOVERY, budget,
     (entry) => entry as PersistedGenerationRecovery,
     (entry) => entry === "working" || entry === "interrupted")
+  const seenInterruptions = normalizeRecord(value.seenInterruptions, MAX_RECOVERY, budget,
+    (entry) => takeNumber(entry, 0, Number.MAX_SAFE_INTEGER))
   const expandedSessionIds = value.expandedSessionIds === undefined
     ? undefined
     : normalizeExpandedSessionIds(value.expandedSessionIds, budget)
@@ -180,6 +183,7 @@ function normalizeWorkspaceTab(
     attachments: { ...identity.priorityAttachments, ...attachmentResult.attachments },
     scrollSnapshots, unseenIdleSince, generationRecovery,
   }
+  if (seenInterruptions && Object.keys(seenInterruptions).length) result.seenInterruptions = seenInterruptions
   if (expandedSessionIds !== undefined) result.expandedSessionIds = expandedSessionIds
   const outlineIndexes = normalizeOutlineIndexes(value.outlineIndexes, budget.outlines, identity.activeSessionId)
   if (outlineIndexes) result.outlineIndexes = outlineIndexes

@@ -46,6 +46,28 @@ when newer SSE/local authority supersedes the captured baseline. Deletion,
 instance/client-generation and abort fences apply. Recovery never prompts,
 interrupts, updates a session or replays anything automatically.
 
+## Display acknowledgement
+
+`session-interruption-seen.ts` owns per-window, per-project-tab acknowledgement
+watermarks keyed by session ID and the native `time.idle` boundary. The shared
+`markSessionIdleSeen` path clears Idle and acknowledges Interrupted; viewing a
+visible, focused conversation uses that path too. Native outcome, recovery,
+admission and pending-request facts keep their existing authority.
+
+The native interruption event invalidates the prior acknowledgement and records
+its monotonic terminal boundary (`max(event.created, previous idle + 1)`) while
+SessionInfo catches up. Clearing during that gap therefore covers the subsequent
+metadata read. A newer native idle boundary shows interrupted attention again;
+the same or an older boundary preserves acknowledgement across refresh/reconnect.
+Work and pending input/permission always retain priority.
+
+`seenInterruptions` persists beside idle and recovery markers in window client
+state, including each session's content-addressed leaf. Capture and hydration use
+the existing session-marker budgets and unavailable-session preservation; live
+event tombstones fence late snapshot hydration. Instance removal releases the
+in-memory markers. Restoration revalidates recovery separately against native
+activity/outcome while preserving the acknowledged boundary.
+
 ## Validation
 
 Store regressions use isolated in-memory clients and the real stores; mutation stubs

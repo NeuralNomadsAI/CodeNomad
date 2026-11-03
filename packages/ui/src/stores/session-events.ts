@@ -44,6 +44,7 @@ import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, invali
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { showsRequestOfSession } from "./interruption-scope"
 import { getRetrySeconds } from "./session-status"
+import { observeSessionInterruption } from "./session-interruption-seen"
 import { tGlobal } from "../lib/i18n"
 
 import { fetchSessions, loadMessages, refreshSessionCatalog, removeSessionRuntimeState } from "./session-api"
@@ -153,7 +154,7 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
     case "session.execution.interrupted":
       void reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
         failed: true,
-        interrupted: true,
+        interruptedAt: event.created,
         refreshMessages: true,
         // A person's stop needs no notice and a shutdown resumes the turn later;
         // OpenCode stopping an unattended run does.
@@ -199,7 +200,7 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
 async function reconcileTerminalNativeSessionStatus(
   instanceId: string,
   sessionId: string,
-  options: { failed: boolean; interrupted?: boolean; refreshMessages?: boolean; notify?: boolean; directory?: string },
+  options: { failed: boolean; interruptedAt?: number; refreshMessages?: boolean; notify?: boolean; directory?: string },
 ): Promise<void> {
   const generation = advanceNativeLifecycle(instanceId, sessionId)
   let activeSessions: Record<string, unknown> | null = null
@@ -218,7 +219,9 @@ async function reconcileTerminalNativeSessionStatus(
     return
   }
 
-  if (options.interrupted) {
+  if (options.interruptedAt !== undefined) {
+    const current = sessions().get(instanceId)?.get(sessionId)
+    if (current) observeSessionInterruption(instanceId, current, options.interruptedAt)
     withSession(instanceId, sessionId, (session) => { session.generationRecovery = "interrupted" })
   }
   setTerminalNativeSessionStatus(instanceId, sessionId, options.failed, options.directory)

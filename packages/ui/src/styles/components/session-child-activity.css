@@ -22,6 +22,10 @@
   --session-child-activity-color: var(--session-status-idle-fg);
 }
 
+.session-item-expander[data-child-activity="interrupted"] {
+  --session-child-activity-color: var(--status-warning);
+}
+
 .session-item-expander[data-child-activity="working"] .disclosure-chevron,
 .session-item-expander[data-child-activity="compacting"] .disclosure-chevron {
   animation: pulse 1.5s ease-in-out infinite;

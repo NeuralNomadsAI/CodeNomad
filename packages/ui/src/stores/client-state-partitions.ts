@@ -42,6 +42,7 @@ interface SessionDocument {
   scrollSnapshot?: RestorableWorkspaceTabState["scrollSnapshots"][string]
   unseenIdleSince?: number
   generationRecovery?: RestorableWorkspaceTabState["generationRecovery"][string]
+  seenInterruption?: number
   outline?: object
 }
 
@@ -133,6 +134,7 @@ async function encodeSessionGraph(session: RestorableSessionState | null) {
         ...Object.keys(tab.scrollSnapshots),
         ...Object.keys(tab.unseenIdleSince),
         ...Object.keys(tab.generationRecovery),
+        ...Object.keys(tab.seenInterruptions ?? {}),
         ...Object.keys(tab.outlineIndexes ?? {}),
       ])
       const sessions: Record<string, { documentPartition: string; partitionKeys: string[] }> = Object.create(null)
@@ -145,6 +147,7 @@ async function encodeSessionGraph(session: RestorableSessionState | null) {
         if (hasOwn(tab.scrollSnapshots, sessionId)) document.scrollSnapshot = tab.scrollSnapshots[sessionId]
         if (hasOwn(tab.unseenIdleSince, sessionId)) document.unseenIdleSince = tab.unseenIdleSince[sessionId]
         if (hasOwn(tab.generationRecovery, sessionId)) document.generationRecovery = tab.generationRecovery[sessionId]
+        if (tab.seenInterruptions && hasOwn(tab.seenInterruptions, sessionId)) document.seenInterruption = tab.seenInterruptions[sessionId]
         const outline = tab.outlineIndexes?.[sessionId]
         const index = outline ? await encodeOutlinePartitions(outline) : undefined
         if (index) { document.outline = index.descriptor; Object.assign(generated, index.partitions) }
@@ -426,7 +429,7 @@ async function decodeGraph(
       const referenced = new Set([documentKey])
       const validDocument = document && (document.format === 1 || document.format === 2)
         && hasExactKeys(document, ["format"],
-          ["draft", "attachments", "scrollSnapshot", "unseenIdleSince", "generationRecovery", "outline"])
+          ["draft", "attachments", "scrollSnapshot", "unseenIdleSince", "generationRecovery", "seenInterruption", "outline"])
         && Object.keys(document).length > 1
       if (!validDocument) {
         degraded = true
@@ -461,6 +464,7 @@ async function decodeGraph(
       }
       if (decodedAttachments !== undefined) leaf.attachments[sessionId] = decodedAttachments as RestorableAttachment[]
       if (outline) leaf.outlineIndexes = { [sessionId]: outline }
+      if (hasOwn(document, "seenInterruption")) leaf.seenInterruptions = { [sessionId]: document.seenInterruption as number }
       const normalizedLeaf = normalizeRestorableSession({ tabs: [leaf], activeTabIndex: 0 })?.tabs[0]
       if (!normalizedLeaf || !canonicalEquals(leaf, normalizedLeaf)) {
         degraded = true
@@ -471,6 +475,10 @@ async function decodeGraph(
         if (hasOwn(leaf[stateField], sessionId)) {
           (tab[stateField] as Record<string, unknown>)[sessionId] = leaf[stateField][sessionId]
         }
+      }
+      if (leaf.seenInterruptions) {
+        const seen = (tab.seenInterruptions ??= Object.create(null)) as Record<string, number>
+        seen[sessionId] = leaf.seenInterruptions[sessionId]!
       }
       if (hasOwn(leaf.attachments, sessionId)) {
         (tab.attachments as Record<string, unknown>)[sessionId] = leaf.attachments[sessionId]

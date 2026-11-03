@@ -32,6 +32,7 @@ import { getAuthoritativeAttachmentSessionIdsForInstance, getSessionAttachmentsF
 import { serializeDraftAttachments } from "../../stores/client-state-attachments-codec"
 import { onInstanceLifecycleAuthority } from "../../stores/instance-lifecycle-authority"
 import { getPersistedGenerationRecovery, type PersistedGenerationRecovery } from "../../stores/session-generation-recovery"
+import { captureSeenInterruptions, seenInterruptionsRevision } from "../../stores/session-interruption-seen"
 import { hydrateWorkspacePromptState } from "../../stores/app-session-prompt-hydration"
 import { captureSessionOutlineIndexes, outlineCacheRevision } from "../../stores/session-outline"
 import { captureSessionCatalog } from "../../stores/session-catalog-persistence"
@@ -53,15 +54,19 @@ function captureScrollSnapshots(instanceId: string): Record<string, ScrollSnapsh
     .slice(0, MAX_CAPTURED_SCROLL_SNAPSHOTS)
     .map(({ sessionId, snapshot }) => [sessionId, { ...snapshot }]))
 }
-function captureRuntimeState(instanceId: string): Pick<RestorableWorkspaceTabState, "unseenIdleSince" | "generationRecovery"> {
+function captureRuntimeState(
+  instanceId: string,
+): Pick<RestorableWorkspaceTabState, "unseenIdleSince" | "generationRecovery" | "seenInterruptions"> {
   const unseenIdleSince: Record<string, number> = {}
   const generationRecovery: Record<string, PersistedGenerationRecovery> = {}
-  for (const session of getSessions(instanceId)) {
+  const sessions = getSessions(instanceId)
+  for (const session of sessions) {
     if (session.status === "idle" && typeof session.idleSince === "number") unseenIdleSince[session.id] = session.idleSince
     const recovery = getPersistedGenerationRecovery(session.status, session.generationRecovery)
     if (recovery) generationRecovery[session.id] = recovery
   }
-  return { unseenIdleSince, generationRecovery }
+  const seenInterruptions = captureSeenInterruptions(instanceId, sessions)
+  return { unseenIdleSince, generationRecovery, ...(Object.keys(seenInterruptions).length ? { seenInterruptions } : {}) }
 }
 function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>) {
   const tabs = appTabs()
@@ -295,7 +300,7 @@ export function useAppSessionCapture() {
     if (!enabled()) return
     const tabs = appTabs()
     activeAppTabId(); activeParentSessionId(); activeSessionId(); expandedSessions(); showFolderSelection()
-    outlineCacheRevision()
+    outlineCacheRevision(); seenInterruptionsRevision()
     for (const tab of tabs) if (tab.kind === "instance") {
       getSessions(tab.instance.id)
       getSessionDraftPromptsForInstance(tab.instance.id)

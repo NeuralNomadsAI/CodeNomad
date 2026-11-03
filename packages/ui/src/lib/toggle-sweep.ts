@@ -1,8 +1,8 @@
 // Drag-to-toggle ("sweep"): pressing a toggle marked with data-toggle-sweep and dragging
 // out of it flips it, and every toggle of the same group the pointer then crosses takes
 // that same state, like layer eyes in image editors. Toggles change through their own
-// click, so each keeps its handlers, disabled state and accessibility. Mouse and pen
-// only: touch drags keep scrolling.
+// click, so each keeps its handlers, disabled state and accessibility; one-way members
+// (`toggleSweepClear`) are only ever cleared. Mouse and pen only: touch drags keep scrolling.
 
 const ATTRIBUTE = "data-toggle-sweep"
 // Distance between the points sampled along a drag, so fast drags skip no row.
@@ -22,6 +22,7 @@ interface Sweep {
 let installed = false
 let sweep: Sweep | null = null
 let deferred: Array<() => void> = []
+const clearActions = new WeakMap<HTMLElement, () => void>()
 
 // A label stands for its control, so a row's whole label area sweeps.
 function toggleFrom(node: EventTarget | null): HTMLElement | null {
@@ -31,6 +32,7 @@ function toggleFrom(node: EventTarget | null): HTMLElement | null {
 }
 
 function isOn(toggle: HTMLElement) {
+  if (clearActions.has(toggle)) return true
   if (toggle instanceof HTMLInputElement) return toggle.checked
   return toggle.getAttribute("aria-pressed") === "true" || toggle.getAttribute("aria-checked") === "true"
 }
@@ -42,7 +44,10 @@ function isDisabled(toggle: HTMLElement) {
 function setToggle(sweep: Sweep, toggle: HTMLElement) {
   if (sweep.visited.has(toggle)) return
   sweep.visited.add(toggle)
-  if (toggle.isConnected && !isDisabled(toggle) && isOn(toggle) !== sweep.on) toggle.click()
+  if (!toggle.isConnected || isDisabled(toggle) || isOn(toggle) === sweep.on) return
+  const clear = clearActions.get(toggle)
+  if (clear) clear()
+  else toggle.click()
 }
 
 function install() {
@@ -129,6 +134,13 @@ function install() {
 export function afterSweep(run: () => void) {
   if (sweep?.started) deferred.push(run)
   else run()
+}
+
+// Makes `element` a one-way member that is always on (a clearable status badge): a sweep
+// starting on or crossing it clears it through `clear`, its own click by default; pass
+// `clear` when the element also has another action (a parent's expander).
+export function toggleSweepClear(element: HTMLElement, clear: () => void = () => element.click()) {
+  clearActions.set(element, clear)
 }
 
 // Returns the group for a toggle's data-toggle-sweep attribute: independent toggles of one
