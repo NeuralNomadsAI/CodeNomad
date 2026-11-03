@@ -172,21 +172,40 @@ test("clicking a collapsed terminal indicator clears descendants without expandi
   } finally { await page.close() }
 })
 
-test("opening a session clears Interrupted; refreshes keep it cleared and a new interruption shows it again", async () => {
+test("opening and viewing keeps Interrupted until explicitly cleared, including a new interruption", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 700 } })
   try {
     const errors = await open(page)
     await page.locator('[data-session-id="interrupted-b"] .session-item-select').click()
-    await page.waitForFunction(() => !document.querySelector('[data-session-id="interrupted-b"] .session-status'))
-    await page.locator('[data-session-id="viewed"] .session-item-select').click()
+    assert.equal(await badge(page, "interrupted-b").innerText(), "INTERRUPTED", "opening keeps a restored interruption without an Idle marker")
+    await page.evaluate(() => (window as any).fixture.idle("interrupted-b"))
+    await page.waitForFunction(() => (window as any).fixture.session("interrupted-b").idleSince === null)
+    assert.equal(await badge(page, "interrupted-b").innerText(), "INTERRUPTED", "viewing an Idle marker keeps Interrupted")
+    await badge(page, "interrupted-b").click()
+    assert.equal(await badge(page, "interrupted-b").count(), 0)
     await page.evaluate(() => (window as any).fixture.refresh("interrupted-b"))
     assert.equal(await badge(page, "interrupted-b").count(), 0, "a refresh does not resurrect it")
+    await page.locator('[data-session-id="viewed"] .session-item-select').click()
+    await page.locator('[data-session-id="interrupted-b"] .session-item-select').click()
+    assert.equal(await badge(page, "interrupted-b").count(), 0, "reopening preserves the explicit clear")
 
     await page.evaluate(() => (window as any).fixture.interrupt("interrupted-b"))
     await page.waitForFunction(() => document.querySelector('[data-session-id="interrupted-b"] .session-status')?.textContent?.includes("Interrupted"))
     await badge(page, "interrupted-b").click()
     assert.equal(await badge(page, "interrupted-b").count(), 0)
-    assert.deepEqual(await selected(page), ["interrupted-b", "viewed"])
+    assert.deepEqual(await selected(page), ["interrupted-b", "viewed", "interrupted-b"])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("opening an Idle session still clears its badge after the existing fade", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 700 } })
+  try {
+    const errors = await open(page)
+    await page.locator('[data-session-id="idle-a"] .session-item-select').click()
+    await page.waitForFunction(() => (window as any).fixture.session("idle-a").idleSince === null)
+    await badge(page, "idle-a").waitFor({ state: "hidden" })
+    assert.deepEqual(await selected(page), ["idle-a"])
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

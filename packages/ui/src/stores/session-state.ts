@@ -12,7 +12,6 @@ import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
 import { applySessionPendingState } from "./session-pending-state"
-import { markSessionInterruptionSeen } from "./session-interruption-seen"
 import { cleanupBlankSession } from "./blank-session-cleanup"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import {
@@ -586,7 +585,6 @@ function reconcileSessionPendingState(
 function markSessionIdleSeen(instanceId: string, sessionId: string): void {
   const current = sessions().get(instanceId)?.get(sessionId)
   if (!current || current.status !== "idle" || current.pendingPermission || current.pendingForm || current.retry) return
-  markSessionInterruptionSeen(instanceId, current)
   withSession(instanceId, sessionId, (session) => {
     if (session.status !== "idle") return false
     if (typeof session.idleSince !== "number") return false

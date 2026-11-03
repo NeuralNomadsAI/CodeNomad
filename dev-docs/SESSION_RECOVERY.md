@@ -49,10 +49,11 @@ interrupts, updates a session or replays anything automatically.
 ## Display acknowledgement
 
 `session-interruption-seen.ts` owns per-window, per-project-tab acknowledgement
-watermarks keyed by session ID and the native `time.idle` boundary. The shared
-`markSessionIdleSeen` path clears Idle and acknowledges Interrupted; viewing a
-visible, focused conversation uses that path too. Native outcome, recovery,
-admission and pending-request facts keep their existing authority.
+watermarks keyed by session ID and the native `time.idle` boundary. The session
+list's explicit badge click, sweep and collapsed-parent indicator acknowledge
+Interrupted through `markSessionInterruptionSeen`. Viewing a visible, focused
+conversation clears only Idle through `markSessionIdleSeen`. Native outcome,
+recovery, admission and pending-request facts keep their existing authority.
 
 The native interruption event claims acknowledgement authority before its activity
 read. It invalidates the prior acknowledgement and uses the event timestamp while
