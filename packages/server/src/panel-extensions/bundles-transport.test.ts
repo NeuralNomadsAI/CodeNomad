@@ -14,7 +14,7 @@ function harness() {
   let principal: string | null = "human", directory = "/project", owned = true, current = true, at = 0
   let prepared = 0, dispatched = 0, reads = 0, disposed = 0, detaches = 0, transmitted = 0
   let stalled: Promise<void> | undefined, detachWait: Promise<void> | undefined
-  let detachFailure: "before" | "after" | "uncertain" | undefined, detachOutcome: "detached" | "none" = "detached"
+  let detachFailure: "before" | "uncertainBefore" | "after" | "uncertain" | undefined, detachOutcome: "detached" | "none" = "detached"
   const leases: AbortController[] = [], bus = new EventBus()
   const connection = { assertCurrent() { if (!current) throw new Error("secret connection") }, client: { session: {
     async get() { reads++; await stalled; return { id: "ses_test", title: "Conversation", location: { directory } } },
@@ -38,6 +38,7 @@ function harness() {
       detaches++; assert.equal(integration, "blender"); assert.equal(context.sessionID, "ses_test")
       await detachWait; outer.throwIfAborted(); await context.authority.revalidate(); context.authority.assertCurrent()
       if (detachFailure === "before") throw new Error("secret refusal")
+      if (detachFailure === "uncertainBefore") throw new NativeMutationUncertainError()
       context.authority.onSubmitted?.(); transmitted++
       if (detachFailure === "after") throw new Error("secret lost response")
       if (detachFailure === "uncertain") throw new NativeMutationUncertainError()
@@ -312,13 +313,13 @@ test("a second concurrent detach is busy; the per-mount flag releases in finally
 })
 
 test("lost or uncertain submission answers unknown, never none; pre-submission refusal and closed sessions or Locations refuse", async () => {
-  for (const failure of ["after", "uncertain"] as const) {
+  for (const failure of ["after", "uncertain", "uncertainBefore"] as const) {
     const h = harness()
     try {
       const a = h.open(), mounted = await h.mount(a.owner)
       h.setDetach({ failure })
       assert.deepEqual(await h.detach(a.owner, mounted.mountID), { outcome: "unknown" }, failure)
-      assert.equal(h.state().transmitted, 1)
+      assert.equal(h.state().transmitted, failure === "uncertainBefore" ? 0 : 1, failure)
     } finally { h.transport.dispose() }
   }
   for (const change of ["location", "deleted", "ownership", "consent"] as const) {

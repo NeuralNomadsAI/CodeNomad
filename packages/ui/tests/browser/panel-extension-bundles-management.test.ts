@@ -932,15 +932,43 @@ async function attachedBanner(page: Page) {
   await frame(page).locator("body").evaluate(() => (window as any).readState())
   const banner = page.getByRole("group", { name: "Attached applications", exact: true })
   await banner.getByText("Attached to Fixture window").waitFor()
+  // Activation counts once the rows have been stable for the 600-ms guard.
+  await page.waitForTimeout(650)
   return banner
 }
+
+test("a row the frame inserts under the pointer ignores activation until the banner has been stable for 600 ms", async () => {
+  const { page, clean } = await open()
+  try {
+    backend.state.binding.set("ses_work", true)
+    await page.evaluate(() => {
+      ;(window as any).earlyClicks = 0
+      new MutationObserver((_records, observer) => {
+        const button = document.querySelector<HTMLButtonElement>(".bundles-host-detach")
+        if (!button) return
+        observer.disconnect(); (window as any).earlyClicks++; button.click()
+      }).observe(document.body, { childList: true, subtree: true })
+    })
+    await frame(page).locator("body").evaluate(() => (window as any).readState())
+    const banner = page.getByRole("group", { name: "Attached applications", exact: true })
+    await banner.getByText("Attached to Fixture window").waitFor()
+    await page.waitForTimeout(300)
+    assert.equal(await page.evaluate(() => (window as any).earlyClicks), 1)
+    assert.equal(detachControls().length, 0); assert.equal(detachHosts(), 0)
+    await page.waitForTimeout(400)
+    await banner.getByRole("button", { name: "Detach fixture", exact: true }).click()
+    await banner.waitFor({ state: "detached" })
+    assert.equal(detachControls().length, 1); assert.equal(detachHosts(), 1)
+    await clean()
+  } finally { await page.close() }
+})
 const detachControls = () => backend.requests.filter(request => request.body?.command === "detach")
 const detachHosts = () => backend.state.rpc.filter(method => method === "detachHost").length
 
 test("AC-C16 panel: repeated iframe-only detach requests transmit nothing; one host-banner activation is exactly one detachHost", async () => {
   const { page, clean } = await open()
   try {
-    const banner = await attachedBanner(page), button = banner.getByRole("button", { name: "Detach", exact: true })
+    const banner = await attachedBanner(page), button = banner.getByRole("button", { name: "Detach fixture", exact: true })
     for (let round = 0; round < 2; round++) {
       assert.deepEqual(await frame(page).locator("body").evaluate(() => Promise.all([1, 2, 3].map(() => (window as any).call("detach", { integration: "fixture" })))),
         Array(3).fill({ outcome: "invalid" }))
@@ -965,7 +993,7 @@ test("AC-C16 panel: repeated iframe-only detach requests transmit nothing; one h
 test("lost host-detach response stays uncertain until an authoritative read, with no replay or optimistic success", async () => {
   const { page, clean } = await open()
   try {
-    const banner = await attachedBanner(page), button = banner.getByRole("button", { name: "Detach", exact: true })
+    const banner = await attachedBanner(page), button = banner.getByRole("button", { name: "Detach fixture", exact: true })
     backend.state.uncertain = true; backend.hold("state")
     await button.click()
     await banner.getByText("Binding unknown").waitFor()
@@ -985,13 +1013,13 @@ test("lost host-detach response stays uncertain until an authoritative read, wit
   } finally { backend.release("state"); await page.close() }
 })
 
-test("host banner info opens from the keyboard and closes with Escape; session change disposes it before any transmission", async () => {
+test("host banner info opens from the keyboard and closes with Escape; a switch fences an admitted detach from the new mounting", async () => {
   const { page, clean } = await open()
   try {
     const banner = await attachedBanner(page)
     assert.equal(await page.locator('.bundles-host-banner [role="status"]').getAttribute("aria-live"), "polite")
     const info = banner.getByRole("img", { name: /^Detaches this conversation only\./ })
-    await banner.getByRole("button", { name: "Detach", exact: true }).focus()
+    await banner.getByRole("button", { name: "Detach fixture", exact: true }).focus()
     await page.keyboard.press("Shift+Tab")
     assert.equal(await info.evaluate(element => element === document.activeElement), true)
     const tooltip = page.getByRole("tooltip").filter({ hasText: "Detaches this conversation only." })
@@ -999,29 +1027,23 @@ test("host banner info opens from the keyboard and closes with Escape; session c
     await page.keyboard.press("Escape")
     await tooltip.waitFor({ state: "hidden" })
     assert.equal(await info.evaluate(element => element === document.activeElement), true)
-    // The conversation changes before the click reaches the bridge.
-    await page.evaluate(async () => {
-      const button = document.querySelector<HTMLButtonElement>(".bundles-host-detach")!
-      await (window as any).fixture.show("ses_other"); button.click()
-    })
-    await frame(page).locator("#ready").filter({ hasText: "ses_other" }).waitFor()
-    await banner.waitFor({ state: "detached" })
-    await page.waitForTimeout(200)
-    assert.equal(detachControls().length, 0); assert.equal(backend.state.detaches, 0); assert.equal(detachHosts(), 0)
-    assert.equal(backend.state.binding.get("ses_work"), true)
-    // A detach admitted before a switch completes once; its answer never reaches the new mounting.
-    await page.evaluate(() => (window as any).fixture.show("ses_work"))
-    await frame(page).locator("#ready").filter({ hasText: "ses_work" }).waitFor()
-    await page.waitForFunction(() => (window as any).mountResponses >= 3)
-    const again = await attachedBanner(page)
+    // A detach admitted before a switch is answered for its own mounting only: the new
+    // conversation's frame gets no state change and no parent re-read follows. Whether the
+    // old mount's disposal lands before native submission is a race, so at most one call.
     backend.hold("control")
-    await again.getByRole("button", { name: "Detach", exact: true }).click()
+    await banner.getByRole("button", { name: "Detach fixture", exact: true }).click()
     await wait(() => detachControls().length === 1)
     await page.evaluate(() => (window as any).fixture.show("ses_other"))
     await frame(page).locator("#ready").filter({ hasText: "ses_other" }).waitFor()
+    await page.waitForFunction(() => (window as any).mountResponses >= 2)
+    const states = backend.requests.filter(request => request.method === "state").length
+    const changes = await frame(page).locator("body").evaluate(() => (window as any).changes.length)
     backend.release("control")
-    await page.waitForTimeout(300)
+    await wait(() => backend.requests.filter(request => request.body?.command === "dispose").length >= 1)
+    await page.waitForTimeout(400)
     assert.equal(detachControls().length, 1); assert.ok(detachHosts() <= 1)
+    assert.equal(backend.requests.filter(request => request.method === "state").length, states, "no re-read for a closed mounting")
+    assert.equal(await frame(page).locator("body").evaluate(() => (window as any).changes.length), changes)
     assert.equal(await page.locator(".bundles-host-row").count(), 0)
     assert.equal(await page.locator('.bundles-host-banner [aria-live="polite"]').innerText(), "")
     await clean()
@@ -1041,7 +1063,7 @@ test("a state answer computed before the detach cannot restore the row after the
     }, { times: 1 })
     const stale = frame(page).locator("body").evaluate(() => (window as any).readState())
     await wait(() => held)
-    await banner.getByRole("button", { name: "Detach", exact: true }).click()
+    await banner.getByRole("button", { name: "Detach fixture", exact: true }).click()
     await banner.waitFor({ state: "detached" })
     resume()
     assert.equal((await stale).integrations[0].attachment.state, "attached", "the frame received the stale answer")

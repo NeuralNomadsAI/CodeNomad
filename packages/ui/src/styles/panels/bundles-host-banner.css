@@ -11,6 +11,13 @@
   min-height: 0;
 }
 
+/* Many rows scroll inside the strip so every Detach stays visible and reachable. */
+.bundles-host-banner {
+  flex-shrink: 0;
+  max-height: 40%;
+  overflow-y: auto;
+}
+
 .bundles-host-row {
   display: flex;
   align-items: center;
@@ -23,24 +30,30 @@
   font-size: var(--font-size-sm);
 }
 
+.bundles-host-name,
+.bundles-host-state {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .bundles-host-name {
-  flex-shrink: 0;
+  max-width: 40%;
   font-weight: 600;
 }
 
 .bundles-host-state {
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--text-muted);
 }
 
-/* aria-disabled keeps the in-flight button focusable. */
-.bundles-host-detach[aria-disabled="true"],
-.bundles-host-detach[aria-disabled="true"]:hover {
-  background-color: var(--surface-secondary);
+/* aria-disabled keeps the in-flight button focusable; hover keeps the button-secondary resting colour. */
+.bundles-host-detach[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.bundles-host-detach[aria-disabled="true"]:hover {
+  background-color: var(--surface-secondary);
 }

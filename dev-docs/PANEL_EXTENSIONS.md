@@ -542,13 +542,14 @@ the mounted exact package. Operation-specific preparation and dispatch use trust
   `resetCutoffForUserRemount()` is reserved to a trusted explicit user-remount action;
   automatic mounts preserve strikes/cutoff and every remount preserves rate history.
 
-The public `detach()` answers `invalid` and reaches no native seam, because a frame message
-carries no proof of a user click. Local detach belongs to `BundlesHostBanner`, which
+The public `detach()` answers `invalid`; only the trusted banner click reaches the native
+detach builder, because a frame message carries no proof of a user click. Local detach belongs to `BundlesHostBanner`, which
 `ExtensionPanel` renders outside the frame for managing extensions: one row per native
 integration whose authoritative `bindingRead` reports `attached` for the displayed
-conversation. The parent observes the frame's `state()` answers and re-reads once after
-each detach, adding no native IO of its own at mount; `readToken()` fences reads that started before
-a detach began or ended. The single **Detach** click is the consent. `aria-disabled` keeps
+conversation. The parent reuses the frame's `state()` answers and re-reads once after
+each detach; `readToken()` fences reads that started before a detach began or ended. The
+single **Detach** click is the consent; it counts once the banner rows have been stable
+for 600 ms, because frame-timed reads can insert or re-enable a row under the pointer. `aria-disabled` keeps
 focus while the request is in flight and makes further activations inert. A lost or refused
 response shows **Binding unknown** until the re-read settles it, and the detached
 announcement follows that read. Focus returns to the frame when a focused row disappears,

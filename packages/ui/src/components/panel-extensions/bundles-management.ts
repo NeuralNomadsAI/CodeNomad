@@ -15,7 +15,12 @@ export function createBundlesManagement(props: { id: string; instanceId: string;
   current(): boolean; send(value: unknown): void; show(view: BundlesConfirmation | undefined): void }) {
   const lifetime = new AbortController()
   const [hostControls, setHostControls] = createSignal<readonly BundlesHostControl[]>([])
-  const [hostNotice, setHostNotice] = createSignal<BundlesHostNotice>()
+  const [hostNotice, setNotice] = createSignal<BundlesHostNotice>()
+  // Clearing first lets a repeated identical notice reach the live region again.
+  const setHostNotice = (notice?: BundlesHostNotice) => {
+    setNotice(undefined)
+    if (notice) queueMicrotask(() => { if (!closed) setNotice(notice) })
+  }
   const names = new Map<string, string>()
   // Reads that started before a detach began or ended cannot overwrite its result.
   let epoch = 0
@@ -52,7 +57,9 @@ export function createBundlesManagement(props: { id: string; instanceId: string;
       if (!props.current()) throw new Error("Bundles unavailable")
       observeState(token, state, true, announce)
     } catch {
-      for (const control of hostControls()) if (control.phase === "detaching") put(control.integration, { ...control, phase: "unknown" })
+      for (const control of hostControls()) if (control.phase === "detaching") {
+        put(control.integration, { ...control, phase: "unknown" }); setHostNotice({ key: "integrations.host.notice.unknown", label: control.label })
+      }
     }
   }
   const trackingOwner = {}
@@ -129,7 +136,7 @@ export function createBundlesManagement(props: { id: string; instanceId: string;
       if (closed || captured !== envelope) return
       epoch++
       const latest = find(integration)
-      if (outcome === "busy") { if (latest) put(integration, { ...latest, phase: "attached" }); return }
+      if (outcome === "busy") { if (latest) put(integration, { ...latest, phase: "attached" }); setHostNotice(undefined); return }
       if (outcome === "unknown" && latest) {
         put(integration, { ...latest, phase: "unknown" }); setHostNotice({ key: "integrations.host.notice.unknown", label: latest.label })
       }
