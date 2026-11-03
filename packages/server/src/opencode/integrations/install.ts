@@ -9,6 +9,7 @@ import { recognizeIntegrations } from "./recognition"
 
 export type IntegrationInstallErrorCode =
   | "invalid" | "not-found" | "forbidden" | "global-only" | "refused" | "duplicate" | "ambiguous" | "stale" | "unavailable" | "timeout"
+  | "uncertain"
 
 /** Fixed, content-free refusals: neither the spec nor a path crosses the HTTP boundary or reaches a log. */
 export class IntegrationInstallError extends Error {
@@ -50,7 +51,8 @@ export class IntegrationInstaller {
       const owned = snapshot.location
       await this.authorize(workspaceId, owned, connection, signal)
       const result = await this.deps.sources.add(workspaceId, { location: owned, scope, spec: `${entry.package}@${entry.range}` })
-      await this.authorize(workspaceId, owned, connection)
+      // The write happened: a refusal now is an uncertain outcome, never a "nothing written" code.
+      await this.authorize(workspaceId, owned, connection).catch(() => { throw new IntegrationInstallError("uncertain") })
       return { scope: result.scope, spec: result.spec, reloadPending: result.reloadPending }
     } catch (error) {
       throw installError(error)

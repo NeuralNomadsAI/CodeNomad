@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
+import { setTimeout as delay } from "node:timers/promises"
 import Fastify from "fastify"
 import { parse } from "jsonc-parser"
 import pino from "pino"
@@ -29,7 +30,8 @@ async function fixture() {
   const state = {
     runtime: [] as unknown[], hideProject: false, current: true, owns: (_call: number) => true, ownership: 0,
     catalog: { state: "fresh", fetchedAt: "2026-11-01T00:00:00.000Z", catalog } as IntegrationCatalogView,
-    afterWrite: undefined as (() => void) | undefined, rpcCalls: 0,
+    afterWrite: undefined as (() => void) | undefined, rpcCalls: 0, adds: 0,
+    beforeAdd: undefined as (() => Promise<void>) | undefined,
   }
   const documentEntry = async (file: string) => readFile(file, "utf8").then(text => [{ type: "document", path: file, info: parse(text) }], () => [])
   const connection = {
@@ -56,7 +58,7 @@ async function fixture() {
   const controls = new PluginControls({ workspaceManager: manager as never, worktreeDeletionFence: { enter: () => () => {} }, logger })
   const sources = new PluginSources({ documents: controls, logger, catalog: { read: async () => state.catalog } })
   const add = sources.add.bind(sources)
-  sources.add = async (...args) => { const result = await add(...args); state.afterWrite?.(); return result }
+  sources.add = async (...args) => { await state.beforeAdd?.(); const result = await add(...args); state.afterWrite?.(); return result }
   const installer = new IntegrationInstaller({ controls, workspaceManager: manager as never, catalog: { read: async () => state.catalog }, sources })
   // Production disables Fastify's own logging; its completion hook and route warnings use the API logger.
   const app = Fastify({ logger: false, disableRequestLogging: true })
@@ -70,8 +72,9 @@ async function fixture() {
     cleanup: async () => { await app.close(); await rm(root, { recursive: true, force: true }) } }
 }
 
-function assertQuietLogs(f: Awaited<ReturnType<typeof fixture>>, expected: string[] = []) {
+function assertQuietLogs(f: Awaited<ReturnType<typeof fixture>>, expected: string[] = [], forbidden: string[] = []) {
   const text = f.logs.join("\n")
+  for (const value of forbidden) assert.equal(text.includes(value), false, `logs never contain the client value ${value}`)
   // Positive controls: the capture sees the completion records and every expected message.
   assert.match(text, /"url":"\/api\/workspaces\/:id\/integrations\/:integrationId\/install"/)
   for (const message of expected) assert.equal(text.includes(message), true, `logs contain ${message}`)
@@ -129,7 +132,7 @@ describe("integration install route", () => {
   })
 
   it("refuses a declared package in either scope and form, a loaded plugin and an ambiguous recognition with 409", async () => {
-    const cases: Array<{ name: string; global?: unknown[]; project?: unknown[]; runtime?: unknown[]; hideProject?: boolean; integration?: string; scope?: string }> = [
+    const cases: Array<{ name: string; global?: unknown[]; project?: unknown[]; runtime?: unknown[]; hideProject?: boolean; integration?: string; scope?: string; code?: string }> = [
       { name: "declared in Global", global: ["@neuralnomads/opencode-fixture@0.1.0"] },
       { name: "declared in Project, installing Global", project: ["@neuralnomads/opencode-fixture"] },
       { name: "an object declaration", global: [{ package: "@neuralnomads/opencode-mail", options: { a: 1 } }], integration: "mail", scope: "project" },
@@ -139,9 +142,9 @@ describe("integration install route", () => {
       { name: "loaded from a local build", runtime: [{ id: "neuralnomads.fixture", source: { type: "local", path: "/builds/fixture/index.js" }, features: {}, state: { status: "active" } }] },
       { name: "failed while loading", global: ["@neuralnomads/opencode-fixture"],
         runtime: [{ source: { type: "package", target: "@neuralnomads/opencode-fixture" }, features: {}, state: { status: "failed", error: "boom" } }] },
-      { name: "a source of two integrations", global: ["@neuralnomads/opencode-mail"],
+      { name: "a source of two integrations", global: ["@neuralnomads/opencode-mail"], code: "ambiguous",
         runtime: [{ id: "neuralnomads.fixture", source: { type: "package", target: "@neuralnomads/opencode-mail" }, features: {}, state: { status: "active" } }] },
-      { name: "two loaded copies", runtime: Array.from({ length: 2 }, (_, index) => ({ id: "neuralnomads.fixture",
+      { name: "two loaded copies", code: "ambiguous", runtime: Array.from({ length: 2 }, (_, index) => ({ id: "neuralnomads.fixture",
         source: { type: "local", path: `/builds/fixture-${index}/index.js` }, features: {}, state: { status: "active" } })) },
     ]
     for (const item of cases) {
@@ -154,7 +157,7 @@ describe("integration install route", () => {
         f.state.hideProject = item.hideProject ?? false
         const response = await f.install(item.integration ?? "fixture", { scope: item.scope ?? "global" })
         assert.equal(response.statusCode, 409, item.name)
-        assert.match(response.json().code, /^(duplicate|ambiguous)$/, item.name)
+        assert.equal(response.json().code, item.code ?? "duplicate", item.name)
         assert.deepEqual([await readFile(f.globalFile, "utf8").catch(() => undefined), await readFile(f.projectFile, "utf8").catch(() => undefined)], before, item.name)
         assertQuietLogs(f, ["Integration install refused"])
       } finally { await f.cleanup() }
@@ -165,7 +168,12 @@ describe("integration install route", () => {
     const f = await fixture()
     try {
       // Both requests pass recognition before either writes; the queue refuses the second whatever its scope.
+      let release!: () => void
+      const gate = new Promise<void>(resolve => { release = resolve })
+      // The first add waits for the second to arrive (bounded, so a missing arrival fails the count below).
+      f.state.beforeAdd = async () => { if (++f.state.adds === 2) release(); await Promise.race([gate, delay(5_000, undefined, { ref: false })]) }
       const [first, second] = await Promise.all([f.install("mail", { scope: "global" }), f.install("mail", { scope: "project" })])
+      assert.equal(f.state.adds, 2, "both requests reached the add queue")
       assert.deepEqual([first.statusCode, second.statusCode].sort(), [200, 409])
       assert.equal([first, second].find(response => response.statusCode === 409)!.json().code, "duplicate")
       assert.deepEqual([...await f.plugins(f.globalFile) ?? [], ...await f.plugins(f.projectFile) ?? []], [API])
@@ -201,7 +209,7 @@ describe("integration install route", () => {
       }
       assert.equal(await f.plugins(f.globalFile), undefined)
       assert.equal(await f.plugins(f.projectFile), undefined)
-      assertQuietLogs(f)
+      assertQuietLogs(f, [], ["evil", "/tmp/x", "workspaceID", "expectedRevision", "inline"])
     } finally { await f.cleanup() }
   })
 
@@ -216,17 +224,18 @@ describe("integration install route", () => {
       }
       f.state.owns = call => call === 0
       const disowned = await f.install("fixture", { scope: "global" })
-      assert.equal(disowned.statusCode, 403)
+      assert.deepEqual([disowned.statusCode, disowned.json().code], [403, "forbidden"])
       assert.equal(await f.plugins(f.globalFile), undefined, "ownership lost before the write writes nothing")
       f.state.owns = () => true
       f.state.current = false
       const replaced = await f.install("fixture", { scope: "global" })
-      assert.equal(replaced.statusCode, 503)
+      assert.deepEqual([replaced.statusCode, replaced.json().code], [503, "unavailable"])
       assert.equal(await f.plugins(f.globalFile), undefined)
       f.state.current = true
       // After the write the answer is refused, leaving an outcome the client reconciles by a new read.
       f.state.afterWrite = () => { f.state.current = false }
-      assert.equal((await f.install("fixture", { scope: "global" })).statusCode, 503)
+      const replacedAfter = await f.install("fixture", { scope: "global" })
+      assert.deepEqual([replacedAfter.statusCode, replacedAfter.json().code], [503, "uncertain"], "a refusal after the write is uncertain")
       assert.deepEqual(await f.plugins(f.globalFile), [NATIVE])
       f.state.afterWrite = undefined
       f.state.current = true
@@ -234,7 +243,8 @@ describe("integration install route", () => {
       let after = false
       f.state.afterWrite = () => { after = true }
       f.state.owns = () => !after
-      assert.equal((await f.install("fixture", { scope: "global" })).statusCode, 403)
+      const disownedAfter = await f.install("fixture", { scope: "global" })
+      assert.deepEqual([disownedAfter.statusCode, disownedAfter.json().code], [503, "uncertain"])
       assert.deepEqual(await f.plugins(f.globalFile), [NATIVE])
       assertQuietLogs(f, ["Added OpenCode plugin source", "Integration install refused"])
     } finally { await f.cleanup() }

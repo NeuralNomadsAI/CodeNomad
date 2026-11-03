@@ -5,7 +5,7 @@ import { PLUGIN_SOURCE_PENDING_TIMEOUT_MS, PluginSourcesStore, removableSources 
 
 const location = { directory: "/repo" }
 
-function harness(options: { failRemove?: boolean; install?: (resolve: (value: unknown) => void, reject: (error: unknown) => void) => void } = {}) {
+function harness(options: { failRemove?: boolean; failAdd?: boolean; install?: (resolve: (value: unknown) => void, reject: (error: unknown) => void) => void } = {}) {
   let now = 1_000
   const timers: Array<{ at: number; run: () => void }> = []
   const calls: unknown[] = []
@@ -18,7 +18,10 @@ function harness(options: { failRemove?: boolean; install?: (resolve: (value: un
         ? options.install(resolve as (value: unknown) => void, reject)
         : resolve({ scope, spec: `@neuralnomads/opencode-${integrationId}@^0.1`, reloadPending: true }))
     },
-    addPluginSource: async (instanceId, payload) => { calls.push(["add", instanceId, payload]); return { scope: payload.scope, spec: payload.spec, reloadPending: true } },
+    addPluginSource: async (instanceId, payload) => {
+      calls.push(["add", instanceId, payload])
+      if (options.failAdd) throw new Error("refused")
+      return { scope: payload.scope, spec: payload.spec, reloadPending: true } },
     removePluginSource: async (instanceId, payload) => {
       calls.push(["remove", instanceId, payload])
       if (options.failRemove) throw new Error("stale")
@@ -96,6 +99,21 @@ describe("plugin sources store", () => {
     await assert.rejects(mismatch, /could not be confirmed/)
     assert.deepEqual(store.addedSpecs("instance", location), [])
     assert.equal(calls.length, 2)
+  })
+
+  it("leaves no hint for a failed add or an install answered after its instance stopped", async () => {
+    let settle: ((value: unknown) => void) | undefined
+    const { store, invalidations } = harness({ failAdd: true, install: resolve => { settle = resolve } })
+    await assert.rejects(store.add("instance", location, "global", "fixture-plugin"), /refused/)
+    assert.deepEqual(store.addedSpecs("instance", location), [])
+    assert.equal(store.state("instance", location, "fixture-plugin"), "unconfirmed")
+    assert.deepEqual(invalidations, ["instance"], "a failed add still reconciles")
+    const late = store.installIntegration("instance", location, "fixture", "global")
+    store.clearInstance("instance")
+    settle!({ scope: "global", spec: SPEC, reloadPending: true })
+    await late
+    assert.deepEqual(store.addedSpecs("instance", location), [], "a stopped instance's late answer creates no hint")
+    assert.equal(store.installation("instance", location, fixture({ declared: true })), "unconfirmed")
   })
 
   it("drops an install hint when its source is removed or its instance stops", async () => {

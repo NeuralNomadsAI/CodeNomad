@@ -20,7 +20,10 @@ export interface IntegrationRecognition {
   scopes: PluginConfigScope[]
   control?: PluginActivationControl
   runtime?: PluginRuntimeInventoryEntry
-  /** A source that also designates another integration, or loaded under another plugin ID. */
+  /**
+   * A source that also designates another integration or loaded under another plugin ID, a failure shared by several
+   * sources, or two runtime candidates. Such sources and the runtime entry are then left unattributed.
+   */
   ambiguous: boolean
 }
 
@@ -89,8 +92,15 @@ export function recognizeIntegrations(catalog: IntegrationCatalog, snapshot: Plu
     const scopes = [...new Set([...sources, ...(ways.has("plugin") ? rules : [])].map(item => item.scope))]
     return { entry, ways: [...ways], sources, scopes, control, runtime, ambiguous }
   })
+  const shared = (source: PluginConfiguredSource) => (designated.get(source)?.size ?? 0) > 1
   for (const recognition of recognitions) {
-    if (recognition.sources.some(source => (designated.get(source)?.size ?? 0) > 1)) recognition.ambiguous = true
+    if (recognition.sources.some(shared)) recognition.ambiguous = true
+    // An ambiguous integration keeps its flag and ways, but is attributed neither the shared or foreign sources nor a
+    // runtime entry: those may belong to another integration.
+    if (!recognition.ambiguous) continue
+    recognition.runtime = undefined
+    recognition.sources = recognition.sources.filter(source => !shared(source)
+      && (source.pluginId === undefined || source.pluginId === recognition.entry.plugin))
   }
   return recognitions
 }

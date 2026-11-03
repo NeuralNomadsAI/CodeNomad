@@ -36,7 +36,10 @@ export interface IntegrationView {
    * inventory loaded it or it failed to load, absent otherwise. Activation rules alone set neither.
    */
   plugin: { declared: boolean; runtime?: "loaded" | "failed" }
-  /** A source designates another integration too, or loaded under another plugin ID: attributed to none. */
+  /**
+   * A source designates another integration too or loaded under another plugin ID, a failure is shared by several
+   * sources, or two runtime candidates exist: those sources and the runtime entry are attributed to none.
+   */
   ambiguous?: true
   /** Writable scopes that declare it or a rule for its plugin. */
   scopes: PluginControlScope[]

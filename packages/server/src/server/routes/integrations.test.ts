@@ -115,6 +115,22 @@ describe("integrations route", () => {
     }
   })
 
+  it("reports neither a declaration, a runtime nor a row association for a source shared by two integrations", async () => {
+    const snapshot = pluginSnapshot({
+      sources: [{ target: "@neuralnomads/opencode-slow", scope: "global", path: "/config/opencode.jsonc", entryIndex: 0, hasOptions: false, pluginId: "neuralnomads.fixture" }],
+      runtime: [{ key: "x", id: "neuralnomads.fixture", features: { rpc: true }, source: { type: "package", target: "@neuralnomads/opencode-slow", version: "0.1.0" }, state: { status: "active" } }],
+    })
+    const { app, calls } = harness({ snapshot: () => snapshot })
+    const items = (await app.inject({ method: "GET", url: "/api/workspaces/w1/integrations?directory=%2Fwork" })).json().integrations
+    for (const item of items.slice(0, 2)) {
+      assert.deepEqual([item.ambiguous, item.plugin, item.configuredSources, item.state, item.configured],
+        [true, { declared: false }, [], "non-conforming", true], item.id)
+      assert.equal("version" in item, false, item.id)
+    }
+    assert.equal(calls.length, 0)
+    await app.close()
+  })
+
   it("omits a documentation link outside the integration's reviewed GitHub page", async () => {
     const tree = "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/fixture"
     for (const [docs, kept] of [

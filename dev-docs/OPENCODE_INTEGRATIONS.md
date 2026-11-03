@@ -84,7 +84,8 @@ normalizes `-X.plugin` to `{ selector: X.plugin, enabled: false }`) also designa
 disabled plugins. A package that failed before exporting its plugin ID is `X`'s runtime entry when exactly one
 recognised source has its exact package target. A source that designates two integrations, one that loaded under
 another plugin ID, a failure shared by several sources, or two runtime candidates make the integration ambiguous:
-no runtime entry is attributed and no RPC is called.
+it keeps its recognition ways, but neither those shared or foreign sources nor a runtime entry are attributed to it
+(no `plugin` fact, `configuredSources` or version from them), and no RPC is called.
 
 `GET /api/workspaces/:id/integrations?directory=[&workspaceID=]` (`server/routes/integrations.ts`,
 `IntegrationsReader`) answers every catalog entry for an owned Location, without the catalog's plugin ID, `rpc`,
@@ -129,11 +130,14 @@ without `expectedRevision`. It answers `{ scope, spec, reloadPending: true }` or
 - 409 `ambiguous`: an ambiguous recognition; 409 `duplicate`: a recognised declaration or runtime entry, or a
   duplicate found by `PluginSources.add` in either scope (its `conflict`/`duplicate` refusal), including a write the
   daemon has not reloaded yet; retained `id`/`-id` rules of an earlier removal never block;
-- 403 `forbidden`: a Location the workspace does not own.
+- 409 `stale`: the configuration document changed during the write; 422 `refused`: the document layer refused the
+  spec or the Location;
+- 403 `forbidden`: a Location the workspace does not own, checked by the snapshot read before any catalog-derived
+  answer.
 
-Ownership and `assertCurrent` are checked before the write and again after it. A refusal after the write leaves an
-uncertain outcome: the client reconciles through a new read and never replays the request. Logs carry only the
-fixed code: never the spec, a path or a native error.
+Ownership and `assertCurrent` are checked before the write and again after it. Every code above means nothing was
+written. A refusal after the write answers 503 `uncertain`: the client reconciles through a new read and never
+replays the request. Logs carry only the fixed code: never the spec, a path or a native error.
 
 `lib/integrations-api.ts` `installIntegration` sends the request once and checks the answer's shape.
 `pluginSourcesStore.installIntegration` (`stores/plugin-sources.ts`) reserves the attempt before transmission and

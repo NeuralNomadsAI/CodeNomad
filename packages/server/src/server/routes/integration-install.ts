@@ -8,7 +8,7 @@ const Params = z.object({ id: z.string().min(1).max(512), integrationId: z.strin
 const Body = z.object({ scope: z.enum(["global", "project"]) }).strict()
 const statuses: Record<IntegrationInstallErrorCode, number> = {
   invalid: 400, "not-found": 404, forbidden: 403, "global-only": 422, refused: 422,
-  duplicate: 409, ambiguous: 409, stale: 409, unavailable: 503, timeout: 503,
+  duplicate: 409, ambiguous: 409, stale: 409, unavailable: 503, timeout: 503, uncertain: 503,
 }
 
 /** `POST /api/workspaces/:id/integrations/:integrationId/install?directory=` (dev-docs/OPENCODE_INTEGRATIONS.md). */

@@ -100,6 +100,26 @@ describe("integration recognition", () => {
     }
   })
 
+  it("attributes neither a shared source nor its runtime entry to an ambiguous integration", () => {
+    // One package loaded under another integration's plugin ID designates both.
+    const loaded = runtime("neuralnomads.fixture", { source: { type: "package", target: "@neuralnomads/opencode-mail" } })
+    const crossed = recognizeIntegrations(catalog, pluginSnapshot({
+      sources: [source("@neuralnomads/opencode-mail", { pluginId: "neuralnomads.fixture" })], runtime: [loaded] }))
+    for (const recognition of [crossed[0]!, crossed[2]!]) {
+      assert.equal(recognition.ambiguous, true, recognition.entry.id)
+      assert.equal(recognition.runtime, undefined, recognition.entry.id)
+      assert.deepEqual(recognition.sources, [], recognition.entry.id)
+      assert.notDeepEqual(recognition.ways, [], `${recognition.entry.id} stays configured`)
+    }
+    // One Git source designating two integrations, failing before exporting an ID.
+    const git = catalogOf(catalogEntry("fixture", { sources: { git: [GIT] } }), catalogEntry("mail", { sources: { git: [GIT] } }))
+    const target = `${GIT}main::path:integrations/fixture/plugin`
+    const failed = runtime("unused", { id: undefined, source: { type: "package", target }, state: { status: "failed", error: "private" } })
+    for (const recognition of recognizeIntegrations(git, pluginSnapshot({ sources: [source(target)], runtime: [failed] }))) {
+      assert.deepEqual([recognition.ambiguous, recognition.runtime, recognition.sources], [true, undefined, []], recognition.entry.id)
+    }
+  })
+
   it("designates integrations for a spec being added by package name or Git prefix only", () => {
     assert.deepEqual(integrationsForSpec(catalog, "@neuralnomads/opencode-fixture").map(entry => entry.id), ["fixture"])
     assert.deepEqual(integrationsForSpec(catalog, `${GIT}fixture-v0.1.0::path:/integrations/fixture`).map(entry => entry.id), ["fixture"])
