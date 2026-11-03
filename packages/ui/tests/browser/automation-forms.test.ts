@@ -11,6 +11,7 @@ import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import type {} from "./fixtures/mission-editor-lifetime"
 import { panelMissions } from "./mission-content-fixture"
+import { missionPanelRoute } from "./mission-panel-route"
 
 // The real codenomad.inspect/act controller drives real pages over Chromium's DevTools
 // endpoint, exactly as it drives the CodeNomad window (#1008).
@@ -185,7 +186,7 @@ test("an agent fills the real Mission editor: the title is replaced, not concate
     await page.route("**/subagent-depth*", route => route.fulfill({ json: { location: { directory: "/fixture" }, capability: { minimum: 0 },
       effectiveDepth: 1, project: { path: "/fixture/.opencode/opencode.jsonc", depth: null, expectation: "e" } } }))
     let list: MissionMap[] = []
-    await page.route("**/api/workspaces/fixture/missions**", route => {
+    await page.route("**/api/workspaces/fixture/missions**", missionPanelRoute(route => {
       const request = route.request(), pathname = new URL(request.url()).pathname
       if (request.method() === "GET") return route.fulfill({ json: pathname.endsWith("/missions/recurrence") ? emptyRecurrence()
         : { available: true, projectID: "project", missions: panelMissions(list), generatedAt: 1, discardedEvents: 0 } })
@@ -193,7 +194,7 @@ test("an agent fills the real Mission editor: the title is replaced, not concate
       creates.push(body)
       list = [createdMission(body)]
       return route.fulfill({ json: { mission: list[0] } })
-    })
+    }))
   })
   try {
     const { page, act, refFor } = run
@@ -230,7 +231,7 @@ const HELD_OUTCOMES = [
     shown: "Depth could not be verified. Your value is kept; refresh before changing it." },
   { name: "a failed map refresh (stale banner)", held: "map", response: { status: 503, json: { error: "unavailable" } },
     shown: "Showing the last durable map while reconnection is pending." },
-  { name: "a cleanup-unavailable map", held: "map", response: map({ cleanupUnavailable: true }),
+  { name: "a cleanup-unavailable map", held: "map", source: "cleanups", response: { status: 503, json: { error: "unavailable" } },
     shown: "Deletion could not be confirmed. Refresh before trying again." },
 ] as const
 for (const outcome of HELD_OUTCOMES) test(`Create keeps its place when ${outcome.name} lands between an agent's aim and click`, async () => {
@@ -246,17 +247,18 @@ for (const outcome of HELD_OUTCOMES) test(`Create keeps its place when ${outcome
       requested.resolve(); await response.promise
       return route.fulfill(outcome.response)
     })
-    await page.route("**/api/workspaces/fixture/missions**", async route => {
+    await page.route("**/api/workspaces/fixture/missions**", missionPanelRoute(async route => {
       const request = route.request()
       if (request.method() === "GET") {
         if (new URL(request.url()).pathname.endsWith("/missions/recurrence")) return route.fulfill({ json: emptyRecurrence() })
-        if (!holdMap) return route.fulfill(map())
+        // Cleanup availability belongs to its own read lane; other successful directory reads stay available.
+        if (!holdMap || "source" in outcome && new URL(request.url()).searchParams.get("panelSource") !== outcome.source) return route.fulfill(map())
         requested.resolve(); await response.promise
         return route.fulfill(outcome.response)
       }
       creates.push(request.postDataJSON())
       return route.fulfill({ json: { mission: createdMission(request.postDataJSON()) } })
-    })
+    }))
   })
   // Test-only hook on the controller's private DevTools channel: release the held read once
   // Create is aimed, and let the pointer events follow its DOM update.

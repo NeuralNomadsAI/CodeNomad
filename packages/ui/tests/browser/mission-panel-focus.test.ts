@@ -32,6 +32,7 @@ async function open(consumer: "creation" | "tree", viewport = { width: 1000, hei
   page.setDefaultTimeout(15_000)
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript("globalThis.__name ??= target => target")
+  await page.addInitScript(installAudit)
   let grown = false, depthRoute: Route | undefined
   await page.route("**/api/**", route => {
     const path = new URL(route.request().url()).pathname
@@ -68,22 +69,29 @@ const visible = (page: Page) => page.evaluate(() => {
 })
 
 // Observe real native calls; every wrapper forwards to the browser unchanged.
+function installAudit() {
+  const state = (window as any).focusAudit = { writes: [] as unknown[], scheduled: [] as number[], ran: [] as number[], cancelled: [] as number[], pending: new Set<number>() }
+  const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop")!
+  Object.defineProperty(Element.prototype, "scrollTop", { ...descriptor, set(value) { state.writes.push({ element: this, value }); descriptor.set!.call(this, value) } })
+  for (const method of ["scrollIntoView", "scrollTo", "scrollBy"] as const) {
+    const original = Element.prototype[method]
+    ;(Element.prototype as any)[method] = function (...args: unknown[]) { state.writes.push({ element: this, method }); return (original as Function).apply(this, args) }
+  }
+  const request = window.requestAnimationFrame.bind(window), cancel = window.cancelAnimationFrame.bind(window), owned = state.pending
+  window.requestAnimationFrame = callback => {
+    if (!new Error().stack?.includes("/mission-panel-scroll.ts")) return request(callback)
+    const id = request(time => { owned.delete(id); state.ran.push(time); callback(time) })
+    owned.add(id); state.scheduled.push(id); return id
+  }
+  window.cancelAnimationFrame = id => { if (owned.delete(id)) state.cancelled.push(id); cancel(id) }
+}
+
 async function audit(page: Page) {
   await page.evaluate(() => {
-    const state = (window as any).focusAudit = { writes: [] as unknown[], scheduled: [] as number[], ran: [] as number[], cancelled: [] as number[] }
-    const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop")!
-    Object.defineProperty(Element.prototype, "scrollTop", { ...descriptor, set(value) { state.writes.push({ element: this, value }); descriptor.set!.call(this, value) } })
-    for (const method of ["scrollIntoView", "scrollTo", "scrollBy"] as const) {
-      const original = Element.prototype[method]
-      ;(Element.prototype as any)[method] = function (...args: unknown[]) { state.writes.push({ element: this, method }); return (original as Function).apply(this, args) }
-    }
-    const request = window.requestAnimationFrame.bind(window), cancel = window.cancelAnimationFrame.bind(window), owned = new Set<number>()
-    window.requestAnimationFrame = callback => {
-      if (!new Error().stack?.includes("/mission-panel-scroll.ts")) return request(callback)
-      const id = request(time => { owned.delete(id); state.ran.push(time); callback(time) })
-      owned.add(id); state.scheduled.push(id); return id
-    }
-    window.cancelAnimationFrame = id => { if (owned.delete(id)) state.cancelled.push(id); cancel(id) }
+    const state = (window as any).focusAudit
+    state.writes.length = 0; state.ran.length = 0; state.cancelled.length = 0
+    // A callback coalesced with the next mutation burst still belongs to this live view.
+    state.scheduled.splice(0, state.scheduled.length, ...state.pending)
   })
 }
 
