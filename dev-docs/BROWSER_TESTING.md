@@ -115,6 +115,14 @@ synthetic provider.
   and let the real connection close with its page. Never answer that path with
   the generic JSON fallback. Composer bootstrap awaits DOM readiness and its
   explicit rendered-fixture signal; stream headers are observed before navigation.
+- Native document-focus checks launch full headless Chromium (`channel: "chromium"`),
+  disable Playwright's focus emulation through CDP and switch real tabs. Assert
+  `document.hasFocus()` on both blur and return, and exercise the same layout
+  observation in each state. Headless-shell keeps background tabs focused.
+- Session-list buffer checks first overflow the initial viewport with measured rows
+  so Virtua can finish its size estimate. After resizing, assert that the same row
+  remains connected outside the viewport before dispatching activity, then retain
+  its identity through scrolling and the fresh visible transition.
 - Panel-resize bootstrap installs `observeHeaderFixture` before navigation and uses
   `fixtureEventStream` plus the exact session Yolo read. Failed initialization,
   navigation and readiness close the page through `runWithDiagnosticCleanup`;
