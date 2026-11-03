@@ -664,7 +664,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     }]
     if (showingInfoView()) return items
     if (attachment.available()) items.push({ key: "attach-application", label: t("integrations.attach"),
-      icon: <Link class="w-4 h-4" aria-hidden="true" />, onSelect: () => attachment.open() })
+      icon: <Link class="w-4 h-4" aria-hidden="true" />, onSelect: () => attachment.openAny() })
     if (attachment.unsupported()) items.push({ key: "application-unsupported", label: t("integrations.unsupported"), disabled: true, onSelect: () => {} })
     items.push({
       key: "search",
@@ -1153,7 +1153,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           </IconButton>
                           <Show when={!previewsUnavailable()}>{renderPreviewToggleButton()}</Show>
                           <Show when={attachment.available()}><IconButton color="inherit" size="small" aria-label={t("integrations.attach")}
-                            title={t("integrations.attach")} onClick={() => void attachment.open()}><Link class="w-5 h-5" aria-hidden="true" /></IconButton></Show>
+                            title={t("integrations.attach")} onClick={() => attachment.openAny()}><Link class="w-5 h-5" aria-hidden="true" /></IconButton></Show>
                           <Show when={attachment.unsupported()}><span tabindex="0" class="text-xs text-secondary" title={t("integrations.unsupported")}>{t("integrations.unavailableShort")}</span></Show>
                           {renderFullscreenButton()}
                           <TranscriptFilters open={filtersOpen()} onOpenChange={setFiltersOpen}

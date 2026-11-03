@@ -394,6 +394,7 @@ jobs:
           packages/ui/src/stores/plugin-controls-events.test.ts
           packages/ui/src/stores/plugin-sources.test.ts
           packages/ui/src/stores/integrations-store.test.ts
+          packages/ui/src/stores/integration-bindings-store.test.ts
           packages/ui/src/lib/integration-rows.test.ts
           packages/ui/src/lib/integrations-api.test.ts
           packages/ui/src/stores/message-prompt-display.test.ts

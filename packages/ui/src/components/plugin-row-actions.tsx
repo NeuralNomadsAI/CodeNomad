@@ -7,7 +7,7 @@ import { showToastNotification } from "../lib/notifications"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { isPluginPackagePending, runPluginPackageAction } from "../stores/plugin-package-actions"
 import { pluginSourcesStore } from "../stores/plugin-sources"
-import { showConfirmDialog } from "../stores/alerts"
+import { confirmIntegrationAction } from "./integration-confirmation"
 import { serverEvents } from "../lib/server-events"
 
 type RemovableSource = PluginConfiguredSource & { scope: PluginControlScope }
@@ -18,7 +18,6 @@ type Item =
   | { kind: "attach" }
   | { kind: "installHost" }
 
-export const PLUGIN_SOURCE_CONFIRM_DELAY_MS = 600
 export const PLUGIN_SOURCE_CONFIRM_EXPIRY_MS = 120_000
 
 /** One compact menu per Plugins row: the native package check/update, removal of each removable
@@ -35,6 +34,10 @@ export function PluginRowActions(props: {
   sessionId?: string
   attach?: () => void | Promise<void>
   installHost?: { action: "install" | "update"; run: () => void | Promise<void> }
+  /** Integration surfaces never show configuration paths. */
+  hidePaths?: boolean
+  /** Receives focus when the menu's trigger is gone or disabled; the surface's Refresh button otherwise. */
+  focusFallback?: () => HTMLElement | null | undefined
 }) {
   const { t } = useI18n()
   let attachAfterClose: (() => void | Promise<void>) | undefined
@@ -45,9 +48,10 @@ export function PluginRowActions(props: {
   let admittedOwner: string | undefined
   let disposed = false
   const presentationOwner = () => JSON.stringify([props.instanceId, props.location.directory, props.sessionId, props.active !== false])
+  const fallback = () => props.focusFallback?.() ?? surface?.querySelector<HTMLButtonElement>("[data-plugin-refresh]")
   const restoreFocus = () => {
     if (trigger?.isConnected && !trigger.disabled) trigger.focus()
-    else surface?.querySelector<HTMLButtonElement>("[data-plugin-refresh]")?.focus()
+    else fallback()?.focus()
   }
   const cancel = () => confirmation?.abort()
   const ownership = createMemo(() => JSON.stringify([props.instanceId, props.location.directory,
@@ -59,7 +63,9 @@ export function PluginRowActions(props: {
   onCleanup(() => {
     disposed = true; generation++; cancel()
     if (admittedOwner && (document.activeElement === trigger || document.activeElement === document.body)) queueMicrotask(() => {
-      if (surface?.isConnected && presentationOwner() === admittedOwner && props.active !== false) surface.querySelector<HTMLButtonElement>("[data-plugin-refresh]")?.focus()
+      if (presentationOwner() !== admittedOwner || props.active === false) return
+      if (props.focusFallback) props.focusFallback()?.focus()
+      else if (surface?.isConnected) surface.querySelector<HTMLButtonElement>("[data-plugin-refresh]")?.focus()
     })
   })
   const pkg = () => props.source?.type === "package" ? props.source : undefined
@@ -81,7 +87,7 @@ export function PluginRowActions(props: {
       : item.kind === "installHost" ? t(`integrations.installHost.${props.installHost?.action ?? "install"}`)
         : t(item.kind === "attach" ? "integrations.attach" : "instanceServiceStatus.plugins.refresh")
   const hint = (item: Item) => item.kind === "package" ? t("settings.pluginPackages.shared")
-    : item.kind === "remove" ? `${item.source.target}\n${item.source.path ?? ""}` : undefined
+    : item.kind === "remove" ? (props.hidePaths ? item.source.target : `${item.source.target}\n${item.source.path ?? ""}`) : undefined
   const triggerLabel = () => {
     const only = items().length === 1 ? items()[0] : undefined
     return only?.kind === "package" ? packageLabel(only) : t("instanceServiceStatus.plugins.sources.actions", { name: props.name })
@@ -100,14 +106,14 @@ export function PluginRowActions(props: {
     const instanceId = props.instanceId, location = { ...props.location }, selected = { ...source }
     const owner = ownership()
     const feedbackOwner = presentationOwner()
-    surface = trigger?.closest<HTMLElement>(".plugin-controls")
+    surface = trigger?.closest<HTMLElement>(".plugin-controls, .integration-section")
     confirmation = new AbortController()
     const signal = confirmation.signal
     const action = t("instanceServiceStatus.plugins.sources.remove", { scope: scopeLabel(source.scope) })
-    const accepted = await showConfirmDialog(t("instanceServiceStatus.plugins.sources.removeWarning"), {
+    const accepted = await confirmIntegrationAction(t("instanceServiceStatus.plugins.sources.removeWarning"), {
       title: `${action} — ⁨${props.name}⁩`,
       detail: `${source.target}\n${source.scope === "global" ? t("instanceServiceStatus.plugins.sources.removeGlobalWarning") + "\n" : ""}${t("instanceServiceStatus.plugins.sources.removeRecovery")}`,
-      confirmLabel: action, variant: "warning", confirmDelayMs: PLUGIN_SOURCE_CONFIRM_DELAY_MS,
+      confirmLabel: action, variant: "warning",
       expiresAfterMs: PLUGIN_SOURCE_CONFIRM_EXPIRY_MS, returnFocus: () => { if (presentationOwner() === feedbackOwner) restoreFocus() },
     }, signal)
     confirmation = undefined

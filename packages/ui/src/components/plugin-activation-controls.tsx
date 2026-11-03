@@ -1,9 +1,7 @@
-import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, type Component } from "solid-js"
+import { For, Show, createEffect, createMemo, createUniqueId, onCleanup, type Component } from "solid-js"
 import { Tooltip } from "@kobalte/core/tooltip"
 import { Loader2, RefreshCw } from "lucide-solid"
-import Switch from "@suid/material/Switch"
 import type {
-  PluginActivationControl,
   PluginConfiguredSource,
   PluginControlLocation,
   PluginControlScope,
@@ -12,11 +10,9 @@ import type {
 } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { integrationForSources } from "../lib/integration-rows"
-import { getLogger } from "../lib/logger"
-import { showToastNotification } from "../lib/notifications"
-import { HttpResponseError } from "../lib/retryable-file-search"
 import { pluginControlsCache } from "../stores/plugin-controls"
 import { pluginSourcesStore, removableSources } from "../stores/plugin-sources"
+import { PluginActivationSwitch } from "./plugin-activation-switch"
 import { PluginRowActions } from "./plugin-row-actions"
 import { PluginSourceAdd } from "./plugin-source-add"
 import "../stores/plugin-controls-events"
@@ -31,13 +27,8 @@ interface PluginActivationControlsProps {
   session?: { id: string; title?: string; metadata?: Record<string, unknown> }
 }
 
-const log = getLogger("session")
-
-const pendingKey = (scope: PluginControlScope, pluginId: string): string => `${scope}:${pluginId}`
-
 export const PluginActivationControls: Component<PluginActivationControlsProps> = (props) => {
   const { t } = useI18n()
-  const [pending, setPending] = createSignal<Set<string>>(new Set())
   const headingId = `plugin-controls-${createUniqueId()}`
   const noticeId = `${headingId}-notice`
   const globalLabelId = `plugin-controls-${createUniqueId()}-global`
@@ -110,53 +101,12 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     return [...targets]
   })
   const projectAvailable = () => snapshot()?.targets.some((target) => target.scope === "project") === true
-  let currentIdentity: string | undefined
-  let locationGeneration = 0
-  // The admitted write may finish after a project tab or visibility wrapper
-  // disposes this surface. Only its live owner may publish presentation feedback.
-  onCleanup(() => { locationGeneration += 1 })
-
   createEffect(() => {
     const instanceId = props.instanceId
     const location = requestLocation()
-    const identity = JSON.stringify([instanceId, location.directory])
-    if (currentIdentity !== identity) {
-      currentIdentity = identity
-      locationGeneration += 1
-      setPending(new Set<string>())
-    }
     if (props.active === false) return
     onCleanup(pluginControlsCache.acquireDemand(instanceId, location))
   })
-
-  const setPendingPlugin = (scope: PluginControlScope, pluginId: string, value: boolean) => {
-    setPending((previous) => {
-      const next = new Set(previous)
-      if (value) next.add(pendingKey(scope, pluginId))
-      else next.delete(pendingKey(scope, pluginId))
-      return next
-    })
-  }
-
-  const toggle = async (control: PluginActivationControl, scope: PluginControlScope, enabled: boolean) => {
-    const key = pendingKey(scope, control.id)
-    if (pending().has(key)) return
-    const requestGeneration = locationGeneration
-    setPendingPlugin(scope, control.id, true)
-    try {
-      await pluginControlsCache.mutate(props.instanceId, requestLocation(), control.id, scope, enabled)
-    } catch (error) {
-      log.error("Failed to update plugin activation rule", { pluginId: control.id, scope, error })
-      if (requestGeneration === locationGeneration && props.active !== false) {
-        showToastNotification({ category: "opencode",
-          variant: "error",
-          message: t(errorMessageKey(error), { name: control.id, scope: scopeLabel(scope) }),
-        })
-      }
-    } finally {
-      if (requestGeneration === locationGeneration) setPendingPlugin(scope, control.id, false)
-    }
-  }
 
   const bidi = (text: string): string => `⁨${text}⁩`
 
@@ -223,46 +173,10 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       return lines.map(bidi).join("\n")
     }
     const renderSwitch = (scope: PluginControlScope) => {
-      const checked = () => {
-        const current = control()
-        return current ? scopeChecked(current, scope) : false
-      }
-      const available = () => isAvailable(scope)
-      const isPending = () => pending().has(pendingKey(scope, pluginId))
-      const describedBy = () => available()
-        ? (scope === "global" ? globalLabelId : projectLabelId)
-        : `${scope === "global" ? globalLabelId : projectLabelId} ${noticeId}`
-      return (
-        <div
-          class="plugin-control-switch"
-          data-scope={scope}
-        >
-          <Switch
-            checked={checked()}
-            disabled={!available()}
-            color="success"
-            size="small"
-            inputProps={{
-              "aria-label": bidi(t("instanceServiceStatus.plugins.toggleAriaLabel", {
-                name: `${pluginId} — ${scopeLabel(scope)}`,
-              })),
-              "aria-describedby": describedBy(),
-              "aria-disabled": isPending() || !available(),
-              "aria-busy": isPending(),
-            }}
-            onChange={(event, nextChecked) => {
-              const current = control()
-              if (isPending() || !available() || !current) {
-                // SUID restores the controlled checked value before calling us.
-                // Cancel native activation too, while retaining keyboard focus.
-                event.preventDefault()
-                return
-              }
-              void toggle(current, scope, Boolean(nextChecked))
-            }}
-          />
-        </div>
-      )
+      const labelId = scope === "global" ? globalLabelId : projectLabelId
+      return <PluginActivationSwitch instanceId={props.instanceId} location={requestLocation()} control={control()} scope={scope}
+        available={isAvailable(scope)} active={props.active} describedBy={isAvailable(scope) ? labelId : `${labelId} ${noticeId}`}
+        label={bidi(t("instanceServiceStatus.plugins.toggleAriaLabel", { name: `${pluginId} — ${scopeLabel(scope)}` }))} />
     }
     const nameId = `${headingId}-name-${pluginId}`
     return (
@@ -401,20 +315,6 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
 
 }
 
-function sameSource(left: PluginConfiguredSource, right: PluginConfiguredSource): boolean {
+export function sameSource(left: PluginConfiguredSource, right: PluginConfiguredSource): boolean {
   return left.scope === right.scope && left.target === right.target && left.entryIndex === right.entryIndex && left.path === right.path && left.expectedRevision === right.expectedRevision
-}
-
-function scopeChecked(control: PluginActivationControl, scope: PluginControlScope): boolean {
-  const scoped = control[scope]
-  if (scoped !== "default") return scoped === "enabled"
-  return scope === "project" ? scopeChecked(control, "global") : true
-}
-
-function errorMessageKey(error: unknown): string {
-  if (!(error instanceof HttpResponseError)) return "instanceServiceStatus.plugins.errors.save"
-  if (error.status === 403) return "instanceServiceStatus.plugins.errors.forbidden"
-  if (error.status === 409) return "instanceServiceStatus.plugins.errors.conflict"
-  if (error.status === 422) return "instanceServiceStatus.plugins.errors.invalidConfig"
-  return "instanceServiceStatus.plugins.errors.save"
 }
