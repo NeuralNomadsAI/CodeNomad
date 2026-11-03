@@ -29,9 +29,9 @@ export function createServiceSupervisionSettings(settings: SettingsService,
     selectedBinary: () => manager.resolveBinaryPath(resolver.resolveDefault().path), connection, selection,
   })
   const supervision = new ServiceSupervisionSettings(acquire, () => acquire(undefined, true))
-  // Startup completes previously requested Linux cleanup even if Preferences is
-  // never opened. This preserves intent and leaves installation repair explicit.
-  if (process.platform === "linux") void supervision.read().catch(() => {})
+  // Startup acquires Windows action upgrades and requested Linux cleanup even
+  // with Preferences closed. Both preserve the saved supervision preference.
+  if (process.platform === "linux" || process.platform === "win32") void supervision.read().catch(() => {})
   return supervision
 }
 
@@ -111,7 +111,7 @@ export async function acquireWindowsSupervision(input: Acquisition): Promise<Acq
   const store = new ServiceSupervisionStore(root, namespace, selectedTarget, policy)
   await store.read()
   let runtime = await readWindowsSupervisionRuntime(store, policy)
-  const preparing = !runtime
+  const preparing = !runtime || !runtime.launcher || Boolean(runtime.previousScript)
   if (!runtime) {
     const environment = { SystemRoot: system, WINDIR: system, COMSPEC: path.join(system, "System32/cmd.exe") } as WindowsSupervisionRuntime["environment"]
     for (const key of ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP"] as const) {

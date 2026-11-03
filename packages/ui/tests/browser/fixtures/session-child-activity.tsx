@@ -6,6 +6,7 @@ import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { GeneralSettingsSection } from "../../../src/components/settings/general-settings-section"
 import { serverApi } from "../../../src/lib/api-client"
+import { serverEvents } from "../../../src/lib/server-events"
 import { addInstance } from "../../../src/stores/instances"
 import {
   sessions, setActiveSession, setSessionPage, setSessionPendingPermission, setSessionStatus, setSessions,
@@ -53,8 +54,13 @@ function Fixture() {
 }
 render(() => <Fixture />, document.getElementById("root")!)
 await updatePreferences({ locale: "en", keepUnseenSubagentIdleStatus: true })
+let eventSequence = 0
 ;(window as any).fixture = {
   preferences,
+  event: (sessionID: string, type: "session.execution.started" | "session.execution.succeeded") => (serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: id, event: {
+    id: `evt_${crypto.randomUUID()}`, type, created: Date.now(), location: { directory: "/repo" }, data: { sessionID },
+    durable: { aggregateID: sessionID, seq: ++eventSequence, version: 1 },
+  } }]),
   status: (sessionId: string, status: Session["status"]) => setSessionStatus(id, sessionId, status, { force: true }),
   add: (sessionId: string, parentId: string, status: Session["status"]) => setSessions(previous => {
     const next = new Map(previous), entries = new Map(next.get(id))

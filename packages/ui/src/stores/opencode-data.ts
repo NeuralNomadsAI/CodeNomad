@@ -221,6 +221,22 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
       if (sessionId && invalidatesFetchedPage(details.type)) {
         destructiveRevisions.set(sessionId, (destructiveRevisions.get(sessionId) ?? 0) + 1)
       }
+      // A re-delivered `session.tool.called` must not regress a tool part that
+      // already settled: the SDK reducer overwrites the state wholesale, which
+      // would flip a completed read's images back to "running" until the next
+      // settlement read healed it. A live re-call always follows a fresh
+      // `session.tool.input.started` part, so a `called` whose newest matching
+      // part is already completed or error is stale.
+      if (details.type === "session.tool.called" && isStaleToolCalled(data, details)) {
+        const payload = (details as { data?: { sessionID?: unknown; assistantMessageID?: unknown; id?: unknown } }).data
+        log.warn("Dropped a re-delivered session.tool.called for a settled tool part; applying it would regress the completed result (and its images) back to running", {
+          instanceId,
+          sessionId: payload?.sessionID,
+          messageId: payload?.assistantMessageID,
+          toolId: payload?.id,
+        })
+        return
+      }
       for (const listener of listeners) listener({ name: details.type, details })
     }
     return {
@@ -979,6 +995,37 @@ function hasUnsettledToolRow(messages: SessionMessageInfo[]): boolean {
   return messages.some((message) => message.type === "assistant"
     && message.content.some((part) => part.type === "tool"
       && (part.state.status === "streaming" || part.state.status === "running")))
+}
+
+/** A `session.tool.called` whose newest matching part already settled. The
+ * daemon never publishes `called` for a settled call (its runner dies on the
+ * duplicate), and a legitimate re-call is always preceded by a fresh
+ * `session.tool.input.started` part that becomes the reducer's match, so a
+ * `called` landing on a completed or errored part is a stale re-delivery. */
+function isStaleToolCalled(data: Data, event: OpenCodeEvent): boolean {
+  const payload = (event as { data?: { sessionID?: unknown; assistantMessageID?: unknown; id?: unknown } }).data
+  const sessionId = typeof payload?.sessionID === "string" ? payload.sessionID : undefined
+  const messageId = typeof payload?.assistantMessageID === "string" ? payload.assistantMessageID : undefined
+  const toolId = typeof payload?.id === "string" ? payload.id : undefined
+  if (!sessionId || !messageId || !toolId) return false
+  let row: SessionMessageInfo | undefined
+  try {
+    row = data.session.message.get(sessionId, messageId)
+  } catch {
+    return false
+  }
+  const content = (row as unknown as { content?: unknown } | undefined)?.content
+  if (!Array.isArray(content)) return false
+  const parts = content.filter((part): part is { type: string; id?: unknown; state?: { status?: unknown } } =>
+    typeof part === "object" && part !== null && (part as { type?: unknown }).type === "tool")
+  // Mirror the reducer's `findLast` targeting: only the newest part with the id.
+  for (let index = parts.length - 1; index >= 0; index--) {
+    const part = parts[index]
+    if (part.id !== toolId) continue
+    const status = part.state?.status
+    return status === "completed" || status === "error"
+  }
+  return false
 }
 
 export function destroyOpenCodeData(instanceId: string, sessionId?: string): void {

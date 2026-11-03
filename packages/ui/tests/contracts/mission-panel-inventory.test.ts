@@ -55,6 +55,32 @@ test("the actual 120-mission first window verifies alone, with zero warm ranges 
   t.diagnostic(`first window ${f.bodies[0]} bytes; 1 transfer; 50/120 summaries; 0 warm source entries; 0 maps`)
 })
 
+for (const source of ["summaries", "cleanups"] as const) test(`${source} cleanup damage refuses directory adoption and fresh reads recover it`, async () => {
+  const f = seeded(1)
+  let damaged = false
+  const store = createMissionPanelInventory({ scope: () => `cleanup-damage-${source}`, tasks: async () => { throw Error("No tasks") },
+    read: (_instance, selector, scope) => readMissionPanelWindow(selector, { ...scope, runTransfer: read => read(), exchange: async body => {
+      const request = JSON.parse(body)
+      const answer = await f.control.panelPage(request)
+      if (answer.available && request.source === source) answer.cleanupUnavailable = damaged
+      return new Response(JSON.stringify(answer))
+    } }) })
+  try {
+    store.setDemand("fixture", true); await store.ensure("fixture")
+    assert.equal(store.state("fixture").status, "ready")
+    const before = store.state("fixture").summaries
+    damaged = true; await store.refresh("fixture")
+    assert.equal(store.progress("fixture", source).failure, "failed", "successful HTTP carrying damage is refused before adoption")
+    assert.deepEqual(store.state("fixture").summaries, before)
+    assert.equal(store.state("fixture").status, source === "summaries" ? "error" : "ready")
+    if (source === "cleanups") assert.equal(store.state("fixture").cleanupUnavailable, true)
+    damaged = false; await store.refresh("fixture")
+    assert.equal(Boolean(store.state("fixture").cleanupUnavailable), false)
+    assert.equal(store.progress("fixture", source).failure, undefined)
+    assert.equal(store.state("fixture").summaries.length, 1)
+  } finally { store.clear("fixture") }
+})
+
 for (const source of ["summaries", "cleanups"] as const) test(`passive ${source} first-window validation retains a failed middle across an unseen-tail order change`, async () => {
   const f = seeded()
   if (source === "cleanups") for (let index = 0; index < 120; index++) {

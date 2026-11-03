@@ -33,6 +33,8 @@ OpenCode owns its global service registration, sessions, messages and database. 
 
 ## Keep OpenCode running {#service-supervision}
 
+On Windows, supervision and recovery run in the background without terminal windows. CodeNomad updates preserve your saved choice and the running OpenCode service; updated task actions apply on subsequent starts.
+
 Before any Mission has played, **Keep off at first Mission Play** saves an explicit OFF without first installing supervision.
 
 In **Settings → OpenCode**, **Keep OpenCode running** installs OS supervision on the execution host, shared by every CodeNomad profile using that service. It works independently of Missions, including with CodeNomad closed. The first Mission Play enables it unless you explicitly turn it off beforehand; creating a paused Mission preserves your choice. Pausing, stopping or deleting a Mission keeps this preference unchanged.

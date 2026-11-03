@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process"
 import { lstat, open, readFile, link, rm } from "node:fs/promises"
 import path from "node:path"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { z } from "zod"
 import { ServiceSupervisionStore } from "./service-supervision-store"
 import { SupervisionError, type SupervisionObservation } from "./service-supervision-contract"
@@ -9,7 +9,7 @@ import { readSupervisionHealth, supervisionReleasePreserved } from "./service-su
 import { lookupProcess } from "./process-identity"
 import { privateStorage, type StoragePolicy } from "./storage"
 import { readWindowsRecovery } from "./service-supervision-windows-recovery"
-import { supervisionArtifactPolicy } from "./service-supervision-runtime"
+import { provisionSupervisionRuntime, supervisionArtifactPolicy, windowsSupervisionSources } from "./service-supervision-runtime"
 import { wslRuntimeSchema, readWslSupervisionSample } from "./service-supervision-wsl"
 
 const absolute = z.string().max(4096).refine(value => /^[A-Za-z]:\\/.test(value)
@@ -23,9 +23,9 @@ const environmentSchema = z.object({
   OPENCODE_TEST_HOME: absolute.optional(),
 }).strict()
 const descriptorSchema = z.object({ v: z.literal(1), key: z.string().regex(/^[a-f0-9]{64}$/), directory: absolute,
-  powershell: absolute, script: absolute, node: absolute, probe: absolute, environment: environmentSchema,
+  powershell: absolute, script: absolute, node: absolute, probe: absolute, launcher: absolute.optional(), previousScript: absolute.optional(), environment: environmentSchema,
   wsl: wslRuntimeSchema.optional() }).strict()
-export type WindowsSupervisionRuntime = Pick<z.infer<typeof descriptorSchema>, "powershell" | "script" | "node" | "probe" | "environment" | "wsl">
+export type WindowsSupervisionRuntime = Pick<z.infer<typeof descriptorSchema>, "powershell" | "script" | "node" | "probe" | "launcher" | "previousScript" | "environment" | "wsl">
 
 export async function readWindowsSupervisionRuntime(store: ServiceSupervisionStore, policy: StoragePolicy = privateStorage): Promise<WindowsSupervisionRuntime | undefined> {
   const file = path.join(store.directory, "windows.json")
@@ -36,15 +36,15 @@ export async function readWindowsSupervisionRuntime(store: ServiceSupervisionSto
   if ((await lstat(file)).size > 32768) throw new SupervisionError("invalid")
   const manifest = await store.read(), descriptor = descriptorSchema.parse(JSON.parse(await readFile(file, "utf8")))
   if (descriptor.key !== manifest.key || descriptor.directory !== store.directory) throw new SupervisionError("conflict")
-  const { powershell, script, node, probe, environment, wsl } = descriptor
-  return { powershell, script, node, probe, environment, ...(wsl ? { wsl } : {}) }
+  const { powershell, script, node, probe, launcher, previousScript, environment, wsl } = descriptor
+  return { powershell, script, node, probe, ...(launcher ? { launcher } : {}), ...(previousScript ? { previousScript } : {}), environment, ...(wsl ? { wsl } : {}) }
 }
 
 /** Internal execution-host adapter. Its caller acquires the exact namespace and
  * durable, owned CodeNomad runtime artifacts, independently of Settings profiles.
  * Preference controls always go through the shared store before reconcile(). */
 export class WindowsServiceSupervision {
-  constructor(private readonly store: ServiceSupervisionStore, private readonly runtime: WindowsSupervisionRuntime,
+  constructor(private readonly store: ServiceSupervisionStore, private runtime: WindowsSupervisionRuntime,
     private readonly policy: StoragePolicy = privateStorage, private readonly artifactPolicy: StoragePolicy = supervisionArtifactPolicy) {}
 
   private async descriptor() {
@@ -60,7 +60,7 @@ export class WindowsServiceSupervision {
       : manifest.namespace.platform !== "win32" || path.win32.join(descriptor.environment.XDG_CONFIG_HOME, "opencode").toLowerCase() !== manifest.namespace.configDirectory.toLowerCase()
       || path.win32.join(descriptor.environment.XDG_STATE_HOME, "opencode").toLowerCase() !== manifest.namespace.stateDirectory.toLowerCase())
       throw new SupervisionError("conflict")
-    for (const file of [descriptor.powershell, descriptor.script, descriptor.node, descriptor.probe]) {
+    for (const file of [descriptor.powershell, descriptor.script, descriptor.node, descriptor.probe, ...(descriptor.launcher ? [descriptor.launcher] : [])]) {
       const stat = await lstat(file)
       if (!stat.isFile() || stat.isSymbolicLink()) throw new SupervisionError("unsafe-storage")
       if (file !== descriptor.powershell) await this.artifactPolicy.verify(file, false)
@@ -93,14 +93,39 @@ export class WindowsServiceSupervision {
     return descriptor
   }
 
-  /** Publishes inert private runtime metadata; installs no OS task or preference. */
-  async prepareRuntime(): Promise<void> { await this.provision() }
+  /** Upgrade only exact owned task actions. Keep intent, receipts, running guards,
+   * service incarnation, task principal, settings and trigger phase intact. */
+  async prepareRuntime(): Promise<void> {
+    await this.provision()
+    if (this.runtime.launcher && !this.runtime.previousScript) return
+    for (const file of [this.runtime.script, this.runtime.node, this.runtime.probe,
+      ...(this.runtime.launcher ? [this.runtime.launcher] : []), ...(this.runtime.previousScript ? [this.runtime.previousScript] : [])]) {
+      await this.artifactPolicy.verify(file, false)
+      const hash = path.basename(file).split(".")[0]
+      if (!/^[a-f0-9]{64}$/.test(hash) || createHash("sha256").update(await readFile(file)).digest("hex") !== hash)
+        throw new SupervisionError("conflict")
+    }
+    // A partial upgrade pins its original artifacts across package replacement.
+    const artifacts = this.runtime.launcher ? this.runtime : await provisionSupervisionRuntime(this.store.directory, this.artifactPolicy,
+      { ...windowsSupervisionSources, node: this.runtime.node, probe: this.runtime.probe })
+    if (!artifacts.launcher) throw new SupervisionError("invalid")
+    const upgraded = new WindowsServiceSupervision(this.store, { ...this.runtime, ...artifacts }, this.policy, this.artifactPolicy)
+    const descriptor = await upgraded.descriptor(), manifest = await this.store.read()
+    await this.execute(descriptor, "upgrade", manifest.revision)
+    const { previousScript: _previous, ...complete } = { ...this.runtime, ...artifacts }
+    this.runtime = complete
+  }
 
   private async run(mode: "install" | "remove" | "observe", revision: number) {
     const d = mode === "observe" ? await this.descriptor() : await this.provision()
+    return this.execute(d, mode, revision)
+  }
+
+  private async execute(d: z.infer<typeof descriptorSchema>, mode: "install" | "remove" | "observe" | "upgrade", revision: number) {
     return new Promise<{ main: string; recovery: string }>((resolve, reject) => {
-      execFile(d.powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", d.script,
-        "-Directory", d.directory, "-Key", d.key, "-Mode", mode, "-Revision", String(revision)], {
+      execFile(d.powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", d.script,
+        "-Directory", d.directory, "-Key", d.key, "-Mode", mode, "-Revision", String(revision),
+        ...(mode === "upgrade" ? ["-Launcher", d.launcher!] : [])], {
         windowsHide: true, timeout: mode === "remove" ? 20_000 : 15_000, maxBuffer: 32768,
         env: { SystemRoot: d.environment.SystemRoot, WINDIR: d.environment.WINDIR,
           PSModulePath: path.join(d.environment.SystemRoot, "System32/WindowsPowerShell/v1.0/Modules") },
@@ -144,7 +169,7 @@ export class WindowsServiceSupervision {
     const health = this.runtime.wsl ? await readWslSupervisionSample(manifest, this.runtime.wsl).then(value => value.health)
       .catch(() => ({ state: "unknown" as const })) : await readSupervisionHealth(registration)
     let artifactMissing = false
-    for (const file of [this.runtime.script, this.runtime.node, this.runtime.probe]) {
+    for (const file of [this.runtime.script, this.runtime.node, this.runtime.probe, ...(this.runtime.launcher ? [this.runtime.launcher] : [])]) {
       try { const stat = await lstat(file); if (!stat.isFile() || stat.isSymbolicLink()) artifactMissing = true }
       catch { artifactMissing = true }
     }

@@ -188,8 +188,14 @@ test("an agent fills the real Mission editor: the title is replaced, not concate
     let list: MissionMap[] = []
     await page.route("**/api/workspaces/fixture/missions**", missionPanelRoute(route => {
       const request = route.request(), pathname = new URL(request.url()).pathname
-      if (request.method() === "GET") return route.fulfill({ json: pathname.endsWith("/missions/recurrence") ? emptyRecurrence()
-        : { available: true, projectID: "project", missions: panelMissions(list), generatedAt: 1, discardedEvents: 0 } })
+      if (request.method() === "GET") {
+        if (pathname === "/api/workspaces/fixture/missions/recurrence") return route.fulfill({ json: emptyRecurrence() })
+        if (pathname === "/api/workspaces/fixture/missions/scheduled") return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
+        if (pathname !== "/api/workspaces/fixture/missions") return route.fallback()
+        return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(list), generatedAt: 1, discardedEvents: 0 } })
+      }
+      assert.equal(request.method(), "POST")
+      assert.equal(pathname, "/api/workspaces/fixture/missions", "only an exact Create POST mutates the fixture")
       const body = request.postDataJSON()
       creates.push(body)
       list = [createdMission(body)]
@@ -199,6 +205,8 @@ test("an agent fills the real Mission editor: the title is replaced, not concate
   try {
     const { page, act, refFor } = run
     await act({ action: "click", ref: await refFor(/button "Create mission"/, "Create mission") })
+    await page.waitForFunction(() => window.missionEditorLifetime.state("fixture").status === "ready")
+    assert.equal(creates.length, 0, "ordinary panel reads never create a mission")
     await act({ action: "type", ref: await refFor(/textbox "What should the mission do\?"/, "What should the mission do?"), text: "Chart the module seams" })
     const title = await refFor(/textbox "Title"/, "Title")
     await act({ action: "type", ref: title, text: "First draft" })
@@ -208,6 +216,7 @@ test("an agent fills the real Mission editor: the title is replaced, not concate
     assert.deepEqual(await act({ action: "select", ref: await refFor(/combobox "Playbook"/, "Playbook"), values: ["Exploration"] }), { selected: ["Exploration"] })
     assert.match((await run.cdp.inspect(run.identity, { query: "Playbook" })).snapshot, /combobox "Playbook" \[e\d+\] value="Exploration"/)
     await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
+    assert.equal(await page.getByLabel("Title", { exact: true }).inputValue(), "Seam survey (pilot)")
     // Like an agent, wait for the Options section to finish reading before clicking under it.
     await act({ action: "wait", text: "OpenCode effective depth: 1" })
     await act({ action: "click", ref: await refFor(/button "Create"(?= \[)/, "Create") })
@@ -231,7 +240,7 @@ const HELD_OUTCOMES = [
     shown: "Depth could not be verified. Your value is kept; refresh before changing it." },
   { name: "a failed map refresh (stale banner)", held: "map", response: { status: 503, json: { error: "unavailable" } },
     shown: "Showing the last durable map while reconnection is pending." },
-  { name: "a cleanup-unavailable map", held: "map", source: "cleanups", response: { status: 503, json: { error: "unavailable" } },
+  { name: "a cleanup-unavailable map", held: "cleanups", response: map({ cleanupUnavailable: true }),
     shown: "Deletion could not be confirmed. Refresh before trying again." },
 ] as const
 for (const outcome of HELD_OUTCOMES) test(`Create keeps its place when ${outcome.name} lands between an agent's aim and click`, async () => {
@@ -248,14 +257,20 @@ for (const outcome of HELD_OUTCOMES) test(`Create keeps its place when ${outcome
       return route.fulfill(outcome.response)
     })
     await page.route("**/api/workspaces/fixture/missions**", missionPanelRoute(async route => {
-      const request = route.request()
+      const request = route.request(), pathname = new URL(request.url()).pathname
       if (request.method() === "GET") {
-        if (new URL(request.url()).pathname.endsWith("/missions/recurrence")) return route.fulfill({ json: emptyRecurrence() })
-        // Cleanup availability belongs to its own read lane; other successful directory reads stay available.
-        if (!holdMap || "source" in outcome && new URL(request.url()).searchParams.get("panelSource") !== outcome.source) return route.fulfill(map())
+        if (pathname === "/api/workspaces/fixture/missions/recurrence") return route.fulfill({ json: emptyRecurrence() })
+        if (pathname === "/api/workspaces/fixture/missions/scheduled") return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
+        if (pathname !== "/api/workspaces/fixture/missions") return route.fallback()
+        if (!holdMap) return route.fulfill(map())
+        // Cleanup unavailability belongs to the cleanup lane. Damaging summaries
+        // instead parks directory discovery before it can read the cleanup result.
+        if (outcome.held === "cleanups" && new URL(request.url()).searchParams.get("panelSource") !== "cleanups") return route.fulfill(map())
         requested.resolve(); await response.promise
         return route.fulfill(outcome.response)
       }
+      assert.equal(request.method(), "POST")
+      assert.equal(pathname, "/api/workspaces/fixture/missions", "only an exact Create POST mutates the fixture")
       creates.push(request.postDataJSON())
       return route.fulfill({ json: { mission: createdMission(request.postDataJSON()) } })
     }))
@@ -280,6 +295,7 @@ for (const outcome of HELD_OUTCOMES) test(`Create keeps its place when ${outcome
         response.resolve()
         await page.locator(".mission-control").getByText(outcome.shown, { exact: true }).waitFor()
         await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
+        assert.equal(await page.getByLabel("What should the mission do?", { exact: true }).inputValue(), "Hold a read", "the read preserves the draft")
         after = await create.boundingBox()
       }
       return command(state, method, params)
@@ -290,5 +306,6 @@ for (const outcome of HELD_OUTCOMES) test(`Create keeps its place when ${outcome
     assert.deepEqual(after, before, "the read's result never moves Create")
     await page.locator("form.mission-editor").waitFor({ state: "detached" })
     assert.equal(creates.length, 1, "the aimed click submitted exactly once")
+    assert.equal((creates[0] as Record<string, unknown>).objective, "Hold a read")
   } finally { cdp.command = command; response.resolve(); await run.close() }
 })

@@ -87,6 +87,11 @@ synthetic provider.
 - Tests that need stateful middleware (SSE feeds driven by the test, custom
   Vite transform hooks, configs that diverge from the canonical daemon
   config) keep their own server and live in the heavy tier.
+- Mission dataset routes use `missionPanelRoute` (also installed by the Mission
+  navigation-budget wrapper); persistent automation contexts wrap their routes
+  explicitly. Mutation collectors match the exact HTTP method and path. Hold the
+  intended panel source independently of schedule reads, and await lifecycle
+  feedback settlement before asserting its final status.
 - Before pointer/keyboard selection in a Monaco diff, wait for its computed
   diff decoration (`.line-insert` in the Git fixture), then locate the line.
   Plain model text can paint before the worker result inserts deleted-code view
@@ -110,6 +115,14 @@ synthetic provider.
   and let the real connection close with its page. Never answer that path with
   the generic JSON fallback. Composer bootstrap awaits DOM readiness and its
   explicit rendered-fixture signal; stream headers are observed before navigation.
+- Native document-focus checks launch full headless Chromium (`channel: "chromium"`),
+  disable Playwright's focus emulation through CDP and switch real tabs. Assert
+  `document.hasFocus()` on both blur and return, and exercise the same layout
+  observation in each state. Headless-shell keeps background tabs focused.
+- Session-list buffer checks first overflow the initial viewport with measured rows
+  so Virtua can finish its size estimate. After resizing, assert that the same row
+  remains connected outside the viewport before dispatching activity, then retain
+  its identity through scrolling and the fresh visible transition.
 - Panel-resize bootstrap installs `observeHeaderFixture` before navigation and uses
   `fixtureEventStream` plus the exact session Yolo read. Failed initialization,
   navigation and readiness close the page through `runWithDiagnosticCleanup`;
