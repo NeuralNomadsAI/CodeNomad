@@ -271,8 +271,8 @@ test("production SessionList/SessionView select recursive children, steer/queue 
     await select(page, "A"); assert.equal(await composer(page).inputValue(), "Coordinator A draft")
     await select(page, "B"); assert.equal(await composer(page).inputValue(), "Sibling B draft")
     assert.equal(await selectedMission(page), "A")
-    assert.equal(requests.filter(item => item.path === "/api/workspaces/native-family/integrations").length, 1,
-      "same-Location navigation and session updates retain the integration demand")
+    assert.equal(requests.filter(item => item.path === "/api/workspaces/native-family/integrations").length, 0,
+      "Mission navigation keeps Status hidden and never demands integration status")
     await ctx.drainRequestFailures(); assert.deepEqual(ctx.errors, []); assert.deepEqual(ctx.failures, [])
   } finally { await ctx.save(); ctx.release(); await page.close() }
 })

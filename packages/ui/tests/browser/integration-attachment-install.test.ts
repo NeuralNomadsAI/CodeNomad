@@ -2,15 +2,16 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Page } from "playwright"
+import { borrowFixture } from "./fixture-borrow"
 import { assertNoSentinels, FAKE_INTEGRATION_SENTINELS } from "../../../../scripts/fixtures/fake-integration/index.mjs"
 import {
-  call, confirmationReady, count, dialogNamed, echoes, expandPlugins, expandSection, failureKinds, failResponse, held,
+  ATTACHMENT_FIXTURE, call, confirmationReady, count, dialogNamed, echoes, expandPlugins, expandSection, failureKinds, failResponse, held,
   installationReady, installButton, installLabel, launchInstallation, line, nextToast, pluginRowMenu, privateHost,
   refreshInstallation, sectionMenu, sentinelOptions, shell, updateLabel, useAttachmentBrowser,
   waitConversation, withAttachment,
 } from "./integration-attachment-harness"
 
-useAttachmentBrowser()
+useAttachmentBrowser(() => borrowFixture(ATTACHMENT_FIXTURE))
 
 test("AC-C15 sessionless install/update needs fresh active native status and a package version, never offers or a conversation", async () => {
   await withAttachment(async ({ page, model, calls }) => {

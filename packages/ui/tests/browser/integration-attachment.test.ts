@@ -6,15 +6,16 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { join } from "node:path"
 import type { Page } from "playwright"
+import { borrowFixture } from "./fixture-borrow"
 import { assertNoSentinels, findSentinels } from "../../../../scripts/fixtures/fake-integration/index.mjs"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 import {
-  actionReady, browser, call, captureDiagnostics, captureHandleControl, conversation, conversationAction, count, echoes, expandPlugins, expandSection,
+  ATTACHMENT_FIXTURE, actionReady, browser, call, captureDiagnostics, captureHandleControl, conversation, conversationAction, count, echoes, expandPlugins, expandSection,
   failureKinds, heldSessions, launch, line, openStatus, takeBinding, panelToggle, pluginRowMenu, privateHost, screenshots, section, sectionBody, sectionMenu, sectionTrigger,
   sentinelOptions, shell, stateBadge, statusTab, useAttachmentBrowser, waitConversation, withAttachment,
 } from "./integration-attachment-harness"
 
-useAttachmentBrowser()
+useAttachmentBrowser(() => borrowFixture(ATTACHMENT_FIXTURE))
 
 for (const stage of ["addInitScript", "goto", "waitForFunction"] as const)
 test(`attachment boundary preserves ${stage} primary under diagnostic and close failures`, async t => {

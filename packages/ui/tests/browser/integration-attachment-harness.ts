@@ -14,11 +14,12 @@ import { assertNoSentinels, FAKE_INTEGRATION_SENTINELS } from "../../../../scrip
 export let browser: Browser
 let url: string
 export const screenshots = process.env.CODENOMAD_ATTACHMENT_SCREENSHOTS
+export const ATTACHMENT_FIXTURE = { name: "integration-attachment", routes: [{ path: "/fixture", html:
+  '<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/integration-attachment.tsx"></script></body></html>' }] }
 /** Registers the shared fixture and browser of one test file. */
-export function useAttachmentBrowser() {
+export function useAttachmentBrowser(borrow: () => ReturnType<typeof borrowFixture>) {
   before(async () => {
-    const fixture = await borrowFixture({ name: "integration-attachment", routes: [{ path: "/fixture", html:
-      '<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/integration-attachment.tsx"></script></body></html>' }] })
+    const fixture = await borrow()
     url = fixture.url
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
     armFixtureNavigationBudget(browser)

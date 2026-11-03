@@ -155,9 +155,9 @@ test("failed packages without IDs remain actionable and reconcile into loaded pl
     await row.locator(".plugin-control-name").focus()
     await page.locator(".plugin-control-tooltip").waitFor()
     assert.match(await page.locator(".plugin-control-tooltip").innerText(), /Failed — Package failed before exporting a plugin ID/)
-    await row.getByRole("button", { name: `Check updates for ${target}`, exact: true }).click()
+    await row.getByRole("button", { name: `Actions for ${target}`, exact: true }).click()
     await page.getByRole("menuitem", { name: `Check updates for ${target}`, exact: true }).click()
-    const update = row.getByRole("button", { name: `Update ${target}`, exact: true })
+    const update = row.getByRole("button", { name: `Actions for ${target}`, exact: true })
     await update.waitFor()
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
     if (process.env.CODENOMAD_PLUGIN_SCREENSHOTS) {

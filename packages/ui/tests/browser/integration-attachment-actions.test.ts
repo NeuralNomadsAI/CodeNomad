@@ -2,14 +2,15 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { join } from "node:path"
+import { borrowFixture } from "./fixture-borrow"
 import { assertNoSentinels } from "../../../../scripts/fixtures/fake-integration/index.mjs"
 import {
-  actionReady, call, confirmAttach, conversation, conversationAction, count, echoes, failureKinds, failResponse,
+  ATTACHMENT_FIXTURE, actionReady, call, confirmAttach, conversation, conversationAction, count, echoes, failureKinds, failResponse,
   held, launch, openStatus, picker, screenshots, sectionBody, sentinelOptions, shell, stateBadge,
   useAttachmentBrowser, waitConversation, withAttachment,
 } from "./integration-attachment-harness"
 
-useAttachmentBrowser()
+useAttachmentBrowser(() => borrowFixture(ATTACHMENT_FIXTURE))
 
 for (const width of [1500, 390]) test(`AC-C3/C5 trusted Status picker at ${width}px: Cancel first, Q8 exact match, consent and authoritative attach/detach`, async () => {
   await withAttachment(async ({ page, calls }) => {
