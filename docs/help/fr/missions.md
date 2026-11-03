@@ -153,7 +153,7 @@ Les consignes stockent les instructions et choix demandés, pas les plans de tâ
 
 Les icônes **i** près des libellés expliquent les choix : survolez-les, placez-y le focus au clavier ou touchez-les.
 
-Développez **Programmation** dans le formulaire de création ou de modification. **Lancer quand** liste les critères qui lancent la mission : choisissez **Ajouter un critère**, puis son type. La mission part dès que l’un d’eux se produit. Sans aucun critère, elle part une fois au démarrage (**Une fois, immédiatement**). Retirez un critère avec son bouton ×.
+Développez **Programmation** dans le formulaire de création ou de modification. **Lancer quand** liste les critères qui lancent la mission : choisissez **Ajouter un critère**, puis son type. La mission part dès que l’un d’eux se produit. Sans aucun critère, elle part une fois au démarrage (**Une fois, immédiatement**). Retirez un critère avec son bouton ×. Le second **i** à côté de **Lancer quand** rappelle que les programmations ne tournent que si OpenCode tourne et ouvre [Garder OpenCode démarré](opencode.md#service-supervision).
 
 | Horaire | Déclenchement |
 | --- | --- |

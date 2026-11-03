@@ -68,6 +68,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.retained": "समयतालिका सम्पादन गर्नुअघि सुरक्षित गरिएको नीति जस्ताको तस्तै राख्नुहोस् वा स्पष्ट रूपमा प्रतिस्थापन गर्नुहोस्।",
   "missions.scheduling.title": "समयतालिका",
   "missions.scheduling.when": "सुरु गर्ने बेला",
+  "missions.scheduling.runtimeHint": "OpenCode चलिरहेको बेला मात्र समयतालिका चल्छन्।",
   "missions.scheduling.whenHint": "कुनै पनि मापदण्ड पूरा हुनेबित्तिकै मिसन सुरु हुन्छ। घटनाहरू हरेक १५ मिनेटमा जाँचिन्छन्। चलिरहेको पास कहिल्यै दोहोरिँदैन: पछिका ट्रिगरहरू एउटै पासमा समूहबद्ध भई त्यसको अन्त्यपछि सुरु हुन्छन्। मापदण्ड नभए, सुरु गर्दा एकपटक चल्छ।",
   "missions.scheduling.criteria.one": "{count} मापदण्ड",
   "missions.scheduling.criteria.other": "{count} मापदण्डहरू",

@@ -68,6 +68,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.retained": "Keep the stored policy unchanged or explicitly replace it before editing scheduling.",
   "missions.scheduling.title": "Scheduling",
   "missions.scheduling.when": "Launch when",
+  "missions.scheduling.runtimeHint": "Schedules only run while OpenCode is running.",
   "missions.scheduling.whenHint": "The Mission launches as soon as any criterion occurs. Events are checked every 15 minutes. A passage in progress is never doubled: later triggers group into one passage after it ends. Without criteria, it launches once at Play.",
   "missions.scheduling.criteria.one": "{count} criterion",
   "missions.scheduling.criteria.other": "{count} criteria",

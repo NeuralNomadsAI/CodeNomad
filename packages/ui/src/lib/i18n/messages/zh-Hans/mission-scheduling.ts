@@ -68,6 +68,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.retained": "请保持已保存的策略不变，或明确替换后再编辑调度。",
   "missions.scheduling.title": "计划",
   "missions.scheduling.when": "启动条件",
+  "missions.scheduling.runtimeHint": "计划仅在 OpenCode 运行时执行。",
   "missions.scheduling.whenHint": "任一条件满足时任务即会启动。事件每 15 分钟检查一次。进行中的执行绝不会重复：后续触发会合并为一次执行，在其结束后启动。没有条件时，在开始时启动一次。",
   "missions.scheduling.criteria.one": "{count} 个条件",
   "missions.scheduling.criteria.other": "{count} 个条件",

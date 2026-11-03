@@ -11,6 +11,7 @@
 .mission-scheduling-row > label { flex: 1; }
 .mission-scheduling-row > button { flex: none; margin-block-end: var(--space-sm); }
 .mission-scheduling-when { display: flex; flex-direction: column; gap: var(--space-sm); margin-block: var(--space-sm); min-inline-size: 0; }
+.mission-scheduling-when-head { display: flex; align-items: center; margin-block-start: var(--space-sm); }
 .mission-scheduling-label { display: inline-flex; align-items: center; gap: var(--space-xs); }
 .mission-criterion { display: flex; flex-direction: column; padding: var(--space-sm); border: 1px solid var(--border-base); background: var(--surface-canvas); min-inline-size: 0; }
 .mission-criterion > label { margin-block: var(--space-xs) 0; }

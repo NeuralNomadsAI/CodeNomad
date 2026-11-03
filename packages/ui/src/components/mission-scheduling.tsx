@@ -4,6 +4,8 @@ import type { MissionLaunchPolicy } from "../../../server/src/missions/launch-po
 import { missionLaunchModel } from "../../../server/src/missions/mission-launch-kind"
 import { useI18n } from "../lib/i18n"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
+import { SettingsInfoLink } from "./settings/settings-info-link"
+import { openSettingsRow } from "../stores/settings-screen"
 import { MissionSchedulingCriterion, type MissionSchedulingSourceLists } from "./mission-scheduling-sources"
 import { isMissionEventKind, missionSchedulingPolicy, previewMissionScheduling, MissionSchedulingError, MISSION_CRITERIA_LIMIT,
   newMissionCriterion, newMissionSchedulingDraft, previewSavedMissionScheduling, type MissionSchedulingPhase,
@@ -81,11 +83,18 @@ export function MissionScheduling(props: {
       <button type="button" class="window-action" disabled={!!props.disabled || !!props.lockReason}
         onClick={() => props.onChange(newMissionSchedulingDraft(props.draft.zone))}>{t("missions.scheduling.retained.replace")}</button>
     </section>}</Show>
-    <Show when={!retained()}><fieldset disabled={locked()} aria-describedby={[reason() ? description : "", result().error ? errorID : ""].filter(Boolean).join(" ") || undefined} aria-invalid={!!result().error}>
+    <Show when={!retained()}>
+      {/* Outside the fieldset: the information and its link stay available while editing is locked. */}
+      <div class="mission-scheduling-when-head">
+        <span id={whenID} class="mission-scheduling-label">{t("missions.scheduling.when")}</span>
+        <SettingsInfoTip text={[t("missions.scheduling.whenHint"), t("missions.scheduling.paused"),
+          props.capability === "activatable" ? t("missions.scheduling.capability.activatable") : ""].filter(Boolean).join(" ")} />
+        {/* Only a link: Missions never reads or changes this independent setting. */}
+        <SettingsInfoLink label={t("missions.scheduling.runtimeHint")} text={t("missions.scheduling.runtimeHint")}
+          link={t("settings.supervision.title")} onLink={() => void openSettingsRow("opencode", "service-supervision")} />
+      </div>
+      <fieldset disabled={locked()} aria-describedby={[reason() ? description : "", result().error ? errorID : ""].filter(Boolean).join(" ") || undefined} aria-invalid={!!result().error}>
       <div class="mission-scheduling-when" role="group" aria-labelledby={whenID}>
-        <span id={whenID} class="mission-scheduling-label">{t("missions.scheduling.when")}
-          <SettingsInfoTip text={[t("missions.scheduling.whenHint"), t("missions.scheduling.paused"),
-            props.capability === "activatable" ? t("missions.scheduling.capability.activatable") : ""].filter(Boolean).join(" ")} /></span>
         <Index each={criteria()}>{(row, index) => <MissionSchedulingCriterion row={row()} number={index + 1} sources={props.sources}
           errorID={rowError(index)}
           onChange={value => patchCriteria(criteria().map((item, position) => position === index ? value : item))}

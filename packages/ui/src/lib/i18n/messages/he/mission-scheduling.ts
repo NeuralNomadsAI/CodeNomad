@@ -68,6 +68,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.retained": "יש להשאיר את המדיניות השמורה ללא שינוי או להחליף אותה במפורש לפני עריכת התזמון.",
   "missions.scheduling.title": "תזמון",
   "missions.scheduling.when": "להפעיל כאשר",
+  "missions.scheduling.runtimeHint": "תזמונים פועלים רק כל עוד OpenCode פועל.",
   "missions.scheduling.whenHint": "המשימה מופעלת ברגע שאחד הקריטריונים מתקיים. אירועים נבדקים כל 15 דקות. מעבר שבתהליך לעולם אינו מוכפל: טריגרים מאוחרים יותר מקובצים למעבר אחד שמופעל בסיומו. ללא קריטריונים, היא מופעלת פעם אחת בהפעלה.",
   "missions.scheduling.criteria.one": "קריטריון {count}",
   "missions.scheduling.criteria.other": "{count} קריטריונים",

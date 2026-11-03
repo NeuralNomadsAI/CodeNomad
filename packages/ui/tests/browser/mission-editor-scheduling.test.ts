@@ -503,7 +503,9 @@ for (const locale of ["en", "fr"]) test(`a stored legacy frequency with a condit
       condition: { kind: "branch-commits", directory: "/fixture", ref: "refs/heads/main" }, ends: { maxLaunches: null, afterMs: null, at: null } } } }
     const stored = structuredClone(f.doc.configuration.launch)
     await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
-    await scheduling(page).click()
+    const section = form(page).locator(".mission-scheduling")
+    if (!await section.evaluate(element => (element as HTMLDetailsElement).open)) await scheduling(page).click()
+    assert.equal(await section.evaluate(element => (element as HTMLDetailsElement).open), true, "the reopened criteria are shown")
     const label = (en: string, fr: string) => form(page).getByLabel(locale === "fr" ? fr : en, { exact: true })
     assert.equal(await label("Criterion 1 type", "Type du critère 1").inputValue(), "daily")
     assert.equal(await label("Criterion 2 time", "Heure du critère 2").inputValue(), "18:00")

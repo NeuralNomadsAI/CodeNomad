@@ -68,6 +68,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.retained": "保存済みの方針を変更せずに保持するか、明示的に置き換えてからスケジュールを編集してください。",
   "missions.scheduling.title": "スケジュール",
   "missions.scheduling.when": "起動条件",
+  "missions.scheduling.runtimeHint": "スケジュールは OpenCode の実行中にのみ動作します。",
   "missions.scheduling.whenHint": "いずれかの条件が満たされるとすぐにミッションが起動します。イベントは15分ごとに確認されます。実行中のパッセージが重複することはなく、後続のトリガーはまとめて終了後に1回だけ起動されます。条件がなければ、開始時に1回起動します。",
   "missions.scheduling.criteria.one": "{count} 件の条件",
   "missions.scheduling.criteria.other": "{count} 件の条件",

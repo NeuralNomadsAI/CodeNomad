@@ -29,6 +29,34 @@
   outline-offset: 1px;
 }
 
+/* The interactive "i" (settings-info-link.tsx) is a button with the same look. */
+.settings-info-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.settings-info-link-action {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent-primary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* A setting row revealed by a link shows its focus with square corners. */
+[data-settings-row]:focus {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
+.settings-info-link-action:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
+}
+
 @media (hover: none) {
   .settings-info-tip {
     opacity: 0.7;

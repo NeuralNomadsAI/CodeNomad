@@ -1,4 +1,6 @@
-import { createSignal } from "solid-js"
+import { Show, createSignal } from "solid-js"
+import { ServiceSupervisionCard } from "../../../src/components/settings/service-supervision-card"
+import { activeSettingsSection, settingsOpen } from "../../../src/stores/settings-screen"
 import { render } from "solid-js/web"
 import type { MissionLaunchPolicy } from "../../../../server/src/missions/launch-policy"
 import { MissionScheduling, type MissionSchedulingLock } from "../../../src/components/mission-scheduling"
@@ -31,6 +33,8 @@ function Fixture() {
     <div class="window-body"><MissionScheduling draft={draft()} directory="/fixture" sources={sources()}
       capability={capability()} lockReason={lock()} anchorAt={Date.parse("2026-03-07T12:00:00Z")}
       onChange={change} onPolicy={setPolicy} /></div>
+    {/* The embedded Settings route: the real OpenCode setting row, mounted only when its section opens. */}
+    <Show when={settingsOpen() && activeSettingsSection() === "opencode"}><ServiceSupervisionCard /></Show>
   </main>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)

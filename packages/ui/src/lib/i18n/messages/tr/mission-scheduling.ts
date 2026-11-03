@@ -68,6 +68,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.retained": "Zamanlamayı düzenlemeden önce kayıtlı ilkeyi aynen koruyun veya açıkça değiştirin.",
   "missions.scheduling.title": "Zamanlama",
   "missions.scheduling.when": "Şu durumda başlat",
+  "missions.scheduling.runtimeHint": "Zamanlamalar yalnızca OpenCode çalışırken çalışır.",
   "missions.scheduling.whenHint": "Ölçütlerden biri gerçekleştiği anda Görev başlar. Olaylar 15 dakikada bir denetlenir. Süren bir geçiş asla ikilenmez: sonraki tetikler tek bir geçişte toplanır ve bu geçiş bitince başlatılır. Ölçüt yoksa, başlatıldığında bir kez çalışır.",
   "missions.scheduling.criteria.one": "{count} ölçüt",
   "missions.scheduling.criteria.other": "{count} ölçüt",

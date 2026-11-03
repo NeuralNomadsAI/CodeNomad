@@ -68,6 +68,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.retained": "Behalten Sie die gespeicherte Regel unverändert oder ersetzen Sie sie ausdrücklich, bevor Sie die Zeitplanung bearbeiten.",
   "missions.scheduling.title": "Zeitplanung",
   "missions.scheduling.when": "Starten, wenn",
+  "missions.scheduling.runtimeHint": "Zeitpläne laufen nur, solange OpenCode läuft.",
   "missions.scheduling.whenHint": "Die Mission startet, sobald eines der Kriterien eintritt. Ereignisse werden alle 15 Minuten geprüft. Ein laufender Durchlauf wird nie verdoppelt: Spätere Auslöser werden zu einem Durchlauf zusammengefasst, der nach seinem Ende startet. Ohne Kriterien startet sie einmal beim Start.",
   "missions.scheduling.criteria.one": "{count} Kriterium",
   "missions.scheduling.criteria.other": "{count} Kriterien",

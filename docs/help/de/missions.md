@@ -153,7 +153,7 @@ Aufträge speichern Anweisungen und angeforderte Auswahl, keine Aufgabenpläne, 
 
 Die **i**-Symbole neben den Beschriftungen erklären die Auswahl: per Mauszeiger, Tastaturfokus oder Antippen.
 
-Klappen Sie **Zeitplanung** beim Erstellen oder Bearbeiten auf. **Starten, wenn** listet die Kriterien, die die Mission starten: Wählen Sie **Kriterium hinzufügen** und dann seinen Typ. Die Mission startet, sobald eines davon eintritt. Ohne Kriterium startet sie einmal beim Starten (**Einmal, sofort**). Entfernen Sie ein Kriterium mit seiner ×-Schaltfläche.
+Klappen Sie **Zeitplanung** beim Erstellen oder Bearbeiten auf. **Starten, wenn** listet die Kriterien, die die Mission starten: Wählen Sie **Kriterium hinzufügen** und dann seinen Typ. Die Mission startet, sobald eines davon eintritt. Ohne Kriterium startet sie einmal beim Starten (**Einmal, sofort**). Entfernen Sie ein Kriterium mit seiner ×-Schaltfläche. Das zweite **i** neben **Starten, wenn** weist darauf hin, dass Zeitpläne nur laufen, solange OpenCode läuft, und öffnet [OpenCode gestartet halten](opencode.md#service-supervision).
 
 | Zeitplan | Zeitpunkt |
 | --- | --- |

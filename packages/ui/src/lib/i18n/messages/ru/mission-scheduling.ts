@@ -68,6 +68,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.retained": "Оставьте сохранённую политику без изменений или явно замените её перед редактированием расписания.",
   "missions.scheduling.title": "Расписание",
   "missions.scheduling.when": "Запускать, когда",
+  "missions.scheduling.runtimeHint": "Расписания работают, только пока работает OpenCode.",
   "missions.scheduling.whenHint": "Миссия запускается, как только выполняется любой критерий. События проверяются каждые 15 минут. Идущий проход никогда не дублируется: последующие срабатывания объединяются в один проход, запускаемый после его завершения. Без критериев она запускается один раз при старте.",
   "missions.scheduling.criteria.one": "{count} критерий",
   "missions.scheduling.criteria.other": "Критериев: {count}",

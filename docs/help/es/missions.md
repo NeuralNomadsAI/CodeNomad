@@ -153,7 +153,7 @@ Las descripciones guardan instrucciones y elecciones solicitadas, no planes de t
 
 Los iconos **i** junto a las etiquetas explican las opciones: pasa el puntero, enfócalos con el teclado o tócalos.
 
-Despliega **Programación** al crear o editar. **Lanzar cuando** enumera los criterios que lanzan la misión: elige **Añadir un criterio** y luego su tipo. La misión se lanza en cuanto ocurre cualquiera de ellos. Sin ningún criterio, se lanza una vez al iniciar (**Una vez, inmediatamente**). Quita un criterio con su botón ×.
+Despliega **Programación** al crear o editar. **Lanzar cuando** enumera los criterios que lanzan la misión: elige **Añadir un criterio** y luego su tipo. La misión se lanza en cuanto ocurre cualquiera de ellos. Sin ningún criterio, se lanza una vez al iniciar (**Una vez, inmediatamente**). Quita un criterio con su botón ×. El segundo **i** junto a **Lanzar cuando** recuerda que las programaciones solo se ejecutan mientras OpenCode está en marcha y abre [Mantener OpenCode iniciado](opencode.md#service-supervision).
 
 | Horario | Momento |
 | --- | --- |

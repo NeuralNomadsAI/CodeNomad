@@ -171,3 +171,33 @@ test("a new client resets Scheduling to its first read, and a late response of a
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
+
+test("the scheduling i opens the real Settings on the Keep OpenCode running row and the native hint targets the same anchor", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  try {
+    const f = await setup(page)
+    await missionGeneralAction(page, "Create mission").click()
+    await scheduling(page).locator("summary").click()
+    await scheduling(page).getByRole("button", { name: "Schedules only run while OpenCode is running.", exact: true }).click()
+    await page.locator(".settings-info-link-content").getByRole("button", { name: "Keep OpenCode running", exact: true }).click()
+    const row = page.locator('.settings-screen-shell [data-settings-row="service-supervision"]')
+    await row.waitFor()
+    await page.waitForFunction(() => document.activeElement?.getAttribute("data-settings-row") === "service-supervision")
+    await page.waitForTimeout(300)
+    assert.equal(await row.evaluate(element => element === document.activeElement), true, "the dialog never takes focus back")
+    // A native Preferences window adopts a fresh hint for its active section only, once.
+    const adopt = (hint: object | null, section: string) => page.evaluate(async ({ hint, section }) => {
+      const path = "/src/stores/settings-screen.ts", store = await import(path)
+      ;(document.activeElement as HTMLElement | null)?.blur()
+      if (hint) localStorage.setItem(store.SETTINGS_ROW_HINT_KEY, JSON.stringify(hint))
+      store.adoptSettingsRowHint(section)
+      await new Promise(resolve => requestAnimationFrame(resolve))
+      return { focused: document.activeElement?.getAttribute("data-settings-row") ?? null, left: localStorage.getItem(store.SETTINGS_ROW_HINT_KEY) }
+    }, { hint, section })
+    const stale = await adopt({ section: "opencode", row: "service-supervision", at: Date.now() - 60_000 }, "opencode")
+    assert.equal(stale.focused, null, "a stale hint never moves focus"); assert.notEqual(stale.left, null)
+    assert.equal((await adopt({ section: "missions", row: "service-supervision", at: Date.now() }, "opencode")).focused, null, "another section's hint is ignored")
+    assert.deepEqual(await adopt({ section: "opencode", row: "service-supervision", at: Date.now() }, "opencode"), { focused: "service-supervision", left: null })
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})

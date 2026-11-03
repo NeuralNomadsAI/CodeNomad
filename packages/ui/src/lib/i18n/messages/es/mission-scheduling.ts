@@ -68,6 +68,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.retained": "Conserve la política guardada sin cambios o sustitúyala explícitamente antes de editar la programación.",
   "missions.scheduling.title": "Programación",
   "missions.scheduling.when": "Lanzar cuando",
+  "missions.scheduling.runtimeHint": "Las programaciones solo se ejecutan mientras OpenCode está en marcha.",
   "missions.scheduling.whenHint": "La Misión se lanza en cuanto ocurre cualquiera de los criterios. Los eventos se comprueban cada 15 minutos. Un pase en curso nunca se duplica: los disparos posteriores se agrupan en un solo pase, lanzado al terminar. Sin criterios, se lanza una vez al iniciar.",
   "missions.scheduling.criteria.one": "{count} criterio",
   "missions.scheduling.criteria.other": "{count} criterios",

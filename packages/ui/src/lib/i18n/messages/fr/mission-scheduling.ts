@@ -68,6 +68,7 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.retained": "Conservez la politique enregistrée ou remplacez-la explicitement avant de modifier la programmation.",
   "missions.scheduling.title": "Programmation",
   "missions.scheduling.when": "Lancer quand",
+  "missions.scheduling.runtimeHint": "Les programmations ne tournent que si OpenCode tourne.",
   "missions.scheduling.whenHint": "La Mission part dès que l’un des critères se produit. Les événements sont vérifiés toutes les 15 minutes. Un passage en cours n’est jamais doublé : les déclenchements suivants sont regroupés en un seul passage, lancé à sa fin. Sans critère, elle part une fois au lancement.",
   "missions.scheduling.criteria.one": "{count} critère",
   "missions.scheduling.criteria.other": "{count} critères",

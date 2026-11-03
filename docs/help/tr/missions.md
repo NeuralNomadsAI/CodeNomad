@@ -153,7 +153,7 @@ Reddedilen veya doğrulanmayan bir seçim asla yeniden gönderilmez: kayıtlı d
 
 Etiketlerin yanındaki **i** simgeleri seçenekleri açıklar: üzerine gelin, klavyeyle odaklayın veya dokunun.
 
-Oluştururken veya düzenlerken **Zamanlama** bölümünü genişletin. **Şu durumda başlat**, görevi başlatan ölçütleri listeler: **Ölçüt ekle** seçip türünü belirleyin. Görev, bunlardan biri gerçekleştiği anda başlar. Hiç ölçüt yoksa Başlat'ta bir kez çalışır (**Bir kez, hemen**). Bir ölçütü × düğmesiyle kaldırın.
+Oluştururken veya düzenlerken **Zamanlama** bölümünü genişletin. **Şu durumda başlat**, görevi başlatan ölçütleri listeler: **Ölçüt ekle** seçip türünü belirleyin. Görev, bunlardan biri gerçekleştiği anda başlar. Hiç ölçüt yoksa Başlat'ta bir kez çalışır (**Bir kez, hemen**). Bir ölçütü × düğmesiyle kaldırın. **Şu durumda başlat** yanındaki ikinci **i**, zamanlamaların yalnızca OpenCode çalışırken çalıştığını belirtir ve [OpenCode'u çalışır tut](opencode.md#service-supervision) ayarını açar.
 
 | Zamanlama | Zaman |
 | --- | --- |

@@ -60,6 +60,9 @@ advanced cron) and the five events; a new daily row takes the first free hour fr
 09:00. Shortcuts write a cron; recognized crons decode back to their shortcut
 and unedited rows keep their stored spelling. **Only if there is something new** is
 enabled only with both a schedule and an event; **Until** and the saved zone follow.
+An info link beside **Launch when** says schedules run only while OpenCode runs and
+opens the OpenCode **Keep OpenCode running** row (`service-supervision` anchor); Missions
+never reads or changes that setting.
 The list summarizes each criterion, only-with-news and the end, and source checks
 only with events. The info tip beside the **Technical details** disclosure explains
 technical activity and costs.
