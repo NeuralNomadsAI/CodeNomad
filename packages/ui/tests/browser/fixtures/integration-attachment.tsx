@@ -8,6 +8,7 @@ import { getToastHistory } from "../../../src/lib/notifications"
 import { activeSessionId, setSessions } from "../../../src/stores/session-state"
 import { getActiveCatalogLocation } from "../../../src/stores/sessions"
 import { sdkManager } from "../../../src/lib/sdk-manager"
+import { setActiveInstanceId } from "../../../src/stores/instances"
 
 const id = "header-windows"
 // Reconnect exercises the native session hydration path; its wire model uses providerID/id.
@@ -40,6 +41,7 @@ const dispatch = (type: string, data: unknown = {}, instanceId = id) => (serverE
   event: { id: `integration-${Date.now()}-${Math.random()}`, created: Date.now(), type, data, location: location() } }])
 ;(window as any).integrationFixture = {
   refresh: () => integrations.refreshDemanded(id),
+  instance: (instanceId: string) => { setActiveInstanceId(instanceId); (window as any).fixture.setActive(instanceId === id) },
   installLabel: () => tGlobal("integrations.installHost.install"),
   event: dispatch,
   burst: () => { for (let index = 0; index < 10; index++) dispatch("rpc.neuralnomads.blender.hosts_changed") },
@@ -62,7 +64,10 @@ const dispatch = (type: string, data: unknown = {}, instanceId = id) => (serverE
     const next = new Map(previous), values = new Map(next.get(id))
     const target = sessionID ?? activeSessionId().get(id) ?? "session"
     const current = values.get(target)!
-    values.set(current.id, { ...current, metadata: { "codenomad.integrationAttachment": { integration, label, attachedAt: 1 } } })
+    const metadata = { ...current.metadata }
+    if (integration) metadata["codenomad.integrationAttachment"] = { integration, label, attachedAt: 1 }
+    else delete metadata["codenomad.integrationAttachment"]
+    values.set(current.id, { ...current, metadata })
     next.set(id, values); return next
   }),
 }

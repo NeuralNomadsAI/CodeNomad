@@ -185,7 +185,8 @@ async function prepareAttachment(page: Page, diagnostics: Awaited<ReturnType<typ
         if (model.bindingBySession[sessionID]) model.bindingBySession[sessionID] = { state: "none" }
         else model.binding = "none"
       }
-      return route.fulfill({ json: { outcome: action === "detach" ? model.detachOutcome : model.outcome } })
+    if (action === "detach") await call(page, "hint", undefined, undefined, body.sessionID)
+    return route.fulfill({ json: { outcome: action === "detach" ? model.detachOutcome : model.outcome } })
     }
     return route.fulfill({ json: { location: { directory: parsed.searchParams.get("directory") }, catalog: { state: model.catalog, fetchedAt: "2026-11-01T12:00:00Z" }, ambiguousSources: [], integrations: [{
       id: "blender", displayName: "OpenCode for Blender", app: { name: "Blender", versions: ">=5.2" }, family: model.family,

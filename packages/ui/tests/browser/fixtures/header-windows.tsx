@@ -1,5 +1,5 @@
 import { render } from "solid-js/web"
-import { createSignal } from "solid-js"
+import { Show, createSignal } from "solid-js"
 import { useViewMenu } from "../../../src/lib/native/view-menu"
 import { useAppLifecycle } from "../../../src/lib/hooks/use-app-lifecycle"
 import { registerNavigationShortcuts } from "../../../src/lib/shortcuts/navigation"
@@ -98,11 +98,11 @@ function Fixture() {
   <div style={{ height: "100vh", display: "flex", "flex-direction": "column" }}>
     <button id="outside">Outside target</button>
     <AlertDialog />
-    <InstanceShell instance={instances().get(id)!} isActiveInstance={active()} escapeInDebounce={escapeInDebounce()}
+    <Show when={instances().get(id)}>{instance => <InstanceShell instance={instance()} isActiveInstance={active()} escapeInDebounce={escapeInDebounce()}
       paletteCommands={() => [{ id: "fixture", label: "Fixture command", description: "Execute the fixture", category: "System", action: () => {} }]}
       onExecuteCommand={() => { executions++ }} onCloseSession={() => {}} onNewSession={() => {}}
       handleSidebarAgentChange={async () => {}} handleSidebarModelChange={async () => {}} tabBarOffset={0}
-      mobileFullscreenMode={immersive()} onEnterMobileFullscreen={() => setImmersive(true)} onExitMobileFullscreen={() => setImmersive(false)} />
+      mobileFullscreenMode={immersive()} onEnterMobileFullscreen={() => setImmersive(true)} onExitMobileFullscreen={() => setImmersive(false)} />}</Show>
   </div>
   )
 }

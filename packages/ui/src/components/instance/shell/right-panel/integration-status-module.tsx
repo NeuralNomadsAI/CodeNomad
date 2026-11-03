@@ -29,17 +29,17 @@ interface IntegrationStatusModuleOptions {
 /** Status announcements closer than this are read as one. */
 export const INTEGRATION_ANNOUNCE_DELAY_MS = 500
 
-const pluginsTrigger = (from?: Element | null) => {
-  const root = from?.closest(".status-tab-container") ?? document
-  return root.querySelector<HTMLElement>('[data-status-section-trigger="plugins"]')
-    ?? root.querySelector<HTMLElement>("[data-status-section-trigger]")
-}
-
 /**
  * One Status section per recognised integration of the instance's Location, in catalogue order after Plugins, and
  * the single attachment (picker, bindings, receipts) of the displayed conversation that they share.
  */
 export function createIntegrationStatusModule(options: IntegrationStatusModuleOptions): Accessor<RightPanelModule> {
+  let statusMarker: HTMLDivElement | undefined
+  const pluginsTrigger = () => {
+    const root = statusMarker?.closest(".status-tab-container")
+    return root?.isConnected ? root.querySelector<HTMLElement>('[data-status-section-trigger="plugins"]')
+      ?? root.querySelector<HTMLElement>("[data-status-section-trigger]") : undefined
+  }
   const { location, session } = createIntegrationContext(() => options.instanceId, options.folder)
   const directory = () => location().directory
   const response = createMemo(() => {
@@ -67,6 +67,7 @@ export function createIntegrationStatusModule(options: IntegrationStatusModuleOp
     get session() { return session() },
     get active() { return options.isActive() },
     onMessage: announce,
+    focusFallback: () => pluginsTrigger(),
   })
   const installation = createIntegrationHostInstallation({
     instanceId: options.instanceId,
@@ -151,7 +152,7 @@ export function createIntegrationStatusModule(options: IntegrationStatusModuleOp
 
   const renderStatusExtras = () => <>
     {attachment.picker()}
-    <div class="sr-only" role="status" aria-live="polite" data-integration-announcements>{announcement()}</div>
+    <div ref={statusMarker} class="sr-only" role="status" aria-live="polite" data-integration-announcements>{announcement()}</div>
   </>
   return createMemo<RightPanelModule>(() => ({
     id: "integration-status",

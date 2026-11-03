@@ -11,12 +11,9 @@ import { claimIntegrationConfirmation, INTEGRATION_CONFIRM_DELAY_MS } from "./in
 
 interface Target { id: string; title?: string; metadata?: Record<string, unknown> }
 interface Offer { integration: IntegrationView; host: IntegrationHostOffer }
-interface Capture { instanceId: string; directory: string; session: Target; identity: string; epoch: string; openedAt: number; release: () => void; returnFocus: () => void }
+interface Capture { instanceId: string; directory: string; session: Target; identity: string; epoch: string; receiptGeneration: number; openedAt: number; release: () => void; returnFocus: () => void }
 const attachable = (entry: IntegrationView) => entry.family === "native" && entry.state === "ok"
   && entry.status?.host?.state !== "unsupported" && (entry.status?.connection?.offers ?? 0) > 0
-
-/** A CodeNomad route refused the request before any application effect; anything else after sending is uncertain. */
-const refusedBeforeEffect = (failure: unknown) => failure instanceof HttpResponseError && failure.status >= 400 && failure.status < 500
 
 /**
  * The attachment of the displayed conversation, one per Status tab: the trusted picker (offers are read only on an
@@ -27,6 +24,7 @@ export function createIntegrationAttachment(props: {
   instanceId: string; directory: string; session?: Target | null; active?: boolean
   /** Messages after an action, for the Status announcements. */
   onMessage?: (message: string) => void
+  focusFallback?: () => HTMLElement | null | undefined
 }) {
   const { t } = useI18n()
   const state = createMemo(() => integrations.state(props.instanceId, props.directory))
@@ -59,19 +57,21 @@ export function createIntegrationAttachment(props: {
   const [outcome, setOutcome] = createSignal<"attached">()
   // Submitted actions whose effect is unknown, per integration, for the identity that sent them.
   const [receipts, setReceipts] = createSignal<ReadonlyMap<string, string>>(new Map())
-  const [detaching, setDetaching] = createSignal<ReadonlySet<string>>(new Set())
   let controller: AbortController | undefined
   let readyTimer: ReturnType<typeof setTimeout> | undefined
   let cancel: HTMLButtonElement | undefined
   let viewGeneration = 0
   let disposed = false
+  let receiptGeneration = 0
   const close = () => {
     controller?.abort(); clearTimeout(readyTimer); capture()?.release()
     setCapture(undefined); setOperation(undefined); setOutcome(undefined); setError(undefined); setOffers([]); setSelected(undefined); setPending(false); setReady(false)
   }
-  const receipt = (integrationId: string, owner: string) => setReceipts(current => new Map(current).set(integrationId, owner))
+  const receipt = (integrationId: string, owner: string, generation: number) => {
+    if (!disposed && identity() === owner && receiptGeneration === generation) setReceipts(current => new Map(current).set(integrationId, owner))
+  }
   const clearReceipt = (integrationId: string) => setReceipts(current => { const next = new Map(current); next.delete(integrationId); return next })
-  createEffect(on(identity, () => { viewGeneration++; close(); setReceipts(new Map()); setKnownOffers(undefined) }))
+  createEffect(on(identity, () => { viewGeneration++; receiptGeneration++; close(); setReceipts(new Map()); setKnownOffers(undefined) }))
   createEffect(on(epoch, () => {
     if (!operation()) { close(); return }
     controller?.abort()
@@ -82,10 +82,10 @@ export function createIntegrationAttachment(props: {
   const current = (value: Capture) => owns(value) && value.epoch === epoch() && !controller?.signal.aborted
   const fail = (failure: unknown) => t(failure instanceof HttpResponseError && failure.status === 403 ? "integrations.error.placement"
     : failure instanceof HttpResponseError && failure.code === "unsupported" ? "integrations.state.unsupported" : "integrations.error.retry")
-  // The shown snapshot decides whether Attach is offered, refreshing or not: the picker reads offers live.
+  // Display retains its snapshot during refresh; opening consent requires a fresh integration read.
   const shown = () => response()?.integrations ?? []
   const canOpen = (integrationId: string) => props.active !== false && Boolean(props.session)
-    && shown().some(entry => entry.id === integrationId && attachable(entry))
+    && entries().some(entry => entry.id === integrationId && attachable(entry))
   const open = async (integrationId: string) => {
     const session = props.session
     const integration = shown().find(entry => entry.id === integrationId)
@@ -96,10 +96,11 @@ export function createIntegrationAttachment(props: {
     const generation = ++viewGeneration
     const signature = JSON.stringify(shown())
     const value: Capture = { instanceId: props.instanceId, directory: props.directory, session: { ...session }, identity: identity(), epoch: epoch(),
-      openedAt: Date.now(), release,
+      receiptGeneration, openedAt: Date.now(), release,
       returnFocus: () => {
-        if (!disposed && !capture() && generation === viewGeneration && value.identity === identity() && value.epoch === epoch() && signature === JSON.stringify(shown())
-          && opener?.isConnected && opener.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }) && !opener.closest('[inert], [aria-hidden="true"]') && !opener.matches(":disabled")) opener.focus({ preventScroll: true })
+        if (disposed || capture() || generation !== viewGeneration || value.identity !== identity() || value.epoch !== epoch() || signature !== JSON.stringify(shown())) return
+        if (opener?.isConnected && opener.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }) && !opener.closest('[inert], [aria-hidden="true"]') && !opener.matches(":disabled")) opener.focus({ preventScroll: true })
+        else props.focusFallback?.()?.focus({ preventScroll: true })
       } }
     controller = new AbortController()
     const signal = controller.signal
@@ -145,9 +146,9 @@ export function createIntegrationAttachment(props: {
       else if (["busy", "gone", "refused"].includes(result.outcome)) {
         const message = t(`integrations.outcome.${result.outcome}`)
         setError(message); props.onMessage?.(message)
-      } else { receipt(offer.integration.id, value.identity); setError(fail(undefined)) }
+      } else { receipt(offer.integration.id, value.identity, value.receiptGeneration); setError(fail(undefined)) }
     } catch (failure) {
-      if (!refusedBeforeEffect(failure)) receipt(offer.integration.id, value.identity)
+      receipt(offer.integration.id, value.identity, value.receiptGeneration)
       if (owns(value)) setError(fail(failure))
     }
     finally { if (owns(value)) setPending(false) } })
@@ -155,21 +156,20 @@ export function createIntegrationAttachment(props: {
   /** D24: one explicit click, at most one `detachHost` for the displayed conversation only. */
   const detach = async (integrationId: string) => {
     const captured = identity(), bindingTarget = target(integrationId)
+    const generation = receiptGeneration
     if (props.active === false || !props.session || !attached(integrationId) || integrationBindings.busy(bindingTarget)
-      || detaching().has(integrationId) || receipts().has(integrationId)) return
-    setDetaching(current => new Set(current).add(integrationId))
-    try {
-      await integrationBindings.run(bindingTarget, async () => {
-        try {
-          const result = await integrationAttachmentRequest<IntegrationDetachResponse>(bindingTarget.instanceId, bindingTarget.directory, integrationId,
-            "detach", new AbortController().signal, { sessionID: bindingTarget.sessionID })
-          if (result?.outcome !== "detached" && result?.outcome !== "none") receipt(integrationId, captured)
-        } catch (failure) {
-          if (!refusedBeforeEffect(failure)) receipt(integrationId, captured)
-          else if (identity() === captured) props.onMessage?.(fail(failure))
-        }
-      })
-    } finally { setDetaching(current => { const next = new Set(current); next.delete(integrationId); return next }) }
+      || receipts().get(integrationId) === captured) return
+    await integrationBindings.run(bindingTarget, async () => {
+      try {
+        const result = await integrationAttachmentRequest<IntegrationDetachResponse>(bindingTarget.instanceId, bindingTarget.directory, integrationId,
+          "detach", new AbortController().signal, { sessionID: bindingTarget.sessionID })
+        if (result?.outcome !== "detached" && result?.outcome !== "none") receipt(integrationId, captured, generation)
+      } catch (failure) {
+        // Ownership can fail after the native effect too; an HTTP status alone cannot establish its phase.
+        receipt(integrationId, captured, generation)
+        if (identity() === captured) props.onMessage?.(fail(failure))
+      }
+    })
   }
   /** A new authoritative read; it settles an uncertain receipt. */
   const refresh = (integrationId: string) => {
@@ -222,7 +222,7 @@ export function createIntegrationAttachment(props: {
   return {
     entries, open, picker, canOpen, detach, refresh, binding, hintLabel, matchedHintLabel,
     /** A mutation for the displayed conversation is in flight. */
-    busy: (integrationId: string) => integrationBindings.busy(target(integrationId)) || detaching().has(integrationId),
+    busy: (integrationId: string) => integrationBindings.busy(target(integrationId)),
     /** A submitted action's effect is unknown until the next explicit read. */
     uncertain: (integrationId: string) => receipts().get(integrationId) === identity(),
   }

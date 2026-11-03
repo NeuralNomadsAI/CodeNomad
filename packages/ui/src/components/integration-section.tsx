@@ -33,13 +33,16 @@ export interface IntegrationSectionContext {
 export function integrationSectionFacts(context: IntegrationSectionContext, entry: IntegrationView) {
   const snapshot = pluginControlsCache.state(context.instanceId, context.location()).snapshot
   const plugin = integrationPlugin(snapshot, entry)
+  const read = integrations.state(context.instanceId, context.location().directory)
+  const binding = context.attachment.binding(entry.id)
+  const fresh = read.status === "ready" && !read.stale
   const state = deriveIntegrationSectionState({
     entry,
     installation: pluginSourcesStore.installation(context.instanceId, context.location(), entry),
     disabled: plugin.control?.effective === "disabled",
     conversation: {
       present: Boolean(context.session()),
-      binding: context.attachment.binding(entry.id),
+      binding: binding.state === "none" && !fresh ? { state: "unknown" } : binding,
       uncertain: context.attachment.uncertain(entry.id),
       hint: context.attachment.matchedHintLabel(entry.id),
     },
@@ -141,6 +144,10 @@ function IntegrationSectionBody(props: { t: Translate; entry: Accessor<Integrati
     if (row.state === "reattach") return t("integrations.conversation.available")
     return t(`integrations.conversation.${row.state}`)
   }
+  const actionIdentity = () => {
+    const row = state().conversation
+    return row ? JSON.stringify([context.session()?.id, row.state === "attached" ? [row.state, row.label] : "unattached"]) : undefined
+  }
 
   return (
     <div class="integration-section" data-integration-section={props.entry().id} data-integration-family={props.entry().family}>
@@ -181,14 +188,14 @@ function IntegrationSectionBody(props: { t: Translate; entry: Accessor<Integrati
       <Show when={state().conversation}>{row => (
         <Line name="conversation" label={t("integrations.section.conversation")}>
           <span data-conversation-state={row().state}><bdi>{conversationText()}</bdi></span>
-          <Show when={conversationAction()}>{action => (
+          <Show when={actionIdentity()} keyed>{identity => <Show when={conversationAction()}>{action => (
             <button type="button" class="window-text-button" data-conversation-action
               aria-disabled={action().disabled || context.attachment.busy(props.entry().id) ? "true" : undefined}
               aria-busy={context.attachment.busy(props.entry().id)} title={action().title}
-              onClick={() => { if (!action().disabled && !context.attachment.busy(props.entry().id)) action().run?.() }}>
+              onClick={event => { if (event.currentTarget.isConnected && identity === actionIdentity() && !action().disabled && !context.attachment.busy(props.entry().id)) action().run?.() }}>
               {action().label}
             </button>
-          )}</Show>
+          )}</Show>}</Show>
           <Show when={row().state === "noOffer"}>
             <InfoPopoverButton label={t("integrations.conversation.noOffer")}>
               <p>{t("integrations.conversation.noOfferHint", { app: props.entry().app.name })}</p>
