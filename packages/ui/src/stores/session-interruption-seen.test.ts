@@ -184,20 +184,23 @@ describe("seen native interruptions", () => {
     }
   })
 
-  it("preserves the current clear when held metadata belongs to an intermediate interruption", async () => {
-    const instanceId = "seen-held-metadata"
+  for (const { name, busy, idle, unseen } of [
+    { name: "preserves the current clear when held metadata belongs to an intermediate interruption", busy: 25, idle: 30, unseen: false },
+    { name: "shows a missed later run when no metadata for the acknowledged interruption ever returns", busy: 35, idle: 40, unseen: true },
+  ]) it(name, async () => {
+    const instanceId = `seen-held-metadata-${idle}`
     let releaseInfo!: (value: unknown) => void
     const heldInfo = new Promise(resolve => { releaseInfo = resolve })
     let requested!: () => void
     const infoRequested = new Promise<void>(resolve => { requested = resolve })
     let reads = 0
-    let nativeIdle = 30
+    let nativeIdle = idle
     const client = {
       session: {
         active: async () => ({}),
         get: () => {
           if (++reads === 1) { requested(); return heldInfo }
-          return Promise.resolve({ ...session({ instanceId }), parentID: undefined, time: { created: 1, updated: nativeIdle, idle: nativeIdle } })
+          return Promise.resolve({ ...session({ instanceId }), parentID: undefined, time: { created: 1, updated: nativeIdle, busy, idle: nativeIdle } })
         },
       },
       message: { list: async () => ({ data: [], cursor: {} }) },
@@ -224,10 +227,14 @@ describe("seen native interruptions", () => {
       const watermarkAfterOlderMetadata = captureSeenInterruptions(instanceId, [current()])
       assert.equal(isSessionInterruptionUnseen(instanceId, current()), false)
       await refreshSessionRuntimeStatus(instanceId)
-      assert.equal(current().time.idle, 30)
-      assert.equal(isSessionInterruptionUnseen(instanceId, current()), false, "refresh without a new terminal event keeps the clear")
+      assert.equal(current().time.idle, idle)
+      assert.equal(current().time.busy, busy)
+      assert.equal(current().outcome, "interrupted")
+      assert.equal(current().generationRecovery, "interrupted")
+      assert.equal(isSessionInterruptionUnseen(instanceId, current()), unseen, "only the acknowledged run stays cleared")
+      assert.deepEqual(captureSeenInterruptions(instanceId, [current()]), { session: 30 }, "a missed later run is never acknowledged by a refresh")
       assert.deepEqual(watermarkAfterOlderMetadata, { session: 30 }, "older metadata never lowers the acknowledgement")
-      nativeIdle = 31
+      nativeIdle = idle + 1
       await refreshSessionRuntimeStatus(instanceId)
       assert.equal(isSessionInterruptionUnseen(instanceId, current()), true, "a genuinely newer native boundary shows again")
     } finally {
@@ -242,7 +249,7 @@ describe("seen native interruptions", () => {
     }
   })
 
-  it("keeps a gap-time clear until metadata covers the event timestamp", () => {
+  for (const busy of [25, 30, 35, undefined]) it(`rebinds covering metadata only with an acknowledged run start (busy=${busy})`, () => {
     const instanceId = "seen-confirmed"
     try {
       const previous = session({ instanceId })
@@ -252,9 +259,10 @@ describe("seen native interruptions", () => {
       const merged = mergeFetchedSessionRuntimeState(confirmed, previous, previous)!
       assert.deepEqual(captureSeenInterruptions(instanceId, [merged]), { session: 30 })
       assert.equal(isSessionInterruptionUnseen(instanceId, merged), false)
-      const covered = mergeFetchedSessionRuntimeState(session({ instanceId, time: { created: 1, updated: 40, idle: 40 } }), merged, merged)!
-      assert.deepEqual(captureSeenInterruptions(instanceId, [covered]), { session: 40 }, "covering metadata can advance the acknowledgement")
-      assert.equal(isSessionInterruptionUnseen(instanceId, covered), false)
+      const covered = mergeFetchedSessionRuntimeState(session({ instanceId, time: { created: 1, updated: 40, busy, idle: 40 } }), merged, merged)!
+      const acknowledgedRun = busy !== undefined && busy <= 30
+      assert.deepEqual(captureSeenInterruptions(instanceId, [covered]), { session: acknowledgedRun ? 40 : 30 }, "only the acknowledged run can advance the clear")
+      assert.equal(isSessionInterruptionUnseen(instanceId, covered), !acknowledgedRun)
       assert.equal(isSessionInterruptionUnseen(instanceId, session({ time: { created: 1, updated: 41, idle: 41 } })), true)
       const settled = session({ instanceId, generationRecovery: null, outcome: "succeeded", time: { created: 1, updated: 42, idle: 42 } })
       mergeFetchedSessionRuntimeState(settled, covered, covered)

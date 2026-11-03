@@ -69,10 +69,12 @@ export function reconcileSessionInterruptionBoundary(instanceId: string, session
     return
   }
   if (!event || idle < event.provisional || session.outcome !== "interrupted") return
+  // Covering metadata retires the association even when it describes a later run.
   eventBoundaries.get(instanceId)!.delete(session.id)
   if (!eventBoundaries.get(instanceId)!.size) eventBoundaries.delete(instanceId)
-  // Only metadata covering the event can consume its provisional association.
-  // The matching acknowledgement can only advance to this proven boundary.
+  const busy = session.time?.busy
+  if (busy === undefined || busy > event.provisional) return
+  // Extend a matching clear only for a run that had already started at the event.
   update(instanceId, entries => {
     if (entries.get(session.id) !== event.provisional) return false
     entries.set(session.id, idle)
