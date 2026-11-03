@@ -1,3 +1,4 @@
+import { legacyLaunch } from "../../missions/legacy-launch-test-helper"
 import assert from "node:assert/strict"
 import test from "node:test"
 import { Effect } from "effect"
@@ -105,7 +106,7 @@ test("auxiliary business settlement reapplies terminal owner cleanup before repl
   const f = await receiver(t, "reconciliation")
   let doc = await f.read()
   doc = await f.store.change(doc.id, doc.revision, f.current, value => {
-    value.configuration.launch.ends.maxLaunches = 1
+    legacyLaunch(value.configuration).ends.maxLaunches = 1
     missionDocumentChanges.reserve(value, { kind: "manual", requestID: "last_original" }, f.now, [])
     missionDocumentChanges.admitted(value, value.pending!.id, f.now)
   })

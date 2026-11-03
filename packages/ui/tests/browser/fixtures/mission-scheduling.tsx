@@ -2,7 +2,7 @@ import { createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import type { MissionLaunchPolicy } from "../../../../server/src/missions/launch-policy"
 import { MissionScheduling, type MissionSchedulingLock } from "../../../src/components/mission-scheduling"
-import { newMissionSchedulingDraft } from "../../../src/components/mission-scheduling-data"
+import { newMissionCriterion, newMissionSchedulingDraft, type MissionCriterionKind } from "../../../src/components/mission-scheduling-data"
 import { decodeMissionSchedulingPolicy } from "../../../src/components/mission-scheduling-decode"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
@@ -25,6 +25,7 @@ function Fixture() {
   })
   ;(window as any).schedulingFixture = { change: (patch: object) => change(value => ({ ...value, ...patch })),
     draft, policy, lock: setLock, capability: setCapability, sources: setSources,
+    row: (kind: MissionCriterionKind, patch: object = {}) => ({ ...newMissionCriterion(kind), ...patch }),
     load: (policy: MissionLaunchPolicy) => change(decodeMissionSchedulingPolicy(policy, "/fixture", "UTC")) }
   return <main class="mission-editor window-shell" style={{ width: "min(420px, 100%)", margin: "auto", color: "var(--text-primary)" }}>
     <div class="window-body"><MissionScheduling draft={draft()} directory="/fixture" sources={sources()}

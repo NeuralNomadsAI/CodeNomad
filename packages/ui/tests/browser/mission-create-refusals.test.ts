@@ -100,8 +100,8 @@ async function setupDaily(page: Page, answer: (route: Route, attempt: number) =>
   })
   await fixture.objective.fill("Review merged changes daily")
   await fixture.form.locator(".mission-scheduling > summary").click()
-  await fixture.form.getByLabel("Frequency", { exact: true }).selectOption("daily")
-  await fixture.form.getByLabel("Time 1", { exact: true }).fill("07:30")
+  await fixture.form.getByRole("button", { name: "Add a criterion", exact: true }).click()
+  await fixture.form.getByLabel("Criterion 1 time", { exact: true }).fill("07:30")
   return { ...fixture, attempts }
 }
 

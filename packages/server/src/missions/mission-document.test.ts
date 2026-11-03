@@ -1,7 +1,8 @@
+import { legacyLaunch } from "./legacy-launch-test-helper"
 import assert from "node:assert/strict"
 import test from "node:test"
 import { canonicalAuthority } from "./authority-protocol"
-import { missionConfigurationSchema, missionLaunchPolicySchema, MISSION_MIN_INTERVAL_MS, type MissionConfiguration } from "./launch-policy"
+import { missionConfigurationSchema, missionLaunchPolicySchema, missionPrincipalCount, MISSION_MIN_INTERVAL_MS, type MissionConfiguration } from "./launch-policy"
 import { missionDocumentChanges as changes } from "./mission-document-state"
 import { NativeMissionDocumentStore, type MissionDocumentStorage } from "./mission-document-store"
 import { MISSION_DOCUMENT_PREFIX, missionSourceKey, missionTombstoneRegistrySchema, parseMissionDocument, projectMissionDocument,
@@ -38,7 +39,7 @@ function fixture() {
   return { values, keys, storage, store, key, mutate }
 }
 function calendars(doc: MissionDocument, suffix = "original"): MissionCalendar[] {
-  const count = doc.configuration.launch.timing.kind === "multi" ? doc.configuration.launch.timing.calendars.length : 1
+  const count = missionPrincipalCount(doc.configuration.launch)
   return [...Array.from({ length: count }, (_, slot): MissionCalendar => ({ role: "principal", slot, scheduleID: `sch_${suffix}_${slot}`,
     sessionID: `ses_${suffix}_${slot}`, timeGeneration: doc.timeGeneration, highWater: 0, pendingWake: null, wakePreparing: null })),
   { role: "reconciliation", slot: 0, scheduleID: `sch_${suffix}_aux`, sessionID: `ses_${suffix}_aux`,
@@ -74,7 +75,7 @@ test("source revalidation runs after the target read and before CAS, under exclu
 
 test("editing or re-adding a source preserves its consumed checkpoint; only genuinely new sources receive a baseline", async () => {
   const f = fixture(), config = configuration(true), condition = { kind: "files-changed" as const, paths: ["included"] }
-  config.launch.condition = condition
+  legacyLaunch(config).condition = condition
   await f.store.create("review", config, now, current)
   const checkpoint = { key: missionSourceKey(condition), kind: condition.kind, placementDigest: "a".repeat(64), value: { digest: "consumed" } }
   await f.mutate(doc => { changes.play(doc, "play_source", now, [checkpoint]); changes.synchronized(doc, "play_source", calendars(doc)) })
@@ -106,7 +107,7 @@ test("strict launch policy accepts six timings, five single conditions and combi
 test("multi calendars normalize duplicate entries, preserve arbitrary pairs and refuse a ninth", () => {
   const config = configuration(true), a = { expression: "15 9 * * *", zone: "UTC" }, b = { expression: "45 17 * * *", zone: "UTC" }
   const parsed = missionLaunchPolicySchema.parse({ ...config.launch, timing: { kind: "multi", calendars: [b, a, a] } })
-  assert.equal(parsed.timing.kind, "multi")
+  assert.ok("timing" in parsed); assert.equal(parsed.timing.kind, "multi")
   if (parsed.timing.kind === "multi") assert.deepEqual(parsed.timing.calendars, [a, b])
   assert.equal(missionLaunchPolicySchema.safeParse({ ...config.launch, timing: { kind: "multi", calendars: Array(9).fill(a) } }).success, false)
   assert.equal(missionConfigurationSchema.safeParse({ ...config, profiles: {} }).success, false)
@@ -114,8 +115,8 @@ test("multi calendars normalize duplicate entries, preserve arbitrary pairs and 
 
 test("creation stays paused; relative dates/fins start at first Play and never read other namespaces", async () => {
   const f = fixture(), config = configuration()
-  config.launch.timing = { kind: "in", delayMs: 60_000 }
-  config.launch.ends = { maxLaunches: 2, afterMs: 180_000, at: now + 1_000_000 }
+  legacyLaunch(config).timing = { kind: "in", delayMs: 60_000 }
+  legacyLaunch(config).ends = { maxLaunches: 2, afterMs: 180_000, at: now + 1_000_000 }
   const created = await f.store.create("review", config, now, current)
   assert.equal(created.state, "paused")
   assert.equal(created.firstPlayedAt, null)
@@ -127,7 +128,7 @@ test("creation stays paused; relative dates/fins start at first Play and never r
   assert.equal(projectMissionDocument(played).remaining, 1)
   assert.ok(f.keys.every(key => key.startsWith(MISSION_DOCUMENT_PREFIX)))
   await assert.rejects(f.mutate(doc => changes.play(doc, "again_play", now + 500_000, [])))
-  const past = configuration(); past.launch.timing = { kind: "at", at: now, zone: "UTC" }
+  const past = configuration(); legacyLaunch(past).timing = { kind: "at", at: now, zone: "UTC" }
   await f.store.create("past_mission", past, now, current)
   await assert.rejects(f.store.change("past_mission", 0, current, doc => changes.play(doc, "first_play", now + 1000, [])), /date has passed/)
 })
@@ -152,7 +153,7 @@ test("CAS across instances, synchronous guards, corrupt reads and missing CAS al
 
 test("reserved identity holds one budget place; exact admission readback increments once across manual and native wakes", async () => {
   const f = fixture(), config = configuration(true)
-  config.launch.ends.maxLaunches = 3
+  legacyLaunch(config).ends.maxLaunches = 3
   let doc = await armed(f, config)
   const first = wake(doc)
   await f.mutate(value => changes.prepareWake(value, first))
@@ -202,7 +203,7 @@ test("high-water and everCreatedTask survive 35 archives; old/gapped/misidentifi
 
 test("configuration generation preserves phase, consumed count and end; temporal replacement fences old IDs", async () => {
   const f = fixture(), config = configuration(true)
-  config.launch.ends = { maxLaunches: 3, afterMs: 900_000, at: null }
+  legacyLaunch(config).ends = { maxLaunches: 3, afterMs: 900_000, at: null }
   let doc = await armed(f, config)
   const mappings = structuredClone(doc.calendars), timeGeneration = doc.timeGeneration, end = doc.slotEndsAt
   for (const requestID of ["first_run", "second_run"]) {
@@ -233,7 +234,7 @@ test("configuration generation preserves phase, consumed count and end; temporal
 
 test("condition baseline required; pending freezes evidence, consumes on success only; failure blocks another admission", async () => {
   const f = fixture(), config = configuration(true), condition = { kind: "files-changed" as const, paths: ["input.txt"] }
-  config.launch.condition = condition
+  legacyLaunch(config).condition = condition
   await f.store.create("review", config, now, current)
   await assert.rejects(f.mutate(doc => changes.play(doc, "first_play", now + 1000, [])), /baseline/)
   const initial: MissionSourceCheckpoint = { key: missionSourceKey(condition), kind: condition.kind, placementDigest: "a".repeat(64), value: { hash: "old" } }
@@ -256,7 +257,7 @@ test("condition baseline required; pending freezes evidence, consumes on success
 
 test("eligible late slot remains admissible after end; native preparations block editing; auxiliary has its own high-water", async () => {
   const f = fixture(), config = configuration(true)
-  config.launch.ends.at = now + 60_000
+  legacyLaunch(config).ends.at = now + 60_000
   let doc = await armed(f, config)
   const next = wake(doc, 0, now + 50_000)
   await f.mutate(value => changes.prepareWake(value, next))
@@ -288,7 +289,7 @@ test("deletion retains full document until reconciled; durable bounded tombstone
 
 test("eight exact calendar occurrences share one pending and budget; ignored checks advance only their own high-water", async () => {
   const f = fixture(), config = configuration(true)
-  config.launch.timing = { kind: "multi", calendars: Array.from({ length: 8 }, (_, index) => ({ expression: `${index} 9 * * *`, zone: "UTC" })) }
+  legacyLaunch(config).timing = { kind: "multi", calendars: Array.from({ length: 8 }, (_, index) => ({ expression: `${index} 9 * * *`, zone: "UTC" })) }
   let doc = await armed(f, config)
   const wakes = Array.from({ length: 8 }, (_, slot) => wake(doc, slot, now + slot * 1000))
   for (const next of wakes) await f.mutate(value => changes.prepareWake(value, next))

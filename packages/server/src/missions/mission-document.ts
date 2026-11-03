@@ -7,7 +7,8 @@ import { missionCalendarOwnerSchema } from "./mission-calendar-owner-state"
 import { MISSION_LIFECYCLE_TEXT_LIMIT } from "./lifecycle-input"
 import {
   documentCounter, documentID, documentTimestamp, nativeDocumentID, missionConfigurationSchema,
-  missionLaunchLimit, missionSlotEndsAt, requiresMissionCalendar, MISSION_DOCUMENT_MAX_BYTES, type MissionConfiguration,
+  missionLaunchLimit, missionLaunchModel, missionSlotEndsAt, requiresMissionCalendar, MISSION_DOCUMENT_MAX_BYTES,
+  type MissionCondition, type MissionLaunchSchedule,
 } from "./launch-policy"
 
 export const MISSION_DOCUMENT_PREFIX = "codenomad-missions/documents-v1"
@@ -62,7 +63,11 @@ const origin = z.union([
   z.object({ kind: z.literal("manual"), requestID: documentID }).strict(),
   z.object({ kind: z.literal("wake"), wakes: z.array(missionWakeSchema).min(1).max(8)
     .refine(wakes => new Set(wakes.map(wake => wake.scheduleID)).size === wakes.length) }).strict(),
+  // Triggers consumed while a passage ran, launched once after it settled.
+  z.object({ kind: z.literal("deferred"), afterPassageID: documentID, dueAt: documentTimestamp }).strict(),
 ])
+const deferred = z.object({ afterPassageID: documentID, dueAt: documentTimestamp, unconditional: z.boolean() }).strict()
+export type MissionDeferredLaunch = z.infer<typeof deferred>
 const pending = z.object({ id: documentID, missionID: documentID, coordinatorSessionID: nativeDocumentID, messageID: nativeDocumentID,
   configurationGeneration: generation, timeGeneration: generation, createdAt: documentTimestamp, dueAt: documentTimestamp,
   origin, configuration: missionConfigurationSchema, checkpoints, admittedAt: documentTimestamp.nullable(),
@@ -93,7 +98,9 @@ const document = z.object({ version: z.literal(1), id: documentID, projectID: na
   }).strict().nullable().optional(),
   calendarOwner: missionCalendarOwnerSchema.nullable().default(null),
   fanIn: z.object({ incarnation: z.string().min(1).max(240), cutoff: documentTimestamp, timeGeneration: generation,
-    principalIDs: z.array(nativeDocumentID).max(8).refine(ids => new Set(ids).size === ids.length), completed: z.boolean(), suppress: z.boolean() }).strict().nullable().default(null),
+    principalIDs: z.array(nativeDocumentID).max(8).refine(ids => new Set(ids).size === ids.length), completed: z.boolean(), suppress: z.boolean(),
+    overlap: z.boolean().optional() }).strict().nullable().default(null),
+  deferred: deferred.nullable().optional(),
   calendars: z.array(calendar).max(9),
   synchronization: z.object({ requestID: documentID, kind: z.enum(["arm", "replace", "disarm", "delete"]),
     retiredCalendars: z.array(calendar).max(9) }).strict().nullable(),
@@ -108,6 +115,8 @@ export type MissionSourceCheckpoint = z.infer<typeof checkpoint>
 export function parseMissionDocument(input: unknown, identity: Pick<MissionDocument, "id" | "projectID" | "projectCanonical">): MissionDocument {
   const doc = document.parse(JSON.parse(canonicalAuthority(input, MISSION_DOCUMENT_MAX_BYTES)))
   const fail = () => { throw new Error("Invalid Mission document identity or progress") }
+  const model = missionLaunchModel(doc.configuration.launch)
+  const once = model.schedules.find(item => item.kind === "at" || item.kind === "in") as Extract<MissionLaunchSchedule, { kind: "at" | "in" }> | undefined
   if (doc.id !== identity.id || doc.projectID !== identity.projectID || doc.projectCanonical !== identity.projectCanonical
     || doc.configurationGeneration > doc.revision + 1 || doc.timeGeneration > doc.configurationGeneration
     || doc.history.length !== Math.min(doc.settledCount, MISSION_DOCUMENT_HISTORY_LIMIT)
@@ -121,9 +130,8 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
       || doc.oneShotAt !== null || doc.slotEndsAt !== null)
     || doc.firstPlayedAt !== null && doc.slotEndsAt !== missionSlotEndsAt(doc.configuration.launch, doc.firstPlayedAt)
     || doc.deletion && doc.state !== "stopped"
-    || doc.firstPlayedAt !== null && (doc.configuration.launch.timing.kind === "at" && doc.oneShotAt !== doc.configuration.launch.timing.at
-      || !["at", "in"].includes(doc.configuration.launch.timing.kind) && doc.oneShotAt !== null
-      || doc.configuration.launch.timing.kind === "in" && (doc.oneShotAt === null || doc.oneShotAt <= doc.firstPlayedAt))) fail()
+    || doc.firstPlayedAt !== null && (once?.kind === "at" && doc.oneShotAt !== once.at || !once && doc.oneShotAt !== null
+      || once?.kind === "in" && (doc.oneShotAt === null || doc.oneShotAt <= doc.firstPlayedAt))) fail()
   const principals = doc.calendars.filter(item => item.role === "principal")
   if (principals.length > 8 || doc.calendars.filter(item => item.role === "reconciliation").length > 1
     || new Set(doc.calendars.map(item => `${item.role}:${item.slot}`)).size !== doc.calendars.length
@@ -160,7 +168,8 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
       || passage.missionID !== `msn_${stableToken(`${doc.projectID}\0${passage.id}`, 24)}`
       || passage.coordinatorSessionID !== missionCoordinatorSessionID(passage.missionID, passage.createdAt)
       || passage.messageID !== `msg_${stableToken(`${passage.id}\0start`, 40)}`
-      || passage.dueAt !== (passage.origin.kind === "wake" ? Math.max(...passage.origin.wakes.map(wake => wake.dueAt)) : passage.createdAt)
+      || passage.dueAt !== (passage.origin.kind === "wake" ? Math.max(...passage.origin.wakes.map(wake => wake.dueAt))
+        : passage.origin.kind === "deferred" ? passage.origin.dueAt : passage.createdAt)
       || passage.admittedAt !== null && passage.admittedAt < passage.createdAt
       || passage.manualExpectedRevision !== undefined && passage.origin.kind !== "manual") fail()
     if ("settledAt" in passage) {
@@ -184,7 +193,8 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
   if (doc.dormantJournal && (!doc.oneTime || doc.oneTime.firstPlay || !requiresMissionCalendar(doc.configuration.launch) || doc.dormantJournal.deleted && !doc.deletion
     || !doc.preparation || doc.dormantJournal.revision !== doc.preparation.expectedJournalRevision + (doc.preparation.pending ? 0 : 1))) fail()
   if (doc.oneTime && doc.id !== `msn_${stableToken(`${doc.projectID}\0${doc.oneTime.creationRequestID}`, 24)}`) fail()
-  if (doc.oneTime && !doc.dormantJournal && (doc.configuration.launch.timing.kind !== "immediate" || doc.configuration.launch.condition !== null
+  if (doc.deferred && (doc.deferred.dueAt < doc.createdAt || !passages.some(item => item.id === doc.deferred!.afterPassageID))) fail()
+  if (doc.oneTime && !doc.dormantJournal && (requiresMissionCalendar(doc.configuration.launch)
     || doc.scheduleActivation || doc.pending || doc.calendars.length
     || doc.oneTime.firstPlay && (doc.firstPlayedAt !== doc.oneTime.firstPlay.requestedAt
       || doc.oneTime.firstPlay.operationID !== controlOperationID(doc.id, doc.oneTime.firstPlay.requestID)
@@ -214,7 +224,7 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
   return doc
 }
 
-export function missionSourceKey(source: NonNullable<MissionConfiguration["launch"]["condition"]>): string {
+export function missionSourceKey(source: MissionCondition): string {
   return stableToken(canonicalAuthority(source), 64)
 }
 export function missionDocumentPassageID(doc: Pick<MissionDocument, "projectID" | "projectCanonical" | "id">,
@@ -243,7 +253,7 @@ export function projectMissionDocument(doc: MissionDocument) {
     || doc.calendars.some(item => item.wakePreparing || item.pendingWake && !doc.pending)
     || doc.scheduleActivation && doc.scheduleActivation.state !== "ready" ? "uncertain"
     : doc.state === "stopped" ? "terminal" : doc.pending ? "passage" : doc.state === "finished" ? "terminal"
-       : (doc.oneTime?.firstPlay || doc.launchedCount > 0 && !["every", "cron", "multi"].includes(doc.configuration.launch.timing.kind)) ? "launched-once"
+       : (doc.oneTime?.firstPlay || doc.launchedCount > 0 && limit === 1) ? "launched-once"
           : doc.oneTime && !isMissionCoordinatorSession(doc.oneTime.coordinatorSessionID, doc.id) ? "journal" : null
   return { id: doc.id, revision: doc.revision, state: doc.state, launch: doc.configuration.launch,
     firstPlayedAt: doc.firstPlayedAt, slotEndsAt: doc.slotEndsAt, launchedCount: doc.launchedCount,

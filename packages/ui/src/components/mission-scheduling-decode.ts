@@ -1,77 +1,75 @@
 import { Cron } from "effect"
 import type { MissionLaunchPolicy } from "../../../server/src/missions/launch-policy"
-import { missionSchedulingPolicy, newMissionSchedulingDraft, type MissionSchedulingDraft, type MissionSchedulingFields } from "./mission-scheduling-data"
+import { missionLaunchModel } from "../../../server/src/missions/mission-launch-kind"
+import { localInstant, missionHourSteps, newMissionCriterion, newMissionSchedulingDraft, type MissionCriterionDraft,
+  type MissionSchedulingDraft } from "./mission-scheduling-data"
 
-/** Recognize only calendars with exactly the semantics of a simple control.
+/** Recognize only calendars with exactly the semantics of a shortcut.
  * The original expression remains stored, including aliases and field spelling. */
-function simpleCron(expression: string, zone: string): Partial<MissionSchedulingFields> | undefined {
-  const cron = Cron.parseUnsafe(expression, zone)
+function shortcut(expression: string, zone: string): Partial<MissionCriterionDraft> | undefined {
+  let cron: Cron.Cron
+  try { cron = Cron.parseUnsafe(expression, zone) } catch { return undefined }
+  const equals = (value: string) => { try { return Cron.equals(cron, Cron.parseUnsafe(value, zone)) } catch { return false } }
+  // An empty native field set is a wildcard.
+  const hours = cron.hours.size ? [...cron.hours].sort((a, b) => a - b) : Array.from({ length: 24 }, (_, hour) => hour)
+  const step = hours.length === 24 ? 1 : hours[1] - hours[0]
+  if (hours.length > 1 && (missionHourSteps as readonly number[]).includes(step) && equals(step === 1 ? "0 * * * *" : `0 */${step} * * *`))
+    return { kind: "hours", hours: String(step) }
   if (cron.minutes.size !== 1 || cron.hours.size !== 1) return undefined
-  const minute = [...cron.minutes][0], hour = [...cron.hours][0]
-  const times = [`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`]
-  const prefix = `${minute} ${hour}`
-  const equals = (value: string) => Cron.equals(cron, Cron.parseUnsafe(value, zone))
-  if (equals(`${prefix} * * *`)) return { frequency: "daily", times }
+  const minute = [...cron.minutes][0], hour = hours[0]
+  const time = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`, prefix = `${minute} ${hour}`
+  if (equals(`${prefix} * * *`)) return { kind: "daily", time }
   const days = [...cron.weekdays].sort()
-  if (days.length && equals(`${prefix} * * ${days.join(",")}`)) return { frequency: "weekly", times, days }
+  if (days.length && equals(`${prefix} * * ${days.join(",")}`)) return { kind: "weekly", time, days }
   const monthDay = [...cron.days][0]
-  if (cron.days.size === 1 && equals(`${prefix} ${monthDay} * *`)) return { frequency: "monthly", times, monthDay: String(monthDay) }
+  if (cron.days.size === 1 && equals(`${prefix} ${monthDay} * *`)) return { kind: "monthly", time, monthDay: String(monthDay) }
   return undefined
 }
 
-function localMinute(at: number, zone: string) {
+export function localMinute(at: number, zone: string) {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(at)
   const part = (name: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === name)!.value
   return `${part("year")}-${part("month")}-${part("day")}T${part("hour")}:${part("minute")}`
 }
 
-/** Decode a server-validated policy. Unsupported native shapes are retained
- * explicitly; a form must never approximate them into a different schedule. */
+/** Decode a server-validated policy, including stored legacy shapes. Shapes the
+ * criteria form cannot express are retained explicitly, never approximated. */
 export function decodeMissionSchedulingPolicy(policy: MissionLaunchPolicy, directory?: string,
   defaultZone = Intl.DateTimeFormat().resolvedOptions().timeZone): MissionSchedulingDraft {
-  const draft = newMissionSchedulingDraft(defaultZone), timing = policy.timing
+  const draft = newMissionSchedulingDraft(defaultZone), model = missionLaunchModel(policy)
+  const exact: NonNullable<MissionSchedulingDraft["stored"]>["exact"] = {}
   let reason: NonNullable<MissionSchedulingDraft["stored"]>["reason"]
-  const duration = (ms: number) => {
-    if (ms % 60_000) { reason = "precision"; return }
-    draft.unit = ms % 3_600_000 === 0 ? "hours" : "minutes"
-    draft.amount = String(ms / (draft.unit === "hours" ? 3_600_000 : 60_000))
+  // Intervals, delays, single dates, passage limits, relative ends and a launch
+  // once on an event alone have no criteria control.
+  if (model.maxLaunches !== null || model.endAfterMs !== null || model.schedules.some(item => item.kind !== "cron")
+    || !model.schedules.length && model.events.length && "timing" in policy) reason = "retired"
+  const zones = [...new Set(model.schedules.flatMap(item => item.kind === "cron" || item.kind === "at" ? [item.zone] : []))]
+  if (zones.length > 1) reason ??= "timing"
+  draft.zone = zones[0] ?? defaultZone
+  for (const schedule of model.schedules) {
+    if (schedule.kind !== "cron") continue
+    const row = { ...newMissionCriterion("cron"), expression: schedule.expression, ...shortcut(schedule.expression, schedule.zone) }
+    exact[row.id] = { kind: "cron", expression: schedule.expression, zone: schedule.zone }
+    draft.criteria.push(row)
   }
-  switch (timing.kind) {
-    case "immediate": break
-    case "at": draft.frequency = "at"; draft.zone = timing.zone; draft.date = localMinute(timing.at, timing.zone); break
-    case "in": draft.frequency = "in"; duration(timing.delayMs); break
-    case "every": draft.frequency = "every"; duration(timing.intervalMs); break
-    case "cron": {
-      draft.zone = timing.zone; draft.expression = timing.expression
-      Object.assign(draft, simpleCron(timing.expression, timing.zone) ?? { frequency: "cron" })
-      break
+  for (const event of model.events) {
+    const row = newMissionCriterion(event.kind)
+    switch (event.kind) {
+      case "schedule-success": case "mission-completed": row.source = event.missionID; break
+      case "conversation-message": row.source = event.conversationID; break
+      case "branch-commits": row.source = event.ref; if (event.directory !== directory) reason ??= "source"; break
+      case "files-changed": row.files = event.paths.join("\n"); break
     }
-    case "multi": {
-      draft.frequency = "multi"; draft.zone = timing.calendars[0].zone
-      const calendars = timing.calendars.map(item => simpleCron(item.expression, item.zone))
-      if (timing.calendars.some(item => item.zone !== draft.zone) || calendars.some(item => item?.frequency !== "daily")) reason = "timing"
-      else draft.times = calendars.map(item => item!.times![0]).sort()
-      break
-    }
+    exact[row.id] = structuredClone(event)
+    draft.criteria.push(row)
   }
-  const condition = policy.condition
-  draft.condition = condition?.kind ?? "none"
-  if (condition) switch (condition.kind) {
-    case "schedule-success": case "mission-completed": draft.source = condition.missionID; break
-    case "conversation-message": draft.source = condition.conversationID; break
-    case "branch-commits": draft.source = condition.ref; if (condition.directory !== directory) reason = "source"; break
-    case "files-changed": draft.files = condition.paths.join("\n"); break
+  draft.onlyWithNews = model.onlyWithNews
+  if (model.until !== null) {
+    draft.until = localMinute(model.until, draft.zone)
+    // Civil minute controls cannot encode sub-minute precision or a repeated hour's second instant.
+    if (localInstant(draft.until, draft.zone) !== model.until) reason ??= "precision"
   }
-  draft.endAt = policy.ends.at === null ? "" : localMinute(policy.ends.at, draft.zone)
-  draft.endAfter = policy.ends.afterMs === null ? "" : String(policy.ends.afterMs / 3_600_000)
-  draft.maxLaunches = policy.ends.maxLaunches === null ? "" : String(policy.ends.maxLaunches)
-  // Civil minute controls cannot encode sub-minute precision, a repeated hour's
-  // second instant, or a fractional-hour end duration. Keep their exact policy.
-  if (!reason) try {
-    const encoded = missionSchedulingPolicy(draft, directory)
-    if (timing.kind === "at" && encoded.timing.kind === "at" && encoded.timing.at !== timing.at
-      || encoded.ends.at !== policy.ends.at || encoded.ends.afterMs !== policy.ends.afterMs) reason = "precision"
-  } catch { reason = "precision" }
-  return { ...draft, stored: { policy: structuredClone(policy), initial: structuredClone(draft), ...(reason ? { reason } : {}) } }
+  const { stored: _stored, ...initial } = draft
+  return { ...draft, stored: { policy: structuredClone(policy), initial: structuredClone(initial), exact, ...(reason ? { reason } : {}) } }
 }

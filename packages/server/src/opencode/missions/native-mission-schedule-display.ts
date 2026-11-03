@@ -1,5 +1,6 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
+import { missionPrincipalCount } from "../../missions/launch-policy"
 import type { MissionDocument } from "../../missions/mission-document"
 import { NativeMissionDocumentStore } from "../../missions/mission-document-store"
 import { unobservedMissionSchedule, type MissionScheduleObservation } from "../../missions/mission-schedule-display"
@@ -13,7 +14,7 @@ export async function observeNativeMissionSchedule(doc: MissionDocument, native:
   const unknown = { ...unobservedMissionSchedule(doc), state: "unknown" as const }
   const slots = doc.calendarOwner?.slots.filter(item => item.role === "principal") ?? []
   if (!slots.length && !doc.calendars.some(item => item.role === "principal")) return unobservedMissionSchedule(doc)
-  const expected = doc.configuration.launch.timing.kind === "multi" ? doc.configuration.launch.timing.calendars.length : 1
+  const expected = missionPrincipalCount(doc.configuration.launch)
   if (slots.length !== expected || doc.synchronization || doc.calendarOwner?.operation.pending) return unknown
   try {
     let wakeCount = 0

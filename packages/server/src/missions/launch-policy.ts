@@ -5,8 +5,9 @@ import { MISSION_TITLE_MAX, MISSION_TITLE_PATTERN } from "./mission-title"
 import { compareModelError, missionProfileRoles, missionProfilesInputSchema, validateMissionProfiles } from "./playbook-profiles"
 import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { documentCounter, documentTimestamp, MISSION_MIN_INTERVAL_MS } from "./mission-time"
-import { requiresMissionCalendar } from "./mission-launch-kind"
-export { requiresMissionCalendar, missionLaunchLimit } from "./mission-launch-kind"
+import { missionLaunchModel, requiresMissionCalendar } from "./mission-launch-kind"
+export { requiresMissionCalendar, missionLaunchLimit, missionLaunchModel, missionEventPrincipal, missionEventPrincipalSlot, missionPrincipalCount,
+  missionLaunchesRepeatedly, type MissionLaunchModel, type MissionLaunchSchedule } from "./mission-launch-kind"
 export { documentCounter, documentTimestamp, MISSION_MIN_INTERVAL_MS } from "./mission-time"
 
 export const MISSION_DOCUMENT_MAX_BYTES = 256 * 1024
@@ -52,10 +53,33 @@ export const missionConditionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("files-changed"), paths: z.array(relativePath).min(1).max(128)
     .refine(paths => new Set(paths).size === paths.length).transform(paths => [...paths].sort()) }).strict(),
 ])
-export const missionLaunchPolicySchema = z.object({ timing: missionTimingSchema, condition: missionConditionSchema.nullable(),
+/** Stored documents written before launch criteria; read exactly, never rewritten. */
+export const missionLegacyLaunchPolicySchema = z.object({ timing: missionTimingSchema, condition: missionConditionSchema.nullable(),
   ends: z.object({ maxLaunches: documentCounter.positive().nullable(), afterMs: duration.nullable(), at: documentTimestamp.nullable() }).strict(),
 }).strict()
+export type MissionLegacyLaunchPolicy = z.infer<typeof missionLegacyLaunchPolicySchema>
+const scheduleCriterion = z.object({ kind: z.literal("cron"), expression: z.string(), zone: z.string() }).strict()
+  .transform(({ kind, ...value }, context) => {
+    const parsed = cron.safeParse(value)
+    if (!parsed.success) { context.addIssue({ code: "custom", message: "Invalid minute-resolution cron" }); return z.NEVER }
+    return { kind, ...parsed.data }
+  })
+/** Any criterion launches (OR). With onlyWithNews, schedules alone wake and launch
+ * only when an event criterion changed since the last passage. */
+export const missionCriteriaLaunchPolicySchema = z.object({
+  when: z.array(z.union([scheduleCriterion, missionConditionSchema])).max(MISSION_CALENDAR_LIMIT * 2),
+  onlyWithNews: z.boolean(), until: documentTimestamp.nullable(),
+}).strict().superRefine((policy, context) => {
+  const schedules = policy.when.filter(item => item.kind === "cron"), events = policy.when.filter(item => item.kind !== "cron")
+  const unique = (items: unknown[]) => new Set(items.map(item => canonicalAuthority(item))).size === items.length
+  const principals = schedules.length + (events.length && !policy.onlyWithNews ? 1 : 0)
+  if (!unique(schedules) || !unique(events) || events.length > MISSION_CALENDAR_LIMIT || principals > MISSION_CALENDAR_LIMIT
+    || policy.onlyWithNews && (!schedules.length || !events.length)) context.addIssue({ code: "custom", message: "Invalid Mission launch criteria" })
+})
+export type MissionCriteriaLaunchPolicy = z.infer<typeof missionCriteriaLaunchPolicySchema>
+export const missionLaunchPolicySchema = z.union([missionCriteriaLaunchPolicySchema, missionLegacyLaunchPolicySchema])
 export type MissionLaunchPolicy = z.infer<typeof missionLaunchPolicySchema>
+export type MissionCondition = z.infer<typeof missionConditionSchema>
 
 /** Exact stored configuration; source ownership and native catalog are checked by
  * admission against the selected Location. Creation itself performs no native effects. */
@@ -83,7 +107,8 @@ export const missionConfigurationSchema = z.object({
 export type MissionConfiguration = z.infer<typeof missionConfigurationSchema>
 
 export function missionSlotEndsAt(policy: MissionLaunchPolicy, firstPlayedAt: number): number | null {
-  const values = [policy.ends.at, policy.ends.afterMs === null ? null : documentTimestamp.parse(firstPlayedAt + policy.ends.afterMs)]
+  const model = missionLaunchModel(policy)
+  const values = [model.until, model.endAfterMs === null ? null : documentTimestamp.parse(firstPlayedAt + model.endAfterMs)]
     .filter((value): value is number => value !== null)
   return values.length ? Math.min(...values) : null
 }

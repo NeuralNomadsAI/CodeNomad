@@ -1,3 +1,4 @@
+import { legacyLaunch } from "./legacy-launch-test-helper"
 import assert from "node:assert/strict"
 import test from "node:test"
 import { MissionDocumentPassageEngine, type DocumentPassagePorts, type DocumentPassageWake } from "./mission-document-passage-engine"
@@ -94,6 +95,7 @@ test("incomplete native fan-in survives restart with its original cutoff and no 
 
 test("100 condition-false checks cost zero launches and advance high-water beyond retained history", async () => {
   const f = await fixture(); f.changed = false
+  await f.mutate(doc => { legacyLaunch(doc.configuration).condition = { kind: "files-changed", paths: ["input.txt"] } })
   for (let run = 1; run <= 100; run++) {
     const wake = f.wake(0, run)
     assert.equal(await f.engine.wake({ missionID: "review", wake }), "ignored")
@@ -106,7 +108,7 @@ test("100 condition-false checks cost zero launches and advance high-water beyon
 test("business checks count committed source observations once per fan-in, with durable tracking and honest legacy origin", async () => {
   const f = await fixture(2), condition = { kind: "files-changed" as const, paths: ["input.txt"] }
   const checkpoint = { key: missionSourceKey(condition), kind: condition.kind, placementDigest: "b".repeat(64), value: { hash: "observed" } }
-  await f.mutate(doc => { doc.configuration.launch.condition = condition })
+  await f.mutate(doc => { legacyLaunch(doc.configuration).condition = condition })
   let changed = false
   f.ports.snapshot = async () => ({ changed, checkpoints: [checkpoint], current })
   const first = f.wake(0); f.wake(1)
@@ -128,7 +130,7 @@ test("business checks count committed source observations once per fan-in, with 
   await assert.rejects(f.store.change(doc.id, doc.revision, current, next => { next.checks!.count-- }), /monotone/)
 
   const legacy = await fixture()
-  await legacy.mutate(doc => { doc.configuration.launch.condition = condition })
+  await legacy.mutate(doc => { legacyLaunch(doc.configuration).condition = condition })
   for (const value of legacy.values.values()) delete (value as unknown as MissionDocument).checks
   assert.equal((await legacy.read()).checks, undefined, "old totals are unknown rather than fabricated zero")
   legacy.ports.snapshot = async () => ({ changed: false, checkpoints: [checkpoint], current,
@@ -197,7 +199,10 @@ test("overlapping same-calendar occurrences advance HWM while retaining the pend
   assert.equal(overlap.calendars[0].highWater, 2); assert.equal(overlap.pending!.id, pending.id)
   f.terminal = true
   await f.engine.reconcile({ missionID: "review" })
-  assert.equal((await f.read()).calendars[0].highWater, 2)
+  const settled = await f.read()
+  assert.equal(settled.calendars[0].highWater, 2)
+  assert.equal(settled.launchedCount, 2, "the overlapping slot launches once, after the passage")
+  assert.equal(settled.history[1].origin.kind, "deferred")
 })
 
 test("35 settled passages retain the total counter and durable old-wake suppression", async () => {

@@ -51,8 +51,9 @@ const dispatch = (page: Page, event: Record<string, unknown>) => page.evaluate(a
   serverEvents.dispatchBatch([event as any])
 }, event)
 const scheduling = (page: Page) => page.locator("form.mission-editor .mission-scheduling")
-const frequency = (page: Page) => scheduling(page).getByLabel("Frequency", { exact: true })
-const dailyDisabled = (page: Page) => frequency(page).locator('option[value="daily"]').evaluate(option => (option as HTMLOptionElement).disabled)
+const add = (page: Page) => scheduling(page).getByRole("button", { name: "Add a criterion", exact: true })
+const kind = (page: Page) => scheduling(page).getByLabel("Criterion 1 type", { exact: true })
+const addDisabled = (page: Page) => add(page).isDisabled()
 const updateIcon = (page: Page) => page.locator(".mission-control-header button[aria-label='Refresh mission map'] .animate-spin")
 async function until(condition: () => boolean, timeout = 5_000) {
   for (const start = Date.now(); !condition();) {
@@ -66,7 +67,7 @@ const watchScheduling = (page: Page) => page.evaluate(`(() => {
   const root = document.querySelector("form.mission-editor .mission-scheduling"), focused = document.activeElement
   const sample = () => JSON.stringify({ rects: [...root.querySelectorAll("summary, fieldset, select, .mission-scheduling-preview, p")]
     .map(item => { const box = item.getBoundingClientRect(); return [item.tagName, Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height)] }),
-  disabled: [...root.querySelectorAll("fieldset, option")].map(item => item.disabled),
+  disabled: [...root.querySelectorAll("fieldset, option, button")].map(item => item.disabled),
   text: root.textContent, focus: document.activeElement === focused, open: root.querySelector("select").matches(":open") })
   const first = sample(), changes = []
   let running = true
@@ -82,8 +83,8 @@ test("Scheduling keeps its display, focus and open picker through passive revali
     const f = await setup(page)
     await missionGeneralAction(page, "Create mission").click()
     await scheduling(page).locator("summary").click()
-    await page.waitForFunction(() => !document.querySelector<HTMLOptionElement>('form.mission-editor .mission-scheduling option[value="daily"]')?.disabled)
-    await frequency(page).selectOption("daily")
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("form.mission-editor .mission-scheduling-add")?.disabled)
+    await add(page).click()
     await scheduling(page).locator(".mission-scheduling-preview").waitFor()
     await page.waitForTimeout(300)
     const baseline = f.reads.length
@@ -92,8 +93,8 @@ test("Scheduling keeps its display, focus and open picker through passive revali
     assert.equal(await scheduling(page).getByText(/OpenCode configuration file:|\/ancestor\/|\/global\//).count(), 0, "Scheduling shows no configuration path")
     await updateIcon(page).waitFor({ state: "detached" })
 
-    await frequency(page).click()
-    assert.equal(await frequency(page).evaluate(select => select.matches(":open")), true)
+    await kind(page).click()
+    assert.equal(await kind(page).evaluate(select => select.matches(":open")), true)
     await watchScheduling(page)
     // Task revisions, transcript releases and unrelated instance publications keep the same owner.
     for (let index = 0; index < 3; index++) {
@@ -134,7 +135,7 @@ test("Scheduling keeps its display, focus and open picker through passive revali
     assert.deepEqual(changes, [], `no reflow, disabled flash, text, focus or picker change from ${first}`)
     assert.equal(await scheduling(page).getByText("Checking scheduling availability…").count(), 0)
     await page.keyboard.press("Escape")
-    assert.equal(await frequency(page).inputValue(), "daily")
+    assert.equal(await kind(page).inputValue(), "daily")
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
@@ -145,7 +146,7 @@ test("a new client resets Scheduling to its first read, and a late response of a
     const f = await setup(page)
     await missionGeneralAction(page, "Create mission").click()
     await scheduling(page).locator("summary").click()
-    await page.waitForFunction(() => !document.querySelector<HTMLOptionElement>('form.mission-editor .mission-scheduling option[value="daily"]')?.disabled)
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("form.mission-editor .mission-scheduling-add")?.disabled)
     f.hold()
     const setClient = (original: boolean) => page.evaluate(async original => {
       const path = "/src/stores/instances.ts", { instances, updateInstance } = await import(path)
@@ -156,16 +157,16 @@ test("a new client resets Scheduling to its first read, and a late response of a
     const before = f.reads.length
     await setClient(false)
     await until(() => f.reads.length === before + 1)
-    assert.equal(await dailyDisabled(page), true, "another client starts from its own first read")
+    assert.equal(await addDisabled(page), true, "another client starts from its own first read")
     await updateIcon(page).waitFor()
     await setClient(true)
     await until(() => f.reads.length === before + 2)
     await f.reads[before].answer("available")
     await page.waitForTimeout(300)
-    assert.equal(await dailyDisabled(page), true, "the previous owner's late answer is ignored")
+    assert.equal(await addDisabled(page), true, "the previous owner's late answer is ignored")
     await f.reads[before + 1].answer("missing")
     await scheduling(page).getByText("Scheduling is unavailable on this connection.", { exact: false }).waitFor()
-    assert.equal(await dailyDisabled(page), true)
+    assert.equal(await addDisabled(page), true)
     await updateIcon(page).waitFor({ state: "detached" })
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }

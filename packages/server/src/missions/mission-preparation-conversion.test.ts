@@ -1,3 +1,4 @@
+import { legacyLaunch } from "./legacy-launch-test-helper"
 import assert from "node:assert/strict"
 import test from "node:test"
 import { preparationFixture, scheduledPreparation, followedPreparationFixture } from "./mission-preparation-test-fixture"
@@ -73,7 +74,7 @@ test("lost first-Play document ACK retains frozen source bytes before journal pu
 })
 
 for (const timing of [{ kind: "every", intervalMs: 900000 }, { kind: "in", delayMs: 60000 },
-  { kind: "at", at: Date.now() + 3600000, zone: "UTC" }] as MissionLaunchPolicy["timing"][]) {
+  { kind: "at", at: Date.now() + 3600000, zone: "UTC" }] as import("./launch-policy").MissionLegacyLaunchPolicy["timing"][]) {
   test(`never-launched immediate → ${timing.kind} → immediate retains its receipt, identity and paused state`, async () => {
     const f = await preparationFixture(), configuration = scheduledPreparation(f, timing)
     const converted = await f.control.configurePreparation({ ...f.request, configuration }, f.native, current)
@@ -196,10 +197,10 @@ test("real preparation/calendar/passage owners: first Play arms only the convert
 
 test("event-only conversion retains its exact sources and return to immediate clears only a settled activation", async () => {
   const f = await preparationFixture(), configuration = scheduledPreparation(f, { kind: "immediate" })
-  configuration.launch.condition = { kind: "files-changed", paths: ["src/example.ts"] }
+  legacyLaunch(configuration).condition = { kind: "files-changed", paths: ["src/example.ts"] }
   configuration.watchedConversationIDs = ["ses_followed"]
   let doc = await f.control.configurePreparation({ ...f.request, configuration }, f.native, current)
-  assert.deepEqual(doc.configuration.launch.condition, configuration.launch.condition)
+  assert.deepEqual(legacyLaunch(doc.configuration).condition, legacyLaunch(configuration).condition)
   assert.deepEqual(doc.configuration.watchedConversationIDs, configuration.watchedConversationIDs)
   assert.equal(doc.firstPlayedAt, null); assert.deepEqual(doc.checkpoints, [])
   doc = await f.store.change(doc.id, doc.revision, current, value => { value.scheduleActivation = {

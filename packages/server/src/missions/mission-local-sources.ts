@@ -6,10 +6,10 @@ import path from "node:path"
 import { promisify } from "node:util"
 import { z } from "zod"
 import { canonicalAuthority } from "./authority-protocol"
-import { missionConditionSchema, type MissionConfiguration } from "./launch-policy"
+import { missionConditionSchema, type MissionCondition } from "./launch-policy"
 import { missionSourceKey, type MissionSourceCheckpoint } from "./mission-document"
 
-type Condition = Extract<NonNullable<MissionConfiguration["launch"]["condition"]>, { kind: "branch-commits" | "files-changed" }>
+type Condition = Extract<MissionCondition, { kind: "branch-commits" | "files-changed" }>
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex")
 const same = (a: unknown, b: unknown) => canonicalAuthority(a) === canonicalAuthority(b)
 const fileProof = z.object({ files: z.array(z.object({ path: z.string().min(1).max(4096),

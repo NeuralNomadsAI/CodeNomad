@@ -93,8 +93,7 @@ async function edit(page: Page) {
   await form.getByLabel("Coordinator · Model", { exact: true }).selectOption(JSON.stringify(["p", "m"]))
   await form.getByLabel("Coordinator · Thinking", { exact: true }).selectOption("precise")
   await form.locator(".mission-scheduling > summary").click()
-  assert.equal(await form.getByLabel("Frequency", { exact: true }).isDisabled(), false)
-  assert.equal(await form.getByLabel("Frequency", { exact: true }).locator('option[value="every"]').evaluate(option => (option as HTMLOptionElement).disabled), true,
+  assert.equal(await form.getByRole("button", { name: "Add a criterion", exact: true }).isDisabled(), true,
     await form.locator(".mission-scheduling").innerText())
   assert.doesNotMatch(await form.locator(".mission-scheduling").innerText(), /journal-owned launch/)
   return form
@@ -157,19 +156,25 @@ test("real owner: positive partial preparation enables only an explicit original
   } finally { await page.close() }
 })
 
-async function convert(page: Page, frequency: "every" | "immediate") {
+async function convert(page: Page, target: "hourly" | "once") {
   const form = page.locator("form.mission-editor")
   await form.locator(".mission-scheduling > summary").click()
-  await form.getByLabel("Frequency", { exact: true }).selectOption(frequency)
-  assert.equal(await form.getByLabel("Frequency", { exact: true }).isDisabled(), false)
-  if (frequency === "every") await form.getByLabel("Duration", { exact: true }).fill("15")
+  if (target === "once") {
+    // A stored interval stays retained until an explicit replacement; criteria rows are removable.
+    const replace = form.getByRole("button", { name: "Replace with a new scheduling policy", exact: true })
+    await (await replace.count() ? replace : form.getByRole("button", { name: "Remove criterion 1", exact: true })).click()
+  } else {
+    await form.getByRole("button", { name: "Add a criterion", exact: true }).click()
+    await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("hours")
+    await form.getByLabel("Criterion 1 hours", { exact: true }).selectOption("1")
+  }
   return form
 }
 
-test("real owners: immediate → recurring → explicit Play arms the converted interval and keeps Mission identity", async t => {
+test("real owners: immediate → recurring → explicit Play arms the converted hourly schedule and keeps Mission identity", async t => {
   const calendar = await ownerFixture(t), page = await browser.newPage({ viewport: { width: 620, height: 1100 } }), f = await setup(page, false, calendar)
   try {
-    const form = await convert(page, "every")
+    const form = await convert(page, "hourly")
     const capture = process.env.CODENOMAD_MISSION_CAPTURE_DIR
     if (capture) { await mkdir(capture, { recursive: true }); await page.screenshot({ path: path.join(capture, "editor-convert-recurring.png"), fullPage: true }) }
     await form.getByRole("button", { name: "Save", exact: true }).click(); await form.waitFor({ state: "detached" })
@@ -180,7 +185,7 @@ test("real owners: immediate → recurring → explicit Play arms the converted 
       page.getByRole("button", { name: "Start", exact: true }).click()])
     const played = await f.read()
     assert.equal(played.id, f.mission.id); assert.equal(played.calendarOwner!.operation.pending, false)
-    assert.deepEqual(played.configuration.launch.timing, { kind: "every", intervalMs: 900000 })
+    assert.ok("when" in played.configuration.launch); assert.equal(played.configuration.launch.when[0].kind === "cron" && played.configuration.launch.when[0].expression, "0 * * * *")
     assert.equal(played.calendars.length, 2); assert.equal(played.launchedCount, 0)
     assert.equal((await f.control.list()).missions.length, 0)
     assert.deepEqual(f.errors, [])
@@ -190,11 +195,11 @@ test("real owners: immediate → recurring → explicit Play arms the converted 
 test("real owners: recurring → immediate → explicit Play uses the restored journal without a native calendar", async t => {
   const calendar = await ownerFixture(t), page = await browser.newPage(), f = await setup(page, false, calendar)
   try {
-    let form = await convert(page, "every")
+    let form = await convert(page, "hourly")
     await form.getByRole("button", { name: "Save", exact: true }).click(); await form.waitFor({ state: "detached" })
     await page.evaluate(id => window.schedulingEditor.schedule(id), f.mission.id)
     await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
-    form = await convert(page, "immediate")
+    form = await convert(page, "once")
     await form.getByRole("button", { name: "Save", exact: true }).click(); await form.waitFor({ state: "detached" })
     const before = await f.read()
     assert.equal(before.dormantJournal, null); assert.equal(before.firstPlayedAt, null)
@@ -210,7 +215,7 @@ test("real owners: recurring → immediate → explicit Play uses the restored j
 test("real conversion: lost HTTP ACK retains its exact request; receipt refresh never repeats conversion or Play", async t => {
   const calendar = await ownerFixture(t), page = await browser.newPage(), f = await setup(page, true, calendar)
   try {
-    const form = await convert(page, "every")
+    const form = await convert(page, "hourly")
     await form.getByRole("button", { name: "Save", exact: true }).click()
     await form.getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
     const hold = await page.evaluate(() => window.schedulingEditor.held())
@@ -225,11 +230,11 @@ test("real conversion: lost HTTP ACK retains its exact request; receipt refresh 
 test("real conversion conflict preserves its unsent draft and reloads only by explicit choice", async t => {
   const calendar = await ownerFixture(t), page = await browser.newPage(), f = await setup(page, false, calendar)
   try {
-    const form = await convert(page, "every"), mission = (await f.control.snapshot()).missions[0]
+    const form = await convert(page, "hourly"), mission = (await f.control.snapshot()).missions[0]
     await f.control.update({ missionID: mission.id, requestID: "concurrent_text", expectedRevision: mission.revision, objective: "Concurrent authoritative text" })
     await form.getByRole("button", { name: "Save", exact: true }).click()
     const reload = form.getByRole("button", { name: "Reload current configuration", exact: true }); await reload.waitFor()
-    assert.equal(await form.getByLabel("Frequency", { exact: true }).inputValue(), "every")
+    assert.equal(await form.getByLabel("Criterion 1 type", { exact: true }).inputValue(), "hours")
     assert.equal(f.writes.length, 0); assert.equal((await f.read()).dormantJournal, null)
     await reload.click()
     await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
@@ -248,7 +253,7 @@ test("scheduled followed context survives return to immediate and is frozen only
     const form = page.locator("form.mission-editor")
     await form.getByLabel("Title", { exact: true }).waitFor()
     await page.waitForFunction(() => !!document.querySelector('form.mission-editor .mission-scheduling'))
-    await convert(page, "immediate")
+    await convert(page, "once")
     await form.getByRole("status").filter({ hasText: /read and frozen at Play/ }).waitFor()
     assert.equal(await form.getByRole("button", { name: "Save", exact: true }).isDisabled(), false)
     await form.getByRole("button", { name: "Save", exact: true }).click(); await form.waitFor({ state: "detached" })

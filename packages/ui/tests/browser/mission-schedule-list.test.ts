@@ -12,6 +12,8 @@ import { missionScheduleView } from "../../../server/src/missions/mission-schedu
 import { missionDocumentSummary } from "../../../server/src/missions/mission-document-one-time"
 import type { MissionDocument } from "../../../server/src/missions/mission-document"
 import type { MissionJsonValue } from "../../../server/src/missions/model"
+import { missionLaunchModel, type MissionConfiguration } from "../../../server/src/missions/launch-policy"
+import { legacyLaunch } from "../../../server/src/missions/legacy-launch-test-helper"
 
 let browser: Browser, url: string, events: Server, eventsURL: string
 before(async () => {
@@ -47,6 +49,7 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
   const firstPage = options.outsidePage ? await Promise.all(Array.from({ length: 8 }, (_, i) =>
     store.create(`aaa_${i}`, { ...config, title: `Inventory Mission ${i}` }, Date.now(), () => true))) : []
   let outside = false
+  const extras: MissionDocument[] = []
   let deleted = false, lost: string | undefined, partial: string | undefined, proof = true, enabled = options.enabled ?? true, activation: Record<string, any> | undefined
   const receipts = new Map<string, Record<string, any>>()
   function result(requestID?: string) {
@@ -63,7 +66,7 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
       availableActions: [...view.document!.availableActions, ...([...receipts.values()].some(item => item.pending) ? ["check"] : [])],
       observation: { state: doc.firstPlayedAt === null ? "unarmed" : "known", nativeStatus: doc.firstPlayedAt === null ? null : doc.state === "running" ? "active" : "paused",
         nextDueAt: doc.state === "running" ? Date.now() + 900_000 : null, wakeCount: doc.launchedCount,
-        kind: doc.configuration.launch.condition ? "check" : "launch", timeGeneration: doc.timeGeneration },
+        kind: missionLaunchModel(doc.configuration.launch).events.length ? "check" : "launch", timeGeneration: doc.timeGeneration },
       control: control ? { requestID: control.requestID, expectedRevision: control.expectedRevision, action: control.action, pending: !!control.pending } : null } }
   }
   page.on("pageerror", error => errors.push(error.message))
@@ -82,7 +85,8 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
         activation: { available: options.available ?? true, targets: [{ scope: "global", path: "/private/config/opencode.jsonc" }] } } })
       if (target.endsWith("/schedule-settings")) return route.fulfill({ json: { document: missionDocumentSummary(doc!) } })
       if (target.endsWith("/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project",
-        schedules: outside && !link.searchParams.has("after") ? firstPage.map(doc => missionScheduleView(doc).document) : doc && !deleted ? [result().document] : [],
+        schedules: outside && !link.searchParams.has("after") ? firstPage.map(doc => missionScheduleView(doc).document)
+          : [...doc && !deleted ? [result().document] : [], ...extras.map(extra => missionScheduleView(extra).document)],
         ...(outside && !link.searchParams.has("after") ? { next: "aaa_7" } : {}) } })
       if (target.endsWith("/schedule")) {
         const value = result(link.searchParams.get("requestID") ?? undefined)
@@ -129,6 +133,9 @@ async function setup(page: Page, options: { seed?: boolean; enabled?: boolean; a
   await page.waitForFunction(() => (window as any).missionFixture).catch(error => { throw new Error(`${error}\n${errors.join("\n")}`) })
   await page.evaluate(() => (window as any).missionFixture.connectCatalog())
   return { posts, reads, errors, store, get doc() { return doc! }, result,
+    addSchedule: async (id: string, change: Partial<MissionConfiguration>) => {
+      extras.push(await store.create(id, { ...config, ...change } as MissionConfiguration, Date.now(), () => true))
+    },
     set outside(value: boolean) { outside = value }, resolve: () => { for (const receipt of receipts.values()) receipt.pending = false },
     set lost(value: string | undefined) { lost = value }, set partial(value: string | undefined) { partial = value },
     set proof(value: boolean) { proof = value }, get activation() { return activation },
@@ -162,21 +169,22 @@ async function capture(page: Page, name: string) {
   if (dir) { await mkdir(dir, { recursive: true }); await page.screenshot({ path: path.join(dir, name), fullPage: true }) }
 }
 
-test("real panel Create → Play → Pause/Resume → Run now → Stop → Delete preserves quota and native control routes", async () => {
+test("real panel Create → Play → Pause/Resume → Run now → Stop → Delete keeps launch counts and native control routes", async () => {
   const page = await browser.newPage({ viewport: { width: 1000, height: 1000 } }), f = await setup(page)
   try {
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     const form = page.locator("form.mission-editor")
     await form.getByLabel("What should the mission do?", { exact: true }).fill("Inspect local changes")
     await form.locator(".mission-scheduling > summary").click()
-    await form.getByLabel("Frequency", { exact: true }).selectOption("every")
-    await form.getByLabel("Maximum launched passages", { exact: true }).fill("3")
+    await form.getByRole("button", { name: "Add a criterion", exact: true }).click()
+    await form.getByLabel("Criterion 1 type", { exact: true }).selectOption("hours")
+    await form.getByLabel("Criterion 1 hours", { exact: true }).selectOption("1")
     await form.getByRole("button", { name: "Create", exact: true }).click()
     await form.waitFor({ state: "detached" })
     assert.deepEqual(f.posts.map(post => post.action), ["create"])
     await select(page); await capture(page, "schedule-paused-en.png")
-    assert.equal(await detail(page).getByText("Without a condition", { exact: true }).count(), 0)
-    assert.equal(await detail(page).getByText("Last allowed slot", { exact: true }).count(), 0)
+    assert.match(await detail(page).locator("dd").first().innerText(), /^Every N hours · 1$/)
+    assert.equal(await detail(page).getByText("Until", { exact: true }).count(), 0)
     assert.equal(await detail(page).getByText("Source verifications", { exact: true }).count(), 0)
     assert.equal(await detail(page).locator(".mission-schedule-notice").count(), 0)
     assert.equal(await detail(page).locator("dt").count(), 6)
@@ -402,8 +410,8 @@ test("event-only details distinguish checks from launches and explain an unknown
   const page = await browser.newPage(), f = await setup(page, { seed: true })
   try {
     await f.change(doc => {
-      changes.configure(doc, { ...doc.configuration, launch: { timing: { kind: "immediate" },
-        condition: { kind: "files-changed", paths: ["src/main.ts", "package.json"] }, ends: doc.configuration.launch.ends } }, Date.now())
+      changes.configure(doc, { ...doc.configuration, launch: { when: [{ kind: "files-changed", paths: ["src/main.ts", "package.json"] }],
+        onlyWithNews: false, until: null } }, Date.now())
       doc.blocked = "unknown"
     })
     await page.evaluate(() => (window as any).missionFixture.refresh()); await select(page)
@@ -411,11 +419,11 @@ test("event-only details distinguish checks from launches and explain an unknown
     assert.match(await detail(page).innerText(), /Explicit files change · package.json, src\/main.ts/)
     assert.match(await detail(page).innerText(), /A control or admission is unconfirmed/)
     assert.equal(await button(page, "Start").isDisabled(), true)
-    assert.match(await detail(page).innerText(), /0 \/ 1/)
-    assert.equal(await detail(page).locator("dt").count(), 8, "conditional schedules retain source and verification history")
+    assert.doesNotMatch(await detail(page).innerText(), /0 \/ /, "criteria have no passage limit")
+    assert.equal(await detail(page).locator("dt").count(), 7, "event criteria retain their verification history")
     assert.equal(await detail(page).locator(".mission-schedule-notice").count(), 0)
     await detail(page).locator(".mission-schedule-facts .settings-info-tip").first().focus()
-    await page.getByRole("tooltip").filter({ hasText: /condition/i }).waitFor()
+    await page.getByRole("tooltip").filter({ hasText: /arrive late/i }).waitFor()
     assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
@@ -598,7 +606,7 @@ for (const [minutes, duration] of [[1, "1 minute"], [2, "2 minutes"]] as const) 
   test(`French delay summary uses running-text units (${minutes})`, async () => {
     const page = await browser.newPage(), f = await setup(page, { seed: true, locale: "fr" })
     try {
-      await f.change(doc => { doc.configuration.launch.timing = { kind: "in", delayMs: minutes * 60_000 } })
+      await f.change(doc => { legacyLaunch(doc.configuration).timing = { kind: "in", delayMs: minutes * 60_000 } })
       await page.evaluate(() => (window as any).missionFixture.refresh()); await select(page)
       await detail(page).locator("dd").first().getByText(`Une fois, dans un délai · ${duration}`, { exact: true }).waitFor()
       assert.deepEqual(f.errors, [])
@@ -633,3 +641,28 @@ for (const locale of ["en", "fr", "de", "es", "he", "ja", "ne", "ru", "tr", "zh-
     } finally { await page.close() }
   })
 }
+
+test("the schedule list summarizes each launch criterion, only-with-news and the end date", async () => {
+  const page = await browser.newPage({ viewport: { width: 760, height: 900 }, timezoneId: "Europe/Paris" }), f = await setup(page, { seed: true })
+  try {
+    const daily = { kind: "cron" as const, expression: "0 9 * * *", zone: "Europe/Paris" }
+    await f.change(doc => changes.configure(doc, { ...doc.configuration, title: "Daily review",
+      launch: { when: [daily], onlyWithNews: false, until: null } }, Date.now()))
+    await f.addSchedule("msn_commits", { title: "Review new commits", launch: { when: [{ ...daily, expression: "0 9 * * 1,2,3,4,5" },
+      { kind: "branch-commits", directory: "fixture", ref: "refs/heads/main" }], onlyWithNews: true, until: Date.parse("2026-12-31T17:00:00Z") } })
+    await f.addSchedule("msn_files", { title: "Follow package changes", launch: { when: [{ kind: "files-changed", paths: ["package.json"] }],
+      onlyWithNews: false, until: null } })
+    await page.evaluate(() => (window as any).missionFixture.refresh())
+    await page.getByRole("combobox").click()
+    const option = (title: string) => page.getByRole("option").filter({ hasText: title })
+    assert.match(await option("Daily review").innerText(), /Every day · 09:00 · Europe\/Paris/)
+    assert.match(await option("Review new commits").innerText(), /Selected weekdays · .* · 09:00 · Europe\/Paris; New commits on a local branch · main · Only if there is something new/)
+    assert.match(await option("Follow package changes").innerText(), /Explicit files change · package\.json/)
+    await capture(page, "schedule-list-criteria-en.png")
+    await option("Review new commits").click()
+    await detail(page).waitFor()
+    assert.match(await detail(page).innerText(), /Until\s+Dec 31, 2026, 6:00 PM/)
+    await capture(page, "schedule-detail-criteria-en.png")
+    assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})

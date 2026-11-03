@@ -1,3 +1,4 @@
+import { legacyLaunch } from "../../missions/legacy-launch-test-helper"
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
@@ -39,7 +40,7 @@ test("unplayed conversion to immediate is a document CAS without Schedule, provi
   const response = await Effect.runPromise(apply())
   assert.equal(response.pending, false)
   const converted = await f.read()
-  assert.equal(converted.configuration.launch.timing.kind, "immediate")
+  assert.equal(legacyLaunch(converted.configuration).timing.kind, "immediate")
   assert.equal(converted.firstPlayedAt, null)
   assert.equal(converted.state, "paused")
   assert.deepEqual(converted.configuration.profiles, before.configuration.profiles)

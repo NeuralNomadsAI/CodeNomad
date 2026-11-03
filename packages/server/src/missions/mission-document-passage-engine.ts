@@ -1,10 +1,10 @@
-import { missionDocumentChanges as changes } from "./mission-document-state"
-import { missionLaunchLimit } from "./launch-policy"
+import { missionDocumentChanges as changes, missionWakesLaunchUnconditionally } from "./mission-document-state"
+import { missionLaunchLimit, missionLaunchModel } from "./launch-policy"
 import type { MissionDocument, MissionSourceCheckpoint, MissionWake } from "./mission-document"
 import type { NativeMissionDocumentStore } from "./mission-document-store"
 
 export type DocumentPassageWake = { missionID: string; generation: number; scheduleID: string; sessionID: string; run: number; messageID: string; dueAt?: number }
-export type DocumentFanInWindow = { incarnation: string; cutoff: number; timeGeneration: number; principalIDs: string[]; completed: boolean; suppress: boolean }
+export type DocumentFanInWindow = { incarnation: string; cutoff: number; timeGeneration: number; principalIDs: string[]; completed: boolean; suppress: boolean; overlap?: boolean }
 export type DocumentPassageResult = "idle" | "ignored" | "started" | "pending" | "settled" | "unknown"
 export type DocumentPassagePreflight = { messagePresent: boolean; ready: boolean; cutoff: number }
 export type DocumentPassageAdmission = { kind: "admitted" | "recorded"; passageID: string; messageID: string; coordinatorSessionID: string; at: number }
@@ -80,13 +80,18 @@ export class MissionDocumentPassageEngine {
         doc = await this.window(locked, doc, input.cutoff, true)
       if (doc.pending) {
         if (!auxiliary && verified && incoming!.run === calendar!.highWater + 1)
-          doc = await this.change(locked, doc, next => changes.processWake(next, verified.wake), verified.current)
+          doc = await this.change(locked, doc, next => {
+            // Never a second passage: the trigger waits for this one to settle.
+            changes.defer(next, verified.wake, next.pending!.id)
+            changes.processWake(next, verified.wake)
+          }, verified.current)
         await this.closeSuppressedWindow(locked, doc)
         return this.reconcileLocked(locked, doc.id)
       }
       if (auxiliary) {
         await this.closeSuppressedWindow(locked, doc)
-        return "idle" // An auxiliary never reserves business work.
+        // An auxiliary only retries a launch already owed to a settled overlap.
+        return await this.launchDeferred(locked, doc.id) ?? "idle"
       }
       if (!verified || incoming!.run <= calendar!.highWater) return "ignored"
       if (doc.state !== "running" || doc.blocked || doc.synchronization || doc.deletion) {
@@ -103,14 +108,15 @@ export class MissionDocumentPassageEngine {
         if (!this.contiguous(doc, coverage.wakes) || !this.contiguous(doc, observed) || !this.contiguous(doc, wakes)) return "unknown"
         if (window.suppress || !wakes.length) {
           doc = await this.consume(locked, doc, observed, coverage.current)
-          if (incoming!.run <= doc.calendars.find(item => item.scheduleID === incoming!.scheduleID)!.highWater) return "ignored"
+          if (incoming!.run <= doc.calendars.find(item => item.scheduleID === incoming!.scheduleID)!.highWater)
+            return await this.launchDeferred(locked, doc.id) ?? "ignored"
           continue
         }
         const snapshot = await this.ports.snapshot(doc)
         snapshot.current(); coverage.current()
-        if (!snapshot.changed) {
+        if (!snapshot.changed && !missionWakesLaunchUnconditionally(doc, wakes)) {
           await this.consume(locked, doc, wakes, () => { snapshot.current(); return coverage.current() }, snapshot.revalidate, true)
-          return "ignored"
+          return await this.launchDeferred(locked, doc.id) ?? "ignored"
         }
         // reserve accepts one next occurrence per principal. Older contiguous
         // occurrences are ignored in the SAME CAS, preserving the latest fan-in.
@@ -144,7 +150,8 @@ export class MissionDocumentPassageEngine {
         if (!doc.fanIn || doc.fanIn.completed) doc = await this.window(locked, doc, undefined, true)
       }
       if (doc) await this.closeSuppressedWindow(locked, doc)
-      return this.reconcileLocked(locked, input.missionID)
+      const result = await this.reconcileLocked(locked, input.missionID)
+      return result === "idle" ? await this.launchDeferred(locked, input.missionID) ?? result : result
     })
   }
 
@@ -216,12 +223,40 @@ export class MissionDocumentPassageEngine {
     const settled = await this.change(locked, doc, next => {
       changes.settle(next, next.pending!.id, observed!.outcome, at)
       // Persist the end-of-flight cutoff in the archive CAS: even a passage that
-      // finishes before sibling hooks run cannot turn an overlap into new work.
+      // finishes before sibling hooks run turns an overlap into at most one deferred passage.
       if (next.calendars.some(item => item.role === "principal")) next.fanIn = this.windowValue(next, at, true)
     }, observed.current)
     await this.closeSuppressedWindow(locked, settled)
     this.ports.retired?.(doc)
-    return "settled"
+    return await this.launchDeferred(locked, id) ?? "settled"
+  }
+  /** Launch the one passage owed to triggers consumed during the previous one.
+   * Returns undefined unless it reserved that passage; callers keep their own result. */
+  private async launchDeferred(locked: NativeMissionDocumentStore, id: string): Promise<DocumentPassageResult | undefined> {
+    let doc = await this.read(locked, id)
+    const owed = doc?.deferred
+    if (!doc || !owed || doc.pending) return undefined
+    const limit = missionLaunchLimit(doc.configuration.launch)
+    if (doc.state !== "running" || doc.blocked || doc.deletion || limit !== null && doc.launchedCount >= limit
+      || doc.slotEndsAt !== null && owed.dueAt > doc.slotEndsAt) {
+      await this.change(locked, doc, next => { next.deferred = null })
+      return undefined
+    }
+    // Synchronization, controls and an open fan-in window are transient; a later wake retries.
+    if (doc.synchronization || doc.calendarOwner?.operation.pending || doc.fanIn && !doc.fanIn.completed) return undefined
+    // An incomplete source read keeps the owed launch for the next wake.
+    let snapshot: Awaited<ReturnType<DocumentPassagePorts["snapshot"]>>
+    try { snapshot = await this.ports.snapshot(doc); snapshot.current() } catch { return undefined }
+    if (!owed.unconditional && !snapshot.changed) {
+      await this.change(locked, doc, next => { this.recordCheck(next); next.deferred = null }, snapshot.current, snapshot.revalidate)
+      return undefined
+    }
+    doc = await this.change(locked, doc, next => {
+      this.recordCheck(next)
+      changes.reserve(next, { kind: "deferred", afterPassageID: owed.afterPassageID, dueAt: owed.dueAt }, this.ports.now(), snapshot.checkpoints)
+    }, snapshot.current, snapshot.revalidate)
+    const reconciled = await this.reconcileLocked(locked, doc.id)
+    return reconciled === "pending" ? "started" : reconciled
   }
   private async closeSuppressedWindow(locked: NativeMissionDocumentStore, doc: MissionDocument) {
     if (!doc.fanIn || doc.fanIn.completed || !doc.fanIn.suppress) return
@@ -237,18 +272,24 @@ export class MissionDocumentPassageEngine {
     })
   }
   private windowValue(doc: MissionDocument, cutoff: number, suppress: boolean): DocumentFanInWindow {
+    // Engine-suppressed windows cover a passage in flight; their wakes are deferred.
     return { incarnation: this.ports.incarnation, cutoff, timeGeneration: doc.timeGeneration,
-      principalIDs: doc.calendars.filter(item => item.role === "principal").map(item => item.scheduleID).sort(), completed: false, suppress }
+      principalIDs: doc.calendars.filter(item => item.role === "principal").map(item => item.scheduleID).sort(), completed: false, suppress,
+      ...(suppress ? { overlap: true } : {}) }
   }
   private consume(locked: NativeMissionDocumentStore, doc: MissionDocument, wakes: MissionWake[], current: () => true, prepare?: () => Promise<void>, checked = false) {
     return this.change(locked, doc, next => {
       if (checked) this.recordCheck(next)
-      for (const wake of [...wakes].sort((a, b) => a.run - b.run)) changes.processWake(next, wake)
+      const after = next.fanIn?.overlap ? next.pending?.id ?? next.history.at(-1)?.id : undefined
+      for (const wake of [...wakes].sort((a, b) => a.run - b.run)) {
+        if (after) changes.defer(next, wake, after)
+        changes.processWake(next, wake)
+      }
       next.fanIn!.completed = true
     }, current, prepare)
   }
   private recordCheck(doc: MissionDocument) {
-    if (!doc.configuration.launch.condition) return
+    if (!missionLaunchModel(doc.configuration.launch).events.length) return
     // Commit the verified observation together with its high-water/reservation.
     // Records without tracking begin here; never invent their earlier total.
     doc.checks ??= { count: 0, since: this.ports.now() }

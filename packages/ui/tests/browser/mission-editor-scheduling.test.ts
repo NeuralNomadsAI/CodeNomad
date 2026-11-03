@@ -32,8 +32,7 @@ async function createDocument() {
   const store = new NativeMissionDocumentStore({ get: async key => values.get(key), compareAndSet: async (key, value) => { values.set(key, value) } }, "project", "/fixture")
   return store.create("msn_fixture", { title: "Stored title", objective: "Stored instructions", notes: "Stored notes", template: "custom", profiles,
     taskMode: "native", watchedConversationIDs: [], roots: [{ mode: "directory-only", directory: "/fixture" }], profileID: "profile", executionHost: "local",
-    launch: { timing: { kind: "cron", expression: "0 05 09 1,15 * *", zone: "Europe/Paris" }, condition: null,
-      ends: { at: null, afterMs: null, maxLaunches: 10 } } }, Date.now(), () => true)
+    launch: { when: [{ kind: "cron", expression: "0 05 09 1,15 * *", zone: "Europe/Paris" }], onlyWithNews: false, until: null } }, Date.now(), () => true)
 }
 async function setup(page: Page, available = true, locale = "en", theme = "dark", taskCount = 0) {
   page.setDefaultTimeout(15_000)
@@ -101,52 +100,53 @@ async function setup(page: Page, available = true, locale = "en", theme = "dark"
 const form = (page: Page) => page.locator("form.mission-editor")
 const scheduling = (page: Page) => form(page).locator(".mission-scheduling > summary")
 const options = (page: Page) => form(page).locator("summary").filter({ hasText: /^Options$/ })
+const addCriterion = (page: Page) => form(page).getByRole("button", { name: "Add a criterion", exact: true }).click()
 const ready = (page: Page) => page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
 async function capture(page: Page, name: string) {
   const directory = process.env.CODENOMAD_MISSION_CAPTURE_DIR
   if (directory) { await mkdir(directory, { recursive: true }); await page.screenshot({ path: path.join(directory, name), fullPage: true }) }
 }
 
-test("shared Create stores a paused multi-time policy with exact profiles and sends no Play", async () => {
+test("shared Create stores a paused two-time policy with exact profiles and sends no Play", async () => {
   const page = await browser.newPage({ timezoneId: "Europe/Paris", viewport: { width: 620, height: 1100 } }), f = await setup(page)
   try {
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Review project changes")
     await ready(page)
     assert.equal(await form(page).locator(".mission-scheduling").getAttribute("open"), null)
-    assert.match(await scheduling(page).innerText(), /Once, immediately.*Without a condition/)
+    assert.match(await scheduling(page).innerText(), /Once, immediately/)
     await scheduling(page).click()
-    await form(page).getByLabel("Frequency", { exact: true }).selectOption("multi")
-    await form(page).getByRole("button", { name: "Add a time", exact: true }).click()
-    await form(page).getByLabel("Time 1", { exact: true }).fill("09:15")
-    await form(page).getByLabel("Time 2", { exact: true }).fill("17:45")
-    await form(page).getByLabel("Maximum launched passages", { exact: true }).fill("3")
-    assert.equal(await form(page).locator(".mission-scheduling-preview li").count(), 3)
+    await addCriterion(page)
+    await form(page).getByLabel("Criterion 1 time", { exact: true }).fill("09:15")
+    await addCriterion(page)
+    await form(page).getByLabel("Criterion 2 time", { exact: true }).fill("17:45")
+    assert.match(await scheduling(page).innerText(), /2 criteria/)
+    assert.equal(await form(page).locator(".mission-scheduling-preview li").count(), 5)
     await capture(page, "editor-create-en-dark.png")
     await form(page).getByRole("button", { name: "Create", exact: true }).click()
     await form(page).waitFor({ state: "detached" })
     assert.equal(f.posts.length, 1)
     assert.equal(f.posts[0].action, "create"); assert.equal(f.posts[0].expectedRevision, 0)
     assert.deepEqual(f.posts[0].configuration.profiles, profiles)
-    assert.deepEqual(f.posts[0].configuration.launch.timing, { kind: "multi", calendars: [
-      { expression: "15 9 * * *", zone: "Europe/Paris" }, { expression: "45 17 * * *", zone: "Europe/Paris" }] })
+    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "cron", expression: "15 9 * * *", zone: "Europe/Paris" },
+      { kind: "cron", expression: "45 17 * * *", zone: "Europe/Paris" }], onlyWithNews: false, until: null })
     assert.equal(f.doc.state, "paused"); assert.equal(f.doc.firstPlayedAt, null); assert.deepEqual(f.doc.calendars, [])
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
 
-test("shared Edit loads all preparation fields and preserves the exact stored policy across remount and quota edits", async () => {
-  const page = await browser.newPage(), f = await setup(page), timing = f.doc.configuration.launch.timing
+test("shared Edit loads all preparation fields and preserves the exact stored criterion across remount and end-date edits", async () => {
+  const page = await browser.newPage(), f = await setup(page), stored = structuredClone(f.doc.configuration.launch)
   try {
     await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
     assert.equal(await form(page).getByLabel("Title", { exact: true }).inputValue(), "Stored title")
     await scheduling(page).click()
-    assert.equal(await form(page).getByLabel("Frequency", { exact: true }).inputValue(), "cron")
-    await form(page).getByLabel("Maximum launched passages", { exact: true }).fill("12")
+    assert.equal(await form(page).getByLabel("Criterion 1 type", { exact: true }).inputValue(), "cron")
+    await form(page).getByLabel("Until", { exact: true }).fill("2030-01-01T00:00")
     await page.evaluate(() => window.schedulingEditor.mount(false))
     await page.evaluate(() => window.schedulingEditor.mount(true)); await ready(page)
     await scheduling(page).click()
-    assert.equal(await form(page).getByLabel("Maximum launched passages", { exact: true }).inputValue(), "12")
+    assert.equal(await form(page).getByLabel("Until", { exact: true }).inputValue(), "2030-01-01T00:00")
     await options(page).click()
     assert.equal(await form(page).getByLabel("Playbook", { exact: true }).isDisabled(), false)
     await form(page).getByLabel("Notes", { exact: true }).fill("Future instructions only")
@@ -155,8 +155,7 @@ test("shared Edit loads all preparation fields and preserves the exact stored po
     await form(page).getByRole("button", { name: "Save", exact: true }).click()
     await form(page).waitFor({ state: "detached" })
     assert.equal(f.posts.length, 1); assert.equal(f.posts[0].action, "configure")
-    assert.deepEqual(f.posts[0].configuration.launch.timing, timing)
-    assert.equal(f.posts[0].configuration.launch.ends.maxLaunches, 12)
+    assert.deepEqual(f.posts[0].configuration.launch, { ...stored, until: Date.parse("2029-12-31T23:00:00Z") })
     assert.equal(f.posts[0].configuration.notes, "Future instructions only")
     assert.deepEqual(f.posts[0].configuration.profiles, profiles); assert.deepEqual(f.errors, [])
   } finally { await page.close() }
@@ -188,7 +187,7 @@ for (const kind of ["create", "edit"] as const) test(`${kind} lost ACK keeps its
     await page.evaluate(kind => window.schedulingEditor[kind](), kind)
     if (kind === "create") {
       await form(page).getByLabel(objective, { exact: true }).fill("Original creation")
-      await scheduling(page).click(); await form(page).getByLabel("Frequency", { exact: true }).selectOption("daily")
+      await scheduling(page).click(); await addCriterion(page)
     }
     await ready(page); f.lose = true
     await form(page).locator('button[type="submit"]').click()
@@ -317,15 +316,15 @@ test("an ever-created task locks the template after retirement; incomplete nativ
   } finally { await page.close() }
 })
 
-test("missing capability keeps immediate creation available and disables scheduled choices", async () => {
+test("missing capability keeps criterion-free creation available and disables adding criteria", async () => {
   const page = await browser.newPage(), f = await setup(page, false)
   try {
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Immediate remains available")
     await ready(page); await scheduling(page).click()
-    assert.equal(await form(page).getByLabel("Frequency", { exact: true }).locator('option[value="daily"]').evaluate(option => (option as HTMLOptionElement).disabled), true)
-    assert.equal(await form(page).getByLabel("Frequency", { exact: true }).locator('option[value="immediate"]').evaluate(option => (option as HTMLOptionElement).disabled), false)
-    assert.match(await form(page).locator(".mission-scheduling").innerText(), /immediate, unconditional Mission remains available/)
+    assert.equal(await form(page).getByRole("button", { name: "Add a criterion", exact: true }).isDisabled(), true)
+    assert.equal(await form(page).locator('button[type="submit"]').isDisabled(), false)
+    assert.match(await form(page).locator(".mission-scheduling").innerText(), /Mission without launch criteria remains available/)
     assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
@@ -337,13 +336,14 @@ for (const kind of ["create", "edit"] as const) test(`${kind} rejects impossible
     await page.evaluate(kind => window.schedulingEditor[kind](), kind)
     if (kind === "create") await form(page).getByLabel(objective, { exact: true }).fill("Valid instructions")
     await ready(page); await scheduling(page).click()
-    await form(page).getByLabel("Frequency", { exact: true }).selectOption("cron")
-    await form(page).getByLabel("Cron expression", { exact: true }).fill("0 0 31 2 *")
+    if (kind === "create") await addCriterion(page)
+    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("cron")
+    await form(page).getByLabel("Criterion 1 cron expression", { exact: true }).fill("0 0 31 2 *")
     await form(page).getByRole("alert").waitFor()
     assert.equal(await form(page).locator('button[type="submit"]').isDisabled(), true)
-    await form(page).getByLabel("Cron expression", { exact: true }).fill("0 9 * * *")
+    await form(page).getByLabel("Criterion 1 cron expression", { exact: true }).fill("0 9 * * *")
     await ready(page)
-    await form(page).getByLabel("Last allowed slot", { exact: true }).fill("2020-01-01T00:00")
+    await form(page).getByLabel("Until", { exact: true }).fill("2020-01-01T00:00")
     await form(page).getByRole("alert").waitFor()
     assert.equal(await form(page).locator('button[type="submit"]').isDisabled(), true)
     await form(page).evaluate(element => element.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
@@ -351,7 +351,7 @@ for (const kind of ["create", "edit"] as const) test(`${kind} rejects impossible
   } finally { await page.close() }
 })
 
-test("the real editor selects all five explicit project sources, pages on demand and avoids rereading sources while typing", async () => {
+test("the real editor selects all five explicit project sources per event row, pages on demand and avoids rereading sources while typing", async () => {
   const page = await browser.newPage(), f = await setup(page)
   let schedulePages = 0
   await page.route("**/api/workspaces/fixture/missions/scheduled?*", route => {
@@ -369,7 +369,8 @@ test("the real editor selects all five explicit project sources, pages on demand
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).getByLabel(objective, { exact: true }).fill("Check explicit sources")
     await ready(page); await scheduling(page).click()
-    const condition = form(page).getByLabel("Condition", { exact: true }), source = form(page).getByLabel("Source in this project", { exact: true })
+    await addCriterion(page)
+    const condition = form(page).getByLabel("Criterion 1 type", { exact: true }), source = form(page).getByLabel("Criterion 1 source", { exact: true })
     for (const [kind, id] of [["schedule-success", "msn_schedule"], ["mission-completed", "msn_once"],
       ["branch-commits", "refs/heads/not-checked-out"], ["conversation-message", "ses_reference"]]) {
       await condition.selectOption(kind)
@@ -381,7 +382,7 @@ test("the real editor selects all five explicit project sources, pages on demand
     }
     assert.equal(schedulePages, 4, "each schedule source reads one page plus one explicit continuation")
     await condition.selectOption("files-changed")
-    await form(page).getByLabel("Relative file paths (one per line)", { exact: true }).fill("src/input.ts")
+    await form(page).getByLabel("Criterion 1 file paths", { exact: true }).fill("src/input.ts")
     await ready(page)
     await form(page).getByLabel("Title", { exact: true }).fill("Typing does not refresh sources")
     await page.waitForTimeout(150)
@@ -423,7 +424,7 @@ test("remounting during the first document read still decodes the stored policy;
     await page.evaluate(() => window.schedulingEditor.mount(true))
     release(); await ready(page)
     await scheduling(page).click()
-    assert.equal(await form(page).getByLabel("Frequency", { exact: true }).inputValue(), "cron")
+    assert.equal(await form(page).getByLabel("Criterion 1 type", { exact: true }).inputValue(), "cron")
     assert.equal(await form(page).getByLabel("Title", { exact: true }).inputValue(), "Stored title")
     await form(page).getByRole("button", { name: "Cancel", exact: true }).click()
     f.doc.configuration.roots.push({ mode: "directory-only", directory: "/another-root" })
@@ -441,17 +442,77 @@ for (const locale of ["fr", "he"]) test(`shared editor fits at 320px in ${locale
     await page.evaluate(() => window.schedulingEditor.create())
     await form(page).locator("textarea").first().fill(locale === "fr" ? "Vérifier les sources du projet" : "בדיקת מקורות הפרויקט")
     await ready(page); await scheduling(page).click()
-    await form(page).locator(".mission-scheduling select").first().selectOption("multi")
-    await form(page).locator(".mission-scheduling button").first().click()
+    await form(page).locator(".mission-scheduling-add").click()
     await form(page).locator('input[type="time"]').nth(0).fill("09:15")
-    await form(page).locator('input[type="time"]').nth(1).fill("17:45")
-    await form(page).locator(".mission-scheduling select").nth(1).selectOption("files-changed")
+    await form(page).locator(".mission-scheduling-add").click()
+    await form(page).locator(".mission-criterion select").nth(1).selectOption("files-changed")
     await form(page).locator(".mission-scheduling textarea").fill("src/input.ts")
     await ready(page)
     assert.equal(await form(page).locator(".mission-scheduling-preview li").count(), 5)
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
     assert.equal(await page.evaluate(() => document.documentElement.dir), locale === "he" ? "rtl" : "ltr")
     await capture(page, `editor-create-${locale}-light.png`)
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+const branches = (page: Page) => page.route("**/api/workspaces/fixture/git-branches?*", route => route.fulfill({ json: { branches: ["refs/heads/main", "refs/heads/dev"] } }))
+test("launch criteria journey: once, a daily schedule, OR new commits, only with news, an event alone and an end date", async () => {
+  const page = await browser.newPage({ timezoneId: "Europe/Paris", viewport: { width: 620, height: 1300 } }), f = await setup(page)
+  await branches(page)
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("Review the latest changes on main and report risks")
+    await ready(page); await scheduling(page).click()
+    await capture(page, "01-empty-form.png")
+    await addCriterion(page)
+    assert.equal(await form(page).getByLabel("Criterion 1 time", { exact: true }).inputValue(), "09:00")
+    await capture(page, "02-daily-09h.png")
+    await addCriterion(page)
+    await form(page).getByLabel("Criterion 2 type", { exact: true }).selectOption("branch-commits")
+    const source = form(page).getByLabel("Criterion 2 source", { exact: true })
+    await source.locator('option[value="refs/heads/main"]').waitFor({ state: "attached" }); await source.selectOption("refs/heads/main")
+    const news = form(page).getByLabel("Only if there is something new", { exact: true })
+    assert.equal(await news.isChecked(), false); assert.equal(await news.isDisabled(), false)
+    await ready(page); await capture(page, "03-daily-or-commits.png")
+    await news.check()
+    assert.match(await form(page).locator(".mission-scheduling-preview h4").innerText(), /Next checks/)
+    await capture(page, "04-daily-only-with-news.png")
+    await form(page).getByRole("button", { name: "Remove criterion 1", exact: true }).click()
+    assert.equal(await news.isDisabled(), true)
+    assert.equal(await form(page).locator(".mission-scheduling-preview").count(), 0)
+    assert.match(await scheduling(page).innerText(), /1 criterion/)
+    await ready(page); await capture(page, "05-event-only.png")
+    await addCriterion(page)
+    await form(page).getByLabel("Until", { exact: true }).fill("2026-12-31T18:00")
+    await ready(page); await capture(page, "06-with-end-date.png")
+    await form(page).getByRole("button", { name: "Create", exact: true }).click()
+    await form(page).waitFor({ state: "detached" })
+    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "branch-commits", directory: "/fixture", ref: "refs/heads/main" },
+      { kind: "cron", expression: "0 9 * * *", zone: "Europe/Paris" }], onlyWithNews: false, until: Date.parse("2026-12-31T17:00:00Z") })
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+for (const locale of ["en", "fr"]) test(`a stored legacy frequency with a condition reopens as criteria with only-with-news checked (${locale})`, async () => {
+  const page = await browser.newPage({ timezoneId: "Europe/Paris", viewport: { width: 620, height: 1300 } }), f = await setup(page, true, locale)
+  await branches(page)
+  try {
+    f.doc = { ...f.doc, configuration: { ...f.doc.configuration, launch: { timing: { kind: "multi", calendars: [
+      { expression: "0 9 * * *", zone: "Europe/Paris" }, { expression: "0 18 * * *", zone: "Europe/Paris" }] },
+      condition: { kind: "branch-commits", directory: "/fixture", ref: "refs/heads/main" }, ends: { maxLaunches: null, afterMs: null, at: null } } } }
+    const stored = structuredClone(f.doc.configuration.launch)
+    await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
+    await scheduling(page).click()
+    const label = (en: string, fr: string) => form(page).getByLabel(locale === "fr" ? fr : en, { exact: true })
+    assert.equal(await label("Criterion 1 type", "Type du critère 1").inputValue(), "daily")
+    assert.equal(await label("Criterion 2 time", "Heure du critère 2").inputValue(), "18:00")
+    assert.equal(await label("Criterion 3 source", "Source du critère 3").inputValue(), "refs/heads/main")
+    assert.equal(await label("Only if there is something new", "Seulement s’il y a du nouveau").isChecked(), true)
+    await capture(page, locale === "fr" ? "09-legacy-reopened-fr.png" : "08-legacy-reopened-en.png")
+    await form(page).locator('button[type="submit"]').click()
+    await form(page).waitFor({ state: "detached" })
+    assert.deepEqual(f.posts[0].configuration.launch, stored, "an unchanged reopen saves the stored legacy policy unchanged")
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })

@@ -1,4 +1,5 @@
 import { canonicalAuthority } from "../../missions/authority-protocol"
+import { missionLaunchModel, type MissionCondition } from "../../missions/launch-policy"
 import { missionCheckpointsSchema, missionSourceKey, type MissionDocument, type MissionSourceCheckpoint } from "../../missions/mission-document"
 import { documentWatchCheckpoint, documentWatchCheckpointSchema, documentWatchKey } from "../../missions/mission-document-passage-input"
 import { recurrenceInputBudget, recurrenceSourceContextLimit } from "../../missions/recurrence-read-budget"
@@ -9,26 +10,30 @@ import type { MissionConditionRead } from "./native-mission-condition-reader"
 import type { NativeSourceFence } from "./native-source-fence"
 
 export type QualifiedDocumentSourceSnapshot = { changed: boolean; checkpoints: MissionSourceCheckpoint[]; current(): true; revalidate?(): Promise<void> }
-export type DocumentConditionReader = (document: MissionDocument) => Promise<MissionConditionRead>
+export type DocumentConditionReader = (document: MissionDocument, condition: MissionCondition) => Promise<MissionConditionRead>
 
 /** Native stable prefixes and condition proofs share one frozen pending snapshot.
  * New sources baseline before Play; retained checkpoints survive remove/re-add. */
 export async function prepareNativeDocumentSources(doc: MissionDocument, native: MissionNativeService, signal: AbortSignal,
   current: () => true, conditionReader?: DocumentConditionReader, fence?: NativeSourceFence, initialContext = false): Promise<QualifiedDocumentSourceSnapshot> {
-  const config = doc.configuration, condition = config.launch.condition, guards: (() => true)[] = [current, native.assertCurrent]
+  const config = doc.configuration, events = missionLaunchModel(config.launch).events, guards: (() => true)[] = [current, native.assertCurrent]
   const observed = doc.firstPlayedAt === null ? { ...doc, checkpoints: [] } : doc
   if (fence) guards.push(fence.current)
   const checkpoints: MissionSourceCheckpoint[] = [], sources: PassageSource[] = []
-  let revalidate: (() => Promise<void>) | undefined
-  let changed = !condition
-  if (condition && condition.kind !== "conversation-message") {
+  const revalidations: (() => Promise<void>)[] = []
+  // Events are alternatives: any one changed is enough.
+  let changed = !events.length
+  for (const condition of events) {
+    if (condition.kind === "conversation-message") continue
     if (!conditionReader) throw new Error("Qualified Mission condition reader unavailable")
-    const result = await conditionReader(structuredClone(observed))
+    const result = await conditionReader(structuredClone(observed), condition)
     if (result.checkpoint.key !== missionSourceKey(condition) || result.checkpoint.kind !== condition.kind) throw new Error("Mission condition proof incomplete")
-    guards.push(result.current); checkpoints.push(result.checkpoint); changed = result.changed
-    revalidate = result.revalidate
+    guards.push(result.current); checkpoints.push(result.checkpoint); changed ||= result.changed
+    if (result.revalidate) revalidations.push(result.revalidate)
   }
-  const ids = [...new Set([...config.watchedConversationIDs, ...(condition?.kind === "conversation-message" ? [condition.conversationID] : [])])]
+  const revalidate = revalidations.length ? async () => { for (const item of revalidations) await item() } : undefined
+  const followed = new Set(events.flatMap(item => item.kind === "conversation-message" ? [item.conversationID] : []))
+  const ids = [...new Set([...config.watchedConversationIDs, ...followed])]
   const budget = { consigne: config.objective, roots: config.roots, watchedConversationIDs: ids }
   if (!recurrenceInputBudget(budget).sufficient) throw new Error("Document watched input capacity")
   for (const conversationID of ids) {
@@ -79,9 +84,10 @@ export async function prepareNativeDocumentSources(doc: MissionDocument, native:
     const prior = old ?? { key: documentWatchKey(conversationID), kind: "conversation-message" as const,
       placementDigest: recurrenceSourceLocationDigest(source.location), value: cursor ?? { messageID: null, nativeDigest: null } }
     checkpoints.push(documentWatchCheckpoint(frozen, prior))
-    if (condition?.kind === "conversation-message" && condition.conversationID === conversationID) {
-      changed = !!old && messages.some(message => ["user", "synthetic", "assistant"].includes(message.type))
-      if (!changed && messages.length === 32) throw new Error("Mission message prefix capacity")
+    if (followed.has(conversationID)) {
+      const fresh = !!old && messages.some(message => ["user", "synthetic", "assistant"].includes(message.type))
+      if (!fresh && messages.length === 32) throw new Error("Mission message prefix capacity")
+      changed ||= fresh
     }
   }
   canonicalAuthority(checkpoints, 64 * 1024)

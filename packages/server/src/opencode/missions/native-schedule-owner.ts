@@ -1,9 +1,9 @@
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchronous"
-import { missionDocumentChanges } from "../../missions/mission-document-state"
+import { missionDocumentChanges, missionTemporalPolicy } from "../../missions/mission-document-state"
 import { missionCalendarPlans, MISSION_RECONCILIATION_INTERVAL_MS } from "../../missions/mission-calendar-plan"
 import { assertMissionCalendarPlacement, captureMissionCalendarPlacement } from "../../missions/mission-calendar-placement"
-import { missionLaunchLimit, requiresMissionCalendar, missionConfigurationSchema } from "../../missions/launch-policy"
+import { missionLaunchLimit, missionLaunchModel, missionPrincipalCount, requiresMissionCalendar, missionConfigurationSchema } from "../../missions/launch-policy"
 import { stableToken } from "../../missions/receipt-identity"
 import { missionSchedulePayloadDigest } from "../../missions/mission-schedule-contract"
 import { MISSION_SCHEDULE_CARRIER_SESSION_PREFIX } from "../../missions/mission-schedule-carrier-identity"
@@ -65,7 +65,7 @@ export function missionCalendarOwnerReady(doc: MissionDocument): boolean {
   const owner = doc.calendarOwner
   return !!owner && !owner.operation.pending && owner.auxiliaryReady && !doc.synchronization && !doc.deletion
     && doc.state === "running" && !doc.blocked && owner.slots.every(slot => slot.creation === "adopted")
-    && owner.slots.filter(slot => slot.role === "principal").length === (doc.configuration.launch.timing.kind === "multi" ? doc.configuration.launch.timing.calendars.length : 1)
+    && owner.slots.filter(slot => slot.role === "principal").length === missionPrincipalCount(doc.configuration.launch)
 }
 export function nativeScheduleOwnerControlReceipt(doc: MissionDocument, requestID: string) {
   if (doc.preparation?.requestID === requestID) return { ...doc.preparation, action: "configure" as const, startedAt: doc.preparation.createdAt }
@@ -169,8 +169,9 @@ export class NativeScheduleCalendarOwner {
       const placement = wasPlayed && doc.calendarOwner && same(configuration.roots, doc.configuration.roots)
         ? doc.calendarOwner.placement : captureMissionCalendarPlacement(configuration.roots)
       let phase: NativeScheduleCalendarInfo | undefined
-      if (input.action === "configure" && wasPlayed && same(configuration.launch.timing, doc.configuration.launch.timing)
-        && (configuration.launch.ends.afterMs !== doc.configuration.launch.ends.afterMs || configuration.launch.ends.at !== doc.configuration.launch.ends.at)) {
+      const temporal = missionTemporalPolicy(configuration), previousTemporal = missionTemporalPolicy(doc.configuration)
+      if (input.action === "configure" && wasPlayed && same(temporal.schedules, previousTemporal.schedules) && temporal.eventCheck === previousTemporal.eventCheck
+        && (temporal.endAfterMs !== previousTemporal.endAfterMs || temporal.until !== previousTemporal.until)) {
         const slot = doc.calendarOwner?.slots.find(item => item.role === "principal" && item.when.type === "every")
         if (slot) {
           if (!slot.scheduleID) throw new Error("Mission native phase unavailable")
@@ -180,15 +181,16 @@ export class NativeScheduleCalendarOwner {
         }
       }
       const now = this.now()
-      const interval = configuration.launch.timing.kind === "every" ? configuration.launch.timing.intervalMs : MISSION_RECONCILIATION_INTERVAL_MS
+      const every = temporal.schedules.find(item => item.kind === "every")
+      const interval = every?.kind === "every" ? every.intervalMs : MISSION_RECONCILIATION_INTERVAL_MS
       const phaseDue = phase && (phase.nextDueAt ?? phase.createdAt + interval)
       const principalAnchorAt = phaseDue === undefined ? undefined : phaseDue + Math.max(0, Math.floor((now - phaseDue) / interval) + 1) * interval - interval
       const syncID = `cal_${stableToken(input.requestID, 40)}`
       const needsSources = input.action === "play" && !wasPlayed || input.action === "configure"
-        && (!same(configuration.launch.condition, doc.configuration.launch.condition)
+        && (!same(missionLaunchModel(configuration.launch).events, missionLaunchModel(doc.configuration.launch).events)
           || !same(configuration.watchedConversationIDs, doc.configuration.watchedConversationIDs))
       const sources = needsSources ? await this.options.sources?.({ ...doc, configuration }, locked) : undefined
-      if (needsSources && configuration.launch.condition && !sources) throw new Error("Mission condition baseline unavailable")
+      if (needsSources && missionLaunchModel(configuration.launch).events.length && !sources) throw new Error("Mission condition baseline unavailable")
       if (input.action === "configure" && doc.pending?.admittedAt != null
         && (configuration.objective !== doc.configuration.objective || configuration.notes !== doc.configuration.notes)) {
         // Validate H9, then reserve the original request before journal I/O.
@@ -204,8 +206,8 @@ export class NativeScheduleCalendarOwner {
       }
       doc = await locked.change(doc.id, doc.revision, () => { locked.assertActive(); sources?.current(); if (resumeProof) assertSynchronousAuthorityGuard(resumeProof.current, "policy-unqualified"); return this.options.current() }, value => {
         const old = value.calendarOwner
-        if (input.action === "play" && value.firstPlayedAt === null && value.configuration.launch.timing.kind === "at"
-          && value.configuration.launch.timing.at <= now) throw new NativeScheduleControlRefusal(input, "date-passed")
+        if (input.action === "play" && value.firstPlayedAt === null && missionLaunchModel(value.configuration.launch).schedules
+          .some(item => item.kind === "at" && item.at <= now)) throw new NativeScheduleControlRefusal(input, "date-passed")
         if (input.action === "play" && value.firstPlayedAt === null) missionDocumentChanges.play(value, syncID, now, sources?.checkpoints ?? input.checkpoints ?? [])
         else if (["play", "resume"].includes(input.action)) {
           if (value.state === "stopped" || value.state === "finished" && !resumeProof || value.deletion || value.pending && !resumeProof || value.synchronization)
@@ -219,7 +221,8 @@ export class NativeScheduleCalendarOwner {
           { expectedRevision: input.expectedRevision, deleteManagedSessions: input.deleteManagedSessions ?? false })
         else if (input.action === "configure") missionDocumentChanges.configure(value, input.configuration!, now, sources?.checkpoints)
         if (["pause", "stop", "delete"].includes(input.action) && value.pending) value.pending.manualAllowed = false
-        if (value.state !== "running" && value.fanIn && !value.fanIn.completed) value.fanIn.suppress = true
+        if (["pause", "stop", "delete", "resume"].includes(input.action) || input.action === "play" && wasPlayed) value.deferred = null
+        if (value.state !== "running" && value.fanIn && !value.fanIn.completed) { value.fanIn.suppress = true; value.fanIn.overlap = false }
         const replaced = old && old.slots.some(slot => slot.timeGeneration !== value.timeGeneration)
         if (replaced && old.retired.length) throw new Error("Mission previous calendar cleanup pending")
         const retired = replaced ? old.slots.map(descriptor => ({ descriptor, highWater: value.synchronization?.retiredCalendars.find(item => item.scheduleID === descriptor.scheduleID)?.highWater ?? 0,

@@ -1,3 +1,4 @@
+import { legacyLaunch } from "../../missions/legacy-launch-test-helper"
 import assert from "node:assert/strict"
 import test from "node:test"
 import { ownerFixture } from "./native-schedule-owner-test-fixture"
@@ -7,7 +8,7 @@ test("owner baselines at first Play under exclusion, rechecks source guard befor
   let value = "old", revoked = false, reads = 0, revalidations = 0
   const f = await ownerFixture(t, undefined, undefined, async (doc, locked) => {
     locked.assertActive(); reads++
-    const condition = doc.configuration.launch.condition!
+    const condition = legacyLaunch(doc.configuration).condition!
     return { checkpoints: [{ key: missionSourceKey(condition), kind: condition.kind, placementDigest: "a".repeat(64), value: { digest: value } }],
       current: () => { if (revoked) throw new Error("source changed"); return true },
       revalidate: async () => { locked.assertActive(); revalidations++; if (value === "changed before publication") throw new Error("source changed") } }

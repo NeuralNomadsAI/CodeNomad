@@ -1,6 +1,6 @@
 import type { MissionDocument } from "./mission-document"
 import { projectMissionDocument } from "./mission-document"
-import { missionLaunchLimit } from "./launch-policy"
+import { missionLaunchLimit, missionLaunchModel } from "./launch-policy"
 
 /** Display evidence only. A technical wake is an admitted native prompt, rather
  * than a source verification or a launched business passage. Its scope is the
@@ -16,7 +16,8 @@ export type MissionScheduleObservation = {
 
 export function unobservedMissionSchedule(doc: MissionDocument): MissionScheduleObservation {
   return { state: doc.firstPlayedAt === null || !doc.calendars.some(item => item.role === "principal") ? "unarmed" : "unknown",
-    nativeStatus: null, nextDueAt: null, wakeCount: null, timeGeneration: doc.timeGeneration, kind: doc.configuration.launch.condition ? "check" : "launch" }
+    nativeStatus: null, nextDueAt: null, wakeCount: null, timeGeneration: doc.timeGeneration,
+    kind: missionLaunchModel(doc.configuration.launch).events.length ? "check" : "launch" }
 }
 
 /** Candidates from durable state. Every control rechecks its revision, native

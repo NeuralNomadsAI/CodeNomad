@@ -87,7 +87,7 @@ export async function preparationFixture(directory = "/fixture", sources?: Missi
 }
 
 export function scheduledPreparation(f: Awaited<ReturnType<typeof preparationFixture>>,
-  timing: import("./launch-policy").MissionLaunchPolicy["timing"] = { kind: "every", intervalMs: 900000 }): import("./launch-policy").MissionConfiguration {
+  timing: import("./launch-policy").MissionLegacyLaunchPolicy["timing"] = { kind: "every", intervalMs: 900000 }): import("./launch-policy").MissionConfiguration {
   const selection = f.request.configuration.profiles.coordinator
   return { ...f.request.configuration, template: "custom", profiles: { coordinator: selection, roles: { specialist: selection } },
     profileID: "profile", executionHost: "host", launch: { ...f.request.configuration.launch, timing } }

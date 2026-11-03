@@ -2,10 +2,10 @@ import { For, Show, createMemo, createSignal, createEffect, type JSX } from "sol
 import { useI18n } from "../lib/i18n"
 import { useMissionSchedules, unifiedScheduleHold, type UnifiedMissionSchedule } from "../stores/mission-schedules"
 import type { MissionPickerEntry } from "./mission-picker-model"
-import { decodeMissionSchedulingPolicy } from "./mission-scheduling-decode"
+import { describeMissionCriteria, missionCriteriaZone } from "./mission-scheduling-summary"
 import { createMissionScheduleControls } from "./mission-schedule-controls"
 import { MissionActionBar } from "./mission-action-bar"
-import { missionLaunchLimit } from "../../../server/src/missions/mission-launch-kind"
+import { missionLaunchLimit, missionLaunchModel } from "../../../server/src/missions/mission-launch-kind"
 import { MissionScheduleDiagnostics } from "./mission-schedule-diagnostics"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 
@@ -22,35 +22,13 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   createEffect(() => props.onPassage?.(schedules().find(row => row.id === props.selected)?.pendingPassage ? props.selected : undefined))
   const date = (value: number | null, zone?: string) => value === null ? t("missions.scheduleList.none")
     : new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short", ...(zone ? { timeZone: zone } : {}) }).format(value)
-  const frequency = (doc: UnifiedMissionSchedule) => {
-    const policy = doc.configuration.launch, timing = policy.timing
-    const draft = decodeMissionSchedulingPolicy(policy, doc.configuration.roots[0]?.directory)
-    const title = t(`missions.scheduling.frequency.${draft.frequency}`)
-    if (timing.kind === "at") return `${title} · ${date(doc.oneShotAt ?? timing.at, timing.zone)} · ${timing.zone}`
-    if (timing.kind === "every" || timing.kind === "in") {
-      const ms = timing.kind === "every" ? timing.intervalMs : timing.delayMs
-      const duration = Intl.NumberFormat.supportedLocalesOf(locale()).length
-        ? new Intl.NumberFormat(locale(), { style: "unit", unit: "minute", unitDisplay: "long" }).format(ms / 60_000)
-        : `${ms / 60_000} ${t("missions.scheduling.minutes")}`
-      return `${title} · ${duration}`
-    }
-    if (timing.kind === "cron") return `${title} · ${timing.expression} · ${timing.zone}`
-    if (timing.kind === "multi") return `${title} · ${timing.calendars.map(item => `${item.expression} (${item.zone})`).join("; ")}`
-    return title
-  }
-  const condition = (doc: UnifiedMissionSchedule) => {
-    const source = doc.configuration.launch.condition
-    if (!source) return undefined
-    const reference = source.kind === "files-changed" ? source.paths.join(", ") : source.kind === "branch-commits" ? source.ref
-      : source.kind === "conversation-message" ? source.conversationID : source.missionID
-    return `${t(`missions.scheduling.condition.${source.kind}`)} · ${reference}`
+  const criteria = (doc: UnifiedMissionSchedule) => {
+    const lines = describeMissionCriteria(doc.configuration.launch, t, locale(), doc.oneShotAt)
+    return [lines.join("; "), missionLaunchModel(doc.configuration.launch).onlyWithNews ? t("missions.scheduling.onlyWithNews") : ""].filter(Boolean).join(" · ")
   }
   const observed = (doc: UnifiedMissionSchedule) => t(`missions.scheduleList.observed.${doc.observation.state === "known"
     ? doc.observation.nativeStatus ?? "unknown" : doc.observation.state}`)
-  const zoneOf = (doc: UnifiedMissionSchedule) => {
-    const timing = doc.configuration.launch.timing
-    return timing.kind === "cron" || timing.kind === "at" ? timing.zone : timing.kind === "multi" ? timing.calendars[0].zone : undefined
-  }
+  const zoneOf = (doc: UnifiedMissionSchedule) => missionCriteriaZone(doc.configuration.launch)
   const nextWake = (doc: UnifiedMissionSchedule) => `${t(doc.observation.kind === "check" ? "missions.scheduleList.nextCheck" : "missions.scheduleList.nextWake")} · ${date(doc.observation.nextDueAt, zoneOf(doc))}`
   const entries = createMemo((): MissionPickerEntry[] => schedules().map(doc => ({ key: `scheduled:${doc.id}`,
     title: doc.configuration.title,
@@ -59,7 +37,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
       : doc.state === "paused" ? "paused" : doc.state === "finished" ? "done" : "idle",
     status: [t(`missions.scheduleList.state.${doc.state}`),
       doc.id === props.selected && doc.pendingPassage?.id === props.selectedRequests?.passageID && (props.selectedRequests?.count ?? 0) > 0 ? t("missionsPanel.task.input") : "",
-      frequency(doc), condition(doc), nextWake(doc)].filter(Boolean).join(" · ") })))
+      criteria(doc), nextWake(doc)].filter(Boolean).join(" · ") })))
   const refresh = () => setRevision(value => value + 1)
   const publishing = () => unifiedScheduleHold(JSON.stringify([props.instanceId, props.projectID, props.directory, props.selected]))?.phase === "publication"
   const view = () => <>
@@ -79,7 +57,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
       const primary = () => (["pause", "resume", "play"] as const).find(action => doc().availableActions.includes(action))
       const action = (name: "play" | "resume" | "pause" | "stop" | "run-now") => ({ key: name, label: controls.label(name),
         disabled: !controls.capable(name), onSelect: () => controls.act(name) })
-      const zone = () => zoneOf(doc())
+      const zone = () => zoneOf(doc()), model = createMemo(() => missionLaunchModel(doc().configuration.launch))
       const editable = () => props.active() && props.enabled() && !list.error() && list.fresh(id)
         && !controls.held() && !controls.busy() && doc().availableActions.includes("configure")
       return <section id={props.detailId} class="mission-detail mission-unified-schedule" aria-label={doc().configuration.title}>
@@ -99,17 +77,16 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
             <Show when={controls.capability() === "activatable"}><p role="status">{t("missions.scheduleList.runNowRequiresEnabled")}</p></Show>
           </>} />
         <dl class="mission-schedule-facts">
-          <dt>{t("missions.scheduling.frequency")}</dt><dd><bdi>{frequency(doc())}</bdi></dd>
-          <Show when={doc().configuration.launch.condition}><dt>{t("missions.scheduling.condition")}<SettingsInfoTip text={t("missions.scheduling.conditionHint")} /></dt><dd><bdi>{condition(doc())}</bdi></dd></Show>
+          <dt>{t("missions.scheduling.when")}</dt><dd><bdi>{criteria(doc())}</bdi></dd>
           <dt>{t("missions.scheduleList.desired")}</dt><dd>{t(`missions.scheduleList.state.${doc().state}`)}</dd>
           <dt>{t("missions.scheduleList.observed")}</dt><dd>{observed(doc())}</dd>
           <dt>{t(doc().observation.kind === "check" ? "missions.scheduleList.nextCheck" : "missions.scheduleList.nextWake")}<SettingsInfoTip text={t("missions.scheduleList.lateSlot")} /></dt><dd><bdi>{date(doc().observation.nextDueAt, zone())}</bdi></dd>
-          <Show when={doc().slotEndsAt !== null || doc().configuration.launch.ends.at !== null || doc().configuration.launch.ends.afterMs !== null}>
-            <dt>{t("missions.scheduling.endAt")}</dt><dd><bdi>{date(doc().slotEndsAt ?? doc().configuration.launch.ends.at, zone())}</bdi>
-              <Show when={doc().firstPlayedAt === null && doc().configuration.launch.ends.afterMs !== null}> · {t("missions.scheduleList.endAfter", { minutes: String(doc().configuration.launch.ends.afterMs! / 60_000) })}</Show></dd>
+          <Show when={doc().slotEndsAt !== null || model().until !== null || model().endAfterMs !== null}>
+            <dt>{t("missions.scheduling.until")}</dt><dd><bdi>{date(doc().slotEndsAt ?? model().until, zone())}</bdi>
+              <Show when={doc().firstPlayedAt === null && model().endAfterMs !== null}> · {t("missions.scheduleList.endAfter", { minutes: String(model().endAfterMs! / 60_000) })}</Show></dd>
           </Show>
-          <Show when={doc().configuration.launch.condition}><dt>{t("missions.scheduleList.checks")}</dt><dd>{doc().checks ? `${doc().checks!.count} · ${t("missions.scheduleList.since", { when: date(doc().checks!.since) })}` : t("missions.scheduleList.unavailable")}</dd></Show>
-          <dt>{t("missions.scheduleList.launched")}</dt><dd><bdi dir="ltr">{doc().launchedCount} / {missionLaunchLimit(doc().configuration.launch) ?? t("missions.scheduleList.unlimited")}</bdi></dd>
+          <Show when={model().events.length}><dt>{t("missions.scheduleList.checks")}</dt><dd>{doc().checks ? `${doc().checks!.count} · ${t("missions.scheduleList.since", { when: date(doc().checks!.since) })}` : t("missions.scheduleList.unavailable")}</dd></Show>
+          <dt>{t("missions.scheduleList.launched")}</dt><dd><bdi dir="ltr">{doc().launchedCount}<Show when={missionLaunchLimit(doc().configuration.launch)}>{limit => <> / {limit()}</>}</Show></bdi></dd>
           <dt>{t("missions.scheduleList.succeeded")}</dt><dd>{doc().successfulCount}</dd>
         </dl>
         <Show when={doc().blockReason}>{reason => <p role="status" class="mission-control-stale">

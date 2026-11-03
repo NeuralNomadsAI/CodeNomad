@@ -70,7 +70,7 @@ async function assertSingleCreate(form: ReturnType<Page["locator"]>) {
   const submits = form.locator('button[type="submit"]')
   assert.equal(await submits.count(), 1, "creation offers one submit button")
   assert.equal(await submits.innerText(), "Create")
-  assert.equal(await form.getByRole("checkbox").count(), 0, "no automatic-start option")
+  assert.equal(await form.getByRole("checkbox", { name: /start|play|launch now/i }).count(), 0, "no automatic-start option")
   await form.getByRole("button", { name: "Create", exact: true }).click()
   await form.waitFor({ state: "detached" })
 }
@@ -279,7 +279,7 @@ test("a definitive creation rejection releases the request, keeps the draft edit
   } finally { await page.close() }
 })
 
-test("clearing the daily time and choosing Once creates a one-time mission without flipping back to Daily", async () => {
+test("clearing the daily time and removing the criterion creates a one-time mission without flipping back to Daily", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
   const fixture = await setup(page)
   try {
@@ -288,9 +288,9 @@ test("clearing the daily time and choosing Once creates a one-time mission witho
     const form = page.locator("form.mission-editor")
     await form.getByLabel(OBJECTIVE, { exact: true }).fill("One-time after clearing the schedule")
     await form.locator(".mission-scheduling > summary").click()
-    await form.getByLabel("Frequency", { exact: true }).selectOption("daily")
-    await form.getByLabel("Time 1", { exact: true }).fill("")
-    await form.getByLabel("Frequency", { exact: true }).selectOption("immediate")
+    await form.getByRole("button", { name: "Add a criterion", exact: true }).click()
+    await form.getByLabel("Criterion 1 time", { exact: true }).fill("")
+    await form.getByRole("button", { name: "Remove criterion 1", exact: true }).click()
     await submitReady(page)
     await form.getByRole("button", { name: "Create", exact: true }).click()
     await form.waitFor({ state: "detached", timeout: 3_000 }).catch(() => undefined)
@@ -312,8 +312,8 @@ test("daily Create stores a paused schedule and never sends Play", async () => {
     const form = page.locator("form.mission-editor")
     await form.getByLabel(OBJECTIVE, { exact: true }).fill("Review yesterday's merged changes and summarize risks.")
     await form.locator(".mission-scheduling > summary").click()
-    await form.getByLabel("Frequency", { exact: true }).selectOption("daily")
-    await form.getByLabel("Time 1", { exact: true }).fill("07:30")
+    await form.getByRole("button", { name: "Add a criterion", exact: true }).click()
+    await form.getByLabel("Criterion 1 time", { exact: true }).fill("07:30")
     assert.equal(await form.getByLabel("Saved time zone (IANA)", { exact: true }).inputValue(), "Europe/Paris")
     await submitReady(page)
     await captureMissionView(page, "create-recurring")
@@ -322,7 +322,7 @@ test("daily Create stores a paused schedule and never sends Play", async () => {
     assert.equal(fixture.creates.length, 1)
     const configuration = fixture.creates[0]!.configuration as Record<string, any>
     assert.equal(configuration.title, "Review yesterday's merged changes and summarize risks")
-    assert.deepEqual(configuration.launch.timing, { kind: "cron", expression: "30 7 * * *", zone: "Europe/Paris" })
+    assert.deepEqual(configuration.launch, { when: [{ kind: "cron", expression: "30 7 * * *", zone: "Europe/Paris" }], onlyWithNews: false, until: null })
     assert.deepEqual(fixture.controls, [], "Play stays a separate explicit action")
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }

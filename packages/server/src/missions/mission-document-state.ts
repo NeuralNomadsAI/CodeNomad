@@ -1,8 +1,8 @@
 import { canonicalAuthority } from "./authority-protocol"
 import { stableToken } from "./receipt-identity"
 import { missionCoordinatorSessionID } from "./session-identity"
-import { documentID, documentTimestamp, missionConfigurationSchema, missionLaunchLimit, missionSlotEndsAt,
-  requiresMissionCalendar, type MissionConfiguration } from "./launch-policy"
+import { documentID, documentTimestamp, missionConfigurationSchema, missionEventPrincipal, missionEventPrincipalSlot, missionLaunchLimit, missionLaunchModel,
+  missionPrincipalCount, missionSlotEndsAt, requiresMissionCalendar, type MissionConfiguration } from "./launch-policy"
 import { missionCheckpointsSchema, missionDocumentPassageID, missionSourceKey, missionWakeSchema, projectMissionDocument,
   type MissionCalendar, type MissionDocument, type MissionDocumentPending, type MissionSourceCheckpoint, type MissionWake } from "./mission-document"
 import { missionDocumentDeletionIdentitySchema } from "./mission-document"
@@ -14,17 +14,32 @@ function available(doc: MissionDocument) {
   if (limit !== null && doc.launchedCount >= limit) throw new Error("Mission launch budget exhausted")
 }
 function oneShotAt(config: MissionConfiguration, now: number): number | null {
-  const timing = config.launch.timing
-  if (timing.kind === "at") {
-    if (timing.at <= now) throw new Error("Mission date has passed")
-    return timing.at
+  for (const timing of missionLaunchModel(config.launch).schedules) {
+    if (timing.kind === "at") {
+      if (timing.at <= now) throw new Error("Mission date has passed")
+      return timing.at
+    }
+    if (timing.kind === "in") return documentTimestamp.parse(now + timing.delayMs)
   }
-  return timing.kind === "in" ? documentTimestamp.parse(now + timing.delayMs) : null
+  return null
 }
 function baseline(config: MissionConfiguration, checkpoints: MissionSourceCheckpoint[]) {
-  const condition = config.launch.condition
-  if (condition && !checkpoints.some(item => item.kind === condition.kind && item.key === missionSourceKey(condition)))
-    throw new Error("Mission source baseline required")
+  for (const condition of missionLaunchModel(config.launch).events)
+    if (!checkpoints.some(item => item.kind === condition.kind && item.key === missionSourceKey(condition)))
+      throw new Error("Mission source baseline required")
+}
+/** A schedule wake launches on its own unless onlyWithNews; event checks need a change. */
+export function missionWakesLaunchUnconditionally(doc: MissionDocument, wakes: readonly MissionWake[]): boolean {
+  const launch = doc.configuration.launch, eventSlot = missionEventPrincipalSlot(launch)
+  return !missionLaunchModel(launch).onlyWithNews && wakes.some(wake => {
+    const calendar = doc.calendars.find(item => item.scheduleID === wake.scheduleID)
+    return calendar?.role === "principal" && calendar.slot !== eventSlot
+  })
+}
+/** Calendar-owned timing: schedules, the internal event check and end bounds. */
+export function missionTemporalPolicy(config: MissionConfiguration) {
+  const model = missionLaunchModel(config.launch)
+  return { schedules: model.schedules, eventCheck: missionEventPrincipal(config.launch), until: model.until, endAfterMs: model.endAfterMs }
 }
 
 /** Mutates a detached, validated document under the store's CAS. Native evidence
@@ -41,15 +56,22 @@ export const missionDocumentChanges = {
       return
     }
     if (doc.everCreatedTask && config.template !== doc.configuration.template) throw new Error("Mission template locked")
-    const temporal = (value: MissionConfiguration) => ({ timing: value.launch.timing, at: value.launch.ends.at, afterMs: value.launch.ends.afterMs })
+    const temporal = missionTemporalPolicy
     const changedTime = !same(temporal(config), temporal(doc.configuration))
-    const changedTiming = !same(config.launch.timing, doc.configuration.launch.timing)
-    if (doc.firstPlayedAt !== null && !same(config.launch.condition, doc.configuration.launch.condition)) {
+    const changedTiming = !same(temporal(config).schedules, temporal(doc.configuration).schedules)
+    if (doc.firstPlayedAt !== null && !same(missionLaunchModel(config.launch).events, missionLaunchModel(doc.configuration.launch).events)) {
       if (!checkpoints) throw new Error("Mission condition baseline reconciliation required")
       baseline(config, checkpoints)
     }
     if (checkpoints) doc.checkpoints = [...new Map([...missionCheckpointsSchema.parse(checkpoints), ...doc.checkpoints].map(item => [item.key, item])).values()]
     if (doc.calendars.some(item => item.pendingWake || item.wakePreparing)) throw new Error("Mission wake unresolved")
+    // A deferred launch belongs to the launch criteria it was triggered under; the end
+    // date is rechecked when it launches.
+    const criteria = (value: MissionConfiguration) => {
+      const model = missionLaunchModel(value.launch)
+      return { schedules: model.schedules, events: model.events, onlyWithNews: model.onlyWithNews }
+    }
+    if (!same(criteria(config), criteria(doc.configuration))) doc.deferred = null
     doc.configuration = config
     doc.configurationGeneration++
     if (changedTime) {
@@ -83,7 +105,7 @@ export const missionDocumentChanges = {
     if (!doc.synchronization || doc.synchronization.requestID !== requestID) throw new Error("Mission synchronization conflict")
     if (doc.synchronization.retiredCalendars.some(item => item.wakePreparing || item.pendingWake)) throw new Error("Mission retired wake unresolved")
     const running = (doc.state === "running" || doc.state === "paused" && doc.firstPlayedAt !== null) && requiresMissionCalendar(doc.configuration.launch)
-    const count = doc.configuration.launch.timing.kind === "multi" ? doc.configuration.launch.timing.calendars.length : 1
+    const count = missionPrincipalCount(doc.configuration.launch)
     if (running && (calendars.filter(item => item.role === "principal").length !== count
       || calendars.filter(item => item.role === "reconciliation").length !== 1)
       || !running && calendars.length) throw new Error("Mission calendar coverage incomplete")
@@ -102,6 +124,17 @@ export const missionDocumentChanges = {
     const wake = missionWakeSchema.parse(input), calendar = exactCalendar(doc, wake)
     if (calendar.wakePreparing && !same(calendar.wakePreparing, wake)) throw new Error("Mission wake preparation conflict")
     calendar.wakePreparing = wake
+  },
+  /** Remember one trigger consumed during a passage; all of them launch once afterwards. */
+  defer(doc: MissionDocument, input: MissionWake, afterPassageID: string) {
+    const wake = missionWakeSchema.parse(input), calendar = doc.calendars.find(item => item.scheduleID === wake.scheduleID)
+    const passage = [doc.pending, ...doc.history].find(item => item?.id === afterPassageID)
+    // A slot due by the passage's reservation is already answered by that passage.
+    if (!passage || wake.dueAt <= passage.createdAt || doc.state !== "running" || doc.blocked || calendar?.role !== "principal"
+      || doc.slotEndsAt !== null && wake.dueAt > doc.slotEndsAt) return
+    const old = doc.deferred?.afterPassageID === afterPassageID ? doc.deferred : null
+    doc.deferred = { afterPassageID, dueAt: Math.max(old?.dueAt ?? 0, wake.dueAt),
+      unconditional: !!old?.unconditional || missionWakesLaunchUnconditionally(doc, [wake]) }
   },
   processWake(doc: MissionDocument, input: MissionWake) {
     const wake = missionWakeSchema.parse(input), calendar = exactCalendar(doc, wake)
@@ -125,11 +158,16 @@ export const missionDocumentChanges = {
         calendar.wakePreparing = null
         calendar.highWater = wake.run
       }
+    } else if (origin.kind === "deferred") {
+      if (!doc.deferred || doc.deferred.afterPassageID !== origin.afterPassageID || doc.deferred.dueAt !== origin.dueAt || origin.dueAt > now)
+        throw new Error("Mission deferred launch differs")
     } else {
       documentID.parse(origin.requestID)
       if (origin.kind === "immediate" && requiresMissionCalendar(doc.configuration.launch)) throw new Error("Mission needs native wake")
     }
-    const dueAt = origin.kind === "wake" ? Math.max(...origin.wakes.map(wake => wake.dueAt)) : now
+    // Any reserved passage answers the triggers that waited for the previous one.
+    doc.deferred = null
+    const dueAt = origin.kind === "wake" ? Math.max(...origin.wakes.map(wake => wake.dueAt)) : origin.kind === "deferred" ? origin.dueAt : now
     // ends.at bounds recorded slots, never the wall-clock arrival of a late wake.
     if (doc.slotEndsAt !== null && dueAt > doc.slotEndsAt) throw new Error("Mission slot past end")
     const proof = missionCheckpointsSchema.parse(checkpoints)
@@ -165,7 +203,11 @@ export const missionDocumentChanges = {
       doc.lastSuccessfulPassageID = pending.id
       doc.checkpoints = [...new Map([...doc.checkpoints, ...checkpoints].map(item => [item.key, item])).values()]
     }
-    else doc.blocked = outcome
+    else {
+      doc.blocked = outcome
+      // Human recovery resumes at a future slot, never with triggers owed before the failure.
+      doc.deferred = null
+    }
     if (pending.origin.kind === "wake") for (const wake of pending.origin.wakes) {
       const calendar = doc.calendars.find(item => item.scheduleID === wake.scheduleID)!
       calendar.highWater = Math.max(calendar.highWater, wake.run)
