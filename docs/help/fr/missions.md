@@ -12,7 +12,7 @@ Les Missions associent un plan de projet durable aux conversations natives OpenC
 
 1. Ouvrez **Missions** dans le panneau droit et choisissez **Créer une mission**. Le formulaire remplace la liste des missions et les tâches de la mission sélectionnée jusqu’à ce que vous créiez ou annuliez.
 2. Remplissez **Que doit faire la mission ?** et vérifiez **Titre**, prérempli depuis la première phrase (jusqu’à 60 caractères).
-3. Laissez **Programmation** repliée pour **Une fois, immédiatement**, ou développez-la et utilisez **Ajouter un critère** sous **Lancer quand** pour ajouter des horaires ou des événements. Vérifiez **Fuseau enregistré (IANA)** et l’aperçu avant de créer un travail programmé.
+3. Laissez **Programmation** repliée pour **Une fois, immédiatement**, ou développez-la et utilisez **Ajouter un critère** sous **Lancer quand** pour ajouter des horaires ou des événements. Vérifiez l’aperçu avant de créer un travail programmé.
 4. Développez **Options** pour **Scénario**, **Notes**, **Agents et modèles**, **Sessions des tâches**, la **Profondeur d’imbrication des sous-sessions** du projet, les consignes enregistrées et les conversations suivies facultatives. Avec **Comparer deux modèles**, les sélecteurs **Modèle A** et **Modèle B** apparaissent dans le formulaire principal.
 5. Choisissez **Créer**. Sélectionnez l’entrée en pause, examinez-la, puis utilisez ▶ **Démarrer** lorsque vous êtes prêt. Sans critère de lancement, Démarrer lance une mission ; avec des critères, il arme la programmation native.
 
@@ -153,7 +153,7 @@ Les consignes stockent les instructions et choix demandés, pas les plans de tâ
 
 Les icônes **i** près des libellés expliquent les choix : survolez-les, placez-y le focus au clavier ou touchez-les.
 
-Développez **Programmation** dans le formulaire de création ou de modification. **Lancer quand** liste les critères qui lancent la mission : choisissez **Ajouter un critère**, puis son type. La mission part dès que l’un d’eux se produit. Sans aucun critère, elle part une fois au démarrage (**Une fois, immédiatement**). Retirez un critère avec son bouton ×. Le second **i** à côté de **Lancer quand** rappelle que les programmations ne tournent que si OpenCode tourne et ouvre [Garder OpenCode démarré](opencode.md#service-supervision).
+Développez **Programmation** dans le formulaire de création ou de modification. **Lancer quand** liste les critères qui lancent la mission : choisissez **Ajouter un critère**, puis son type. La mission part dès que l’un d’eux se produit. Sans aucun critère, elle part une fois au démarrage (**Une fois, immédiatement**). Retirez un critère avec son bouton ×. L’**i** à côté de **Lancer quand** s’ouvre au clic, avec Entrée ou Espace : il explique les critères, rappelle que les programmations ne tournent que si OpenCode tourne et mène à [Garder OpenCode démarré](opencode.md#service-supervision). Les nouvelles programmations utilisent le fuseau du système ; **Fuseau enregistré (IANA)** n’apparaît que si le fuseau enregistré en diffère.
 
 | Horaire | Déclenchement |
 | --- | --- |

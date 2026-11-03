@@ -12,7 +12,7 @@ Missions pair a durable project plan with native OpenCode conversations. The coo
 
 1. Open **Missions** in the right panel and choose **Create mission**. The form replaces the mission list and the selected mission's tasks until you create or cancel.
 2. Fill **What should the mission do?** and check **Title**, prefilled from the first sentence (up to 60 characters).
-3. Leave **Scheduling** folded for **Once, immediately**, or expand it and use **Add a criterion** under **Launch when** to add schedules or events. Verify **Saved time zone (IANA)** and the preview before creating scheduled work.
+3. Leave **Scheduling** folded for **Once, immediately**, or expand it and use **Add a criterion** under **Launch when** to add schedules or events. Verify the preview before creating scheduled work.
 4. Expand **Options** for **Playbook**, **Notes**, **Agents and models**, **Task sessions**, the project's **Subsession nesting depth**, saved briefs and optional followed conversations. With **Compare two models**, the **Model A** and **Model B** selectors appear in the main form.
 5. Choose **Create**. Select the paused entry, review it, then use ▶ **Start** when ready. Without launch criteria, Start runs one mission; with criteria, it arms native scheduling.
 
@@ -153,7 +153,7 @@ Briefs store instructions and requested choices, not task plans, results, conver
 
 The **i** icons beside scheduling labels explain the choices: hover, focus with the keyboard or tap.
 
-Expand **Scheduling** in Create or Edit. **Launch when** lists the criteria that launch the mission: choose **Add a criterion**, then pick its type. The mission launches as soon as any of them occurs. Without any criterion, it launches once at Start (**Once, immediately**). Remove a criterion with its × button. The second **i** beside **Launch when** notes that schedules only run while OpenCode is running and opens [Keep OpenCode running](opencode.md#service-supervision).
+Expand **Scheduling** in Create or Edit. **Launch when** lists the criteria that launch the mission: choose **Add a criterion**, then pick its type. The mission launches as soon as any of them occurs. Without any criterion, it launches once at Start (**Once, immediately**). Remove a criterion with its × button. The **i** beside **Launch when** opens on click, Enter or Space: it explains the criteria, notes that schedules only run while OpenCode is running and links to [Keep OpenCode running](opencode.md#service-supervision). New schedules use the system time zone; **Saved time zone (IANA)** appears only when the saved zone differs from it.
 
 | Schedule | Timing |
 | --- | --- |

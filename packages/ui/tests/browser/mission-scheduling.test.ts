@@ -22,7 +22,7 @@ before(async () => {
 })
 after(async () => { try { await browser?.close() } finally { await events?.close() } })
 async function setup(query = "", prepare?: (page: Page) => void) {
-  const page = await browser.newPage({ viewport: { width: 440, height: 1000 }, locale: "en-US" })
+  const page = await browser.newPage({ viewport: { width: 440, height: 1000 }, locale: "en-US", timezoneId: "Europe/Paris" })
   prepare?.(page)
   page.setDefaultTimeout(15_000); page.setDefaultNavigationTimeout(60_000)
   const errors: string[] = []
@@ -55,10 +55,12 @@ test("an empty form is a one-time Mission; explanations stay behind help and cri
     assert.equal(await schedule.locator(".mission-scheduling-preview").count(), 0)
     assert.deepEqual(await policy(page), { when: [], onlyWithNews: false, until: null })
     assert.equal(await page.getByRole("checkbox").count(), 0, "options appear with the first criterion")
-    await page.locator(".mission-scheduling").getByRole("img", { name: /any criterion occurs/ }).focus()
-    await page.getByRole("tooltip").filter({ hasText: /any criterion occurs.*Create saves a paused Mission/ }).waitFor()
-    await page.keyboard.press("Tab")
-    await page.getByRole("tooltip").waitFor({ state: "detached" })
+    // One "i" beside Launch when holds every explanation and ends with the OpenCode setting link.
+    assert.equal(await page.locator(".mission-scheduling-when-head .settings-info-tip").count(), 1)
+    await page.getByRole("button", { name: /any criterion occurs/ }).focus(); await page.keyboard.press("Enter")
+    await page.getByRole("dialog", { name: "Launch when" }).filter({ hasText: /any criterion occurs.*Create saves a paused Mission.*only run while OpenCode is running\. Keep OpenCode running/ }).waitFor()
+    await page.keyboard.press("Escape")
+    await page.locator(".settings-info-link-content").waitFor({ state: "detached" })
     await page.getByRole("button", { name: "Add a criterion", exact: true }).click()
     assert.equal(await label(page, "Criterion 1 type").inputValue(), "daily")
     assert.equal(await label(page, "Criterion 1 type").locator("option").count(), 10)
@@ -292,11 +294,11 @@ test("the scheduling i links to the Keep OpenCode running row by its stable anch
       await page.waitForFunction(locale => document.documentElement.lang.startsWith(locale), locale)
       await rows(page, [["daily"]])
       const sentence = locale === "fr" ? "Les programmations ne tournent que si OpenCode tourne." : "Schedules only run while OpenCode is running."
-      const info = page.getByRole("button", { name: sentence, exact: true })
+      const info = page.locator(".mission-scheduling-when-head").getByRole("button", { name: new RegExp(`${sentence.replace(/\./g, "\\.")}$`) })
       await info.focus(); await page.keyboard.press("Enter")
       const popover = page.locator(".settings-info-link-content")
       await popover.waitFor()
-      assert.equal((await popover.innerText()).startsWith(sentence), true)
+      assert.equal((await popover.innerText()).includes(sentence), true)
       await page.screenshot({ path: path.join(captures, `runtime-info-${locale}.png`) })
       assert.deepEqual(supervision, [], "Missions never reads the supervision setting")
       const link = popover.getByRole("button")
@@ -307,11 +309,31 @@ test("the scheduling i links to the Keep OpenCode running row by its stable anch
       await row.waitFor()
       await page.waitForFunction(() => document.activeElement?.getAttribute("data-settings-row") === "service-supervision")
       assert.equal(await popover.count(), 0)
-      await page.waitForFunction(() => true)
+      for (let wait = 0; wait < 100 && !supervision.length; wait++) await page.waitForTimeout(50)
       assert.ok(supervision.length > 0 && supervision.every(method => method === "GET"), "only the opened setting reads its own state")
       await page.evaluate(() => (window as any).schedulingFixture.lock("passage"))
       assert.equal(await info.isDisabled(), false, "a lock never hides the information or its link")
+      await info.click()
+      assert.equal(await popover.getByRole("button").isDisabled(), false)
       assert.deepEqual(errors, [])
     } finally { await page.close() }
   }
+})
+
+test("the saved zone defaults to the system zone and is shown only once it differs, then stays while typing", async () => {
+  const { page, errors } = await setup("?zone=system")
+  try {
+    const zone = label(page, "Saved time zone (IANA)")
+    await rows(page, [["daily"]])
+    assert.equal((await policy(page)).when[0].zone, "Europe/Paris", "the system zone is the default")
+    assert.equal(await zone.count(), 0, "the system zone needs no field")
+    await patch(page, { zone: "America/New_York" })
+    await zone.waitFor()
+    const suggestions = await zone.evaluate(input => [...((input as HTMLInputElement).list?.options ?? [])].map(option => option.value))
+    assert.ok(suggestions.includes("Europe/Paris") && suggestions.includes("America/New_York"), "native time-zone suggestions")
+    await zone.fill("Europe/Paris")
+    assert.equal(await zone.evaluate(element => element === document.activeElement), true, "typing the system zone never hides the field")
+    assert.equal((await policy(page)).when[0].zone, "Europe/Paris")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
 })

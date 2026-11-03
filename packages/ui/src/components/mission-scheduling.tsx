@@ -72,6 +72,13 @@ export function MissionScheduling(props: {
   const fieldError = (...fields: string[]) => ({ "aria-invalid": fields.includes(result().error ?? ""),
     "aria-describedby": fields.includes(result().error ?? "") ? errorID : undefined })
   const rowError = (index: number) => result().index === index ? errorID : undefined
+  const whenHint = () => [t("missions.scheduling.whenHint"), t("missions.scheduling.paused"),
+    props.capability === "activatable" ? t("missions.scheduling.capability.activatable") : "", t("missions.scheduling.runtimeHint")].filter(Boolean).join(" ")
+  // The saved zone defaults to the system zone and is shown only once it differs (a
+  // schedule saved elsewhere, or an invalid zone); it then stays shown so typing never hides it.
+  const systemZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  let zoneLatched = false
+  const zoneShown = createMemo(() => zoneLatched ||= props.draft.zone !== systemZone || result().error === "zone")
   const summary = () => retained() ? t("missions.scheduling.retained.title") : !criteria().length ? t("missions.scheduling.once")
     : t(criteria().length === 1 ? "missions.scheduling.criteria.one" : "missions.scheduling.criteria.other", { count: String(criteria().length) })
   return <details ref={disclosure} class="mission-scheduling mission-profile-optional">
@@ -87,11 +94,9 @@ export function MissionScheduling(props: {
       {/* Outside the fieldset: the information and its link stay available while editing is locked. */}
       <div class="mission-scheduling-when-head">
         <span id={whenID} class="mission-scheduling-label">{t("missions.scheduling.when")}</span>
-        <SettingsInfoTip text={[t("missions.scheduling.whenHint"), t("missions.scheduling.paused"),
-          props.capability === "activatable" ? t("missions.scheduling.capability.activatable") : ""].filter(Boolean).join(" ")} />
-        {/* Only a link: Missions never reads or changes this independent setting. */}
-        <SettingsInfoLink label={t("missions.scheduling.runtimeHint")} text={t("missions.scheduling.runtimeHint")}
-          link={t("settings.supervision.title")} onLink={() => void openSettingsRow("opencode", "service-supervision")} />
+        {/* One "i" ending with a link only: Missions never reads or changes this independent setting. */}
+        <SettingsInfoLink title={t("missions.scheduling.when")} text={whenHint()} link={t("settings.supervision.title")}
+          onLink={() => void openSettingsRow("opencode", "service-supervision")} />
       </div>
       <fieldset disabled={locked()} aria-describedby={[reason() ? description : "", result().error ? errorID : ""].filter(Boolean).join(" ") || undefined} aria-invalid={!!result().error}>
       <div class="mission-scheduling-when" role="group" aria-labelledby={whenID}>
@@ -111,10 +116,10 @@ export function MissionScheduling(props: {
           <label><span>{t("missions.scheduling.until")}<SettingsInfoTip text={t("missions.scheduling.untilHint")} /></span>
             <input aria-label={t("missions.scheduling.until")} type="datetime-local" {...fieldError("until")} value={props.draft.until}
               onInput={event => patch({ until: event.currentTarget.value })} /></label>
-          <label>{t("missions.scheduling.zone")}<input maxLength={100} value={props.draft.zone} list={zoneList} {...fieldError("zone")}
-            onInput={event => patch({ zone: event.currentTarget.value })} /></label>
+          <Show when={zoneShown()}><label>{t("missions.scheduling.zone")}<input maxLength={100} value={props.draft.zone} list={zoneList} {...fieldError("zone")}
+            onInput={event => patch({ zone: event.currentTarget.value })} /></label></Show>
         </div>
-        <datalist id={zoneList}><For each={zones}>{zone => <option value={zone} />}</For></datalist>
+        <Show when={zoneShown()}><datalist id={zoneList}><For each={zones}>{zone => <option value={zone} />}</For></datalist></Show>
       </Show>
     </fieldset></Show>
     <Show when={result().error}>{error => <p id={errorID} class="mission-create-field-error" role="alert">{t(`missions.scheduling.error.${error()}`)}</p>}</Show>

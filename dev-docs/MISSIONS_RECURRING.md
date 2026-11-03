@@ -59,10 +59,14 @@ N hours with N in 1, 2, 3, 4, 6, 8 or 12, every day, selected weekdays, day of e
 advanced cron) and the five events; a new daily row takes the first free hour from
 09:00. Shortcuts write a cron; recognized crons decode back to their shortcut
 and unedited rows keep their stored spelling. **Only if there is something new** is
-enabled only with both a schedule and an event; **Until** and the saved zone follow.
-An info link beside **Launch when** says schedules run only while OpenCode runs and
-opens the OpenCode **Keep OpenCode running** row (`service-supervision` anchor); Missions
-never reads or changes that setting.
+enabled only with both a schedule and an event; **Until** follows. The saved zone
+defaults to the system zone; its field appears only when the draft's zone differs (a
+schedule saved elsewhere, an invalid zone) and then stays for that editor, so typing
+never hides it; a reopened schedule keeps its stored zone. **Launch when** has a single
+**i** (`settings-info-link.tsx`, opened by click, Enter or Space) holding its
+explanations and the fact that schedules run only while OpenCode runs, ending with a
+link to the OpenCode **Keep OpenCode running** row (`service-supervision` anchor);
+Missions never reads or changes that setting.
 The list summarizes each criterion, only-with-news and the end, and source checks
 only with events. The info tip beside the **Technical details** disclosure explains
 technical activity and costs.

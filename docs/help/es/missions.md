@@ -12,7 +12,7 @@ Las Misiones combinan un plan de proyecto duradero con conversaciones nativas de
 
 1. Abre **Misiones** en el panel derecho y elige **Crear misión**. El formulario sustituye la lista de misiones y las tareas de la misión seleccionada hasta que crees o canceles.
 2. Completa **¿Qué debe hacer la misión?** y comprueba el **Título**, rellenado a partir de la primera frase (hasta 60 caracteres).
-3. Deja **Programación** plegada para **Una vez, inmediatamente**, o despliégala y usa **Añadir un criterio** en **Lanzar cuando** para añadir horarios o eventos. Verifica **Zona horaria guardada (IANA)** y la vista previa antes de crear trabajo programado.
+3. Deja **Programación** plegada para **Una vez, inmediatamente**, o despliégala y usa **Añadir un criterio** en **Lanzar cuando** para añadir horarios o eventos. Verifica la vista previa antes de crear trabajo programado.
 4. Expande **Opciones** para acceder a **Guion**, **Notas**, **Agentes y modelos**, **Sesiones de tareas**, la **Profundidad de anidamiento de subsesiones** del proyecto, descripciones guardadas y conversaciones seguidas opcionales. Con **Comparar dos modelos**, los selectores **Modelo A** y **Modelo B** aparecen en el formulario principal.
 5. Elige **Crear**. Selecciona la entrada en pausa, revísala y usa ▶ **Iniciar** cuando estés listo. Sin criterios de lanzamiento, Iniciar ejecuta una misión; con criterios, activa la programación nativa.
 
@@ -153,7 +153,7 @@ Las descripciones guardan instrucciones y elecciones solicitadas, no planes de t
 
 Los iconos **i** junto a las etiquetas explican las opciones: pasa el puntero, enfócalos con el teclado o tócalos.
 
-Despliega **Programación** al crear o editar. **Lanzar cuando** enumera los criterios que lanzan la misión: elige **Añadir un criterio** y luego su tipo. La misión se lanza en cuanto ocurre cualquiera de ellos. Sin ningún criterio, se lanza una vez al iniciar (**Una vez, inmediatamente**). Quita un criterio con su botón ×. El segundo **i** junto a **Lanzar cuando** recuerda que las programaciones solo se ejecutan mientras OpenCode está en marcha y abre [Mantener OpenCode iniciado](opencode.md#service-supervision).
+Despliega **Programación** al crear o editar. **Lanzar cuando** enumera los criterios que lanzan la misión: elige **Añadir un criterio** y luego su tipo. La misión se lanza en cuanto ocurre cualquiera de ellos. Sin ningún criterio, se lanza una vez al iniciar (**Una vez, inmediatamente**). Quita un criterio con su botón ×. El **i** junto a **Lanzar cuando** se abre con un clic, Intro o Espacio: explica los criterios, recuerda que las programaciones solo se ejecutan mientras OpenCode está en marcha y enlaza a [Mantener OpenCode iniciado](opencode.md#service-supervision). Las nuevas programaciones usan la zona horaria del sistema; **Zona horaria guardada (IANA)** solo aparece si la zona guardada es distinta.
 
 | Horario | Momento |
 | --- | --- |

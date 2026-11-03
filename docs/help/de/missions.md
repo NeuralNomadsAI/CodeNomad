@@ -12,7 +12,7 @@ Missionen verbinden einen dauerhaften Projektplan mit nativen OpenCode-Unterhalt
 
 1. Öffnen Sie **Missionen** im rechten Panel und wählen Sie **Mission erstellen**. Das Formular ersetzt die Missionsliste und die Aufgaben der ausgewählten Mission, bis Sie erstellen oder abbrechen.
 2. Füllen Sie **Was soll die Mission tun?** aus und prüfen Sie **Titel**, der aus dem ersten Satz vorbelegt wird (bis 60 Zeichen).
-3. Lassen Sie **Zeitplanung** für **Einmal, sofort** eingeklappt oder klappen Sie sie auf und fügen Sie unter **Starten, wenn** mit **Kriterium hinzufügen** Zeitpläne oder Ereignisse hinzu. Prüfen Sie **Gespeicherte Zeitzone (IANA)** und die Vorschau, bevor Sie geplante Arbeit erstellen.
+3. Lassen Sie **Zeitplanung** für **Einmal, sofort** eingeklappt oder klappen Sie sie auf und fügen Sie unter **Starten, wenn** mit **Kriterium hinzufügen** Zeitpläne oder Ereignisse hinzu. Prüfen Sie die Vorschau, bevor Sie geplante Arbeit erstellen.
 4. Klappen Sie **Optionen** für **Playbook**, **Notizen**, **Agenten und Modelle**, **Aufgabensitzungen**, die **Verschachtelungstiefe der Untersitzungen** des Projekts, gespeicherte Aufträge und optional verfolgte Unterhaltungen auf. Mit **Zwei Modelle vergleichen** erscheinen die Auswahlfelder **Modell A** und **Modell B** im Hauptformular.
 5. Wählen Sie **Erstellen**. Wählen Sie den pausierten Eintrag, prüfen Sie ihn und verwenden Sie bei Bereitschaft ▶ **Starten**. Ohne Startkriterien startet Starten eine Mission; mit Kriterien aktiviert es die native Zeitplanung.
 
@@ -153,7 +153,7 @@ Aufträge speichern Anweisungen und angeforderte Auswahl, keine Aufgabenpläne, 
 
 Die **i**-Symbole neben den Beschriftungen erklären die Auswahl: per Mauszeiger, Tastaturfokus oder Antippen.
 
-Klappen Sie **Zeitplanung** beim Erstellen oder Bearbeiten auf. **Starten, wenn** listet die Kriterien, die die Mission starten: Wählen Sie **Kriterium hinzufügen** und dann seinen Typ. Die Mission startet, sobald eines davon eintritt. Ohne Kriterium startet sie einmal beim Starten (**Einmal, sofort**). Entfernen Sie ein Kriterium mit seiner ×-Schaltfläche. Das zweite **i** neben **Starten, wenn** weist darauf hin, dass Zeitpläne nur laufen, solange OpenCode läuft, und öffnet [OpenCode gestartet halten](opencode.md#service-supervision).
+Klappen Sie **Zeitplanung** beim Erstellen oder Bearbeiten auf. **Starten, wenn** listet die Kriterien, die die Mission starten: Wählen Sie **Kriterium hinzufügen** und dann seinen Typ. Die Mission startet, sobald eines davon eintritt. Ohne Kriterium startet sie einmal beim Starten (**Einmal, sofort**). Entfernen Sie ein Kriterium mit seiner ×-Schaltfläche. Das **i** neben **Starten, wenn** öffnet sich per Klick, Eingabe- oder Leertaste: Es erklärt die Kriterien, weist darauf hin, dass Zeitpläne nur laufen, solange OpenCode läuft, und verweist auf [OpenCode gestartet halten](opencode.md#service-supervision). Neue Zeitpläne verwenden die Zeitzone des Systems; **Gespeicherte Zeitzone (IANA)** erscheint nur, wenn die gespeicherte Zone davon abweicht.
 
 | Zeitplan | Zeitpunkt |
 | --- | --- |

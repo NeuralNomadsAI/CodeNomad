@@ -178,7 +178,7 @@ test("the scheduling i opens the real Settings on the Keep OpenCode running row 
     const f = await setup(page)
     await missionGeneralAction(page, "Create mission").click()
     await scheduling(page).locator("summary").click()
-    await scheduling(page).getByRole("button", { name: "Schedules only run while OpenCode is running.", exact: true }).click()
+    await scheduling(page).getByRole("button", { name: /Schedules only run while OpenCode is running\.$/ }).click()
     await page.locator(".settings-info-link-content").getByRole("button", { name: "Keep OpenCode running", exact: true }).click()
     const row = page.locator('.settings-screen-shell [data-settings-row="service-supervision"]')
     await row.waitFor()

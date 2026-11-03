@@ -314,7 +314,7 @@ test("daily Create stores a paused schedule and never sends Play", async () => {
     await form.locator(".mission-scheduling > summary").click()
     await form.getByRole("button", { name: "Add a criterion", exact: true }).click()
     await form.getByLabel("Criterion 1 time", { exact: true }).fill("07:30")
-    assert.equal(await form.getByLabel("Saved time zone (IANA)", { exact: true }).inputValue(), "Europe/Paris")
+    assert.equal(await form.getByLabel("Saved time zone (IANA)", { exact: true }).count(), 0, "the system zone is the hidden default")
     await submitReady(page)
     await captureMissionView(page, "create-recurring")
     await assertSingleCreate(form)

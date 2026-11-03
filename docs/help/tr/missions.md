@@ -12,7 +12,7 @@ Görevler, kalıcı bir proje planını OpenCode'un kendi konuşmalarıyla birle
 
 1. Sağ panelde **Görevler** bölümünü açıp **Görev oluştur** eylemini seçin. Form, oluşturana veya iptal edene kadar görev listesinin ve seçili görevin görev düğümlerinin yerini alır.
 2. **Görev ne yapmalı?** alanını doldurun ve ilk cümleden otomatik doldurulan **Başlık** alanını kontrol edin (en fazla 60 karakter).
-3. **Bir kez, hemen** için **Zamanlama** bölümünü kapalı bırakın veya zamanlama ya da olay eklemek için genişletip **Şu durumda başlat** altındaki **Ölçüt ekle** eylemini kullanın. Zamanlanmış iş oluşturmadan önce **Kayıtlı saat dilimi (IANA)** değerini ve önizlemeyi doğrulayın.
+3. **Bir kez, hemen** için **Zamanlama** bölümünü kapalı bırakın veya zamanlama ya da olay eklemek için genişletip **Şu durumda başlat** altındaki **Ölçüt ekle** eylemini kullanın. Zamanlanmış iş oluşturmadan önce önizlemeyi doğrulayın.
 4. **Rehber**, **Notlar**, **Ajanlar ve modeller**, **Görev oturumları**, projenin **Alt oturum iç içe geçme derinliği** ayarı, kayıtlı özetler ve isteğe bağlı takip edilen konuşmalar için **Seçenekler** bölümünü genişletin. **İki modeli karşılaştır** seçildiğinde **Model A** ve **Model B** seçicileri ana formda görünür.
 5. **Oluştur** eylemini seçin. Duraklatılmış kaydı seçip inceleyin, ardından hazır olduğunuzda ▶ **Başlat** eylemini kullanın. Başlatma ölçütü yoksa Başlat tek bir görev çalıştırır; ölçüt varsa yerel zamanlamayı etkinleştirir.
 
@@ -153,7 +153,7 @@ Reddedilen veya doğrulanmayan bir seçim asla yeniden gönderilmez: kayıtlı d
 
 Etiketlerin yanındaki **i** simgeleri seçenekleri açıklar: üzerine gelin, klavyeyle odaklayın veya dokunun.
 
-Oluştururken veya düzenlerken **Zamanlama** bölümünü genişletin. **Şu durumda başlat**, görevi başlatan ölçütleri listeler: **Ölçüt ekle** seçip türünü belirleyin. Görev, bunlardan biri gerçekleştiği anda başlar. Hiç ölçüt yoksa Başlat'ta bir kez çalışır (**Bir kez, hemen**). Bir ölçütü × düğmesiyle kaldırın. **Şu durumda başlat** yanındaki ikinci **i**, zamanlamaların yalnızca OpenCode çalışırken çalıştığını belirtir ve [OpenCode'u çalışır tut](opencode.md#service-supervision) ayarını açar.
+Oluştururken veya düzenlerken **Zamanlama** bölümünü genişletin. **Şu durumda başlat**, görevi başlatan ölçütleri listeler: **Ölçüt ekle** seçip türünü belirleyin. Görev, bunlardan biri gerçekleştiği anda başlar. Hiç ölçüt yoksa Başlat'ta bir kez çalışır (**Bir kez, hemen**). Bir ölçütü × düğmesiyle kaldırın. **Şu durumda başlat** yanındaki **i** tıklama, Enter veya Boşluk ile açılır: ölçütleri açıklar, zamanlamaların yalnızca OpenCode çalışırken çalıştığını belirtir ve [OpenCode'u çalışır tut](opencode.md#service-supervision) ayarına götürür. Yeni zamanlamalar sistemin saat dilimini kullanır; **Kayıtlı saat dilimi (IANA)** yalnızca kayıtlı saat dilimi farklıysa görünür.
 
 | Zamanlama | Zaman |
 | --- | --- |

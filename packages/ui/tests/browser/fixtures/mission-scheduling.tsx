@@ -15,7 +15,8 @@ import "../../../src/index.css"
 const query = new URLSearchParams(location.search)
 await applyUiSettings({ locale: (query.get("locale") || "en") as any })
 function Fixture() {
-  const [draft, change] = createSignal(newMissionSchedulingDraft("UTC"))
+  // `?zone=system` starts on the browser's own zone, like a new editor draft.
+  const [draft, change] = createSignal(query.get("zone") === "system" ? newMissionSchedulingDraft() : newMissionSchedulingDraft("UTC"))
   const [policy, setPolicy] = createSignal<MissionLaunchPolicy>()
   const [lock, setLock] = createSignal<MissionSchedulingLock | null>(null)
   const [capability, setCapability] = createSignal<"available" | "activatable" | "missing" | "loading">("available")
