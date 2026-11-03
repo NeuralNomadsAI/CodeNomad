@@ -57,6 +57,10 @@ describe("integration recognition", () => {
     const other = recognizeIntegrations(catalog, pluginSnapshot({ sources: [source("@neuralnomads/opencode-mail", { pluginId: "neuralnomads.other" })] }))
     assert.equal(other[2]!.ambiguous, true)
     assert.deepEqual([other[2]!.sources, other[2]!.runtime, other[2]!.scopes], [[], undefined, []], "a source loaded under a foreign ID stays unattributed")
+    const ruled = recognizeIntegrations(catalog, pluginSnapshot({
+      sources: [source("@neuralnomads/opencode-mail", { pluginId: "neuralnomads.other" })],
+      rules: [{ selector: "neuralnomads.mail", enabled: false, scope: "project", entryIndex: 1, order: 1 }] }))[2]!
+    assert.deepEqual([ruled.ambiguous, ruled.sources, ruled.scopes], [true, [], ["project"]], "its own retained rule still gives its scope")
   })
 
   it("recognises a disabled plugin by its normalized rule only, never by an enabling or raw `-id` selector", () => {
