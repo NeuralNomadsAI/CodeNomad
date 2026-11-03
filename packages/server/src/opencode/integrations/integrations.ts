@@ -78,11 +78,13 @@ export class IntegrationsReader {
           configuredSources: recognition.sources.flatMap(source =>
             (source.scope === "global" || source.scope === "project")
               && snapshot.targets.some(target => target.scope === source.scope && target.path === source.path)
-              ? [{ scope: source.scope, entryIndex: source.entryIndex }] : []),
+              ? [{ scope: source.scope, entryIndex: source.entryIndex,
+                expectedRevision: snapshot.targets.find(target => target.scope === source.scope && target.path === source.path)?.expectedRevision }] : []),
           configuredRules: recognition.ambiguous ? [] : snapshot.configured.rules.flatMap(rule =>
             rule.selector === entry.plugin && (rule.scope === "global" || rule.scope === "project")
               && snapshot.targets.some(target => target.scope === rule.scope && target.path === rule.path)
-              ? [{ scope: rule.scope, entryIndex: rule.entryIndex }] : []),
+              ? [{ scope: rule.scope, entryIndex: rule.entryIndex,
+                expectedRevision: snapshot.targets.find(target => target.scope === rule.scope && target.path === rule.path)?.expectedRevision }] : []),
           ...(source?.type === "package" && source.version ? { version: source.version } : {}),
           ...(source?.type === "package" && source.outdated ? { outdated: true as const } : {}),
           state: read.state,

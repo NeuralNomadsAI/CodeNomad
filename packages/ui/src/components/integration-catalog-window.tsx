@@ -1,12 +1,12 @@
 import { Dialog } from "@kobalte/core/dialog"
-import { For, Show, createMemo, createSignal, type Accessor } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js"
 import { BookOpen, RefreshCw } from "lucide-solid"
 import type { PluginControlLocation, PluginControlScope } from "../../../server/src/api-types"
 import type { IntegrationView } from "../../../server/src/integration-types"
 import { openExternalUrl } from "../lib/external-url"
 import { useI18n } from "../lib/i18n"
 import { showToastNotification } from "../lib/notifications"
-import { integrations } from "../stores/integrations"
+import { integrationEpoch, integrations } from "../stores/integrations"
 import { pluginSourcesStore } from "../stores/plugin-sources"
 import { InfoPopoverButton } from "./info-popover-button"
 import { confirmIntegrationAction } from "./integration-confirmation"
@@ -27,6 +27,7 @@ export function IntegrationCatalogWindow(props: {
   location: PluginControlLocation
   projectAvailable: boolean
   active?: boolean
+  sessionId?: string
   open: boolean
   onClose: () => void
   /** The "+" trigger, focused again on close when it is still shown. */
@@ -51,15 +52,24 @@ export function IntegrationCatalogWindow(props: {
   }
 
   const active = () => props.active !== false
+  const identity = createMemo(() => JSON.stringify([props.instanceId, props.location.directory, props.sessionId, active(), props.open,
+    integrationEpoch(props.instanceId, props.sessionId)]))
+  let confirmation: AbortController | undefined
+  createEffect(() => { identity(); confirmation?.abort() })
+  onCleanup(() => confirmation?.abort())
   const install = async (entry: IntegrationView, scope: PluginControlScope) => {
-    if (!active()) return
+    if (!active() || confirmation) return
     const instanceId = props.instanceId, location = { directory: props.location.directory }
+    const owner = identity()
+    confirmation = new AbortController()
+    const signal = confirmation.signal
     const accepted = await confirmIntegrationAction(t("integrations.install.confirm", { name: entry.displayName, scope: scopeLabel(scope) }), {
       title: t("integrations.install.title"), confirmLabel: t("integrations.catalog.install"), variant: "warning",
       ...(scope === "project" ? { detail: t("instanceServiceStatus.plugins.sources.projectWarning") } : {}),
       returnFocus: focusTrigger,
-    })
-    if (!accepted || !active() || props.instanceId !== instanceId || props.location.directory !== location.directory) return
+    }, signal)
+    confirmation = undefined
+    if (!accepted || signal.aborted || identity() !== owner) return
     props.onClose()
     try {
       // Sent once: a lost answer is reconciled by the next read, never replayed.

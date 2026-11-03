@@ -9,14 +9,15 @@ import { IntegrationsReader } from "../../opencode/integrations/integrations"
 import { PluginControlsError } from "../../opencode/plugin-controls"
 import { registerIntegrationRoutes } from "./integrations"
 
-const loadedSnapshot = (): PluginControlsSnapshot => pluginSnapshot({
+const loadedSnapshot = (): PluginControlsSnapshot => ({ ...pluginSnapshot({
   sources: [
     { target: "@neuralnomads/opencode-fixture@0.1.0", scope: "global", path: "/config/opencode.jsonc", entryIndex: 0, hasOptions: false, pluginId: "neuralnomads.fixture" },
     { target: "@neuralnomads/opencode-slow", scope: "project", entryIndex: 0, hasOptions: false, pluginId: "neuralnomads.slow" },
   ],
   runtime: ["fixture", "slow"].map(id => ({ key: id, id: `neuralnomads.${id}`, features: { rpc: true as const },
     source: { type: "package" as const, target: `@neuralnomads/opencode-${id}`, version: "0.1.0" }, state: { status: "active" as const } })),
-})
+}), targets: [{ scope: "global", path: "/config/opencode.jsonc", exists: true, expectedRevision: "a".repeat(64) },
+  { scope: "project", path: "/work/.opencode/opencode.jsonc", exists: true, expectedRevision: "b".repeat(64) }] })
 
 function harness(options: {
   snapshot?: () => PluginControlsSnapshot
@@ -62,7 +63,7 @@ describe("integrations route", () => {
     assert.deepEqual(body.integrations.map(item => [item.id, item.state, item.scopes]), [["fixture", "ok", ["global"]], ["slow", "unknown", ["project"]], ["other", "absent", []]])
     assert.deepEqual(body.integrations[0]!.status, { version: "0.1.0", host: { state: "absent", action: "install" } })
     assert.equal(body.integrations[0]!.version, "0.1.0")
-    assert.deepEqual(body.integrations[0]!.configuredSources, [{ scope: "global", entryIndex: 0 }])
+    assert.deepEqual(body.integrations[0]!.configuredSources, [{ scope: "global", entryIndex: 0, expectedRevision: "a".repeat(64) }])
     assert.deepEqual(body.integrations[1]!.configuredSources, [], "only the scope's writable target is correlated")
     assert.deepEqual(body.integrations.map(item => item.plugin), [
       { declared: true, runtime: "loaded" }, { declared: true, runtime: "loaded" }, { declared: false },
@@ -72,6 +73,8 @@ describe("integrations route", () => {
     assert.equal(body.integrations[0]!.docs, "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/fixture")
     for (const field of ["rpc", "sources", "package"]) assert.equal(field in body.integrations[0]!, false, `${field} stays on the server`)
     assert.equal(JSON.stringify(body).includes("neuralnomads."), false, "plugin and RPC IDs stay on the server")
+    assert.equal(JSON.stringify(body.integrations).includes("/config/"), false, "configuration paths stay on the server")
+    assert.equal(JSON.stringify(body.integrations).includes("@neuralnomads/"), false, "source specs stay on the server")
     assert.deepEqual(calls.map(call => [call.rpcID, call.method, call.input, call.location]),
       [["neuralnomads.fixture", "status", {}, { directory: "/work" }], ["neuralnomads.slow", "status", {}, { directory: "/work" }]])
     await app.close()
@@ -125,13 +128,32 @@ describe("integrations route", () => {
     ]
     const { app } = harness({ snapshot: () => snapshot })
     const items = (await app.inject({ method: "GET", url: "/api/workspaces/w1/integrations?directory=%2Fwork" })).json().integrations as IntegrationsResponse["integrations"]
-    assert.deepEqual(items.map(item => item.configuredRules), [[{ scope: "global", entryIndex: 3 }], [], [{ scope: "global", entryIndex: 4 }]])
+    assert.deepEqual(items.map(item => item.configuredRules), [[{ scope: "global", entryIndex: 3, expectedRevision: "a".repeat(64) }], [],
+      [{ scope: "global", entryIndex: 4, expectedRevision: "a".repeat(64) }]])
     await app.close()
     snapshot.runtime.push(snapshot.runtime[0]!)
     const ambiguous = harness({ snapshot: () => snapshot })
     const first = (await ambiguous.app.inject({ method: "GET", url: "/api/workspaces/w1/integrations?directory=%2Fwork" })).json().integrations[0]
     assert.deepEqual([first.ambiguous, first.configuredRules], [true, []])
     await ambiguous.app.close()
+  })
+
+  it("projects the exact target revision for both correlations, leaving unverifiable documents without authority", async () => {
+    const snapshot = loadedSnapshot()
+    snapshot.configured.rules = [
+      { selector: "neuralnomads.fixture", enabled: false, scope: "global", path: "/config/opencode.jsonc", entryIndex: 3, order: 0 },
+      { selector: "neuralnomads.fixture", enabled: false, scope: "project", path: "/ancestor/opencode.jsonc", entryIndex: 3, order: 1 },
+    ]
+    for (const revision of ["c".repeat(64), undefined]) {
+      snapshot.targets[0]!.expectedRevision = revision
+      const { app } = harness({ snapshot: () => snapshot })
+      const item = (await app.inject({ method: "GET", url: "/api/workspaces/w1/integrations?directory=%2Fwork" })).json().integrations[0]
+      const authority = revision ? { expectedRevision: revision } : {}
+      assert.deepEqual(item.configuredSources, [{ scope: "global", entryIndex: 0, ...authority }])
+      assert.deepEqual(item.configuredRules, [{ scope: "global", entryIndex: 3, ...authority }])
+      assert.equal(JSON.stringify(item).includes("/opencode.jsonc"), false)
+      await app.close()
+    }
   })
 
   it("never projects an aggregate binding state or count", async () => {

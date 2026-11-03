@@ -29,8 +29,11 @@ interface IntegrationStatusModuleOptions {
 /** Status announcements closer than this are read as one. */
 export const INTEGRATION_ANNOUNCE_DELAY_MS = 500
 
-const pluginsTrigger = (from?: Element | null) =>
-  (from?.closest(".status-tab-container") ?? document).querySelector<HTMLElement>('[data-status-section-trigger="plugins"]')
+const pluginsTrigger = (from?: Element | null) => {
+  const root = from?.closest(".status-tab-container") ?? document
+  return root.querySelector<HTMLElement>('[data-status-section-trigger="plugins"]')
+    ?? root.querySelector<HTMLElement>("[data-status-section-trigger]")
+}
 
 /**
  * One Status section per recognised integration of the instance's Location, in catalogue order after Plugins, and
@@ -84,21 +87,23 @@ export function createIntegrationStatusModule(options: IntegrationStatusModuleOp
   // Stable section objects: a refresh never remounts a shown section.
   const cache = new Map<string, RightPanelSectionModule>()
   const section = (id: string, index: number): RightPanelSectionModule => {
-    const order = INTEGRATION_SECTION_ORDER + index / 1000
     const known = cache.get(id)
-    if (known && known.order === order) return known
+    if (known) return known
     const value: RightPanelSectionModule = {
       id: integrationSectionId(id),
       labelKey: "",
       get label() { return entry(id)?.displayName ?? id },
       get regionLabel() { return entry(id)?.displayName ?? id },
       tooltipKey: "",
-      order,
+      get order() { return INTEGRATION_SECTION_ORDER + ids().indexOf(id) / 1000 },
       after: "plugins",
       renderStatus: () => <Show when={facts(id)}>{value => <IntegrationSectionStatus t={options.t} state={value().state} />}</Show>,
       renderHeaderActions: () => <IntegrationDocsButton t={options.t} docs={entry(id)?.docs} />,
       renderInfo: () => <Show when={entry(id)}>{value => <IntegrationInfoButton t={options.t} entry={value()} state={facts(id)!.state} />}</Show>,
-      autoExpandKey: () => { const value = facts(id); return value ? integrationAutoExpandKey(value.state) : undefined },
+      autoExpandKey: () => {
+        const value = facts(id), key = value && integrationAutoExpandKey(value.state)
+        return key === "attached" ? `${key}:${session()?.id}` : key
+      },
       render: () => <IntegrationSection t={options.t} entry={() => entry(id)} context={context} />,
     }
     cache.set(id, value)
@@ -142,14 +147,15 @@ export function createIntegrationStatusModule(options: IntegrationStatusModuleOp
     })
   }, { defer: true }))
 
+  const renderStatusExtras = () => <>
+    {attachment.picker()}
+    <div class="sr-only" role="status" aria-live="polite" data-integration-announcements>{announcement()}</div>
+  </>
   return createMemo<RightPanelModule>(() => ({
     id: "integration-status",
     displayNameKey: "",
     origin: "first-party",
     statusSections: sections(),
-    renderStatusExtras: () => <>
-      {attachment.picker()}
-      <div class="sr-only" role="status" aria-live="polite" data-integration-announcements>{announcement()}</div>
-    </>,
+    renderStatusExtras,
   }))
 }

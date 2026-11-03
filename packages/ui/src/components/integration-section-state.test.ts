@@ -93,6 +93,9 @@ describe("integration section state (spec change §5.2)", () => {
     assert.ok(states.every(state => state.expectsAction && integrationAutoExpandKey(state) === state.label))
     const attached = derive(input(native({ version: "0.1.0", host: { state: "ok" }, connection: { offers: 1 } }), {}, { binding: { state: "attached", label: "a" } }))
     assert.equal(integrationAutoExpandKey(attached), "attached")
+    const closedAttached = derive(input(native({ version: "0.1.0", host: { state: "unknown" } }), {}, { binding: { state: "attached", label: "a" } }))
+    assert.equal(closedAttached.label, "hostClosed")
+    assert.equal(integrationAutoExpandKey(closedAttached), "attached", "the authoritative displayed binding expands even with a different header state")
     for (const quiet of [derive(input(native())), derive(input({ id: "blender", family: "native", state: "inactive" }, { disabled: true }))]) {
       assert.equal(quiet.expectsAction, false)
       assert.equal(integrationAutoExpandKey(quiet), undefined)

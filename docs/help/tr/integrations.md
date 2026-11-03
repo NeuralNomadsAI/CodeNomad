@@ -40,7 +40,7 @@ Yüzey, gizliyken son anlık görüntüsünü korur ve gösterildiğinde, yerel 
 
 ## Eklenti ekleyin veya kaldırın {#plugin-sources}
 
-1. **Durum → Eklentiler** içinde **Eklenti ekle** öğesini seçin (**Plugin denetimlerini yenile** yanındaki artı simgesi).
+1. **Durum → Eklentiler** içinde **+** menüsünü açıp **Eklenti ekle…** öğesini seçin.
 2. npm kayıt defterinden bir paket (`name`, `name@1.2.3`, `@scope/name@^1`) veya bir Git deposu (`github:owner/repo`, `git+https://…`) girin.
 3. Eklenti yalnızca bu projede çalışmayacaksa **Genel** seçili kalsın, ardından **Ekle** öğesini seçin.
 4. Yeni satır, OpenCode bildirene kadar **Kuruluyor** gösterir. Ardından anahtarlarıyla sıradan bir eklenti satırına veya başarısız bir satıra dönüşür.
@@ -72,23 +72,33 @@ Beceri kullanılabilirliği küresel bir CodeNomad beceri kataloğundan değil, 
 Aktif Location için komutlar OpenCode'den keşfedilir. Kendi yerel tanımları yürütme davranışını seçebilir; menü bir paket yükleyicisi veya sınırsız bir yapılandırma düzenleyicisi değildir. CodeNomad, yerel özel komut gönderiminden önce profilin oturum ortamını uygular; başarısız bir ortam güncellemesi gönderimi engeller. `/btw`, sıradan bir özel komut değil, CodeNomad'in ayrı geçici soru akışıdır.
 
 Komut tanımları ve yerel konfigürasyon devralımı için [OpenCode komutları dokümantasyonu](https://opencode.ai/v2/docs/commands/)'yi kullanın. Yapılandırma değişikliklerinden sonra öncelikle ilgili yüzeyi yenileyin/yeniden açın; açık yapılandırma yeniden yüklemesini yalnızca çalışma zamanının hâlâ buna ihtiyacı varsa kullanın. Kabul edilmesi muhtemel bir komutu asla yalnızca ekranını yenilemek için tekrar oynatmayın.
+## Durum içindeki entegrasyon bölümleri {#integration-sections}
+
+**Durum → Eklentiler** içindeki **+**, **Entegrasyon ekle…** veya **Eklenti ekle…** seçeneklerini açar. Entegrasyon seçicisi incelenmiş katalogdaki kurulmamış girdileri listeler. Kapsamı ve **Kur** seçeneğini seçin: CodeNomad seçilen katalog kimliğini kurar. Yerel entegrasyonlar **Yalnızca genel** kapsamını kullanır. **Katalog kullanılamıyor**, **Yenile** sunar; **{date} tarihli katalog**, güncel olmayan son geçerli kataloğu belirtir.
+
+Bildirimi veya yüklenmiş/başarısız eklentisi olan her tanınan entegrasyonun **Durum** içinde kendi bölümü vardır; devre dışı veya kuruluyor olması bunu değiştirmez. Belirsiz bir kaynak Eklentiler'de **Uyumsuz durum** gösterir. Her entegrasyon güncelleme, kaldırma ve yenileme işlemleriyle Eklentiler satırını korur. Sürümü ve eklenti denetimlerini gövdede görmek için bölümü açın; ad ve durum başlıkta **Belgeler** ve **i** yanında görünür kalır. **i** açılır penceresi ayrıntıları istek üzerine gösterir: Enter/Boşluk ile açın, Escape ile kapatın.
+
+Durum özelleştirmesinde tüm bölümleri gizleyebilir ve sürükleyerek ya da Yukarı/Aşağı tuşlarıyla sıralayabilirsiniz. Görünürlük ve sıra yeniden yüklemelerde ve entegrasyon geçici olarak yokken korunur. Odaklanmış bölüm kaybolursa odak Eklentiler'e döner.
+
+Katalogdan kurulum, uygulama bölümünü kurma/güncelleme, bağlama ve kaldırma onay gerektirir. İlk odak **İptal** üzerindedir; onay işlemi 600 ms sonra kullanılabilir. Etkinleştirme ve eklenti güncellemeleri doğrudan çalışır.
+
 ## Açık bir uygulamayı bağla {#application-attachment}
 
-Belgeyi uygulamanın entegrasyonundan sunun, ardından konuşma başlığında (veya ek işlemler menüsünde) ya da Eklentiler satırı menüsünde **Açık bir uygulamayı bağla…** seçeneğini kullanın. İşlem yalnızca teklif bildiren etkin bir yerel entegrasyonda görünür. Uygulama ve belgeyi seçin, hedef konuşmayı ve değişiklik uyarısını denetleyin, ardından **Bağlantıyı onayla** seçeneğini kullanın. İlk odak İptal'dedir. Uygulama, uzak bağlantılarda da OpenCode makinesinde çalışır. Desteklenmeyen WSL dahil desteklenmeyen sunucular işlem yerine yardım gösterir.
+Belgeyi uygulamanın entegrasyonundan sunun, **Durum → entegrasyon → Konuşma** bölümünü açıp **Bağla…** seçeneğini kullanın. Bu bölüm görüntülenen konuşmanın bağlantısını denetler. Uygulama ve belgeyi seçin, hedef konuşmayı ve değişiklik uyarısını denetleyip **Bağla** ile onaylayın. Uygulama uzak bağlantılarda da OpenCode makinesinde çalışır. WSL dahil desteklenmeyen sunucular **i** üzerinden yardım sunar.
 
-Konuşma başlığı, hem geniş hem dar düzende uygulama adı ve belge etiketiyle kalıcı bir bağlantı göstergesi sunar. Görüntülenen konuşmanın güncel bağlantısını okur. Doğrulanmamış durumda **Bağlantı bilinmiyor** görünür; bağlantı olmadığı doğrulandığında gösterge gizlenir. **Bu konuşmanın bağlantısını kes** yalnızca güncel ve yetkili bir okuma tam olarak bu oturumun bağlı olduğunu doğruladığında kullanılabilir. Diğer istemciler bağlantıları değiştirebildiğinden yerel değişiklikler ve yeniden bağlantılar bu durumu yeniler.
+**Konuşma** satırı görüntülenen konuşmanın bağlantısını okur. **Bağlantı bilinmiyor**, **Yenile** sunar. Güncel ve yetkili okuma bağlantıyı doğruladığında **Bağlantıyı kes**, **Bağla…** yerine geçer. Tek tıklama başka onay olmadan yalnızca bu konuşmayı ayırır; uygulama açık, uygulama bölümü kurulu kalır ve diğer konuşmalar bağlantılarını korur. Yerel değişiklikler ve yeniden bağlantılar durumu yeniler.
 
-Kabul edilmiş işlemin sonucu veya hatası, hedef konuşma görüntülenirken yerel değişikliklerde ve yeniden bağlantılarda korunur. Bağlama ve bağlantı kesme tamamlanma mesajları, tamamlanan isteği açıklayan yerel işlem kayıtlarıdır. Bağlantı göstergesi ve bağlantı kesmenin kullanılabilirliği, oturumun güncel ve yetkili durumuna göre belirlenir. Gezinme kayıtları kapatır.
+Kabul edilmiş işlem hedef konuşma görüntülenirken sonucunu veya hatasını korur; gezinme işlem kaydını kapatır. Güncel bağlantı yetkili okumayı izler. Yanıt kaybı, zaman aşımı veya bağlantı kesilmesi sonrası **Durum belirsiz**, gerçek durumu okumak için **Yenile** sunar. Görünümü yenilemek için isteği asla tekrar göndermeyin.
 
 Kayıtlı Q8 meta verileri yalnızca yeniden bağlama önerisi sunar: **Yeniden bağla**, seçicide ancak aynı entegrasyon ve etikete sahip teklif varsa görünür ve açık onay gerektirir. Güncel bağlantının yetkili bilgisi, entegrasyonun oturum bazındaki okumasından gelir.
 
-Eklentiler, katalog kullanılamadığında bir bildirim veya eskiyse alınma zamanı ile son geçerli kataloğu gösterir. Yeniden denemek için yenileyin.
+Entegrasyon bölümünden veya Eklentiler satırından kaldırma aynı bildirimi ve kapsam onayını kullanır. Konuşma sayımı veya otomatik bağlantı kesme yapılmadan kaldırılır.
 
 Kaldırma uyarısı eklentiyi ve tam kapsamı adlandırır. **İptal** odaklanır; **Genel/Proje kapsamından kaldır** 600 ms sonra kullanılabilir ve açık bir işlem gerektirir. Kullanan konuşmalarda kullanılabilirliği ve bağlantıları kesebilir; Genel kapsam diğer projeleri de etkileyebilir. Gönderimden önce iptal, süre dolması veya gezinme hiçbir şeyi değiştirmez. Yalnızca onaylanan bildirim kaldırılır; kurallar, önbellek, uygulama dosyaları ve kayıtlı bağlantı ipuçları korunur. Yapılandırma değişirse yeniden seçim ve onay gerekir. Başarı bildirimin kaldırıldığını belirtir; çalışma durumu OpenCode yeniden yüklemesini izler. Yanıt kaybolursa yeniden denemeden önce yenileyip yapılandırmayı kontrol edin. Yeniden kurulum kullanılabilirliği geri getirebilir; yeniden yükleme veya bağlama gerekebilir ve kesilen işlemler devam etmeyebilir.
 
 ## Uygulama entegrasyonunu kurun veya güncelleyin {#application-installation}
 
-**Durum → Eklentiler** içinde entegrasyonun kendi satırının menüsünü açıp **Uygulama entegrasyonunu kur…** veya **Uygulama entegrasyonunu güncelle…** seçeneğini kullanın. İşlem, etkin bir yerel entegrasyonun güncel durumu kurulum veya güncelleme istediğinde görünür. Konuşma veya sunulan belge olmadan da kullanılabilir.
+**Durum → entegrasyon → Uygulama** içinde güncel durum sunduğunda **Uygulamaya kur…** veya **Uygulamayı güncelle…** seçeneğini kullanın. Konuşma veya sunulan belge olmadan kullanılabilir. Uygulama kapalıysa uygulama bölümünü denetlemek için açın; **i** makine ve önkoşul ayrıntılarını gösterir.
 
 Onay, uygulamayı ve yükleyiciyi sağlayan **entegrasyon paketinin sürümünü** belirtir. İkisini ve makine uyarısını denetleyin: kurulum OpenCode'un çalıştığı makinede yapılır; bu uzak bir makine olabilir. İlk odak **İptal** üzerindedir. Devam etmek için açıkça onaylayın. Onaydan önce proje, Location veya konuşma değiştirmek, yeniden bağlanmak ya da ilgili yerel değişiklikleri almak bekleyen onayı iptal eder; güncel ayrıntıları incelemek için işlemi yeniden açın.
 

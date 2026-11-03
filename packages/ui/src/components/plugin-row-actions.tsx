@@ -80,7 +80,7 @@ export function PluginRowActions(props: {
     : item.kind === "remove" ? t("instanceServiceStatus.plugins.sources.remove", { scope: scopeLabel(item.source.scope) })
       : t("instanceServiceStatus.plugins.refresh")
   const hint = (item: Item) => item.kind === "package" ? t("settings.pluginPackages.shared")
-    : item.kind === "remove" ? (props.hidePaths ? item.source.target : `${item.source.target}\n${item.source.path ?? ""}`) : undefined
+    : item.kind === "remove" ? (props.hidePaths ? undefined : `${item.source.target}\n${item.source.path ?? ""}`) : undefined
   const triggerLabel = () => {
     const only = items().length === 1 ? items()[0] : undefined
     return only?.kind === "package" ? packageLabel(only) : t("instanceServiceStatus.plugins.sources.actions", { name: props.name })
@@ -105,7 +105,7 @@ export function PluginRowActions(props: {
     const action = t("instanceServiceStatus.plugins.sources.remove", { scope: scopeLabel(source.scope) })
     const accepted = await confirmIntegrationAction(t("instanceServiceStatus.plugins.sources.removeWarning"), {
       title: `${action} — ⁨${props.name}⁩`,
-      detail: `${source.target}\n${source.scope === "global" ? t("instanceServiceStatus.plugins.sources.removeGlobalWarning") + "\n" : ""}${t("instanceServiceStatus.plugins.sources.removeRecovery")}`,
+      detail: `${props.hidePaths ? "" : source.target + "\n"}${source.scope === "global" ? t("instanceServiceStatus.plugins.sources.removeGlobalWarning") + "\n" : ""}${t("instanceServiceStatus.plugins.sources.removeRecovery")}`,
       confirmLabel: action, variant: "warning",
       expiresAfterMs: PLUGIN_SOURCE_CONFIRM_EXPIRY_MS, returnFocus: () => { if (presentationOwner() === feedbackOwner) restoreFocus() },
     }, signal)
@@ -117,7 +117,7 @@ export function PluginRowActions(props: {
       const stale = error instanceof HttpResponseError && error.status === 409
       showToastNotification({ category: "opencode", variant: "error", message: t(stale
         ? "instanceServiceStatus.plugins.sources.errors.removeStale"
-        : "instanceServiceStatus.plugins.sources.errors.remove", { name: source.target, scope: scopeLabel(source.scope) }) })
+         : "instanceServiceStatus.plugins.sources.errors.remove", { name: props.hidePaths ? props.name : source.target, scope: scopeLabel(source.scope) }) })
     })
   }
   const run = (item: Item) => item.kind === "package" ? runPackage(item) : item.kind === "remove" ? (afterClose = () => runRemove(item.source)) : props.refresh?.()
@@ -139,7 +139,7 @@ export function PluginRowActions(props: {
           {icon(items()[0]!, busy())}
         </Show>
       </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
+      <DropdownMenu.Portal mount={trigger?.closest<HTMLElement>(".session-floating-drawer") ?? undefined}>
         <DropdownMenu.Content class="action-overflow-content" onCloseAutoFocus={() => {
           const action = afterClose; afterClose = undefined
           if (action) queueMicrotask(() => void action())

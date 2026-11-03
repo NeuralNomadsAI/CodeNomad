@@ -1,6 +1,6 @@
 // C4: real Fastify routes, native sessions/RPC/events, the production relay and read store,
 // plus the Blender pilot. Run with: node --import tsx scripts/test-integrations-attachments-native.mjs
-// <absolute OpenCode 2.2.5 executable> [pilot checkout] [Blender executable].
+// <absolute OpenCode 2.2.x executable> [pilot checkout] [Blender >=5.2 executable].
 // All children have allowlisted/private environments. AC-B4 remains a separate manual check.
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
@@ -110,7 +110,7 @@ try {
     })
     const connection = { ...fixtureConnection, client }
     const info = await client.server.info()
-    assert.equal(info.version, "2.2.5", "C4 qualifies the requested native binary")
+    assert.match(info.version, /^2\.2\.\d+$/, "Qualify the requested OpenCode 2.2.x runtime")
     console.log(`Native runtime: ${info.version}`)
     await writeFixtureServiceRegistration(env, { ...info, url: connection.endpoint.url, password: connection.endpoint.auth.password })
     const location = (await client.location.get({ location: { directory: root } })).directory
@@ -282,7 +282,7 @@ try {
       const offerID = listed.offers[0].offerID
       assert.deepEqual(await request("attach", { body: { offerID, sessionID: session.id } }), { outcome: "attached" })
       assert.deepEqual(await bindingRead(session.id), { state: "attached", label: "Fixture scene" })
-      assert.equal((await request("")).integrations.find(item => item.id === "fixture").status.connection.attachedSessions, 1)
+      assert(!Object.hasOwn((await request("")).integrations.find(item => item.id === "fixture").status.connection, "attachedSessions"))
       const attached = await client.session.get({ sessionID: session.id })
       check(attached.metadata, "Q8 metadata")
       assert.deepEqual({ ...attached.metadata, [Q8]: undefined }, { ...metadata, [Q8]: undefined })
@@ -292,9 +292,23 @@ try {
       assert(Number.isSafeInteger(attached.metadata[Q8].attachedAt))
       const updatedMetadata = { ...attached.metadata, unrelated: "updated by another native writer", latest: { keep: 2 } }
       await client.session.update({ sessionID: session.id, metadata: updatedMetadata })
+      const secondSession = await client.session.create({ location: { directory: location }, title: "ST2 second binding" })
+      assert.deepEqual(await request("attach", { body: { offerID, sessionID: secondSession.id } }), { outcome: "attached" })
+      const secondMetadata = (await client.session.get({ sessionID: secondSession.id })).metadata
+      check(secondMetadata, "second session Q8")
+      const configurationFile = path.join(env.OPENCODE_CONFIG_DIR, "opencode.jsonc")
+      const configurationBeforeDetach = await readFile(configurationFile)
+      const detachCalls = calls.filter(call => call.method === "detachHost").length
       assert.deepEqual(await request("detach", { body: { sessionID: session.id } }), { outcome: "detached" })
+      assert.equal(calls.filter(call => call.method === "detachHost").length, detachCalls + 1, "One route action dispatches exactly one detachHost")
+      assert.deepEqual(await bindingRead(secondSession.id), { state: "attached", label: "Fixture scene" })
+      assert.deepEqual((await client.session.get({ sessionID: secondSession.id })).metadata, secondMetadata)
+      assert.deepEqual(await readFile(configurationFile), configurationBeforeDetach)
       assert.deepEqual(await bindingRead(session.id), { state: "none" })
-      assert.equal((await request("")).integrations.find(item => item.id === "fixture").status.connection.attachedSessions, 0)
+      assert(!Object.hasOwn((await request("")).integrations.find(item => item.id === "fixture").status.connection, "attachedSessions"), "Global binding counts stay backend-only")
+      assert.deepEqual(await request("detach", { body: { sessionID: secondSession.id } }), { outcome: "detached" })
+      assert(!Object.hasOwn((await request("")).integrations.find(item => item.id === "fixture").status.connection, "attachedSessions"))
+      console.log("PASS ST2 native local detach: exactly 1 detachHost; second binding/Q8, configuration and live host preserved")
       const detached = await client.session.get({ sessionID: session.id })
       const { [Q8]: _hint, ...expectedMetadata } = updatedMetadata
       assert.deepEqual(detached.metadata, expectedMetadata)
@@ -344,6 +358,9 @@ try {
       assert.equal(versionProbe.code, 0)
       const resourceVersion = /Blender (\d+\.\d+)/.exec(versionProbe.output)?.[1]
       assert(resourceVersion, "Blender identifies its shipped system resources")
+      const [major, minor] = resourceVersion.split(".").map(Number)
+      assert(major > 5 || major === 5 && minor >= 2, "ST2 requires Blender >=5.2")
+      console.log(`Blender runtime: ${/Blender [^\r\n]+/.exec(versionProbe.output)?.[0]}`)
       for (const part of ["scripts", "datafiles", "python", "extensions"]) {
         const target = path.join(root, "blender-system", part)
         await cp(path.join(path.dirname(blender), resourceVersion, part), target, { recursive: true })

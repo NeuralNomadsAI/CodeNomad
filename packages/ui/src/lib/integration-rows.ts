@@ -20,8 +20,13 @@ export interface IntegrationPlugin {
 export function integrationPlugin(snapshot: PluginControlsSnapshot | undefined,
   entry: Pick<IntegrationView, "configuredSources" | "configuredRules">): IntegrationPlugin {
   if (!snapshot) return { sources: [] }
-  const correlated = (item: { scope: string; entryIndex: number }, list: readonly { scope: PluginControlScope; entryIndex: number }[]) =>
-    list.some(association => association.scope === item.scope && association.entryIndex === item.entryIndex)
+  // Independent reads can reuse an index for another plugin. Only the same verified writable document joins them.
+  const correlated = (item: { scope: string; path?: string; entryIndex: number },
+    list: readonly { scope: PluginControlScope; entryIndex: number; expectedRevision?: string }[]) =>
+    list.some(association => association.scope === item.scope && association.entryIndex === item.entryIndex
+      && typeof association.expectedRevision === "string" && association.expectedRevision.length > 0
+      && snapshot.targets.some(target => target.scope === item.scope && target.path === item.path
+        && target.expectedRevision === association.expectedRevision))
   const sources = snapshot.configured.sources.filter(source => correlated(source, entry.configuredSources))
   const ids = new Set([
     ...sources.flatMap(source => source.pluginId ? [source.pluginId] : []),

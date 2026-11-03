@@ -178,7 +178,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
             <Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content>
           </Tooltip.Portal>
         </Tooltip>{nonConformingLabel(declarationsFor(matchesControl))}<PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={pluginId}
-          source={control()?.runtime?.source} removable={removable()} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} /></div>
+          source={control()?.runtime?.source} removable={removable()} refresh={refresh} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} /></div>
         {renderSwitch("global")}
         {renderSwitch("project")}
       </div>
@@ -207,7 +207,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
         </Tooltip>
         {nonConformingLabel(declarationsFor(source => source.target === target))}
         <PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} source={entry()?.source}
-          removable={removable()} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} />
+          removable={removable()} refresh={refresh} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} />
       </div>
     </div>
   }
@@ -266,7 +266,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
             <RefreshCw class="h-3.5 w-3.5" classList={{ "animate-spin": state().loading || state().refreshing }} aria-hidden="true" />
           </button>
           <Show when={snapshot()}>
-            <PluginAddMenu instanceId={props.instanceId} location={requestLocation()} projectAvailable={projectAvailable()} active={props.active} />
+            <PluginAddMenu instanceId={props.instanceId} location={requestLocation()} sessionId={props.session?.id} projectAvailable={projectAvailable()} active={props.active} />
           </Show>
         </div>
         <span id={globalLabelId} class="plugin-control-scope-label">{scopeLabel("global")}</span>

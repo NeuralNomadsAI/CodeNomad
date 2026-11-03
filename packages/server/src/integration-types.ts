@@ -43,10 +43,10 @@ export interface IntegrationView {
   ambiguous?: true
   /** Writable scopes that declare it or a rule for its plugin. */
   scopes: PluginControlScope[]
-  /** Safe correlation to writable plugin-source rows; paths, targets and plugin IDs stay server-side. */
-  configuredSources: Array<{ scope: PluginControlScope; entryIndex: number }>
-  /** Safe correlation to writable activation rules of its plugin ID (none when ambiguous). */
-  configuredRules: Array<{ scope: PluginControlScope; entryIndex: number }>
+  /** Writable source rows, bound to the opaque document revision; missing authority leaves actions unavailable. */
+  configuredSources: Array<{ scope: PluginControlScope; entryIndex: number; expectedRevision?: string }>
+  /** Writable activation rules, with the same document fence as sources (none when ambiguous). */
+  configuredRules: Array<{ scope: PluginControlScope; entryIndex: number; expectedRevision?: string }>
   /** Installed package version, when the runtime loaded it. */
   version?: string
   outdated?: true

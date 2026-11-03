@@ -40,7 +40,7 @@ The surface retains its last snapshot while hidden and revalidates when shown, o
 
 ## Add or remove a plugin {#plugin-sources}
 
-1. In **Status → Plugins**, select **Add plugin** (the plus icon beside **Refresh plugin controls**).
+1. In **Status → Plugins**, open **+** and select **Add a plugin…**.
 2. Enter a package from the npm registry (`name`, `name@1.2.3`, `@scope/name@^1`) or a Git repository (`github:owner/repo`, `git+https://…`).
 3. Keep **Global** unless the plugin should run only for this project, then select **Add**.
 4. The new row shows **Installing** until OpenCode reports it. It then becomes an ordinary plugin row with its switches, or a failed row.
@@ -72,23 +72,33 @@ Skill availability comes from the conversation's Location, not a global CodeNoma
 Commands are discovered from OpenCode for the active Location. Their own native definition can choose execution behavior; the menu is not a package installer or an unrestricted configuration editor. CodeNomad applies the profile's session environment before native custom-command submission; a failed environment update blocks the send. `/btw` is CodeNomad's separate ephemeral question flow, not an ordinary custom command.
 
 For command definitions and native configuration inheritance, use [OpenCode commands documentation](https://opencode.ai/v2/docs/commands/). After configuration changes, refresh/reopen the relevant surface first; use explicit configuration reload only if the runtime still needs it. Never replay a possibly admitted command solely to refresh its display.
+## Integration sections in Status {#integration-sections}
+
+In **Status → Plugins**, **+** opens **Add an integration…** or **Add a plugin…**. The integration picker lists uninstalled entries from the reviewed catalogue. Choose the scope and **Install**: CodeNomad installs the selected catalogue ID. Native integrations use **Global only**. **Catalogue unavailable** offers **Refresh**; **Catalogue of {date}** identifies the last valid catalogue when stale.
+
+Each recognised integration with a declaration or a loaded/failed plugin has its own section in **Status**, including disabled or installing integrations. An ambiguous source shows **Non-conforming** in Plugins. Every integration keeps its Plugins row with update, remove and refresh actions. Expand its integration section to see the version and plugin controls in the body; its name and status stay visible in the header, beside **Documentation** and **i**. The **i** popover provides details on demand: open it with Enter/Space and close it with Escape.
+
+Use Status customisation to hide sections or reorder them by dragging or with Up/Down keys, including the other Status sections. Visibility and order persist across reloads and temporary absence of an integration. If a section disappears while focused, focus returns to Plugins.
+
+Catalogue installation, application-part installation/update, attachment and removal require confirmation. **Cancel** is focused first; the confirming action becomes available after 600 ms. Activation and plugin updates run directly.
+
 ## Attach an open application {#application-attachment}
 
-Offer a document from the application's integration, then select **Attach an open application…** in the conversation header (or its overflow menu) or the integration's Plugins row menu. The action appears only for an active native integration reporting offers. Select an application/document, check the target conversation and modification warning, then select **Confirm attachment**. Cancel is focused initially. The application runs on the machine where OpenCode runs, including remote connections. An unsupported host, including unsupported WSL, shows help instead of an attachment action.
+Offer a document from the application's integration, then open **Status → the integration → Conversation** and select **Attach…**. This section is the attachment control for the displayed conversation. Select an application/document, check the target conversation and modification warning, then confirm **Attach**. The application runs on the machine where OpenCode runs, including remote connections. An unsupported host, including unsupported WSL, shows help through **i**.
 
-The conversation header keeps a visible binding indicator with the application name and document label, in both wide and narrow layouts. It reads the current binding for the displayed conversation. An unconfirmed state shows **Binding unknown**; a confirmed absence of binding leaves the indicator absent. **Detach this conversation** is available only when a fresh authoritative read confirms an attachment for this exact session. Other clients may change bindings, so native changes and reconnects refresh this state.
+The section's **Conversation** row reads the current binding for the displayed conversation. **Binding unknown** offers **Refresh**. When a fresh authoritative read confirms the attachment, **Detach** replaces **Attach…**. One click detaches only this conversation, without another confirmation; the application stays open, its part stays installed and other conversations keep their bindings. Native changes and reconnects refresh this state.
 
-An admitted action keeps its result or error through native changes and reconnects while the target conversation stays displayed. Attach and detach completion messages are local action receipts describing the completed request. The binding indicator and detach availability follow the fresh authoritative session state. Navigation dismisses the receipts.
+An admitted action keeps its result or error while the target conversation stays displayed; navigation dismisses its receipt. Live attachment follows the authoritative read. **Uncertain state** after a lost response, timeout or disconnection offers **Refresh** to read the actual state. Never replay the request to refresh the display.
 
 Saved Q8 metadata supplies only a reattach suggestion: **Reattach** appears in the picker only for an offer with the same integration and label, and requires explicit confirmation. Current binding authority comes from the integration's per-session read.
 
-Plugins shows **Integration catalog unavailable** when no catalog can be read, or the last valid catalog with its fetch time when stale. Refresh Plugins to retry.
+Removal from the integration section or its Plugins row uses the same scoped declaration and confirmation. Removal proceeds without a conversation census or automatic detach.
 
 Removing any plugin opens a warning naming the plugin and exact scope. **Cancel** is initially focused; **Remove from Global/Project** becomes available after 600 ms and needs an explicit click or keyboard action. Removal can interrupt availability and connections in conversations using the plugin; Global can also affect other projects. Cancellation, expiry or navigation before submission leaves everything unchanged. CodeNomad removes only the confirmed declaration, preserving activation rules, package cache, application files and saved attachment hints. Changed configuration requires a fresh selection and confirmation. Success confirms the declaration was removed; runtime state follows OpenCode's reload. If the response is lost, refresh Plugins to check the actual configuration before a new attempt. Reinstalling may restore availability, with a reload or reattachment sometimes needed; interrupted operations may not resume.
 
 ## Install or update the application integration {#application-installation}
 
-In **Status → Plugins**, open the menu of the integration's own row and choose **Install application integration…** or **Update application integration…**. The action appears when a fresh status from an active native integration requests installation or update. It is available without a conversation or an offered document.
+In **Status → the integration → Application**, choose **Install in application…** or **Update application…** when its fresh status offers the action. It is available without a conversation or an offered document. If the application is closed, open it to check its application part; **i** provides the machine and prerequisite details.
 
 The confirmation names the application and the **integration package version** supplying the installer. Check both and the machine warning: installation runs on the machine where OpenCode runs, which may be remote. **Cancel** has initial focus. Confirm explicitly to proceed. Changing project, Location or conversation, reconnecting, or receiving relevant native changes before confirmation cancels the pending approval; open the action again to review fresh details.
 

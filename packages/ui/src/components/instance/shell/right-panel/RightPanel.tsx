@@ -224,7 +224,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     isActive: () => props.isActive() && rightPanelTab() === "status",
   })
   const rightPanelModules = createMemo(() => [coreModule, missionsModule, integrationModule(), ...externalModules()])
-  const extraStatusContent = createMemo(() => rightPanelModules().flatMap(module => module.renderStatusExtras ? [module.renderStatusExtras] : []))
+  const extraStatusContent = createMemo(() => rightPanelModules().flatMap(module => module.renderStatusExtras ? [module.renderStatusExtras] : []), [],
+    { equals: (left, right) => left.length === right.length && left.every((item, index) => item === right[index]) })
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
   const visibleRightPanelTabs = createMemo(() =>
     applyRightPanelItemCustomization(
@@ -235,7 +236,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     ),
   )
   const orderedRightPanelTabs = createMemo(() => applyRightPanelItemCustomization(allRightPanelTabs(), rightPanelCustomization().tabOrder, []))
-  const extraStatusSections = createMemo(() => collectRightPanelItems<RightPanelSectionModule>(rightPanelModules(), "statusSections"))
+  // Same sections, same array: Status keeps its rows mounted across unrelated module updates.
+  const extraStatusSections = createMemo(() => collectRightPanelItems<RightPanelSectionModule>(rightPanelModules(), "statusSections"), [],
+    { equals: (left, right) => left.length === right.length && left.every((item, index) => item === right[index]) })
   const allStatusSections = createMemo<RightPanelItem[]>(() => [...CORE_STATUS_SECTION_ITEMS, ...extraStatusSections()])
   const orderedStatusSections = createMemo(() => applyRightPanelItemCustomization(allStatusSections(), rightPanelCustomization().statusSectionOrder, []))
   const visibleStatusSections = createMemo(() =>

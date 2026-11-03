@@ -99,6 +99,7 @@ const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => 
 const autoExpandedKeys = new WeakMap<Accessor<string[]>, Map<string, string>>()
 
 const StatusTab: Component<StatusTabProps> = (props) => {
+  let escaping = false
   const isSectionExpanded = (id: string) => props.expandedItems().includes(id)
   const shellLocation = createMemo(() => props.activeSession()?.location ?? { directory: props.instance.folder })
   const shellState = createMemo(() => shellStore.getState(props.instanceId, shellLocation().directory, shellLocation().workspaceID))
@@ -236,8 +237,8 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     </Show>
   )
 
-  const allStatusSections = createMemo<RightPanelSectionModule[]>(() => {
-    const sections = createCoreStatusSectionManifest({
+  // Built once: a changed extra-section list must never recreate (remount) the core sections.
+  const coreSections = untrack(() => createCoreStatusSectionManifest({
       renderTokens: () => (
         <Show when={props.activeSession()?.id}>
           <ContextUsagePanel instanceId={props.instanceId} sessionId={props.activeSession()!.id} />
@@ -261,10 +262,8 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           class="space-y-2"
         />
       ),
-    }).statusSections ?? []
-
-    return [...sections, ...(props.extraSections ?? [])]
-  })
+    }).statusSections ?? [])
+  const allStatusSections = createMemo<RightPanelSectionModule[]>(() => [...coreSections, ...(props.extraSections ?? [])])
   const statusSections = createMemo<RightPanelSectionModule[]>(() =>
     applyRightPanelItemCustomization(
       allStatusSections(),
@@ -315,7 +314,13 @@ const StatusTab: Component<StatusTabProps> = (props) => {
         collapsible
         multiple
         value={props.expandedItems()}
-        onChange={props.onExpandedItemsChange}
+        // Kobalte's list keyboard model clears every expanded item on Escape. Escape closes the popover,
+        // tooltip or window it was meant for; it never collapses Status.
+        onKeyDown={(event: KeyboardEvent) => {
+          escaping = event.key === "Escape"
+          if (escaping) queueMicrotask(() => { escaping = false })
+        }}
+        onChange={(values: string[]) => { if (!escaping) props.onExpandedItemsChange(values) }}
       >
         <DragDropProvider collisionDetector={closestCenter} onDragEnd={handleSectionDragEnd}>
           <DragDropSensors>

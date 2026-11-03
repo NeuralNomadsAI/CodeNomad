@@ -16,6 +16,7 @@ export function PluginAddMenu(props: {
   location: PluginControlLocation
   projectAvailable: boolean
   active?: boolean
+  sessionId?: string
 }) {
   const { t } = useI18n()
   const [plugin, setPlugin] = createSignal(false)
@@ -29,7 +30,7 @@ export function PluginAddMenu(props: {
         title={t("instanceServiceStatus.plugins.sources.add")} aria-label={t("instanceServiceStatus.plugins.sources.add")}>
         <Plus class="h-3.5 w-3.5" aria-hidden="true" />
       </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
+      <DropdownMenu.Portal mount={trigger?.closest<HTMLElement>(".session-floating-drawer") ?? undefined}>
         <DropdownMenu.Content class="action-overflow-content" onCloseAutoFocus={event => {
           const action = afterClose; afterClose = undefined
           if (!action) return
@@ -52,6 +53,6 @@ export function PluginAddMenu(props: {
     <PluginSourceAdd instanceId={props.instanceId} location={props.location} projectAvailable={props.projectAvailable} active={props.active}
       open={plugin()} onOpenChange={setPlugin} anchor={() => trigger} />
     <IntegrationCatalogWindow instanceId={props.instanceId} location={props.location} projectAvailable={props.projectAvailable}
-      active={props.active} open={catalog()} onClose={() => setCatalog(false)} trigger={() => trigger} />
+      active={props.active} sessionId={props.sessionId} open={catalog()} onClose={() => setCatalog(false)} trigger={() => trigger} />
   </>
 }

@@ -45,7 +45,7 @@ test("V2 plugin controls load on demand and expose explicit Global and Project s
   assert.deepEqual(await page.locator(".plugin-control-scope-label").allTextContents(), ["Global", "Project"])
   assert.equal(await page.locator(".plugin-controls-description, .plugin-controls-footer, .plugin-control-sub, .plugin-controls-notice").count(), 0)
   assert.deepEqual(await page.locator(".plugin-controls-header button").evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-label"))),
-    ["Refresh plugin controls", "Add plugin"], "only the compact Refresh and Add icons appear in the header")
+    ["Refresh plugin controls", "Add"], "only the compact Refresh and Add icons appear in the header")
   assert.ok(await page.locator(".plugin-control-identity button").count() > 0, "package rows expose a compact native update/check action")
   const refresh = page.getByRole("button", { name: "Refresh plugin controls", exact: true })
   assert.equal(await refresh.isEnabled(), true)

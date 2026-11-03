@@ -33,7 +33,8 @@ export function createIntegrationAttachment(props: {
   const response = () => { const value = state(); return value.status === "ready" ? value.response : undefined }
   const entries = () => { const value = state(); return value.status === "ready" && !value.stale ? value.response.integrations : [] }
   const identity = createMemo(() => JSON.stringify([props.instanceId, props.directory, props.session?.id, props.active !== false]))
-  const bindingEntries = () => response()?.integrations.filter(entry => entry.family === "native" && entry.configured) ?? []
+  const bindingEntries = () => response()?.integrations.filter(entry => entry.family === "native" && !entry.ambiguous
+    && (entry.plugin.declared || entry.plugin.runtime !== undefined)) ?? []
   const target = (integrationId: string): IntegrationBindingTarget => ({ instanceId: props.instanceId, directory: props.directory, sessionID: props.session?.id ?? "", integrationId })
   const bindingDemand = createMemo(() => JSON.stringify([identity(), bindingEntries().map(entry => entry.id)]))
   createEffect(on(bindingDemand, () => {
@@ -48,6 +49,8 @@ export function createIntegrationAttachment(props: {
   const [capture, setCapture] = createSignal<Capture>()
   const [offers, setOffers] = createSignal<Offer[]>([])
   const [selected, setSelected] = createSignal<Offer>()
+  // Only an explicit fresh hosts read can match Q8; retain its bounded labels until navigation/invalidation.
+  const [knownOffers, setKnownOffers] = createSignal<{ identity: string; epoch: string; integration: string; labels: string[] }>()
   const [pending, setPending] = createSignal(false)
   const [ready, setReady] = createSignal(false)
   const [error, setError] = createSignal<string>()
@@ -68,7 +71,7 @@ export function createIntegrationAttachment(props: {
   }
   const receipt = (integrationId: string, owner: string) => setReceipts(current => new Map(current).set(integrationId, owner))
   const clearReceipt = (integrationId: string) => setReceipts(current => { const next = new Map(current); next.delete(integrationId); return next })
-  createEffect(on(identity, () => { viewGeneration++; close(); setReceipts(new Map()) }))
+  createEffect(on(identity, () => { viewGeneration++; close(); setReceipts(new Map()); setKnownOffers(undefined) }))
   createEffect(on(epoch, () => {
     if (!operation()) { close(); return }
     controller?.abort()
@@ -79,21 +82,23 @@ export function createIntegrationAttachment(props: {
   const current = (value: Capture) => owns(value) && value.epoch === epoch() && !controller?.signal.aborted
   const fail = (failure: unknown) => t(failure instanceof HttpResponseError && failure.status === 403 ? "integrations.error.placement"
     : failure instanceof HttpResponseError && failure.code === "unsupported" ? "integrations.state.unsupported" : "integrations.error.retry")
+  // The shown snapshot decides whether Attach is offered, refreshing or not: the picker reads offers live.
+  const shown = () => response()?.integrations ?? []
   const canOpen = (integrationId: string) => props.active !== false && Boolean(props.session)
-    && entries().some(entry => entry.id === integrationId && attachable(entry))
+    && shown().some(entry => entry.id === integrationId && attachable(entry))
   const open = async (integrationId: string) => {
     const session = props.session
-    const integration = entries().find(entry => entry.id === integrationId)
+    const integration = shown().find(entry => entry.id === integrationId)
     if (!session || !integration || !canOpen(integrationId) || capture()) return
     const release = claimIntegrationConfirmation()
     if (!release) return
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
     const generation = ++viewGeneration
-    const signature = JSON.stringify(entries())
+    const signature = JSON.stringify(shown())
     const value: Capture = { instanceId: props.instanceId, directory: props.directory, session: { ...session }, identity: identity(), epoch: epoch(),
       openedAt: Date.now(), release,
       returnFocus: () => {
-        if (!disposed && !capture() && generation === viewGeneration && value.identity === identity() && value.epoch === epoch() && signature === JSON.stringify(entries())
+        if (!disposed && !capture() && generation === viewGeneration && value.identity === identity() && value.epoch === epoch() && signature === JSON.stringify(shown())
           && opener?.isConnected && opener.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }) && !opener.closest('[inert], [aria-hidden="true"]') && !opener.matches(":disabled")) opener.focus({ preventScroll: true })
       } }
     controller = new AbortController()
@@ -103,6 +108,8 @@ export function createIntegrationAttachment(props: {
     try {
       const result = await integrationAttachmentRequest<IntegrationHostsResponse>(value.instanceId, value.directory, integration.id, "hosts", signal)
       if (!current(value)) return
+      setKnownOffers({ identity: value.identity, epoch: value.epoch, integration: integrationId,
+        labels: result.offers.filter(host => host.protocol === "ok").map(host => host.label) })
       setOffers(result.offers.map(host => ({ integration, host })))
       const only = result.offers.length === 1 && result.offers[0]!.protocol === "ok" ? result.offers[0] : undefined
       if (only) setSelected({ integration, host: only })
@@ -113,9 +120,14 @@ export function createIntegrationAttachment(props: {
     const value = props.session?.metadata?.[INTEGRATION_ATTACHMENT_METADATA_KEY]
     if (!value || typeof value !== "object") return undefined
     const hint = value as Record<string, unknown>
-    return hint.integration === integrationId && typeof hint.label === "string" && typeof hint.attachedAt === "number" ? hint.label : undefined
+    return hint.integration === integrationId && typeof hint.label === "string" && [...hint.label].length > 0 && [...hint.label].length <= 120
+      && !/[/\\~\p{Cc}]|^[A-Za-z]:/u.test(hint.label) && typeof hint.attachedAt === "number" && Number.isFinite(hint.attachedAt) ? hint.label : undefined
   }
   const reattach = (offer: Offer) => hintLabel(offer.integration.id) === offer.host.label
+  const matchedHintLabel = (integrationId: string) => {
+    const known = knownOffers(), hint = hintLabel(integrationId)
+    return known?.identity === identity() && known.epoch === epoch() && known.integration === integrationId && hint && known.labels.includes(hint) ? hint : undefined
+  }
   const attach = async () => {
     const value = capture(), offer = selected()
     if (!value || !offer || !owns(value) || pending() || !ready() || Date.now() - value.openedAt < INTEGRATION_CONFIRM_DELAY_MS) return
@@ -208,7 +220,7 @@ export function createIntegrationAttachment(props: {
     </Dialog.Portal>
   </Dialog>}</Show>
   return {
-    entries, open, picker, canOpen, detach, refresh, binding, hintLabel,
+    entries, open, picker, canOpen, detach, refresh, binding, hintLabel, matchedHintLabel,
     /** A mutation for the displayed conversation is in flight. */
     busy: (integrationId: string) => integrationBindings.busy(target(integrationId)) || detaching().has(integrationId),
     /** A submitted action's effect is unknown until the next explicit read. */

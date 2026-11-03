@@ -41,7 +41,7 @@ export function integrationSectionFacts(context: IntegrationSectionContext, entr
       present: Boolean(context.session()),
       binding: context.attachment.binding(entry.id),
       uncertain: context.attachment.uncertain(entry.id),
-      hint: context.attachment.hintLabel(entry.id),
+      hint: context.attachment.matchedHintLabel(entry.id),
     },
   })
   return { snapshot, plugin, state }

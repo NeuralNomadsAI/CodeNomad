@@ -33,7 +33,7 @@ export interface IntegrationSectionInput {
     binding: IntegrationBindingResponse
     /** A submitted action whose effect was not read again yet. */
     uncertain: boolean
-    /** The displayed conversation's saved reattach hint label for this integration. */
+    /** A validated saved hint matched to a fresh offer of this integration. */
     hint?: string
   }
 }
@@ -71,7 +71,7 @@ export function deriveIntegrationSectionState(input: IntegrationSectionInput): I
 
 /** Expands a section once per key: an expected action, or the displayed conversation attached. */
 export function integrationAutoExpandKey(state: IntegrationSectionState): string | undefined {
-  return state.expectsAction || state.label === "attached" ? state.label : undefined
+  return state.expectsAction ? state.label : state.conversation?.state === "attached" ? "attached" : undefined
 }
 
 function sectionLabel(input: IntegrationSectionInput, conversation: IntegrationConversationRow | undefined): IntegrationSectionLabel {
