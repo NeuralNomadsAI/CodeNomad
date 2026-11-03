@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "providerUsage.estimated": "Estimate: recorded steps since 00:00 UTC against an assumed 200 requests/day. Steps approximate requests; other traffic and changing IP-based limits can make this differ from actual quota usage.",
+  "providerUsage.estimatedReset": "Estimated reset {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "Automatically expand subsessions",
   "settings.behavior.autoExpandActiveSubsessions.info": "When a visible collapsed branch under the selected conversation changes to working, compacting or awaiting input, expand the path to its active subsessions. Visible subsessions follow the same rule at every depth. Disable to keep activity from opening branches. Open branches are saved for restoration.",
   "settings.usage.cached": "Previous saved statistics · awaiting refresh",

@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "providerUsage.estimated": "הערכה: צעדים שנרשמו מאז 00:00 UTC בהנחה של 200 בקשות ביום. הצעדים הם קירוב לבקשות; תעבורה אחרת ומגבלות IP משתנות עשויות ליצור הבדל מהשימוש בפועל במכסה.",
+  "providerUsage.estimatedReset": "איפוס משוער {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "הרחבה אוטומטית של תת־סשנים",
   "settings.behavior.autoExpandActiveSubsessions.info": "כשענף גלוי ומכווץ בשיחה הנבחרת עובר לעבודה, דחיסה או המתנה לקלט, הנתיב לתת־הסשנים הפעילים שלו נפתח. אותו כלל חל על תת־סשנים גלויים בכל עומק. כבו כדי שפעילות לא תפתח ענפים. ענפים פתוחים נשמרים לשחזור.",
   "settings.usage.cached": "הנתונים הסטטיסטיים האחרונים שנשמרו · ממתין לרענון",

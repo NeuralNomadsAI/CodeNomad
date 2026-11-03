@@ -219,6 +219,8 @@ export interface ProviderUsageResponse {
   windows: Record<string, ProviderUsageWindow>
   fetchedAt: number
   unavailableReason?: "openai-token-sharing-unsupported"
+  /** Computed locally from recorded activity because the provider publishes no counter. */
+  estimated?: true
 }
 
 export type WorktreeKind = "root" | "worktree"

@@ -52,6 +52,35 @@ const fulfill = (route: Route, usedPercent: number) => route.fulfill({ contentTy
   requestedProviderId: "openai", providerId: "codex", providerName: "Codex", supported: true, configured: true, ok: true, fetchedAt: Date.now(),
   windows: { "5h": { usedPercent, remainingPercent: 100 - usedPercent, windowSeconds: 18000, resetAt: null } },
 }) })
+
+test("free-model usage shows an estimate and estimated reset, then clears them on a provider switch", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1)
+    await fulfill(requests[0], 10)
+    await page.getByRole("progressbar").waitFor()
+    await page.evaluate(() => (window as any).usageFixture.select({ providerId: "opencode", modelId: "big-pickle" }))
+    await waitRequests(requests, 2)
+    assert.equal(new URL(requests[1].request().url()).pathname, "/api/usage/opencode")
+    await requests[1].fulfill({ json: {
+      requestedProviderId: "opencode", providerId: "opencode-free", providerName: "OpenCode Zen",
+      supported: true, configured: true, ok: true, estimated: true, fetchedAt: Date.now(),
+      windows: { daily: { usedPercent: 21, remainingPercent: 79, windowSeconds: 86400, resetAt: Date.UTC(2026, 10, 4), valueLabel: "42 / 200" } },
+    } })
+    await page.getByText("42 / 200", { exact: true }).waitFor()
+    await page.getByText(/Estimate: recorded steps/).waitFor()
+    await page.getByText(/Estimated reset/).waitFor()
+    assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "21")
+    await page.evaluate(() => (window as any).usageFixture.select({ providerId: "openai", modelId: "gpt-5" }))
+    await waitRequests(requests, 3)
+    assert.equal(await page.getByText(/Estimate:|Estimated reset/).count(), 0)
+    await fulfill(requests[2], 30)
+    await page.getByRole("progressbar").waitFor()
+    assert.equal(await page.getByText(/Estimate:|Estimated reset/).count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
 async function waitRequests(requests: Route[], count: number) {
   const deadline = Date.now() + 5000
   while (requests.length < count && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10))
