@@ -12,7 +12,7 @@ Las Misiones combinan un plan de proyecto duradero con conversaciones nativas de
 
 1. Abre **Misiones** en el panel derecho y elige **Crear misión**. El formulario sustituye la lista de misiones y las tareas de la misión seleccionada hasta que crees o canceles.
 2. Completa **¿Qué debe hacer la misión?** y comprueba el **Título**, rellenado a partir de la primera frase (hasta 60 caracteres).
-3. Deja **Programación** plegada para **Una vez, inmediatamente**, o despliégala y usa **Añadir un criterio** en **Lanzar cuando** para añadir horarios o eventos. En cada tarjeta de evento, elige **Cuando** o **Solo si**.
+3. Deja **Programación** plegada para **Una vez, inmediatamente**, o despliégala y usa **Añadir un criterio** en **Lanzar cuando** para añadir horarios o eventos. Su orden fija cómo se combinan.
 4. Expande **Opciones** para acceder a **Guion**, **Notas**, **Agentes y modelos**, **Sesiones de tareas**, la **Profundidad de anidamiento de subsesiones** del proyecto, descripciones guardadas y conversaciones seguidas opcionales. Con **Comparar dos modelos**, los selectores **Modelo A** y **Modelo B** aparecen en el formulario principal.
 5. Elige **Crear**. Selecciona la entrada en pausa, revísala y usa ▶ **Iniciar** cuando estés listo. Sin criterios de lanzamiento, Iniciar ejecuta una misión; con criterios, activa la programación nativa.
 
@@ -153,7 +153,7 @@ Las descripciones guardan instrucciones y elecciones solicitadas, no planes de t
 
 Los iconos **i** junto a las etiquetas explican las opciones: pasa el puntero, enfócalos con el teclado o tócalos.
 
-Despliega **Programación** al crear o editar. **Lanzar cuando** enumera los criterios que lanzan la misión: elige **Añadir un criterio** y luego su tipo. La misión se lanza en cuanto ocurre cualquier criterio **Cuando**. Sin ningún criterio, se lanza una vez al iniciar (**Una vez, inmediatamente**). Quita un criterio con su botón ×. El **i** junto a **Lanzar cuando** se abre con un clic, Intro o Espacio: explica los criterios, recuerda que las programaciones solo se ejecutan mientras OpenCode está en marcha y enlaza al [ajuste de inicio de OpenCode](opencode.md#login-start). Las nuevas programaciones usan la zona horaria del sistema; **Zona horaria guardada (IANA)** solo aparece si la zona guardada es distinta.
+Despliega **Programación** al crear o editar. **Lanzar cuando** enumera los criterios que lanzan la misión: elige **Añadir un criterio** y luego su tipo. Sin ningún criterio, se lanza una vez al iniciar (**Una vez, inmediatamente**). Quita un criterio con su botón ×. El **i** junto a **Lanzar cuando** se abre con un clic, Intro o Espacio: explica **si** y **si no**, recuerda que la misión solo se ejecuta mientras OpenCode está en marcha y enlaza al [ajuste de inicio de OpenCode](opencode.md#login-start). Las nuevas programaciones usan la zona horaria del sistema; **Zona horaria guardada (IANA)** solo aparece si la zona guardada es distinta.
 
 | Horario | Momento |
 | --- | --- |
@@ -163,11 +163,11 @@ Despliega **Programación** al crear o editar. **Lanzar cuando** enumera los cri
 | Un día de cada mes | El día 1–31 a la hora elegida; se omiten los meses sin ese día. |
 | Avanzado (cron) | Una expresión cron nativa, como máximo una vez por minuto. |
 
-Añade varios horarios para varias horas, como 09:15 y 17:45. Cada uno es un cron; las expresiones reconocidas se reabren como su atajo. Los [eventos](#scheduling-conditions) son los demás criterios: los eventos **Cuando** se comprueban cada 15 minutos, sin frecuencia que ajustar; los eventos **Solo si** se leen en cada lanzamiento.
+Añade varios horarios para varias horas, como 09:15 y 17:45. Cada uno es un cron; las expresiones reconocidas se reabren como su atajo. Los [eventos](#scheduling-conditions) son los demás criterios: los eventos que lanzan la misión se comprueban cada 15 minutos, sin frecuencia que ajustar; las condiciones se leen en los momentos que las necesitan.
 
-Los horarios son siempre criterios **Cuando**. Cada tarjeta de evento tiene un selector con dos iconos: **Cuando** (rayo) hace que el evento lance la misión; **Solo si** (embudo) lo convierte en condición. En cada lanzamiento, por un horario o un evento **Cuando**, la misión solo se lanza si alguno de los eventos **Solo si** ocurrió desde la última pasada; si no, esa pasada se omite y los eventos **Cuando** que vio ya no pueden lanzarla después. Las condiciones requieren al menos un criterio **Cuando**.
+Entre dos tarjetas, un pequeño conector muestra cómo se combinan: **o** entre dos horarios o dos eventos, **si** de un horario a un evento, **si no** de un evento a un horario. Los eventos al principio lanzan la misión cada vez que ocurren; los horarios al principio la lanzan a sus horas. Los eventos tras horarios son sus condiciones: en cada una de esas horas, la misión solo se lanza si alguno de ellos ocurrió desde la última pasada exitosa; si no, esa hora se omite. Los horarios tras eventos son un respaldo para todo lo que está encima: en cada una de sus horas, un horario de respaldo solo lanza si las tarjetas de encima no lanzaron ninguna pasada desde su hora anterior (o desde que se configuró); **Ejecutar ahora** también cuenta, y también una pasada fallida. Los eventos tras él condicionan solo ese respaldo. Por ejemplo, nuevos commits, luego 18:00, luego nuevos mensajes, luego 20:00 lanza con cada commit; si no, a las 18:00 si hubo mensajes nuevos; si no, a las 20:00. Arrastra una tarjeta por su asa para cambiar el orden, o enfoca el asa y pulsa Alt+Flecha arriba o Alt+Flecha abajo; los conectores se actualizan.
 
-Una pasada en curso nunca se duplica. Los horarios o eventos que ocurren mientras se ejecuta se agrupan en una sola pasada, lanzada al terminar; esa pasada agrupada sigue necesitando sus condiciones **Solo si**.
+Una pasada en curso nunca se duplica. Los horarios o eventos que ocurren mientras se ejecuta se agrupan en una sola pasada, lanzada al terminar, si habrían lanzado la misión a su propia hora: sus condiciones y respaldos se deciden entonces.
 
 Los horarios civiles siguen la zona guardada y las reglas de horario de verano de OpenCode. Se rechaza un calendario sin ningún horario futuro.
 
@@ -187,11 +187,11 @@ Las programaciones no tienen fecha de fin. Una programación guardada con fecha 
 
 **Pasadas iniciadas** cuenta cada pasada una vez cuando se admite la primera entrada de su coordinador, incluidas **Ejecutar ahora** y una pasada que luego falla. Las comprobaciones, los eventos sin cambios y las activaciones rechazadas no cuentan. Los recuentos se conservan tras ediciones y reinicios.
 
-Una programación guardada con una frecuencia y una condición opcional se abre como criterios: la frecuencia se convierte en horarios, una frecuencia con condición añade ese evento en **Solo si**, y una condición sola se convierte en un evento **Cuando**; reabrirla y guardarla sin cambios conserva exactamente la programación guardada, incluido un único lanzamiento con ese evento; guardar una edición quita ese límite de un solo lanzamiento, de modo que el evento lanza la misión cada vez que ocurre. Un intervalo, un retraso, una fecha única, un número máximo de pasadas o un final tras un número de horas sigue funcionando tal como se guardó y se muestra en **Política de programación guardada** hasta que la reemplaces.
+Una programación guardada con una frecuencia y una condición opcional se abre como criterios: la frecuencia se convierte en horarios colocados primero, una condición tras una frecuencia se coloca después de ellos y se convierte en su condición (**si**), y una condición sola se convierte en el evento que lanza la misión; reabrirla y guardarla sin cambios conserva exactamente la programación guardada, incluido un único lanzamiento con ese evento; guardar una edición quita ese límite de un solo lanzamiento, de modo que el evento lanza la misión cada vez que ocurre. Un intervalo, un retraso, una fecha única, un número máximo de pasadas o un final tras un número de horas sigue funcionando tal como se guardó y se muestra en **Política de programación guardada** hasta que la reemplaces.
 
 La programación nativa seleccionada muestra **Estado deseado**, **Calendario nativo**, **Próxima activación** o **Próxima comprobación**, **Comprobaciones** con **Seguimiento desde…**, **Pasadas iniciadas**, **Pasadas exitosas**, su final y **Ejecuciones anteriores**. Lee una pasada anterior mediante **Abrir conversación**. **Programación terminada** describe el final de la programación; inspecciona por separado el resultado de la pasada. Se conservan los últimos 30 resultados; los recuentos acumulados persisten más allá de esa ventana. **Cargar más Missions** carga la siguiente página de objetos guardados.
 
-La lista resume cada criterio y antepone **Solo si** a las condiciones; el detalle muestra una fecha de fin guardada solo si está definida, y **Comprobaciones** solo con eventos.
+La lista resume cada criterio en orden, precedido a partir del segundo por su conector (**o**, **si** o **si no**); el detalle muestra una fecha de fin guardada solo si está definida, y **Comprobaciones** solo con eventos.
 
 ### Programaciones diarias existentes {#existing-daily-schedules}
 

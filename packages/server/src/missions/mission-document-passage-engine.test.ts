@@ -125,7 +125,7 @@ test("business checks count committed source observations once per fan-in, with 
   assert.equal((await f.read()).checks!.count, 2)
   f.tick(); const overlap = f.wake(0, 3); f.wake(1, 3)
   await f.engine.wake({ missionID: "review", wake: overlap })
-  assert.equal((await f.read()).checks!.count, 2, "overlap has no source observation")
+  assert.equal((await f.read()).checks!.count, 3, "an overlapping slot reads its sources once to decide its grouped launch")
   const doc = await f.read()
   await assert.rejects(f.store.change(doc.id, doc.revision, current, next => { next.checks!.count-- }), /monotone/)
 

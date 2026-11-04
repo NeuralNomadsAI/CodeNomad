@@ -2,9 +2,9 @@ import { canonicalAuthority } from "./authority-protocol"
 import { stableToken } from "./receipt-identity"
 import { missionCoordinatorSessionID } from "./session-identity"
 import { documentID, documentTimestamp, missionConfigurationSchema, missionEventPrincipal, missionEventPrincipalSlot, missionLaunchLimit, missionLaunchModel,
-  missionPrincipalCount, missionSlotEndsAt, requiresMissionCalendar, type MissionConfiguration } from "./launch-policy"
+  missionPrincipalCount, missionSlotEndsAt, requiresMissionCalendar, type MissionCondition, type MissionConfiguration } from "./launch-policy"
 import { missionCheckpointsSchema, missionDocumentPassageID, missionSourceKey, missionWakeSchema, projectMissionDocument,
-  type MissionCalendar, type MissionDocument, type MissionDocumentPending, type MissionSourceCheckpoint, type MissionTriggerMark, type MissionWake } from "./mission-document"
+  type MissionCalendar, type MissionDocument, type MissionDocumentPending, type MissionSourceCheckpoint, type MissionWake } from "./mission-document"
 import { missionDocumentDeletionIdentitySchema } from "./mission-document"
 
 const same = (a: unknown, b: unknown) => canonicalAuthority(a) === canonicalAuthority(b)
@@ -28,21 +28,42 @@ function baseline(config: MissionConfiguration, checkpoints: MissionSourceCheckp
     if (!checkpoints.some(item => item.kind === condition.kind && item.key === missionSourceKey(condition)))
       throw new Error("Mission source baseline required")
 }
-/** Whether these wakes include a schedule slot, which triggers on its own; the
- * internal event-check slot triggers only when a trigger event changed. */
-export function missionWakesSchedule(doc: MissionDocument, wakes: readonly MissionWake[]): boolean {
-  const eventSlot = missionEventPrincipalSlot(doc.configuration.launch)
-  return wakes.some(wake => {
-    const calendar = doc.calendars.find(item => item.scheduleID === wake.scheduleID)
-    return calendar?.role === "principal" && calendar.slot !== eventSlot
-  })
+/** Event changes since the last successful passage: trigger events and conditions, plus
+ * the keys of every changed event so each schedule group reads only its own conditions. */
+export type MissionEventNews = { triggers: boolean; conditions: boolean; changed?: readonly string[] }
+/** An "else" schedule's own period runs from its previous slot (or the arming of its
+ * calendar) to this slot. It is free when no passage launched by the criteria above its
+ * group, or by Run now, was admitted for a slot in that period, even one that failed later.
+ * Such a passage still awaiting admission is uncertain, so no fallback can be proven. */
+export function missionFallbackClear(doc: MissionDocument, scheduleID: string, dueAt: number): boolean {
+  const launch = doc.configuration.launch, model = missionLaunchModel(launch), eventSlot = missionEventPrincipalSlot(launch)
+  const calendar = doc.calendars.find(item => item.scheduleID === scheduleID)
+  const group = calendar ? model.plans[calendar.slot]?.group ?? 0 : 0
+  const from = calendar?.lastDueAt ?? calendar?.armedAt ?? doc.firstPlayedAt ?? 0
+  // A calendar no longer listed belongs to an earlier configuration: its passages count.
+  const above = (id: string) => {
+    const item = doc.calendars.find(value => value.scheduleID === id && value.role === "principal")
+    return !item || item.slot === eventSlot || (model.plans[item.slot]?.group ?? 0) < group
+  }
+  return ![doc.pending, ...doc.history].some(passage => passage && passage.dueAt > from && passage.dueAt <= dueAt
+    && (passage.admittedAt !== null || passage === doc.pending)
+    && (passage.origin.kind === "wake" ? passage.origin.wakes.some(wake => above(wake.scheduleID))
+      : passage.origin.kind === "deferred" ? passage.origin.scheduleIDs.some(above) : true))
 }
-/** Event changes since the last passage, split by role. */
-export type MissionEventNews = { triggers: boolean; conditions: boolean }
-/** Any trigger (a schedule slot or a changed trigger event) launches, provided one
- * condition changed since the last passage when the policy has conditions. */
-export function missionLaunches(doc: MissionDocument, scheduled: boolean, news: MissionEventNews): boolean {
-  return (scheduled || news.triggers) && (!missionLaunchModel(doc.configuration.launch).conditions.length || news.conditions)
+/** Whether any of these principal wakes launches. The event check launches on a changed
+ * trigger event; a schedule slot launches when one of its group's conditions changed ("if")
+ * and, for a fallback group, when its own period is free ("else"). */
+export function missionLaunches(doc: MissionDocument, wakes: readonly { scheduleID: string; dueAt: number }[], news: MissionEventNews): boolean {
+  const launch = doc.configuration.launch, model = missionLaunchModel(launch), eventSlot = missionEventPrincipalSlot(launch)
+  const changed = (conditions: readonly MissionCondition[]) => !conditions.length
+    || (news.changed ? conditions.some(item => news.changed!.includes(missionSourceKey(item))) : news.conditions)
+  return wakes.some(wake => {
+    const calendar = doc.calendars.find(item => item.scheduleID === wake.scheduleID && item.role === "principal")
+    if (!calendar) return false
+    if (calendar.slot === eventSlot) return news.triggers
+    const plan = model.plans[calendar.slot]
+    return !!plan && changed(plan.conditions) && (!plan.fallback || missionFallbackClear(doc, wake.scheduleID, wake.dueAt))
+  })
 }
 /** Calendar-owned timing: schedules, the internal event check and end bounds. */
 export function missionTemporalPolicy(config: MissionConfiguration) {
@@ -77,9 +98,14 @@ export const missionDocumentChanges = {
     // date is rechecked when it launches.
     const criteria = (value: MissionConfiguration) => {
       const model = missionLaunchModel(value.launch)
-      return { schedules: model.schedules, triggers: model.triggers, conditions: model.conditions }
+      return { schedules: model.schedules, plans: model.plans, triggers: model.triggers }
     }
-    if (!same(criteria(config), criteria(doc.configuration))) { doc.deferred = null; doc.triggerMarks = null }
+    if (!same(criteria(config), criteria(doc.configuration))) {
+      doc.deferred = null
+      // A kept calendar that never had a slot starts any "else" period at this activation.
+      for (const calendar of doc.calendars)
+        if (calendar.role === "principal" && calendar.armedAt === undefined && calendar.lastDueAt === undefined) calendar.armedAt = now
+    }
     doc.configuration = config
     doc.configurationGeneration++
     if (changedTime) {
@@ -134,20 +160,17 @@ export const missionDocumentChanges = {
     calendar.wakePreparing = wake
   },
   /** Remember one trigger consumed during a passage; all of them launch once afterwards. */
-  defer(doc: MissionDocument, input: MissionWake, afterPassageID: string) {
+  defer(doc: MissionDocument, input: MissionWake, afterPassageID: string, news: MissionEventNews) {
     const wake = missionWakeSchema.parse(input), calendar = doc.calendars.find(item => item.scheduleID === wake.scheduleID)
     const passage = [doc.pending, ...doc.history].find(item => item?.id === afterPassageID)
     // A slot due by the passage's reservation is already answered by that passage.
     if (!passage || wake.dueAt <= passage.createdAt || doc.state !== "running" || doc.blocked || calendar?.role !== "principal"
       || doc.slotEndsAt !== null && wake.dueAt > doc.slotEndsAt) return
+    // Decided at its slot, from the news observed then: a wake that would not launch now never launches later.
+    if (!missionLaunches(doc, [wake], news)) return
     const old = doc.deferred?.afterPassageID === afterPassageID ? doc.deferred : null
     doc.deferred = { afterPassageID, dueAt: Math.max(old?.dueAt ?? 0, wake.dueAt),
-      scheduled: !!old?.scheduled || missionWakesSchedule(doc, [wake]) }
-  },
-  /** A passage skipped for lack of a condition consumes the When events seen by its check. */
-  consumeTriggers(doc: MissionDocument, news: MissionEventNews, marks: readonly MissionTriggerMark[] | undefined) {
-    if (!news.triggers || !marks?.length) return
-    doc.triggerMarks = [...new Map([...(doc.triggerMarks ?? []), ...structuredClone(marks)].map(item => [item.key, item])).values()]
+      scheduleIDs: [...new Set([...(old?.scheduleIDs ?? []), wake.scheduleID])] }
   },
   processWake(doc: MissionDocument, input: MissionWake) {
     const wake = missionWakeSchema.parse(input), calendar = exactCalendar(doc, wake)
@@ -155,6 +178,7 @@ export const missionDocumentChanges = {
     // when paused or overlapping; a gap is never a license to skip ahead.
     calendar.highWater = wake.run
     calendar.wakePreparing = null
+    if (calendar.role === "principal") calendar.lastDueAt = wake.dueAt
   },
   reserve(doc: MissionDocument, input: MissionDocumentPending["origin"], now: number, checkpoints: MissionSourceCheckpoint[]) {
     available(doc)
@@ -170,18 +194,18 @@ export const missionDocumentChanges = {
         calendar.pendingWake = wake
         calendar.wakePreparing = null
         calendar.highWater = wake.run
+        calendar.lastDueAt = wake.dueAt
       }
     } else if (origin.kind === "deferred") {
-      if (!doc.deferred || doc.deferred.afterPassageID !== origin.afterPassageID || doc.deferred.dueAt !== origin.dueAt || origin.dueAt > now)
+      if (!doc.deferred || doc.deferred.afterPassageID !== origin.afterPassageID || doc.deferred.dueAt !== origin.dueAt || origin.dueAt > now
+        || !same(doc.deferred.scheduleIDs, origin.scheduleIDs))
         throw new Error("Mission deferred launch differs")
     } else {
       documentID.parse(origin.requestID)
       if (origin.kind === "immediate" && requiresMissionCalendar(doc.configuration.launch)) throw new Error("Mission needs native wake")
     }
-    // Any reserved passage answers the triggers that waited for the previous one; its
-    // references replace the marks of triggers consumed by skipped passages.
+    // Any reserved passage answers the triggers that waited for the previous one.
     doc.deferred = null
-    doc.triggerMarks = null
     const dueAt = origin.kind === "wake" ? Math.max(...origin.wakes.map(wake => wake.dueAt)) : origin.kind === "deferred" ? origin.dueAt : now
     // ends.at bounds recorded slots, never the wall-clock arrival of a late wake.
     if (doc.slotEndsAt !== null && dueAt > doc.slotEndsAt) throw new Error("Mission slot past end")

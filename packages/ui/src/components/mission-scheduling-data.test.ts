@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { missionLaunchPolicySchema } from "../../../server/src/missions/launch-policy"
-import { missionEventKinds, missionScheduleShortcuts, newMissionCriterion, newMissionSchedulingDraft, missionSchedulingPolicy,
+import { missionCardConnectors, missionEventKinds, missionScheduleShortcuts, newMissionCriterion, newMissionSchedulingDraft, missionSchedulingPolicy,
   MissionSchedulingError, type MissionCriterionDraft } from "./mission-scheduling-data"
 
 const row = (kind: MissionCriterionDraft["kind"], patch: Partial<MissionCriterionDraft> = {}) => ({ ...newMissionCriterion(kind), ...patch })
@@ -11,7 +11,7 @@ const field = (name: MissionSchedulingError["field"], index?: number) => (error:
   error.field === name && (index === undefined || error.index === index)
 
 test("no criteria is a one-time Mission; every shortcut writes its cron", () => {
-  assert.deepEqual(missionSchedulingPolicy(draft([])), { when: [], onlyIf: [] })
+  assert.deepEqual(missionSchedulingPolicy(draft([])), { when: [] })
   const expected = { hours: "0 */6 * * *", daily: "0 9 * * *", weekly: "0 9 * * 1,2,3,4,5", monthly: "0 9 1 * *", cron: "0 9 * * *" }
   for (const kind of missionScheduleShortcuts) {
     const policy = missionSchedulingPolicy(draft([row(kind)]))
@@ -22,21 +22,23 @@ test("no criteria is a one-time Mission; every shortcut writes its cron", () => 
   assert.equal((missionSchedulingPolicy(draft([row("hours", { hours: "1" })])) as { when: { expression: string }[] }).when[0].expression, "0 * * * *")
 })
 
-test("triggers OR, event cards in Only if become conditions, a condition needs a trigger, duplicates and over-capacity are refused", () => {
-  const both = missionSchedulingPolicy(draft([row("daily"), row("branch-commits", { source: "refs/heads/main", onlyIf: true }),
-    row("files-changed", { files: "a.ts" })]), "/project")
-  assert.deepEqual(both, { when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }, { kind: "files-changed", paths: ["a.ts"] }],
-    onlyIf: [{ kind: "branch-commits", directory: "/project", ref: "refs/heads/main" }] })
-  assert.deepEqual(missionSchedulingPolicy(draft([row("daily", { onlyIf: true })])), { when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }], onlyIf: [] },
-    "a schedule always triggers")
-  assert.throws(() => missionSchedulingPolicy(draft([row("files-changed", { files: "a.ts", onlyIf: true })])), field("trigger"))
+test("the stored list keeps the card order; the connectors between cards come from the shared parser", () => {
+  const daily = { kind: "cron", expression: "0 9 * * *", zone: "UTC" }, commits = { kind: "branch-commits", directory: "/project", ref: "refs/heads/main" }
+  const commitsRow = () => row("branch-commits", { source: "refs/heads/main" })
+  assert.deepEqual(missionSchedulingPolicy(draft([commitsRow(), row("daily")]), "/project"), { when: [commits, daily] })
+  assert.deepEqual(missionCardConnectors([commitsRow(), row("daily")]), ["else"], "commits, else 09:00")
+  assert.deepEqual(missionSchedulingPolicy(draft([row("daily"), commitsRow()]), "/project"), { when: [daily, commits] })
+  assert.deepEqual(missionCardConnectors([row("daily"), commitsRow()]), ["if"], "09:00 if commits")
+  assert.deepEqual(missionCardConnectors([commitsRow(), row("files-changed", { files: "a.ts" })]), ["or"], "commits or files")
+  assert.deepEqual(missionCardConnectors([row("hours"), row("daily"), row("files-changed"), row("mission-completed")]), ["or", "if", "or"])
+  assert.deepEqual(missionCardConnectors([commitsRow(), row("daily"), row("files-changed"), row("cron")]), ["else", "if", "else"])
   assert.throws(() => missionSchedulingPolicy(draft([row("daily"), row("daily", { time: "09:00" })])), field("duplicate"))
-  assert.throws(() => missionSchedulingPolicy(draft([row("daily"), row("files-changed", { files: "a.ts" }), row("files-changed", { files: "a.ts", onlyIf: true })])),
-    field("duplicate"), "one event cannot both trigger and gate")
+  assert.throws(() => missionSchedulingPolicy(draft([row("files-changed", { files: "a.ts" }), row("daily"), row("files-changed", { files: "a.ts" })])),
+    field("duplicate"), "one event appears once")
   const eight = Array.from({ length: 8 }, (_, hour) => row("daily", { time: `0${hour}:00` }))
-  assert.throws(() => missionSchedulingPolicy(draft([...eight, row("files-changed", { files: "a.ts" })])), field("count"))
-  assert.doesNotThrow(() => missionSchedulingPolicy(draft([...eight, row("files-changed", { files: "a.ts", onlyIf: true })])),
-    "conditions need no check of their own")
+  assert.throws(() => missionSchedulingPolicy(draft([row("files-changed", { files: "a.ts" }), ...eight])), field("count"))
+  assert.doesNotThrow(() => missionSchedulingPolicy(draft([...eight, row("files-changed", { files: "a.ts" })])),
+    "events after schedules are conditions and need no check of their own")
 })
 
 test("all five events map to the native source contract and reject unsafe sources with their row index", () => {

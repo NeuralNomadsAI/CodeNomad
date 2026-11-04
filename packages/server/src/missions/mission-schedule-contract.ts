@@ -70,7 +70,9 @@ const missionScheduleHistoryWire = { type: "object", properties: { id: text, mis
   origin: { oneOf: [
     { type: "object", properties: { kind: { const: "wake" }, wakes: { type: "array", minItems: 1, maxItems: 8, items: wake } }, required: ["kind", "wakes"], additionalProperties: false },
     ...["manual", "immediate"].map(kind => ({ type: "object", properties: { kind: { const: kind }, requestID: text }, required: ["kind", "requestID"], additionalProperties: false })),
-    { type: "object", properties: { kind: { const: "deferred" }, afterPassageID: text, dueAt: counter }, required: ["kind", "afterPassageID", "dueAt"], additionalProperties: false },
+    { type: "object", properties: { kind: { const: "deferred" }, afterPassageID: text, dueAt: counter,
+      scheduleIDs: { type: "array", minItems: 1, maxItems: 8, uniqueItems: true, items: text } },
+      required: ["kind", "afterPassageID", "dueAt", "scheduleIDs"], additionalProperties: false },
   ] }, admittedAt: { type: ["integer", "null"], minimum: 0 }, manualAllowed: { type: "boolean" }, admissionAttempted: { type: "boolean" },
   manualExpectedRevision: counter, configurationDigest: text, settledAt: counter,
   outcome: { type: "string", enum: ["completed", "failed", "ended-without-report"] }, reason: { const: "not-started" },

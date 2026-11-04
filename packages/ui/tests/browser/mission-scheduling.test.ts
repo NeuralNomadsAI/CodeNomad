@@ -45,50 +45,83 @@ const rows = (page: Page, specs: [string, object?][], extra: object = {}) => pag
   fixture.change({ criteria: specs.map(([kind, fields]) => fixture.row(kind, fields)), ...extra })
 }, { specs, extra })
 const label = (page: Page, name: string) => page.getByLabel(name, { exact: true })
-const role = (page: Page, number: number) => page.getByRole("group", { name: `Criterion ${number} role`, exact: true })
+const roleOf = (page: Page, number: number) => page.locator(".mission-criterion-slot").nth(number - 1).locator(".mission-criterion-connector")
+const handle = (page: Page, number: number) => page.getByRole("button", { name: `Move criterion ${number}`, exact: true })
+/** A real pointer drag on the grip, in small steps so the sortable activates and tracks. */
+async function drag(page: Page, from: number, to: number) {
+  const start = (await handle(page, from).boundingBox())!, end = (await page.getByRole("group", { name: `Criterion ${to}`, exact: true }).boundingBox())!
+  await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2); await page.mouse.down()
+  const y = end.y + end.height * (to > from ? 0.75 : 0.25)
+  for (let step = 1; step <= 12; step++) await page.mouse.move(start.x + start.width / 2, start.y + (y - start.y) * step / 12)
+  return async () => { await page.mouse.up() }
+}
 
-test("an empty form is a one-time Mission; one i explains; triggers OR and an Only if event card gates them", async () => {
+test("an empty form is a one-time Mission; the i explains if and else; connectors between cards follow their kinds", async () => {
   const { page, errors } = await setup()
   try {
     const schedule = page.locator(".mission-scheduling")
-    assert.equal(await schedule.locator("p").count(), 0)
-    assert.deepEqual(await policy(page), { when: [], onlyIf: [] })
+    assert.equal(await schedule.locator("p:not(.sr-only)").count(), 0)
+    assert.deepEqual(await policy(page), { when: [] })
     assert.equal(await page.getByRole("checkbox").count(), 0)
-    // One "i" beside Launch when holds every explanation and ends with the OpenCode setting link.
+    // One "i" beside Launch when, at most two sentences, then the OpenCode start setting link.
     assert.equal(await page.locator(".mission-scheduling-when-head .settings-info-tip").count(), 1)
-    await page.getByRole("button", { name: /any When criterion occurs/ }).focus(); await page.keyboard.press("Enter")
-    await page.getByRole("dialog", { name: "Launch when" }).filter({ hasText: /any When criterion occurs.*Create saves a paused Mission.*only run while OpenCode is running\./ }).waitFor()
+    await page.getByRole("button", { name: /An event after a schedule is its condition/ }).focus(); await page.keyboard.press("Enter")
+    const tip = page.getByRole("dialog", { name: "Launch when" })
+    await tip.filter({ hasText: /^An event after a schedule is its condition \(if\); a schedule after events is a fallback that launches only if the cards above launched no passage since its previous slot \(else\)\. The Mission only runs while OpenCode is running\. \S/ }).waitFor()
     await page.keyboard.press("Escape")
     await page.locator(".settings-info-link-content").waitFor({ state: "detached" })
     await page.getByRole("button", { name: "Add a criterion", exact: true }).click()
     assert.equal(await label(page, "Criterion 1 type").inputValue(), "daily")
     assert.equal(await label(page, "Criterion 1 type").locator("option").count(), 10)
-    assert.equal(await role(page, 1).count(), 0, "schedules always trigger")
-    assert.equal(await schedule.locator("time, ol, input[type=datetime-local]").count(), 0, "no slot preview and no end date")
+    assert.equal(await roleOf(page, 1).count(), 0, "Launch when titles the first card")
+    assert.equal(await handle(page, 1).isDisabled(), true, "a single card has nothing to reorder")
+    assert.equal(await schedule.locator("time, ol, input[type=datetime-local], [aria-pressed]").count(), 0, "no preview, end date or role switch")
     await page.getByRole("button", { name: "Add a criterion", exact: true }).click()
     await label(page, "Criterion 2 type").selectOption("files-changed")
     await page.getByRole("alert").waitFor()
-    assert.equal(await label(page, "Criterion 2 file paths").getAttribute("aria-invalid"), "true")
     await label(page, "Criterion 2 file paths").fill("src/main.ts")
     assert.equal(await page.getByRole("alert").count(), 0)
-    assert.deepEqual(await policy(page), { when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }, { kind: "files-changed", paths: ["src/main.ts"] }], onlyIf: [] })
-    const when = role(page, 2).getByRole("button", { name: "When", exact: true }), onlyIf = role(page, 2).getByRole("button", { name: "Only if", exact: true })
-    assert.deepEqual([await when.getAttribute("aria-pressed"), await onlyIf.getAttribute("aria-pressed")], ["true", "false"])
-    // Each role explains itself in one sentence on keyboard focus; no text is added to the card.
-    await onlyIf.focus()
-    await page.getByRole("tooltip").filter({ hasText: /^At each trigger, the Mission starts only if one of the conditions occurred since the last passage; otherwise that passage is skipped\.$/ }).waitFor()
-    await page.keyboard.press("Enter")
-    assert.equal(await onlyIf.getAttribute("aria-pressed"), "true")
-    assert.deepEqual(await policy(page), { when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }], onlyIf: [{ kind: "files-changed", paths: ["src/main.ts"] }] })
-    await page.getByRole("button", { name: "Remove criterion 1", exact: true }).click()
-    await page.getByRole("alert").filter({ hasText: /^Add at least one When criterion\.$/ }).waitFor()
-    assert.equal(await policy(page), undefined, "conditions alone never launch")
-    await role(page, 1).getByRole("button", { name: "When", exact: true }).click()
-    assert.equal(await page.getByRole("alert").count(), 0)
-    assert.deepEqual(await policy(page), { when: [{ kind: "files-changed", paths: ["src/main.ts"] }], onlyIf: [] })
-    assert.equal(await schedule.locator("p").count(), 0)
+    const daily = { kind: "cron", expression: "0 9 * * *", zone: "UTC" }, files = { kind: "files-changed", paths: ["src/main.ts"] }
+    assert.deepEqual(await policy(page), { when: [daily, files] })
+    assert.equal(await roleOf(page, 2).innerText(), "if", "an event after a schedule is its condition")
+    // Keyboard: Alt+Up on the grip moves the event first: files, else 09:00.
+    await handle(page, 2).focus(); await page.keyboard.press("Alt+ArrowUp")
+    assert.deepEqual(await policy(page), { when: [files, daily] })
+    assert.equal(await label(page, "Criterion 1 type").inputValue(), "files-changed")
+    assert.equal(await roleOf(page, 2).innerText(), "else")
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Move criterion 1")
+    assert.equal(await schedule.locator("[aria-live]").innerText(), "Moved to position 1 of 2: Launch when.")
+    await page.keyboard.press("Alt+ArrowUp")
+    assert.deepEqual(await policy(page), { when: [files, daily] }, "nothing moves past the top")
+    // Pointer: drag the event after the schedule again; it becomes its condition.
+    const heights = () => schedule.locator(".mission-criterion-slot").evaluateAll(slots => slots.map(slot => slot.getBoundingClientRect().height))
+    const before = await heights()
+    const drop = await drag(page, 1, 2)
+    assert.deepEqual(await heights(), before, "connectors changing while dragging never reflow the cards")
+    assert.equal(await schedule.locator(".mission-criterion-drop").count(), 1, "the drop target is shown while dragging")
+    assert.deepEqual(await schedule.locator(".mission-criterion-connector").allInnerTexts(), ["if"], "the connectors follow the projected order while dragging")
+    await drop()
+    assert.deepEqual(await policy(page), { when: [daily, files] })
+    assert.equal(await roleOf(page, 2).innerText(), "if")
+    assert.equal(await schedule.locator(".mission-criterion-dragging, .mission-criterion-drop").count(), 0)
     assert.deepEqual(await schedule.locator("[aria-describedby]").evaluateAll(elements => elements.flatMap(element =>
       element.getAttribute("aria-describedby")!.split(/\s+/).filter(id => !document.getElementById(id)))), [])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("dragging and keyboard moves keep every card mounted, its typed values and the grip's focus", async () => {
+  const { page, errors } = await setup()
+  try {
+    await rows(page, [["daily", { time: "07:30" }], ["branch-commits", { source: "refs/heads/dev" }], ["files-changed", { files: "a.ts" }]])
+    const nodes = await page.locator(".mission-criterion").elementHandles()
+    await handle(page, 3).focus(); await page.keyboard.press("Alt+ArrowUp"); await page.keyboard.press("Alt+ArrowUp")
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Move criterion 1")
+    assert.deepEqual(await page.locator(".mission-criterion-connector").allInnerTexts(), ["else", "if"], "files, else 07:30 if commits")
+    const after = await page.locator(".mission-criterion").elementHandles()
+    for (const node of nodes) assert.ok(await Promise.all(after.map(item => item.evaluate((element, other) => element === other, node))).then(found => found.includes(true)),
+      "no card remounts")
+    assert.equal(await label(page, "Criterion 2 time").inputValue(), "07:30")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -151,9 +184,9 @@ test("typing keeps focus and rows; shortcuts write their cron; the list stops at
     assert.equal(await add.isDisabled(), true)
     assert.equal(await page.locator(".mission-criterion").count(), 16)
     const eight = Array.from({ length: 8 }, (_, hour): [string, object] => ["daily", { time: `0${hour}:00` }])
-    await rows(page, [...eight, ["files-changed", { files: "a.ts" }]])
+    await rows(page, [["files-changed", { files: "a.ts" }], ...eight])
     await page.getByRole("alert").filter({ hasText: /Too many criteria/ }).waitFor()
-    await rows(page, [...eight, ["files-changed", { files: "a.ts", onlyIf: true }]])
+    await rows(page, [...eight, ["files-changed", { files: "a.ts" }]])
     assert.equal(await page.getByRole("alert").count(), 0, "eight schedules fit when events are conditions")
     assert.equal(await label(page, "Criterion 1 time").evaluate(input => getComputedStyle(input).color === getComputedStyle(input.parentElement!).color), true)
     assert.deepEqual(errors, [])
@@ -201,7 +234,7 @@ test("H9 locks explain why; missing capability keeps a criterion-free Mission av
     for (const lock of ["uncertain", "passage", "launched-once", "terminal", "deleted"]) {
       await page.evaluate(lock => (window as any).schedulingFixture.lock(lock), lock)
       assert.equal(await label(page, "Criterion 1 type").isDisabled(), true)
-      assert.equal(await role(page, 2).getByRole("button", { name: "Only if", exact: true }).isDisabled(), true)
+      assert.equal(await handle(page, 2).isDisabled(), true)
       assert.equal(await page.getByRole("button", { name: "Add a criterion", exact: true }).isDisabled(), true)
       assert.ok((await page.getByRole("status").innerText()).length > 30)
     }
@@ -210,7 +243,7 @@ test("H9 locks explain why; missing capability keeps a criterion-free Mission av
     assert.equal(await page.getByRole("button", { name: "Add a criterion", exact: true }).isDisabled(), true)
     await page.getByRole("button", { name: "Remove criterion 2", exact: true }).click()
     await page.getByRole("button", { name: "Remove criterion 1", exact: true }).click()
-    assert.deepEqual(await policy(page), { when: [], onlyIf: [] })
+    assert.deepEqual(await policy(page), { when: [] })
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -220,7 +253,7 @@ test("French light and Hebrew RTL remain readable at narrow widths without overf
     const { page, errors } = await setup(`?locale=${locale}&light`)
     try {
       await page.setViewportSize({ width: 320, height: 1000 })
-      await rows(page, [["weekly"], ["branch-commits", { source: "refs/heads/dev", onlyIf: true }], ["files-changed", { files: "src/a.ts" }]])
+      await rows(page, [["branch-commits", { source: "refs/heads/dev" }], ["weekly"], ["files-changed", { files: "src/a.ts" }]])
       await page.waitForFunction(() => document.documentElement.lang.startsWith(new URLSearchParams(location.search).get("locale")!))
       assert.equal(await page.locator("main").evaluate(element => element.scrollWidth <= element.clientWidth), true)
       assert.equal(await page.locator("main").innerText().then(text => text.includes("missions.scheduling.")), false)
@@ -230,27 +263,27 @@ test("French light and Hebrew RTL remain readable at narrow widths without overf
   }
 })
 
-test("stored policies reopen exactly, legacy frequency + condition reads as When + Only if, retired options need explicit replacement", async () => {
+test("stored policies reopen in order, legacy frequency + condition reads as a schedule then a condition, retired options need explicit replacement", async () => {
   const { page, errors } = await setup()
   const load = (value: object) => page.evaluate(value => (window as any).schedulingFixture.load(value), value)
   try {
-    const criteria = { when: [{ kind: "cron", expression: "15 09 * * MON,WED,FRI", zone: "UTC" }], onlyIf: [] }
+    const criteria = { when: [{ kind: "cron", expression: "15 09 * * MON,WED,FRI", zone: "UTC" }] }
     await load(criteria)
     assert.equal(await label(page, "Criterion 1 type").inputValue(), "weekly")
     assert.deepEqual(await policy(page), criteria)
-    await load({ when: [{ kind: "cron", expression: "*/15 9-17 * * MON-FRI", zone: "UTC" }], onlyIf: [] })
+    await load({ when: [{ kind: "cron", expression: "*/15 9-17 * * MON-FRI", zone: "UTC" }] })
     assert.equal(await label(page, "Criterion 1 cron expression").inputValue(), "*/15 9-17 * * MON-FRI")
     const legacy = { timing: { kind: "cron", expression: "0 9 * * *", zone: "UTC" },
       condition: { kind: "branch-commits", directory: "/fixture", ref: "refs/heads/dev" }, ends: { maxLaunches: null, afterMs: null, at: Date.parse("2027-01-01T00:00:00Z") } }
     await load(legacy)
     assert.equal(await label(page, "Criterion 1 type").inputValue(), "daily")
     assert.equal(await label(page, "Criterion 2 source").inputValue(), "refs/heads/dev")
-    assert.equal(await role(page, 2).getByRole("button", { name: "Only if", exact: true }).getAttribute("aria-pressed"), "true")
+    assert.equal(await roleOf(page, 2).innerText(), "if")
     assert.deepEqual(await policy(page), legacy, "an unchanged reopen keeps the stored bytes, end date included")
-    await role(page, 2).getByRole("button", { name: "When", exact: true }).click()
-    assert.deepEqual(await policy(page), { when: [legacy.timing, legacy.condition], onlyIf: [] }, "an edit saves criteria without the end date")
+    await handle(page, 2).focus(); await page.keyboard.press("Alt+ArrowUp")
+    assert.deepEqual(await policy(page), { when: [legacy.condition, legacy.timing] }, "an edit saves criteria without the end date")
     await load({ timing: { kind: "immediate" }, condition: legacy.condition, ends: { maxLaunches: null, afterMs: null, at: null } })
-    assert.equal(await role(page, 1).getByRole("button", { name: "When", exact: true }).getAttribute("aria-pressed"), "true", "a condition alone reads as When")
+    assert.equal(await label(page, "Criterion 1 type").inputValue(), "branch-commits", "a condition alone reads as the trigger")
     const retired = { timing: { kind: "every", intervalMs: 5_400_000 }, condition: null, ends: { maxLaunches: 3, at: null, afterMs: null } }
     await load(retired)
     assert.deepEqual(await policy(page), retired)
@@ -260,7 +293,7 @@ test("stored policies reopen exactly, legacy frequency + condition reads as When
     assert.equal(await page.getByRole("button", { name: "Replace with a new scheduling policy", exact: true }).isDisabled(), true)
     await page.evaluate(() => (window as any).schedulingFixture.lock(null))
     await page.getByRole("button", { name: "Replace with a new scheduling policy", exact: true }).click()
-    assert.deepEqual(await policy(page), { when: [], onlyIf: [] })
+    assert.deepEqual(await policy(page), { when: [] })
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -295,7 +328,7 @@ test("the scheduling i links to the OpenCode login-start row by its stable ancho
     try {
       await page.waitForFunction(locale => document.documentElement.lang.startsWith(locale), locale)
       await rows(page, [["daily"]])
-      const sentence = locale === "fr" ? "Les programmations ne tournent que si OpenCode tourne." : "Schedules only run while OpenCode is running."
+      const sentence = locale === "fr" ? "La Mission ne tourne que si OpenCode tourne." : "The Mission only runs while OpenCode is running."
       const info = page.locator(".mission-scheduling-when-head").getByRole("button", { name: new RegExp(`${sentence.replace(/\./g, "\\.")}$`) })
       await info.focus(); await page.keyboard.press("Enter")
       const popover = page.locator(".settings-info-link-content")

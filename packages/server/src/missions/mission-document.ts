@@ -53,9 +53,12 @@ const checkpoints = missionCheckpointsSchema
 export const missionWakeSchema = z.object({ scheduleID: nativeDocumentID, run: documentCounter.positive(),
   messageID: nativeDocumentID, dueAt: documentTimestamp }).strict().refine(wake => wake.messageID === `msg_${wake.scheduleID}_${wake.run}`)
 export type MissionWake = z.infer<typeof missionWakeSchema>
+/** `armedAt`: when this native calendar was armed (its anchor); `lastDueAt`: the due time of
+ * its latest processed slot. Together they bound an "else" schedule's own period. */
 const calendar = z.object({ role: z.enum(["principal", "reconciliation"]), slot: documentCounter.max(7),
   timeGeneration: generation, scheduleID: nativeDocumentID, sessionID: nativeDocumentID, highWater: documentCounter,
   pendingWake: missionWakeSchema.nullable(), wakePreparing: missionWakeSchema.nullable(),
+  armedAt: documentTimestamp.optional(), lastDueAt: documentTimestamp.optional(),
 }).strict()
 export type MissionCalendar = z.infer<typeof calendar>
 const origin = z.union([
@@ -63,17 +66,15 @@ const origin = z.union([
   z.object({ kind: z.literal("manual"), requestID: documentID }).strict(),
   z.object({ kind: z.literal("wake"), wakes: z.array(missionWakeSchema).min(1).max(8)
     .refine(wakes => new Set(wakes.map(wake => wake.scheduleID)).size === wakes.length) }).strict(),
-  // Triggers consumed while a passage ran, launched once after it settled.
-  z.object({ kind: z.literal("deferred"), afterPassageID: documentID, dueAt: documentTimestamp }).strict(),
+  // Triggers consumed while a passage ran, launched once after it settled, with the calendars they came from.
+  z.object({ kind: z.literal("deferred"), afterPassageID: documentID, dueAt: documentTimestamp,
+    scheduleIDs: z.array(nativeDocumentID).min(1).max(8).refine(ids => new Set(ids).size === ids.length) }).strict(),
 ])
-/** `scheduled`: a schedule slot triggered it; otherwise a trigger event must still show news. */
-const deferred = z.object({ afterPassageID: documentID, dueAt: documentTimestamp, scheduled: z.boolean() }).strict()
+/** `scheduleIDs`: the principal calendars whose wakes were consumed during the passage and
+ * stayed eligible at their slot (an "else" period is decided at the slot, never later). */
+const deferred = z.object({ afterPassageID: documentID, dueAt: documentTimestamp,
+  scheduleIDs: z.array(nativeDocumentID).min(1).max(8).refine(ids => new Set(ids).size === ids.length) }).strict()
 export type MissionDeferredLaunch = z.infer<typeof deferred>
-/** The value a When event had when a passage was skipped for lack of a condition: its
- * trigger news is measured from here until the next passage advances the references.
- * Source references, including a followed conversation's context cursor, never move. */
-const triggerMarks = z.array(checkpoint.pick({ key: true, value: true })).max(8).refine(items => new Set(items.map(item => item.key)).size === items.length)
-export type MissionTriggerMark = z.infer<typeof triggerMarks>[number]
 const pending = z.object({ id: documentID, missionID: documentID, coordinatorSessionID: nativeDocumentID, messageID: nativeDocumentID,
   configurationGeneration: generation, timeGeneration: generation, createdAt: documentTimestamp, dueAt: documentTimestamp,
   origin, configuration: missionConfigurationSchema, checkpoints, admittedAt: documentTimestamp.nullable(),
@@ -107,7 +108,6 @@ const document = z.object({ version: z.literal(1), id: documentID, projectID: na
     principalIDs: z.array(nativeDocumentID).max(8).refine(ids => new Set(ids).size === ids.length), completed: z.boolean(), suppress: z.boolean(),
     overlap: z.boolean().optional() }).strict().nullable().default(null),
   deferred: deferred.nullable().optional(),
-  triggerMarks: triggerMarks.nullable().optional(),
   calendars: z.array(calendar).max(9),
   synchronization: z.object({ requestID: documentID, kind: z.enum(["arm", "replace", "disarm", "delete"]),
     retiredCalendars: z.array(calendar).max(9) }).strict().nullable(),

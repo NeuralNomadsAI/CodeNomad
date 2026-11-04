@@ -1,6 +1,6 @@
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { missionLaunchModel, type MissionCondition } from "../../missions/launch-policy"
-import { missionCheckpointsSchema, missionSourceKey, type MissionDocument, type MissionSourceCheckpoint, type MissionTriggerMark } from "../../missions/mission-document"
+import { missionCheckpointsSchema, missionSourceKey, type MissionDocument, type MissionSourceCheckpoint } from "../../missions/mission-document"
 import { documentWatchCheckpoint, documentWatchCheckpointSchema, documentWatchKey } from "../../missions/mission-document-passage-input"
 import { recurrenceInputBudget, recurrenceSourceContextLimit } from "../../missions/recurrence-read-budget"
 import { recurrenceSourceLocationDigest, type PassageSource } from "../../missions/recurrence-input"
@@ -10,7 +10,7 @@ import { nativePassageMessageDigest, type MissionNativeService } from "./native-
 import type { MissionConditionRead } from "./native-mission-condition-reader"
 import type { NativeSourceFence } from "./native-source-fence"
 
-export type QualifiedDocumentSourceSnapshot = { news: MissionEventNews; marks: MissionTriggerMark[]; checkpoints: MissionSourceCheckpoint[]; current(): true; revalidate?(): Promise<void> }
+export type QualifiedDocumentSourceSnapshot = { news: MissionEventNews; checkpoints: MissionSourceCheckpoint[]; current(): true; revalidate?(): Promise<void> }
 export type DocumentConditionReader = (document: MissionDocument, condition: MissionCondition) => Promise<MissionConditionRead>
 
 /** Native stable prefixes and condition proofs share one frozen pending snapshot.
@@ -18,31 +18,25 @@ export type DocumentConditionReader = (document: MissionDocument, condition: Mis
 export async function prepareNativeDocumentSources(doc: MissionDocument, native: MissionNativeService, signal: AbortSignal,
   current: () => true, conditionReader?: DocumentConditionReader, fence?: NativeSourceFence, initialContext = false): Promise<QualifiedDocumentSourceSnapshot> {
   const config = doc.configuration, model = missionLaunchModel(config.launch), events = model.events, guards: (() => true)[] = [current, native.assertCurrent]
-  const role = (condition: MissionCondition): keyof MissionEventNews => model.conditions.includes(condition) ? "conditions" : "triggers"
+  const role = (condition: MissionCondition): "triggers" | "conditions" => model.conditions.includes(condition) ? "conditions" : "triggers"
   const observed = doc.firstPlayedAt === null ? { ...doc, checkpoints: [] } : doc
   if (fence) guards.push(fence.current)
   const checkpoints: MissionSourceCheckpoint[] = [], sources: PassageSource[] = []
   const revalidations: (() => Promise<void>)[] = []
-  // Within each role, events are alternatives: any one changed is enough. A When event
-  // consumed by a skipped passage measures its news from that mark, never from a moved reference.
-  const news: MissionEventNews = { triggers: false, conditions: false }, marks: MissionTriggerMark[] = []
-  const mark = (key: string) => observed.triggerMarks?.find(item => item.key === key)
+  // Within each role, events are alternatives: any one changed is enough. `changed` keeps
+  // each event's own news, so every schedule group reads only its own conditions.
+  const changed: string[] = [], news = { triggers: false, conditions: false, changed }
+  const note = (condition: MissionCondition, fresh: boolean) => { if (!fresh) return; news[role(condition)] = true; changed.push(missionSourceKey(condition)) }
   for (const condition of events) {
     if (condition.kind === "conversation-message") continue
     if (!conditionReader) throw new Error("Qualified Mission condition reader unavailable")
     const result = await conditionReader(structuredClone(observed), condition)
     if (result.checkpoint.key !== missionSourceKey(condition) || result.checkpoint.kind !== condition.kind) throw new Error("Mission condition proof incomplete")
-    guards.push(result.current); checkpoints.push(result.checkpoint)
-    if (role(condition) === "conditions") news.conditions ||= result.changed
-    else {
-      const seen = mark(result.checkpoint.key)
-      news.triggers ||= result.changed && (!seen || canonicalAuthority(seen.value) !== canonicalAuthority(result.checkpoint.value))
-      marks.push({ key: result.checkpoint.key, value: result.checkpoint.value })
-    }
+    guards.push(result.current); checkpoints.push(result.checkpoint); note(condition, result.changed)
     if (result.revalidate) revalidations.push(result.revalidate)
   }
   const revalidate = revalidations.length ? async () => { for (const item of revalidations) await item() } : undefined
-  const followed = new Map(events.flatMap(item => item.kind === "conversation-message" ? [[item.conversationID, role(item)] as const] : []))
+  const followed = new Map(events.flatMap(item => item.kind === "conversation-message" ? [[item.conversationID, item] as const] : []))
   const ids = [...new Set([...config.watchedConversationIDs, ...followed.keys()])]
   const budget = { consigne: config.objective, roots: config.roots, watchedConversationIDs: ids }
   if (!recurrenceInputBudget(budget).sufficient) throw new Error("Document watched input capacity")
@@ -95,23 +89,14 @@ export async function prepareNativeDocumentSources(doc: MissionDocument, native:
       placementDigest: recurrenceSourceLocationDigest(source.location), value: cursor ?? { messageID: null, nativeDigest: null } }
     checkpoints.push(documentWatchCheckpoint(frozen, prior))
     if (followed.has(conversationID)) {
-      const content = (items: typeof messages) => items.some(message => ["user", "synthetic", "assistant"].includes(message.type))
-      const fresh = !!old && content(messages)
+      const fresh = !!old && messages.some(message => ["user", "synthetic", "assistant"].includes(message.type))
       if (!fresh && messages.length === 32) throw new Error("Mission message prefix capacity")
-      if (followed.get(conversationID) === "conditions") news.conditions ||= fresh
-      else {
-        // The cursor (context for the next passage) stays put; the mark only hides messages a skipped check saw.
-        const key = documentWatchKey(conversationID), seen = mark(key)?.value
-        const after = typeof seen === "string" ? messages.slice(messages.findIndex(message => message.id === seen) + 1) : messages
-        news.triggers ||= !!old && content(after)
-        const last = messages.at(-1)?.id ?? (typeof seen === "string" ? seen : undefined)
-        if (last) marks.push({ key, value: last })
-      }
+      note(followed.get(conversationID)!, fresh)
     }
   }
   canonicalAuthority(checkpoints, 64 * 1024)
   const assertCurrent = (): true => { signal.throwIfAborted(); for (const guard of guards) guard(); return true }
   assertCurrent()
-  return { news, marks, checkpoints: missionCheckpointsSchema.parse(checkpoints), current: assertCurrent,
+  return { news, checkpoints: missionCheckpointsSchema.parse(checkpoints), current: assertCurrent,
     ...(revalidate ? { revalidate: async () => { await revalidate!(); assertCurrent() } } : {}) }
 }

@@ -161,7 +161,7 @@ export function createMissionEditorScheduling(props: {
         } else {
           setPreviousDraft(comparison()); setJournal(mission)
           props.onLoad({ ...mission, ...text, title: mission.title ?? "", taskMode: mission.taskMode ?? "native", roots: [],
-            profileID: null, executionHost: null, watchedConversationIDs: [], launch: { when: [], onlyIf: [] } })
+            profileID: null, executionHost: null, watchedConversationIDs: [], launch: { when: [] } })
           setConflict(false); setReady(true)
         }
         return

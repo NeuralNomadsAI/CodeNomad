@@ -1,8 +1,8 @@
-import { For, Show } from "solid-js"
-import { X } from "lucide-solid"
+import { For, Show, createUniqueId } from "solid-js"
+import { createSortable, transformStyle } from "@thisbeyond/solid-dnd"
+import { GripVertical, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
-import { MissionCriterionRole } from "./mission-criterion-role"
 import { isMissionEventKind, missionEventKinds, missionHourSteps, missionScheduleShortcuts, type MissionConditionKind,
   type MissionCriterionDraft, type MissionCriterionKind } from "./mission-scheduling-data"
 
@@ -10,10 +10,13 @@ type SelectedSource = Exclude<MissionConditionKind, "files-changed">
 /** Lists come from the owning authorized project. Absence is an unavailable read. */
 export type MissionSchedulingSourceLists = Partial<Record<SelectedSource, readonly { id: string; label: string }[]>>
 
-/** One "Launch when" criterion: a schedule shortcut writing a cron, or an event. */
+/** One "Launch when" criterion: a schedule shortcut writing a cron, or an event. The
+ * `connector` to the card above (or / if / else) sits in the gap above it and moves with
+ * it. The grip drags it (a sortable of the surrounding SortableProvider) or moves it with Alt+↑/↓. */
 export function MissionSchedulingCriterion(props: { row: MissionCriterionDraft; number: number; sources: MissionSchedulingSourceLists
-  onChange: (row: MissionCriterionDraft) => void; onRemove: () => void; errorID?: string }) {
-  const { t, locale } = useI18n()
+  connector?: string; sortable: boolean
+  onChange: (row: MissionCriterionDraft) => void; onRemove: () => void; onMove: (delta: -1 | 1) => void; errorID?: string }) {
+  const { t, locale } = useI18n(), connectorID = createUniqueId(), sortable = createSortable(props.row.id)
   const patch = (change: Partial<MissionCriterionDraft>) => props.onChange({ ...props.row, ...change })
   const invalid = () => ({ "aria-invalid": !!props.errorID, "aria-describedby": props.errorID })
   const kind = () => props.row.kind
@@ -23,8 +26,19 @@ export function MissionSchedulingCriterion(props: { row: MissionCriterionDraft; 
   const time = () => <label><span>{t("missions.scheduling.at")}</span>
     <input aria-label={label("missions.scheduling.criterionTime")} type="time" {...invalid()} value={props.row.time}
       onInput={event => patch({ time: event.currentTarget.value })} /></label>
-  return <div class="mission-criterion" role="group" aria-label={label("missions.scheduling.criterion")}>
+  return <div ref={sortable.ref} class="mission-criterion-slot" classList={{ "mission-criterion-dragging": sortable.isActiveDraggable,
+    "mission-criterion-drop": sortable.isActiveDroppable && !sortable.isActiveDraggable }} style={transformStyle(sortable.transform)} data-criterion={props.row.id}>
+    {/* A fixed-height line in every card, so a connector appearing or disappearing while dragging never reflows. */}
+    <div class="mission-criterion-gap"><Show when={props.connector}>{text => <span id={connectorID} class="mission-criterion-connector">{text()}</span>}</Show></div>
+  <div class="mission-criterion" role="group" aria-label={label("missions.scheduling.criterion")} aria-describedby={props.connector ? connectorID : undefined}>
     <div class="mission-criterion-head">
+      <button type="button" class="window-icon-button mission-criterion-grip" data-drag-handle disabled={!props.sortable}
+        aria-label={label("missions.scheduling.dragHandle")} title={label("missions.scheduling.dragHandle")} aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+        {...(props.sortable ? sortable.dragActivators : {})}
+        onKeyDown={event => {
+          if (!event.altKey || event.key !== "ArrowUp" && event.key !== "ArrowDown") return
+          event.preventDefault(); props.onMove(event.key === "ArrowUp" ? -1 : 1)
+        }}><GripVertical class="h-4 w-4" aria-hidden="true" /></button>
       <select aria-label={label("missions.scheduling.criterionKind")} value={kind()}
         onChange={event => patch({ kind: event.currentTarget.value as MissionCriterionKind, source: "" })}>
         <optgroup label={t("missions.scheduling.group.schedule")}>
@@ -34,9 +48,6 @@ export function MissionSchedulingCriterion(props: { row: MissionCriterionDraft; 
           <For each={missionEventKinds}>{value => <option value={value}>{t(`missions.scheduling.condition.${value}`)}</option>}</For>
         </optgroup>
       </select>
-      <Show when={isMissionEventKind(kind())}>
-        <MissionCriterionRole onlyIf={props.row.onlyIf} label={label("missions.scheduling.criterionRole")} onChange={onlyIf => patch({ onlyIf })} />
-      </Show>
       <button type="button" class="window-icon-button" aria-label={label("missions.scheduling.removeCriterion")}
         title={label("missions.scheduling.removeCriterion")} onClick={() => props.onRemove()}><X class="h-4 w-4" aria-hidden="true" /></button>
     </div>
@@ -77,5 +88,6 @@ export function MissionSchedulingCriterion(props: { row: MissionCriterionDraft; 
         <For each={choices()}>{item => <option value={item.id} selected={props.row.source === item.id}>{item.label}</option>}</For>
       </select>
     </Show>
+  </div>
   </div>
 }

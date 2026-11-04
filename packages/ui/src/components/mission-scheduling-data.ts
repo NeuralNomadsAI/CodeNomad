@@ -1,6 +1,7 @@
 import { Cron } from "effect"
 import type { MissionCondition, MissionCriteriaLaunchPolicy, MissionLaunchPolicy } from "../../../server/src/missions/launch-policy"
 import { previewMissionCalendars } from "../../../server/src/missions/mission-calendar-preview"
+import { missionCriteriaStructure, type MissionCriterionConnector } from "../../../server/src/missions/mission-launch-kind"
 
 /** Schedule shortcuts write a cron; advanced cron is written directly. */
 export const missionScheduleShortcuts = ["hours", "daily", "weekly", "monthly", "cron"] as const
@@ -13,8 +14,6 @@ export const missionHourSteps = [1, 2, 3, 4, 6, 8, 12] as const
 export interface MissionCriterionDraft {
   id: string; kind: MissionCriterionKind
   hours: string; time: string; days: number[]; monthDay: string; expression: string; source: string; files: string
-  /** Events only: a condition ("Only if") rather than a trigger ("When"). Schedules always trigger. */
-  onlyIf: boolean
 }
 export interface MissionSchedulingFields { criteria: MissionCriterionDraft[]; zone: string }
 type Criterion = MissionCriteriaLaunchPolicy["when"][number]
@@ -27,18 +26,21 @@ export interface MissionSchedulingDraft extends MissionSchedulingFields {
 }
 export const isMissionEventKind = (kind: MissionCriterionKind): kind is MissionConditionKind =>
   (missionEventKinds as readonly string[]).includes(kind)
+/** The connector between each pair of adjacent cards, with the codec's own parser. */
+export const missionCardConnectors = (rows: readonly MissionCriterionDraft[]): MissionCriterionConnector[] =>
+  missionCriteriaStructure(rows, kind => !isMissionEventKind(kind as MissionCriterionKind)).connectors
 export function newMissionCriterion(kind: MissionCriterionKind = "daily", existing: readonly MissionCriterionDraft[] = []): MissionCriterionDraft {
   // A new daily row takes the first free hour from 09:00, so adding twice is never a duplicate.
   const taken = new Set(existing.filter(row => row.kind === "daily").map(row => row.time))
   const hour = Array.from({ length: 24 }, (_, offset) => (9 + offset) % 24).find(value => !taken.has(`${String(value).padStart(2, "0")}:00`)) ?? 9
   return { id: crypto.randomUUID(), kind, hours: "6", time: `${String(hour).padStart(2, "0")}:00`, days: [1, 2, 3, 4, 5], monthDay: "1",
-    expression: "0 9 * * *", source: "", files: "", onlyIf: false }
+    expression: "0 9 * * *", source: "", files: "" }
 }
 export function newMissionSchedulingDraft(zone = Intl.DateTimeFormat().resolvedOptions().timeZone): MissionSchedulingDraft {
   return { criteria: [], zone }
 }
 export class MissionSchedulingError extends Error {
-  constructor(readonly field: "zone" | "hours" | "time" | "days" | "monthDay" | "cron" | "empty" | "source" | "trigger" | "count" | "duplicate" | "retained",
+  constructor(readonly field: "zone" | "hours" | "time" | "days" | "monthDay" | "cron" | "empty" | "source" | "count" | "duplicate" | "retained",
     readonly index?: number) { super(field) }
 }
 const fail = (field: MissionSchedulingError["field"], index?: number): never => { throw new MissionSchedulingError(field, index) }
@@ -118,11 +120,9 @@ export function missionSchedulingPolicy(draft: MissionSchedulingDraft, directory
       now, 1).length) return fail("empty", index)
     return { kind: "cron", expression, zone }
   })
-  const conditions = new Set(draft.criteria.flatMap((row, index) => isMissionEventKind(row.kind) && row.onlyIf ? [index] : []))
-  const triggers = when.filter((_, index) => !conditions.has(index)), onlyIf = when.filter((_, index) => conditions.has(index)) as MissionCondition[]
-  const schedules = triggers.filter(item => item.kind === "cron"), events = when.filter(item => item.kind !== "cron")
+  const { roles } = missionCriteriaStructure(when), schedules = when.filter(item => item.kind === "cron"), events = when.filter(item => item.kind !== "cron")
   if (!unique(schedules) || !unique(events)) return fail("duplicate")
-  if (events.length > 8 || schedules.length + (triggers.length > schedules.length ? 1 : 0) > 8) return fail("count")
-  if (onlyIf.length && !triggers.length) return fail("trigger")
-  return { when: triggers, onlyIf }
+  const eventCheck = when.some((item, index) => item.kind !== "cron" && roles[index] === "trigger")
+  if (events.length > 8 || schedules.length + (eventCheck ? 1 : 0) > 8) return fail("count")
+  return { when }
 }

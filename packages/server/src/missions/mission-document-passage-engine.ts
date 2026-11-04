@@ -1,10 +1,11 @@
-import { missionDocumentChanges as changes, missionLaunches, missionWakesSchedule, type MissionEventNews } from "./mission-document-state"
+import { missionDocumentChanges as changes, missionLaunches, type MissionEventNews } from "./mission-document-state"
 import { missionLaunchLimit, missionLaunchModel } from "./launch-policy"
-import type { MissionDocument, MissionSourceCheckpoint, MissionTriggerMark, MissionWake } from "./mission-document"
+import type { MissionDocument, MissionSourceCheckpoint, MissionWake } from "./mission-document"
 import type { NativeMissionDocumentStore } from "./mission-document-store"
 
 export type DocumentPassageWake = { missionID: string; generation: number; scheduleID: string; sessionID: string; run: number; messageID: string; dueAt?: number }
 export type DocumentFanInWindow = { incarnation: string; cutoff: number; timeGeneration: number; principalIDs: string[]; completed: boolean; suppress: boolean; overlap?: boolean }
+type SlotNews = { news: MissionEventNews; current(): true }
 export type DocumentPassageResult = "idle" | "ignored" | "started" | "pending" | "settled" | "unknown"
 export type DocumentPassagePreflight = { messagePresent: boolean; ready: boolean; cutoff: number }
 export type DocumentPassageAdmission = { kind: "admitted" | "recorded"; passageID: string; messageID: string; coordinatorSessionID: string; at: number }
@@ -16,8 +17,7 @@ export interface DocumentPassagePorts {
   current(): true
   verifyWake(doc: MissionDocument, wake: DocumentPassageWake): Promise<{ wake: MissionWake; current(): true }>
   coverage(doc: MissionDocument, window: DocumentFanInWindow): Promise<{ complete: boolean; wakes: MissionWake[]; current(): true }>
-  /** `marks`: the When events' current values, consumed when the check skips its passage. */
-  snapshot(doc: MissionDocument): Promise<{ news: MissionEventNews; marks?: MissionTriggerMark[]; checkpoints: MissionSourceCheckpoint[]; current(): true; revalidate?(): Promise<void> }>
+  snapshot(doc: MissionDocument): Promise<{ news: MissionEventNews; checkpoints: MissionSourceCheckpoint[]; current(): true; revalidate?(): Promise<void> }>
   admit(doc: MissionDocument, locked: NativeMissionDocumentStore): Promise<DocumentPassageAdmission>
   observe(doc: MissionDocument, locked: NativeMissionDocumentStore): Promise<{ outcome: "completed" | "failed" | "ended-without-report"; current(): true } | undefined>
   retired?(doc: MissionDocument): void
@@ -80,13 +80,19 @@ export class MissionDocumentPassageEngine {
       if (doc.pending && (!doc.fanIn || doc.fanIn.completed))
         doc = await this.window(locked, doc, input.cutoff, true)
       if (doc.pending) {
-        if (!auxiliary && verified && incoming!.run === calendar!.highWater + 1)
-          doc = await this.change(locked, doc, next => {
-            // Never a second passage: the trigger waits for this one to settle.
-            changes.defer(next, verified.wake, next.pending!.id)
+        let slot: SlotNews | undefined
+        if (!auxiliary && verified && incoming!.run === calendar!.highWater + 1) {
+          // Never a second passage: the trigger waits for this one to settle. An unread slot
+          // stays unconsumed; the passage's suppressed window decides it later.
+          slot = await this.slotNews(doc)
+          if (slot) doc = await this.change(locked, doc, next => {
+            this.recordCheck(next)
+            changes.defer(next, verified.wake, next.pending!.id, slot!.news)
             changes.processWake(next, verified.wake)
-          }, verified.current)
-        await this.closeSuppressedWindow(locked, doc)
+          }, () => { slot!.current(); return verified.current() })
+        }
+        // The same read decides the passage's other slots of this fan-in.
+        await this.closeSuppressedWindow(locked, doc, slot)
         return this.reconcileLocked(locked, doc.id)
       }
       if (auxiliary) {
@@ -115,9 +121,8 @@ export class MissionDocumentPassageEngine {
         }
         const snapshot = await this.ports.snapshot(doc)
         snapshot.current(); coverage.current()
-        if (!missionLaunches(doc, missionWakesSchedule(doc, wakes), snapshot.news)) {
-          await this.consume(locked, doc, wakes, () => { snapshot.current(); return coverage.current() }, snapshot.revalidate, true,
-            next => changes.consumeTriggers(next, snapshot.news, snapshot.marks))
+        if (!missionLaunches(doc, wakes, snapshot.news)) {
+          await this.consume(locked, doc, wakes, () => { snapshot.current(); return coverage.current() }, snapshot.revalidate, true)
           return await this.launchDeferred(locked, doc.id) ?? "ignored"
         }
         // reserve accepts one next occurrence per principal. Older contiguous
@@ -246,29 +251,24 @@ export class MissionDocumentPassageEngine {
     }
     // Synchronization, controls and an open fan-in window are transient; a later wake retries.
     if (doc.synchronization || doc.calendarOwner?.operation.pending || doc.fanIn && !doc.fanIn.completed) return undefined
+    // Each owed wake was decided at its slot; this read only freezes the new passage's sources.
     // An incomplete source read keeps the owed launch for the next wake.
     let snapshot: Awaited<ReturnType<DocumentPassagePorts["snapshot"]>>
     try { snapshot = await this.ports.snapshot(doc); snapshot.current() } catch { return undefined }
-    if (!missionLaunches(doc, owed.scheduled, snapshot.news)) {
-      await this.change(locked, doc, next => {
-        this.recordCheck(next); next.deferred = null
-        changes.consumeTriggers(next, snapshot.news, snapshot.marks)
-      }, snapshot.current, snapshot.revalidate)
-      return undefined
-    }
     doc = await this.change(locked, doc, next => {
       this.recordCheck(next)
-      changes.reserve(next, { kind: "deferred", afterPassageID: owed.afterPassageID, dueAt: owed.dueAt }, this.ports.now(), snapshot.checkpoints)
+      changes.reserve(next, { kind: "deferred", afterPassageID: owed.afterPassageID, dueAt: owed.dueAt, scheduleIDs: owed.scheduleIDs },
+        this.ports.now(), snapshot.checkpoints)
     }, snapshot.current, snapshot.revalidate)
     const reconciled = await this.reconcileLocked(locked, doc.id)
     return reconciled === "pending" ? "started" : reconciled
   }
-  private async closeSuppressedWindow(locked: NativeMissionDocumentStore, doc: MissionDocument) {
+  private async closeSuppressedWindow(locked: NativeMissionDocumentStore, doc: MissionDocument, slot?: SlotNews) {
     if (!doc.fanIn || doc.fanIn.completed || !doc.fanIn.suppress) return
     let coverage: Awaited<ReturnType<DocumentPassagePorts["coverage"]>>
     try { coverage = await this.ports.coverage(doc, doc.fanIn) } catch { return }
     const wakes = doc.pending ? coverage.wakes : coverage.wakes.filter(wake => wake.dueAt <= doc.fanIn!.cutoff)
-    if (coverage.complete && this.contiguous(doc, wakes)) await this.consume(locked, doc, wakes, coverage.current)
+    if (coverage.complete && this.contiguous(doc, wakes)) await this.consume(locked, doc, wakes, coverage.current, undefined, false, slot)
   }
   private async window(locked: NativeMissionDocumentStore, doc: MissionDocument, cutoff: number | undefined, suppress: boolean) {
     if (!doc.calendars.some(item => item.role === "principal")) return doc
@@ -282,18 +282,30 @@ export class MissionDocumentPassageEngine {
       principalIDs: doc.calendars.filter(item => item.role === "principal").map(item => item.scheduleID).sort(), completed: false, suppress,
       ...(suppress ? { overlap: true } : {}) }
   }
-  private consume(locked: NativeMissionDocumentStore, doc: MissionDocument, wakes: MissionWake[], current: () => true, prepare?: () => Promise<void>, checked = false,
-    skipped?: (next: MissionDocument) => void) {
+  private async consume(locked: NativeMissionDocumentStore, doc: MissionDocument, wakes: MissionWake[], current: () => true, prepare?: () => Promise<void>, checked = false,
+    read?: SlotNews) {
+    // Overlapping wakes are decided at their slot; without a complete read they stay unconsumed.
+    const overlap = !!doc.fanIn?.overlap && wakes.length > 0
+    const slot = overlap ? read ?? await this.slotNews(doc) : undefined
+    if (overlap && !slot) return doc
     return this.change(locked, doc, next => {
-      if (checked) this.recordCheck(next)
-      skipped?.(next)
+      if (checked || slot && !read) this.recordCheck(next)
       const after = next.fanIn?.overlap ? next.pending?.id ?? next.history.at(-1)?.id : undefined
       for (const wake of [...wakes].sort((a, b) => a.run - b.run)) {
-        if (after) changes.defer(next, wake, after)
+        if (after && slot) changes.defer(next, wake, after, slot.news)
         changes.processWake(next, wake)
       }
       next.fanIn!.completed = true
-    }, current, prepare)
+    }, slot ? () => { slot.current(); return current() } : current, prepare)
+  }
+  /** Event news at a slot that waits for a passage, measured from the references that
+   * passage will consume, so its grouped launch is decided then. A slot whose read fails
+   * stays unconsumed and is decided by the next read, as any retried wake. */
+  private async slotNews(doc: MissionDocument): Promise<SlotNews | undefined> {
+    if (!missionLaunchModel(doc.configuration.launch).events.length) return { news: { triggers: false, conditions: false, changed: [] }, current: () => true }
+    const references = doc.pending
+      ? { ...doc, checkpoints: [...new Map([...doc.checkpoints, ...doc.pending.checkpoints].map(item => [item.key, item])).values()] } : doc
+    try { const snapshot = await this.ports.snapshot(references); snapshot.current(); return snapshot } catch { return undefined }
   }
   private recordCheck(doc: MissionDocument) {
     if (!missionLaunchModel(doc.configuration.launch).events.length) return

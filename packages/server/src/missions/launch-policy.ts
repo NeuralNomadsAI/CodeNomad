@@ -5,8 +5,8 @@ import { MISSION_TITLE_MAX, MISSION_TITLE_PATTERN } from "./mission-title"
 import { compareModelError, missionProfileRoles, missionProfilesInputSchema, validateMissionProfiles } from "./playbook-profiles"
 import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { documentCounter, documentTimestamp, MISSION_MIN_INTERVAL_MS } from "./mission-time"
-import { missionLaunchModel, requiresMissionCalendar } from "./mission-launch-kind"
-export { requiresMissionCalendar, missionLaunchLimit, missionLaunchModel, missionEventPrincipal, missionEventPrincipalSlot, missionPrincipalCount,
+import { missionCriteriaStructure, missionLaunchModel, requiresMissionCalendar } from "./mission-launch-kind"
+export { missionCriteriaStructure, type MissionCriterionConnector, type MissionCriterionRole, type MissionSchedulePlan, requiresMissionCalendar, missionLaunchLimit, missionLaunchModel, missionEventPrincipal, missionEventPrincipalSlot, missionPrincipalCount,
   missionLaunchesRepeatedly, type MissionLaunchModel, type MissionLaunchSchedule } from "./mission-launch-kind"
 export { documentCounter, documentTimestamp, MISSION_MIN_INTERVAL_MS } from "./mission-time"
 
@@ -64,20 +64,20 @@ const scheduleCriterion = z.object({ kind: z.literal("cron"), expression: z.stri
     if (!parsed.success) { context.addIssue({ code: "custom", message: "Invalid minute-resolution cron" }); return z.NEVER }
     return { kind, ...parsed.data }
   })
-/** Triggers (`when`: schedules and events) launch on any one (OR). Conditions
- * (`onlyIf`: events) gate every trigger: one of them must have changed since the
- * last passage. Conditions need at least one trigger; empty `when` and `onlyIf`
- * launch once at Play. */
+/** One ordered list read as groups (`missionCriteriaStructure`): leading events trigger,
+ * leading schedules trigger at their slots, events after schedules are their "if"
+ * conditions, and schedules after events are an "else" fallback of everything above.
+ * An empty list launches once at Play. */
 export const missionCriteriaLaunchPolicySchema = z.object({
   when: z.array(z.union([scheduleCriterion, missionConditionSchema])).max(MISSION_CALENDAR_LIMIT * 2),
-  onlyIf: z.array(missionConditionSchema).max(MISSION_CALENDAR_LIMIT),
 }).strict().superRefine((policy, context) => {
-  const schedules = policy.when.filter(item => item.kind === "cron"), triggers = policy.when.filter(item => item.kind !== "cron")
-  const events = [...triggers, ...policy.onlyIf]
+  const schedules = policy.when.filter(item => item.kind === "cron"), events = policy.when.filter(item => item.kind !== "cron")
+  const { roles } = missionCriteriaStructure(policy.when)
+  const triggerEvents = policy.when.filter((item, index) => item.kind !== "cron" && roles[index] === "trigger")
   const unique = (items: unknown[]) => new Set(items.map(item => canonicalAuthority(item))).size === items.length
-  const principals = schedules.length + (triggers.length ? 1 : 0)
-  if (!unique(schedules) || !unique(events) || events.length > MISSION_CALENDAR_LIMIT || principals > MISSION_CALENDAR_LIMIT
-    || policy.onlyIf.length && !policy.when.length) context.addIssue({ code: "custom", message: "Invalid Mission launch criteria" })
+  const principals = schedules.length + (triggerEvents.length ? 1 : 0)
+  if (!unique(schedules) || !unique(events) || events.length > MISSION_CALENDAR_LIMIT || principals > MISSION_CALENDAR_LIMIT)
+    context.addIssue({ code: "custom", message: "Invalid Mission launch criteria" })
 })
 export type MissionCriteriaLaunchPolicy = z.infer<typeof missionCriteriaLaunchPolicySchema>
 export const missionLaunchPolicySchema = z.union([missionCriteriaLaunchPolicySchema, missionLegacyLaunchPolicySchema])

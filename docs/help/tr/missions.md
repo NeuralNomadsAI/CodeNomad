@@ -12,7 +12,7 @@ Görevler, kalıcı bir proje planını OpenCode'un kendi konuşmalarıyla birle
 
 1. Sağ panelde **Görevler** bölümünü açıp **Görev oluştur** eylemini seçin. Form, oluşturana veya iptal edene kadar görev listesinin ve seçili görevin görev düğümlerinin yerini alır.
 2. **Görev ne yapmalı?** alanını doldurun ve ilk cümleden otomatik doldurulan **Başlık** alanını kontrol edin (en fazla 60 karakter).
-3. **Bir kez, hemen** için **Zamanlama** bölümünü kapalı bırakın veya zamanlama ya da olay eklemek için genişletip **Şu durumda başlat** altındaki **Ölçüt ekle** eylemini kullanın. Her olay kartında **Ne zaman** veya **Yalnızca şu durumda** seçin.
+3. **Bir kez, hemen** için **Zamanlama** bölümünü kapalı bırakın veya zamanlama ya da olay eklemek için genişletip **Şu durumda başlat** altındaki **Ölçüt ekle** eylemini kullanın. Sıraları nasıl birleştiklerini belirler.
 4. **Rehber**, **Notlar**, **Ajanlar ve modeller**, **Görev oturumları**, projenin **Alt oturum iç içe geçme derinliği** ayarı, kayıtlı özetler ve isteğe bağlı takip edilen konuşmalar için **Seçenekler** bölümünü genişletin. **İki modeli karşılaştır** seçildiğinde **Model A** ve **Model B** seçicileri ana formda görünür.
 5. **Oluştur** eylemini seçin. Duraklatılmış kaydı seçip inceleyin, ardından hazır olduğunuzda ▶ **Başlat** eylemini kullanın. Başlatma ölçütü yoksa Başlat tek bir görev çalıştırır; ölçüt varsa yerel zamanlamayı etkinleştirir.
 
@@ -153,7 +153,7 @@ Reddedilen veya doğrulanmayan bir seçim asla yeniden gönderilmez: kayıtlı d
 
 Etiketlerin yanındaki **i** simgeleri seçenekleri açıklar: üzerine gelin, klavyeyle odaklayın veya dokunun.
 
-Oluştururken veya düzenlerken **Zamanlama** bölümünü genişletin. **Şu durumda başlat**, görevi başlatan ölçütleri listeler: **Ölçüt ekle** seçip türünü belirleyin. Görev, herhangi bir **Ne zaman** ölçütü gerçekleştiği anda başlar. Hiç ölçüt yoksa Başlat'ta bir kez çalışır (**Bir kez, hemen**). Bir ölçütü × düğmesiyle kaldırın. **Şu durumda başlat** yanındaki **i** tıklama, Enter veya Boşluk ile açılır: ölçütleri açıklar, zamanlamaların yalnızca OpenCode çalışırken çalıştığını belirtir ve [OpenCode'un başlatma ayarına](opencode.md#login-start) götürür. Yeni zamanlamalar sistemin saat dilimini kullanır; **Kayıtlı saat dilimi (IANA)** yalnızca kayıtlı saat dilimi farklıysa görünür.
+Oluştururken veya düzenlerken **Zamanlama** bölümünü genişletin. **Şu durumda başlat**, görevi başlatan ölçütleri listeler: **Ölçüt ekle** seçip türünü belirleyin. Hiç ölçüt yoksa Başlat'ta bir kez çalışır (**Bir kez, hemen**). Bir ölçütü × düğmesiyle kaldırın. **Şu durumda başlat** yanındaki **i** tıklama, Enter veya Boşluk ile açılır: **eğer** ve **aksi halde** bağlaçlarını açıklar, görevin yalnızca OpenCode çalışırken çalıştığını belirtir ve [OpenCode'un başlatma ayarına](opencode.md#login-start) götürür. Yeni zamanlamalar sistemin saat dilimini kullanır; **Kayıtlı saat dilimi (IANA)** yalnızca kayıtlı saat dilimi farklıysa görünür.
 
 | Zamanlama | Zaman |
 | --- | --- |
@@ -163,11 +163,11 @@ Oluştururken veya düzenlerken **Zamanlama** bölümünü genişletin. **Şu du
 | Her ayın belirli günü | Seçilen saatte 1–31 arası gün; o günü olmayan aylar atlanır. |
 | Gelişmiş (cron) | Yerel bir cron ifadesi, en fazla dakikada bir. |
 
-09:15 ve 17:45 gibi birden çok saat için birden çok zamanlama ekleyin. Her biri bir cron'dur; tanınan ifadeler kısayolları olarak yeniden açılır. [Olaylar](#scheduling-conditions) diğer ölçütlerdir: **Ne zaman** olayları sıklık ayarı olmadan 15 dakikada bir denetlenir; **Yalnızca şu durumda** olayları her başlatmada okunur.
+09:15 ve 17:45 gibi birden çok saat için birden çok zamanlama ekleyin. Her biri bir cron'dur; tanınan ifadeler kısayolları olarak yeniden açılır. [Olaylar](#scheduling-conditions) diğer ölçütlerdir: görevi başlatan olaylar sıklık ayarı olmadan 15 dakikada bir denetlenir; koşullar gerektiği zamanlarda okunur.
 
-Zamanlamalar her zaman **Ne zaman** ölçütleridir. Her olay kartında iki simgeli bir anahtar bulunur: **Ne zaman** (şimşek) olayın görevi başlatmasını sağlar; **Yalnızca şu durumda** (huni) onu bir koşul yapar. Bir zamanlama veya **Ne zaman** olayıyla yapılan her başlatmada görev, son geçişten beri **Yalnızca şu durumda** olaylarından biri gerçekleştiyse başlar; aksi halde o geçiş atlanır ve gördüğü **Ne zaman** olayları daha sonra başlatamaz. Koşullar en az bir **Ne zaman** ölçütü gerektirir.
+İki kart arasındaki küçük bir bağlaç, nasıl birleştiklerini gösterir: iki zamanlama veya iki olay arasında **veya**, bir zamanlamadan bir olaya **eğer**, bir olaydan bir zamanlamaya **aksi halde**. En üstteki olaylar her gerçekleştiklerinde görevi başlatır; en üstteki zamanlamalar onu kendi zamanlarında başlatır. Zamanlamalardan sonraki olaylar onların koşullarıdır: bu zamanların her birinde görev, son başarılı geçişten beri bunlardan biri gerçekleştiyse başlar; aksi halde o zaman atlanır. Olaylardan sonraki zamanlamalar üstlerindeki her şey için bir yedektir: bir yedek zamanlama, her zamanında, üstündeki kartlar önceki zamanından (veya kurulduğundan) beri hiçbir geçiş başlatmadıysa başlatır; **Şimdi çalıştır** da sayılır, başarısız bir geçiş de. Ondan sonraki olaylar yalnızca bu yedeği koşula bağlar. Örneğin, yeni commit'ler, sonra 18:00, sonra yeni mesajlar, sonra 20:00 her commit'te başlatır; aksi halde yeni mesaj olduysa 18:00'de; aksi halde 20:00'de. Sırayı değiştirmek için bir kartı tutamağından sürükleyin veya tutamağa odaklanıp Alt+Yukarı ok ya da Alt+Aşağı ok tuşuna basın; bağlaçlar da buna uyar.
 
-Süren bir geçiş asla ikilenmez. O çalışırken gerçekleşen zamanlamalar veya olaylar tek bir geçişte toplanır ve bu geçiş bitince başlatılır; toplanan geçiş yine **Yalnızca şu durumda** koşullarını gerektirir.
+Süren bir geçiş asla ikilenmez. O çalışırken gerçekleşen zamanlamalar veya olaylar tek bir geçişte toplanır ve kendi zamanlarında görevi başlatacak idiyseler bu geçiş bitince başlatılır: koşulları ve yedekleri o zaman belirlenir.
 
 Yerel zamanlamalar kayıtlı dilimi ve OpenCode'un yaz saati kurallarını izler. Gelecekte hiçbir zamanı olmayan bir takvim reddedilir.
 
@@ -187,11 +187,11 @@ Zamanlamaların bitiş tarihi yoktur. Bitiş tarihiyle kaydedilmiş bir zamanlam
 
 **Başlatılan geçişler**, koordinatörünün ilk girdisi kabul edildiğinde her geçişi bir kez sayar; **Şimdi çalıştır** ve sonra başarısız olan bir geçiş dahil. Denetimler, değişmeyen olaylar ve reddedilen uyanışlar sayılmaz. Sayılar düzenlemelerden ve yeniden başlatmalardan sonra korunur.
 
-Bir sıklık ve isteğe bağlı bir koşulla kaydedilmiş zamanlama ölçüt olarak açılır: sıklık zamanlamalar olur, koşullu bir sıklık o olayı **Yalnızca şu durumda** içine ekler ve tek başına bir koşul **Ne zaman** olayı olur; değiştirmeden açıp kaydetmek, o olayda tek bir başlatma dahil kayıtlı zamanlamayı aynen korur; bir düzenlemeyi kaydetmek bu tek başlatma sınırını kaldırır, böylece olay her gerçekleştiğinde görevi başlatır. Bir aralık, gecikme, tek tarih, en fazla geçiş sayısı veya birkaç saat sonra bitiş kaydedildiği gibi çalışmaya devam eder ve siz değiştirene kadar **Kayıtlı zamanlama ilkesi** altında gösterilir.
+Bir sıklık ve isteğe bağlı bir koşulla kaydedilmiş zamanlama ölçüt olarak açılır: sıklık en başa yerleşen zamanlamalar olur, bir sıklıktan sonraki koşul bunlardan sonra yerleştirilip onların koşulu (**eğer**) olur ve tek başına bir koşul görevi başlatan olay olur; değiştirmeden açıp kaydetmek, o olayda tek bir başlatma dahil kayıtlı zamanlamayı aynen korur; bir düzenlemeyi kaydetmek bu tek başlatma sınırını kaldırır, böylece olay her gerçekleştiğinde görevi başlatır. Bir aralık, gecikme, tek tarih, en fazla geçiş sayısı veya birkaç saat sonra bitiş kaydedildiği gibi çalışmaya devam eder ve siz değiştirene kadar **Kayıtlı zamanlama ilkesi** altında gösterilir.
 
 Seçili yerel zamanlama **İstenen durum**, **Yerel takvim**, **Sonraki uyanma** veya **Sonraki kontrol**, **… tarihinden beri izleniyor** bilgisiyle **Kontroller**, **Başlatılan geçişler**, **Başarılı geçişler**, bitişi ve **Önceki çalıştırmalar** bilgilerini gösterir. Geçmiş bir geçişi **Konuşmayı aç** üzerinden okuyun. **Zamanlama tamamlandı**, zamanlamanın bitişini açıklar; geçişin sonucunu ayrıca inceleyin. Son 30 sonuç korunur; ömür boyu sayılar bu pencerenin dışında da kalır. **Daha fazla Mission yükle**, kayıtlı nesnelerin sonraki sayfasını yükler.
 
-Liste her ölçütü özetler ve koşulların başına **Yalnızca şu durumda** ekler; ayrıntı, kayıtlı bir bitiş tarihini yalnızca tanımlandığında, **Kontroller** bilgisini ise yalnızca olaylar varsa gösterir.
+Liste her ölçütü sırayla özetler ve ilkinden sonrakilerin başına bağlaçlarını (**veya**, **eğer** ya da **aksi halde**) ekler; ayrıntı, kayıtlı bir bitiş tarihini yalnızca tanımlandığında, **Kontroller** bilgisini ise yalnızca olaylar varsa gösterir.
 
 ### Mevcut günlük zamanlamalar {#existing-daily-schedules}
 

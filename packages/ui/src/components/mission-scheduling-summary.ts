@@ -1,12 +1,12 @@
-import type { MissionLaunchPolicy } from "../../../server/src/missions/launch-policy"
-import { missionLaunchModel } from "../../../server/src/missions/mission-launch-kind"
+import type { MissionCondition, MissionLaunchPolicy } from "../../../server/src/missions/launch-policy"
+import { missionCriteriaStructure, missionLaunchModel, type MissionLaunchSchedule } from "../../../server/src/missions/mission-launch-kind"
 import { decodeMissionSchedulingPolicy } from "./mission-scheduling-decode"
 import { isMissionEventKind } from "./mission-scheduling-data"
 
 type Translate = (key: string, params?: Record<string, string>) => string
 
-/** One readable line per launch criterion, in stored order: schedules, then events;
- * conditions are prefixed with their "Only if" role. */
+/** One readable line per launch criterion, in stored order; after the first, each
+ * line is prefixed with the connector before it: "or", "if" or "else". */
 export function describeMissionCriteria(policy: MissionLaunchPolicy, t: Translate, locale: string, oneShotAt?: number | null): string[] {
   const model = missionLaunchModel(policy), draft = decodeMissionSchedulingPolicy(policy, undefined, "UTC")
   const date = (at: number, zone: string) => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short", timeZone: zone }).format(at)
@@ -15,27 +15,33 @@ export function describeMissionCriteria(policy: MissionLaunchPolicy, t: Translat
     ? new Intl.NumberFormat(locale, { style: "unit", unit: "minute", unitDisplay: "long" }).format(ms / 60_000)
     : `${ms / 60_000} ${t("missions.scheduling.minutes")}`
   const weekday = new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" })
-  const lines = model.schedules.map((schedule, index) => {
-    if (schedule.kind === "at") return `${t("missions.scheduling.frequency.at")} · ${date(oneShotAt ?? schedule.at, schedule.zone)} · ${schedule.zone}`
-    if (schedule.kind === "in") return `${t("missions.scheduling.frequency.in")} · ${minutes(schedule.delayMs)}`
-    if (schedule.kind === "every") return `${t("missions.scheduling.frequency.every")} · ${minutes(schedule.intervalMs)}`
-    const row = draft.criteria.filter(item => !isMissionEventKind(item.kind))[index]
+  const cronRows = draft.criteria.filter(item => !isMissionEventKind(item.kind))
+  let cronIndex = 0
+  const schedule = (item: MissionLaunchSchedule) => {
+    if (item.kind === "at") return `${t("missions.scheduling.frequency.at")} · ${date(oneShotAt ?? item.at, item.zone)} · ${item.zone}`
+    if (item.kind === "in") return `${t("missions.scheduling.frequency.in")} · ${minutes(item.delayMs)}`
+    if (item.kind === "every") return `${t("missions.scheduling.frequency.every")} · ${minutes(item.intervalMs)}`
+    const row = cronRows[cronIndex++]
     const title = t(`missions.scheduling.shortcut.${row?.kind ?? "cron"}`)
     switch (row?.kind) {
       case "hours": return `${title} · ${row.hours}`
-      case "daily": return `${title} · ${row.time} · ${schedule.zone}`
-      case "weekly": return `${title} · ${row.days.map(day => weekday.format(Date.UTC(2026, 10, 1 + day))).join(", ")} · ${row.time} · ${schedule.zone}`
-      case "monthly": return `${title} · ${row.monthDay} · ${row.time} · ${schedule.zone}`
-      default: return `${title} · ${schedule.expression} · ${schedule.zone}`
+      case "daily": return `${title} · ${row.time} · ${item.zone}`
+      case "weekly": return `${title} · ${row.days.map(day => weekday.format(Date.UTC(2026, 10, 1 + day))).join(", ")} · ${row.time} · ${item.zone}`
+      case "monthly": return `${title} · ${row.monthDay} · ${row.time} · ${item.zone}`
+      default: return `${title} · ${item.expression} · ${item.zone}`
     }
-  })
-  for (const event of model.events) {
-    const reference = event.kind === "files-changed" ? event.paths.join(", ") : event.kind === "branch-commits" ? event.ref.slice("refs/heads/".length)
-      : event.kind === "conversation-message" ? event.conversationID : event.missionID
-    const line = `${t(`missions.scheduling.condition.${event.kind}`)} · ${reference}`
-    lines.push(model.conditions.includes(event) ? `${t("missions.scheduling.role.onlyIf")} · ${line}` : line)
   }
-  return lines
+  const event = (item: MissionCondition) => {
+    const reference = item.kind === "files-changed" ? item.paths.join(", ") : item.kind === "branch-commits" ? item.ref.slice("refs/heads/".length)
+      : item.kind === "conversation-message" ? item.conversationID : item.missionID
+    return `${t(`missions.scheduling.condition.${item.kind}`)} · ${reference}`
+  }
+  const items: (MissionLaunchSchedule | MissionCondition)[] = "when" in policy ? policy.when : [...model.schedules, ...model.events]
+  const { connectors } = missionCriteriaStructure(items, kind => ["cron", "every", "at", "in"].includes(kind))
+  return items.map((item, index) => {
+    const line = item.kind === "cron" || item.kind === "every" || item.kind === "at" || item.kind === "in" ? schedule(item) : event(item)
+    return index === 0 ? line : `${t(`missions.scheduling.connector.${connectors[index - 1]}`)} · ${line}`
+  })
 }
 
 /** The zone that dates of this policy are shown in, when it has one. */

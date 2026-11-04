@@ -41,14 +41,18 @@ export function decodeMissionSchedulingPolicy(policy: MissionLaunchPolicy, direc
   const zones = [...new Set(model.schedules.flatMap(item => item.kind === "cron" || item.kind === "at" ? [item.zone] : []))]
   if (zones.length > 1) reason ??= "timing"
   draft.zone = zones[0] ?? defaultZone
-  for (const schedule of model.schedules) {
-    if (schedule.kind !== "cron") continue
-    const row = { ...newMissionCriterion("cron"), expression: schedule.expression, ...shortcut(schedule.expression, schedule.zone) }
-    exact[row.id] = { kind: "cron", expression: schedule.expression, zone: schedule.zone }
-    draft.criteria.push(row)
-  }
-  for (const event of model.events) {
-    const row = { ...newMissionCriterion(event.kind), onlyIf: model.conditions.includes(event) }
+  // Cards keep the stored order, so each one keeps its role. A legacy frequency comes
+  // first and its condition below it, which makes that event a condition.
+  const items = "when" in policy ? policy.when : [...model.schedules, ...model.events]
+  for (const item of items) {
+    if (item.kind === "cron") {
+      const row = { ...newMissionCriterion("cron"), expression: item.expression, ...shortcut(item.expression, item.zone) }
+      exact[row.id] = { kind: "cron", expression: item.expression, zone: item.zone }
+      draft.criteria.push(row)
+      continue
+    }
+    if (item.kind === "every" || item.kind === "at" || item.kind === "in") continue
+    const event = item, row = newMissionCriterion(event.kind)
     switch (event.kind) {
       case "schedule-success": case "mission-completed": row.source = event.missionID; break
       case "conversation-message": row.source = event.conversationID; break

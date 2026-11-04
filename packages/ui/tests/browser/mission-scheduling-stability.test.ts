@@ -178,7 +178,7 @@ test("the scheduling i opens the real Settings on the OpenCode login-start row a
     const f = await setup(page)
     await missionGeneralAction(page, "Create mission").click()
     await scheduling(page).locator("summary").click()
-    await scheduling(page).getByRole("button", { name: /Schedules only run while OpenCode is running\.$/ }).click()
+    await scheduling(page).getByRole("button", { name: /The Mission only runs while OpenCode is running\.$/ }).click()
     await page.locator(".settings-info-link-content").locator(".settings-info-link-action").click()
     const row = page.locator(".settings-screen-shell #opencode-login-start")
     await row.waitFor()

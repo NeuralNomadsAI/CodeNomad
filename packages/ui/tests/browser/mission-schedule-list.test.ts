@@ -410,8 +410,7 @@ test("event-only details distinguish checks from launches and explain an unknown
   const page = await browser.newPage(), f = await setup(page, { seed: true })
   try {
     await f.change(doc => {
-      changes.configure(doc, { ...doc.configuration, launch: { when: [{ kind: "files-changed", paths: ["src/main.ts", "package.json"] }],
-        onlyIf: [] } }, Date.now())
+      changes.configure(doc, { ...doc.configuration, launch: { when: [{ kind: "files-changed", paths: ["src/main.ts", "package.json"] }] } }, Date.now())
       doc.blocked = "unknown"
     })
     await page.evaluate(() => (window as any).missionFixture.refresh()); await select(page)
@@ -647,17 +646,16 @@ test("the schedule list summarizes each launch criterion and its role; a stored 
   try {
     const daily = { kind: "cron" as const, expression: "0 9 * * *", zone: "Europe/Paris" }
     await f.change(doc => changes.configure(doc, { ...doc.configuration, title: "Daily review",
-      launch: { when: [daily], onlyIf: [] } }, Date.now()))
+      launch: { when: [daily] } }, Date.now()))
     // A schedule written before launch criteria keeps its condition and end date until it is edited.
     await f.addSchedule("msn_commits", { title: "Review new commits", launch: { timing: { ...daily, expression: "0 9 * * 1,2,3,4,5" },
       condition: { kind: "branch-commits", directory: "fixture", ref: "refs/heads/main" }, ends: { maxLaunches: null, afterMs: null, at: Date.parse("2026-12-31T17:00:00Z") } } })
-    await f.addSchedule("msn_files", { title: "Follow package changes", launch: { when: [{ kind: "files-changed", paths: ["package.json"] }],
-      onlyIf: [] } })
+    await f.addSchedule("msn_files", { title: "Follow package changes", launch: { when: [{ kind: "files-changed", paths: ["package.json"] }] } })
     await page.evaluate(() => (window as any).missionFixture.refresh())
     await page.getByRole("combobox").click()
     const option = (title: string) => page.getByRole("option").filter({ hasText: title })
     assert.match(await option("Daily review").innerText(), /Every day · 09:00 · Europe\/Paris/)
-    assert.match(await option("Review new commits").innerText(), /Selected weekdays · .* · 09:00 · Europe\/Paris; Only if · New commits on a local branch · main/)
+    assert.match(await option("Review new commits").innerText(), /Selected weekdays · .* · 09:00 · Europe\/Paris; if · New commits on a local branch · main/)
     assert.match(await option("Follow package changes").innerText(), /Explicit files change · package\.json/)
     await capture(page, "schedule-list-criteria-en.png")
     await option("Review new commits").click()

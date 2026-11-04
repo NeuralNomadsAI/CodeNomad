@@ -12,7 +12,7 @@ Missions pair a durable project plan with native OpenCode conversations. The coo
 
 1. Open **Missions** in the right panel and choose **Create mission**. The form replaces the mission list and the selected mission's tasks until you create or cancel.
 2. Fill **What should the mission do?** and check **Title**, prefilled from the first sentence (up to 60 characters).
-3. Leave **Scheduling** folded for **Once, immediately**, or expand it and use **Add a criterion** under **Launch when** to add schedules or events. On each event card, choose **When** or **Only if**.
+3. Leave **Scheduling** folded for **Once, immediately**, or expand it and use **Add a criterion** under **Launch when** to add schedules or events. Their order sets how they combine.
 4. Expand **Options** for **Playbook**, **Notes**, **Agents and models**, **Task sessions**, the project's **Subsession nesting depth**, saved briefs and optional followed conversations. With **Compare two models**, the **Model A** and **Model B** selectors appear in the main form.
 5. Choose **Create**. Select the paused entry, review it, then use ▶ **Start** when ready. Without launch criteria, Start runs one mission; with criteria, it arms native scheduling.
 
@@ -153,7 +153,7 @@ Briefs store instructions and requested choices, not task plans, results, conver
 
 The **i** icons beside scheduling labels explain the choices: hover, focus with the keyboard or tap.
 
-Expand **Scheduling** in Create or Edit. **Launch when** lists the criteria that launch the mission: choose **Add a criterion**, then pick its type. The mission launches as soon as any **When** criterion occurs. Without any criterion, it launches once at Start (**Once, immediately**). Remove a criterion with its × button. The **i** beside **Launch when** opens on click, Enter or Space: it explains the criteria, notes that schedules only run while OpenCode is running and links to [OpenCode's start setting](opencode.md#login-start). New schedules use the system time zone; **Saved time zone (IANA)** appears only when the saved zone differs from it.
+Expand **Scheduling** in Create or Edit. **Launch when** lists the criteria that launch the mission: choose **Add a criterion**, then pick its type. Without any criterion, it launches once at Start (**Once, immediately**). Remove a criterion with its × button. The **i** beside **Launch when** opens on click, Enter or Space: it explains **if** and **else**, notes that the mission only runs while OpenCode is running and links to [OpenCode's start setting](opencode.md#login-start). New schedules use the system time zone; **Saved time zone (IANA)** appears only when the saved zone differs from it.
 
 | Schedule | Timing |
 | --- | --- |
@@ -163,11 +163,11 @@ Expand **Scheduling** in Create or Edit. **Launch when** lists the criteria that
 | Day of each month | Day 1–31 at the chosen time; months without that day are skipped. |
 | Advanced (cron) | A native cron expression, at most once per minute. |
 
-Add several schedules for several times, such as 09:15 and 17:45. Each one is a cron; recognized expressions reopen as their shortcut. The [events](#scheduling-conditions) are the other criteria: **When** events are checked every 15 minutes, with no frequency to set; **Only if** events are read at each launch.
+Add several schedules for several times, such as 09:15 and 17:45. Each one is a cron; recognized expressions reopen as their shortcut. The [events](#scheduling-conditions) are the other criteria: events that launch the mission are checked every 15 minutes, with no frequency to set; conditions are read at the times that need them.
 
-Schedules are always **When** criteria. Each event card has a switch with two icons: **When** (lightning) makes the event launch the mission; **Only if** (funnel) makes it a condition. At each launch, by a schedule or a **When** event, the mission starts only if one of the **Only if** events occurred since the last passage; otherwise that passage is skipped and the **When** events it saw cannot launch later. Conditions need at least one **When** criterion.
+Between two cards, a small connector shows how they combine: **or** between two schedules or two events, **if** from a schedule to an event, **else** from an event to a schedule. Events at the top launch the mission each time they occur; schedules at the top launch it at their times. Events after schedules are their conditions: at each of those times, the mission starts only if one of them occurred since the last successful passage; otherwise that time is skipped. Schedules after events are a fallback for everything above them: at each of its times, a fallback schedule launches only if the cards above it launched no passage since its previous time (or since it was set up); a **Run now** counts too, and so does a passage that failed. Events after it condition only that fallback. For example, new commits, then 18:00, then new messages, then 20:00 launches on each commit; else at 18:00 if there were new messages; else at 20:00. Drag a card by its grip to change the order, or focus the grip and press Alt+Up or Alt+Down; the connectors follow.
 
-A passage in progress is never doubled. Schedules or events that occur while it runs are grouped into one passage, launched when it ends; that grouped passage still needs its **Only if** conditions.
+A passage in progress is never doubled. Schedules or events that occur while it runs are grouped into one passage, launched when it ends, if they would have launched the mission at their own time: their conditions and fallbacks are decided then.
 
 Civil schedules follow the saved zone and OpenCode's daylight-saving rules. A calendar without any future slot is refused.
 
@@ -187,11 +187,11 @@ Schedules have no end date. A schedule saved with an end date keeps respecting i
 
 **Launched passages** counts each passage once when its coordinator's first input is admitted, including **Run now** and a passage that later fails. Checks, unchanged events and refused wakes count nothing. Counts survive edits and restarts.
 
-A schedule stored with a frequency and an optional condition opens as criteria: a frequency becomes schedules, a frequency with a condition adds that event in **Only if**, and a condition alone becomes a **When** event; reopening and saving unchanged keeps the saved schedule exactly, including a single launch on that event; saving an edit removes that single-launch limit, so the event launches the mission each time it occurs. An interval, a delay, a single date, a maximum number of passages or an end after a number of hours keeps working as saved and is shown under **Stored scheduling policy** until you replace it.
+A schedule stored with a frequency and an optional condition opens as criteria: a frequency becomes schedules first, a condition after a frequency is placed after them and becomes their condition (**if**), and a condition alone becomes the event that launches the mission; reopening and saving unchanged keeps the saved schedule exactly, including a single launch on that event; saving an edit removes that single-launch limit, so the event launches the mission each time it occurs. An interval, a delay, a single date, a maximum number of passages or an end after a number of hours keeps working as saved and is shown under **Stored scheduling policy** until you replace it.
 
 The selected native schedule shows **Desired state**, **Native calendar**, **Next wake** or **Next check**, **Checks** with **Tracked since**, **Launched passages**, **Successful passages**, its end and **Past runs**. Read a past passage through **Open conversation**. **Schedule finished** describes the schedule's end; inspect the passage outcome separately. Results retain the latest 30 entries; lifetime counts survive that window. **Load more Missions** loads the next saved-object page.
 
-The list summarizes each criterion, prefixing conditions with **Only if**; the detail shows a saved end date only when set, and **Checks** only with events.
+The list summarizes each criterion in order, prefixed after the first with its connector (**or**, **if** or **else**); the detail shows a saved end date only when set, and **Checks** only with events.
 
 ### Existing daily schedules {#existing-daily-schedules}
 

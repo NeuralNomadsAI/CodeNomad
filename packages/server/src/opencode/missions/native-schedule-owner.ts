@@ -48,8 +48,16 @@ const calendarForSlot = (doc: MissionDocument, slot: MissionCalendarOwnerSlot): 
       || current.role !== slot.role || current.slot !== slot.slot) throw new Error("Mission calendar mapping differs")
     return current
   }
+  // A new principal calendar's anchor is when this configuration armed it: an "else"
+  // schedule's first period starts there. A schedule re-armed unchanged by an edit of
+  // other criteria keeps the period origin of the calendar it replaces.
+  const kept = slot.role === "principal" ? doc.calendarOwner?.retired.find(item => item.descriptor.role === "principal" && same(item.descriptor.when, slot.when)) : undefined
+  const previous = kept && doc.synchronization?.retiredCalendars.find(item => item.scheduleID === kept.descriptor.scheduleID)
+  const origin = previous && (previous.armedAt !== undefined || previous.lastDueAt !== undefined)
+    ? { ...(previous.armedAt !== undefined ? { armedAt: previous.armedAt } : {}), ...(previous.lastDueAt !== undefined ? { lastDueAt: previous.lastDueAt } : {}) }
+    : slot.role === "principal" && slot.anchorAt !== undefined ? { armedAt: slot.anchorAt } : {}
   return { role: slot.role, slot: slot.slot, timeGeneration: slot.timeGeneration, sessionID: slot.sessionID,
-    scheduleID: slot.scheduleID, highWater: 0, pendingWake: null, wakePreparing: null }
+    scheduleID: slot.scheduleID, highWater: 0, pendingWake: null, wakePreparing: null, ...origin }
 }
 const publishAuxiliary = (doc: MissionDocument, slot: MissionCalendarOwnerSlot) => {
   if (slot.role !== "reconciliation" || slot.timeGeneration !== doc.timeGeneration) throw new Error("Mission current auxiliary required")
