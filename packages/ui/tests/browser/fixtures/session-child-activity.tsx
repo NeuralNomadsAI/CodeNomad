@@ -14,6 +14,7 @@ import {
 } from "../../../src/stores/session-state"
 import { clearSessionIdleFade, markSessionIdleFadeStarted } from "../../../src/stores/session-status"
 import { buildSessionThreadsFromMap } from "../../../src/stores/session-tree"
+import { markSessionInterruptionSeen } from "../../../src/stores/session-interruption-seen"
 import type { Session } from "../../../src/types/session"
 import "../../../src/index.css"
 
@@ -73,6 +74,7 @@ let eventSequence = 0
   expanded: () => getPersistentExpandedSessionIds(id),
   restore: (saved: string[]) => { clearInstanceSessionExpansionState(id); hydrateSessionExpansion(id, saved) },
   seen: (sessionId: string) => markSessionIdleSeen(id, sessionId),
+  acknowledgeInterruption: (sessionId: string) => markSessionInterruptionSeen(id, sessions().get(id)!.get(sessionId)!),
   idle: (sessionId: string, idleSince: number, extra = {}) => withSession(id, sessionId, session => {
     Object.assign(session, { status: "idle", idleSince, retry: null, generationRecovery: null }, extra)
   }),

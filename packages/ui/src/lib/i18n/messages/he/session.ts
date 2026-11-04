@@ -35,8 +35,6 @@ export const sessionMessages = {
   "sessionList.childActivity.idle.other": "{count} תת-שיחות לא פעילות",
   "sessionList.status.interrupted": "הופסק",
   "sessionList.status.clear": "נקה",
-  "sessionList.childActivity.interrupted.one": "{count} תת-שיחה הופסקה",
-  "sessionList.childActivity.interrupted.other": "{count} תת-שיחות הופסקו",
   "sessionList.status.clearAriaLabel": "נקה {status}",
   "sessionList.status.retrying": "מנסה שוב",
   "sessionList.status.retryingIn": "מנסה שוב בעוד {seconds}ש׳",

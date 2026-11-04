@@ -35,8 +35,6 @@ export const sessionMessages = {
   "sessionList.childActivity.idle.other": "{count} 件のサブセッションが待機中",
   "sessionList.status.interrupted": "中断",
   "sessionList.status.clear": "クリア",
-  "sessionList.childActivity.interrupted.one": "{count} 件のサブセッションが中断",
-  "sessionList.childActivity.interrupted.other": "{count} 件のサブセッションが中断",
   "sessionList.status.clearAriaLabel": "{status}をクリア",
   "sessionList.status.retrying": "再試行中",
   "sessionList.status.retryingIn": "{seconds}秒後に再試行",

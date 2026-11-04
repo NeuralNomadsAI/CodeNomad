@@ -22,7 +22,7 @@ interface Sweep {
 let installed = false
 let sweep: Sweep | null = null
 let deferred: Array<() => void> = []
-const clearActions = new WeakMap<HTMLElement, () => void>()
+const clearableToggles = new WeakSet<HTMLElement>()
 
 // A label stands for its control, so a row's whole label area sweeps.
 function toggleFrom(node: EventTarget | null): HTMLElement | null {
@@ -32,7 +32,7 @@ function toggleFrom(node: EventTarget | null): HTMLElement | null {
 }
 
 function isOn(toggle: HTMLElement) {
-  if (clearActions.has(toggle)) return true
+  if (clearableToggles.has(toggle)) return true
   if (toggle instanceof HTMLInputElement) return toggle.checked
   return toggle.getAttribute("aria-pressed") === "true" || toggle.getAttribute("aria-checked") === "true"
 }
@@ -45,9 +45,7 @@ function setToggle(sweep: Sweep, toggle: HTMLElement) {
   if (sweep.visited.has(toggle)) return
   sweep.visited.add(toggle)
   if (!toggle.isConnected || isDisabled(toggle) || isOn(toggle) === sweep.on) return
-  const clear = clearActions.get(toggle)
-  if (clear) clear()
-  else toggle.click()
+  toggle.click()
 }
 
 function install() {
@@ -137,10 +135,9 @@ export function afterSweep(run: () => void) {
 }
 
 // Makes `element` a one-way member that is always on (a clearable status badge): a sweep
-// starting on or crossing it clears it through `clear`, its own click by default; pass
-// `clear` when the element also has another action (a parent's expander).
-export function toggleSweepClear(element: HTMLElement, clear: () => void = () => element.click()) {
-  clearActions.set(element, clear)
+// starting on or crossing it clears it through its own click.
+export function toggleSweepClear(element: HTMLElement) {
+  clearableToggles.add(element)
 }
 
 // Returns the group for a toggle's data-toggle-sweep attribute: independent toggles of one

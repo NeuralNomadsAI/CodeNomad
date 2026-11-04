@@ -137,9 +137,8 @@ const SessionList: Component<SessionListProps> = (props) => {
   const sessionListError = createMemo(() => getSessionListError(props.instanceId))
   const descendantActivity = createMemo(() => collectDescendantActivity(
     sessionStateSessions().get(props.instanceId),
-    session => !session.retry && !isSessionInterruptionUnseen(props.instanceId, session)
+    session => !session.retry && session.generationRecovery !== "interrupted"
       && shouldShowSessionStatus(props.instanceId, session.id, now(), preferences().keepUnseenSubagentIdleStatus),
-    session => isSessionInterruptionUnseen(props.instanceId, session),
   ))
 
   createEffect(() => {
@@ -453,15 +452,6 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
   }
 
-  // The collapsed terminal indicator acknowledges every finished descendant.
-  const clearDescendantStatus = (sessionId: string) => {
-    batch(() => {
-      for (const descendant of getDescendantSessions(props.instanceId, sessionId)) {
-        clearSessionStatus(descendant.id)
-      }
-    })
-  }
-
   const closeRenameDialog = () => {
     setRenameTarget(null)
   }
@@ -620,7 +610,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       return activity ? childActivityKind(activity) : undefined
     })
     createEffect(on(activityKind, (kind, previous) => {
-      if (kind === previous || !kind || kind === "idle" || kind === "interrupted" || rowProps.expanded
+      if (kind === previous || !kind || kind === "idle" || rowProps.expanded
         || props.enableFilterBar || !preferences().autoExpandActiveSubsessions) return
       const active = props.activeSessionId
       if (!active || (!isActive() && !getSessionAncestorIds(props.instanceId, sessionId()).includes(active))) return
@@ -702,10 +692,6 @@ const SessionList: Component<SessionListProps> = (props) => {
         <span class="session-item-status-label">{statusText()}</span>
       </>
     )
-    const childStatusClearable = () => {
-      const activity = childActivity()
-      return Boolean(activity) && (childActivityKind(activity!) === "idle" || childActivityKind(activity!) === "interrupted")
-    }
     const selectRow = () => {
       selectSession(sessionId())
       if (needsInput()) focusInterruption(props.instanceId, sessionId())
@@ -797,15 +783,11 @@ const SessionList: Component<SessionListProps> = (props) => {
             <button
               type="button"
               class={`session-item-expander opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
-              onClick={() => childStatusClearable() ? clearDescendantStatus(sessionId()) : rowProps.onToggleExpand?.()}
+              onClick={() => rowProps.onToggleExpand?.()}
               aria-expanded={Boolean(rowProps.expanded)}
-              aria-label={childStatusClearable()
-                ? t("sessionList.status.clearAriaLabel", { status: childActivityLabel(t, childActivity()!) })
-                : expanderLabel(rowProps.expanded ? "collapseAriaLabel" : "expandAriaLabel")}
-              title={childStatusClearable() ? t("sessionList.status.clear") : expanderLabel(rowProps.expanded ? "collapseTitle" : "expandTitle")}
+              aria-label={expanderLabel(rowProps.expanded ? "collapseAriaLabel" : "expandAriaLabel")}
+              title={expanderLabel(rowProps.expanded ? "collapseTitle" : "expandTitle")}
               data-child-activity={childActivity() ? childActivityKind(childActivity()!) : undefined}
-              data-toggle-sweep={childStatusClearable() ? toggleSweepGroup("session-status-clear") : undefined}
-              ref={(element) => toggleSweepClear(element, () => clearDescendantStatus(sessionId()))}
             >
               <ChevronRight class="disclosure-chevron w-3.5 h-3.5" />
             </button>

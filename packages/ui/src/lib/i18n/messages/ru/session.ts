@@ -35,8 +35,6 @@ export const sessionMessages = {
   "sessionList.childActivity.idle.other": "Неактивных подсессий: {count}",
   "sessionList.status.interrupted": "Прервано",
   "sessionList.status.clear": "Сбросить",
-  "sessionList.childActivity.interrupted.one": "Прерванных подсессий: {count}",
-  "sessionList.childActivity.interrupted.other": "Прерванных подсессий: {count}",
   "sessionList.status.clearAriaLabel": "Сбросить {status}",
   "sessionList.status.retrying": "Повтор",
   "sessionList.status.retryingIn": "Повтор через {seconds}с",

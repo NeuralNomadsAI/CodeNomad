@@ -35,8 +35,6 @@ export const sessionMessages = {
   "sessionList.childActivity.idle.other": "{count} 个子会话空闲",
   "sessionList.status.interrupted": "已中断",
   "sessionList.status.clear": "清除",
-  "sessionList.childActivity.interrupted.one": "{count} 个子会话已中断",
-  "sessionList.childActivity.interrupted.other": "{count} 个子会话已中断",
   "sessionList.status.clearAriaLabel": "清除{status}",
   "sessionList.status.retrying": "重试中",
   "sessionList.status.retryingIn": "{seconds} 秒后重试",
