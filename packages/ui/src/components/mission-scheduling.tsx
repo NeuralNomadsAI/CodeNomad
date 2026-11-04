@@ -3,13 +3,11 @@ import { Plus } from "lucide-solid"
 import type { MissionLaunchPolicy } from "../../../server/src/missions/launch-policy"
 import { missionLaunchModel } from "../../../server/src/missions/mission-launch-kind"
 import { useI18n } from "../lib/i18n"
-import { SettingsInfoTip } from "./settings/settings-info-tip"
 import { SettingsInfoLink } from "./settings/settings-info-link"
 import { openSettingsRow } from "../stores/settings-screen"
 import { MissionSchedulingCriterion, type MissionSchedulingSourceLists } from "./mission-scheduling-sources"
-import { isMissionEventKind, missionSchedulingPolicy, previewMissionScheduling, MissionSchedulingError, MISSION_CRITERIA_LIMIT,
-  newMissionCriterion, newMissionSchedulingDraft, previewSavedMissionScheduling, type MissionSchedulingPhase,
-  type MissionSchedulingDraft } from "./mission-scheduling-data"
+import { isMissionEventKind, missionSchedulingPolicy, MissionSchedulingError, MISSION_CRITERIA_LIMIT, newMissionCriterion,
+  newMissionSchedulingDraft, type MissionSchedulingDraft } from "./mission-scheduling-data"
 
 export type MissionSchedulingLock = "uncertain" | "passage" | "launched-once" | "terminal" | "deleted" | "journal" | "scope"
 
@@ -18,59 +16,36 @@ export function MissionScheduling(props: {
   draft: MissionSchedulingDraft; directory?: string; sources: MissionSchedulingSourceLists
   capability: "available" | "activatable" | "missing" | "loading"
   lockReason?: MissionSchedulingLock | null; disabled?: boolean
-  /** A frozen prospective Play instant, rather than a ticking browser clock. */
-  anchorAt: number
-  persisted?: MissionSchedulingPhase
   onChange: (draft: MissionSchedulingDraft) => void
   onPolicy: (policy: MissionLaunchPolicy | undefined) => void
 }) {
-  const { t, locale } = useI18n(), description = createUniqueId(), errorID = createUniqueId(), zoneList = createUniqueId(), whenID = createUniqueId()
+  const { t } = useI18n(), description = createUniqueId(), errorID = createUniqueId(), zoneList = createUniqueId(), whenID = createUniqueId()
   const zones = (Intl as { supportedValuesOf?: (key: "timeZone") => string[] }).supportedValuesOf?.("timeZone") ?? []
   let disclosure: HTMLDetailsElement | undefined
   const patch = (change: Partial<MissionSchedulingDraft>) => props.onChange({ ...props.draft, ...change })
-  // A list that loses its last schedule or event also drops only-with-news, so
-  // adding one back never silently re-enables it.
-  const patchCriteria = (next: MissionSchedulingDraft["criteria"]) => patch({ criteria: next, onlyWithNews: props.draft.onlyWithNews
-    && next.some(row => !isMissionEventKind(row.kind)) && next.some(row => isMissionEventKind(row.kind)) })
+  const patchCriteria = (next: MissionSchedulingDraft["criteria"]) => patch({ criteria: next })
   const retained = () => props.draft.stored?.reason
   const locked = () => !!props.disabled || !!props.lockReason || !!retained()
   const unavailable = () => props.capability === "missing" || props.capability === "loading"
   const criteria = () => props.draft.criteria
-  const scheduled = () => criteria().some(row => !isMissionEventKind(row.kind))
-  const evented = () => criteria().some(row => isMissionEventKind(row.kind))
-  const result = createMemo(() => {
+  const result = createMemo((): { error?: string; index?: number; policy?: MissionLaunchPolicy } => {
     try {
       const policy = missionSchedulingPolicy(props.draft, props.directory), model = missionLaunchModel(policy)
       const calendar = model.schedules.length > 0 || model.events.length > 0
-      if (props.capability === "loading" && calendar) return { error: undefined, policy: undefined, dates: undefined }
+      if (props.capability === "loading" && calendar) return {}
       if (unavailable() && calendar) return { error: "capability" }
       const missing = criteria().findIndex(row => isMissionEventKind(row.kind) && row.kind !== "files-changed"
         && !props.sources[row.kind]?.some(item => item.id === row.source))
       if (missing >= 0) return { error: "source", index: missing }
-      if (!model.schedules.length) return model.until !== null && model.until <= props.anchorAt ? { error: "until" } : { policy, dates: [] as number[] }
-      const unchanged = !!props.draft.stored && JSON.stringify(model.schedules) === JSON.stringify(missionLaunchModel(props.draft.stored.policy).schedules)
-      const phaseUnknown = !!props.persisted && unchanged && props.persisted.nextDueAt === null && model.schedules.some(item => item.kind === "every")
-      const dates = props.persisted ? previewSavedMissionScheduling(policy, props.persisted, props.anchorAt, unchanged)
-        : previewMissionScheduling(policy, props.anchorAt)
-      // A saved unknown phase or an intentionally exhausted quota is editable.
-      // Other empty calendars share Create's validation, including impossible cron.
-      const exhausted = !!props.persisted && model.maxLaunches !== null && model.maxLaunches <= props.persisted.launchedCount
-      if (!dates.length && !phaseUnknown && !exhausted) return { error: "empty" }
-      return { policy, dates, phaseUnknown }
+      return { policy }
     } catch (error) {
       return error instanceof MissionSchedulingError ? { error: error.field, index: error.index } : { error: "empty" }
     }
   })
   createEffect(() => props.onPolicy(result().policy))
   createEffect(() => { if (result().error && disclosure) disclosure.open = true })
-  const format = (at: number) => {
-    try { return new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short", timeZone: props.draft.zone }).format(at) }
-    catch { return "—" }
-  }
   const reason = () => props.lockReason ? t(`missions.scheduling.lock.${props.lockReason}`)
     : unavailable() ? t(`missions.scheduling.capability.${props.capability}`) : undefined
-  const fieldError = (...fields: string[]) => ({ "aria-invalid": fields.includes(result().error ?? ""),
-    "aria-describedby": fields.includes(result().error ?? "") ? errorID : undefined })
   const rowError = (index: number) => result().index === index ? errorID : undefined
   const whenHint = () => [t("missions.scheduling.whenHint"), t("missions.scheduling.paused"),
     props.capability === "activatable" ? t("missions.scheduling.capability.activatable") : "", t("missions.scheduling.runtimeHint")].filter(Boolean).join(" ")
@@ -107,28 +82,13 @@ export function MissionScheduling(props: {
         <button type="button" class="window-action mission-scheduling-add" disabled={unavailable() || criteria().length >= MISSION_CRITERIA_LIMIT}
           onClick={() => patchCriteria([...criteria(), newMissionCriterion("daily", criteria())])}><Plus class="h-3.5 w-3.5" aria-hidden="true" />{t("missions.scheduling.addCriterion")}</button>
       </div>
-      <Show when={criteria().length}>
-        <label class="mission-scheduling-check"><input type="checkbox" aria-label={t("missions.scheduling.onlyWithNews")}
-          checked={props.draft.onlyWithNews && scheduled() && evented()}
-          disabled={!scheduled() || !evented()} onChange={event => patch({ onlyWithNews: event.currentTarget.checked })} />
-          <span>{t("missions.scheduling.onlyWithNews")}<SettingsInfoTip text={t("missions.scheduling.onlyWithNewsHint")} /></span></label>
-        <div class="mission-scheduling-row">
-          <label><span>{t("missions.scheduling.until")}<SettingsInfoTip text={t("missions.scheduling.untilHint")} /></span>
-            <input aria-label={t("missions.scheduling.until")} type="datetime-local" {...fieldError("until")} value={props.draft.until}
-              onInput={event => patch({ until: event.currentTarget.value })} /></label>
-          <Show when={zoneShown()}><label>{t("missions.scheduling.zone")}<input maxLength={100} value={props.draft.zone} list={zoneList} {...fieldError("zone")}
-            onInput={event => patch({ zone: event.currentTarget.value })} /></label></Show>
-        </div>
-        <Show when={zoneShown()}><datalist id={zoneList}><For each={zones}>{zone => <option value={zone} />}</For></datalist></Show>
+      <Show when={criteria().length && zoneShown()}>
+        <label>{t("missions.scheduling.zone")}<input maxLength={100} value={props.draft.zone} list={zoneList}
+          aria-invalid={result().error === "zone"} aria-describedby={result().error === "zone" ? errorID : undefined}
+          onInput={event => patch({ zone: event.currentTarget.value })} /></label>
+        <datalist id={zoneList}><For each={zones}>{zone => <option value={zone} />}</For></datalist>
       </Show>
     </fieldset></Show>
     <Show when={result().error}>{error => <p id={errorID} class="mission-create-field-error" role="alert">{t(`missions.scheduling.error.${error()}`)}</p>}</Show>
-    <Show when={result().dates?.length || result().phaseUnknown ? result().dates : undefined}>{dates => <section class="mission-scheduling-preview" aria-label={t("missions.scheduling.preview")}>
-      <h4>{t(props.draft.onlyWithNews && evented() ? "missions.scheduling.checks" : "missions.scheduling.preview")}
-        <SettingsInfoTip text={t(props.persisted ? "missions.scheduling.savedPhase" : "missions.scheduling.anchor",
-          { when: format(props.persisted?.firstPlayedAt ?? props.anchorAt), zone: props.draft.zone })} /></h4>
-      <ol><For each={dates()}>{at => <li><time dateTime={new Date(at).toISOString()}>{format(at)}</time></li>}</For></ol>
-      <Show when={!dates().length}><p role="status">{t("missions.scheduling.previewUnavailable")}</p></Show>
-    </section>}</Show>
   </details>
 }

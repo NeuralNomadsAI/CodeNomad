@@ -182,7 +182,7 @@ test("real preparation/calendar/passage owners: first Play arms only the convert
   let admissions = 0
   const engine = new MissionDocumentPassageEngine(f.store, { incarnation: "converted_owner", current, now: () => wake.dueAt,
     verifyWake: async () => ({ wake, current }), coverage: async () => ({ complete: true, wakes: [wake], current }),
-    snapshot: async () => ({ changed: true, checkpoints: [], current }),
+    snapshot: async () => ({ news: { triggers: true, conditions: true }, checkpoints: [], current }),
     admit: async value => {
       admissions++; assert.deepEqual(value.pending!.configuration, configuration)
       assert.equal(value.pending!.configurationGeneration, doc.configurationGeneration)

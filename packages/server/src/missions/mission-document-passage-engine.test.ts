@@ -56,7 +56,7 @@ async function fixture(count = 1, maximum: number | null = null) {
     incarnation: "process_one", now: () => now, current,
     verifyWake: async (_doc, wake) => { io(); return { wake: { scheduleID: wake.scheduleID, run: wake.run, messageID: wake.messageID, dueAt: wake.dueAt! }, current } },
     coverage: async doc => { io(); return { complete, wakes: occurrences.filter(wake => wake.run > doc.calendars.find(item => item.scheduleID === wake.scheduleID)!.highWater), current } },
-    snapshot: async () => { io(); return { changed, checkpoints: [], current } },
+    snapshot: async () => { io(); return { news: { triggers: changed, conditions: changed }, checkpoints: [], current } },
     admit: async (doc, locked) => {
       io(); locked.assertActive()
       if (crash) { crash = false; throw new Error("lost ACK") }
@@ -110,7 +110,7 @@ test("business checks count committed source observations once per fan-in, with 
   const checkpoint = { key: missionSourceKey(condition), kind: condition.kind, placementDigest: "b".repeat(64), value: { hash: "observed" } }
   await f.mutate(doc => { legacyLaunch(doc.configuration).condition = condition })
   let changed = false
-  f.ports.snapshot = async () => ({ changed, checkpoints: [checkpoint], current })
+  f.ports.snapshot = async () => ({ news: { triggers: changed, conditions: changed }, checkpoints: [checkpoint], current })
   const first = f.wake(0); f.wake(1)
   await f.engine.wake({ missionID: "review", wake: first })
   assert.deepEqual((await f.read()).checks, { count: 1, since: start })
@@ -133,12 +133,12 @@ test("business checks count committed source observations once per fan-in, with 
   await legacy.mutate(doc => { legacyLaunch(doc.configuration).condition = condition })
   for (const value of legacy.values.values()) delete (value as unknown as MissionDocument).checks
   assert.equal((await legacy.read()).checks, undefined, "old totals are unknown rather than fabricated zero")
-  legacy.ports.snapshot = async () => ({ changed: false, checkpoints: [checkpoint], current,
+  legacy.ports.snapshot = async () => ({ news: { triggers: false, conditions: false }, checkpoints: [checkpoint], current,
     revalidate: async () => { throw new Error("source moved") } })
   const wake = legacy.wake()
   await assert.rejects(legacy.engine.wake({ missionID: "review", wake }), /source moved/)
   assert.equal((await legacy.read()).checks, undefined)
-  legacy.ports.snapshot = async () => ({ changed: false, checkpoints: [checkpoint], current })
+  legacy.ports.snapshot = async () => ({ news: { triggers: false, conditions: false }, checkpoints: [checkpoint], current })
   await legacy.engine.wake({ missionID: "review", wake })
   assert.deepEqual((await legacy.read()).checks, { count: 1, since: start + 1000 })
 })
@@ -147,7 +147,7 @@ test("calendar reservation, false-condition consumption and manual reservation a
   for (const mode of ["changed", "unchanged", "manual"] as const) {
     const f = await fixture()
     let revalidated = false
-    f.ports.snapshot = async () => ({ changed: mode !== "unchanged", checkpoints: [], current,
+    f.ports.snapshot = async () => ({ news: { triggers: mode !== "unchanged", conditions: mode !== "unchanged" }, checkpoints: [], current,
       revalidate: async () => { await Promise.resolve(); revalidated = true; throw new Error("source changed before CAS") } })
     const execute = mode === "manual"
       ? () => f.engine.runNow({ missionID: "review", requestID: "manual_source_race", expectedRevision: 2 })
@@ -244,7 +244,7 @@ test("source checkpoints advance only with completed settlement; a failure block
   for (const outcome of ["completed", "failed", "ended-without-report"] as const) {
     const f = await fixture()
     const checkpoint = { key: "a".repeat(64), kind: "files-changed" as const, placementDigest: "b".repeat(64), value: { hash: "frozen" } }
-    f.ports.snapshot = async () => ({ changed: true, checkpoints: [checkpoint], current })
+    f.ports.snapshot = async () => ({ news: { triggers: true, conditions: true }, checkpoints: [checkpoint], current })
     f.ports.observe = async () => ({ outcome, current })
     await f.engine.runNow({ missionID: "review", requestID: "source_run", expectedRevision: (await f.read()).revision })
     const doc = await f.read()

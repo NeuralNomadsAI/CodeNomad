@@ -32,7 +32,7 @@ async function createDocument() {
   const store = new NativeMissionDocumentStore({ get: async key => values.get(key), compareAndSet: async (key, value) => { values.set(key, value) } }, "project", "/fixture")
   return store.create("msn_fixture", { title: "Stored title", objective: "Stored instructions", notes: "Stored notes", template: "custom", profiles,
     taskMode: "native", watchedConversationIDs: [], roots: [{ mode: "directory-only", directory: "/fixture" }], profileID: "profile", executionHost: "local",
-    launch: { when: [{ kind: "cron", expression: "0 05 09 1,15 * *", zone: "Europe/Paris" }], onlyWithNews: false, until: null } }, Date.now(), () => true)
+    launch: { when: [{ kind: "cron", expression: "0 05 09 1,15 * *", zone: "Europe/Paris" }], onlyIf: [] } }, Date.now(), () => true)
 }
 async function setup(page: Page, available = true, locale = "en", theme = "dark", taskCount = 0) {
   page.setDefaultTimeout(15_000)
@@ -121,7 +121,6 @@ test("shared Create stores a paused two-time policy with exact profiles and send
     await addCriterion(page)
     await form(page).getByLabel("Criterion 2 time", { exact: true }).fill("17:45")
     assert.match(await scheduling(page).innerText(), /2 criteria/)
-    assert.equal(await form(page).locator(".mission-scheduling-preview li").count(), 5)
     await capture(page, "editor-create-en-dark.png")
     await form(page).getByRole("button", { name: "Create", exact: true }).click()
     await form(page).waitFor({ state: "detached" })
@@ -129,24 +128,28 @@ test("shared Create stores a paused two-time policy with exact profiles and send
     assert.equal(f.posts[0].action, "create"); assert.equal(f.posts[0].expectedRevision, 0)
     assert.deepEqual(f.posts[0].configuration.profiles, profiles)
     assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "cron", expression: "15 9 * * *", zone: "Europe/Paris" },
-      { kind: "cron", expression: "45 17 * * *", zone: "Europe/Paris" }], onlyWithNews: false, until: null })
+      { kind: "cron", expression: "45 17 * * *", zone: "Europe/Paris" }], onlyIf: [] })
     assert.equal(f.doc.state, "paused"); assert.equal(f.doc.firstPlayedAt, null); assert.deepEqual(f.doc.calendars, [])
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
 
-test("shared Edit loads all preparation fields and preserves the exact stored criterion across remount and end-date edits", async () => {
+test("shared Edit loads all preparation fields and preserves the exact stored criterion and an event role across remount", async () => {
   const page = await browser.newPage(), f = await setup(page), stored = structuredClone(f.doc.configuration.launch)
   try {
     await page.evaluate(() => window.schedulingEditor.edit()); await ready(page)
     assert.equal(await form(page).getByLabel("Title", { exact: true }).inputValue(), "Stored title")
     await scheduling(page).click()
     assert.equal(await form(page).getByLabel("Criterion 1 type", { exact: true }).inputValue(), "cron")
-    await form(page).getByLabel("Until", { exact: true }).fill("2030-01-01T00:00")
+    await addCriterion(page)
+    await form(page).getByLabel("Criterion 2 type", { exact: true }).selectOption("files-changed")
+    await form(page).getByLabel("Criterion 2 file paths", { exact: true }).fill("src/a.ts")
+    await form(page).getByRole("group", { name: "Criterion 2 role", exact: true }).getByRole("button", { name: "Only if", exact: true }).click()
     await page.evaluate(() => window.schedulingEditor.mount(false))
     await page.evaluate(() => window.schedulingEditor.mount(true)); await ready(page)
-    await scheduling(page).click()
-    assert.equal(await form(page).getByLabel("Until", { exact: true }).inputValue(), "2030-01-01T00:00")
+    if (await form(page).locator(".mission-scheduling").getAttribute("open") === null) await scheduling(page).click()
+    assert.equal(await form(page).getByLabel("Criterion 2 file paths", { exact: true }).inputValue(), "src/a.ts")
+    assert.equal(await form(page).getByRole("group", { name: "Criterion 2 role", exact: true }).getByRole("button", { name: "Only if", exact: true }).getAttribute("aria-pressed"), "true")
     await options(page).click()
     assert.equal(await form(page).getByLabel("Playbook", { exact: true }).isDisabled(), false)
     await form(page).getByLabel("Notes", { exact: true }).fill("Future instructions only")
@@ -155,7 +158,7 @@ test("shared Edit loads all preparation fields and preserves the exact stored cr
     await form(page).getByRole("button", { name: "Save", exact: true }).click()
     await form(page).waitFor({ state: "detached" })
     assert.equal(f.posts.length, 1); assert.equal(f.posts[0].action, "configure")
-    assert.deepEqual(f.posts[0].configuration.launch, { ...stored, until: Date.parse("2029-12-31T23:00:00Z") })
+    assert.deepEqual(f.posts[0].configuration.launch, { ...stored, onlyIf: [{ kind: "files-changed", paths: ["src/a.ts"] }] })
     assert.equal(f.posts[0].configuration.notes, "Future instructions only")
     assert.deepEqual(f.posts[0].configuration.profiles, profiles); assert.deepEqual(f.errors, [])
   } finally { await page.close() }
@@ -343,8 +346,8 @@ for (const kind of ["create", "edit"] as const) test(`${kind} rejects impossible
     assert.equal(await form(page).locator('button[type="submit"]').isDisabled(), true)
     await form(page).getByLabel("Criterion 1 cron expression", { exact: true }).fill("0 9 * * *")
     await ready(page)
-    await form(page).getByLabel("Until", { exact: true }).fill("2020-01-01T00:00")
-    await form(page).getByRole("alert").waitFor()
+    await form(page).getByLabel("Criterion 1 cron expression", { exact: true }).fill("0 9 30 2 *")
+    await form(page).getByRole("alert").filter({ hasText: "This calendar has no future slot." }).waitFor()
     assert.equal(await form(page).locator('button[type="submit"]').isDisabled(), true)
     await form(page).evaluate(element => element.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
     assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
@@ -435,7 +438,7 @@ test("remounting during the first document read still decodes the stored policy;
   } finally { release(); await page.close() }
 })
 
-for (const locale of ["fr", "he"]) test(`shared editor fits at 320px in ${locale} with native controls, scheduling and conditional preview`, async () => {
+for (const locale of ["fr", "he"]) test(`shared editor fits at 320px in ${locale} with native controls, scheduling and an event role switch`, async () => {
   const page = await browser.newPage({ viewport: { width: 320, height: 1000 }, timezoneId: "Europe/Paris" })
   const f = await setup(page, true, locale, "light")
   try {
@@ -447,8 +450,9 @@ for (const locale of ["fr", "he"]) test(`shared editor fits at 320px in ${locale
     await form(page).locator(".mission-scheduling-add").click()
     await form(page).locator(".mission-criterion select").nth(1).selectOption("files-changed")
     await form(page).locator(".mission-scheduling textarea").fill("src/input.ts")
+    await form(page).locator(".mission-criterion-role button").nth(1).click()
     await ready(page)
-    assert.equal(await form(page).locator(".mission-scheduling-preview li").count(), 5)
+    assert.equal(await form(page).locator(".mission-criterion-role button").nth(1).getAttribute("aria-pressed"), "true")
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
     assert.equal(await page.evaluate(() => document.documentElement.dir), locale === "he" ? "rtl" : "ltr")
     await capture(page, `editor-create-${locale}-light.png`)
@@ -457,7 +461,7 @@ for (const locale of ["fr", "he"]) test(`shared editor fits at 320px in ${locale
 })
 
 const branches = (page: Page) => page.route("**/api/workspaces/fixture/git-branches?*", route => route.fulfill({ json: { branches: ["refs/heads/main", "refs/heads/dev"] } }))
-test("launch criteria journey: once, a daily schedule, OR new commits, only with news, an event alone and an end date", async () => {
+test("launch criteria journey: once, a daily schedule, OR new commits, commits as an Only if condition, no trigger, an event alone", async () => {
   const page = await browser.newPage({ timezoneId: "Europe/Paris", viewport: { width: 620, height: 1300 } }), f = await setup(page)
   await branches(page)
   try {
@@ -472,29 +476,33 @@ test("launch criteria journey: once, a daily schedule, OR new commits, only with
     await form(page).getByLabel("Criterion 2 type", { exact: true }).selectOption("branch-commits")
     const source = form(page).getByLabel("Criterion 2 source", { exact: true })
     await source.locator('option[value="refs/heads/main"]').waitFor({ state: "attached" }); await source.selectOption("refs/heads/main")
-    const news = form(page).getByLabel("Only if there is something new", { exact: true })
-    assert.equal(await news.isChecked(), false); assert.equal(await news.isDisabled(), false)
+    const role = form(page).getByRole("group", { name: "Criterion 2 role", exact: true })
+    const when = role.getByRole("button", { name: "When", exact: true }), onlyIf = role.getByRole("button", { name: "Only if", exact: true })
+    assert.equal(await when.getAttribute("aria-pressed"), "true")
+    assert.equal(await form(page).locator(".mission-scheduling").locator("input[type=checkbox], input[type=datetime-local], ol").count(), 0, "no checkbox, end date or slot preview")
     await ready(page); await capture(page, "03-daily-or-commits.png")
-    await news.check()
-    assert.match(await form(page).locator(".mission-scheduling-preview h4").innerText(), /Next checks/)
-    await capture(page, "04-daily-only-with-news.png")
+    await onlyIf.click()
+    await ready(page); await page.mouse.move(0, 0); await page.getByRole("tooltip").waitFor({ state: "detached" })
+    await capture(page, "04-daily-only-if-commits.png")
+    await page.keyboard.press("Shift+Tab"); await page.keyboard.press("Tab")
+    assert.equal(await onlyIf.evaluate(element => element === document.activeElement), true)
+    await page.getByRole("tooltip").filter({ hasText: /^At each trigger/ }).waitFor()
+    await capture(page, "05-role-tooltip.png")
     await form(page).getByRole("button", { name: "Remove criterion 1", exact: true }).click()
-    assert.equal(await news.isDisabled(), true)
-    assert.equal(await form(page).locator(".mission-scheduling-preview").count(), 0)
+    await form(page).getByRole("alert").filter({ hasText: "Add at least one When criterion." }).waitFor()
+    assert.equal(await form(page).locator('button[type="submit"]').isDisabled(), true)
+    await page.mouse.move(0, 0); await capture(page, "06-no-trigger-error.png")
+    await form(page).getByRole("group", { name: "Criterion 1 role", exact: true }).getByRole("button", { name: "When", exact: true }).click()
     assert.match(await scheduling(page).innerText(), /1 criterion/)
-    await ready(page); await capture(page, "05-event-only.png")
-    await addCriterion(page)
-    await form(page).getByLabel("Until", { exact: true }).fill("2026-12-31T18:00")
-    await ready(page); await capture(page, "06-with-end-date.png")
+    await ready(page); await page.mouse.move(0, 0); await capture(page, "07-event-only.png")
     await form(page).getByRole("button", { name: "Create", exact: true }).click()
     await form(page).waitFor({ state: "detached" })
-    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "branch-commits", directory: "/fixture", ref: "refs/heads/main" },
-      { kind: "cron", expression: "0 9 * * *", zone: "Europe/Paris" }], onlyWithNews: false, until: Date.parse("2026-12-31T17:00:00Z") })
+    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "branch-commits", directory: "/fixture", ref: "refs/heads/main" }], onlyIf: [] })
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })
 
-for (const locale of ["en", "fr"]) test(`a stored legacy frequency with a condition reopens as criteria with only-with-news checked (${locale})`, async () => {
+for (const locale of ["en", "fr"]) test(`a stored legacy frequency with a condition reopens as When schedules and an Only if event (${locale})`, async () => {
   const page = await browser.newPage({ timezoneId: "Europe/Paris", viewport: { width: 620, height: 1300 } }), f = await setup(page, true, locale)
   await branches(page)
   try {
@@ -510,7 +518,9 @@ for (const locale of ["en", "fr"]) test(`a stored legacy frequency with a condit
     assert.equal(await label("Criterion 1 type", "Type du critère 1").inputValue(), "daily")
     assert.equal(await label("Criterion 2 time", "Heure du critère 2").inputValue(), "18:00")
     assert.equal(await label("Criterion 3 source", "Source du critère 3").inputValue(), "refs/heads/main")
-    assert.equal(await label("Only if there is something new", "Seulement s’il y a du nouveau").isChecked(), true)
+    assert.equal(await form(page).getByRole("group", { name: locale === "fr" ? "Rôle du critère 3" : "Criterion 3 role", exact: true })
+      .getByRole("button", { name: locale === "fr" ? "Seulement si" : "Only if", exact: true }).getAttribute("aria-pressed"), "true")
+    assert.equal(await form(page).getByRole("group", { name: locale === "fr" ? "Rôle du critère 1" : "Criterion 1 role", exact: true }).count(), 0)
     await capture(page, locale === "fr" ? "09-legacy-reopened-fr.png" : "08-legacy-reopened-en.png")
     await form(page).locator('button[type="submit"]').click()
     await form(page).waitFor({ state: "detached" })

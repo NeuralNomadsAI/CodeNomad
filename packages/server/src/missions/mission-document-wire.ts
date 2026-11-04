@@ -9,10 +9,10 @@ const events = [
   { type: "object", properties: { kind: { const: "conversation-message" }, conversationID: text }, required: ["kind", "conversationID"], additionalProperties: false },
   { type: "object", properties: { kind: { const: "files-changed" }, paths: { type: "array", maxItems: 128, items: text } }, required: ["kind", "paths"], additionalProperties: false },
 ] as const
-/** Launch criteria; the strict domain codec checks counts, uniqueness and onlyWithNews. */
+/** Launch criteria; the strict domain codec checks counts, uniqueness and that conditions have a trigger. */
 const criteriaLaunchPolicyWire = { type: "object", properties: {
-  when: { type: "array", maxItems: 16, items: { oneOf: [cron, ...events] } }, onlyWithNews: { type: "boolean" }, until: nullableTime,
-}, required: ["when", "onlyWithNews", "until"], additionalProperties: false } as const
+  when: { type: "array", maxItems: 16, items: { oneOf: [cron, ...events] } }, onlyIf: { type: "array", maxItems: 8, items: { oneOf: events } },
+}, required: ["when", "onlyIf"], additionalProperties: false } as const
 const legacyLaunchPolicyWire = { type: "object", properties: {
   timing: { oneOf: [
     { type: "object", properties: { kind: { const: "immediate" } }, required: ["kind"], additionalProperties: false },

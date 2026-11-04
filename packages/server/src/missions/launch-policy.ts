@@ -64,17 +64,20 @@ const scheduleCriterion = z.object({ kind: z.literal("cron"), expression: z.stri
     if (!parsed.success) { context.addIssue({ code: "custom", message: "Invalid minute-resolution cron" }); return z.NEVER }
     return { kind, ...parsed.data }
   })
-/** Any criterion launches (OR). With onlyWithNews, schedules alone wake and launch
- * only when an event criterion changed since the last passage. */
+/** Triggers (`when`: schedules and events) launch on any one (OR). Conditions
+ * (`onlyIf`: events) gate every trigger: one of them must have changed since the
+ * last passage. Conditions need at least one trigger; empty `when` and `onlyIf`
+ * launch once at Play. */
 export const missionCriteriaLaunchPolicySchema = z.object({
   when: z.array(z.union([scheduleCriterion, missionConditionSchema])).max(MISSION_CALENDAR_LIMIT * 2),
-  onlyWithNews: z.boolean(), until: documentTimestamp.nullable(),
+  onlyIf: z.array(missionConditionSchema).max(MISSION_CALENDAR_LIMIT),
 }).strict().superRefine((policy, context) => {
-  const schedules = policy.when.filter(item => item.kind === "cron"), events = policy.when.filter(item => item.kind !== "cron")
+  const schedules = policy.when.filter(item => item.kind === "cron"), triggers = policy.when.filter(item => item.kind !== "cron")
+  const events = [...triggers, ...policy.onlyIf]
   const unique = (items: unknown[]) => new Set(items.map(item => canonicalAuthority(item))).size === items.length
-  const principals = schedules.length + (events.length && !policy.onlyWithNews ? 1 : 0)
+  const principals = schedules.length + (triggers.length ? 1 : 0)
   if (!unique(schedules) || !unique(events) || events.length > MISSION_CALENDAR_LIMIT || principals > MISSION_CALENDAR_LIMIT
-    || policy.onlyWithNews && (!schedules.length || !events.length)) context.addIssue({ code: "custom", message: "Invalid Mission launch criteria" })
+    || policy.onlyIf.length && !policy.when.length) context.addIssue({ code: "custom", message: "Invalid Mission launch criteria" })
 })
 export type MissionCriteriaLaunchPolicy = z.infer<typeof missionCriteriaLaunchPolicySchema>
 export const missionLaunchPolicySchema = z.union([missionCriteriaLaunchPolicySchema, missionLegacyLaunchPolicySchema])

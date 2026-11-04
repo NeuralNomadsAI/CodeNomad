@@ -1,7 +1,7 @@
 import { Cron } from "effect"
 import type { MissionLaunchPolicy } from "../../../server/src/missions/launch-policy"
 import { missionLaunchModel } from "../../../server/src/missions/mission-launch-kind"
-import { localInstant, missionHourSteps, newMissionCriterion, newMissionSchedulingDraft, type MissionCriterionDraft,
+import { missionHourSteps, newMissionCriterion, newMissionSchedulingDraft, type MissionCriterionDraft,
   type MissionSchedulingDraft } from "./mission-scheduling-data"
 
 /** Recognize only calendars with exactly the semantics of a shortcut.
@@ -26,24 +26,18 @@ function shortcut(expression: string, zone: string): Partial<MissionCriterionDra
   return undefined
 }
 
-export function localMinute(at: number, zone: string) {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(at)
-  const part = (name: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === name)!.value
-  return `${part("year")}-${part("month")}-${part("day")}T${part("hour")}:${part("minute")}`
-}
-
 /** Decode a server-validated policy, including stored legacy shapes. Shapes the
- * criteria form cannot express are retained explicitly, never approximated. */
+ * criteria form cannot express are retained explicitly, never approximated. A legacy
+ * end date or single launch on an event has no control: the unchanged policy keeps
+ * it, and saving an edit writes criteria without it. */
 export function decodeMissionSchedulingPolicy(policy: MissionLaunchPolicy, directory?: string,
   defaultZone = Intl.DateTimeFormat().resolvedOptions().timeZone): MissionSchedulingDraft {
   const draft = newMissionSchedulingDraft(defaultZone), model = missionLaunchModel(policy)
   const exact: NonNullable<MissionSchedulingDraft["stored"]>["exact"] = {}
   let reason: NonNullable<MissionSchedulingDraft["stored"]>["reason"]
-  // Intervals, delays, single dates, passage limits, relative ends and a launch
-  // once on an event alone have no criteria control.
-  if (model.maxLaunches !== null || model.endAfterMs !== null || model.schedules.some(item => item.kind !== "cron")
-    || !model.schedules.length && model.events.length && "timing" in policy) reason = "retired"
+  // Intervals, delays, single dates, passage limits and relative ends have no criteria control.
+  const once = !model.schedules.length && model.triggers.length > 0 && "timing" in policy
+  if (model.maxLaunches !== null && !once || model.endAfterMs !== null || model.schedules.some(item => item.kind !== "cron")) reason = "retired"
   const zones = [...new Set(model.schedules.flatMap(item => item.kind === "cron" || item.kind === "at" ? [item.zone] : []))]
   if (zones.length > 1) reason ??= "timing"
   draft.zone = zones[0] ?? defaultZone
@@ -54,7 +48,7 @@ export function decodeMissionSchedulingPolicy(policy: MissionLaunchPolicy, direc
     draft.criteria.push(row)
   }
   for (const event of model.events) {
-    const row = newMissionCriterion(event.kind)
+    const row = { ...newMissionCriterion(event.kind), onlyIf: model.conditions.includes(event) }
     switch (event.kind) {
       case "schedule-success": case "mission-completed": row.source = event.missionID; break
       case "conversation-message": row.source = event.conversationID; break
@@ -63,12 +57,6 @@ export function decodeMissionSchedulingPolicy(policy: MissionLaunchPolicy, direc
     }
     exact[row.id] = structuredClone(event)
     draft.criteria.push(row)
-  }
-  draft.onlyWithNews = model.onlyWithNews
-  if (model.until !== null) {
-    draft.until = localMinute(model.until, draft.zone)
-    // Civil minute controls cannot encode sub-minute precision or a repeated hour's second instant.
-    if (localInstant(draft.until, draft.zone) !== model.until) reason ??= "precision"
   }
   const { stored: _stored, ...initial } = draft
   return { ...draft, stored: { policy: structuredClone(policy), initial: structuredClone(initial), exact, ...(reason ? { reason } : {}) } }

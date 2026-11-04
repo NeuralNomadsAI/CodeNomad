@@ -5,35 +5,37 @@ import { documentWatchCheckpoint, documentWatchCheckpointSchema, documentWatchKe
 import { recurrenceInputBudget, recurrenceSourceContextLimit } from "../../missions/recurrence-read-budget"
 import { recurrenceSourceLocationDigest, type PassageSource } from "../../missions/recurrence-input"
 import { MISSION_SCHEDULE_CARRIER_SESSION_PREFIX } from "../../missions/mission-schedule-carrier-identity"
+import type { MissionEventNews } from "../../missions/mission-document-state"
 import { nativePassageMessageDigest, type MissionNativeService } from "./native-service-adapter"
 import type { MissionConditionRead } from "./native-mission-condition-reader"
 import type { NativeSourceFence } from "./native-source-fence"
 
-export type QualifiedDocumentSourceSnapshot = { changed: boolean; checkpoints: MissionSourceCheckpoint[]; current(): true; revalidate?(): Promise<void> }
+export type QualifiedDocumentSourceSnapshot = { news: MissionEventNews; checkpoints: MissionSourceCheckpoint[]; current(): true; revalidate?(): Promise<void> }
 export type DocumentConditionReader = (document: MissionDocument, condition: MissionCondition) => Promise<MissionConditionRead>
 
 /** Native stable prefixes and condition proofs share one frozen pending snapshot.
  * New sources baseline before Play; retained checkpoints survive remove/re-add. */
 export async function prepareNativeDocumentSources(doc: MissionDocument, native: MissionNativeService, signal: AbortSignal,
   current: () => true, conditionReader?: DocumentConditionReader, fence?: NativeSourceFence, initialContext = false): Promise<QualifiedDocumentSourceSnapshot> {
-  const config = doc.configuration, events = missionLaunchModel(config.launch).events, guards: (() => true)[] = [current, native.assertCurrent]
+  const config = doc.configuration, model = missionLaunchModel(config.launch), events = model.events, guards: (() => true)[] = [current, native.assertCurrent]
+  const role = (condition: MissionCondition): keyof MissionEventNews => model.conditions.includes(condition) ? "conditions" : "triggers"
   const observed = doc.firstPlayedAt === null ? { ...doc, checkpoints: [] } : doc
   if (fence) guards.push(fence.current)
   const checkpoints: MissionSourceCheckpoint[] = [], sources: PassageSource[] = []
   const revalidations: (() => Promise<void>)[] = []
-  // Events are alternatives: any one changed is enough.
-  let changed = !events.length
+  // Within each role, events are alternatives: any one changed is enough.
+  const news: MissionEventNews = { triggers: false, conditions: false }
   for (const condition of events) {
     if (condition.kind === "conversation-message") continue
     if (!conditionReader) throw new Error("Qualified Mission condition reader unavailable")
     const result = await conditionReader(structuredClone(observed), condition)
     if (result.checkpoint.key !== missionSourceKey(condition) || result.checkpoint.kind !== condition.kind) throw new Error("Mission condition proof incomplete")
-    guards.push(result.current); checkpoints.push(result.checkpoint); changed ||= result.changed
+    guards.push(result.current); checkpoints.push(result.checkpoint); news[role(condition)] ||= result.changed
     if (result.revalidate) revalidations.push(result.revalidate)
   }
   const revalidate = revalidations.length ? async () => { for (const item of revalidations) await item() } : undefined
-  const followed = new Set(events.flatMap(item => item.kind === "conversation-message" ? [item.conversationID] : []))
-  const ids = [...new Set([...config.watchedConversationIDs, ...followed])]
+  const followed = new Map(events.flatMap(item => item.kind === "conversation-message" ? [[item.conversationID, role(item)] as const] : []))
+  const ids = [...new Set([...config.watchedConversationIDs, ...followed.keys()])]
   const budget = { consigne: config.objective, roots: config.roots, watchedConversationIDs: ids }
   if (!recurrenceInputBudget(budget).sufficient) throw new Error("Document watched input capacity")
   for (const conversationID of ids) {
@@ -87,12 +89,12 @@ export async function prepareNativeDocumentSources(doc: MissionDocument, native:
     if (followed.has(conversationID)) {
       const fresh = !!old && messages.some(message => ["user", "synthetic", "assistant"].includes(message.type))
       if (!fresh && messages.length === 32) throw new Error("Mission message prefix capacity")
-      changed ||= fresh
+      news[followed.get(conversationID)!] ||= fresh
     }
   }
   canonicalAuthority(checkpoints, 64 * 1024)
   const assertCurrent = (): true => { signal.throwIfAborted(); for (const guard of guards) guard(); return true }
   assertCurrent()
-  return { changed, checkpoints: missionCheckpointsSchema.parse(checkpoints), current: assertCurrent,
+  return { news, checkpoints: missionCheckpointsSchema.parse(checkpoints), current: assertCurrent,
     ...(revalidate ? { revalidate: async () => { await revalidate!(); assertCurrent() } } : {}) }
 }

@@ -158,6 +158,9 @@ test("journal-only completion resolves its authorized linked placement and pins 
   await assert.rejects(reader(doc), /coverage unavailable/, "linked placement requires explicit authorization")
 })
 
+/** Whatever role the followed conversation has, any change is news. */
+const anyNews = (snapshot: { news: { triggers: boolean; conditions: boolean } }) => snapshot.news.triggers || snapshot.news.conditions
+
 test("conversation baseline, exact stable prefixes, technical/self exclusion, remove/re-add and frozen pending text", async () => {
   const f = await fixture(), doc = await f.read("target"), signal = new AbortController().signal
   legacyLaunch(doc.configuration).condition = { kind: "conversation-message", conversationID: "ses_followed" }
@@ -167,19 +170,19 @@ test("conversation baseline, exact stable prefixes, technical/self exclusion, re
   let messages = [] as Awaited<ReturnType<MissionNativeService["sourceMessages"]>>
   f.native.sourceMessages = async () => structuredClone(messages)
   const baseline = await prepareNativeDocumentSources(doc, f.native, signal, current)
-  assert.equal(baseline.changed, false); assert.equal(documentWatchCheckpointSchema.parse(baseline.checkpoints[0].value).messageID, anchor.id)
+  assert.equal(anyNews(baseline), false); assert.equal(documentWatchCheckpointSchema.parse(baseline.checkpoints[0].value).messageID, anchor.id)
   doc.firstPlayedAt = at; doc.checkpoints = baseline.checkpoints
   messages = [{ id: "msg_technical", type: "technical", text: "", nativeDigest: "a".repeat(64) }]
-  assert.equal((await prepareNativeDocumentSources(doc, f.native, signal, current)).changed, false)
+  assert.equal(anyNews(await prepareNativeDocumentSources(doc, f.native, signal, current)), false)
   messages.push({ id: "msg_new", type: "user", text: "stable new text", nativeDigest: "b".repeat(64) })
   const snapshot = await prepareNativeDocumentSources(doc, f.native, signal, current)
-  assert.equal(snapshot.changed, true)
+  assert.equal(anyNews(snapshot), true)
   assert.equal(documentWatchCheckpointSchema.parse(snapshot.checkpoints[0].value).source!.messages.at(-1)!.text, "stable new text")
   messages[1].text = "later text"
   assert.equal(documentWatchCheckpointSchema.parse(snapshot.checkpoints[0].value).source!.messages.at(-1)!.text, "stable new text")
   const removed = JSON.parse(JSON.stringify(doc)); legacyLaunch(removed.configuration).condition = null
   assert.equal((await prepareNativeDocumentSources(removed, f.native, signal, current)).checkpoints.length, 0)
-  assert.equal((await prepareNativeDocumentSources(JSON.parse(JSON.stringify(doc)), f.native, signal, current)).changed, true)
+  assert.equal(anyNews(await prepareNativeDocumentSources(JSON.parse(JSON.stringify(doc)), f.native, signal, current)), true)
   f.native.message = async () => ({ ...anchor, text: "rewritten" } as typeof anchor)
   await assert.rejects(prepareNativeDocumentSources(doc, f.native, signal, current), /anchor changed/)
   f.native.message = async () => anchor
@@ -207,7 +210,7 @@ test("conversation exclusion walks passage ancestry, rejects cycles and recogniz
   f.native.get = async input => ({ ...await get(input), ...(input.sessionID === "ses_grandchild" ? { parentID: "ses_foreign_root" } : {}) })
   const fence: NativeSourceFence = { document() {}, journal() {}, message() {}, family() {}, current,
     conversation(id) { if (id === "ses_foreign_root") parentsPinned++ } }
-  assert.equal((await prepareNativeDocumentSources(doc, f.native, signal, current, undefined, fence)).changed, false)
+  assert.equal(anyNews(await prepareNativeDocumentSources(doc, f.native, signal, current, undefined, fence)), false)
   assert.equal(parentsPinned, 1, "allowed ancestry remains pinned against moves before CAS")
 })
 

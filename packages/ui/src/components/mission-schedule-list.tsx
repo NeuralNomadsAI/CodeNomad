@@ -22,10 +22,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   createEffect(() => props.onPassage?.(schedules().find(row => row.id === props.selected)?.pendingPassage ? props.selected : undefined))
   const date = (value: number | null, zone?: string) => value === null ? t("missions.scheduleList.none")
     : new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short", ...(zone ? { timeZone: zone } : {}) }).format(value)
-  const criteria = (doc: UnifiedMissionSchedule) => {
-    const lines = describeMissionCriteria(doc.configuration.launch, t, locale(), doc.oneShotAt)
-    return [lines.join("; "), missionLaunchModel(doc.configuration.launch).onlyWithNews ? t("missions.scheduling.onlyWithNews") : ""].filter(Boolean).join(" · ")
-  }
+  const criteria = (doc: UnifiedMissionSchedule) => describeMissionCriteria(doc.configuration.launch, t, locale(), doc.oneShotAt).join("; ")
   const observed = (doc: UnifiedMissionSchedule) => t(`missions.scheduleList.observed.${doc.observation.state === "known"
     ? doc.observation.nativeStatus ?? "unknown" : doc.observation.state}`)
   const zoneOf = (doc: UnifiedMissionSchedule) => missionCriteriaZone(doc.configuration.launch)

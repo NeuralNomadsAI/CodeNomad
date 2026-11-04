@@ -228,7 +228,7 @@ export function MissionEditor(props: {
     customProfiles: customProfiles(), taskMode: taskMode(), customTaskMode: customTaskMode(), defaults: defaults(),
     defaultsReady: defaultsReady(), selectedModel: selectedModel(), optionsOpen: optionsOpen(), profileDetailsOpen: profileDetailsOpen(),
     requestId, lastPayload, deleteManagedSessions: deleteManagedSessions(), deleteAttempted: deleteAttempted(),
-    scheduling: structuredClone(schedule.scheduling()), scheduleDocument: schedule.document(), scheduleAnchorAt: schedule.anchorAt(),
+    scheduling: structuredClone(schedule.scheduling()), scheduleDocument: schedule.document(),
     previousDraft: schedule.previousDraft(), journalMission: schedule.journal() })
   onCleanup(() => props.onDispose?.(busy() ? undefined : prefilling() ? null : captureDraft()))
 
@@ -491,11 +491,7 @@ export function MissionEditor(props: {
       </Show>
     </details>
     <MissionScheduling draft={schedule.scheduling()} directory={schedule.directory()} sources={sourceChoices.sources()}
-      capability={schedule.capability()} lockReason={structuralReason()} disabled={structuralLocked()}
-      persisted={schedule.document()?.firstPlayedAt != null ? { firstPlayedAt: schedule.document()!.firstPlayedAt!,
-        oneShotAt: schedule.document()!.oneShotAt, slotEndsAt: schedule.document()!.slotEndsAt,
-        nextDueAt: schedule.document()!.observation.nextDueAt, launchedCount: schedule.document()!.launchedCount } : undefined}
-      anchorAt={schedule.anchorAt()} onChange={schedule.setScheduling} onPolicy={value => setPolicyReady(!!value)} />
+      capability={schedule.capability()} lockReason={structuralReason()} disabled={structuralLocked()} onChange={schedule.setScheduling} onPolicy={value => setPolicyReady(!!value)} />
     <Show when={immediateFollowed()}><p role="status">{t(immediateCreationFollowed() ? "missions.scheduling.immediateCreationFollowed" : "missions.scheduling.immediateFollowed")}</p></Show>
     <Show when={schedule.capability() === "missing"}><button type="button" class="window-action" disabled={busy() || schedule.reading()}
       onClick={schedule.retryRead}>{t("missions.control.retry")}</button></Show>

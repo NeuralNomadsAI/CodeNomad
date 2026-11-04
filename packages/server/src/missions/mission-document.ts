@@ -66,7 +66,8 @@ const origin = z.union([
   // Triggers consumed while a passage ran, launched once after it settled.
   z.object({ kind: z.literal("deferred"), afterPassageID: documentID, dueAt: documentTimestamp }).strict(),
 ])
-const deferred = z.object({ afterPassageID: documentID, dueAt: documentTimestamp, unconditional: z.boolean() }).strict()
+/** `scheduled`: a schedule slot triggered it; otherwise a trigger event must still show news. */
+const deferred = z.object({ afterPassageID: documentID, dueAt: documentTimestamp, scheduled: z.boolean() }).strict()
 export type MissionDeferredLaunch = z.infer<typeof deferred>
 const pending = z.object({ id: documentID, missionID: documentID, coordinatorSessionID: nativeDocumentID, messageID: nativeDocumentID,
   configurationGeneration: generation, timeGeneration: generation, createdAt: documentTimestamp, dueAt: documentTimestamp,

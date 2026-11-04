@@ -1,4 +1,4 @@
-import { missionDocumentChanges as changes, missionWakesLaunchUnconditionally } from "./mission-document-state"
+import { missionDocumentChanges as changes, missionLaunches, missionWakesSchedule, type MissionEventNews } from "./mission-document-state"
 import { missionLaunchLimit, missionLaunchModel } from "./launch-policy"
 import type { MissionDocument, MissionSourceCheckpoint, MissionWake } from "./mission-document"
 import type { NativeMissionDocumentStore } from "./mission-document-store"
@@ -16,7 +16,7 @@ export interface DocumentPassagePorts {
   current(): true
   verifyWake(doc: MissionDocument, wake: DocumentPassageWake): Promise<{ wake: MissionWake; current(): true }>
   coverage(doc: MissionDocument, window: DocumentFanInWindow): Promise<{ complete: boolean; wakes: MissionWake[]; current(): true }>
-  snapshot(doc: MissionDocument): Promise<{ changed: boolean; checkpoints: MissionSourceCheckpoint[]; current(): true; revalidate?(): Promise<void> }>
+  snapshot(doc: MissionDocument): Promise<{ news: MissionEventNews; checkpoints: MissionSourceCheckpoint[]; current(): true; revalidate?(): Promise<void> }>
   admit(doc: MissionDocument, locked: NativeMissionDocumentStore): Promise<DocumentPassageAdmission>
   observe(doc: MissionDocument, locked: NativeMissionDocumentStore): Promise<{ outcome: "completed" | "failed" | "ended-without-report"; current(): true } | undefined>
   retired?(doc: MissionDocument): void
@@ -114,7 +114,7 @@ export class MissionDocumentPassageEngine {
         }
         const snapshot = await this.ports.snapshot(doc)
         snapshot.current(); coverage.current()
-        if (!snapshot.changed && !missionWakesLaunchUnconditionally(doc, wakes)) {
+        if (!missionLaunches(doc, missionWakesSchedule(doc, wakes), snapshot.news)) {
           await this.consume(locked, doc, wakes, () => { snapshot.current(); return coverage.current() }, snapshot.revalidate, true)
           return await this.launchDeferred(locked, doc.id) ?? "ignored"
         }
@@ -247,7 +247,7 @@ export class MissionDocumentPassageEngine {
     // An incomplete source read keeps the owed launch for the next wake.
     let snapshot: Awaited<ReturnType<DocumentPassagePorts["snapshot"]>>
     try { snapshot = await this.ports.snapshot(doc); snapshot.current() } catch { return undefined }
-    if (!owed.unconditional && !snapshot.changed) {
+    if (!missionLaunches(doc, owed.scheduled, snapshot.news)) {
       await this.change(locked, doc, next => { this.recordCheck(next); next.deferred = null }, snapshot.current, snapshot.revalidate)
       return undefined
     }

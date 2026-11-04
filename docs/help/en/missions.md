@@ -12,7 +12,7 @@ Missions pair a durable project plan with native OpenCode conversations. The coo
 
 1. Open **Missions** in the right panel and choose **Create mission**. The form replaces the mission list and the selected mission's tasks until you create or cancel.
 2. Fill **What should the mission do?** and check **Title**, prefilled from the first sentence (up to 60 characters).
-3. Leave **Scheduling** folded for **Once, immediately**, or expand it and use **Add a criterion** under **Launch when** to add schedules or events. Verify the preview before creating scheduled work.
+3. Leave **Scheduling** folded for **Once, immediately**, or expand it and use **Add a criterion** under **Launch when** to add schedules or events. On each event card, choose **When** or **Only if**.
 4. Expand **Options** for **Playbook**, **Notes**, **Agents and models**, **Task sessions**, the project's **Subsession nesting depth**, saved briefs and optional followed conversations. With **Compare two models**, the **Model A** and **Model B** selectors appear in the main form.
 5. Choose **Create**. Select the paused entry, review it, then use ▶ **Start** when ready. Without launch criteria, Start runs one mission; with criteria, it arms native scheduling.
 
@@ -153,7 +153,7 @@ Briefs store instructions and requested choices, not task plans, results, conver
 
 The **i** icons beside scheduling labels explain the choices: hover, focus with the keyboard or tap.
 
-Expand **Scheduling** in Create or Edit. **Launch when** lists the criteria that launch the mission: choose **Add a criterion**, then pick its type. The mission launches as soon as any of them occurs. Without any criterion, it launches once at Start (**Once, immediately**). Remove a criterion with its × button. The **i** beside **Launch when** opens on click, Enter or Space: it explains the criteria, notes that schedules only run while OpenCode is running and links to [Keep OpenCode running](opencode.md#service-supervision). New schedules use the system time zone; **Saved time zone (IANA)** appears only when the saved zone differs from it.
+Expand **Scheduling** in Create or Edit. **Launch when** lists the criteria that launch the mission: choose **Add a criterion**, then pick its type. The mission launches as soon as any **When** criterion occurs. Without any criterion, it launches once at Start (**Once, immediately**). Remove a criterion with its × button. The **i** beside **Launch when** opens on click, Enter or Space: it explains the criteria, notes that schedules only run while OpenCode is running and links to [Keep OpenCode running](opencode.md#service-supervision). New schedules use the system time zone; **Saved time zone (IANA)** appears only when the saved zone differs from it.
 
 | Schedule | Timing |
 | --- | --- |
@@ -163,13 +163,13 @@ Expand **Scheduling** in Create or Edit. **Launch when** lists the criteria that
 | Day of each month | Day 1–31 at the chosen time; months without that day are skipped. |
 | Advanced (cron) | A native cron expression, at most once per minute. |
 
-Add several schedules for several times, such as 09:15 and 17:45. Each one is a cron; recognized expressions reopen as their shortcut. The [events](#scheduling-conditions) are the other criteria; they are checked every 15 minutes, with no frequency to set.
+Add several schedules for several times, such as 09:15 and 17:45. Each one is a cron; recognized expressions reopen as their shortcut. The [events](#scheduling-conditions) are the other criteria: **When** events are checked every 15 minutes, with no frequency to set; **Only if** events are read at each launch.
 
-Check **Only if there is something new** to make the schedules conditional: only the schedules launch, and at each scheduled time the mission starts only if one of the listed events occurred since the last passage; otherwise that time is skipped. The option needs at least one schedule and one event.
+Schedules are always **When** criteria. Each event card has a switch with two icons: **When** (lightning) makes the event launch the mission; **Only if** (funnel) makes it a condition. At each launch, by a schedule or a **When** event, the mission starts only if one of the **Only if** events occurred since the last passage; otherwise that passage is skipped. Conditions need at least one **When** criterion.
 
-A passage in progress is never doubled. Schedules or events that occur while it runs are grouped into one passage, launched when it ends; with **Only if there is something new**, that grouped passage still needs a new event.
+A passage in progress is never doubled. Schedules or events that occur while it runs are grouped into one passage, launched when it ends; that grouped passage still needs its **Only if** conditions.
 
-**Next slots (up to five)** previews the schedules in the saved zone from the assumed Play time; with **Only if there is something new**, **Next checks (up to five)** shows the times when events are checked. Events alone have no dated preview. Civil schedules follow the saved zone and OpenCode's daylight-saving rules. The displayed dates are projections subject to service and host availability.
+Civil schedules follow the saved zone and OpenCode's daylight-saving rules. A calendar without any future slot is refused.
 
 After an outage, native scheduling delivers at most one catch-up passage before returning to future slots. It uses the recorded native due slot, which may precede later missed slots. All schedules share this catch-up and the same non-overlap guard. An unresolved passage is reconciled under its original conversation and message identities before another passage can start. Resuming an explicitly paused schedule uses its next future slot.
 
@@ -181,17 +181,17 @@ First Play establishes the starting reference. Resume preserves it, including ch
 
 Changes observed together are grouped. A passage freezes the observed source evidence; successful settlement consumes that snapshot, leaving later changes for a future check. A failed passage keeps its source checkpoint and requires intervention. **Followed conversations (optional)** under **Options** supplies context separately from choosing a conversation-message event.
 
-### End date and counts {#scheduling-limits}
+### Counts and saved schedules {#scheduling-limits}
 
-Leave **Until** blank for ongoing scheduling, or set the last date and time a slot may be due. A slot recorded before the end can arrive late after a long outage. A passage already admitted remains observable through its result.
+Schedules have no end date. A schedule saved with an end date keeps respecting it until you edit it; saving an edit removes the end date. A slot recorded before that end can arrive late after a long outage. A passage already admitted remains observable through its result.
 
 **Launched passages** counts each passage once when its coordinator's first input is admitted, including **Run now** and a passage that later fails. Checks, unchanged events and refused wakes count nothing. Counts survive edits and restarts.
 
-A schedule stored with a frequency and an optional condition opens as criteria: a frequency becomes a schedule, a condition becomes an event, and a frequency with a condition becomes both with **Only if there is something new** checked; reopening and saving unchanged keeps the saved schedule exactly. An interval, a delay, a single date, a maximum number of passages, an end after a number of hours or a condition launched once without a frequency keeps working as saved and is shown under **Stored scheduling policy** until you replace it.
+A schedule stored with a frequency and an optional condition opens as criteria: a frequency becomes schedules, a frequency with a condition adds that event in **Only if**, and a condition alone becomes a **When** event; reopening and saving unchanged keeps the saved schedule exactly, including a single launch on that event. An interval, a delay, a single date, a maximum number of passages or an end after a number of hours keeps working as saved and is shown under **Stored scheduling policy** until you replace it.
 
 The selected native schedule shows **Desired state**, **Native calendar**, **Next wake** or **Next check**, **Checks** with **Tracked since**, **Launched passages**, **Successful passages**, its end and **Past runs**. Read a past passage through **Open conversation**. **Schedule finished** describes the schedule's end; inspect the passage outcome separately. Results retain the latest 30 entries; lifetime counts survive that window. **Load more Missions** loads the next saved-object page.
 
-The list summarizes each criterion, shows **Only if there is something new** and the end only when set, and **Checks** only with events.
+The list summarizes each criterion, prefixing conditions with **Only if**; the detail shows a saved end date only when set, and **Checks** only with events.
 
 ### Existing daily schedules {#existing-daily-schedules}
 
@@ -259,9 +259,9 @@ If **Create** is unconfirmed, the window retains the submitted request and disab
 
 If the objective or notes change while the form is still loading, it says the mission changed since you opened it instead of filling them; choose **Reopen** to edit the current version.
 
-Between passages, a native schedule that is paused or running can edit its title, instructions, notes, requested profiles, task-session mode, launch criteria and end date when no passage or unresolved control holds the object. A paused schedule stays paused; an armed schedule reconciles its calendar before continuing. Saving preserves past results, consumed sources, launched count and first-Play origin; unchanged schedules keep their native calendars.
+Between passages, a native schedule that is paused or running can edit its title, instructions, notes, requested profiles, task-session mode and launch criteria when no passage or unresolved control holds the object. A paused schedule stays paused; an armed schedule reconciles its calendar before continuing. Saving preserves past results, consumed sources, launched count and first-Play origin; unchanged schedules keep their native calendars.
 
-During an admitted passage, only instructions and notes follow the active text-edit contract: changes are recorded in its history and saved for future passages. Existing tasks, briefs, profiles and execution identities keep their admitted values. Structural fields stay locked until the passage settles, including after Pause. A playbook stays locked once any task has been created, including completed or retired tasks. Uncertain admission/control or incomplete integrity evidence keeps structural editing read-only. Create and Edit share calendar validation; the preview applies the edited end date to the saved next wake, including a late wake.
+During an admitted passage, only instructions and notes follow the active text-edit contract: changes are recorded in its history and saved for future passages. Existing tasks, briefs, profiles and execution identities keep their admitted values. Structural fields stay locked until the passage settles, including after Pause. A playbook stays locked once any task has been created, including completed or retired tasks. Uncertain admission/control or incomplete integrity evidence keeps structural editing read-only. Create and Edit share calendar validation.
 
 The local-branch source includes branches without a worktree, using local refs only. The picker supports up to 200 local branches; a larger inventory shows the source as unavailable. **Start** and **Resume** ask for consent with the exact configuration paths when activation is available. **Run now** stays disabled with an explanation while native scheduling is inactive; enable `experimental.schedules` in OpenCode configuration, then refresh. A lost activation reply keeps the original request for receipt refresh.
 

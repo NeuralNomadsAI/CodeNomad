@@ -2,6 +2,7 @@ import { For, Show } from "solid-js"
 import { X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
+import { MissionCriterionRole } from "./mission-criterion-role"
 import { isMissionEventKind, missionEventKinds, missionHourSteps, missionScheduleShortcuts, type MissionConditionKind,
   type MissionCriterionDraft, type MissionCriterionKind } from "./mission-scheduling-data"
 
@@ -33,6 +34,9 @@ export function MissionSchedulingCriterion(props: { row: MissionCriterionDraft; 
           <For each={missionEventKinds}>{value => <option value={value}>{t(`missions.scheduling.condition.${value}`)}</option>}</For>
         </optgroup>
       </select>
+      <Show when={isMissionEventKind(kind())}>
+        <MissionCriterionRole onlyIf={props.row.onlyIf} label={label("missions.scheduling.criterionRole")} onChange={onlyIf => patch({ onlyIf })} />
+      </Show>
       <button type="button" class="window-icon-button" aria-label={label("missions.scheduling.removeCriterion")}
         title={label("missions.scheduling.removeCriterion")} onClick={() => props.onRemove()}><X class="h-4 w-4" aria-hidden="true" /></button>
     </div>

@@ -54,7 +54,7 @@ async function composed(t: test.TestContext, maximum = 3) {
     incarnation: "composed_native", now: () => now, current: f.current,
     verifyWake: (doc, wake) => coverage.verifyWake(doc, wake, f.current, signal),
     coverage: (doc, window) => coverage.coverage(doc, window, f.current, signal),
-    snapshot: async () => { business.push("source"); return { changed: true, checkpoints: [], current: f.current } },
+    snapshot: async () => { business.push("source"); return { news: { triggers: true, conditions: true }, checkpoints: [], current: f.current } },
     admit: async doc => {
       business.push("admit")
       const pending = doc.pending!

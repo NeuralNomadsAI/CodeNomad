@@ -28,13 +28,21 @@ function baseline(config: MissionConfiguration, checkpoints: MissionSourceCheckp
     if (!checkpoints.some(item => item.kind === condition.kind && item.key === missionSourceKey(condition)))
       throw new Error("Mission source baseline required")
 }
-/** A schedule wake launches on its own unless onlyWithNews; event checks need a change. */
-export function missionWakesLaunchUnconditionally(doc: MissionDocument, wakes: readonly MissionWake[]): boolean {
-  const launch = doc.configuration.launch, eventSlot = missionEventPrincipalSlot(launch)
-  return !missionLaunchModel(launch).onlyWithNews && wakes.some(wake => {
+/** Whether these wakes include a schedule slot, which triggers on its own; the
+ * internal event-check slot triggers only when a trigger event changed. */
+export function missionWakesSchedule(doc: MissionDocument, wakes: readonly MissionWake[]): boolean {
+  const eventSlot = missionEventPrincipalSlot(doc.configuration.launch)
+  return wakes.some(wake => {
     const calendar = doc.calendars.find(item => item.scheduleID === wake.scheduleID)
     return calendar?.role === "principal" && calendar.slot !== eventSlot
   })
+}
+/** Event changes since the last passage, split by role. */
+export type MissionEventNews = { triggers: boolean; conditions: boolean }
+/** Any trigger (a schedule slot or a changed trigger event) launches, provided one
+ * condition changed since the last passage when the policy has conditions. */
+export function missionLaunches(doc: MissionDocument, scheduled: boolean, news: MissionEventNews): boolean {
+  return (scheduled || news.triggers) && (!missionLaunchModel(doc.configuration.launch).conditions.length || news.conditions)
 }
 /** Calendar-owned timing: schedules, the internal event check and end bounds. */
 export function missionTemporalPolicy(config: MissionConfiguration) {
@@ -69,7 +77,7 @@ export const missionDocumentChanges = {
     // date is rechecked when it launches.
     const criteria = (value: MissionConfiguration) => {
       const model = missionLaunchModel(value.launch)
-      return { schedules: model.schedules, events: model.events, onlyWithNews: model.onlyWithNews }
+      return { schedules: model.schedules, triggers: model.triggers, conditions: model.conditions }
     }
     if (!same(criteria(config), criteria(doc.configuration))) doc.deferred = null
     doc.configuration = config
@@ -134,7 +142,7 @@ export const missionDocumentChanges = {
       || doc.slotEndsAt !== null && wake.dueAt > doc.slotEndsAt) return
     const old = doc.deferred?.afterPassageID === afterPassageID ? doc.deferred : null
     doc.deferred = { afterPassageID, dueAt: Math.max(old?.dueAt ?? 0, wake.dueAt),
-      unconditional: !!old?.unconditional || missionWakesLaunchUnconditionally(doc, [wake]) }
+      scheduled: !!old?.scheduled || missionWakesSchedule(doc, [wake]) }
   },
   processWake(doc: MissionDocument, input: MissionWake) {
     const wake = missionWakeSchema.parse(input), calendar = exactCalendar(doc, wake)

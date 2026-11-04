@@ -5,7 +5,8 @@ import { isMissionEventKind } from "./mission-scheduling-data"
 
 type Translate = (key: string, params?: Record<string, string>) => string
 
-/** One readable line per launch criterion, in stored order: schedules, then events. */
+/** One readable line per launch criterion, in stored order: schedules, then events;
+ * conditions are prefixed with their "Only if" role. */
 export function describeMissionCriteria(policy: MissionLaunchPolicy, t: Translate, locale: string, oneShotAt?: number | null): string[] {
   const model = missionLaunchModel(policy), draft = decodeMissionSchedulingPolicy(policy, undefined, "UTC")
   const date = (at: number, zone: string) => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short", timeZone: zone }).format(at)
@@ -31,7 +32,8 @@ export function describeMissionCriteria(policy: MissionLaunchPolicy, t: Translat
   for (const event of model.events) {
     const reference = event.kind === "files-changed" ? event.paths.join(", ") : event.kind === "branch-commits" ? event.ref.slice("refs/heads/".length)
       : event.kind === "conversation-message" ? event.conversationID : event.missionID
-    lines.push(`${t(`missions.scheduling.condition.${event.kind}`)} · ${reference}`)
+    const line = `${t(`missions.scheduling.condition.${event.kind}`)} · ${reference}`
+    lines.push(model.conditions.includes(event) ? `${t("missions.scheduling.role.onlyIf")} · ${line}` : line)
   }
   return lines
 }

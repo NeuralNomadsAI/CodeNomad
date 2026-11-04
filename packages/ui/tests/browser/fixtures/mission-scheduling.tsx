@@ -32,7 +32,7 @@ function Fixture() {
     load: (policy: MissionLaunchPolicy) => change(decodeMissionSchedulingPolicy(policy, "/fixture", "UTC")) }
   return <main class="mission-editor window-shell" style={{ width: "min(420px, 100%)", margin: "auto", color: "var(--text-primary)" }}>
     <div class="window-body"><MissionScheduling draft={draft()} directory="/fixture" sources={sources()}
-      capability={capability()} lockReason={lock()} anchorAt={Date.parse("2026-03-07T12:00:00Z")}
+      capability={capability()} lockReason={lock()}
       onChange={change} onPolicy={setPolicy} /></div>
     {/* The embedded Settings route: the real OpenCode setting row, mounted only when its section opens. */}
     <Show when={settingsOpen() && activeSettingsSection() === "opencode"}><ServiceSupervisionCard /></Show>

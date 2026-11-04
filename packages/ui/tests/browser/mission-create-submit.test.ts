@@ -322,7 +322,7 @@ test("daily Create stores a paused schedule and never sends Play", async () => {
     assert.equal(fixture.creates.length, 1)
     const configuration = fixture.creates[0]!.configuration as Record<string, any>
     assert.equal(configuration.title, "Review yesterday's merged changes and summarize risks")
-    assert.deepEqual(configuration.launch, { when: [{ kind: "cron", expression: "30 7 * * *", zone: "Europe/Paris" }], onlyWithNews: false, until: null })
+    assert.deepEqual(configuration.launch, { when: [{ kind: "cron", expression: "30 7 * * *", zone: "Europe/Paris" }], onlyIf: [] })
     assert.deepEqual(fixture.controls, [], "Play stays a separate explicit action")
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }

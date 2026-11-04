@@ -65,7 +65,7 @@ async function until(condition: () => boolean, timeout = 5_000) {
 // A source string: the test transpiler would wrap named functions in a helper the page lacks.
 const watchScheduling = (page: Page) => page.evaluate(`(() => {
   const root = document.querySelector("form.mission-editor .mission-scheduling"), focused = document.activeElement
-  const sample = () => JSON.stringify({ rects: [...root.querySelectorAll("summary, fieldset, select, .mission-scheduling-preview, p")]
+  const sample = () => JSON.stringify({ rects: [...root.querySelectorAll("summary, fieldset, select, .mission-criterion, p")]
     .map(item => { const box = item.getBoundingClientRect(); return [item.tagName, Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height)] }),
   disabled: [...root.querySelectorAll("fieldset, option, button")].map(item => item.disabled),
   text: root.textContent, focus: document.activeElement === focused, open: root.querySelector("select").matches(":open") })
@@ -85,7 +85,7 @@ test("Scheduling keeps its display, focus and open picker through passive revali
     await scheduling(page).locator("summary").click()
     await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("form.mission-editor .mission-scheduling-add")?.disabled)
     await add(page).click()
-    await scheduling(page).locator(".mission-scheduling-preview").waitFor()
+    await scheduling(page).locator(".mission-criterion").waitFor()
     await page.waitForTimeout(300)
     const baseline = f.reads.length
     // The fixture's startup plugin/config events may add one coalesced trailing read.

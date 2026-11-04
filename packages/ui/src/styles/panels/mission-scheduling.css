@@ -21,15 +21,11 @@
 .mission-criterion > select { margin-block-start: var(--space-xs); }
 .mission-criterion .mission-scheduling-row > label { margin-block: var(--space-xs) 0; }
 .mission-scheduling-add { align-self: flex-start; display: inline-flex; align-items: center; gap: var(--space-xs); }
-.mission-scheduling .mission-scheduling-check { flex-direction: row; align-items: center; }
-.mission-scheduling-check input[type="checkbox"] { inline-size: auto; }
-.mission-scheduling-check > span { display: inline-flex; align-items: center; gap: var(--space-xs); }
+/* An event card's two-icon role switch, segmented by one square border. */
+.mission-criterion-role { display: flex; flex: none; border: 1px solid var(--border-base); }
 .mission-scheduling-days { display: flex; flex-wrap: wrap; gap: var(--space-xs) var(--space-sm); }
 .mission-scheduling-days label { flex-direction: row; align-items: center; }
 .mission-scheduling-days input[type="checkbox"] { inline-size: auto; }
 .mission-scheduling fieldset:disabled { opacity: .65; }
 .mission-scheduling fieldset:disabled fieldset:disabled { opacity: 1; }
-.mission-scheduling-preview { padding: var(--space-sm); margin-block: var(--space-sm); background: var(--surface-inset); }
-.mission-scheduling-preview h4 { margin: 0; font-size: var(--font-size-sm); }
-.mission-scheduling-preview ol { padding-inline-start: var(--space-lg); }
 .mission-scheduling pre { background: var(--surface-inset); color: var(--text-primary); padding: var(--space-sm); max-block-size: 14rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--font-size-xs); }
