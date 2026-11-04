@@ -6,6 +6,9 @@ import type { NativeMissionDocumentStore } from "./mission-document-store"
 export type DocumentPassageWake = { missionID: string; generation: number; scheduleID: string; sessionID: string; run: number; messageID: string; dueAt?: number }
 export type DocumentFanInWindow = { incarnation: string; cutoff: number; timeGeneration: number; principalIDs: string[]; completed: boolean; suppress: boolean; overlap?: boolean }
 type SlotNews = { news: MissionEventNews; current(): true }
+/** Only launch criteria group the wakes that overlap a passage into one later passage;
+ * a stored legacy policy consumes them without launching or reading its sources. */
+const coalesces = (doc: MissionDocument) => "when" in doc.configuration.launch
 export type DocumentPassageResult = "idle" | "ignored" | "started" | "pending" | "settled" | "unknown"
 export type DocumentPassagePreflight = { messagePresent: boolean; ready: boolean; cutoff: number }
 export type DocumentPassageAdmission = { kind: "admitted" | "recorded"; passageID: string; messageID: string; coordinatorSessionID: string; at: number }
@@ -81,7 +84,9 @@ export class MissionDocumentPassageEngine {
         doc = await this.window(locked, doc, input.cutoff, true)
       if (doc.pending) {
         let slot: SlotNews | undefined
-        if (!auxiliary && verified && incoming!.run === calendar!.highWater + 1) {
+        if (!auxiliary && verified && incoming!.run === calendar!.highWater + 1 && !coalesces(doc))
+          doc = await this.change(locked, doc, next => changes.processWake(next, verified.wake), verified.current)
+        else if (!auxiliary && verified && incoming!.run === calendar!.highWater + 1) {
           // Never a second passage: the trigger waits for this one to settle. An unread slot
           // stays unconsumed; the passage's suppressed window decides it later.
           slot = await this.slotNews(doc)
@@ -125,6 +130,9 @@ export class MissionDocumentPassageEngine {
           await this.consume(locked, doc, wakes, () => { snapshot.current(); return coverage.current() }, snapshot.revalidate, true)
           return await this.launchDeferred(locked, doc.id) ?? "ignored"
         }
+        // Launch criteria record which calendars decided the launch: an "else" period counts
+        // a fan-in passage only for them, never for every grouped calendar.
+        const launchedBy = coalesces(doc) ? [...new Set(wakes.filter(wake => missionLaunches(doc!, [wake], snapshot.news)).map(wake => wake.scheduleID))] : undefined
         // reserve accepts one next occurrence per principal. Older contiguous
         // occurrences are ignored in the SAME CAS, preserving the latest fan-in.
         await this.change(locked, doc, next => {
@@ -136,7 +144,7 @@ export class MissionDocumentPassageEngine {
             const last = group.at(-1)
             if (last) { changes.prepareWake(next, last); selected.push(last) }
           }
-          changes.reserve(next, { kind: "wake", wakes: selected }, this.ports.now(), snapshot.checkpoints)
+          changes.reserve(next, { kind: "wake", wakes: selected }, this.ports.now(), snapshot.checkpoints, launchedBy)
           for (const wake of [...coverage.wakes].sort((a, b) => a.run - b.run)) {
             const principal = next.calendars.find(item => item.scheduleID === wake.scheduleID)
             if (principal && wake.run > principal.highWater) changes.processWake(next, wake)
@@ -244,8 +252,7 @@ export class MissionDocumentPassageEngine {
     const owed = doc?.deferred
     if (!doc || !owed || doc.pending) return undefined
     const limit = missionLaunchLimit(doc.configuration.launch)
-    if (doc.state !== "running" || doc.blocked || doc.deletion || limit !== null && doc.launchedCount >= limit
-      || doc.slotEndsAt !== null && owed.dueAt > doc.slotEndsAt) {
+    if (doc.state !== "running" || doc.blocked || doc.deletion || limit !== null && doc.launchedCount >= limit) {
       await this.change(locked, doc, next => { next.deferred = null })
       return undefined
     }
@@ -280,17 +287,17 @@ export class MissionDocumentPassageEngine {
     // Engine-suppressed windows cover a passage in flight; their wakes are deferred.
     return { incarnation: this.ports.incarnation, cutoff, timeGeneration: doc.timeGeneration,
       principalIDs: doc.calendars.filter(item => item.role === "principal").map(item => item.scheduleID).sort(), completed: false, suppress,
-      ...(suppress ? { overlap: true } : {}) }
+      ...(suppress && coalesces(doc) ? { overlap: true } : {}) }
   }
   private async consume(locked: NativeMissionDocumentStore, doc: MissionDocument, wakes: MissionWake[], current: () => true, prepare?: () => Promise<void>, checked = false,
     read?: SlotNews) {
     // Overlapping wakes are decided at their slot; without a complete read they stay unconsumed.
-    const overlap = !!doc.fanIn?.overlap && wakes.length > 0
+    const overlap = !!doc.fanIn?.overlap && wakes.length > 0 && coalesces(doc)
     const slot = overlap ? read ?? await this.slotNews(doc) : undefined
     if (overlap && !slot) return doc
     return this.change(locked, doc, next => {
       if (checked || slot && !read) this.recordCheck(next)
-      const after = next.fanIn?.overlap ? next.pending?.id ?? next.history.at(-1)?.id : undefined
+      const after = slot ? next.pending?.id ?? next.history.at(-1)?.id : undefined
       for (const wake of [...wakes].sort((a, b) => a.run - b.run)) {
         if (after && slot) changes.defer(next, wake, after, slot.news)
         changes.processWake(next, wake)

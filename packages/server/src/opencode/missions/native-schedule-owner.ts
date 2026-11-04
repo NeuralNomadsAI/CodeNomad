@@ -56,8 +56,10 @@ const calendarForSlot = (doc: MissionDocument, slot: MissionCalendarOwnerSlot): 
   const origin = previous && (previous.armedAt !== undefined || previous.lastDueAt !== undefined)
     ? { ...(previous.armedAt !== undefined ? { armedAt: previous.armedAt } : {}), ...(previous.lastDueAt !== undefined ? { lastDueAt: previous.lastDueAt } : {}) }
     : slot.role === "principal" && slot.anchorAt !== undefined ? { armedAt: slot.anchorAt } : {}
+  // Its passages, recorded under the replaced calendars, stay attributed to this schedule.
+  const formerIDs = previous ? [previous.scheduleID, ...previous.formerIDs ?? []].slice(0, 8) : undefined
   return { role: slot.role, slot: slot.slot, timeGeneration: slot.timeGeneration, sessionID: slot.sessionID,
-    scheduleID: slot.scheduleID, highWater: 0, pendingWake: null, wakePreparing: null, ...origin }
+    scheduleID: slot.scheduleID, highWater: 0, pendingWake: null, wakePreparing: null, ...origin, ...(formerIDs ? { formerIDs } : {}) }
 }
 const publishAuxiliary = (doc: MissionDocument, slot: MissionCalendarOwnerSlot) => {
   if (slot.role !== "reconciliation" || slot.timeGeneration !== doc.timeGeneration) throw new Error("Mission current auxiliary required")

@@ -74,7 +74,8 @@ const missionScheduleHistoryWire = { type: "object", properties: { id: text, mis
       scheduleIDs: { type: "array", minItems: 1, maxItems: 8, uniqueItems: true, items: text } },
       required: ["kind", "afterPassageID", "dueAt", "scheduleIDs"], additionalProperties: false },
   ] }, admittedAt: { type: ["integer", "null"], minimum: 0 }, manualAllowed: { type: "boolean" }, admissionAttempted: { type: "boolean" },
-  manualExpectedRevision: counter, configurationDigest: text, settledAt: counter,
+  manualExpectedRevision: counter, launchedBy: { type: "array", minItems: 1, maxItems: 8, uniqueItems: true, items: text },
+  configurationDigest: text, settledAt: counter,
   outcome: { type: "string", enum: ["completed", "failed", "ended-without-report"] }, reason: { const: "not-started" },
 }, required: ["id", "missionID", "coordinatorSessionID", "messageID", "configurationGeneration", "timeGeneration", "createdAt", "dueAt", "origin", "admittedAt", "configurationDigest", "settledAt", "outcome"], additionalProperties: false } as const
 const summary = { ...missionDocumentSummaryWire, properties: { ...missionDocumentSummaryWire.properties,

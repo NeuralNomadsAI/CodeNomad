@@ -34,21 +34,28 @@ export type MissionEventNews = { triggers: boolean; conditions: boolean; changed
 /** An "else" schedule's own period runs from its previous slot (or the arming of its
  * calendar) to this slot. It is free when no passage launched by the criteria above its
  * group, or by Run now, was admitted for a slot in that period, even one that failed later.
- * Such a passage still awaiting admission is uncertain, so no fallback can be proven. */
+ * Such a passage still awaiting admission is uncertain, so no fallback can be proven; so is
+ * a period whose origin is not before this slot. */
 export function missionFallbackClear(doc: MissionDocument, scheduleID: string, dueAt: number): boolean {
   const launch = doc.configuration.launch, model = missionLaunchModel(launch), eventSlot = missionEventPrincipalSlot(launch)
   const calendar = doc.calendars.find(item => item.scheduleID === scheduleID)
   const group = calendar ? model.plans[calendar.slot]?.group ?? 0 : 0
   const from = calendar?.lastDueAt ?? calendar?.armedAt ?? doc.firstPlayedAt ?? 0
-  // A calendar no longer listed belongs to an earlier configuration: its passages count.
+  if (from >= dueAt) return false
+  // A re-armed schedule answers for the calendars it replaced (`formerIDs`). A calendar no
+  // longer listed belonged to a schedule since removed or changed: its place in the list is
+  // unknown, so its passages count, which may skip a fallback slot but never doubles one.
   const above = (id: string) => {
-    const item = doc.calendars.find(value => value.scheduleID === id && value.role === "principal")
+    const item = doc.calendars.find(value => value.role === "principal" && (value.scheduleID === id || value.formerIDs?.includes(id)))
     return !item || item.slot === eventSlot || (model.plans[item.slot]?.group ?? 0) < group
   }
+  // Only the calendars that decided a fan-in passage launched it.
+  const deciders = (passage: Pick<MissionDocumentPending, "origin" | "launchedBy">) => passage.origin.kind === "wake"
+    ? passage.launchedBy ?? passage.origin.wakes.map(wake => wake.scheduleID)
+    : passage.origin.kind === "deferred" ? passage.origin.scheduleIDs : undefined
   return ![doc.pending, ...doc.history].some(passage => passage && passage.dueAt > from && passage.dueAt <= dueAt
     && (passage.admittedAt !== null || passage === doc.pending)
-    && (passage.origin.kind === "wake" ? passage.origin.wakes.some(wake => above(wake.scheduleID))
-      : passage.origin.kind === "deferred" ? passage.origin.scheduleIDs.some(above) : true))
+    && (deciders(passage)?.some(above) ?? true))
 }
 /** Whether any of these principal wakes launches. The event check launches on a changed
  * trigger event; a schedule slot launches when one of its group's conditions changed ("if")
@@ -162,10 +169,11 @@ export const missionDocumentChanges = {
   /** Remember one trigger consumed during a passage; all of them launch once afterwards. */
   defer(doc: MissionDocument, input: MissionWake, afterPassageID: string, news: MissionEventNews) {
     const wake = missionWakeSchema.parse(input), calendar = doc.calendars.find(item => item.scheduleID === wake.scheduleID)
+    // A stored legacy policy never groups an overlapping wake into a later passage.
+    if (!("when" in doc.configuration.launch)) return
     const passage = [doc.pending, ...doc.history].find(item => item?.id === afterPassageID)
     // A slot due by the passage's reservation is already answered by that passage.
-    if (!passage || wake.dueAt <= passage.createdAt || doc.state !== "running" || doc.blocked || calendar?.role !== "principal"
-      || doc.slotEndsAt !== null && wake.dueAt > doc.slotEndsAt) return
+    if (!passage || wake.dueAt <= passage.createdAt || doc.state !== "running" || doc.blocked || calendar?.role !== "principal") return
     // Decided at its slot, from the news observed then: a wake that would not launch now never launches later.
     if (!missionLaunches(doc, [wake], news)) return
     const old = doc.deferred?.afterPassageID === afterPassageID ? doc.deferred : null
@@ -180,7 +188,8 @@ export const missionDocumentChanges = {
     calendar.wakePreparing = null
     if (calendar.role === "principal") calendar.lastDueAt = wake.dueAt
   },
-  reserve(doc: MissionDocument, input: MissionDocumentPending["origin"], now: number, checkpoints: MissionSourceCheckpoint[]) {
+  /** `launchedBy`: for a wake origin, the calendars whose slot decided the launch. */
+  reserve(doc: MissionDocument, input: MissionDocumentPending["origin"], now: number, checkpoints: MissionSourceCheckpoint[], launchedBy?: readonly string[]) {
     available(doc)
     if (doc.pending) throw new Error("Mission passage pending")
     const origin = structuredClone(input)
@@ -214,7 +223,8 @@ export const missionDocumentChanges = {
     const id = missionDocumentPassageID(doc, doc.configurationGeneration, origin), missionID = `msn_${stableToken(`${doc.projectID}\0${id}`, 24)}`
     doc.pending = { id, missionID, coordinatorSessionID: missionCoordinatorSessionID(missionID, now),
       messageID: `msg_${stableToken(`${id}\0start`, 40)}`, origin, configurationGeneration: doc.configurationGeneration,
-      timeGeneration: doc.timeGeneration, createdAt: now, dueAt, configuration: structuredClone(doc.configuration), checkpoints: proof, admittedAt: null, manualAllowed: false, admissionAttempted: false }
+      timeGeneration: doc.timeGeneration, createdAt: now, dueAt, configuration: structuredClone(doc.configuration), checkpoints: proof, admittedAt: null, manualAllowed: false, admissionAttempted: false,
+      ...(origin.kind === "wake" && launchedBy?.length ? { launchedBy: [...launchedBy].sort() } : {}) }
   },
   admitted(doc: MissionDocument, passageID: string, now: number) {
     const pending = exactPending(doc, passageID)

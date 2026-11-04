@@ -125,7 +125,7 @@ test("business checks count committed source observations once per fan-in, with 
   assert.equal((await f.read()).checks!.count, 2)
   f.tick(); const overlap = f.wake(0, 3); f.wake(1, 3)
   await f.engine.wake({ missionID: "review", wake: overlap })
-  assert.equal((await f.read()).checks!.count, 3, "an overlapping slot reads its sources once to decide its grouped launch")
+  assert.equal((await f.read()).checks!.count, 2, "overlap has no source observation")
   const doc = await f.read()
   await assert.rejects(f.store.change(doc.id, doc.revision, current, next => { next.checks!.count-- }), /monotone/)
 
@@ -199,10 +199,27 @@ test("overlapping same-calendar occurrences advance HWM while retaining the pend
   assert.equal(overlap.calendars[0].highWater, 2); assert.equal(overlap.pending!.id, pending.id)
   f.terminal = true
   await f.engine.reconcile({ missionID: "review" })
+  assert.equal((await f.read()).calendars[0].highWater, 2)
+})
+
+test("a stored legacy schedule consumes an overlapping wake without launching, deferring or reading its sources", async () => {
+  const f = await fixture(), condition = { kind: "files-changed" as const, paths: ["input.txt"] }
+  const checkpoint = { key: missionSourceKey(condition), kind: condition.kind, placementDigest: "b".repeat(64), value: { hash: "observed" } }
+  await f.mutate(doc => { legacyLaunch(doc.configuration).condition = condition })
+  f.ports.snapshot = async () => ({ news: { triggers: true, conditions: true }, checkpoints: [checkpoint], current })
+  assert.equal(await f.engine.wake({ missionID: "review", wake: f.wake() }), "started")
+  const before = await f.read()
+  f.tick()
+  assert.equal(await f.engine.wake({ missionID: "review", wake: f.wake(0, 2) }), "pending")
+  const overlap = await f.read()
+  assert.equal(overlap.calendars[0].highWater, 2); assert.equal(overlap.deferred ?? null, null)
+  assert.deepEqual(overlap.checks, before.checks, "an overlapping legacy wake reads no source")
+  f.terminal = true
+  await f.engine.reconcile({ missionID: "review" })
   const settled = await f.read()
-  assert.equal(settled.calendars[0].highWater, 2)
-  assert.equal(settled.launchedCount, 2, "the overlapping slot launches once, after the passage")
-  assert.equal(settled.history[1].origin.kind, "deferred")
+  assert.equal(settled.launchedCount, 1, "the overlapping slot never launches afterwards")
+  assert.equal(settled.history.length, 1); assert.equal(settled.deferred ?? null, null)
+  assert.deepEqual(settled.checks, before.checks)
 })
 
 test("35 settled passages retain the total counter and durable old-wake suppression", async () => {

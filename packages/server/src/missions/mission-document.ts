@@ -53,12 +53,14 @@ const checkpoints = missionCheckpointsSchema
 export const missionWakeSchema = z.object({ scheduleID: nativeDocumentID, run: documentCounter.positive(),
   messageID: nativeDocumentID, dueAt: documentTimestamp }).strict().refine(wake => wake.messageID === `msg_${wake.scheduleID}_${wake.run}`)
 export type MissionWake = z.infer<typeof missionWakeSchema>
-/** `armedAt`: when this native calendar was armed (its anchor); `lastDueAt`: the due time of
- * its latest processed slot. Together they bound an "else" schedule's own period. */
+/** Principal calendars only. `armedAt`: when this native calendar was armed (its anchor);
+ * `lastDueAt`: the due time of its latest processed slot. Together they bound an "else"
+ * schedule's own period. `formerIDs`: the calendars of the same schedule it replaced, newest first. */
 const calendar = z.object({ role: z.enum(["principal", "reconciliation"]), slot: documentCounter.max(7),
   timeGeneration: generation, scheduleID: nativeDocumentID, sessionID: nativeDocumentID, highWater: documentCounter,
   pendingWake: missionWakeSchema.nullable(), wakePreparing: missionWakeSchema.nullable(),
   armedAt: documentTimestamp.optional(), lastDueAt: documentTimestamp.optional(),
+  formerIDs: z.array(nativeDocumentID).min(1).max(8).refine(ids => new Set(ids).size === ids.length).optional(),
 }).strict()
 export type MissionCalendar = z.infer<typeof calendar>
 const origin = z.union([
@@ -74,13 +76,14 @@ const origin = z.union([
  * stayed eligible at their slot (an "else" period is decided at the slot, never later). */
 const deferred = z.object({ afterPassageID: documentID, dueAt: documentTimestamp,
   scheduleIDs: z.array(nativeDocumentID).min(1).max(8).refine(ids => new Set(ids).size === ids.length) }).strict()
-export type MissionDeferredLaunch = z.infer<typeof deferred>
 const pending = z.object({ id: documentID, missionID: documentID, coordinatorSessionID: nativeDocumentID, messageID: nativeDocumentID,
   configurationGeneration: generation, timeGeneration: generation, createdAt: documentTimestamp, dueAt: documentTimestamp,
   origin, configuration: missionConfigurationSchema, checkpoints, admittedAt: documentTimestamp.nullable(),
   manualAllowed: z.boolean().optional().default(false),
   admissionAttempted: z.boolean().optional().default(false),
   manualExpectedRevision: documentCounter.optional(),
+  /** Launch criteria only: the calendars of `origin.wakes` whose slot decided the launch. */
+  launchedBy: z.array(nativeDocumentID).min(1).max(8).refine(ids => new Set(ids).size === ids.length).optional(),
 }).strict()
 export type MissionDocumentPending = z.infer<typeof pending>
 const receipt = pending.omit({ configuration: true, checkpoints: true }).extend({ configurationDigest: digest,
@@ -148,7 +151,19 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
     if (item.timeGeneration > doc.timeGeneration || item.role === "reconciliation" && item.slot !== 0) fail()
     if (item.pendingWake && (item.pendingWake.scheduleID !== item.scheduleID || item.pendingWake.run > item.highWater)) fail()
     if (item.wakePreparing && (item.wakePreparing.scheduleID !== item.scheduleID || item.wakePreparing.run !== item.highWater + 1)) fail()
+    // Period origins belong to principal calendars and never pass their own known slots: the
+    // arming precedes every slot, the latest processed slot is at least the reserved one and
+    // at most the one being prepared. The document holds no clock to bound an idle calendar
+    // further; an origin at or after a slot only keeps that fallback from launching.
+    if (item.role !== "principal" && (item.armedAt !== undefined || item.lastDueAt !== undefined || item.formerIDs)) fail()
+    const slots = [item.lastDueAt, item.pendingWake?.dueAt, item.wakePreparing?.dueAt].filter((value): value is number => value !== undefined)
+    if (item.armedAt !== undefined && (item.armedAt < doc.createdAt || slots.some(value => item.armedAt! > value))
+      || item.lastDueAt !== undefined && (item.lastDueAt < doc.createdAt || item.pendingWake && item.pendingWake.dueAt > item.lastDueAt
+        || item.wakePreparing && item.wakePreparing.dueAt < item.lastDueAt)
+      || item.formerIDs?.some(id => doc.calendars.some(other => other.scheduleID === id))) fail()
   }
+  const formerIDs = doc.calendars.flatMap(item => item.formerIDs ?? [])
+  if (new Set(formerIDs).size !== formerIDs.length) fail()
   if (doc.calendars.some(item => item.timeGeneration !== doc.timeGeneration)) fail()
   if (doc.calendarOwner && (doc.calendarOwner.operation.expectedRevision > doc.revision
     || doc.calendarOwner.slots.some(item => item.timeGeneration !== doc.timeGeneration)
@@ -178,7 +193,9 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
       || passage.dueAt !== (passage.origin.kind === "wake" ? Math.max(...passage.origin.wakes.map(wake => wake.dueAt))
         : passage.origin.kind === "deferred" ? passage.origin.dueAt : passage.createdAt)
       || passage.admittedAt !== null && passage.admittedAt < passage.createdAt
-      || passage.manualExpectedRevision !== undefined && passage.origin.kind !== "manual") fail()
+      || passage.manualExpectedRevision !== undefined && passage.origin.kind !== "manual"
+      || passage.launchedBy && (passage.origin.kind !== "wake" || !("when" in doc.configuration.launch)
+        || passage.launchedBy.some(id => passage.origin.kind !== "wake" || !passage.origin.wakes.some(wake => wake.scheduleID === id)))) fail()
     if ("settledAt" in passage) {
       if (passage.settledAt < Math.max(previousSettledAt, passage.createdAt, passage.admittedAt ?? 0)
         || (passage.reason === "not-started") !== (passage.admittedAt === null)
@@ -200,7 +217,8 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
   if (doc.dormantJournal && (!doc.oneTime || doc.oneTime.firstPlay || !requiresMissionCalendar(doc.configuration.launch) || doc.dormantJournal.deleted && !doc.deletion
     || !doc.preparation || doc.dormantJournal.revision !== doc.preparation.expectedJournalRevision + (doc.preparation.pending ? 0 : 1))) fail()
   if (doc.oneTime && doc.id !== `msn_${stableToken(`${doc.projectID}\0${doc.oneTime.creationRequestID}`, 24)}`) fail()
-  if (doc.deferred && (doc.deferred.dueAt < doc.createdAt || !passages.some(item => item.id === doc.deferred!.afterPassageID))) fail()
+  if (doc.deferred && (doc.deferred.dueAt < doc.createdAt || !passages.some(item => item.id === doc.deferred!.afterPassageID)
+    || doc.deferred.scheduleIDs.some(id => !doc.calendars.some(item => item.role === "principal" && item.scheduleID === id)))) fail()
   if (doc.oneTime && !doc.dormantJournal && (requiresMissionCalendar(doc.configuration.launch)
     || doc.scheduleActivation || doc.pending || doc.calendars.length
     || doc.oneTime.firstPlay && (doc.firstPlayedAt !== doc.oneTime.firstPlay.requestedAt

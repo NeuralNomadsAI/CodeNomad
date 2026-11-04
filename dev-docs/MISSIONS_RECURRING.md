@@ -42,22 +42,31 @@ unconsumed condition can serve a retry after a failure.
 
 A fallback period (`missionFallbackClear`) counts a passage by its slot (`dueAt`)
 once its coordinator's first input was admitted (`admittedAt`), even if it later
-failed: **Run now** passages, and wake or grouped passages whose calendars belong to
-the event check, to a group above, or to an earlier configuration. Passages of the
+failed: **Run now** passages, and wake or grouped passages launched by the event check,
+by a group above, or by a schedule since removed or changed (its place in the list is
+unknown, so it may skip a fallback slot but never doubles one). A wake passage counts only for the
+calendars whose slot decided it (`launchedBy`, recorded at reservation; `origin.wakes`
+keeps every grouped wake), a grouped passage for its `scheduleIDs`. Passages of the
 fallback's own group or of a later group never count, so a fallback's own passage
 never hides its next slot. A reservation without proven admission does not count; such
-a pending passage makes the decision uncertain, so the fallback never launches then.
+a pending passage makes the decision uncertain, so the fallback never launches then,
+nor when its period's origin is not before the slot.
 Each principal calendar records `armedAt` (the anchor the calendar owner armed it
 with) and `lastDueAt` (its latest processed slot). A schedule changed or added by an
 edit starts a new period at its new anchor; an unchanged schedule keeps its origin, even
-when the edit re-arms its calendar (`calendarForSlot` carries it over), and a kept
-calendar that never had a slot takes the activation time of a launch-criteria edit.
+when the edit re-arms its calendar (`calendarForSlot` carries it over with the replaced
+calendars' identifiers in `formerIDs`, so their passages keep that schedule's current
+group), and a kept calendar that never had a slot takes the activation time of a
+launch-criteria edit. Document validation accepts these fields on principal calendars
+only, with `armedAt` at or before every known slot of its calendar, `lastDueAt` at or
+after its reserved slot and at or before the slot being prepared, and `deferred.scheduleIDs`
+naming current principal calendars.
 
 The codec requires unique schedules and unique events, at most 16 criteria, eight
 events and eight principal calendars. Criteria have no end date.
 
-A passage in progress is never doubled. Principal wakes consumed while a passage is
-pending, or after it within its overlap window, record one `deferred` launch
+A passage in progress is never doubled. With launch criteria, principal wakes consumed
+while a passage is pending, or after it within its overlap window, record one `deferred` launch
 (`{ afterPassageID, dueAt, scheduleIDs }`); slots due by the passage's reservation are
 already answered by it. Each wake is decided at its slot with `missionLaunches`, from a
 source read measured against the references the running passage will consume: a wake
@@ -67,8 +76,9 @@ stays unconsumed until the passage's window decides it. Settlement then launches
 exactly one passage with origin `{ kind: "deferred", afterPassageID, dueAt, scheduleIDs }`,
 whose deterministic passage ID admits it once; its source read only freezes the new
 passage's inputs. Pause, Resume, Stop, Delete, a launch-criteria edit, an unsuccessful
-settlement, a blocked or finished schedule and a due slot after a stored legacy end
-drop it. A transient source read or open fan-in window keeps it for the next wake.
+settlement and a blocked or finished schedule drop it. A transient source read or open
+fan-in window keeps it for the next wake. A stored legacy policy never groups: its
+overlapping wakes are consumed without a launch or a source read.
 
 `missions/mission-launch-kind.ts` (`missionLaunchModel`) reads both stored shapes;
 the codec accepts both, the editor writes criteria only, and one-time creation stores

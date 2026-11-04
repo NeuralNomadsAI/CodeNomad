@@ -332,13 +332,15 @@ test("grouped triggers keep their slot's conditions, a grouped event check its t
   assert.equal(paused.launches(), 1)
 })
 
-test("a stored legacy end date still bounds grouped triggers until the schedule is edited", async () => {
-  const ending = await fixture({ timing: daily, condition: null, ends: { ...legacyEnds, at: start + 90_000 } })
-  await run(ending, ending.wake(0)); ending.tick(); ending.tick()
-  await run(ending, ending.wake(0))
-  assert.equal((await ending.read()).deferred ?? null, null, "a slot after the end date never waits")
-  await ending.settle()
-  assert.equal(ending.launches(), 1)
+test("a stored legacy schedule never groups an overlapping slot, whatever its end date", async () => {
+  for (const at of [null, start + 90_000]) {
+    const legacy = await fixture({ timing: daily, condition: null, ends: { ...legacyEnds, at } })
+    await run(legacy, legacy.wake(0)); legacy.tick()
+    assert.equal(await run(legacy, legacy.wake(0)), "pending")
+    assert.equal((await legacy.read()).deferred ?? null, null)
+    await legacy.settle()
+    assert.equal(legacy.launches(), 1)
+  }
 })
 
 test("a failed passage drops its grouped triggers; recovery resumes at a future slot", async () => {
@@ -432,6 +434,7 @@ test("the calendar owner arms new principal calendars at their anchor; a kept ca
   assert.ok(edited.timeGeneration > played.timeGeneration && kept.scheduleID !== first.scheduleID, "the edit re-arms every calendar")
   assert.deepEqual([kept.armedAt, kept.lastDueAt], [first.armedAt, first.armedAt! + 1], "the unchanged 09:00 keeps its period origin")
   assert.ok(added.armedAt! > first.armedAt! && added.lastDueAt === undefined, "the new 18:00 starts at its activation")
+  assert.deepEqual([kept.formerIDs, added.formerIDs], [[first.scheduleID], undefined], "the 09:00 answers for the calendar it replaced")
 
   // A kept legacy calendar has no arming time: once it is an else fallback, its first period starts at the edit.
   // (The codec stores legacy calendars sorted: 18:00 first.)
@@ -442,4 +445,60 @@ test("the calendar owner arms new principal calendars at their anchor; a kept ca
     [{ key: missionSourceKey(commits), kind: commits.kind, placementDigest: "b".repeat(64), value: { now: 0 } }]))
   assert.deepEqual(saved.calendars.map(item => item.scheduleID), doc.calendars.map(item => item.scheduleID), "the calendars are kept")
   assert.deepEqual(saved.calendars.filter(item => item.role === "principal").map(item => item.armedAt), [start + 7000, start + 7000])
+})
+
+test("after an outage, a fan-in passage counts only for the calendars that decided it", async () => {
+  const f = await fixture({ when: [commits, evening, messages, night] })
+  const [at18, at20, check] = [0, 1, 2]
+  // The missed 18:00 and 20:00 slots and a later event check fan in: only 20:00 launches.
+  f.tick(); f.wake(at18); f.tick(); f.wake(at20); f.tick()
+  assert.equal(await run(f, f.wake(check)), "started")
+  const passage = (await f.read()).pending!
+  assert.equal(passage.origin.kind === "wake" && passage.origin.wakes.length, 3, "the origin keeps every grouped wake")
+  assert.deepEqual(passage.launchedBy, ["sch_principal_1"], "20:00 alone decided the launch")
+  await f.settle()
+  // Next day: no commit launched anything, so 18:00 with new messages launches.
+  f.tick(day); f.changed(messages)
+  assert.equal(await run(f, f.wake(at18)), "started")
+  assert.equal(f.launches(), 2)
+})
+
+test("passages of a replaced calendar keep their schedule's group; a removed schedule's still count", async () => {
+  const f = await fixture({ when: [commits, evening, messages, night] })
+  const doc = await f.read(), at18 = "sch_principal_0", at20 = doc.calendars.find(item => item.scheduleID === "sch_principal_1")!
+  const withPassage = (scheduleID: string, formerIDs?: string[]) => {
+    const next = structuredClone(doc)
+    if (formerIDs) next.calendars.find(item => item.scheduleID === at20.scheduleID)!.formerIDs = formerIDs
+    const wake = { scheduleID, run: 1, messageID: `msg_${scheduleID}_1`, dueAt: start + 2000 }
+    next.history.push({ ...structuredClone(next.history[0] ?? {}), id: "psg_replaced", dueAt: wake.dueAt, admittedAt: start + 2500,
+      origin: { kind: "wake", wakes: [wake] }, launchedBy: [scheduleID] } as MissionDocument["history"][number])
+    return next
+  }
+  assert.equal(missionFallbackClear(withPassage("sch_old_20", ["sch_old_20"]), at18, start + 10_000), true,
+    "a 20:00 passage recorded under its replaced calendar never hides 18:00")
+  assert.equal(missionFallbackClear(withPassage("sch_removed"), at18, start + 10_000), false, "a removed schedule's passage counts")
+  assert.equal(missionFallbackClear(doc, at18, start), false, "a period whose origin is not before the slot is uncertain")
+})
+
+test("forged period origins and grouped calendars are refused", async () => {
+  const f = await fixture({ when: [commits, evening] })
+  const doc = await f.read(), principal = (next: MissionDocument) => next.calendars.find(item => item.role === "principal")!
+  const forged: [string, (next: MissionDocument) => void][] = [
+    ["an origin on the reconciliation calendar", next => { next.calendars.find(item => item.role === "reconciliation")!.armedAt = start }],
+    ["a slot on the reconciliation calendar", next => { next.calendars.find(item => item.role === "reconciliation")!.lastDueAt = start }],
+    ["an arming before the document", next => { principal(next).armedAt = start - 1 }],
+    ["an arming after its latest slot", next => { principal(next).lastDueAt = start + 1000; principal(next).armedAt = start + 2000 }],
+    ["a calendar replacing itself", next => { principal(next).formerIDs = [principal(next).scheduleID] }],
+    ["former identifiers on the reconciliation calendar", next => { next.calendars.find(item => item.role === "reconciliation")!.formerIDs = ["sch_old"] }],
+  ]
+  for (const [name, use] of forged)
+    await assert.rejects(f.store.change(doc.id, doc.revision, current, use), /Invalid Mission document/, name)
+  f.changed(commits); assert.equal(await run(f, f.wake(1)), "started")
+  const pending = await f.read()
+  await assert.rejects(f.store.change(pending.id, pending.revision, current, next => {
+    next.deferred = { afterPassageID: next.pending!.id, dueAt: f.now, scheduleIDs: ["sch_auxiliary"] }
+  }), /Invalid Mission document/, "a grouped launch names principal calendars only")
+  await assert.rejects(f.store.change(pending.id, pending.revision, current, next => {
+    next.calendars.find(item => item.scheduleID === "sch_principal_1")!.lastDueAt = next.pending!.dueAt - 1
+  }), /Invalid Mission document/, "the latest slot is never before the reserved one")
 })
