@@ -129,7 +129,10 @@ test("Windows install and remove are idempotent, own only their task and never t
   assert.equal(await windows.installed(), true)
   assert.equal(scheduler.tasks.size, 1)
   const xml = scheduler.tasks.get("CodeNomad-OpenCode-Login")!.xml!
-  assert.match(xml, new RegExp(`<Command>${path.join(directory, "opencode-login-launcher.exe").replace(/\\/g, "\\\\")}</Command>`))
+  // The same path functions as the adapter: host separators for the copied launcher, the account's home directory.
+  const pattern = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  assert.match(xml, new RegExp(`<Command>${pattern(path.join(directory, "opencode-login-launcher.exe"))}</Command>`))
+  assert.match(xml, new RegExp(`<WorkingDirectory>${pattern(os.homedir())}</WorkingDirectory>`))
   assert.equal(await readFile(path.join(directory, "opencode-login-launcher.exe"), "utf8"), "launcher-bytes")
   await windows.remove()
   await windows.remove()

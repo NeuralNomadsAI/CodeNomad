@@ -112,14 +112,15 @@ export class WindowsLoginStart implements LoginStartPlatform {
   }
 
   /** A stable copy outside the CodeNomad installation, so updates or a moved
-   * installation never leave the task pointing at a replaced file. */
+   * installation never leave the task pointing at a replaced file. File paths use
+   * the host's own separators: Windows ones wherever this adapter runs in production. */
   private async provisionLauncher() {
     const source = this.options.launcherSource ?? fileURLToPath(new URL(`../../dist/host-lifetime/${LAUNCHER}`, import.meta.url))
-    const directory = this.launcherDirectory(), target = path.win32.join(directory, LAUNCHER)
+    const directory = this.launcherDirectory(), target = path.join(directory, LAUNCHER)
     const bytes = await readFile(source)
     if ((await readFile(target).catch(() => undefined))?.equals(bytes)) return target
     await mkdir(directory, { recursive: true })
-    const temporary = path.win32.join(directory, `${randomUUID()}.tmp`)
+    const temporary = path.join(directory, `${randomUUID()}.tmp`)
     try { await writeFile(temporary, bytes); await rename(temporary, target) } finally { await rm(temporary, { force: true }) }
     return target
   }
