@@ -1,3 +1,4 @@
+import { legacyLaunch } from "./legacy-launch-test-helper"
 import assert from "node:assert/strict"
 import test from "node:test"
 import { missionCalendarPlans, nextMissionCalendarCron, previewMissionCalendar, previewMissionCalendars } from "./mission-calendar-plan"
@@ -25,11 +26,11 @@ test("policy projects all native timings, an absolute common end, every:15-min e
     assert(!("times" in plans[1]))
   }
   const doc = structuredClone(root)
-  doc.configuration.launch.timing = { kind: "multi", calendars: Array.from({ length: 8 }, (_, index) => ({ expression: `${index} ${index} * * *`, zone: "UTC" })) }
+  legacyLaunch(doc.configuration).timing = { kind: "multi", calendars: Array.from({ length: 8 }, (_, index) => ({ expression: `${index} ${index} * * *`, zone: "UTC" })) }
   missionDocumentChanges.play(doc, "multi", f.now, [])
   assert.equal(missionCalendarPlans(doc, f.now).length, 9)
-  doc.configuration.launch.timing = { kind: "immediate" }
-  doc.configuration.launch.condition = { kind: "files-changed", paths: ["selected.txt"] }
+  legacyLaunch(doc.configuration).timing = { kind: "immediate" }
+  legacyLaunch(doc.configuration).condition = { kind: "files-changed", paths: ["selected.txt"] }
   const event = missionCalendarPlans(doc, f.now)[1]
   assert.deepEqual(event.when, { type: "every", every: "900000 millis", tz: "UTC" })
 })

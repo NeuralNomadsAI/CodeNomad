@@ -33,7 +33,7 @@ import { MissionBodyPending } from "./mission-reader-body"
 import { missionTargetState, retryMissionTarget, useTargetBody } from "./mission-target-bodies"
 import { missionScheduleEditorHold } from "../stores/mission-schedule-editor-holds"
 import { createMissionEditorScheduling } from "./mission-editor-schedule"
-import { missionSchedulingPolicy } from "./mission-scheduling-data"
+import { isMissionEventKind, missionSchedulingPolicy } from "./mission-scheduling-data"
 import { MissionScheduling, type MissionSchedulingLock } from "./mission-scheduling"
 import { createMissionEditorSources } from "./mission-editor-sources"
 
@@ -171,10 +171,10 @@ export function MissionEditor(props: {
     }, captureDraft: () => captureDraft(), onSaved: (mission, scheduleID) => props.onSaved(mission, scheduleID) })
   createEffect(() => props.onReading?.(schedule.revalidating()))
   onCleanup(() => props.onReading?.(false))
-  const mode = () => schedule.scheduling().frequency === "immediate" && schedule.scheduling().condition === "none" ? "once" : "recurring"
+  const mode = () => schedule.scheduling().criteria.length || schedule.scheduling().stored?.reason ? "recurring" : "once"
   const immediateFollowed = () => mode() === "once" && watched().length > 0
   const immediateCreationFollowed = () => kind === "create" && immediateFollowed()
-  const time = () => schedule.scheduling().times[0] ?? "09:00", zone = () => schedule.scheduling().zone
+  const time = () => schedule.scheduling().criteria.find(row => row.kind === "daily")?.time ?? "09:00", zone = () => schedule.scheduling().zone
   const journalLocked = () => kind === "edit" && !schedule.unified
   const journalPreparation = () => kind === "edit" && schedule.document()?.kind === "one-time" && schedule.document()?.edit.structural
   const observationUnknown = () => schedule.document()?.kind === "schedule" && schedule.document()?.observation.state === "unknown"
@@ -190,7 +190,8 @@ export function MissionEditor(props: {
   const policy = () => { try { return missionSchedulingPolicy(schedule.scheduling(), schedule.directory()) } catch { return undefined } }
   const [policyReady, setPolicyReady] = createSignal(false)
   const sourceChoices = createMissionEditorSources({ instanceId: props.instanceId, projectID: props.projectID,
-    target: action.scheduleID ?? original?.id, directory: schedule.directory, condition: () => schedule.scheduling().condition,
+    target: action.scheduleID ?? original?.id, directory: schedule.directory,
+    kinds: () => schedule.scheduling().criteria.flatMap(row => isMissionEventKind(row.kind) ? [row.kind] : []),
     active: isActive, captureView })
   const watchedIDs = watched
   const needsSourceLocation = createMemo(() => mode() === "recurring" && watchedIDs().length > 0)
@@ -227,7 +228,7 @@ export function MissionEditor(props: {
     customProfiles: customProfiles(), taskMode: taskMode(), customTaskMode: customTaskMode(), defaults: defaults(),
     defaultsReady: defaultsReady(), selectedModel: selectedModel(), optionsOpen: optionsOpen(), profileDetailsOpen: profileDetailsOpen(),
     requestId, lastPayload, deleteManagedSessions: deleteManagedSessions(), deleteAttempted: deleteAttempted(),
-    scheduling: structuredClone(schedule.scheduling()), scheduleDocument: schedule.document(), scheduleAnchorAt: schedule.anchorAt(),
+    scheduling: structuredClone(schedule.scheduling()), scheduleDocument: schedule.document(),
     previousDraft: schedule.previousDraft(), journalMission: schedule.journal() })
   onCleanup(() => props.onDispose?.(busy() ? undefined : prefilling() ? null : captureDraft()))
 
@@ -490,11 +491,7 @@ export function MissionEditor(props: {
       </Show>
     </details>
     <MissionScheduling draft={schedule.scheduling()} directory={schedule.directory()} sources={sourceChoices.sources()}
-      capability={schedule.capability()} lockReason={structuralReason()} disabled={structuralLocked()}
-      persisted={schedule.document()?.firstPlayedAt != null ? { firstPlayedAt: schedule.document()!.firstPlayedAt!,
-        oneShotAt: schedule.document()!.oneShotAt, slotEndsAt: schedule.document()!.slotEndsAt,
-        nextDueAt: schedule.document()!.observation.nextDueAt, launchedCount: schedule.document()!.launchedCount } : undefined}
-      anchorAt={schedule.anchorAt()} onChange={schedule.setScheduling} onPolicy={value => setPolicyReady(!!value)} />
+      capability={schedule.capability()} lockReason={structuralReason()} disabled={structuralLocked()} onChange={schedule.setScheduling} onPolicy={value => setPolicyReady(!!value)} />
     <Show when={immediateFollowed()}><p role="status">{t(immediateCreationFollowed() ? "missions.scheduling.immediateCreationFollowed" : "missions.scheduling.immediateFollowed")}</p></Show>
     <Show when={schedule.capability() === "missing"}><button type="button" class="window-action" disabled={busy() || schedule.reading()}
       onClick={schedule.retryRead}>{t("missions.control.retry")}</button></Show>

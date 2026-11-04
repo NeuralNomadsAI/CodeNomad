@@ -15,7 +15,7 @@ import { NativeScheduleCalendarOwner, type NativeScheduleOwnerOptions } from "./
 import { nativeScheduleOwnerBindings } from "./native-schedule-owner-bindings"
 import type { NativeScheduleCalendarInfo, NativeScheduleCalendarService, NativeScheduleCalendarTarget } from "./native-schedule-calendar-service"
 
-export async function ownerFixture(t: test.TestContext, timing: MissionConfiguration["launch"]["timing"] = { kind: "every", intervalMs: 90 * 60_000 }, maximum = 3,
+export async function ownerFixture(t: test.TestContext, timing: import("../../missions/launch-policy").MissionLegacyLaunchPolicy["timing"] = { kind: "every", intervalMs: 90 * 60_000 }, maximum = 3,
   sources?: NativeScheduleOwnerOptions["sources"]) {
   const scratch = process.env.CODENOMAD_SCHEDULE_TEST_SCRATCH ?? path.join(os.tmpdir(), "codenomad-owner-tests")
   mkdirSync(scratch, { recursive: true })

@@ -1,3 +1,4 @@
+import { legacyLaunch } from "../../missions/legacy-launch-test-helper"
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
@@ -191,8 +192,8 @@ test("the derived calendar requirement is captured even when binding IDs and ins
     const http = f.calls.http, before = await f.read()
     await f.documents.change(before.id, before.revision, current, next => {
       // Controlled source drift: the client must not cross its captured branch.
-      next.configuration.launch.timing = { kind: "every", intervalMs: 900_000 }
-      next.pending!.configuration.launch.timing = { kind: "every", intervalMs: 900_000 }
+      legacyLaunch(next.configuration).timing = { kind: "every", intervalMs: 900_000 }
+      legacyLaunch(next.pending!.configuration).timing = { kind: "every", intervalMs: 900_000 }
     })
     await assert.rejects(route.control.contextFor(route.readSessionID))
     assert.equal(f.calls.http, http)

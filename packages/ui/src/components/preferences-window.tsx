@@ -15,7 +15,7 @@ import {
   type NativePreferencesRequest,
 } from "../lib/native/preferences-window"
 import { runNativeWindowAction } from "../lib/native/window-controls"
-import { activeSettingsSection, setActiveSettingsSection } from "../stores/settings-screen"
+import { activeSettingsSection, adoptSettingsRowHint, setActiveSettingsSection, SETTINGS_ROW_HINT_KEY } from "../stores/settings-screen"
 import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
 import { sdkManager } from "../lib/sdk-manager"
 import { observeDesktopUpdates } from "../stores/desktop-updates"
@@ -71,6 +71,7 @@ export const PreferencesWindow: Component = () => {
       setRequest(next)
       setActiveSettingsSection(next.section)
     })
+    adoptSettingsRowHint(next.section)
   }
 
   const close = async (guard = true) => {
@@ -89,6 +90,10 @@ export const PreferencesWindow: Component = () => {
   onMount(() => {
     // Updates installed from Preferences report their failures to this window.
     onCleanup(observeDesktopUpdates())
+    // A row hint written after this window opened (another window's link) arrives as a storage event.
+    const rowHint = (event: StorageEvent) => { if (event.key === SETTINGS_ROW_HINT_KEY && event.newValue) adoptSettingsRowHint(activeSettingsSection()) }
+    window.addEventListener("storage", rowHint)
+    onCleanup(() => window.removeEventListener("storage", rowHint))
     let mounted = true
     let receivedLiveUpdate = false
     let requestGuardReady = false

@@ -317,13 +317,13 @@ Check to finish that same cleanup intent.
 ## Event source readers
 
 `native-mission-condition-reader.ts`, `native-scheduled-passage-sources.ts` and
-`missions/mission-local-sources.ts` read one explicit condition in the service
-namespace. First Play prepares a fresh baseline under document exclusion; Resume
+`missions/mission-local-sources.ts` read each explicit event of the launch criteria,
+one reader call per event key, in the service namespace; any change is enough. First Play prepares a fresh baseline under document exclusion; Resume
 retains it. Editing adds baselines only for new source keys. Retained keys win
 over newly observed proofs during configuration, preserving remove/re-add cursors.
 The pending stores the complete bounded checkpoint. Successful archive consumes
 that checkpoint, while failures preserve the prior one and retain the admission
-barrier. A conversation condition also contributes its frozen prefix to launch input.
+barrier. A conversation event also contributes its frozen prefix to launch input.
 
 Schedule success uses durable `successfulCount` and `lastSuccessfulPassageID`,
 independent of the 30 retained results. Every unseen success needs its retained

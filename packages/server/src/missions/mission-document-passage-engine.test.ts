@@ -1,3 +1,4 @@
+import { legacyLaunch } from "./legacy-launch-test-helper"
 import assert from "node:assert/strict"
 import test from "node:test"
 import { MissionDocumentPassageEngine, type DocumentPassagePorts, type DocumentPassageWake } from "./mission-document-passage-engine"
@@ -55,7 +56,7 @@ async function fixture(count = 1, maximum: number | null = null) {
     incarnation: "process_one", now: () => now, current,
     verifyWake: async (_doc, wake) => { io(); return { wake: { scheduleID: wake.scheduleID, run: wake.run, messageID: wake.messageID, dueAt: wake.dueAt! }, current } },
     coverage: async doc => { io(); return { complete, wakes: occurrences.filter(wake => wake.run > doc.calendars.find(item => item.scheduleID === wake.scheduleID)!.highWater), current } },
-    snapshot: async () => { io(); return { changed, checkpoints: [], current } },
+    snapshot: async () => { io(); return { news: { triggers: changed, conditions: changed }, checkpoints: [], current } },
     admit: async (doc, locked) => {
       io(); locked.assertActive()
       if (crash) { crash = false; throw new Error("lost ACK") }
@@ -94,6 +95,7 @@ test("incomplete native fan-in survives restart with its original cutoff and no 
 
 test("100 condition-false checks cost zero launches and advance high-water beyond retained history", async () => {
   const f = await fixture(); f.changed = false
+  await f.mutate(doc => { legacyLaunch(doc.configuration).condition = { kind: "files-changed", paths: ["input.txt"] } })
   for (let run = 1; run <= 100; run++) {
     const wake = f.wake(0, run)
     assert.equal(await f.engine.wake({ missionID: "review", wake }), "ignored")
@@ -106,9 +108,9 @@ test("100 condition-false checks cost zero launches and advance high-water beyon
 test("business checks count committed source observations once per fan-in, with durable tracking and honest legacy origin", async () => {
   const f = await fixture(2), condition = { kind: "files-changed" as const, paths: ["input.txt"] }
   const checkpoint = { key: missionSourceKey(condition), kind: condition.kind, placementDigest: "b".repeat(64), value: { hash: "observed" } }
-  await f.mutate(doc => { doc.configuration.launch.condition = condition })
+  await f.mutate(doc => { legacyLaunch(doc.configuration).condition = condition })
   let changed = false
-  f.ports.snapshot = async () => ({ changed, checkpoints: [checkpoint], current })
+  f.ports.snapshot = async () => ({ news: { triggers: changed, conditions: changed }, checkpoints: [checkpoint], current })
   const first = f.wake(0); f.wake(1)
   await f.engine.wake({ missionID: "review", wake: first })
   assert.deepEqual((await f.read()).checks, { count: 1, since: start })
@@ -128,15 +130,15 @@ test("business checks count committed source observations once per fan-in, with 
   await assert.rejects(f.store.change(doc.id, doc.revision, current, next => { next.checks!.count-- }), /monotone/)
 
   const legacy = await fixture()
-  await legacy.mutate(doc => { doc.configuration.launch.condition = condition })
+  await legacy.mutate(doc => { legacyLaunch(doc.configuration).condition = condition })
   for (const value of legacy.values.values()) delete (value as unknown as MissionDocument).checks
   assert.equal((await legacy.read()).checks, undefined, "old totals are unknown rather than fabricated zero")
-  legacy.ports.snapshot = async () => ({ changed: false, checkpoints: [checkpoint], current,
+  legacy.ports.snapshot = async () => ({ news: { triggers: false, conditions: false }, checkpoints: [checkpoint], current,
     revalidate: async () => { throw new Error("source moved") } })
   const wake = legacy.wake()
   await assert.rejects(legacy.engine.wake({ missionID: "review", wake }), /source moved/)
   assert.equal((await legacy.read()).checks, undefined)
-  legacy.ports.snapshot = async () => ({ changed: false, checkpoints: [checkpoint], current })
+  legacy.ports.snapshot = async () => ({ news: { triggers: false, conditions: false }, checkpoints: [checkpoint], current })
   await legacy.engine.wake({ missionID: "review", wake })
   assert.deepEqual((await legacy.read()).checks, { count: 1, since: start + 1000 })
 })
@@ -145,7 +147,7 @@ test("calendar reservation, false-condition consumption and manual reservation a
   for (const mode of ["changed", "unchanged", "manual"] as const) {
     const f = await fixture()
     let revalidated = false
-    f.ports.snapshot = async () => ({ changed: mode !== "unchanged", checkpoints: [], current,
+    f.ports.snapshot = async () => ({ news: { triggers: mode !== "unchanged", conditions: mode !== "unchanged" }, checkpoints: [], current,
       revalidate: async () => { await Promise.resolve(); revalidated = true; throw new Error("source changed before CAS") } })
     const execute = mode === "manual"
       ? () => f.engine.runNow({ missionID: "review", requestID: "manual_source_race", expectedRevision: 2 })
@@ -200,6 +202,26 @@ test("overlapping same-calendar occurrences advance HWM while retaining the pend
   assert.equal((await f.read()).calendars[0].highWater, 2)
 })
 
+test("a stored legacy schedule consumes an overlapping wake without launching, deferring or reading its sources", async () => {
+  const f = await fixture(), condition = { kind: "files-changed" as const, paths: ["input.txt"] }
+  const checkpoint = { key: missionSourceKey(condition), kind: condition.kind, placementDigest: "b".repeat(64), value: { hash: "observed" } }
+  await f.mutate(doc => { legacyLaunch(doc.configuration).condition = condition })
+  f.ports.snapshot = async () => ({ news: { triggers: true, conditions: true }, checkpoints: [checkpoint], current })
+  assert.equal(await f.engine.wake({ missionID: "review", wake: f.wake() }), "started")
+  const before = await f.read()
+  f.tick()
+  assert.equal(await f.engine.wake({ missionID: "review", wake: f.wake(0, 2) }), "pending")
+  const overlap = await f.read()
+  assert.equal(overlap.calendars[0].highWater, 2); assert.equal(overlap.deferred ?? null, null)
+  assert.deepEqual(overlap.checks, before.checks, "an overlapping legacy wake reads no source")
+  f.terminal = true
+  await f.engine.reconcile({ missionID: "review" })
+  const settled = await f.read()
+  assert.equal(settled.launchedCount, 1, "the overlapping slot never launches afterwards")
+  assert.equal(settled.history.length, 1); assert.equal(settled.deferred ?? null, null)
+  assert.deepEqual(settled.checks, before.checks)
+})
+
 test("35 settled passages retain the total counter and durable old-wake suppression", async () => {
   const f = await fixture(); f.terminal = true
   const first = f.wake()
@@ -239,7 +261,7 @@ test("source checkpoints advance only with completed settlement; a failure block
   for (const outcome of ["completed", "failed", "ended-without-report"] as const) {
     const f = await fixture()
     const checkpoint = { key: "a".repeat(64), kind: "files-changed" as const, placementDigest: "b".repeat(64), value: { hash: "frozen" } }
-    f.ports.snapshot = async () => ({ changed: true, checkpoints: [checkpoint], current })
+    f.ports.snapshot = async () => ({ news: { triggers: true, conditions: true }, checkpoints: [checkpoint], current })
     f.ports.observe = async () => ({ outcome, current })
     await f.engine.runNow({ missionID: "review", requestID: "source_run", expectedRevision: (await f.read()).revision })
     const doc = await f.read()

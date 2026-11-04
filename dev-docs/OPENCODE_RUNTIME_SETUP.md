@@ -26,7 +26,7 @@ Location block. Targeted, confirmed activation and exact read-back are described
 [Missions](MISSIONS.md) and [native contracts](MISSIONS_NATIVE_CONTRACTS.md).
 Missing APIs, explicit OFF, a masking block, failed activation or missing exact
 calendar registration keep the schedule paused or in an explained error state.
-Immediate unconditional Play follows its own admission path.
+Play of a Mission without launch criteria follows its own admission path.
 
 ## Setup and recovery
 

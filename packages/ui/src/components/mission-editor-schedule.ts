@@ -28,7 +28,6 @@ export function createMissionEditorScheduling(props: {
   const [document, setDocument] = createSignal<Document | undefined>(props.draft?.scheduleDocument)
   const [journal, setJournal] = createSignal(props.draft?.journalMission ?? props.action.mission)
   const [scheduling, setScheduling] = createSignal(props.draft?.scheduling ?? newMissionSchedulingDraft())
-  const [anchorAt, setAnchorAt] = createSignal(props.draft?.scheduleAnchorAt ?? Date.now())
   const [previousDraft, setPreviousDraft] = createSignal(props.draft?.previousDraft)
   const [ready, setReady] = createSignal(!unified), [failed, setFailed] = createSignal(false)
   const [conflict, setConflict] = createSignal(false), [reading, setReading] = createSignal(false)
@@ -40,7 +39,7 @@ export function createMissionEditorScheduling(props: {
     if (!directory()) setDirectory(doc.configuration.roots[0]?.directory)
     setDocument(doc); props.onLoad(doc.configuration)
     setScheduling(decodeMissionSchedulingPolicy(doc.configuration.launch, doc.configuration.roots[0]?.directory))
-    setAnchorAt(Date.now()); setConflict(false); setReady(true)
+    setConflict(false); setReady(true)
   }
   // Only a changed view, client or native generation is another owner: other
   // publications (task revisions, transcript releases) never reread or reset.
@@ -162,8 +161,7 @@ export function createMissionEditorScheduling(props: {
         } else {
           setPreviousDraft(comparison()); setJournal(mission)
           props.onLoad({ ...mission, ...text, title: mission.title ?? "", taskMode: mission.taskMode ?? "native", roots: [],
-            profileID: null, executionHost: null, watchedConversationIDs: [], launch: { timing: { kind: "immediate" }, condition: null,
-              ends: { at: null, afterMs: null, maxLaunches: null } } })
+            profileID: null, executionHost: null, watchedConversationIDs: [], launch: { when: [] } })
           setConflict(false); setReady(true)
         }
         return
@@ -291,7 +289,7 @@ export function createMissionEditorScheduling(props: {
     } catch { /* The original request remains held through any uncertain retry. */ }
     finally { if (current()) setReading(false) }
   }
-  return { unified, document, journal, scheduling, setScheduling, anchorAt, previousDraft, ready, failed, conflict, reading, capability, directory,
+  return { unified, document, journal, scheduling, setScheduling, previousDraft, ready, failed, conflict, reading, capability, directory,
     revalidating: () => capabilityReading() || documentReading(),
     held, save, saveJournalEdit, reconcile, reload, retryable, retryPreparation, retryRead: () => setRefresh(value => value + 1) }
 }

@@ -6,6 +6,7 @@ import { serverEvents } from "../../lib/server-events"
 import { HttpResponseError } from "../../lib/retryable-file-search"
 import { SettingsInfoTip } from "./settings-info-tip"
 import { SettingsSwitch } from "./settings-switch"
+import { useSettingsRowTarget } from "./settings-row-target"
 
 type Failure = "read" | "failed" | "unsupported-binary"
 const states: LoginStartResponse["state"][] = ["on", "off", "unavailable"]
@@ -53,7 +54,9 @@ export function OpenCodeLoginStartCard() {
     void load()
   })
   const unavailable = () => status()?.state === "unavailable"
-  return <section id="opencode-login-start" class="settings-card" aria-labelledby={titleID}>
+  const [card, setCard] = createSignal<HTMLElement>()
+  useSettingsRowTarget("opencode-login-start", card, () => !!status() || !!failure())
+  return <section ref={setCard} id="opencode-login-start" class="settings-card" aria-labelledby={titleID} tabindex="-1">
     <div class="settings-card-header">
       <h3 id={titleID} class="settings-card-title">{t("settings.loginStart.title")}<SettingsInfoTip text={t("settings.loginStart.info")} /></h3>
       <SettingsSwitch label={t("settings.loginStart.title")} checked={status()?.state === "on"}

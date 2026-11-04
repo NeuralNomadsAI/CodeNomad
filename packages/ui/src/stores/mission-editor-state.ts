@@ -8,7 +8,7 @@ import type { UserMissionModel } from "../lib/mission-model-library"
 export interface MissionEditorDraft {
   scheduling?: import("../components/mission-scheduling-data").MissionSchedulingDraft
   scheduleDocument?: NonNullable<import("../../../server/src/api-types").MissionScheduleRead["document"]>
-  scheduleAnchorAt?: number; previousDraft?: string
+  previousDraft?: string
   journalMission?: MissionPanelMap
   mode: "once" | "recurring"; titleOverride?: string; time: string; zone: string; watched: string[]
   objective: string; notes: string; template: MissionPanelMap["template"]; profiles?: MissionProfiles; customProfiles: boolean

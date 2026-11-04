@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { canonicalAuthority } from "./authority-protocol"
+import { missionLaunchModel } from "./mission-launch-kind"
 import { controlOperationID } from "./receipt-identity"
 import { missionSourceKey, type MissionDocument, type MissionSourceCheckpoint } from "./mission-document"
 import { recurrenceSourceLocationDigest, type PassageSource } from "./recurrence-input"
@@ -29,8 +30,8 @@ export function documentWatchCheckpoint(source: PassageSource, previous?: Missio
 export function documentPassageSources(doc: { pending: Pick<NonNullable<MissionDocument["pending"]>, "configuration" | "checkpoints"> | null }): PassageSource[] {
   if (!doc.pending) throw new Error("Document passage unavailable")
   const config = doc.pending.configuration
-  const condition = config.launch.condition
-  const ids = [...new Set([...config.watchedConversationIDs, ...(condition?.kind === "conversation-message" ? [condition.conversationID] : [])])]
+  const followed = missionLaunchModel(config.launch).events.flatMap(item => item.kind === "conversation-message" ? [item.conversationID] : [])
+  const ids = [...new Set([...config.watchedConversationIDs, ...followed])]
   return ids.map(conversationID => {
     const checkpoint = doc.pending!.checkpoints.find(item => item.key === documentWatchKey(conversationID))
     const value = checkpoint && documentWatchCheckpointSchema.parse(checkpoint.value)

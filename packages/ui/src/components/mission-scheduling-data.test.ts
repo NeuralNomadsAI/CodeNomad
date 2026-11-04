@@ -1,87 +1,63 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { missionLaunchPolicySchema } from "../../../server/src/missions/launch-policy"
-import { nextMissionCalendarCron } from "../../../server/src/missions/mission-calendar-plan"
-import { missionFrequencies, newMissionSchedulingDraft, missionSchedulingPolicy, previewMissionScheduling, previewSavedMissionScheduling, MissionSchedulingError } from "./mission-scheduling-data"
+import { missionCardConnectors, missionEventKinds, missionScheduleShortcuts, newMissionCriterion, newMissionSchedulingDraft, missionSchedulingPolicy,
+  MissionSchedulingError, type MissionCriterionDraft } from "./mission-scheduling-data"
 
-const now = Date.parse("2026-01-01T00:00:00Z")
-const draft = (patch: Partial<ReturnType<typeof newMissionSchedulingDraft>> = {}) => ({ ...newMissionSchedulingDraft("UTC"), ...patch })
-test("saved previews preserve interval/delay phases, absolute ends and consumed quotas while showing a late native slot only once", () => {
-  const policy = missionSchedulingPolicy(draft({ frequency: "every", amount: "15", endAfter: "2", maxLaunches: "8" }))
-  const phase = { firstPlayedAt: now, oneShotAt: null, slotEndsAt: now + 7_200_000, nextDueAt: now + 900_000, launchedCount: 2 }
-  const dates = previewSavedMissionScheduling(policy, phase, now + 4_000_000, true)
-  assert.deepEqual(dates, [900_000, 4_500_000, 5_400_000, 6_300_000, 7_200_000].map(ms => now + ms))
-  assert.deepEqual(previewSavedMissionScheduling({ ...policy, ends: { at: null, afterMs: null, maxLaunches: null } },
-    { ...phase, nextDueAt: now + 1_020_000 }, now + 1_080_000, true), [17, 32, 47, 62, 77].map(minutes => now + minutes * 60_000),
-    "a replaced interval keeps the current native phase rather than the first Play's phase")
-  assert.deepEqual(previewSavedMissionScheduling(policy, { ...phase, nextDueAt: null }, now, true), [], "an unobserved/paused phase is kept unknown")
-  assert.deepEqual(previewSavedMissionScheduling(policy, { ...phase, launchedCount: 8 }, now, true), [])
-  const delay = missionSchedulingPolicy(draft({ frequency: "in", amount: "2", unit: "hours" }))
-  assert.deepEqual(previewSavedMissionScheduling(delay, { ...phase, launchedCount: 0, oneShotAt: now + 7_200_000, nextDueAt: now + 7_200_000 }, now + 1000, true), [now + 7_200_000])
-  assert.deepEqual(previewSavedMissionScheduling(delay, { ...phase, launchedCount: 1 }, now + 1000, true), [])
-  // Changing the frequency reanchors timing at validation, while the end still
-  // belongs to the saved first Play, rather than gaining two more hours.
-  assert.deepEqual(previewSavedMissionScheduling(policy, { ...phase, nextDueAt: null }, now + 6_000_000, false), [now + 6_900_000])
-})
-test("an edited absolute or relative end bounds the persisted next slot, including a late slot", () => {
-  const policy = missionSchedulingPolicy(draft({ frequency: "every", amount: "15" }))
-  const phase = { firstPlayedAt: now, oneShotAt: null, slotEndsAt: null, nextDueAt: now + 7_200_000, launchedCount: 0 }
-  for (const ends of [{ at: now + 3_600_000, afterMs: null, maxLaunches: null }, { at: null, afterMs: 3_600_000, maxLaunches: null }]) {
-    for (const at of [now, now + 8_000_000]) assert.deepEqual(previewSavedMissionScheduling({ ...policy, ends }, phase, at, true), [])
-  }
-  assert.deepEqual(previewSavedMissionScheduling({ ...policy, ends: { at: phase.nextDueAt, afterMs: null, maxLaunches: null } }, phase, now, true), [phase.nextDueAt])
-})
-test("all form frequencies produce the strict native launch contract and exact bounded previews", () => {
-  for (const frequency of missionFrequencies) {
-    const policy = missionSchedulingPolicy(draft({ frequency, date: "2026-01-03T12:00" }))
+const row = (kind: MissionCriterionDraft["kind"], patch: Partial<MissionCriterionDraft> = {}) => ({ ...newMissionCriterion(kind), ...patch })
+const draft = (criteria: MissionCriterionDraft[], patch: Partial<ReturnType<typeof newMissionSchedulingDraft>> = {}) =>
+  ({ ...newMissionSchedulingDraft("UTC"), criteria, ...patch })
+const field = (name: MissionSchedulingError["field"], index?: number) => (error: MissionSchedulingError) =>
+  error.field === name && (index === undefined || error.index === index)
+
+test("no criteria is a one-time Mission; every shortcut writes its cron", () => {
+  assert.deepEqual(missionSchedulingPolicy(draft([])), { when: [] })
+  const expected = { hours: "0 */6 * * *", daily: "0 9 * * *", weekly: "0 9 * * 1,2,3,4,5", monthly: "0 9 1 * *", cron: "0 9 * * *" }
+  for (const kind of missionScheduleShortcuts) {
+    const policy = missionSchedulingPolicy(draft([row(kind)]))
     assert.deepEqual(missionLaunchPolicySchema.parse(policy), policy)
-    const dates = previewMissionScheduling(policy, now)
-    assert.equal(dates.length, ["immediate", "at", "in"].includes(frequency) ? 1 : 5, frequency)
-    assert.ok(dates.every(at => at >= now))
+    assert.ok("when" in policy)
+    assert.deepEqual(policy.when, [{ kind: "cron", expression: expected[kind], zone: "UTC" }], kind)
   }
-  assert.equal(missionSchedulingPolicy(draft()).timing.kind, "immediate")
-  assert.equal(missionSchedulingPolicy(draft()).condition, null)
+  assert.equal((missionSchedulingPolicy(draft([row("hours", { hours: "1" })])) as { when: { expression: string }[] }).when[0].expression, "0 * * * *")
 })
-test("arbitrary minutes, duplicate normalization, ninth time refusal and shared quota", () => {
-  const policy = missionSchedulingPolicy(draft({ frequency: "multi", times: ["09:15", "17:45", "09:15"], maxLaunches: "2" }))
-  assert.equal(policy.timing.kind, "multi")
-  if (policy.timing.kind === "multi") assert.equal(policy.timing.calendars.length, 2)
-  assert.deepEqual(previewMissionScheduling(policy, now).map(at => new Date(at).toISOString()), ["2026-01-01T09:15:00.000Z", "2026-01-01T17:45:00.000Z"])
-  assert.throws(() => missionSchedulingPolicy(draft({ frequency: "multi", times: Array(9).fill("09:00") })), MissionSchedulingError)
+
+test("the stored list keeps the card order; the connectors between cards come from the shared parser", () => {
+  const daily = { kind: "cron", expression: "0 9 * * *", zone: "UTC" }, commits = { kind: "branch-commits", directory: "/project", ref: "refs/heads/main" }
+  const commitsRow = () => row("branch-commits", { source: "refs/heads/main" })
+  assert.deepEqual(missionSchedulingPolicy(draft([commitsRow(), row("daily")]), "/project"), { when: [commits, daily] })
+  assert.deepEqual(missionCardConnectors([commitsRow(), row("daily")]), ["else"], "commits, else 09:00")
+  assert.deepEqual(missionSchedulingPolicy(draft([row("daily"), commitsRow()]), "/project"), { when: [daily, commits] })
+  assert.deepEqual(missionCardConnectors([row("daily"), commitsRow()]), ["if"], "09:00 if commits")
+  assert.deepEqual(missionCardConnectors([commitsRow(), row("files-changed", { files: "a.ts" })]), ["or"], "commits or files")
+  assert.deepEqual(missionCardConnectors([row("hours"), row("daily"), row("files-changed"), row("mission-completed")]), ["or", "if", "or"])
+  assert.deepEqual(missionCardConnectors([commitsRow(), row("daily"), row("files-changed"), row("cron")]), ["else", "if", "else"])
+  assert.throws(() => missionSchedulingPolicy(draft([row("daily"), row("daily", { time: "09:00" })])), field("duplicate"))
+  assert.throws(() => missionSchedulingPolicy(draft([row("files-changed", { files: "a.ts" }), row("daily"), row("files-changed", { files: "a.ts" })])),
+    field("duplicate"), "one event appears once")
+  const eight = Array.from({ length: 8 }, (_, hour) => row("daily", { time: `0${hour}:00` }))
+  assert.throws(() => missionSchedulingPolicy(draft([row("files-changed", { files: "a.ts" }), ...eight])), field("count"))
+  assert.doesNotThrow(() => missionSchedulingPolicy(draft([...eight, row("files-changed", { files: "a.ts" })])),
+    "events after schedules are conditions and need no check of their own")
 })
-test("relative origins, elapsed intervals, civil monthly skips and native DST wrapper", () => {
-  const relative = missionSchedulingPolicy(draft({ frequency: "in", amount: "2", unit: "hours" }))
-  assert.deepEqual(previewMissionScheduling(relative, now), [now + 7_200_000])
-  assert.deepEqual(previewMissionScheduling(relative, now + 1_000), [now + 7_201_000])
-  assert.throws(() => missionSchedulingPolicy(draft({ frequency: "every", amount: "14" })), MissionSchedulingError)
-  const monthly = missionSchedulingPolicy(draft({ frequency: "monthly", monthDay: "31" }))
-  assert.deepEqual(previewMissionScheduling(monthly, now).map(at => new Date(at).getUTCMonth()), [0, 2, 4, 6, 7])
-  for (const instant of ["2026-03-08T06:00:00Z", "2026-11-01T05:31:00Z"]) {
-    const anchor = Date.parse(instant), policy = missionSchedulingPolicy(draft({ frequency: "daily", times: ["01:30"], zone: "America/New_York" }))
-    assert.equal(previewMissionScheduling(policy, anchor)[0], nextMissionCalendarCron("30 1 * * *", "America/New_York", anchor))
-  }
-  const elapsed = missionSchedulingPolicy(draft({ frequency: "every", amount: "24", unit: "hours", zone: "America/New_York" }))
-  assert.equal(previewMissionScheduling(elapsed, Date.parse("2026-03-07T12:00Z"))[1] - previewMissionScheduling(elapsed, Date.parse("2026-03-07T12:00Z"))[0], 86_400_000)
-})
-test("all five explicit conditions map to the native source contract; event-only previews are checks", () => {
-  for (const [condition, source] of [["schedule-success", "msn_source"], ["mission-completed", "msn_source"],
-    ["branch-commits", "refs/heads/dev"], ["conversation-message", "ses_source"], ["files-changed", ""]] as const) {
-    const policy = missionSchedulingPolicy(draft({ condition, source, files: "src/a.ts\nsrc/b.ts" }), "/project")
+
+test("all five events map to the native source contract and reject unsafe sources with their row index", () => {
+  const sources = { "schedule-success": "msn_source", "mission-completed": "msn_source", "branch-commits": "refs/heads/dev",
+    "conversation-message": "ses_source", "files-changed": "" }
+  for (const kind of missionEventKinds) {
+    const policy = missionSchedulingPolicy(draft([row(kind, { source: sources[kind], files: "src/a.ts\nsrc/b.ts" })]), "/project")
     assert.deepEqual(missionLaunchPolicySchema.parse(policy), policy)
-    assert.deepEqual(previewMissionScheduling(policy, now), [1, 2, 3, 4, 5].map(index => now + index * 900_000))
   }
-  for (const files of ["../secret", "/outside", "a\\b", "a/./b", "a//b", "C:/secret", "a/../b"]) {
-    assert.throws(() => missionSchedulingPolicy(draft({ condition: "files-changed", files })), MissionSchedulingError)
-  }
-  assert.throws(() => missionSchedulingPolicy(draft({ condition: "branch-commits", source: "refs/heads/dev..other" }), "/project"), MissionSchedulingError)
+  for (const files of ["../secret", "/outside", "a\\b", "a/./b", "a//b", "C:/secret", "a/../b"])
+    assert.throws(() => missionSchedulingPolicy(draft([row("daily"), row("files-changed", { files })])), field("source", 1))
+  assert.throws(() => missionSchedulingPolicy(draft([row("branch-commits", { source: "refs/heads/dev..other" })]), "/project"), MissionSchedulingError)
+  assert.throws(() => missionSchedulingPolicy(draft([row("branch-commits", { source: "refs/heads/dev" })])), MissionSchedulingError, "a branch needs its directory")
 })
-test("end bounds combine without turning check counts into launch quotas; invalid input stays invalid", () => {
-  const policy = missionSchedulingPolicy(draft({ frequency: "every", amount: "15", endAt: "2026-01-01T00:45", endAfter: "1" }))
-  assert.deepEqual(previewMissionScheduling(policy, now), [1, 2, 3].map(index => now + index * 900_000))
-  for (const change of [{ zone: "Invalid/Zone" }, { frequency: "at", date: "2026-02-31T12:00" }, { frequency: "cron", expression: "* * * * * *" },
-    { frequency: "weekly", days: [] }, { frequency: "monthly", monthDay: "32" }, { endAfter: "1.5" }, { maxLaunches: "0" }] as const) {
-    assert.throws(() => missionSchedulingPolicy(draft(change as any)), MissionSchedulingError)
-  }
-  const past = missionSchedulingPolicy(draft({ frequency: "at", date: "2025-12-31T23:00" }))
-  assert.deepEqual(previewMissionScheduling(past, now), [])
+
+test("invalid fields stay invalid and an impossible calendar is refused", () => {
+  assert.throws(() => missionSchedulingPolicy(draft([row("daily")], { zone: "Invalid/Zone" })), field("zone"))
+  for (const patch of [{ kind: "cron", expression: "* * * * * *" }, { kind: "weekly", days: [] }, { kind: "monthly", monthDay: "32" },
+    { kind: "hours", hours: "24" }, { kind: "hours", hours: "1.5" }, { kind: "daily", time: "25:00" }] as const)
+    assert.throws(() => missionSchedulingPolicy(draft([row(patch.kind, patch as Partial<MissionCriterionDraft>)])), MissionSchedulingError, JSON.stringify(patch))
+  assert.throws(() => missionSchedulingPolicy(draft([row("daily"), row("cron", { expression: "0 9 30 2 *" })])), field("empty", 1))
 })

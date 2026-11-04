@@ -9,6 +9,7 @@ import {
   activeSettingsSection,
   closeSettings,
   settingsOpen,
+  settingsRowPending,
   setActiveSettingsSection,
   type SettingsSectionId,
 } from "../stores/settings-screen"
@@ -328,6 +329,8 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
             class="modal-surface window-shell settings-screen-shell"
             style={{ transform: `translate(${windowPosition().x}px, ${windowPosition().y}px)` }}
             onInteractOutside={(event) => event.preventDefault()}
+            // A linked setting row takes focus itself instead of the first control.
+            onOpenAutoFocus={(event) => { if (settingsRowPending()) event.preventDefault() }}
           >
             <Dialog.Title class="sr-only">{t("settings.title")}</Dialog.Title>
             {content()}

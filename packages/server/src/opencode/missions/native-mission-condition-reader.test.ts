@@ -1,3 +1,4 @@
+import { legacyLaunch } from "../../missions/legacy-launch-test-helper"
 import assert from "node:assert/strict"
 import test from "node:test"
 import { DatabaseSync } from "node:sqlite"
@@ -18,6 +19,8 @@ import { nativePassageMessageDigest, type MissionNativeService } from "./native-
 import type { NativePassageObservation } from "./native-passage-observation"
 import { acquireNativeSourceFence, type NativeSourceFence } from "./native-source-fence"
 
+// Each fixture document carries one legacy condition; the reader is asked for exactly it.
+const sole = (read: ReturnType<typeof createMissionConditionReader>) => (doc: MissionDocument) => read(doc, legacyLaunch(doc.configuration).condition!)
 const at = Date.parse("2026-10-01T00:00:00Z"), current = () => true as const
 const config = (): MissionConfiguration => ({ title: "Source fixture", objective: "Observe explicit source", template: "custom", taskMode: "native",
   profileID: "profile", executionHost: "local", roots: [{ mode: "directory-only", directory: "/project" }], watchedConversationIDs: [],
@@ -45,7 +48,7 @@ async function fixture() {
       terminal: { inputMessageID: states.get(id)?.message ?? "msg_first", messageID: "msg_idle", outcome: "succeeded" } }),
     children: async () => [], requests: async () => false }
   const fence = (): NativeSourceFence => ({ document() {}, journal() {}, conversation() {}, message() {}, family() {}, current })
-  const reader = () => createMissionConditionReader({ store, storage, native, observation, fence, signal: new AbortController().signal, current })
+  const reader = () => sole(createMissionConditionReader({ store, storage, native, observation, fence, signal: new AbortController().signal, current }))
   const read = async (id: string) => (await store.read(id)) as MissionDocument
   const mutate = async (id: string, use: (doc: MissionDocument) => void) => { const doc = await read(id); return store.change(id, doc.revision, current, use) }
   async function success(id: string, number: number, outcome: "completed" | "failed" = "completed") {
@@ -68,7 +71,7 @@ async function fixture() {
 
 test("schedule success baselines, groups successes, freezes proof, survives reader restart, refuses cycles and lost windows", async () => {
   const f = await fixture(), doc = await f.read("target")
-  doc.configuration.launch.condition = { kind: "schedule-success", missionID: "source" }
+  legacyLaunch(doc.configuration).condition = { kind: "schedule-success", missionID: "source" }
   await f.success("source", 1)
   const baseline = await f.reader()(doc)
   assert.equal(baseline.changed, false); doc.checkpoints = [baseline.checkpoint]
@@ -83,9 +86,9 @@ test("schedule success baselines, groups successes, freezes proof, survives read
   f.states.get(first.pending.coordinatorSessionID)!.active = false
   doc.checkpoints = [result.checkpoint]
   assert.equal((await f.reader()(doc)).changed, false)
-  await f.mutate("source", next => { next.configuration.launch.condition = { kind: "schedule-success", missionID: "target" } })
+  await f.mutate("source", next => { legacyLaunch(next.configuration).condition = { kind: "schedule-success", missionID: "target" } })
   await assert.rejects(assertMissionSourceAcyclic(doc, f.store), /cycle/)
-  await f.mutate("source", next => { next.configuration.launch.condition = null })
+  await f.mutate("source", next => { legacyLaunch(next.configuration).condition = null })
   doc.checkpoints = [baseline.checkpoint]
   for (let n = 5; n <= 35; n++) await f.success("source", n)
   await assert.rejects(f.reader()(doc), /coverage unavailable/)
@@ -93,8 +96,8 @@ test("schedule success baselines, groups successes, freezes proof, survives read
 
 test("a once source requires completed journal and whole-family terminal evidence, never Stop/inactivity", async () => {
   const f = await fixture(), doc = await f.read("target")
-  await f.mutate("source", next => { next.configuration.launch.timing = { kind: "immediate" } })
-  doc.configuration.launch.condition = { kind: "mission-completed", missionID: "source" }
+  await f.mutate("source", next => { legacyLaunch(next.configuration).timing = { kind: "immediate" } })
+  legacyLaunch(doc.configuration).condition = { kind: "mission-completed", missionID: "source" }
   const baseline = await f.reader()(doc); assert.equal(baseline.changed, false); doc.checkpoints = [baseline.checkpoint]
   const completed = await f.success("source", 1)
   f.states.get(completed.pending.coordinatorSessionID)!.active = true
@@ -111,8 +114,8 @@ test("a once source requires completed journal and whole-family terminal evidenc
 
 for (const kind of ["schedule-success", "mission-completed"] as const) test(`${kind} blocks missing correlation instead of reporting no change`, async () => {
   const f = await fixture(), doc = await f.read("target")
-  if (kind === "mission-completed") await f.mutate("source", next => { next.configuration.launch.timing = { kind: "immediate" } })
-  doc.configuration.launch.condition = { kind, missionID: "source" }
+  if (kind === "mission-completed") await f.mutate("source", next => { legacyLaunch(next.configuration).timing = { kind: "immediate" } })
+  legacyLaunch(doc.configuration).condition = { kind, missionID: "source" }
   doc.checkpoints = [(await f.reader()(doc)).checkpoint]
   const success = await f.success("source", 1)
   assert.equal((await f.reader()(doc)).changed, true)
@@ -140,12 +143,12 @@ test("journal-only completion resolves its authorized linked placement and pins 
   const session = f.observation.session
   f.observation.session = async (...args) => ({ ...await session(...args), directory: "/linked" })
   f.states.set(sessionID, { active: false, message: inputID })
-  const reader = createMissionConditionReader({ store: f.store, storage: f.storage, native: f.native, observation: f.observation,
+  const reader = sole(createMissionConditionReader({ store: f.store, storage: f.storage, native: f.native, observation: f.observation,
     observationFor: async placement => { assert.equal(placement.directory, "/linked"); borrowed++; return f.observation },
     fence: () => ({ document() {}, journal() {}, conversation() {}, message() {}, family() {}, current }),
-    signal: new AbortController().signal, current })
+    signal: new AbortController().signal, current }))
   doc.configuration.roots.push({ mode: "directory-only", directory: "/linked" })
-  doc.configuration.launch.condition = { kind: "mission-completed", missionID }
+  legacyLaunch(doc.configuration).condition = { kind: "mission-completed", missionID }
   doc.checkpoints = [(await reader(doc)).checkpoint]
   await journal.append({ ...common, type: "mission.finished", id: "journal_finished", createdAt: at + 3, outcome: "completed", summary: "Done" })
   assert.equal((await reader(doc)).changed, true); assert.equal(borrowed, 1)
@@ -155,28 +158,31 @@ test("journal-only completion resolves its authorized linked placement and pins 
   await assert.rejects(reader(doc), /coverage unavailable/, "linked placement requires explicit authorization")
 })
 
+/** Whatever role the followed conversation has, any change is news. */
+const anyNews = (snapshot: { news: { triggers: boolean; conditions: boolean } }) => snapshot.news.triggers || snapshot.news.conditions
+
 test("conversation baseline, exact stable prefixes, technical/self exclusion, remove/re-add and frozen pending text", async () => {
   const f = await fixture(), doc = await f.read("target"), signal = new AbortController().signal
-  doc.configuration.launch.condition = { kind: "conversation-message", conversationID: "ses_followed" }
+  legacyLaunch(doc.configuration).condition = { kind: "conversation-message", conversationID: "ses_followed" }
   const anchor = Schema.decodeUnknownSync(SessionMessage.Info)({ id: "msg_anchor", type: "user", text: "before Play", time: { created: at } })
   f.native.sourceBaseline = async () => anchor
   f.native.message = async () => anchor
   let messages = [] as Awaited<ReturnType<MissionNativeService["sourceMessages"]>>
   f.native.sourceMessages = async () => structuredClone(messages)
   const baseline = await prepareNativeDocumentSources(doc, f.native, signal, current)
-  assert.equal(baseline.changed, false); assert.equal(documentWatchCheckpointSchema.parse(baseline.checkpoints[0].value).messageID, anchor.id)
+  assert.equal(anyNews(baseline), false); assert.equal(documentWatchCheckpointSchema.parse(baseline.checkpoints[0].value).messageID, anchor.id)
   doc.firstPlayedAt = at; doc.checkpoints = baseline.checkpoints
   messages = [{ id: "msg_technical", type: "technical", text: "", nativeDigest: "a".repeat(64) }]
-  assert.equal((await prepareNativeDocumentSources(doc, f.native, signal, current)).changed, false)
+  assert.equal(anyNews(await prepareNativeDocumentSources(doc, f.native, signal, current)), false)
   messages.push({ id: "msg_new", type: "user", text: "stable new text", nativeDigest: "b".repeat(64) })
   const snapshot = await prepareNativeDocumentSources(doc, f.native, signal, current)
-  assert.equal(snapshot.changed, true)
+  assert.equal(anyNews(snapshot), true)
   assert.equal(documentWatchCheckpointSchema.parse(snapshot.checkpoints[0].value).source!.messages.at(-1)!.text, "stable new text")
   messages[1].text = "later text"
   assert.equal(documentWatchCheckpointSchema.parse(snapshot.checkpoints[0].value).source!.messages.at(-1)!.text, "stable new text")
-  const removed = JSON.parse(JSON.stringify(doc)); removed.configuration.launch.condition = null
+  const removed = JSON.parse(JSON.stringify(doc)); legacyLaunch(removed.configuration).condition = null
   assert.equal((await prepareNativeDocumentSources(removed, f.native, signal, current)).checkpoints.length, 0)
-  assert.equal((await prepareNativeDocumentSources(JSON.parse(JSON.stringify(doc)), f.native, signal, current)).changed, true)
+  assert.equal(anyNews(await prepareNativeDocumentSources(JSON.parse(JSON.stringify(doc)), f.native, signal, current)), true)
   f.native.message = async () => ({ ...anchor, text: "rewritten" } as typeof anchor)
   await assert.rejects(prepareNativeDocumentSources(doc, f.native, signal, current), /anchor changed/)
   f.native.message = async () => anchor
@@ -188,7 +194,7 @@ test("conversation baseline, exact stable prefixes, technical/self exclusion, re
 
 test("conversation exclusion walks passage ancestry, rejects cycles and recognizes the carrier marker", async () => {
   const f = await fixture(), doc = await f.read("target"), signal = new AbortController().signal
-  doc.configuration.launch.condition = { kind: "conversation-message", conversationID: "ses_grandchild" }
+  legacyLaunch(doc.configuration).condition = { kind: "conversation-message", conversationID: "ses_grandchild" }
   f.native.sourceBaseline = async () => undefined
   const get = f.native.get
   f.native.get = async input => ({ ...await get(input), ...(input.sessionID === "ses_grandchild" ? { parentID: "ses_child" }
@@ -204,7 +210,7 @@ test("conversation exclusion walks passage ancestry, rejects cycles and recogniz
   f.native.get = async input => ({ ...await get(input), ...(input.sessionID === "ses_grandchild" ? { parentID: "ses_foreign_root" } : {}) })
   const fence: NativeSourceFence = { document() {}, journal() {}, message() {}, family() {}, current,
     conversation(id) { if (id === "ses_foreign_root") parentsPinned++ } }
-  assert.equal((await prepareNativeDocumentSources(doc, f.native, signal, current, undefined, fence)).changed, false)
+  assert.equal(anyNews(await prepareNativeDocumentSources(doc, f.native, signal, current, undefined, fence)), false)
   assert.equal(parentsPinned, 1, "allowed ancestry remains pinned against moves before CAS")
 })
 
@@ -229,7 +235,7 @@ for (const mutation of ["reattach", "move", "carrier"] as const) test(`ancestor 
     if (sessionID === "ses_ancestor") { started(); await resumed }
     return snapshot
   }
-  doc.configuration.launch.condition = { kind: "conversation-message", conversationID: "ses_followed" }
+  legacyLaunch(doc.configuration).condition = { kind: "conversation-message", conversationID: "ses_followed" }
   doc.history = [{ coordinatorSessionID: "ses_target_coordinator" }] as MissionDocument["history"]
   f.native.sourceBaseline = async () => undefined
   const pending = prepareNativeDocumentSources(doc, f.native, new AbortController().signal, current, undefined, fence())

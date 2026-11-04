@@ -46,3 +46,18 @@ test("schedule mutations bind exact action, revision, configuration and cleanup 
   assert.equal(missionScheduleRequestSchema.safeParse({ ...request("play"), transport: undefined }).success, false)
   assert.notEqual(identity.missionID, missionScheduleID("project", "/foreign", "request"))
 })
+
+test("the native wire accepts launch criteria beside stored legacy policies and refuses retired fields in criteria", () => {
+  const wire = new Ajv().compile(missionScheduleRpcMethods.scheduleControl.input)
+  const criteria = { when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" },
+    { kind: "branch-commits", directory: "/owned", ref: "refs/heads/main" }, { kind: "files-changed", paths: ["a.ts"] }] }
+  const input = request("configure")
+  input.configuration = { ...configuration, launch: criteria as MissionConfiguration["launch"] }
+  input.transport.configDigest = missionSchedulePayloadDigest(input as never)
+  assert.equal(wire(input), true, JSON.stringify(wire.errors))
+  for (const launch of [{ ...criteria, maxLaunches: 3 }, { ...criteria, when: [{ kind: "every", intervalMs: 900_000 }] }, { ...criteria, ends: {} },
+    { ...criteria, until: 1 }, { ...criteria, onlyWithNews: true }, { ...criteria, onlyIf: [] }]) {
+    const invalid = structuredClone(input); (invalid.configuration as { launch: unknown }).launch = launch
+    assert.equal(wire(invalid), false, JSON.stringify(launch))
+  }
+})

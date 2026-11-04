@@ -5,44 +5,146 @@ Acceptance status: `MISSIONS_RECURRING_QUALIFICATION.md`.
 
 ## Unified native schedules
 
-Unified documents use `launch-policy.ts` for immediate, absolute/relative one-shot,
-elapsed Every, cron and up to eight cron calendars. A source condition uses its
-qualified reader. Native schedule rows own future dates and civil-time behavior;
-Missions owns admission, non-overlap, frozen inputs, launch counts and settlement.
+Unified documents store a launch policy (`missions/launch-policy.ts`): one ordered
+list `{ when }` of criteria, each a schedule (one cron with its IANA zone) or one of
+the five events below. An empty list is a one-time Mission launched at Play. Native
+schedule rows own future dates and civil-time behavior; Missions owns admission,
+non-overlap, frozen inputs, launch counts and settlement.
+
+### Launch criteria
+
+`missionCriteriaStructure` (`missions/mission-launch-kind.ts`) is the one parser the
+codec, the engine, the editor and the list summary share. It reads the list as
+alternating groups of consecutive schedules or events. Between two adjacent cards the
+connector depends only on their kinds: same kind **or**, schedule → event **if**,
+event → schedule **else**. Groups, not neighbours, carry the meaning:
+
+- Events at the head trigger on each new occurrence (OR). A schedule group at the head
+  triggers at its slots.
+- Events after a schedule group are the conditions (OR) of every schedule of that
+  group: at each of its slots the Mission launches only if one of them changed since
+  the last successful passage. Such events never trigger.
+- A schedule group after events is an **else** fallback of everything above it: at a
+  slot it launches only if the criteria above its group launched no passage for a slot
+  in that schedule's own period, from its previous slot (or, before any slot, from when
+  its calendar was armed) to this slot. Events after a fallback group condition only
+  that fallback.
+
+For example, commits, 18:00, new messages, 20:00 launches at each commit; else at
+18:00 if there were new messages; else at 20:00 without a condition. Each schedule
+owns one principal calendar (slots 0..n-1); trigger events share one internal
+principal that checks them every 15 minutes (slot n). Conditions own no calendar and
+are read at the slots that need them. `missionLaunches` (`missions/mission-document-state.ts`)
+decides every fan-in group; source snapshots report each changed event key
+(`news.changed`), so a schedule group reads only its own conditions. A skipped slot
+consumes no source: references advance only with a successful passage, so an
+unconsumed condition can serve a retry after a failure.
+
+A fallback period (`missionFallbackClear`) counts a passage by its slot once its
+coordinator's first input was admitted (`admittedAt`), even if it later failed:
+**Run now** passages, and wake or grouped passages launched by the event check, by a
+group above, or by a schedule since removed or changed (its place in the list is
+unknown, so it may skip a fallback slot but never doubles one). A wake passage counts
+only for the calendars whose slot decided it (`launchedBy`, recorded at reservation; `origin.wakes`
+keeps every grouped wake) at the latest slot of those deciding wakes; a grouped passage
+counts for its `scheduleIDs` at its `dueAt`, and any other passage at its `dueAt`. Passages of the
+fallback's own group or of a later group never count, so a fallback's own passage
+never hides its next slot. A reservation without proven admission does not count; such
+a pending passage makes the decision uncertain, so the fallback never launches then,
+nor when its period's origin is not before the slot.
+Each principal calendar records `armedAt` (the anchor the calendar owner armed it
+with) and `lastDueAt` (its latest processed slot). A schedule changed or added by an
+edit starts a new period at its new anchor; an unchanged schedule keeps its origin, even
+when the edit re-arms its calendar (`calendarForSlot` carries it over with the replaced
+calendars' identifiers in `formerIDs`, so their passages keep that schedule's current
+group), and a kept calendar that never had a slot takes the activation time of a
+launch-criteria edit. Document validation accepts these fields on principal calendars
+only, with `armedAt` at or before every known slot of its calendar, `lastDueAt` at or
+after its reserved slot and at or before the slot being prepared, and `deferred.scheduleIDs`
+naming current principal calendars.
+
+The codec requires unique schedules and unique events, at most 16 criteria, eight
+events and eight principal calendars. Criteria have no end date.
+
+A passage in progress is never doubled. With launch criteria, principal wakes consumed
+while a passage is pending, or after it within its overlap window, record one `deferred` launch
+(`{ afterPassageID, dueAt, scheduleIDs }`); slots due by the passage's reservation are
+already answered by it. Each wake is decided at its slot with `missionLaunches`, from a
+source read measured against the references the running passage will consume: a wake
+that would not launch then (no changed trigger or condition, or a fallback period
+already covered or uncertain) is not recorded, and a wake whose read is incomplete
+stays unconsumed until the passage's window decides it. Settlement then launches
+exactly one passage with origin `{ kind: "deferred", afterPassageID, dueAt, scheduleIDs }`,
+whose deterministic passage ID admits it once; its source read only freezes the new
+passage's inputs. Pause, Resume, Stop, Delete, a launch-criteria edit, an unsuccessful
+settlement and a blocked or finished schedule drop it. A transient source read or open
+fan-in window keeps it for the next wake. A stored legacy policy never groups: its
+overlapping wakes are consumed without a launch or a source read, and document validation
+refuses a `deferred` launch, a deferred passage or an overlap window on it. Saved launch
+criteria never turn back into a legacy policy: `configure` refuses that edit, and
+one-time preparation refuses it before recording its intent.
+
+`missions/mission-launch-kind.ts` (`missionLaunchModel`) reads both stored shapes;
+the codec accepts both, the editor writes criteria only, and one-time creation stores
+the criteria-free `{ timing: { kind: "immediate" }, condition: null, ends }` shape.
+Documents in the `{ timing, condition, ends }` shape keep their bytes, are never
+rewritten on read and keep their native calendars without re-arming; they read as:
+frequency → a schedule group (`every`, single-date `at` and delayed `in` keep their
+exact legacy timing); frequency + condition → that group with the event as the
+condition of every calendar; condition alone → one trigger event
+launched once; `ends.at` keeps bounding the slots as the model's `until`;
+`ends.afterMs` and `ends.maxLaunches` keep bounding the slots and admitted passages.
+The editor decodes cron/multi frequencies (single zone) into schedule cards, then the
+condition after them. An unchanged reopen saves the stored policy byte-for-byte, so a
+stored end date or single launch keeps applying; saving any edit writes criteria,
+which drops the end date and the single-launch limit. An equivalent criteria save of
+a legacy policy without an end keeps the same temporal policy, so it neither replaces
+calendars nor starts a new time generation. Interval, delay, single-date,
+passage-limit and relative-end policies and mixed zones are retained read-only until
+an explicit replacement.
 
 ### Visible timing, limits and editing
 
 Scheduling labels use focusable **i** tips for secondary explanations, available
-on hover, keyboard focus and touch. Frequency and condition controls retain their
-timing and admission semantics. The list shows condition and end details only
-when configured, and source checks only with a condition. The info tip beside
-the **Technical details** disclosure explains technical activity and costs.
+on hover, keyboard focus and touch. The editor's **Launch when** list adds cards
+with **Add a criterion**; each card's native select groups schedule shortcuts (every
+N hours with N in 1, 2, 3, 4, 6, 8 or 12, every day, selected weekdays, day of each month,
+advanced cron) and the five events; a new daily card takes the first free hour from
+09:00. Shortcuts write a cron; recognized crons decode back to their shortcut
+and unedited cards keep their stored spelling. Cards reorder by dragging their grip
+(`@thisbeyond/solid-dnd`, as for tabs) or with Alt+Up/Down on the focused grip; a live
+region announces the new position and focus stays on the grip. The connector to the
+card above sits in a fixed-height line above each card, small and secondary, and
+follows the projected order while dragging, so nothing reflows. The form shows no
+slot preview and no end date; it refuses a calendar without a future slot. The saved
+zone defaults to the system zone; its field appears only when the draft's zone
+differs (a schedule saved elsewhere, an invalid zone) and then stays for that editor,
+so typing never hides it; a reopened schedule keeps its stored zone. **Launch when**
+has a single **i** (`settings-info-link.tsx`, opened by click, Enter or Space) whose
+two sentences explain **if** and **else** and that the Mission runs only while
+OpenCode runs, ending with a link to the OpenCode login-start row
+(`#opencode-login-start` anchor, labelled by that setting's own title key); Missions
+never reads or changes that setting. The list summarizes each criterion in order,
+prefixed after the first with its connector; the detail shows a stored legacy end
+date, and source checks only with events. The info tip beside the **Technical
+details** disclosure explains technical activity and costs.
 
-The editor exposes nine frequencies: immediate once, once at a civil date, once
-after an elapsed delay, elapsed interval, daily, selected weekdays, several daily
-times, day of each month and advanced cron. First Play freezes relative origins
-and source baselines. Delays use positive whole minutes/hours; intervals are at
-least 15 minutes and first wake one interval after Play. Cron runs at most once
-per minute. Up to eight daily calendars share admission and non-overlap; duplicate
-times coalesce. Civil rules use the saved IANA zone and native DST behavior;
-months without the selected day are skipped. An unchanged interval retains its
-native phase; the preview uses its persisted next slot when available.
+Cron runs at most once per minute. Civil rules use the saved IANA zone and native
+DST behavior; months without the selected day are skipped.
 
 Catch-up uses the native row's recorded `dueAt`, including when later slots were
 missed. Multiple principal wakes fan in to at most one catch-up passage before
 future slots resume. Explicitly paused recurring calendars resume at a future slot;
-a paused one-shot may arrive once, late. End bounds apply to the recorded due slot.
+a paused legacy one-shot may arrive once, late. End bounds apply to the recorded due slot.
 
-Three combinable bounds are an absolute last slot, an elapsed end from first Play
-and a global maximum of admitted passages. The earliest time bound applies and
-continues through Pause; an eligible recorded slot may arrive after that end.
-The quota counts each passage once on admission of its coordinator's first input,
-including Run now and a passage that later fails. Checks, technical wakes and
-refused admissions consume zero; uncertain admission keeps its reservation until
-reconciliation. One-shot policies allow at most one launch. Counts and first-Play
+The end continues through Pause; an eligible recorded slot may arrive after it.
+Launch counts record each passage once on admission of its coordinator's first
+input, including Run now and a passage that later fails; checks, technical wakes and
+refused admissions count zero, and uncertain admission keeps its reservation until
+reconciliation. A legacy passage limit counts the same way. Counts and first-Play
 origins survive edits, restarts and the thirty-result history window.
 
-The five source conditions and their consumption rules are below. H9 editing
+The five events and their consumption rules are below. H9 editing
 follows the [shared editor table](MISSIONS.md#user-journey-regression-checks): full
 eligible preparation before admission, future configuration between recurring
 passages, objective/notes during admitted work and read-only uncertain state.
@@ -129,7 +231,7 @@ launches retain their separate counters.
 The native display adapter reads at most eight exact principal rows, validates
 their adopted mapping and checks the document revision again after I/O. Missing,
 foreign, partial or retired reads project `unknown`. `nextDueAt` is the earliest
-active native principal's saved date; a condition labels it as a check. Paused
+active native principal's saved date; events label it as a check. Paused
 rows contribute their counter but have no active next wake. `nativeStatus`
 separately exposes active/paused/done/mixed principals beside the document's
 desired state. `wakeCount` sums
@@ -148,16 +250,15 @@ including after passage archive. Reconciliation only reads that event; explicit 
 uses the saved original revision and payload. Missing proof retains the operation and
 the editor's original uncertain request. Frozen passage inputs, task contracts, profiles and
 session/message identities remain intact. Never send a prompt from this edit path.
-Create and Edit share empty-calendar validation; saved unknown interval phases and
-intentionally exhausted launch quotas retain their explicit display. Preview end
-bounds apply to both the persisted next slot and subsequent slots, including late slots.
+Create and Edit share empty-calendar validation; saved legacy intervals and
+intentionally exhausted legacy passage limits stay retained read-only.
 
 `checks: {count,since} | null` counts completed, revalidated source observations
 committed with a principal fan-in's consumed high-water or passage reservation,
-and explicit Run now reservations. A group of up to eight principal wakes counts
-once. True and false conditions both count; baseline reads at Play, auxiliary
-wakes, replays, overlaps, suppressed wakes, failed/incomplete source reads and
-unconditional policies contribute zero. Admission or settlement retries preserve
+explicit Run now reservations and deferred launches. A group of up to eight principal
+wakes counts once. Changed and unchanged events both count; baseline reads at Play,
+auxiliary wakes, replays, overlaps, suppressed wakes, failed/incomplete source reads and
+policies without events contribute zero. Admission or settlement retries preserve
 the count. Configuration changes and temporal generations retain it. New documents
 track from creation; documents without tracking begin at their first committed
 check. The UI displays `since` alongside the count and treats `null` as unavailable
@@ -178,11 +279,13 @@ Both display routes revalidate workspace, connection, physical checkout and requ
 lifetime after asynchronous work. Missing methods or capabilities return an
 explicit unavailable response. UI reads use the shared secondary HTTP budget.
 
-Five explicit source conditions share the native source preparation boundary:
+Five explicit events share the native source preparation boundary:
 another schedule's successful passage, a completed one-time Mission, commits on
 a local branch, stable new messages in a followed conversation, and an explicit
-file set. Event-only policies check every 15 minutes; calendar-backed conditions
-are read only at those calendar slots. First Play establishes their baseline,
+file set. One reader call per event key (`native-mission-condition-reader.ts`)
+reads the listed events; within a group, any change is enough. Trigger events are
+checked every 15 minutes; conditions are read at the slots that need them. Mission-source edges are checked
+for cycles depth-first across every listed event. First Play establishes their baseline,
 Pause/Resume preserves it, and configuration retains removed source checkpoints.
 A pending freezes the observed proof; only successful settlement consumes it.
 Success counters outlive the 30-result window, and missing retained success proof,
@@ -770,10 +873,12 @@ daemon or user Mission.
 
 `missions/launch-policy.ts` and `mission-document{,-state,-store}.ts` provide a
 strict internal configuration codec and conditional document store. Their
-`codenomad-missions/documents-v1` namespace owns paused creation, immediate/at/in/
-every/cron/multi launch policies, one optional source condition, combined end
-bounds, and a global admitted-passage count. Relative origins are frozen at first
-Play; the absolute slot end applies to recorded due times, including late arrivals.
+`codenomad-missions/documents-v1` namespace owns paused creation, launch criteria
+(triggers and conditions), the stored legacy policies read
+through `missionLaunchModel`, the single deferred launch and an admitted-passage
+count. Relative legacy origins are frozen at first Play; the slot end applies to
+recorded due times, including late arrivals. Engine code reads launch policies only
+through `missionLaunchModel` and its helpers, never their stored fields.
 Each passage references its execution journal by immutable mission ID. The existing
 journal ranges, deletion reserve and activation index own execution history.
 

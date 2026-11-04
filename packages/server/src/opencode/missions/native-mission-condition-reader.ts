@@ -7,7 +7,7 @@ import type { NativeMissionDocumentStore } from "../../missions/mission-document
 import { isolatedMissionPassageJournal } from "../../missions/mission-document-passage-storage"
 import { readMissionLocalSource } from "../../missions/mission-local-sources"
 import { stableToken } from "../../missions/receipt-identity"
-import { requiresMissionCalendar } from "../../missions/launch-policy"
+import { missionLaunchesRepeatedly, missionLaunchModel, requiresMissionCalendar, type MissionCondition } from "../../missions/launch-policy"
 import type { MissionMap } from "../../missions/model"
 import { acquireNativeSourceFence, type NativeSourceFence } from "./native-source-fence"
 import { acquireNativePassageObservation, type NativePassageObservation } from "./native-passage-observation"
@@ -15,7 +15,7 @@ import { observePassageFamilySettlement } from "./native-recurrence-settlement"
 import { acquireMissionNativeService, type MissionNativeRunner, type MissionNativeService } from "./native-service-adapter"
 import { acquireNativeSourceObservation } from "./native-source-observation"
 
-type Condition = NonNullable<MissionDocument["configuration"]["launch"]["condition"]>
+type Condition = MissionCondition
 export type MissionConditionRead = { checkpoint: MissionSourceCheckpoint; changed: boolean; current(): true; revalidate?(): Promise<void> }
 const same = (a: unknown, b: unknown) => canonicalAuthority(a, 256 * 1024) === canonicalAuthority(b, 256 * 1024)
 const unavailable = (): never => { throw new Error("Mission event source coverage unavailable") }
@@ -25,16 +25,23 @@ const sourceKey = (doc: MissionDocument, id: string) => `${MISSION_DOCUMENT_PREF
  * exclusion. Missing/deleted edges and over-bound coverage remain blocking. */
 export async function assertMissionSourceAcyclic(target: MissionDocument, store: Pick<NativeMissionDocumentStore, "read">,
   pin: (id: string) => void = () => {}) {
-  let condition = target.configuration.launch.condition
-  const seen = new Set([target.id])
-  while (condition?.kind === "schedule-success" || condition?.kind === "mission-completed") {
-    if (seen.has(condition.missionID) || seen.size >= 64) throw new Error("Mission source dependency cycle or capacity")
-    seen.add(condition.missionID); pin(condition.missionID)
-    const source = await store.read(condition.missionID)
-    if (!source) { if (condition.kind === "mission-completed") return; return unavailable() }
-    if ("deletedAt" in source || source.deletion) return unavailable()
-    condition = source.configuration.launch.condition
+  const edges = (doc: MissionDocument) => missionLaunchModel(doc.configuration.launch).events
+    .filter((item): item is Extract<Condition, { missionID: string }> => item.kind === "schedule-success" || item.kind === "mission-completed")
+  const visited = new Set<string>()
+  // Depth-first over every Mission edge: a path back to an ancestor is a cycle.
+  const visit = async (doc: MissionDocument, path: Set<string>): Promise<void> => {
+    for (const condition of edges(doc)) {
+      if (path.has(condition.missionID)) throw new Error("Mission source dependency cycle or capacity")
+      if (visited.has(condition.missionID)) continue
+      if (visited.size >= 64) throw new Error("Mission source dependency cycle or capacity")
+      visited.add(condition.missionID); pin(condition.missionID)
+      const source = await store.read(condition.missionID)
+      if (!source) { if (condition.kind === "mission-completed") continue; return unavailable() }
+      if ("deletedAt" in source || source.deletion) return unavailable()
+      await visit(source, new Set([...path, condition.missionID]))
+    }
   }
+  await visit(target, new Set([target.id]))
 }
 
 export function createMissionConditionReader(input: {
@@ -42,9 +49,9 @@ export function createMissionConditionReader(input: {
   observation: NativePassageObservation; fence(): NativeSourceFence; signal: AbortSignal; current(): true
   observationFor?: (location: { directory: string; workspaceID?: string }, projectID: string, canonical: string) => Promise<NativePassageObservation>
 }) {
-  return async (doc: MissionDocument): Promise<MissionConditionRead> => {
-    const condition = doc.configuration.launch.condition
-    if (!condition || condition.kind === "conversation-message") return unavailable()
+  return async (doc: MissionDocument, condition: Condition): Promise<MissionConditionRead> => {
+    if (condition.kind === "conversation-message" || !missionLaunchModel(doc.configuration.launch).events
+      .some(item => missionSourceKey(item) === missionSourceKey(condition))) return unavailable()
     const fence = input.fence(), guards: (() => true)[] = [input.current, fence.current]
     const current = (): true => { input.signal.throwIfAborted(); for (const guard of guards) guard(); return true }
     await assertMissionSourceAcyclic(doc, input.store, id => fence.document(sourceKey(doc, id)))
@@ -131,7 +138,7 @@ export function createMissionConditionReader(input: {
       current()
       return { checkpoint: result, changed: delta > 0, current }
     }
-    if (document && (!document.oneTime || document.dormantJournal) && ["every", "cron", "multi"].includes(document.configuration.launch.timing.kind)) return unavailable()
+    if (document && (!document.oneTime || document.dormantJournal) && missionLaunchesRepeatedly(document.configuration.launch)) return unavailable()
     let completed = false, proof: unknown = null
     if (document && (!document.oneTime || document.dormantJournal)) {
       const receipt = document.history.find(item => item.outcome === "completed")

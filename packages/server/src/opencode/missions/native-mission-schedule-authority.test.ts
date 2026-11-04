@@ -104,7 +104,7 @@ test("Run now retains exact manual authority past 30 s without extending its ori
     incarnation: "manual_test", now: Date.now, current: execution.current,
     verifyWake: async () => { throw new Error("Manual run has no wake") },
     coverage: async () => ({ complete: true, wakes: [], current: execution.current }),
-    snapshot: async () => ({ changed: true, checkpoints: [], current: execution.current }),
+    snapshot: async () => ({ news: { triggers: true, conditions: true }, checkpoints: [], current: execution.current }),
     admit: async doc => {
       if (!admit) { t.mock.timers.tick(35_000); execution.current(); return { kind: "unknown" } }
       return { kind: "admitted", passageID: doc.pending!.id, messageID: doc.pending!.messageID,
@@ -163,7 +163,7 @@ test("Run now cannot reserve or promote absent or foreign proof after admission 
   const engine = new MissionDocumentPassageEngine(f.store, {
     incarnation: "manual_expired", now: Date.now, current: execution.current,
     verifyWake: async () => { throw new Error("Unexpected wake") }, coverage: async () => { throw new Error("Unexpected coverage") },
-    snapshot: async () => ({ changed: true, checkpoints: [], current: execution.current,
+    snapshot: async () => ({ news: { triggers: true, conditions: true }, checkpoints: [], current: execution.current,
       revalidate: async () => { t.mock.timers.tick(30_001) } }),
     admit: async () => { throw new Error("Unexpected admission") }, observe: async () => undefined,
   })
@@ -175,7 +175,7 @@ test("Run now cannot reserve or promote absent or foreign proof after admission 
   const foreign = new MissionDocumentPassageEngine(f.store, {
     incarnation: "foreign_manual", now: Date.now, current: f.current,
     verifyWake: async () => { throw new Error("Unexpected wake") }, coverage: async () => { throw new Error("Unexpected coverage") },
-    snapshot: async () => ({ changed: true, checkpoints: [], current: f.current }),
+    snapshot: async () => ({ news: { triggers: true, conditions: true }, checkpoints: [], current: f.current }),
     admit: async () => ({ kind: "unknown" }), observe: async () => undefined,
   })
   await foreign.runNow({ ...request, requestID: "foreign_manual" })

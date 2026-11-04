@@ -7,7 +7,7 @@ import type { MissionJournal } from "./journal"
 import { missionConfigurationSchema, requiresMissionCalendar, type MissionConfiguration } from "./launch-policy"
 import type { NativeMissionDocumentStore } from "./mission-document-store"
 import type { MissionDocument } from "./mission-document"
-import { missionDocumentChanges } from "./mission-document-state"
+import { assertMissionLaunchShape, missionDocumentChanges } from "./mission-document-state"
 import { MISSION_SCHEMA_VERSION, type MissionPreparedEvent } from "./model"
 import { missionCoordinatorTitle } from "./mission-title"
 import { freezeCompareProfiles, validateMissionProfiles } from "./playbook-profiles"
@@ -41,6 +41,8 @@ export async function configureMissionPreparation(journal: MissionJournal, store
       if (previous?.pending) throw new MissionControlError("Original Mission preparation is unresolved", "control-pending")
       if (doc.revision !== input.expectedRevision) throw new MissionControlError("Mission preparation revision conflict", "revision-conflict")
     }
+    // After the request checks, before any intent is recorded.
+    assertMissionLaunchShape(doc, configuration)
     if (!isDeepStrictEqual(configuration.roots, doc.configuration.roots)) throw new Error("Mission preparation scope locked")
     validateMissionProfiles(configuration.template, configuration.profiles)
     const profiles = freezeCompareProfiles(configuration.template, configuration.profiles)

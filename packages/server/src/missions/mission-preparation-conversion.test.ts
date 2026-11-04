@@ -1,3 +1,4 @@
+import { legacyLaunch } from "./legacy-launch-test-helper"
 import assert from "node:assert/strict"
 import test from "node:test"
 import { preparationFixture, scheduledPreparation, followedPreparationFixture } from "./mission-preparation-test-fixture"
@@ -9,6 +10,7 @@ import { finishMissionDocumentDeletion } from "./mission-document-deletion"
 import { ownerFixture } from "../opencode/missions/native-schedule-owner-test-fixture"
 import { MissionDocumentPassageEngine } from "./mission-document-passage-engine"
 import { MissionJournal } from "./journal"
+import { MissionControlError } from "./control-error"
 
 const current = () => true as const
 
@@ -73,7 +75,7 @@ test("lost first-Play document ACK retains frozen source bytes before journal pu
 })
 
 for (const timing of [{ kind: "every", intervalMs: 900000 }, { kind: "in", delayMs: 60000 },
-  { kind: "at", at: Date.now() + 3600000, zone: "UTC" }] as MissionLaunchPolicy["timing"][]) {
+  { kind: "at", at: Date.now() + 3600000, zone: "UTC" }] as import("./launch-policy").MissionLegacyLaunchPolicy["timing"][]) {
   test(`never-launched immediate → ${timing.kind} → immediate retains its receipt, identity and paused state`, async () => {
     const f = await preparationFixture(), configuration = scheduledPreparation(f, timing)
     const converted = await f.control.configurePreparation({ ...f.request, configuration }, f.native, current)
@@ -181,7 +183,7 @@ test("real preparation/calendar/passage owners: first Play arms only the convert
   let admissions = 0
   const engine = new MissionDocumentPassageEngine(f.store, { incarnation: "converted_owner", current, now: () => wake.dueAt,
     verifyWake: async () => ({ wake, current }), coverage: async () => ({ complete: true, wakes: [wake], current }),
-    snapshot: async () => ({ changed: true, checkpoints: [], current }),
+    snapshot: async () => ({ news: { triggers: true, conditions: true }, checkpoints: [], current }),
     admit: async value => {
       admissions++; assert.deepEqual(value.pending!.configuration, configuration)
       assert.equal(value.pending!.configurationGeneration, doc.configurationGeneration)
@@ -196,10 +198,10 @@ test("real preparation/calendar/passage owners: first Play arms only the convert
 
 test("event-only conversion retains its exact sources and return to immediate clears only a settled activation", async () => {
   const f = await preparationFixture(), configuration = scheduledPreparation(f, { kind: "immediate" })
-  configuration.launch.condition = { kind: "files-changed", paths: ["src/example.ts"] }
+  legacyLaunch(configuration).condition = { kind: "files-changed", paths: ["src/example.ts"] }
   configuration.watchedConversationIDs = ["ses_followed"]
   let doc = await f.control.configurePreparation({ ...f.request, configuration }, f.native, current)
-  assert.deepEqual(doc.configuration.launch.condition, configuration.launch.condition)
+  assert.deepEqual(legacyLaunch(doc.configuration).condition, legacyLaunch(configuration).condition)
   assert.deepEqual(doc.configuration.watchedConversationIDs, configuration.watchedConversationIDs)
   assert.equal(doc.firstPlayedAt, null); assert.deepEqual(doc.checkpoints, [])
   doc = await f.store.change(doc.id, doc.revision, current, value => { value.scheduleActivation = {
@@ -231,4 +233,30 @@ for (const expired of [false, true]) test(`converted immediate first Play freeze
     assert.equal(played.slotEndsAt, played.firstPlayedAt! + 3600000)
     assert.equal(played.launchedCount, 1); assert.equal(f.admissions.length, 1)
   }
+})
+
+test("a one-time Mission prepared with launch criteria refuses a legacy launch before recording any intent", async () => {
+  const f = await preparationFixture()
+  const criteria = await f.control.configurePreparation({ ...f.request,
+    configuration: { ...scheduledPreparation(f), launch: { when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }] } } }, f.native, current)
+  const before = await f.read()
+  await assert.rejects(f.control.configurePreparation({ ...f.request, requestID: "back_to_legacy", expectedRevision: criteria.revision,
+    configuration: scheduledPreparation(f) }, f.native, current), /cannot become a legacy policy/)
+  const after = await f.read()
+  assert.equal(after.revision, before.revision); assert.deepEqual(after.preparation, before.preparation)
+  const again = await f.control.configurePreparation({ ...f.request, requestID: "criteria_again", expectedRevision: criteria.revision,
+    configuration: { ...scheduledPreparation(f), launch: { when: [] } } }, f.native, current)
+  assert.deepEqual((await f.read()).configuration.launch, { when: [] }); assert.ok(again.revision > criteria.revision)
+})
+
+test("a stale legacy preparation of a Mission already prepared with launch criteria is a revision conflict", async () => {
+  const f = await preparationFixture()
+  const stale = (await f.read()).revision
+  await f.control.configurePreparation({ ...f.request,
+    configuration: { ...scheduledPreparation(f), launch: { when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }] } } }, f.native, current)
+  const before = await f.read()
+  await assert.rejects(f.control.configurePreparation({ ...f.request, requestID: "stale_legacy", expectedRevision: stale,
+    configuration: scheduledPreparation(f) }, f.native, current), (error: unknown) => error instanceof MissionControlError && error.code === "revision-conflict")
+  const after = await f.read()
+  assert.equal(after.revision, before.revision); assert.deepEqual(after.preparation, before.preparation)
 })

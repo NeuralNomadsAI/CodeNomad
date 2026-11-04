@@ -2,23 +2,31 @@ const counter = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER 
 const nullableTime = { type: ["integer", "null"], minimum: 0 } as const
 const text = { type: "string" } as const
 const calendar = { type: "object", properties: { expression: text, zone: text }, required: ["expression", "zone"], additionalProperties: false } as const
-export const missionLaunchPolicyWire = { type: "object", properties: {
+const cron = { ...calendar, properties: { ...calendar.properties, kind: { const: "cron" } }, required: ["kind", ...calendar.required] } as const
+const events = [
+  ...["schedule-success", "mission-completed"].map(kind => ({ type: "object", properties: { kind: { const: kind }, missionID: text }, required: ["kind", "missionID"], additionalProperties: false })),
+  { type: "object", properties: { kind: { const: "branch-commits" }, directory: text, ref: text }, required: ["kind", "directory", "ref"], additionalProperties: false },
+  { type: "object", properties: { kind: { const: "conversation-message" }, conversationID: text }, required: ["kind", "conversationID"], additionalProperties: false },
+  { type: "object", properties: { kind: { const: "files-changed" }, paths: { type: "array", maxItems: 128, items: text } }, required: ["kind", "paths"], additionalProperties: false },
+] as const
+/** One ordered criteria list (roles by position); the strict domain codec checks counts and uniqueness. */
+const criteriaLaunchPolicyWire = { type: "object", properties: {
+  when: { type: "array", maxItems: 16, items: { oneOf: [cron, ...events] } },
+}, required: ["when"], additionalProperties: false } as const
+const legacyLaunchPolicyWire = { type: "object", properties: {
   timing: { oneOf: [
     { type: "object", properties: { kind: { const: "immediate" } }, required: ["kind"], additionalProperties: false },
     { type: "object", properties: { kind: { const: "at" }, at: counter, zone: text }, required: ["kind", "at", "zone"], additionalProperties: false },
     { type: "object", properties: { kind: { const: "in" }, delayMs: counter }, required: ["kind", "delayMs"], additionalProperties: false },
     { type: "object", properties: { kind: { const: "every" }, intervalMs: counter }, required: ["kind", "intervalMs"], additionalProperties: false },
-    { ...calendar, properties: { ...calendar.properties, kind: { const: "cron" } }, required: ["kind", ...calendar.required] },
+    cron,
     { type: "object", properties: { kind: { const: "multi" }, calendars: { type: "array", maxItems: 8, items: calendar } }, required: ["kind", "calendars"], additionalProperties: false },
   ] },
-  condition: { oneOf: [{ type: "null" },
-    ...["schedule-success", "mission-completed"].map(kind => ({ type: "object", properties: { kind: { const: kind }, missionID: text }, required: ["kind", "missionID"], additionalProperties: false })),
-    { type: "object", properties: { kind: { const: "branch-commits" }, directory: text, ref: text }, required: ["kind", "directory", "ref"], additionalProperties: false },
-    { type: "object", properties: { kind: { const: "conversation-message" }, conversationID: text }, required: ["kind", "conversationID"], additionalProperties: false },
-    { type: "object", properties: { kind: { const: "files-changed" }, paths: { type: "array", maxItems: 128, items: text } }, required: ["kind", "paths"], additionalProperties: false },
-  ] },
+  condition: { oneOf: [{ type: "null" }, ...events] },
   ends: { type: "object", properties: { maxLaunches: nullableTime, afterMs: nullableTime, at: nullableTime }, required: ["maxLaunches", "afterMs", "at"], additionalProperties: false },
 }, required: ["timing", "condition", "ends"], additionalProperties: false } as const
+/** Both stored shapes stay valid on the wire; documents keep the shape they were written in. */
+export const missionLaunchPolicyWire = { oneOf: [criteriaLaunchPolicyWire, legacyLaunchPolicyWire] } as const
 
 export const missionScheduleActivationWire = { type: "object", properties: { requestID: text, expectedRevision: counter, authority: text,
   state: { type: "string", enum: ["prepared", "partial", "ready", "failed"] },

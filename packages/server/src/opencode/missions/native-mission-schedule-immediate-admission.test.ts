@@ -83,7 +83,7 @@ for (const delta of [0, 1]) test(`immediate Play remains unknown until exact ori
     incarnation: "current", now: () => f.now, current: f.current,
     verifyWake: async () => { throw new Error("immediate has no native calendar") },
     coverage: async () => { throw new Error("immediate has no native calendar") },
-    snapshot: async () => ({ changed: true, checkpoints: [], current: f.current }), observe: async () => undefined,
+    snapshot: async () => ({ news: { triggers: true, conditions: true }, checkpoints: [], current: f.current }), observe: async () => undefined,
     admit: async (document, locked) => blocked ? { kind: "unknown" } : admitNativeScheduledPassage({ document, locked, storage, native,
       observation, authority: f.current, profile: document.calendarOwner!.profileSource, signal: new AbortController().signal,
       current: () => locked.assertActive(), now: () => f.now, environment: async () => ({}) }),

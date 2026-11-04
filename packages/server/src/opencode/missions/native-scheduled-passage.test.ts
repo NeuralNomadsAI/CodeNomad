@@ -1,3 +1,4 @@
+import { legacyLaunch } from "../../missions/legacy-launch-test-helper"
 import assert from "node:assert/strict"
 import test from "node:test"
 import { Effect, Schema } from "effect"
@@ -229,7 +230,7 @@ test("Run now paused consent is durable on the original pending, revocable, and 
 
 test("configured conditions without a qualified external reader fail closed before any native source input", async () => {
   const f = await fixture(), doc = await f.read()
-  doc.configuration.launch.condition = { kind: "files-changed", paths: ["src/app.ts"] }
+  legacyLaunch(doc.configuration).condition = { kind: "files-changed", paths: ["src/app.ts"] }
   await assert.rejects(prepareNativeDocumentSources(doc, f.native, new AbortController().signal, current), /condition reader unavailable/)
   assert.equal(f.counts().sends, 0)
 })
