@@ -233,3 +233,17 @@ for (const expired of [false, true]) test(`converted immediate first Play freeze
     assert.equal(played.launchedCount, 1); assert.equal(f.admissions.length, 1)
   }
 })
+
+test("a one-time Mission prepared with launch criteria refuses a legacy launch before recording any intent", async () => {
+  const f = await preparationFixture()
+  const criteria = await f.control.configurePreparation({ ...f.request,
+    configuration: { ...scheduledPreparation(f), launch: { when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }] } } }, f.native, current)
+  const before = await f.read()
+  await assert.rejects(f.control.configurePreparation({ ...f.request, requestID: "back_to_legacy", expectedRevision: criteria.revision,
+    configuration: scheduledPreparation(f) }, f.native, current), /cannot become a legacy policy/)
+  const after = await f.read()
+  assert.equal(after.revision, before.revision); assert.deepEqual(after.preparation, before.preparation)
+  const again = await f.control.configurePreparation({ ...f.request, requestID: "criteria_again", expectedRevision: criteria.revision,
+    configuration: { ...scheduledPreparation(f), launch: { when: [] } } }, f.native, current)
+  assert.deepEqual((await f.read()).configuration.launch, { when: [] }); assert.ok(again.revision > criteria.revision)
+})

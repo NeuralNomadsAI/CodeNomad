@@ -250,7 +250,7 @@ export class MissionDocumentPassageEngine {
   private async launchDeferred(locked: NativeMissionDocumentStore, id: string): Promise<DocumentPassageResult | undefined> {
     let doc = await this.read(locked, id)
     const owed = doc?.deferred
-    if (!doc || !owed || doc.pending) return undefined
+    if (!doc || !owed || doc.pending || !coalesces(doc)) return undefined
     const limit = missionLaunchLimit(doc.configuration.launch)
     if (doc.state !== "running" || doc.blocked || doc.deletion || limit !== null && doc.launchedCount >= limit) {
       await this.change(locked, doc, next => { next.deferred = null })

@@ -40,13 +40,14 @@ decides every fan-in group; source snapshots report each changed event key
 consumes no source: references advance only with a successful passage, so an
 unconsumed condition can serve a retry after a failure.
 
-A fallback period (`missionFallbackClear`) counts a passage by its slot (`dueAt`)
-once its coordinator's first input was admitted (`admittedAt`), even if it later
-failed: **Run now** passages, and wake or grouped passages launched by the event check,
-by a group above, or by a schedule since removed or changed (its place in the list is
-unknown, so it may skip a fallback slot but never doubles one). A wake passage counts only for the
-calendars whose slot decided it (`launchedBy`, recorded at reservation; `origin.wakes`
-keeps every grouped wake), a grouped passage for its `scheduleIDs`. Passages of the
+A fallback period (`missionFallbackClear`) counts a passage by its slot once its
+coordinator's first input was admitted (`admittedAt`), even if it later failed:
+**Run now** passages, and wake or grouped passages launched by the event check, by a
+group above, or by a schedule since removed or changed (its place in the list is
+unknown, so it may skip a fallback slot but never doubles one). A wake passage counts
+only for the calendars whose slot decided it (`launchedBy`, recorded at reservation; `origin.wakes`
+keeps every grouped wake) at the latest slot of those deciding wakes; a grouped passage
+counts for its `scheduleIDs` at its `dueAt`, and any other passage at its `dueAt`. Passages of the
 fallback's own group or of a later group never count, so a fallback's own passage
 never hides its next slot. A reservation without proven admission does not count; such
 a pending passage makes the decision uncertain, so the fallback never launches then,
@@ -78,7 +79,10 @@ whose deterministic passage ID admits it once; its source read only freezes the 
 passage's inputs. Pause, Resume, Stop, Delete, a launch-criteria edit, an unsuccessful
 settlement and a blocked or finished schedule drop it. A transient source read or open
 fan-in window keeps it for the next wake. A stored legacy policy never groups: its
-overlapping wakes are consumed without a launch or a source read.
+overlapping wakes are consumed without a launch or a source read, and document validation
+refuses a `deferred` launch, a deferred passage or an overlap window on it. Saved launch
+criteria never turn back into a legacy policy: `configure` refuses that edit, and
+one-time preparation refuses it before recording its intent.
 
 `missions/mission-launch-kind.ts` (`missionLaunchModel`) reads both stored shapes;
 the codec accepts both, the editor writes criteria only, and one-time creation stores

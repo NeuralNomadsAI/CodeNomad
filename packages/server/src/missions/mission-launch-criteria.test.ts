@@ -385,7 +385,11 @@ test("Pause and Resume through the calendar owner drop a grouped launch", async 
   for (const action of ["pause", "resume"] as const) {
     const f = await ownerFixture(t, { kind: "cron", expression: "0 9 * * *", zone: "UTC" }, 3)
     await f.control("play")
+    // Only launch criteria group overlapping wakes.
+    await f.control("configure", `criteria_${action}`, { ...(await f.read()).configuration,
+      launch: { when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }] } })
     const doc = await f.read()
+    assert.ok("when" in doc.configuration.launch)
     // A settled passage owes one grouped launch, as after an overlap.
     await f.store.change(doc.id, doc.revision, f.current, next => {
       changes.reserve(next, { kind: "manual", requestID: `manual_${action}` }, f.now + 1, [])
@@ -501,4 +505,39 @@ test("forged period origins and grouped calendars are refused", async () => {
   await assert.rejects(f.store.change(pending.id, pending.revision, current, next => {
     next.calendars.find(item => item.scheduleID === "sch_principal_1")!.lastDueAt = next.pending!.dueAt - 1
   }), /Invalid Mission document/, "the latest slot is never before the reserved one")
+})
+
+test("a fan-in passage counts for the slot of the wakes that decided it, never for a later grouped check", async () => {
+  const f = await fixture({ when: [commits, evening, messages, night] })
+  const [at18, at20, check] = [0, 1, 2]
+  // The missed 18:00 and 20:00 slots and a later event check fan in, with new messages.
+  f.tick(); f.wake(at18); f.tick(); f.wake(at20); f.tick(); f.changed(messages)
+  assert.equal(await run(f, f.wake(check)), "started")
+  assert.deepEqual((await f.read()).pending!.launchedBy, ["sch_principal_0", "sch_principal_1"])
+  await f.settle(); f.changed()
+  // Next day: no passage was launched for a slot in 20:00's period, so it launches.
+  f.tick(day); assert.equal(await run(f, f.wake(at18)), "ignored", "18:00 needs new messages")
+  f.tick(); assert.equal(await run(f, f.wake(at20)), "started")
+  assert.equal(f.launches(), 2)
+})
+
+test("a stored legacy document never holds a grouped launch or an overlap window", async () => {
+  const f = await fixture({ timing: daily, condition: null, ends: legacyEnds })
+  assert.equal(await run(f, f.wake(0)), "started"); await f.settle()
+  const doc = await f.read(), principal = doc.calendars.find(item => item.role === "principal")!.scheduleID
+  await assert.rejects(f.store.change(doc.id, doc.revision, current, next => {
+    next.deferred = { afterPassageID: next.history[0].id, dueAt: f.now, scheduleIDs: [principal] }
+  }), /Invalid Mission document/, "a forged grouped launch")
+  await assert.rejects(f.store.change(doc.id, doc.revision, current, next => { next.fanIn = { ...next.fanIn!, overlap: true } }),
+    /Invalid Mission document/, "a forged overlap window")
+  assert.equal(await f.engine.reconcile({ missionID: "criteria" }), "idle")
+  assert.equal(f.launches(), 1)
+})
+
+test("saved launch criteria never turn back into a stored legacy policy", async () => {
+  const f = await fixture({ when: [daily] })
+  const doc = await f.read()
+  await assert.rejects(f.store.change(doc.id, doc.revision, current, next =>
+    changes.configure(next, configuration({ timing: daily, condition: null, ends: legacyEnds }), start + 2000)), /cannot become a legacy policy/)
+  assert.deepEqual((await f.read()).configuration.launch, { when: [daily] })
 })

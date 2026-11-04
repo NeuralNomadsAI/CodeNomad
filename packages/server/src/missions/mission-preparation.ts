@@ -7,7 +7,7 @@ import type { MissionJournal } from "./journal"
 import { missionConfigurationSchema, requiresMissionCalendar, type MissionConfiguration } from "./launch-policy"
 import type { NativeMissionDocumentStore } from "./mission-document-store"
 import type { MissionDocument } from "./mission-document"
-import { missionDocumentChanges } from "./mission-document-state"
+import { assertMissionLaunchShape, missionDocumentChanges } from "./mission-document-state"
 import { MISSION_SCHEMA_VERSION, type MissionPreparedEvent } from "./model"
 import { missionCoordinatorTitle } from "./mission-title"
 import { freezeCompareProfiles, validateMissionProfiles } from "./playbook-profiles"
@@ -32,6 +32,7 @@ export async function configureMissionPreparation(journal: MissionJournal, store
     if (!read || "deletedAt" in read || !read.oneTime) throw new Error("Mission preparation unavailable")
     let doc: MissionDocument = read
     const configuration = missionConfigurationSchema.parse(input.configuration)
+    assertMissionLaunchShape(doc, configuration)
     const fingerprint = stableToken(canonicalAuthority({ action: "configure", configuration, deleteManagedSessions: false }), 64)
     const previous = doc.preparation
     if (previous?.requestID === input.requestID) {

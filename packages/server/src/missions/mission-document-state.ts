@@ -53,7 +53,13 @@ export function missionFallbackClear(doc: MissionDocument, scheduleID: string, d
   const deciders = (passage: Pick<MissionDocumentPending, "origin" | "launchedBy">) => passage.origin.kind === "wake"
     ? passage.launchedBy ?? passage.origin.wakes.map(wake => wake.scheduleID)
     : passage.origin.kind === "deferred" ? passage.origin.scheduleIDs : undefined
-  return ![doc.pending, ...doc.history].some(passage => passage && passage.dueAt > from && passage.dueAt <= dueAt
+  // A wake passage stands for the latest slot of its deciding wakes, never for a later grouped one.
+  const slot = (passage: Pick<MissionDocumentPending, "origin" | "launchedBy" | "dueAt">) => {
+    if (passage.origin.kind !== "wake") return passage.dueAt
+    const ids = deciders(passage)!
+    return Math.max(...passage.origin.wakes.filter(wake => ids.includes(wake.scheduleID)).map(wake => wake.dueAt))
+  }
+  return ![doc.pending, ...doc.history].some(passage => passage && slot(passage) > from && slot(passage) <= dueAt
     && (passage.admittedAt !== null || passage === doc.pending)
     && (deciders(passage)?.some(above) ?? true))
 }
@@ -72,6 +78,11 @@ export function missionLaunches(doc: MissionDocument, wakes: readonly { schedule
     return !!plan && changed(plan.conditions) && (!plan.fallback || missionFallbackClear(doc, wake.scheduleID, wake.dueAt))
   })
 }
+/** Saved launch criteria never turn back into a stored legacy policy. Checked by
+ * `configure` and, before recording any intent, by one-time preparation. */
+export function assertMissionLaunchShape(doc: MissionDocument, config: MissionConfiguration) {
+  if ("when" in doc.configuration.launch && !("when" in config.launch)) throw new Error("Mission launch criteria cannot become a legacy policy")
+}
 /** Calendar-owned timing: schedules, the internal event check and end bounds. */
 export function missionTemporalPolicy(config: MissionConfiguration) {
   const model = missionLaunchModel(config.launch)
@@ -83,6 +94,7 @@ export function missionTemporalPolicy(config: MissionConfiguration) {
 export const missionDocumentChanges = {
   configure(doc: MissionDocument, input: MissionConfiguration, now: number, checkpoints?: MissionSourceCheckpoint[]) {
     const config = missionConfigurationSchema.parse(input), edit = projectMissionDocument(doc).edit
+    assertMissionLaunchShape(doc, config)
     if (!edit.structural) {
       const { objective: _oldObjective, notes: _oldNotes, ...oldStructure } = doc.configuration
       const { objective: _objective, notes: _notes, ...structure } = config

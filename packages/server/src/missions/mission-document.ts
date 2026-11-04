@@ -217,6 +217,8 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
   if (doc.dormantJournal && (!doc.oneTime || doc.oneTime.firstPlay || !requiresMissionCalendar(doc.configuration.launch) || doc.dormantJournal.deleted && !doc.deletion
     || !doc.preparation || doc.dormantJournal.revision !== doc.preparation.expectedJournalRevision + (doc.preparation.pending ? 0 : 1))) fail()
   if (doc.oneTime && doc.id !== `msn_${stableToken(`${doc.projectID}\0${doc.oneTime.creationRequestID}`, 24)}`) fail()
+  // Only launch criteria group overlapping wakes; a stored legacy policy never holds them.
+  if (!("when" in doc.configuration.launch) && (doc.deferred || doc.fanIn?.overlap || passages.some(item => item.origin.kind === "deferred"))) fail()
   if (doc.deferred && (doc.deferred.dueAt < doc.createdAt || !passages.some(item => item.id === doc.deferred!.afterPassageID)
     || doc.deferred.scheduleIDs.some(id => !doc.calendars.some(item => item.role === "principal" && item.scheduleID === id)))) fail()
   if (doc.oneTime && !doc.dormantJournal && (requiresMissionCalendar(doc.configuration.launch)
