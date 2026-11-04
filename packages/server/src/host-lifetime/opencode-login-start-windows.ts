@@ -64,9 +64,13 @@ export const runPowerShell: PowerShell = script => {
     (error, stdout) => error ? reject(new Error("login-start-powershell")) : resolve(stdout.trim())))
 }
 
+/** Returns one root-folder task, or nothing only when Task Scheduler reports it
+ * missing (ObjectNotFound); any other failure stops the script as an error. */
+export const findTaskScript = "function Find($n) { try { Get-ScheduledTask -TaskPath '\\' -TaskName $n -ErrorAction Stop } catch { if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw } } };"
+
 /** Prints absent, owned or foreign for one task in the root folder. */
 export const taskStateScript = (name: string, marker: string) =>
-  `function State { $t=Get-ScheduledTask -TaskPath '\\' -TaskName ${psLiteral(name)} -ErrorAction SilentlyContinue; if (!$t) { 'absent' } elseif ($t.Description -ceq ${psLiteral(marker)}) { 'owned' } else { 'foreign' } };`
+  `${findTaskScript}function State { $t=Find ${psLiteral(name)}; if (!$t) { 'absent' } elseif ($t.Description -ceq ${psLiteral(marker)}) { 'owned' } else { 'foreign' } };`
 
 export class WindowsLoginStart implements LoginStartPlatform {
   private readonly name: string

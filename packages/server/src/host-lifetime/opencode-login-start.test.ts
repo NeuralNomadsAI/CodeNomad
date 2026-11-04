@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { test, type TestContext } from "node:test"
 import Fastify from "fastify"
-import { LoginStartError, OpenCodeLoginStart, resolveLoginStartLaunch, type LoginStartLaunch, type LoginStartPlatform } from "./opencode-login-start"
+import { LoginStartError, OpenCodeLoginStart, loginStartEnvironment, resolveLoginStartLaunch, type LoginStartLaunch, type LoginStartPlatform } from "./opencode-login-start"
 import { WINDOWS_LOGIN_MARKER, WindowsLoginStart, windowsArgument, windowsLoginTaskXml } from "./opencode-login-start-windows"
 import { LINUX_LOGIN_UNIT, LinuxLoginStart, MacosLoginStart, linuxLoginUnit, macosLoginAgentPlist } from "./opencode-login-start-posix"
 import { registerOpenCodeLoginStartRoutes } from "../server/routes/opencode-login-start"
@@ -73,16 +73,30 @@ test("macOS LaunchAgent: RunAtLoad, crash-only KeepAlive and the exact argv", ()
   assert.match(plist, /<key>KeepAlive<\/key><dict><key>Crashed<\/key><true\/><\/dict>/)
   assert.match(plist, /<array><string>\/Users\/a\/bin\/open&lt;code&gt;<\/string><string>serve<\/string><string>--service<\/string><\/array>/)
   for (const absent of ["AbandonProcessGroup", "ThrottleInterval", "ProcessType", "EnvironmentVariables"]) assert.equal(plist.includes(absent), false, absent)
+  const withPath = macosLoginAgentPlist({ command: "/opt/opencode", args: [], environment: { PATH: "/opt/home<brew>/bin:/a&b:/usr/bin" } })
+  assert.match(withPath, /<key>EnvironmentVariables<\/key><dict><key>PATH<\/key><string>\/opt\/home&lt;brew&gt;\/bin:\/a&amp;b:\/usr\/bin<\/string><\/dict>/)
+  assert.deepEqual(withPath.match(/<key>[^<]*<\/key>/g), ["<key>Label</key>", "<key>ProgramArguments</key>", "<key>EnvironmentVariables</key>",
+    "<key>PATH</key>", "<key>RunAtLoad</key>", "<key>KeepAlive</key>", "<key>Crashed</key>"], "only the server's PATH")
 })
 
-test("systemd user unit: default.target, Restart=on-failure and quoted ExecStart", () => {
+test("systemd user unit: default.target, crash-only restart and quoted ExecStart", () => {
   const unit = linuxLoginUnit({ command: "/home/a/my bin/100%/$opencode", args: ["serve", "--service"] })
   assert.match(unit, /^Description=CodeNomad: start OpenCode at login$/m)
   assert.match(unit, /^ExecStart="\/home\/a\/my bin\/100%%\/\$\$opencode" "serve" "--service"$/m)
-  assert.match(unit, /^Restart=on-failure$/m)
+  // `opencode service stop` exits 130 (measured on Linux): exit codes are never relaunched.
+  assert.match(unit, /^Restart=on-abnormal$/m)
+  assert.match(unit, /^RestartPreventExitStatus=SIGKILL$/m)
   assert.match(unit, /^WantedBy=default\.target$/m)
-  for (const absent of ["KillMode", "Restart=always", "linger", "StartLimit"]) assert.equal(unit.includes(absent), false, absent)
+  for (const absent of ["KillMode", "Restart=always", "Restart=on-failure", "linger", "StartLimit"]) assert.equal(unit.includes(absent), false, absent)
   assert.throws(() => linuxLoginUnit({ command: "/bin/x\nExecStartPre=/bin/rm", args: [] }))
+  assert.equal(unit.includes("Environment="), false)
+  const production = linuxLoginUnit({ command: "/bin/opencode", args: [], environment: { PATH: "/home/a/.local/bin:/usr/bin" } })
+  assert.deepEqual(production.match(/^Environment=.*$/gm), ['Environment="PATH=/home/a/.local/bin:/usr/bin"'], "only the server's PATH")
+  assert.throws(() => linuxLoginUnit({ command: "/bin/opencode", args: [], environment: { PATH: "/bin\nExecStartPre=/bin/rm" } }))
+  const isolated = linuxLoginUnit({ command: "/bin/opencode", args: [] }, { XDG_CONFIG_HOME: '/a b/50%/$HOME/"q"\\' })
+  assert.match(isolated, /^Environment="XDG_CONFIG_HOME=\/a b\/50%%\/\$HOME\/\\"q\\"\\\\"\nExecStart=/m)
+  assert.throws(() => linuxLoginUnit({ command: "/bin/opencode", args: [] }, { "BAD KEY": "x" }))
+  assert.throws(() => linuxLoginUnit({ command: "/bin/opencode", args: [] }, { KEY: "x\nExecStartPre=/bin/rm" }))
 })
 
 /** A Task Scheduler stand-in interpreting the adapter's fixed scripts. */
@@ -129,6 +143,13 @@ test("Windows install and remove are idempotent, own only their task and never t
   await assert.rejects(windows.install(native))
   await windows.remove()
   assert.equal(scheduler.tasks.get("CodeNomad-OpenCode-Login")!.description, "someone else's task")
+
+  // Only Task Scheduler's ObjectNotFound reads as absent; any other failure is an error, never "off".
+  for (const script of scheduler.scripts.filter(script => script.includes("function State")))
+    assert.ok(script.includes("-ErrorAction Stop") && script.includes("'ObjectNotFound'") && !script.includes("-ErrorAction SilentlyContinue"))
+  const broken = new WindowsLoginStart({ run: async () => { throw new Error("login-start-powershell") }, launcherSource: source, launcherDirectory: directory })
+  await assert.rejects(broken.installed())
+  await assert.rejects(new OpenCodeLoginStart({ platform: broken, launch: async () => native }).read(), { code: "failed" })
 })
 
 test("macOS install and remove are idempotent, keep a foreign plist and never call launchctl", async t => {
@@ -166,7 +187,7 @@ test("Linux install enables without starting; remove disables without stopping, 
     if (args[0] === "disable") await unlink(wanted).catch(() => {})
     return ""
   }
-  const linux = new LinuxLoginStart(directory, command), launch = { command: "/usr/bin/opencode", args: ["serve", "--service"] }
+  const linux = new LinuxLoginStart({ unitDirectory: directory, command }), launch = { command: "/usr/bin/opencode", args: ["serve", "--service"] }
   try { await mkdir(directory, { recursive: true }); await symlink(directory, path.join(directory, "probe")); await unlink(path.join(directory, "probe")) }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "EPERM") return t.skip("symbolic links unavailable"); throw error }
   assert.equal(await linux.installed(), false)
@@ -257,8 +278,34 @@ test("Windows launch resolution keeps the native image or wsl.exe, never a comma
   assert.deepEqual(await resolveLoginStartLaunch("\\\\wsl.localhost\\Ubuntu\\home\\me\\.opencode\\bin\\opencode"), {
     command: path.win32.join(process.env.SystemRoot!, "System32", "wsl.exe"),
     args: ["--distribution", "Ubuntu", "--exec", "/home/me/.opencode/bin/opencode", "serve", "--service"] })
-  for (const selected of [cmd, path.join(root, "missing.exe"), "codenomad-missing-opencode"])
+  for (const selected of [cmd, path.join(root, "missing.exe"), "codenomad-missing-opencode",
+    "\\\\wsl.localhost\\Ubuntu", "\\\\wsl.localhost\\Ubuntu\\", "\\\\wsl$\\Ubuntu\\\\"])
     await assert.rejects(resolveLoginStartLaunch(selected), { code: "unsupported-binary" }, selected)
+})
+
+test("only the server's PATH is kept for launchd and systemd", () => {
+  assert.deepEqual(loginStartEnvironment({ PATH: "/opt/bin:/usr/bin", HOME: "/home/me", SECRET: "x", OPENCODE_CONFIG_CONTENT: "{}" }), { PATH: "/opt/bin:/usr/bin" })
+  assert.equal(loginStartEnvironment({ HOME: "/home/me" }), undefined)
+  assert.equal(loginStartEnvironment({ PATH: "" }), undefined)
+  assert.throws(() => macosLoginAgentPlist({ command: "/opt/opencode", args: [], environment: { PATH: "/bin\u0001" } }), /login-start-agent/)
+  assert.throws(() => macosLoginAgentPlist({ command: "/opt/open\rcode", args: [] }), /login-start-agent/)
+})
+
+test("POSIX launches carry the server's PATH only", { skip: process.platform === "win32" }, async () => {
+  assert.deepEqual(await resolveLoginStartLaunch(process.execPath, "linux", { PATH: "/opt/bin:/usr/bin", HOME: "/home/me", SECRET: "x" }),
+    { command: process.execPath, args: ["serve", "--service"], environment: { PATH: "/opt/bin:/usr/bin" } })
+  assert.equal((await resolveLoginStartLaunch(process.execPath, "darwin", {})).environment, undefined)
+})
+
+test("refresh rewrites the current server PATH into an installed artifact", async () => {
+  const fake = fakePlatform()
+  let PATH = "/usr/bin"
+  const loginStart = new OpenCodeLoginStart({ platform: fake.platform,
+    launch: async () => ({ command: "/opt/opencode", args: ["serve", "--service"], environment: { PATH } }) })
+  await loginStart.set(true)
+  PATH = "/home/me/.local/bin:/usr/bin"
+  await loginStart.refresh()
+  assert.deepEqual(fake.current()?.environment, { PATH: "/home/me/.local/bin:/usr/bin" })
 })
 
 test("the artifact keeps a linked executable's selected path, not its versioned target", async t => {

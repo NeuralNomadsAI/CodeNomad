@@ -59,6 +59,7 @@ test("Windows: a former ON installs the login task first, releases each guard, t
     assert.equal(/Stop-ScheduledTask -InputObject \$a|Stop-Process|taskkill/.test(script), false, "Main is never stopped")
     assert.match(script, /CodeNomad-OpenCode-[ab]{64}-Main/)
     assert.match(script, /CodeNomad OpenCode supervision v1 key=[ab]{64} root=/)
+    assert.ok(script.includes("'ObjectNotFound'") && !script.includes("SilentlyContinue"), "a failed lookup never reads as a removed task")
   }
   // Turning the preference off meanwhile is not undone by the remaining migration.
   assert.deepEqual(await loginStart.set(false), { state: "off" })

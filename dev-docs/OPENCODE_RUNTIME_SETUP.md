@@ -200,6 +200,7 @@ a voluntary preference, off by default, whose only state is one OS artifact per 
 Missions never read or change it. `GET|POST /api/opencode/login-start`
 (`server/routes/opencode-login-start.ts`) returns `{ state: "on" | "off" | "unavailable" }`
 and accepts `{ enabled }`; POST requires the live human session of `recurrenceHumanSession`.
+A GET also applies the replacement of a former ON below, which can install the artifact.
 Failures cross the boundary only as `login-start-unavailable` (503),
 `login-start-unsupported-binary` (422) and `login-start-failed` (500). `OpenCodeLoginStart`
 runs reads, changes and the replacement of the former supervision one at a time; they only
@@ -209,14 +210,17 @@ stays stopped until the next login.
 The artifact starts exactly `opencode serve --service` for the selected executable
 (`resolveLoginStartLaunch`). Windows takes the native image `buildSpawnSpec` launches, or
 `%SystemRoot%\System32\wsl.exe --distribution … --exec <binary> serve --service` for a WSL
-UNC selection; command wrappers (`.cmd`, `.ps1`) are `unsupported-binary`. POSIX takes the
-absolute executable. Both validate the link target but keep the selected path, so a package
-manager's stable link survives its versioned upgrades. The Windows task inherits the session
-environment; launchd and the systemd user manager supply their own minimal environment.
-Profile overrides are never persisted in the artifact. Explicit executable changes (both Settings
-patch routes) and verified installations (`opencode-update/service.ts`) call `refresh()`,
-which rewrites an installed artifact; its failure never refuses the save or the update and
-leaves the artifact starting the previous executable.
+UNC selection (a distribution root alone is refused); command wrappers (`.cmd`, `.ps1`) are
+`unsupported-binary`. POSIX takes the absolute executable. Both validate the link target but
+keep the selected path, so a package manager's stable link survives its versioned upgrades.
+The Windows task inherits the session environment. launchd and the systemd user manager supply
+a minimal one, so the plist (`EnvironmentVariables`) and the unit (`Environment=`) carry the
+server's `PATH` as it is at the last ON or refresh, and nothing else
+(`loginStartEnvironment`). Profile overrides are never persisted in the artifact. Explicit
+executable changes (both Settings patch routes) and verified installations
+(`opencode-update/service.ts`) call `refresh()`, which rewrites an installed artifact; its
+failure never refuses the save or the update and leaves the artifact starting the previous
+executable.
 
 - **Windows** (`opencode-login-start-windows.ts`): one root-folder task
   `CodeNomad-OpenCode-Login` with the description marker `CodeNomad: start OpenCode at login`,
@@ -234,7 +238,10 @@ leaves the artifact starting the previous executable.
   while an explicit `opencode service stop` keeps it stopped. ON writes and OFF deletes the
   plist without `launchctl`, so it applies at the next login and a running OpenCode is untouched.
 - **Linux**: `~/.config/systemd/user/codenomad-opencode-login.service` with
-  `WantedBy=default.target` and `Restart=on-failure`, enabled with `systemctl --user enable`
+  `WantedBy=default.target`, `Restart=on-abnormal` and `RestartPreventExitStatus=SIGKILL`:
+  systemd relaunches it after a crash signal (SIGSEGV, SIGABRT…) but never after an exit code
+  or SIGKILL: an explicit `opencode service stop` (exit 130), a start failing with a code and a
+  forced kill stay stopped. It is enabled with `systemctl --user enable`
   (never `--now`) and removed with `disable`, its link and file. Lingering stays as the user
   set it. A server running inside WSL, or a host without `/usr/bin/systemctl`, reports
   `unavailable`.
@@ -270,14 +277,23 @@ Linger recorded in `linux-linger.json` as owned, with an unchanged
 exists, so the user manager and OpenCode survive. Personal, external, uncertain or altered linger
 is left as it is. Incomplete steps remain for the next pass; the root disappears once empty.
 
+Native qualification also covers a Windows-to-WSL selection
+(`scripts/test-opencode-login-start-wsl-native.mjs DISTRO LINUX_CLI LINUX_ROOT`: isolated
+roots passed through `WSLENV`, port and unique task; the service runs in the distribution,
+reachable from Windows, with no visible window) and Linux
+(`scripts/test-opencode-login-start-linux-native.mjs`, run on a disposable host with an esbuild
+ESM bundle of `opencode-login-start-posix.ts`: a real logout and login starts the unit,
+`opencode service stop` and SIGKILL stay stopped, SIGSEGV is relaunched, OFF keeps the process
+running, no linger).
+
 Checks: `node --import tsx --test packages/server/src/host-lifetime/opencode-login-start.test.ts
 packages/server/src/host-lifetime/opencode-login-start-legacy.test.ts`. Windows native
 qualification: `node --import tsx scripts/test-opencode-login-start-windows-native.mjs
 ABSOLUTE_CLI [EVIDENCE_DIRECTORY]` registers a uniquely named task for an isolated service (own
 HOME/XDG roots and port), runs it on demand, checks the hidden `serve --service` process and
 that removal keeps it running, then stops the service, removes the task and compares the shared
-service registration. macOS and Linux are covered by artifact and adapter tests; a real login
-on those systems is a separate qualification gate.
+service registration. macOS is covered by artifact and adapter tests; a real login there is a
+separate qualification gate.
 
 ## Stored-history migration
 

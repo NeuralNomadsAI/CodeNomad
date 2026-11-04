@@ -31,7 +31,7 @@ On Windows, a selected WSL executable runs inside its chosen distribution. Insta
 
 OpenCode owns its global service registration, sessions, messages and database. CodeNomad does not create a private OpenCode database per window or project. Closing a project tab closes that project in CodeNomad; sessions continue in OpenCode and reappear when you reopen the project. CodeNomad never unloads native Locations. Closing a whole window, quitting or reloading preserves project connections for restoration; neither those actions nor backend shutdown stops the shared daemon. See [Projects](projects.md).
 
-## Start OpenCode at login {#service-supervision}
+## Start OpenCode at login {#login-start}
 
 In **Settings → OpenCode**, **Start OpenCode at login** has your operating system start the OpenCode service in the background when you sign in, even with CodeNomad closed. It is off until you turn it on, takes effect at your next sign-in and applies to your account on the computer running the CodeNomad server. It starts the executable selected in the **OpenCode Binary** card; selecting another native executable updates it, otherwise it keeps starting the previous one.
 

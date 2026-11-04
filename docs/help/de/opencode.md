@@ -31,7 +31,7 @@ Unter Windows läuft eine ausgewählte WSL-Programmdatei in der gewählten Distr
 
 OpenCode verwaltet seine globale Dienstregistrierung, Sitzungen, Nachrichten und Datenbank. CodeNomad erstellt keine private OpenCode-Datenbank pro Fenster oder Projekt. Das Schließen eines Projekt-Tabs schließt das Projekt in CodeNomad; Sitzungen laufen in OpenCode weiter und erscheinen wieder, wenn Sie das Projekt erneut öffnen. CodeNomad entlädt niemals native Locations. Das Schließen eines ganzen Fensters, Beenden oder Neuladen bewahrt Projektverbindungen für die Wiederherstellung; weder diese Aktionen noch das Herunterfahren des Backends beenden den gemeinsamen Daemon. Siehe [Projekte](projects.md).
 
-## OpenCode bei der Anmeldung starten {#service-supervision}
+## OpenCode bei der Anmeldung starten {#login-start}
 
 Unter **Einstellungen → OpenCode** lässt **OpenCode bei der Anmeldung starten** das Betriebssystem den OpenCode-Dienst bei Ihrer Anmeldung im Hintergrund starten, auch wenn CodeNomad geschlossen ist. Die Einstellung bleibt aus, bis Sie sie einschalten, wirkt ab Ihrer nächsten Anmeldung und gilt für Ihr Konto auf dem Computer, auf dem der CodeNomad-Server läuft. Sie startet die auf der Karte **OpenCode-Binärdatei** gewählte Programmdatei; die Auswahl einer anderen nativen Programmdatei aktualisiert sie, sonst startet sie weiter die bisherige.
 

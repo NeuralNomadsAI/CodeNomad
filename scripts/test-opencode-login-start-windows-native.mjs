@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 import { setTimeout as delay } from "node:timers/promises"
 import { OpenCodeLoginStart, resolveLoginStartLaunch } from "../packages/server/src/host-lifetime/opencode-login-start.ts"
-import { WindowsLoginStart, psLiteral, runPowerShell } from "../packages/server/src/host-lifetime/opencode-login-start-windows.ts"
+import { WindowsLoginStart, findTaskScript, psLiteral, runPowerShell } from "../packages/server/src/host-lifetime/opencode-login-start-windows.ts"
 import { lookupProcess } from "../packages/server/src/host-lifetime/process-identity.ts"
 
 assert.equal(process.platform, "win32")
@@ -107,7 +107,7 @@ $i=Get-ScheduledTaskInfo -TaskPath '\\' -TaskName ${psLiteral(name)}; $t=Get-Sch
 
   assert.deepEqual(await loginStart.set(false), { state: "off" })
   assert.deepEqual(await loginStart.set(false), { state: "off" }, "idempotent")
-  assert.equal(await ps(`if (Get-ScheduledTask -TaskPath '\\' -TaskName ${psLiteral(name)} -ErrorAction SilentlyContinue) { 'present' } else { 'absent' }`), "absent")
+  assert.equal(await ps(`${findTaskScript}if (Find ${psLiteral(name)}) { 'present' } else { 'absent' }`), "absent")
   assert.equal(await service(["service", "status"]), url, "turning it off never stops the running OpenCode")
   assert.equal((await lookupProcess(pid)).state, "live")
   step("task-removed-service-kept", { task: "absent", url })
@@ -115,7 +115,7 @@ $i=Get-ScheduledTaskInfo -TaskPath '\\' -TaskName ${psLiteral(name)}; $t=Get-Sch
   // Run-owned cleanup only: the isolated service, then the unique task and roots.
   await service(["service", "stop"]).catch(() => {})
   if (pid) for (let i = 0; i < 60 && (await lookupProcess(pid)).state === "live"; i++) await delay(500)
-  const after = await ps(`$t=Get-ScheduledTask -TaskPath '\\' -TaskName ${psLiteral(name)} -ErrorAction SilentlyContinue; if ($t) { Unregister-ScheduledTask -InputObject $t -Confirm:$false; 'removed-in-cleanup' } else { 'absent' }`)
+  const after = await ps(`${findTaskScript}try { $t=Find ${psLiteral(name)}; if ($t) { Unregister-ScheduledTask -InputObject $t -Confirm:$false; 'removed-in-cleanup' } else { 'absent' } } catch { 'unknown' }`)
   step("cleanup", { task: after, isolatedProcess: pid ? (await lookupProcess(pid)).state : "never-started" })
   await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 })
 }

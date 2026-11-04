@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto"
 import { lstat, readdir, readFile, realpath, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { psLiteral, runPowerShell, type PowerShell } from "./opencode-login-start-windows"
+import { findTaskScript, psLiteral, runPowerShell, type PowerShell } from "./opencode-login-start-windows"
 
 /** The former "Keep OpenCode running" supervision: one directory per service key
  * under a private root, with Windows Main/Recovery tasks, a macOS LaunchAgent or
@@ -125,7 +125,7 @@ class WindowsLegacy extends LegacyRoot {
   protected async retireEntry(entry: Entry) {
     const { main, recovery, marker } = legacyTaskNames(entry.key)
     // The former marker names the exact directory; PowerShell's -eq ignores case like Windows paths.
-    const owned = `function Owned($n) { $t=Get-ScheduledTask -TaskPath '\\' -TaskName $n -ErrorAction SilentlyContinue; if ($t -and [string]$t.Description -eq ${psLiteral(marker + entry.directory)}) { $t } };`
+    const owned = `${findTaskScript}function Owned($n) { $t=Find $n; if ($t -and [string]$t.Description -eq ${psLiteral(marker + entry.directory)}) { $t } };`
     const result = await this.run(`${owned}$main=${psLiteral(main)};$recovery=${psLiteral(recovery)};
 foreach ($n in @($recovery,$main)) { $t=Owned $n; if ($t) { Disable-ScheduledTask -InputObject $t|Out-Null } }
 $deadline=[datetime]::UtcNow.AddSeconds(15)
@@ -134,7 +134,7 @@ $b=Owned $recovery; if ($b) { Stop-ScheduledTask -InputObject $b; Unregister-Sch
 $a=Owned $main; if ($a -and $a.State -in @('Running','Queued')) { 'pending'; exit 0 }
 if ($a) { Unregister-ScheduledTask -InputObject $a -Confirm:$false }
 # A same-key task naming another root keeps the directory, so it stays visible to the next pass.
-foreach ($n in @($main,$recovery)) { $t=Get-ScheduledTask -TaskPath '\\' -TaskName $n -ErrorAction SilentlyContinue; if ($t -and ([string]$t.Description).StartsWith(${psLiteral(marker)}, [StringComparison]::OrdinalIgnoreCase)) { 'pending'; exit 0 } }
+foreach ($n in @($main,$recovery)) { $t=Find $n; if ($t -and ([string]$t.Description).StartsWith(${psLiteral(marker)}, [StringComparison]::OrdinalIgnoreCase)) { 'pending'; exit 0 } }
 'removed'`)
     return result === "removed"
   }

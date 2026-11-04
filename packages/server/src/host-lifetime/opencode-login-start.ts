@@ -6,7 +6,7 @@ import type { LoginStartResponse } from "../api-types"
 import { BinaryResolver } from "../settings/binaries"
 import type { SettingsService } from "../settings/service"
 import type { WorkspaceManager } from "../workspaces/manager"
-import { buildSpawnSpec } from "../workspaces/spawn"
+import { buildSpawnSpec, parseWslUncPath } from "../workspaces/spawn"
 import { WindowsLoginStart } from "./opencode-login-start-windows"
 import { LINUX_SYSTEMCTL, LinuxLoginStart, MacosLoginStart } from "./opencode-login-start-posix"
 import { legacySupervision, type LegacySupervision } from "./opencode-login-start-legacy"
@@ -17,8 +17,10 @@ export class LoginStartError extends Error {
 }
 
 /** The exact program the OS starts at login: `opencode serve --service`, or the
- * same through `wsl.exe` for a Windows-to-WSL selection. Never a shell command. */
-export interface LoginStartLaunch { command: string; args: string[] }
+ * same through `wsl.exe` for a Windows-to-WSL selection. Never a shell command.
+ * On macOS and Linux, `environment` carries only the server's PATH; a Windows task
+ * inherits the session environment. */
+export interface LoginStartLaunch { command: string; args: string[]; environment?: { PATH: string } }
 
 /** One OS artifact per account: a Windows logon task, a macOS LaunchAgent or a
  * systemd user unit. Its presence is the preference; there is no other store. */
@@ -38,8 +40,10 @@ export async function resolveLoginStartLaunch(selected: string, platform: NodeJS
   if (platform !== "win32") {
     if (!path.posix.isAbsolute(selected)) throw unsupported()
     await assertExecutable(selected, true)
-    return { command: selected, args: [...SERVE_ARGS] }
+    const environment = loginStartEnvironment(env)
+    return { command: selected, args: [...SERVE_ARGS], ...(environment ? { environment } : {}) }
   }
+  if (parseWslUncPath(selected)?.linuxPath === "/") throw unsupported()
   let spec: ReturnType<typeof buildSpawnSpec>
   try { spec = buildSpawnSpec(selected, SERVE_ARGS, { env, platform }) } catch { throw unsupported() }
   if (spec.command === "wsl.exe") {
@@ -53,6 +57,12 @@ export async function resolveLoginStartLaunch(selected: string, platform: NodeJS
     || path.win32.extname(spec.command).toLowerCase() !== ".exe") throw unsupported()
   await assertExecutable(spec.command, false)
   return { command: spec.command, args: spec.args }
+}
+
+/** launchd and the systemd user manager get only the server's PATH, as it is at the
+ * last ON or refresh; nothing else from the server environment is persisted. */
+export function loginStartEnvironment(env: NodeJS.ProcessEnv): { PATH: string } | undefined {
+  return env.PATH ? { PATH: env.PATH } : undefined
 }
 
 /** The artifact keeps the selected path, not its link target: package managers

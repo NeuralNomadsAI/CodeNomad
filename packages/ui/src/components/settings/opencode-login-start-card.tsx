@@ -41,9 +41,10 @@ export function OpenCodeLoginStartCard() {
     } catch (error) {
       if (disposed) return
       const code = error instanceof HttpResponseError ? (error.body as { error?: unknown } | undefined)?.error : undefined
-      // Show what the OS actually has after a refused change, with the cause.
+      // Show what the OS actually has after a refused change, with the cause; an
+      // unreadable state keeps its own error and Try again.
       await load()
-      if (!disposed) setFailure(code === "login-start-unsupported-binary" ? "unsupported-binary" : "failed")
+      if (!disposed && failure() !== "read") setFailure(code === "login-start-unsupported-binary" ? "unsupported-binary" : "failed")
     } finally { if (!disposed) setBusy(false) }
   }
   onMount(() => {

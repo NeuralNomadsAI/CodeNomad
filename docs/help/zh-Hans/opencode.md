@@ -31,7 +31,7 @@ Windows 上，所选 WSL 可执行文件在其指定发行版中运行。请在�
 
 OpenCode 管理其全局服务注册、会话、消息和数据库。CodeNomad 不会按窗口或项目创建私有 OpenCode 数据库。关闭项目标签页会在 CodeNomad 中关闭该项目；会话继续在 OpenCode 中运行，重新打开项目时会再次出现。CodeNomad 绝不会卸载原生 Location。关闭整个窗口、退出或重新加载会保留项目连接以便恢复；这些操作以及关闭后端都不会停止共享守护进程。参阅[项目](projects.md)。
 
-## 登录时启动 OpenCode {#service-supervision}
+## 登录时启动 OpenCode {#login-start}
 
 在**设置 → OpenCode** 中，**登录时启动 OpenCode** 会让操作系统在你登录时于后台启动 OpenCode 服务，即使 CodeNomad 已关闭。在你开启之前它保持关闭，从下次登录起生效，并作用于运行 CodeNomad 服务器的电脑上你的账户。它启动 **OpenCode 可执行文件**卡片中选择的程序；选择另一个原生可执行文件会更新它，否则继续启动之前的程序。
 
