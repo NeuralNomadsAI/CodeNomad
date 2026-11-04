@@ -1,0 +1,30 @@
+/* "Add an integration…": a centred catalogue window over the Status tab. */
+.integration-catalog {
+  background: var(--surface-overlay);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-base);
+  position: fixed;
+  z-index: 1305;
+  inset-inline-start: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(34rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  display: flex;
+  flex-direction: column;
+}
+:dir(rtl) .integration-catalog { transform: translate(50%, -50%); }
+.integration-catalog-body { display: grid; gap: var(--space-sm); font-size: var(--font-size-xs); }
+.integration-catalog-state { display: flex; align-items: center; gap: var(--space-xs); margin: 0; color: var(--text-secondary); }
+.integration-catalog-list { display: grid; gap: var(--space-xs); margin: 0; padding: 0; list-style: none; }
+.integration-catalog-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) var(--space-sm);
+  padding: var(--space-xs) 0;
+  border-bottom: 1px solid var(--border-divider);
+}
+.integration-catalog-name { flex: 1 1 10rem; min-width: 0; color: var(--text-primary); font-weight: var(--font-weight-medium); overflow-wrap: anywhere; }
+.integration-catalog-scope { width: 7rem; }
+.integration-catalog-scope[aria-disabled="true"] { opacity: 0.6; cursor: not-allowed; }

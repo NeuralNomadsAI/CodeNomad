@@ -143,3 +143,17 @@ for (const scope of ["native", "renderer"] as const) test(`${scope} disconnect c
   assert.equal(f.store.state(other).state, "attached")
   release(); next()
 })
+
+test("an explicit refresh revokes the previous answer, reads the demanded target once and ignores undemanded ones", async () => {
+  const f = fixture(), release = f.store.demand(target)
+  f.reads[0]!.resolve(attached); await settle()
+  const refreshed = f.store.refresh(target)
+  assert.deepEqual(f.store.state(target), { state: "unknown" })
+  assert.equal(f.reads.length, 2)
+  f.reads[1]!.resolve({ state: "none" })
+  await refreshed
+  assert.deepEqual(f.store.state(target), { state: "none" })
+  await f.store.refresh({ ...target, sessionID: "ses_other" })
+  assert.equal(f.reads.length, 2)
+  release()
+})

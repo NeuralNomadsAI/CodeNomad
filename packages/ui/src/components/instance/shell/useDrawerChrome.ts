@@ -12,6 +12,7 @@ import type { TranslateParams } from "../../../lib/i18n"
 
 import type { DrawerViewState } from "./types"
 import { resolveEmbeddedDrawers } from "./drawer-layout"
+import { isNestedDrawerSurface } from "./drawer-events"
 import { createOrientationDrawerMemory, type DrawerOrientation } from "./drawer-orientation"
 
 type DrawerSide = "left" | "right"
@@ -219,7 +220,7 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
   onMount(() => {
     if (typeof window === "undefined") return
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return
+      if (event.key !== "Escape" || isNestedDrawerSurface(event.target)) return
       if (!closeFloatingDrawersIfAny()) return
       event.preventDefault()
       event.stopPropagation()

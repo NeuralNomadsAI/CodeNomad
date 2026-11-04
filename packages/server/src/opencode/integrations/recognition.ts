@@ -20,8 +20,13 @@ export interface IntegrationRecognition {
   scopes: PluginConfigScope[]
   control?: PluginActivationControl
   runtime?: PluginRuntimeInventoryEntry
-  /** A source that also designates another integration, or loaded under another plugin ID. */
+  /**
+   * A source that also designates another integration or loaded under another plugin ID, a failure shared by several
+   * sources, or two runtime candidates. Such sources and the runtime entry are then left unattributed.
+   */
   ambiguous: boolean
+  /** Every source that designated an ambiguous integration, attributed or not. */
+  candidates: PluginConfiguredSource[]
 }
 
 /**
@@ -72,15 +77,35 @@ export function recognizeIntegrations(catalog: IntegrationCatalog, snapshot: Plu
       const set = designated.get(source) ?? new Set<string>()
       designated.set(source, set.add(entry.id))
     }
-    const runtime = snapshot.runtime.find(candidate => candidate.id === entry.plugin)
-    const rules = snapshot.configured.rules.filter(rule => rule.selector === entry.plugin || rule.selector === `-${entry.plugin}`)
-    if (runtime || rules.some(rule => rule.selector === `-${entry.plugin}`)) ways.add("plugin")
+    // A package that failed before exporting its ID is this integration only through exactly one source of its
+    // exact target; two runtime candidates, or a failure shared by several sources, cannot be attributed.
+    const candidates = snapshot.runtime.filter(candidate => {
+      const target = candidate.source.type === "package" ? candidate.source.target : undefined
+      const matching = target === undefined ? 0 : sources.filter(source => source.target === target).length
+      if (candidate.id === undefined && matching > 1) ambiguous = true
+      return candidate.id === entry.plugin || (candidate.id === undefined && candidate.state.status === "failed" && matching === 1)
+    })
+    if (candidates.length > 1) ambiguous = true
+    const runtime = candidates.length === 1 ? candidates[0] : undefined
+    // Rules are normalized (`-id` is `{ selector: id, enabled: false }`): a disabling rule designates the plugin.
+    const rules = snapshot.configured.rules.filter(rule => rule.selector === entry.plugin)
+    if (candidates.length > 0 || rules.some(rule => !rule.enabled)) ways.add("plugin")
     const control = snapshot.controls.find(candidate => candidate.id === entry.plugin)
     const scopes = [...new Set([...sources, ...(ways.has("plugin") ? rules : [])].map(item => item.scope))]
-    return { entry, ways: [...ways], sources, scopes, control, runtime, ambiguous }
+    return { entry, ways: [...ways], sources, scopes, control, runtime, ambiguous, candidates: [] }
   })
+  const shared = (source: PluginConfiguredSource) => (designated.get(source)?.size ?? 0) > 1
   for (const recognition of recognitions) {
-    if (recognition.sources.some(source => (designated.get(source)?.size ?? 0) > 1)) recognition.ambiguous = true
+    if (recognition.sources.some(shared)) recognition.ambiguous = true
+    // An ambiguous integration keeps its flag and ways, but is attributed neither the shared or foreign sources nor a
+    // runtime entry: those may belong to another integration.
+    if (!recognition.ambiguous) continue
+    recognition.candidates = recognition.sources
+    recognition.runtime = undefined
+    recognition.sources = recognition.sources.filter(source => !shared(source)
+      && (source.pluginId === undefined || source.pluginId === recognition.entry.plugin))
+    const rules = recognition.ways.includes("plugin") ? snapshot.configured.rules.filter(rule => rule.selector === recognition.entry.plugin) : []
+    recognition.scopes = [...new Set([...recognition.sources, ...rules].map(item => item.scope))]
   }
   return recognitions
 }

@@ -4,7 +4,7 @@ import { isHumanAnswerProofPayload } from "../missions/human-answer"
 import { isRecurrenceProofPayload } from "../missions/recurrence-control-proof"
 
 const integrationRoute = "/api/workspaces/:id/integrations"
-const integrationRoutes = new Set([integrationRoute, "/api/workspaces/:id/plugin-sources", ...["hosts", "binding", "attach", "detach", "install-host"].map(action => `${integrationRoute}/:integrationId/${action}`)])
+const integrationRoutes = new Set([integrationRoute, "/api/workspaces/:id/plugin-sources", ...["hosts", "binding", "attach", "detach", "install", "install-host"].map(action => `${integrationRoute}/:integrationId/${action}`)])
 
 function integrationLogRoute(request: FastifyRequest): string | undefined {
   const route = request.routeOptions.url

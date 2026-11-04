@@ -19,21 +19,34 @@ export type {
 export type { IntegrationCatalogState } from "./opencode/integrations/catalog"
 export type { IntegrationRuntimeState } from "./opencode/integrations/status"
 
-/** One catalog integration in a Location, without the catalog's internal `plugin`, `rpc` and `sources`. */
+/** One catalog integration in a Location, without the catalog's plugin ID, `rpc`, `sources` and `package`. */
 export interface IntegrationView {
   id: string
   displayName: string
   family: IntegrationFamily
   summary: IntegrationCatalogEntry["summary"]
   app: IntegrationCatalogEntry["app"]
-  docs: string
+  /** The catalog's documentation link, only when it is the integration's reviewed GitHub page. */
+  docs?: string
   catalogStatus: IntegrationCatalogEntry["status"]
   /** Recognised in the effective configuration, enabled or not. */
   configured: boolean
+  /**
+   * `declared`: at least one recognised source declaration (Global, Project or inherited); `runtime`: the native
+   * inventory loaded it or it failed to load, absent otherwise. Activation rules alone set neither.
+   */
+  plugin: { declared: boolean; runtime?: "loaded" | "failed" }
+  /**
+   * A source designates another integration too or loaded under another plugin ID, a failure is shared by several
+   * sources, or two runtime candidates exist: those sources and the runtime entry are attributed to none.
+   */
+  ambiguous?: true
   /** Writable scopes that declare it or a rule for its plugin. */
   scopes: PluginControlScope[]
-  /** Safe correlation to writable plugin-source rows; paths, targets and plugin IDs stay server-side. */
-  configuredSources: Array<{ scope: PluginControlScope; entryIndex: number }>
+  /** Writable source rows, bound to the opaque document revision; missing authority leaves actions unavailable. */
+  configuredSources: Array<{ scope: PluginControlScope; entryIndex: number; expectedRevision?: string }>
+  /** Writable activation rules, with the same document fence as sources (none when ambiguous). */
+  configuredRules: Array<{ scope: PluginControlScope; entryIndex: number; expectedRevision?: string }>
   /** Installed package version, when the runtime loaded it. */
   version?: string
   outdated?: true
@@ -42,16 +55,24 @@ export interface IntegrationView {
   status?: {
     version: string
     host?: NonNullable<IntegrationStatus["host"]>
-    connection?: NonNullable<IntegrationStatus["connection"]>
+    connection?: IntegrationConnectionView
     notices?: string[]
   }
 }
+
+/**
+ * `connection` without any aggregate binding fact: a native integration's offer count, or another family's
+ * connection state. Bindings are read per displayed conversation only.
+ */
+export type IntegrationConnectionView = { offers?: number; state?: Exclude<NonNullable<IntegrationStatus["connection"]>["state"], "attached" | "available"> }
 
 /** `GET /api/workspaces/:id/integrations?directory=` */
 export interface IntegrationsResponse {
   location: PluginControlLocation
   catalog: { state: IntegrationCatalogState; fetchedAt?: string }
   integrations: IntegrationView[]
+  /** Writable source rows that designate an ambiguous integration: their Plugins rows are non-conforming. */
+  ambiguousSources: Array<{ scope: PluginControlScope; entryIndex: number }>
 }
 
 export type IntegrationHostsResponse = import("./opencode/integrations/contract").IntegrationRpcValue<"hosts.output">

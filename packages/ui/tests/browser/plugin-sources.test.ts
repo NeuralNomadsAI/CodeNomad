@@ -23,7 +23,9 @@ after(async () => { await browser?.close() })
 const calls = (page: Page, type: string) => page.evaluate(kind => (window as any).fixture.calls.filter((call: any) => call.type === kind), type)
 
 async function openAdd(page: Page) {
-  await page.getByRole("button", { name: "Add plugin", exact: true }).click()
+  await page.getByRole("button", { name: "Add", exact: true }).click()
+  assert.deepEqual((await page.getByRole("menuitem").allInnerTexts()).map(item => item.trim()), ["Add an integration…", "Add a plugin…"])
+  await page.getByRole("menuitem", { name: "Add a plugin…", exact: true }).click()
   return page.getByRole("dialog", { name: "Add a plugin" })
 }
 
@@ -86,7 +88,7 @@ test("adding a plugin defaults to Global, warns for Project and shows Installing
 
     await row.getByRole("button", { name: "Actions for fixture.package", exact: true }).click()
     const items = await page.getByRole("menuitem").allInnerTexts()
-    assert.deepEqual(items.map(item => item.trim()), ["Update fixture-plugin@1.0.0", "Remove from Global"])
+    assert.deepEqual(items.map(item => item.trim()), ["Update fixture-plugin@1.0.0", "Remove from Global", "Refresh plugin controls"])
     await page.getByRole("menuitem", { name: "Remove from Global", exact: true }).click()
     const removal = page.getByRole("dialog", { name: /Remove from Global.*fixture.package/ })
     await removal.waitFor()

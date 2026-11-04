@@ -4,9 +4,8 @@ import type { Instance, RawMcpStatus } from "../types/instance"
 import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
-import { getActiveCatalogLocation } from "../stores/sessions"
 import { PluginActivationControls } from "./plugin-activation-controls"
-import { activeSessionId, sessions } from "../stores/session-state"
+import { createIntegrationContext } from "./integration-context"
 
 const log = getLogger("session")
 
@@ -65,12 +64,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
   const mcpServers = createMemo(() => parseMcpStatus(metadata()?.mcpStatus ?? undefined))
 
   const isMcpLoading = () => isLoading() || !hasMcpMetadata()
-  const pluginLocation = createMemo(() => getActiveCatalogLocation(instance().id) ?? { directory: instance().folder })
-  const attachmentSession = createMemo(() => {
-    const id = activeSessionId().get(instance().id)
-    const session = id ? sessions().get(instance().id)?.get(id) : undefined
-    return session?.location.directory === pluginLocation().directory ? session : undefined
-  })
+  const { location: pluginLocation, session: attachmentSession } = createIntegrationContext(() => instance().id, () => instance().folder)
 
 
   const [pendingMcpActions, setPendingMcpActions] = createSignal<Record<string, "connect" | "disconnect">>({})

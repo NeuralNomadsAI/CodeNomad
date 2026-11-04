@@ -35,6 +35,13 @@ and session/project names in the adjacent `readme-workspace-data.ts`. Update thi
 data when refreshing documentation; keep product layout and styling in the real
 components.
 
+# Integration Status captures
+
+`integration-status-{light,dark,catalog,customization}.png` show the real Status components with synthetic
+integration, plugin and conversation data. `packages/ui/tests/browser/integration-status-section.test.ts`
+generates them when `CODENOMAD_INTEGRATION_SCREENSHOTS` names an output directory. The dark capture includes
+the keyboard-opened information Popover; the other captures show the attached section, catalog and customization.
+
 # Help home tour
 
 The help home page's `{{tour-video}}` block uses two files from the CodeNomad 1.0

@@ -78,6 +78,12 @@ export function createIntegrationBindingsStore(
         setSnapshots(current => { const next = new Map(current); next.delete(id); return next })
       }
     },
+    /** An explicit new authoritative read of one demanded target; its previous answer is revoked first. */
+    refresh(target: IntegrationBindingTarget): Promise<void> {
+      const id = key(target)
+      const entry = entries.get(id)
+      return entry ? reconcile(id, entry, true) ?? Promise.resolve() : Promise.resolve()
+    },
     /** Payload-free integration events and exact-session changes are invalidation hints only. */
     applyEvent(instanceId: string, type: string, sessionID?: string): void {
       const integrationEvent = isIntegrationRefreshEvent(type)

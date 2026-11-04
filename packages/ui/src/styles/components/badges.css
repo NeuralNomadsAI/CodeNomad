@@ -11,7 +11,8 @@
     .tool-call-todo-status,
     .tool-call-todo-tag,
     .git-change-section-count,
-    .session-goal-badge) {
+    .session-goal-badge,
+    .integration-state-badge) {
   border-radius: var(--chip-radius);
 }
 
@@ -30,6 +31,34 @@
 .session-goal-badge[data-status="complete"] {
   background-color: var(--status-ready-bg);
   color: var(--status-ready-fg);
+}
+
+/* An integration's state label: text carries the state; colour only tints it (AA contrast in every palette). */
+.integration-state-badge {
+  @apply inline-flex min-w-0 shrink items-center px-1.5 py-0.5 text-xs font-medium;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--status-stopped-fg);
+  background-color: var(--status-stopped-bg);
+  color: var(--text-primary);
+}
+
+.integration-state-badge:is([data-integration-state="ready"], [data-integration-state="available"], [data-integration-state="attached"]) {
+  border-color: var(--status-ready-fg);
+  background-color: var(--status-ready-bg);
+}
+
+.integration-state-badge:is([data-integration-state="installing"], [data-integration-state="uncertain"], [data-integration-state="unconfirmed"],
+  [data-integration-state="hostOutdated"], [data-integration-state="legacy"], [data-integration-state="update"]) {
+  border-color: var(--status-starting-fg);
+  background-color: var(--status-starting-bg);
+}
+
+.integration-state-badge:is([data-integration-state="failed"], [data-integration-state="nonConforming"], [data-integration-state="incompatible"],
+  [data-integration-state="hostAbsent"]) {
+  border-color: var(--status-error-fg);
+  background-color: var(--status-error-bg);
 }
 
 .neutral-badge {

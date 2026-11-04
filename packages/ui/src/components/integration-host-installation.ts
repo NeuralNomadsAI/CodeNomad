@@ -4,8 +4,8 @@ import { integrationAttachmentRequest } from "../lib/integrations-api"
 import { useI18n } from "../lib/i18n"
 import { showToastNotification } from "../lib/notifications"
 import { HttpResponseError } from "../lib/retryable-file-search"
-import { showConfirmDialog } from "../stores/alerts"
 import { integrationEpoch, integrations } from "../stores/integrations"
+import { confirmIntegrationAction } from "./integration-confirmation"
 
 /** Location-scoped explicit consent; the session is only a navigation fence, never installer input. */
 export function createIntegrationHostInstallation(props: {
@@ -41,8 +41,8 @@ export function createIntegrationHostInstallation(props: {
     confirmation = new AbortController()
     const signal = confirmation.signal
     const action = entry.status!.host!.action!
-    const accepted = await showConfirmDialog(t("integrations.installHost.warning", { app: entry.app.name, version: entry.status!.version }), {
-      title: t(`integrations.installHost.${action}`), detail: t("integrations.installHost.machine"),
+    const accepted = await confirmIntegrationAction(t("integrations.installHost.warning", { app: entry.app.name, name: entry.displayName, version: entry.status!.version }), {
+      title: t(`integrations.installHost.${action}`),
       confirmLabel: t(`integrations.installHost.${action}`), variant: "warning",
       returnFocus: () => {
         if (!disposed && generation === focusGeneration && identity() === owner && epoch() === captured.epoch && signature(id) === captured.signature

@@ -253,8 +253,9 @@ test("manual ZIP consent, general activation across projects, context switch, re
 
 test("the customization checkbox owns activation, ignores legacy hide flags and fails without optimistic consent or replay", async () => {
   const pkg = await installDirect(example)
-  const view = await page()
+  let opened: Page | undefined
   try {
+    const view = opened = await page()
     await view.evaluate(() => localStorage.setItem("opencode-session-right-panel-customization-v1", JSON.stringify({ hiddenTabIds: ["extension:example.session"] })))
     await view.reload()
     await view.getByRole("tab", { name: "Session example", exact: true }).click()
@@ -288,7 +289,7 @@ test("the customization checkbox owns activation, ignores legacy hide flags and 
     assert.equal(await checkbox.isChecked(), false, "General deactivation survives reload")
     await view.evaluate(() => (window as any).extensionFixture.transport("disconnected"))
     assert.equal(await checkbox.isDisabled(), true, "Unverified state cannot activate code")
-  } finally { await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
+  } finally { await opened?.close(); await store.remove(pkg.manifest.id, pkg.digest) }
 })
 
 test("removal consent cannot follow a package replaced by another window", async () => {
@@ -312,10 +313,11 @@ test("removal consent cannot follow a package replaced by another window", async
 
 test("Extensions is separated, collapsed by default and combines installed/online rows without modes or a floating window", async () => {
   const pkg = await installDirect(example)
-  const view = await page()
+  let opened: Page | undefined
   let catalogReads = 0
-  await view.route("**/api/panel-extensions/catalog*", route => { catalogReads++; return route.continue() })
   try {
+    const view = opened = await page()
+    await view.route("**/api/panel-extensions/catalog*", route => { catalogReads++; return route.continue() })
     await view.getByRole("button", { name: "Customize right panel" }).click()
     const popup = view.getByRole("group", { name: "Customize right panel", exact: true })
     const summary = popup.locator(".panel-extension-disclosure > summary")
@@ -375,7 +377,7 @@ test("Extensions is separated, collapsed by default and combines installed/onlin
     await openManager(view)
     await view.evaluate(() => (window as any).extensionFixture.active(false))
     await popup.waitFor({ state: "detached" })
-  } finally { await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
+  } finally { await opened?.close(); await store.remove(pkg.manifest.id, pkg.digest) }
 })
 
 test("API2 grants only current-session asset pages and bounded thumbnails; session switches and revocation fence late reads", async () => {
@@ -391,9 +393,10 @@ test("API2 grants only current-session asset pages and bounded thumbnails; sessi
   </script>`
   const pkg = await readPanelExtensionArchive(fixtureArchive(html, { apiVersion: 2, permissions: ["session.context", "session.assets.read"] }))
   await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true)
-  const view = await page()
+  let opened: Page | undefined
   let release: (() => void) | undefined
   try {
+    const view = opened = await page()
     await view.getByRole("tab", { name: "Status", exact: true }).click()
     await view.locator(".right-panel-accordion-item").first().waitFor()
     const nativeBackground = await view.locator(".right-panel-accordion-item").first().evaluate(element => getComputedStyle(element).backgroundColor)
@@ -439,7 +442,7 @@ test("API2 grants only current-session asset pages and bounded thumbnails; sessi
     assert.equal(await frame.locator("#image").getAttribute("src"), null, "Previous session pixels are not retained")
     await store.activate(pkg.manifest.id, pkg.digest, false); await changed(view)
     await view.locator("iframe[title='Session example']").waitFor({ state: "detached" })
-  } finally { holdAssets = undefined; release?.(); await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
+  } finally { holdAssets = undefined; release?.(); await opened?.close(); await store.remove(pkg.manifest.id, pkg.digest) }
 })
 
 test("API3 lists the project's forge work items and opens their host-built pages, rate-limited; other APIs hold no work items", async () => {
@@ -457,8 +460,9 @@ test("API3 lists the project's forge work items and opens their host-built pages
   </script>`
   const pkg = await readPanelExtensionArchive(fixtureArchive(html, { apiVersion: 3, permissions: ["session.context", "repository.workItems.read"] }))
   await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true)
-  const view = await page()
+  let opened: Page | undefined
   try {
+    const view = opened = await page()
     await view.evaluate(() => { (window as any).opened = []; window.open = ((url: string) => { (window as any).opened.push(url); return null }) as typeof window.open })
     await view.getByRole("tab", { name: "Session example", exact: true }).click()
     const frame = view.frameLocator("iframe[title='Session example']")
@@ -470,14 +474,15 @@ test("API3 lists the project's forge work items and opens their host-built pages
     assert.deepEqual(await view.evaluate(() => (window as any).opened), ["https://gitlab.com/team/app/-/merge_requests/42"])
     await store.activate(pkg.manifest.id, pkg.digest, false); await changed(view)
     await view.locator("iframe[title='Session example']").waitFor({ state: "detached" })
-  } finally { await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
+  } finally { await opened?.close(); await store.remove(pkg.manifest.id, pkg.digest) }
 
   const context = await installDirect(`<p id="api"></p><script>document.querySelector('#api').textContent = typeof codenomad.workItems;</script>`)
-  const plain = await page()
+  let plain: Page | undefined
   try {
+    plain = await page()
     await plain.getByRole("tab", { name: "Session example", exact: true }).click()
     await plain.frameLocator("iframe[title='Session example']").locator("#api").filter({ hasText: "undefined" }).waitFor()
-  } finally { await plain.close(); await store.remove(context.manifest.id, context.digest) }
+  } finally { await plain?.close(); await store.remove(context.manifest.id, context.digest) }
 })
 
 test("API2 observes failed/pruned assets and fences native disconnects and connection generations", async () => {
@@ -486,8 +491,9 @@ test("API2 observes failed/pruned assets and fences native disconnects and conne
     window.probe=()=>{document.querySelector('#state').textContent='pending';void codenomad.assets.list().then(()=>document.querySelector('#state').textContent='success').catch(()=>document.querySelector('#state').textContent='error');};
   </script>`, { apiVersion: 2, permissions: ["session.context", "session.assets.read"] }))
   await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true)
-  const view = await page()
+  let opened: Page | undefined
   try {
+    const view = opened = await page()
     await view.getByRole("tab", { name: "Session example", exact: true }).click()
     const frame = view.frameLocator("iframe[title='Session example']")
     await frame.locator("#changes").waitFor()
@@ -538,7 +544,7 @@ test("API2 observes failed/pruned assets and fences native disconnects and conne
       await frame.locator("#state").filter({ hasText: /^success$/ }).waitFor()
       assert.equal(await view.evaluate(() => (window as any).assetResults.filter((value: any) => value.result).length), before + 1, "Only the new native connection publishes a successful result")
     }
-  } finally { await view.evaluate(() => (window as any).releaseAsset?.()).catch(() => {}); await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
+  } finally { await opened?.evaluate(() => (window as any).releaseAsset?.()).catch(() => {}); await opened?.close(); await store.remove(pkg.manifest.id, pkg.digest) }
 })
 
 test("inline management and keyboard tooltips work inside the real temporary drawer", async () => {

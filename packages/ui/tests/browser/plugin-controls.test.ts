@@ -45,7 +45,7 @@ test("V2 plugin controls load on demand and expose explicit Global and Project s
   assert.deepEqual(await page.locator(".plugin-control-scope-label").allTextContents(), ["Global", "Project"])
   assert.equal(await page.locator(".plugin-controls-description, .plugin-controls-footer, .plugin-control-sub, .plugin-controls-notice").count(), 0)
   assert.deepEqual(await page.locator(".plugin-controls-header button").evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-label"))),
-    ["Refresh plugin controls", "Add plugin"], "only the compact Refresh and Add icons appear in the header")
+    ["Refresh plugin controls", "Add"], "only the compact Refresh and Add icons appear in the header")
   assert.ok(await page.locator(".plugin-control-identity button").count() > 0, "package rows expose a compact native update/check action")
   const refresh = page.getByRole("button", { name: "Refresh plugin controls", exact: true })
   assert.equal(await refresh.isEnabled(), true)
@@ -155,9 +155,9 @@ test("failed packages without IDs remain actionable and reconcile into loaded pl
     await row.locator(".plugin-control-name").focus()
     await page.locator(".plugin-control-tooltip").waitFor()
     assert.match(await page.locator(".plugin-control-tooltip").innerText(), /Failed — Package failed before exporting a plugin ID/)
-    await row.getByRole("button", { name: `Check updates for ${target}`, exact: true }).click()
+    await row.getByRole("button", { name: `Actions for ${target}`, exact: true }).click()
     await page.getByRole("menuitem", { name: `Check updates for ${target}`, exact: true }).click()
-    const update = row.getByRole("button", { name: `Update ${target}`, exact: true })
+    const update = row.getByRole("button", { name: `Actions for ${target}`, exact: true })
     await update.waitFor()
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
     if (process.env.CODENOMAD_PLUGIN_SCREENSHOTS) {

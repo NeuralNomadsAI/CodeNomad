@@ -38,6 +38,8 @@ Arrastra el borde interior de un panel acoplado para cambiar su tamaño. El tira
 2. Abre **Personalizar panel derecho** en el panel derecho. Usa las casillas para elegir pestañas integradas y secciones de Estado; al menos una sección de Estado permanece visible. Arrastra sobre estas casillas para ajustar varias a la vez.
 3. Arrastra las pestañas del panel derecho para reordenarlas. Usa **Restablecer** para restaurar las elecciones de disposición integradas.
 
+Las [integraciones](integrations.md#integration-sections) reconocidas también tienen secciones de Estado. Ocúltalas con las mismas casillas; reordena cualquier sección de Estado arrastrando o con las teclas Arriba/Abajo. La visibilidad y el orden persisten al recargar y durante la ausencia temporal de una integración.
+
 Estado incluye información de tokens, modo Yolo, Uso del proveedor, shells en segundo plano, MCP y Plugins. Mientras la conversación tiene un [objetivo](conversations.md#goal), una línea de objetivo encima de estas secciones lo muestra; esa línea no es una sección y no se puede ocultar ni mover. Ocultar una sección no desactiva su servicio ni revoca permisos. Las disposiciones estrechas cierran los paneles que ya no caben en lugar de estrechar la conversación; un panel abierto en ellas flota sobre la conversación, y abrir un panel flotante cierra el otro.
 
 La disposición integrada es disposición de ventana, no una modificación del proyecto. Las casillas de extensiones son distintas: activan código en todos los proyectos que usan la configuración. **Restablecer** no cambia el consentimiento de extensiones. Consulta [Extensiones de panel](extensions.md).

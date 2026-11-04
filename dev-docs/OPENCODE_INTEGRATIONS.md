@@ -79,13 +79,23 @@ UTF-8 JSON within `integrationCatalogSchema`.
 `opencode/integrations/recognition.ts` recognises a configured integration from the authoritative plugin snapshot
 (`PluginControls.read`), enabled or not, without reading OpenCode's cache. A source is the catalog integration `X`
 when its registry package (or the target of an `npm:` alias) is `X.package`, when the runtime loaded it as
-`X.plugin`, or when its spec starts with a prefix of `X.sources.git`; an exact `-X.plugin` rule also designates it,
-since `plugin.list` omits disabled plugins. A source that designates two integrations, or that loaded under another
-plugin ID, is ambiguous.
+`X.plugin`, or when its spec starts with a prefix of `X.sources.git`; a disabling rule for `X.plugin` (the snapshot
+normalizes `-X.plugin` to `{ selector: X.plugin, enabled: false }`) also designates it, since `plugin.list` omits
+disabled plugins. A package that failed before exporting its plugin ID is `X`'s runtime entry when exactly one
+recognised source has its exact package target. A source that designates two integrations, one that loaded under
+another plugin ID, a failure shared by several sources, or two runtime candidates make the integration ambiguous:
+it keeps its recognition ways, but neither those shared or foreign sources nor a runtime entry are attributed to it
+(no `plugin` fact, `configuredSources` or version from them), and no RPC is called.
 
 `GET /api/workspaces/:id/integrations?directory=[&workspaceID=]` (`server/routes/integrations.ts`,
-`IntegrationsReader`) answers every catalog entry for an owned Location, without the catalog's `plugin`, `rpc`,
-`sources` and `package`, with one `state` (`IntegrationRuntimeState`):
+`IntegrationsReader`) answers every catalog entry for an owned Location, without the catalog's plugin ID, `rpc`,
+`sources` and `package`. `docs` is present only when `isIntegrationDocsUrl` (`opencode/integrations/docs-url.ts`)
+accepts it: the raw canonical `https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/<id>`
+or `…/blob/main/integrations/<id>/plugin/README.md` of the same ID. Each entry carries the installation facts
+`plugin: { declared, runtime? }` (`declared`: at least one recognised source; `runtime`: `loaded` or `failed` from
+the native inventory, absent otherwise; a retained `id`/`-id` rule alone sets neither), `ambiguous: true` for an
+ambiguous recognition (distinct from a marker mismatch, which keeps its attribution), and one `state`
+(`IntegrationRuntimeState`):
 
 - `absent` (not configured), `inactive` (configured, not loaded: disabled or not installed yet), `failed`;
 - for a loaded one, the fixed `status` method under the catalog's RPC ID, at most 4 calls in flight and 8 s each
@@ -102,8 +112,41 @@ Adding a plugin source (`opencode/plugin-sources.ts`) uses the same catalog: a r
 refused in Project (`global-only`, D18), and specs of one recognised integration, or of one whose plugin already
 loaded, are duplicates whatever their form (registry or Git). With the catalog unavailable nothing is recognised.
 
-`IntegrationView.configuredSources` associates an integration with its writable plugin-source rows by `scope` and
-`entryIndex` only. The source must belong to that scope's exact write target; inherited declarations stay read-only.
+`IntegrationView.configuredSources` and `configuredRules` associate an integration with writable rows by `scope`,
+`entryIndex` and the existing opaque document `expectedRevision`. The UI correlates only matching nonempty revisions
+and rows whose path belongs to that scope's exact write target. Independent display responses can therefore arrive
+in either order safely: a mismatch leaves correlated actions unavailable until reconciliation. Inherited and inline
+declarations retain their read-only state. Correlation lives in `lib/integration-rows.ts`.
+
+### Installation by catalog ID
+
+`POST /api/workspaces/:id/integrations/:integrationId/install?directory=` (`server/routes/integration-install.ts`,
+`IntegrationInstaller` in `opencode/integrations/install.ts`) takes the strict body `{ scope: "global" | "project" }`
+and the strict query `{ directory }`; any other field is 400. The server builds the spec `<package>@<range>` from
+the current catalog (a valid `stale` one included) and writes it with `PluginSources.add` and its serialized queue,
+without `expectedRevision`. It answers `{ scope, spec, reloadPending: true }` or `{ error, code }`:
+
+- 503 `unavailable`: no valid catalog, no service connection, or a replaced connection; 503 `timeout`: the add
+  deadline passed before any write;
+- 404 `not-found`: an ID outside the catalog; 422 `global-only`: a `native` integration in Project;
+- 409 `ambiguous`: an ambiguous recognition; 409 `duplicate`: a recognised declaration or runtime entry, or a
+  duplicate found by `PluginSources.add` in either scope (its `conflict`/`duplicate` refusal), including a write the
+  daemon has not reloaded yet; retained `id`/`-id` rules of an earlier removal never block;
+- 409 `stale`: the configuration document changed during the write; 422 `refused`: the document layer refused the
+  spec or the Location;
+- 403 `forbidden`: a Location the workspace does not own, checked by the snapshot read before any catalog-derived
+  answer.
+
+Ownership and `assertCurrent` are checked before the write and again after it. Every code above means nothing was
+written. A refusal after the write answers 503 `uncertain`: the client reconciles through a new read and never
+replays the request. Logs carry only the fixed code: never the spec, a path or a native error.
+
+`lib/integrations-api.ts` `installIntegration` sends the request once and checks the answer's shape.
+`pluginSourcesStore.installIntegration` (`stores/plugin-sources.ts`) reserves the attempt before transmission and
+shows its hint only once the server confirms the returned spec: that Plugins row is `pending` for
+`PLUGIN_SOURCE_PENDING_TIMEOUT_MS` (120 s), then `unconfirmed`. A refused or lost answer leaves no hint. Either way it
+invalidates the plugin snapshot and refreshes the demanded integrations reads. `installation(instance, location,
+integration)` derives `active`/`failed` from `plugin.runtime`, otherwise the hint or `unconfirmed` for a declaration.
 
 ## Application attachment
 
@@ -209,22 +252,37 @@ own. `stores/integrations.ts` owns the production singleton and forwards `instan
 and workspace-stop notifications. The event relay projects only the two payload-free integration notifications,
 retaining the native Location for ownership routing and dropping plugin-authored envelope fields.
 
-The conversation header (wide and overflow layouts) and each associated Plugins row offer a trusted application
-picker. The picker initially focuses Cancel, names its captured target conversation and the daemon machine, and
-requires explicit selection and confirmation. Navigation discards the captured target; reconnect and relevant
-native invalidations discard offers. Admitted action receipts remain readable for their unchanged target across
-native echoes. WSL-unsupported status shows help.
-Plugins shows an unavailable catalog or the last
-valid catalog's fetch time. Saved Q8 hints offer confirmed reattachment only for matching integration and label.
-Action receipts describe the completed request.
+`right-panel/integration-status-module.tsx` registers a native Status section per unambiguous integration with
+`plugin.declared` or `plugin.runtime` facts. Stable `integration:<id>` IDs follow catalog order after Plugins, with
+persisted hiding/order and keyboard Up/Down customization. Retained activation rules alone leave the entry in the
+installation catalog. `createIntegrationContext` shares the active Location with Plugins and supplies a conversation
+only when its Location matches. Sections retain their objects across display refreshes.
+
+`integration-section-state.ts` derives section and Conversation labels from installation, activation, host and
+authoritative binding facts. Headers keep the state visible, with Documentation beside the information Popover;
+the body contains Plugin (version, switches and row actions), Application/Conversation for native integrations,
+or Connection for the other families. Expected-action changes or an attached conversation expand the section once;
+user collapse persists until the expected-action key changes. Each Status tab owns one grouped polite live region.
+
+The section's Conversation line opens the trusted application picker. It initially focuses Cancel, names its captured
+target conversation and the daemon machine, and enables explicit confirmation after 600 ms. Navigation discards the
+captured target; reconnect and relevant native invalidations discard offers. Admitted action receipts remain readable
+for their unchanged target across native echoes. WSL-unsupported status shows help in the information Popover.
+Saved Q8 hints offer confirmed reattachment only for matching integration and label. Action receipts describe the
+completed request. **Detach** sends one request directly from the section for the authoritative current binding.
+
+Plugins retains its ordinary rows with update/remove/refresh actions. Its Add menu opens **Add an integration…**:
+the reviewed catalog's installable entries, family label, summary Popover, Documentation, scope and Install. Native
+integrations lock scope to Global. Catalog availability and the last valid fetch date appear here. Installation uses
+the shared guarded confirmation and `pluginSourcesStore.installIntegration`, preserving its pending/reconciliation
+semantics. Activation and plugin package updates use ordinary native mutations without confirmation.
 Cancelling attachment or application installation restores the captured visible, enabled opener while its
 owning view, conversation and integration context remain current. Navigation, invalidation and view disposal revoke restoration.
 
 `createIntegrationBindingsStore` (`stores/integration-bindings-store.ts`) shares reads for the exact instance,
-Location, session and native integration shown by the conversation header or its Plugins picker. The header keeps
-the application name and safe binding label outside the action overflow at every width; labels use isolated text,
-ellipsis and a full accessible title. An authoritative `none` renders no indicator, while `unknown` is explicit.
-Only a fresh `attached` binding offers Detach, including in the picker. Q8 supplies matching confirmed-reattach
+Location, session and native integration shown by the Status sections. The Conversation line keeps the safe binding
+label in isolated text and distinguishes `none` from explicit `unknown` and uncertain outcomes.
+Only a fresh `attached` binding offers Detach. Q8 supplies matching confirmed-reattach
 suggestions. Binding reads carry only the session selector and receive only the projected state/label.
 
 The store uses the shared secondary HTTP budget. Relevant integration/plugin/configuration events and exact-session
@@ -234,8 +292,8 @@ Every read checks its demand identity and generation before publication. Errors 
 demand aborts and drops its state. Attach and detach run once, then invalidate and reconcile their captured target
 in `finally`, including uncertain outcomes, while navigation leaves reads scoped to the latest shown target.
 
-The existing Plugins row menu also offers **Install application integration…** or **Update application integration…**
-only for its exact `configuredSources` association and a fresh active native integration reporting
+The integration section's Application line offers **Install in application…** or **Update application…**
+for a fresh active native integration reporting
 `host.action: "install" | "update"`. `components/integration-host-installation.ts` owns the trusted shared
 confirmation: application name, integration package version and the OpenCode-machine warning, with Cancel initially
 focused. The captured instance, Location, session-navigation identity, action, version and integration epoch fence
@@ -283,7 +341,13 @@ Commands:
   and `packages/ui/src/stores/integrations-store.test.ts` (event coalescing, no polling).
   `packages/ui/src/stores/integration-bindings-store.test.ts` checks shared exact-target demand, immediate authority
   revocation, generation fences, trailing reads, native/renderer disconnect suspension and captured mutation cleanup.
-  `catalog-fixture.ts` builds conforming catalog entries and plugin snapshots.
+  `catalog-fixture.ts` builds conforming catalog entries and plugin snapshots; `catalog-pinned-fixture.ts` reads
+  `fixtures/catalog-54d6e5d.json`, the published catalog of revision `54d6e5d`, checked against its Git blob ID.
+- `node --import tsx --test packages/server/src/opencode/integrations/docs-url.test.ts
+  packages/server/src/server/routes/integration-install.test.ts`: the documentation link check against the pinned
+  catalog and URL attacks; installation through the real route, `PluginSources` and configuration documents on disk
+  (every refusal code without writing, `stale` catalogs, the queue's duplicate in either scope, reinstall over retained
+  rules, strict inputs, ownership and connection before and after the write, and captured logs free of paths and specs).
 - `node --import tsx scripts/test-integrations-recognition-native.mjs <absolute-cli>`: the fake integration loaded
   (`ok`), its marker-mismatch variant (`non-conforming`), a third disabled by its exact rule (`inactive`, recognised)
   and an absent entry, against a real daemon; only loaded integrations are called, under catalog RPC IDs; a

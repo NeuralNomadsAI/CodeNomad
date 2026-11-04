@@ -1,4 +1,6 @@
 import type { IntegrationsResponse, IntegrationHostsResponse, IntegrationAttachResponse, IntegrationDetachResponse, IntegrationInstallHostResponse, IntegrationBindingResponse } from "../../../server/src/integration-types"
+import type { PluginControlScope } from "../../../server/src/api-types"
+import type { PluginSourceMutationResponse } from "../../../server/src/plugin-source-types"
 import type { IntegrationBindingTarget } from "../stores/integration-bindings-store"
 import { CODENOMAD_API_BASE as API_BASE } from "./api-base"
 import { authenticatedFetch } from "./auth-recovery"
@@ -35,6 +37,27 @@ export function fetchIntegrationBinding(target: IntegrationBindingTarget, signal
     } catch { /* A failed authority read is unknown; never retain a previous attachment. */ }
     return { state: "unknown" }
   }, "visible")
+}
+
+/**
+ * Installs a catalog integration by ID (`POST …/integrations/:id/install`): the server builds the spec from its
+ * catalog. Sent once; a lost or refused answer is an uncertain outcome the caller reconciles by a new read.
+ */
+export async function installIntegration(instanceId: string, directory: string, integrationId: string, scope: PluginControlScope,
+  signal?: AbortSignal): Promise<PluginSourceMutationResponse> {
+  const path = `/api/workspaces/${encodeURIComponent(instanceId)}/integrations/${encodeURIComponent(integrationId)}/install?${new URLSearchParams({ directory })}`
+  const response = await authenticatedFetch(API_BASE ? new URL(path, API_BASE).toString() : path, {
+    signal, credentials: "include", cache: "no-store", method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scope }),
+  })
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}))
+    throw new HttpResponseError("Integration install failed", response.status, null, typeof error?.code === "string" ? error.code : undefined)
+  }
+  const value = await response.json()
+  if (!value || typeof value !== "object" || Object.keys(value).length !== 3 || value.scope !== scope
+    || typeof value.spec !== "string" || !value.spec || value.reloadPending !== true) throw new Error("Invalid integration install response")
+  return { scope, spec: value.spec, reloadPending: true }
 }
 
 /** Fixed CodeNomad routes only; the server owns RPC identity and placement checks. Never replay mutations. */
