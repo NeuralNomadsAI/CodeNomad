@@ -155,6 +155,46 @@ test("instance teardown drops pending projections instead of resurrecting stores
   }
 })
 
+test("an idle compositor that never frames still projects through the fallback", async ctx => {
+  // Headless/hidden pages can stop producing frames entirely; every visible
+  // schedule arms a short fallback so a pending page can never hang.
+  ;(globalThis as any).requestAnimationFrame = () => 1
+  ;(globalThis as any).cancelAnimationFrame = () => {}
+  const f = fixture("frame-fallback")
+  try {
+    const hydration = ctx.mock.method(f.store, "hydrateMessages")
+    const { streamId, joined } = f.stream(20)
+    await new Promise(resolve => setTimeout(resolve, 120))
+    assert.equal(hydration.mock.callCount(), 1, "the frame fallback projects without a compositor frame")
+    assert.equal(f.storeText(streamId), joined)
+  } finally {
+    delete (globalThis as any).requestAnimationFrame
+    delete (globalThis as any).cancelAnimationFrame
+    f.cleanup()
+  }
+})
+
+test("an execution settlement projects its final status in the same task", ctx => {
+  const clock = frameClock()
+  const f = fixture("frame-settlement")
+  try {
+    const hydration = ctx.mock.method(f.store, "hydrateMessages")
+    const { streamId } = f.stream(5)
+    assert.equal(hydration.mock.callCount(), 0)
+    assert.equal(f.store.getMessage(streamId), undefined, "the streaming row is not resident before a frame")
+    f.dispatch("session.step.ended", { assistantMessageID: "msg_live", finish: "stop", cost: 0, tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } } })
+    f.dispatch("session.execution.succeeded", {})
+    const settled = f.store.getMessage("msg_live")
+    assert.ok(settled, "the settlement projected synchronously")
+    assert.equal(settled.status, "complete", "interactive reads never see a settled row lag a frame behind")
+    clock.fire()
+    assert.equal(hydration.mock.callCount(), 1, "the settlement subsumed the pending frame")
+  } finally {
+    clock.restore()
+    f.cleanup()
+  }
+})
+
 test("a destructive event projects synchronously and subsumes the pending frame", ctx => {
   const clock = frameClock()
   const f = fixture("frame-destructive")

@@ -35,6 +35,15 @@ type PendingProjection = {
 /** Hidden windows pause animation frames; this timer keeps projections bounded-stale instead. */
 const HIDDEN_PROJECTION_INTERVAL_MS = 250
 
+/**
+ * An idle compositor can stop producing frames (a hidden or headless page with
+ * nothing to draw), and a frame-aligned callback would then never run — a
+ * scheduled projection could hang until the next paint. Every visible-window
+ * schedule therefore also arms this short fallback; whichever wake wins, the
+ * other is cancelled, so a live page still projects exactly once per frame.
+ */
+const FRAME_FALLBACK_MS = 32
+
 let gates: TranscriptProjectionGates | undefined
 const pending = new Map<string, PendingProjection>()
 let cancelScheduledRun: (() => void) | undefined
@@ -140,11 +149,27 @@ function requestScheduledRun(): void {
   }
   if (typeof requestAnimationFrame === "function") {
     const cancelFrame = typeof cancelAnimationFrame === "function" ? cancelAnimationFrame : () => {}
-    const frame = requestAnimationFrame(() => {
+    let frame: number | undefined
+    let fallback: ReturnType<typeof setTimeout> | undefined
+    let settled = false
+    const settle = () => {
+      if (settled) return
+      settled = true
+      if (frame !== undefined) cancelFrame(frame)
+      if (fallback !== undefined) clearTimeout(fallback)
       cancelScheduledRun = undefined
       drain(false)
-    })
-    cancelScheduledRun = () => cancelFrame(frame)
+    }
+    const cancel = () => {
+      if (settled) return
+      settled = true
+      if (frame !== undefined) cancelFrame(frame)
+      if (fallback !== undefined) clearTimeout(fallback)
+      cancelScheduledRun = undefined
+    }
+    frame = requestAnimationFrame(settle)
+    fallback = setTimeout(settle, FRAME_FALLBACK_MS)
+    cancelScheduledRun = cancel
     return
   }
   // No frame scheduler exists (server-side/unit contexts): there is no frame to

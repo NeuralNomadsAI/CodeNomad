@@ -2254,13 +2254,17 @@ const USAGE_EVENT_TYPES = new Set<string>([
   "session.step.failed",
 ])
 
-// These events publish their page in the same task: teardown must not leave a
-// coalesced frame behind, and each pairs with direct store surgery whose
-// result a delayed projection would only repeat.
+// These events publish their page in the same task. Destructive events pair
+// with direct store surgery a delayed projection would only repeat, and an
+// execution settlement is the stable point interactive reads (part deletion,
+// copy) synchronize on: its final status must never lag a frame behind.
 const SYNCHRONOUS_PROJECTION_EVENTS = new Set<string>([
   "session.deleted",
   "session.inbox.cancelled",
   "session.revert.committed",
+  "session.execution.succeeded",
+  "session.execution.failed",
+  "session.execution.interrupted",
 ])
 
 // One stable, explicitly chunk-safe publication identity for ordinary replay.
