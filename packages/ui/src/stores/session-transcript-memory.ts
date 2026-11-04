@@ -6,6 +6,7 @@ import { isSessionTranscriptProtected, SessionTranscriptLru } from "../lib/sessi
 import { messageStoreBus } from "./message-v2/bus"
 import { loading, sessions } from "./session-state"
 import { destroyOpenCodeData } from "./opencode-data"
+import { cancelTranscriptProjections } from "./opencode-projection-frame"
 
 // Inactive transcript budget. Protected active/live 200-message windows retain authoritative content and may exceed it.
 export const SESSION_TRANSCRIPT_BYTE_BUDGET = 64 * 1024 * 1024
@@ -30,6 +31,7 @@ const coordinator = new SessionTranscriptLru({
   },
   evict: (instanceId, sessionId) => {
     log.info("Evicting inactive session transcript", { instanceId, sessionId })
+    cancelTranscriptProjections(instanceId, sessionId)
     destroyOpenCodeData(instanceId, sessionId)
     messageStoreBus.getInstance(instanceId)?.evictSessionTranscript(sessionId)
   },

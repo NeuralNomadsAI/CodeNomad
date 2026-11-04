@@ -15,6 +15,7 @@ import { applySessionPendingState } from "./session-pending-state"
 import { markSessionInterruptionSeen } from "./session-interruption-seen"
 import { cleanupBlankSession } from "./blank-session-cleanup"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
+import { flushTranscriptProjections } from "./opencode-projection-frame"
 import {
   resolveAuthoritativeGenerationRecovery,
   resolveHydratedGenerationRecovery,
@@ -703,6 +704,9 @@ function writeSessionSelection(
   instanceId: string,
   sessionId: string | null,
 ): void {
+  // A coalesced transcript page admitted under the previous selection lands
+  // before the gates move; nothing pending may cross a selection change.
+  flushTranscriptProjections()
   setter((prev) => {
     const next = new Map(prev)
     if (sessionId) next.set(instanceId, sessionId)

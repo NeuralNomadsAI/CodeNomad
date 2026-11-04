@@ -54,6 +54,11 @@ import {
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
 import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, projectOpenCodeMessages, syncOpenCodeSessionInbox, type OpenCodeDataEventAdmission } from "./opencode-data"
+import {
+  cancelTranscriptProjections,
+  scheduleTranscriptProjection,
+  setTranscriptProjectionGates,
+} from "./opencode-projection-frame"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { isLatestWindow } from "./message-v2/message-window"
 import { upsertPermissionV2, removePermissionV2, removeMessageV2 } from "./message-v2/bridge"
@@ -661,6 +666,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
   if (instance.client) {
     sdkManager.destroyClientsForInstance(descriptor.id)
     destroyOpenCodeData(descriptor.id)
+    cancelTranscriptProjections(descriptor.id)
   }
 
   const client = sdkManager.createClient(descriptor.id, nextProxyPath, () => activeInstanceId() === descriptor.id)
@@ -739,6 +745,7 @@ function releaseInstanceResources(instanceId: string) {
     sdkManager.destroyClientsForInstance(instanceId)
   }
   destroyOpenCodeData(instanceId)
+  cancelTranscriptProjections(instanceId)
   sseManager.seedStatus(instanceId, "disconnected")
 }
 
@@ -1487,6 +1494,7 @@ function updateInstance(id: string, updates: Partial<Instance>) {
     clearCommands(id)
     clearInstanceMetadata(id)
     destroyOpenCodeData(id)
+    cancelTranscriptProjections(id)
     volatileInstanceRefreshes.delete(id)
     for (const sessionId of sessions().get(id)?.keys() ?? []) invalidateSessionMessageLoad(id, sessionId)
   }
@@ -1555,6 +1563,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   clearPendingFormQueue(id)
   clearInstanceMetadata(id)
   destroyOpenCodeData(id)
+  cancelTranscriptProjections(id)
   clearPermissionAutoAcceptForInstance(id)
   clearSyncedYoloSessionsForInstance(id)
   initialHydrations.delete(id)
@@ -2245,6 +2254,15 @@ const USAGE_EVENT_TYPES = new Set<string>([
   "session.step.failed",
 ])
 
+// These events publish their page in the same task: teardown must not leave a
+// coalesced frame behind, and each pairs with direct store surgery whose
+// result a delayed projection would only repeat.
+const SYNCHRONOUS_PROJECTION_EVENTS = new Set<string>([
+  "session.deleted",
+  "session.inbox.cancelled",
+  "session.revert.committed",
+])
+
 // One stable, explicitly chunk-safe publication identity for ordinary replay.
 // Destructive event-specific effects below retain per-event callback barriers.
 const publishTranscriptChunk: NonNullable<OpenCodeDataEventAdmission["publication"]> = ({ instanceId, sessionId, data, events }) => {
@@ -2255,10 +2273,10 @@ const publishTranscriptChunk: NonNullable<OpenCodeDataEventAdmission["publicatio
     return
   }
   if (!isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))) return
-  projectOpenCodeMessages(instanceId, sessionId, data, true, sessionEvents.at(-1)?.type !== "session.inbox.enqueued")
-  if (sessionEvents.some((event) => USAGE_EVENT_TYPES.has(event.type) || event.type === "session.compaction.delta")) {
-    updateSessionInfo(instanceId, sessionId)
-  }
+  scheduleTranscriptProjection(instanceId, sessionId, data, {
+    confirmPending: sessionEvents.at(-1)?.type !== "session.inbox.enqueued",
+    updateUsage: sessionEvents.some((event) => USAGE_EVENT_TYPES.has(event.type) || event.type === "session.compaction.delta"),
+  })
 }
 
 function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
@@ -2287,14 +2305,23 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
       activeSessionId().get(instanceId) === sessionId
       && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))
     )) {
-      projectOpenCodeMessages(
-        instanceId,
-        sessionId,
-        data,
-        preserveOmitted,
-        force || event.type !== "session.inbox.enqueued",
-      )
-      if (force || USAGE_EVENT_TYPES.has(event.type)) updateSessionInfo(instanceId, sessionId)
+      if (force || SYNCHRONOUS_PROJECTION_EVENTS.has(event.type)) {
+        // A synchronous page subsumes whatever a pending frame still holds.
+        cancelTranscriptProjections(instanceId, sessionId)
+        projectOpenCodeMessages(
+          instanceId,
+          sessionId,
+          data,
+          preserveOmitted,
+          force || event.type !== "session.inbox.enqueued",
+        )
+        if (force || USAGE_EVENT_TYPES.has(event.type)) updateSessionInfo(instanceId, sessionId)
+        return
+      }
+      scheduleTranscriptProjection(instanceId, sessionId, data, {
+        confirmPending: event.type !== "session.inbox.enqueued",
+        updateUsage: USAGE_EVENT_TYPES.has(event.type),
+      })
     }
   }
   const project = (data: ReturnType<typeof applyOpenCodeDataEvent>, preserveOmitted = true) => {
@@ -2358,6 +2385,18 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
 }
 
 sseManager.onInvalidation = handleInstanceInvalidation
+
+// The frame coalescer re-checks the gates a projection was admitted under when
+// its frame runs; a selection change flushes pending pages first (session-state).
+setTranscriptProjectionGates({
+  isActiveSession: (instanceId, sessionId) => activeSessionId().get(instanceId) === sessionId,
+  isLatestMessageWindow: (instanceId, sessionId) =>
+    isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId)),
+  invalidateInactiveLoadedSession: (instanceId, sessionId) => {
+    if (messagesLoaded().get(instanceId)?.has(sessionId)) invalidateSessionMessageLoad(instanceId, sessionId)
+  },
+  onProjectedUsage: updateSessionInfo,
+})
 
 sseManager.onConnectionLost = (instanceId, reason) => {
   const instance = instances().get(instanceId)
