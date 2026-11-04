@@ -10,6 +10,7 @@ import { finishMissionDocumentDeletion } from "./mission-document-deletion"
 import { ownerFixture } from "../opencode/missions/native-schedule-owner-test-fixture"
 import { MissionDocumentPassageEngine } from "./mission-document-passage-engine"
 import { MissionJournal } from "./journal"
+import { MissionControlError } from "./control-error"
 
 const current = () => true as const
 
@@ -246,4 +247,16 @@ test("a one-time Mission prepared with launch criteria refuses a legacy launch b
   const again = await f.control.configurePreparation({ ...f.request, requestID: "criteria_again", expectedRevision: criteria.revision,
     configuration: { ...scheduledPreparation(f), launch: { when: [] } } }, f.native, current)
   assert.deepEqual((await f.read()).configuration.launch, { when: [] }); assert.ok(again.revision > criteria.revision)
+})
+
+test("a stale legacy preparation of a Mission already prepared with launch criteria is a revision conflict", async () => {
+  const f = await preparationFixture()
+  const stale = (await f.read()).revision
+  await f.control.configurePreparation({ ...f.request,
+    configuration: { ...scheduledPreparation(f), launch: { when: [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }] } } }, f.native, current)
+  const before = await f.read()
+  await assert.rejects(f.control.configurePreparation({ ...f.request, requestID: "stale_legacy", expectedRevision: stale,
+    configuration: scheduledPreparation(f) }, f.native, current), (error: unknown) => error instanceof MissionControlError && error.code === "revision-conflict")
+  const after = await f.read()
+  assert.equal(after.revision, before.revision); assert.deepEqual(after.preparation, before.preparation)
 })

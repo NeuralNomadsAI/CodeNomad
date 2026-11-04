@@ -32,7 +32,6 @@ export async function configureMissionPreparation(journal: MissionJournal, store
     if (!read || "deletedAt" in read || !read.oneTime) throw new Error("Mission preparation unavailable")
     let doc: MissionDocument = read
     const configuration = missionConfigurationSchema.parse(input.configuration)
-    assertMissionLaunchShape(doc, configuration)
     const fingerprint = stableToken(canonicalAuthority({ action: "configure", configuration, deleteManagedSessions: false }), 64)
     const previous = doc.preparation
     if (previous?.requestID === input.requestID) {
@@ -42,6 +41,8 @@ export async function configureMissionPreparation(journal: MissionJournal, store
       if (previous?.pending) throw new MissionControlError("Original Mission preparation is unresolved", "control-pending")
       if (doc.revision !== input.expectedRevision) throw new MissionControlError("Mission preparation revision conflict", "revision-conflict")
     }
+    // After the request checks, before any intent is recorded.
+    assertMissionLaunchShape(doc, configuration)
     if (!isDeepStrictEqual(configuration.roots, doc.configuration.roots)) throw new Error("Mission preparation scope locked")
     validateMissionProfiles(configuration.template, configuration.profiles)
     const profiles = freezeCompareProfiles(configuration.template, configuration.profiles)
