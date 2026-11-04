@@ -31,9 +31,9 @@ Sous Windows, un exécutable WSL sélectionné s’exécute dans la distribution
 
 OpenCode possède l’enregistrement global de son service, ses sessions, messages et base de données. CodeNomad ne crée pas une base OpenCode privée par fenêtre ou projet. Fermer un onglet de projet ferme ce projet dans CodeNomad ; les sessions continuent dans OpenCode et réapparaissent quand vous rouvrez le projet. CodeNomad ne décharge jamais les Locations natives. Fermer une fenêtre entière, quitter ou recharger conserve les connexions de projet pour la restauration ; ni ces actions ni l’arrêt du backend n’arrêtent le démon partagé. Voir [Projets](projects.md).
 
-## Démarrer OpenCode à l'ouverture de session {#login-start}
+## Démarrer OpenCode au démarrage {#login-start}
 
-Dans **Paramètres → OpenCode**, **Démarrer OpenCode à l'ouverture de session** demande au système de lancer le service OpenCode en arrière-plan quand vous ouvrez votre session, même CodeNomad fermé. Le réglage reste désactivé tant que vous ne l'activez pas, prend effet à la prochaine ouverture de session et concerne votre compte sur l'ordinateur qui exécute le serveur CodeNomad. Il lance l'exécutable choisi dans la carte **Binaire OpenCode** ; choisir un autre exécutable natif le met à jour, sinon il continue de lancer le précédent.
+Dans **Paramètres → OpenCode**, **Démarrer OpenCode au démarrage** demande au système de lancer le service OpenCode en arrière-plan quand vous ouvrez votre session, même CodeNomad fermé. Le réglage reste désactivé tant que vous ne l'activez pas, prend effet à la prochaine ouverture de session et concerne votre compte sur l'ordinateur qui exécute le serveur CodeNomad. Il lance l'exécutable choisi dans la carte **Binaire OpenCode** ; choisir un autre exécutable natif le met à jour, sinon il continue de lancer le précédent.
 
 | Système | Ce qui lance OpenCode | Après un plantage |
 | --- | --- | --- |

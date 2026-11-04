@@ -1,6 +1,6 @@
 export const openCodeLoginStartMessages = {
-  "settings.loginStart.title": "Oturum açılışında OpenCode'u başlat",
-  "settings.loginStart.info": "CodeNomad'ı çalıştıran bilgisayarda oturum açtığınızda OpenCode hizmetini arka planda başlatır.",
+  "settings.loginStart.title": "Başlangıçta OpenCode'u başlat",
+  "settings.loginStart.info": "OpenCode, kullanıcı oturumunuz açıldığında başlar.",
   "settings.loginStart.unavailable": "Bu sistemde kullanılamaz.",
   "settings.loginStart.error.read": "Bu ayar okunamadı.",
   "settings.loginStart.error.failed": "Bu ayar değiştirilemedi. Yeniden deneyin.",
