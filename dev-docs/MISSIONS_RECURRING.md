@@ -82,8 +82,8 @@ the draft's zone differs (a schedule saved elsewhere, an invalid zone) and then 
 for that editor, so typing never hides it; a reopened schedule keeps its stored zone.
 **Launch when** has a single **i** (`settings-info-link.tsx`, opened by click, Enter
 or Space) holding its explanations and the fact that schedules run only while
-OpenCode runs, ending with a link to the OpenCode **Keep OpenCode running** row
-(`service-supervision` anchor); Missions never reads or changes that setting.
+OpenCode runs, ending with a link to the OpenCode login-start row (`#opencode-login-start`
+anchor, labelled by that setting's own title key); Missions never reads or changes that setting.
 The list summarizes each criterion, prefixing conditions with **Only if**; the detail
 shows a stored legacy end date, and source checks only with events. The info tip
 beside the **Technical details** disclosure explains technical activity and costs.

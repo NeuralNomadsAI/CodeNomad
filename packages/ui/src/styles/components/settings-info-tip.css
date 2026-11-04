@@ -47,7 +47,7 @@
 }
 
 /* A setting row revealed by a link shows its focus with square corners. */
-[data-settings-row]:focus {
+.settings-card[tabindex="-1"]:focus {
   outline: 2px solid var(--accent-primary);
   outline-offset: -2px;
 }

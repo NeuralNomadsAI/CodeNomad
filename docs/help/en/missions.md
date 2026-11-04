@@ -153,7 +153,7 @@ Briefs store instructions and requested choices, not task plans, results, conver
 
 The **i** icons beside scheduling labels explain the choices: hover, focus with the keyboard or tap.
 
-Expand **Scheduling** in Create or Edit. **Launch when** lists the criteria that launch the mission: choose **Add a criterion**, then pick its type. The mission launches as soon as any **When** criterion occurs. Without any criterion, it launches once at Start (**Once, immediately**). Remove a criterion with its × button. The **i** beside **Launch when** opens on click, Enter or Space: it explains the criteria, notes that schedules only run while OpenCode is running and links to [Keep OpenCode running](opencode.md#service-supervision). New schedules use the system time zone; **Saved time zone (IANA)** appears only when the saved zone differs from it.
+Expand **Scheduling** in Create or Edit. **Launch when** lists the criteria that launch the mission: choose **Add a criterion**, then pick its type. The mission launches as soon as any **When** criterion occurs. Without any criterion, it launches once at Start (**Once, immediately**). Remove a criterion with its × button. The **i** beside **Launch when** opens on click, Enter or Space: it explains the criteria, notes that schedules only run while OpenCode is running and links to [OpenCode's start setting](opencode.md#login-start). New schedules use the system time zone; **Saved time zone (IANA)** appears only when the saved zone differs from it.
 
 | Schedule | Timing |
 | --- | --- |

@@ -70,8 +70,8 @@ export function MissionScheduling(props: {
       <div class="mission-scheduling-when-head">
         <span id={whenID} class="mission-scheduling-label">{t("missions.scheduling.when")}</span>
         {/* One "i" ending with a link only: Missions never reads or changes this independent setting. */}
-        <SettingsInfoLink title={t("missions.scheduling.when")} text={whenHint()} link={t("settings.supervision.title")}
-          onLink={() => void openSettingsRow("opencode", "service-supervision")} />
+        <SettingsInfoLink title={t("missions.scheduling.when")} text={whenHint()} link={t("settings.loginStart.title")}
+          onLink={() => void openSettingsRow("opencode", "opencode-login-start")} />
       </div>
       <fieldset disabled={locked()} aria-describedby={[reason() ? description : "", result().error ? errorID : ""].filter(Boolean).join(" ") || undefined} aria-invalid={!!result().error}>
       <div class="mission-scheduling-when" role="group" aria-labelledby={whenID}>

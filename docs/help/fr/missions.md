@@ -153,7 +153,7 @@ Les consignes stockent les instructions et choix demandés, pas les plans de tâ
 
 Les icônes **i** près des libellés expliquent les choix : survolez-les, placez-y le focus au clavier ou touchez-les.
 
-Développez **Programmation** dans le formulaire de création ou de modification. **Lancer quand** liste les critères qui lancent la mission : choisissez **Ajouter un critère**, puis son type. La mission part dès que l’un des critères **Quand** se produit. Sans aucun critère, elle part une fois au démarrage (**Une fois, immédiatement**). Retirez un critère avec son bouton ×. L’**i** à côté de **Lancer quand** s’ouvre au clic, avec Entrée ou Espace : il explique les critères, rappelle que les programmations ne tournent que si OpenCode tourne et mène à [Garder OpenCode démarré](opencode.md#service-supervision). Les nouvelles programmations utilisent le fuseau du système ; **Fuseau enregistré (IANA)** n’apparaît que si le fuseau enregistré en diffère.
+Développez **Programmation** dans le formulaire de création ou de modification. **Lancer quand** liste les critères qui lancent la mission : choisissez **Ajouter un critère**, puis son type. La mission part dès que l’un des critères **Quand** se produit. Sans aucun critère, elle part une fois au démarrage (**Une fois, immédiatement**). Retirez un critère avec son bouton ×. L’**i** à côté de **Lancer quand** s’ouvre au clic, avec Entrée ou Espace : il explique les critères, rappelle que les programmations ne tournent que si OpenCode tourne et mène au [réglage de démarrage d’OpenCode](opencode.md#login-start). Les nouvelles programmations utilisent le fuseau du système ; **Fuseau enregistré (IANA)** n’apparaît que si le fuseau enregistré en diffère.
 
 | Horaire | Déclenchement |
 | --- | --- |

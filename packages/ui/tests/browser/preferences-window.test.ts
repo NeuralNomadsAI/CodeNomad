@@ -138,7 +138,7 @@ test("a row hint from another window focuses the linked setting row on the nativ
     const w = window
     w.__CODENOMAD_RUNTIME_HOST__ = "electron"
     w.__CODENOMAD_WINDOW_CONTEXT__ = "preferences"
-    localStorage.setItem("codenomad.settings.rowTarget", JSON.stringify({ section: "opencode", row: "service-supervision", at: Date.now() }))
+    localStorage.setItem("codenomad.settings.rowTarget", JSON.stringify({ section: "opencode", row: "opencode-login-start", at: Date.now() }))
     w.electronAPI = {
       getPreferencesRequest: async () => ({ section: "opencode" }),
       acceptPreferencesRequest: async () => {},
@@ -150,7 +150,7 @@ test("a row hint from another window focuses the linked setting row on the nativ
     }
   }` })
   await context.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
-  const focused = () => page.waitForFunction(() => document.activeElement?.getAttribute("data-settings-row") === "service-supervision")
+  const focused = () => page.waitForFunction(() => document.activeElement?.id === "opencode-login-start")
   try {
     await page.goto(url)
     await page.waitForFunction(() => (window as any).ready)
@@ -161,7 +161,7 @@ test("a row hint from another window focuses the linked setting row on the nativ
     const other = await context.newPage()
     await other.goto(new URL("/api/fixture-origin", url).href)
     await other.evaluate(() => localStorage.setItem("codenomad.settings.rowTarget",
-      JSON.stringify({ section: "opencode", row: "service-supervision", at: Date.now() })))
+      JSON.stringify({ section: "opencode", row: "opencode-login-start", at: Date.now() })))
     await focused()
     await other.close()
     assert.deepEqual(errors, [])

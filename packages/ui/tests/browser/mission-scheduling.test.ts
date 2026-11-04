@@ -57,7 +57,7 @@ test("an empty form is a one-time Mission; one i explains; triggers OR and an On
     // One "i" beside Launch when holds every explanation and ends with the OpenCode setting link.
     assert.equal(await page.locator(".mission-scheduling-when-head .settings-info-tip").count(), 1)
     await page.getByRole("button", { name: /any When criterion occurs/ }).focus(); await page.keyboard.press("Enter")
-    await page.getByRole("dialog", { name: "Launch when" }).filter({ hasText: /any When criterion occurs.*Create saves a paused Mission.*only run while OpenCode is running\. Keep OpenCode running/ }).waitFor()
+    await page.getByRole("dialog", { name: "Launch when" }).filter({ hasText: /any When criterion occurs.*Create saves a paused Mission.*only run while OpenCode is running\./ }).waitFor()
     await page.keyboard.press("Escape")
     await page.locator(".settings-info-link-content").waitFor({ state: "detached" })
     await page.getByRole("button", { name: "Add a criterion", exact: true }).click()
@@ -287,11 +287,11 @@ test("retained policy explanation and exact JSON fit French/Hebrew narrow light 
   } finally { await page.close() }
 })
 
-test("the scheduling i links to the Keep OpenCode running row by its stable anchor without reading that setting", async () => {
+test("the scheduling i links to the OpenCode login-start row by its stable anchor without reading that setting", async () => {
   for (const locale of ["en", "fr"]) {
     const supervision: string[] = []
     const { page, errors } = await setup(locale === "fr" ? "?locale=fr" : "", page => page.on("request", request => {
-      if (new URL(request.url()).pathname.startsWith("/api/opencode/supervision")) supervision.push(request.method()) }))
+      if (new URL(request.url()).pathname.startsWith("/api/opencode/login-start")) supervision.push(request.method()) }))
     try {
       await page.waitForFunction(locale => document.documentElement.lang.startsWith(locale), locale)
       await rows(page, [["daily"]])
@@ -302,15 +302,17 @@ test("the scheduling i links to the Keep OpenCode running row by its stable anch
       await popover.waitFor()
       assert.equal((await popover.innerText()).includes(sentence), true)
       await page.screenshot({ path: path.join(captures, `runtime-info-${locale}.png`) })
-      assert.deepEqual(supervision, [], "Missions never reads the supervision setting")
+      assert.deepEqual(supervision, [], "Missions never reads the login-start setting")
       const link = popover.getByRole("button")
       await page.waitForFunction(() => document.activeElement?.classList.contains("settings-info-link-action"))
       assert.equal(await link.evaluate(element => element === document.activeElement), true, "opening by keyboard moves focus to the link")
+      const label = await link.innerText()
       await page.keyboard.press("Enter")
-      const row = page.locator('[data-settings-row="service-supervision"]')
+      const row = page.locator("#opencode-login-start")
       await row.waitFor()
-      await page.waitForFunction(() => document.activeElement?.getAttribute("data-settings-row") === "service-supervision")
+      await page.waitForFunction(() => document.activeElement?.id === "opencode-login-start")
       assert.equal(await popover.count(), 0)
+      assert.equal(await row.locator("h3").innerText(), label, "the link names the setting by its own title, whatever it is")
       for (let wait = 0; wait < 100 && !supervision.length; wait++) await page.waitForTimeout(50)
       assert.ok(supervision.length > 0 && supervision.every(method => method === "GET"), "only the opened setting reads its own state")
       await page.evaluate(() => (window as any).schedulingFixture.lock("passage"))

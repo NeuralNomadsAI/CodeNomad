@@ -153,7 +153,7 @@ Las descripciones guardan instrucciones y elecciones solicitadas, no planes de t
 
 Los iconos **i** junto a las etiquetas explican las opciones: pasa el puntero, enfócalos con el teclado o tócalos.
 
-Despliega **Programación** al crear o editar. **Lanzar cuando** enumera los criterios que lanzan la misión: elige **Añadir un criterio** y luego su tipo. La misión se lanza en cuanto ocurre cualquier criterio **Cuando**. Sin ningún criterio, se lanza una vez al iniciar (**Una vez, inmediatamente**). Quita un criterio con su botón ×. El **i** junto a **Lanzar cuando** se abre con un clic, Intro o Espacio: explica los criterios, recuerda que las programaciones solo se ejecutan mientras OpenCode está en marcha y enlaza a [Mantener OpenCode iniciado](opencode.md#service-supervision). Las nuevas programaciones usan la zona horaria del sistema; **Zona horaria guardada (IANA)** solo aparece si la zona guardada es distinta.
+Despliega **Programación** al crear o editar. **Lanzar cuando** enumera los criterios que lanzan la misión: elige **Añadir un criterio** y luego su tipo. La misión se lanza en cuanto ocurre cualquier criterio **Cuando**. Sin ningún criterio, se lanza una vez al iniciar (**Una vez, inmediatamente**). Quita un criterio con su botón ×. El **i** junto a **Lanzar cuando** se abre con un clic, Intro o Espacio: explica los criterios, recuerda que las programaciones solo se ejecutan mientras OpenCode está en marcha y enlaza al [ajuste de inicio de OpenCode](opencode.md#login-start). Las nuevas programaciones usan la zona horaria del sistema; **Zona horaria guardada (IANA)** solo aparece si la zona guardada es distinta.
 
 | Horario | Momento |
 | --- | --- |

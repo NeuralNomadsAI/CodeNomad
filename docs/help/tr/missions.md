@@ -153,7 +153,7 @@ Reddedilen veya doğrulanmayan bir seçim asla yeniden gönderilmez: kayıtlı d
 
 Etiketlerin yanındaki **i** simgeleri seçenekleri açıklar: üzerine gelin, klavyeyle odaklayın veya dokunun.
 
-Oluştururken veya düzenlerken **Zamanlama** bölümünü genişletin. **Şu durumda başlat**, görevi başlatan ölçütleri listeler: **Ölçüt ekle** seçip türünü belirleyin. Görev, herhangi bir **Ne zaman** ölçütü gerçekleştiği anda başlar. Hiç ölçüt yoksa Başlat'ta bir kez çalışır (**Bir kez, hemen**). Bir ölçütü × düğmesiyle kaldırın. **Şu durumda başlat** yanındaki **i** tıklama, Enter veya Boşluk ile açılır: ölçütleri açıklar, zamanlamaların yalnızca OpenCode çalışırken çalıştığını belirtir ve [OpenCode'u çalışır tut](opencode.md#service-supervision) ayarına götürür. Yeni zamanlamalar sistemin saat dilimini kullanır; **Kayıtlı saat dilimi (IANA)** yalnızca kayıtlı saat dilimi farklıysa görünür.
+Oluştururken veya düzenlerken **Zamanlama** bölümünü genişletin. **Şu durumda başlat**, görevi başlatan ölçütleri listeler: **Ölçüt ekle** seçip türünü belirleyin. Görev, herhangi bir **Ne zaman** ölçütü gerçekleştiği anda başlar. Hiç ölçüt yoksa Başlat'ta bir kez çalışır (**Bir kez, hemen**). Bir ölçütü × düğmesiyle kaldırın. **Şu durumda başlat** yanındaki **i** tıklama, Enter veya Boşluk ile açılır: ölçütleri açıklar, zamanlamaların yalnızca OpenCode çalışırken çalıştığını belirtir ve [OpenCode'un başlatma ayarına](opencode.md#login-start) götürür. Yeni zamanlamalar sistemin saat dilimini kullanır; **Kayıtlı saat dilimi (IANA)** yalnızca kayıtlı saat dilimi farklıysa görünür.
 
 | Zamanlama | Zaman |
 | --- | --- |
