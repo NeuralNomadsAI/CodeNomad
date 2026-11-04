@@ -16,6 +16,7 @@ import {
 } from "./opencode-data-events"
 import { mergePageWithSnapshot, snapshotRows, type OpenCodeRowSnapshot } from "./opencode-data-read-merge"
 import { createReconnect, type ReconnectCapture } from "./opencode-reconnect"
+import { cancelTranscriptProjections } from "./opencode-projection-frame"
 
 const log = getLogger("session")
 
@@ -1029,6 +1030,10 @@ function isStaleToolCalled(data: Data, event: OpenCodeEvent): boolean {
 }
 
 export function destroyOpenCodeData(instanceId: string, sessionId?: string): void {
+  // The shared lifetime boundary for reducers, reconnect resets and instance
+  // teardown: a coalesced frame holding this reducer's page must never publish
+  // after the entry is gone (its guard cannot see a missing entry).
+  cancelTranscriptProjections(instanceId, sessionId)
   if (sessionId !== undefined) {
     compactionDeltas.cancel(instanceId, sessionId)
     unobservedCompactions.delete(messageRevisionKey(instanceId, sessionId))

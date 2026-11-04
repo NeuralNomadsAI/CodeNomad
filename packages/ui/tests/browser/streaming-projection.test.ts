@@ -3,8 +3,10 @@ import { after, before, test } from "node:test"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { fixtureEventStream } from "./fixture-event-stream"
 
 let browser: Browser, url: string
+let stream: Awaited<ReturnType<typeof fixtureEventStream>>
 before(async () => {
   const fixture = await borrowFixture({
     name: "streaming-projection",
@@ -13,23 +15,33 @@ before(async () => {
     ],
   })
   url = fixture.url
+  stream = await fixtureEventStream(url)
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close() })
+after(async () => { try { await browser?.close() } finally { await stream?.close() } })
 
 async function open(run: (page: Page) => Promise<void>) {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()) })
+  page.on("response", response => { if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`) })
+  page.on("requestfailed", request => errors.push(`${request.method()} ${request.url()}: ${request.failure()?.errorText}`))
   await page.route("**/*", route => {
     const request = new URL(route.request().url())
     if (request.hostname !== "127.0.0.1") return route.abort()
+    if (request.pathname === "/workspaces/streaming-fixture/yolo/sessions/active" && route.request().method() === "GET") {
+      return route.fulfill({ json: { enabled: false } })
+    }
     if (request.pathname.startsWith("/api/")) return route.fulfill({ json: {} })
     return route.continue()
   })
   try {
+    await stream.route(page)
+    const opened = page.waitForResponse(response => new URL(response.url()).pathname === "/api/events")
     await page.goto(url, { waitUntil: "domcontentloaded" })
+    assert.match((await opened).headers()["content-type"], /text\/event-stream/)
     await page.waitForFunction(() => Boolean((window as any).streamingFixture), undefined, { timeout: 60_000 })
     await page.waitForTimeout(300)
     await run(page)
@@ -41,6 +53,7 @@ const snapshot = (page: Page) => page.evaluate(() => (window as any).streamingFi
 const frames = (page: Page) => page.evaluate(() => new Promise<void>(resolve =>
   requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
 const joined = (count: number) => Array.from({ length: count }, (_, index) => `[${index}]`).join("")
+const spacedText = (count: number) => Array.from({ length: count }, (_, index) => `<${index}>`).join("")
 /** Starts a reply and lets its own frame land before counts reset. */
 const startSettled = async (page: Page, messageId?: string) => {
   await page.evaluate((id) => (window as any).streamingFixture.startReply(id ?? undefined), messageId)
@@ -72,7 +85,8 @@ test("spaced deltas across tasks stay frame-coalesced and complete", () => open(
   await frames(page)
   const state = await snapshot(page)
   console.log("streaming-spaced", JSON.stringify({ variant: process.env.CODENOMAD_STREAMING_VARIANT ?? "default", spaced, projections: state.projections }))
-  assert.ok(state.text.endsWith("<23>"), "the projected page carries every spaced delta")
+  assert.equal(state.text, spacedText(24), "the projected page carries every spaced delta, exactly once, in order")
+  assert.ok(state.projections < 24, `frame coalescing projects fewer passes than deltas (got ${state.projections})`)
 }))
 
 test("visibility changes and session switches flush pending pages", () => open(async page => {

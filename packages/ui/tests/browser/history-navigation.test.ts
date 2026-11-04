@@ -982,7 +982,12 @@ test("resident streaming keeps a distant timeline marker mounted", async () => {
       return element.isConnected
     })
     assert(retained, "a resident content update must not remount an unchanged distant click target")
-    assert((await snapshot(f.page)).ids.includes("msg_streaming"), "the resident transcript did receive the streamed message")
+    // The streamed row publishes on its coalesced frame; wait for it before
+    // rechecking the marker, so the identity assertion protects the DOM
+    // invariant instead of racing the publication.
+    await f.page.waitForFunction(() => (window as any).fixture.snapshot().ids.includes("msg_streaming"), undefined, { timeout: 15_000 })
+    assert.equal(await marker.evaluate(element => element.isConnected), true,
+      "the distant marker stays mounted after the streamed row publishes")
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })

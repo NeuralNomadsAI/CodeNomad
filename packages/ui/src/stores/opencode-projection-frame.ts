@@ -1,5 +1,4 @@
 import type { Data } from "@opencode/client/solid"
-import { projectOpenCodeMessages } from "./opencode-data"
 import { getLogger } from "../lib/logger"
 
 const log = getLogger("session")
@@ -14,6 +13,10 @@ const log = getLogger("session")
  * reading the reducer's newest state. Projections never skip on reference
  * identity (the reducer mutates rows in place); `hydrateMessages` record reuse
  * remains what keeps an unchanged window cheap.
+ *
+ * The module stays free of store imports so the reducer's own lifetime
+ * boundaries (`destroyOpenCodeData`) can cancel pending frames; every store
+ * touch arrives through the gates the instance layer registers.
  */
 export type TranscriptProjectionGates = {
   isActiveSession(instanceId: string, sessionId: string): boolean
@@ -22,6 +25,8 @@ export type TranscriptProjectionGates = {
   invalidateInactiveLoadedSession(instanceId: string, sessionId: string): void
   /** Cost/token totals published after usage-affecting events. */
   onProjectedUsage(instanceId: string, sessionId: string): void
+  /** Publishes a reduced page into the message store. */
+  projectPage(instanceId: string, sessionId: string, data: Data, confirmPending: boolean): void
 }
 
 type PendingProjection = {
@@ -65,11 +70,7 @@ export function scheduleTranscriptProjection(
   data: Data,
   options: { confirmPending?: boolean; updateUsage?: boolean } = {},
 ): void {
-  if (!gates) {
-    // No instance layer registered (unit harnesses): project synchronously.
-    projectOpenCodeMessages(instanceId, sessionId, data, true, options.confirmPending ?? true)
-    return
-  }
+  if (!gates) return
   const key = projectionKey(instanceId, sessionId)
   const previous = pending.get(key)
   const merged = previous !== undefined && previous.data === data
@@ -92,6 +93,15 @@ export function flushTranscriptProjections(): void {
   drain(true)
 }
 
+/** Removes and returns a session's pending projection. A synchronous
+ * publication takes its obligations (usage updates) over before dropping it. */
+export function takeTranscriptProjection(instanceId: string, sessionId: string): PendingProjection | undefined {
+  const key = projectionKey(instanceId, sessionId)
+  const entry = pending.get(key)
+  if (entry !== undefined) disarmIfEmpty(key)
+  return entry
+}
+
 /** Drops pending projections for a session (or whole instance): destroyed
  * reducers must not be projected by a later frame into a resurrected store. */
 export function cancelTranscriptProjections(instanceId: string, sessionId?: string): void {
@@ -103,15 +113,23 @@ export function cancelTranscriptProjections(instanceId: string, sessionId?: stri
   } else {
     pending.delete(projectionKey(instanceId, sessionId))
   }
-  if (!pending.size && cancelScheduledRun) {
+  if (!pending.size) disarm()
+}
+
+function disarmIfEmpty(removedKey: string): void {
+  pending.delete(removedKey)
+  if (!pending.size) disarm()
+}
+
+function disarm(): void {
+  if (cancelScheduledRun) {
     cancelScheduledRun()
     cancelScheduledRun = undefined
   }
 }
 
 function drain(bypassActiveGate: boolean): void {
-  cancelScheduledRun?.()
-  cancelScheduledRun = undefined
+  disarm()
   if (!pending.size || !gates) return
   const entries = [...pending.values()]
   pending.clear()
@@ -136,7 +154,7 @@ function applyProjection(entry: PendingProjection, bypassActiveGate: boolean): v
     return
   }
   if (!gate.isLatestMessageWindow(entry.instanceId, entry.sessionId)) return
-  projectOpenCodeMessages(entry.instanceId, entry.sessionId, entry.data, true, entry.confirmPending)
+  gate.projectPage(entry.instanceId, entry.sessionId, entry.data, entry.confirmPending)
   if (entry.updateUsage) gate.onProjectedUsage(entry.instanceId, entry.sessionId)
 }
 
