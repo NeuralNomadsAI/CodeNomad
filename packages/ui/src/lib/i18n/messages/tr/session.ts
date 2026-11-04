@@ -32,8 +32,6 @@ export const sessionMessages = {
   "sessionList.childActivity.idle.other": "{count} alt oturum boşta",
   "sessionList.status.interrupted": "Kesildi",
   "sessionList.status.clear": "Temizle",
-  "sessionList.childActivity.interrupted.one": "{count} alt oturum kesildi",
-  "sessionList.childActivity.interrupted.other": "{count} alt oturum kesildi",
   "sessionList.status.clearAriaLabel": "{status} durumunu temizle",
   "sessionList.status.retrying": "Yeniden deneniyor",
   "sessionList.status.retryingIn": "{seconds} sn içinde yeniden denenecek",

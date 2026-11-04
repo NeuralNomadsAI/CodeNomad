@@ -35,8 +35,6 @@ export const sessionMessages = {
   "sessionList.childActivity.idle.other": "{count} sous-sessions inactives",
   "sessionList.status.interrupted": "Interrompu",
   "sessionList.status.clear": "Effacer",
-  "sessionList.childActivity.interrupted.one": "{count} sous-session interrompue",
-  "sessionList.childActivity.interrupted.other": "{count} sous-sessions interrompues",
   "sessionList.status.clearAriaLabel": "Effacer {status}",
   "sessionList.status.retrying": "Nouvelle tentative",
   "sessionList.status.retryingIn": "Nouvelle tentative dans {seconds}s",

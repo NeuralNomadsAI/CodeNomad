@@ -50,7 +50,7 @@ interrupts, updates a session or replays anything automatically.
 
 `session-interruption-seen.ts` owns per-window, per-project-tab acknowledgement
 watermarks keyed by session ID and the native `time.idle` boundary. The session
-list's explicit badge click, sweep and collapsed-parent indicator acknowledge
+list's explicit badge click and sweep acknowledge
 Interrupted through `markSessionInterruptionSeen`. Viewing a visible, focused
 conversation clears only Idle through `markSessionIdleSeen`. Native outcome,
 recovery, admission and pending-request facts keep their existing authority.

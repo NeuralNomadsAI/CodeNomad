@@ -83,8 +83,7 @@ test("a collapsed parent's chevron carries visible subsession statuses without r
       ;(window as any).fixture.status("other-grandchild", "idle")
     })
     await settlesOn("other-child", "--session-status-idle-fg")
-    assert.equal(await chevron("other-child").getAttribute("aria-label"), "Clear 1 subsession idle")
-    await chevron("other-child").click()
+    assert.equal(await chevron("other-child").getAttribute("aria-label"), "Expand session — 1 subsession idle")
     await chevron("other-child").click()
     await page.locator('[data-session-id="other-grandchild"]').waitFor()
     assert.equal(await chevron("other-child").getAttribute("data-child-activity"), null)
@@ -104,7 +103,7 @@ test("a collapsed parent's chevron carries visible subsession statuses without r
       ;(window as any).fixture.status("other-child", "idle")
     })
     await settlesOn("other", "--session-status-idle-fg")
-    assert.equal(await chevron("other").getAttribute("aria-label"), "Clear 2 subsessions idle")
+    assert.equal(await chevron("other").getAttribute("aria-label"), "Expand session — 2 subsessions idle")
     await page.evaluate(() => {
       ;(window as any).fixture.seen("other-child")
       ;(window as any).fixture.seen("other-grandchild")
@@ -128,13 +127,14 @@ test("a collapsed parent's chevron carries visible subsession statuses without r
     })
     assert.equal(await chevron("other").getAttribute("data-child-activity"), null)
 
-    // Interrupted carries its own colour; retrying stays out of the idle projection.
-    await page.evaluate(() => (window as any).fixture.idle("other-grandchild", Date.now(), { generationRecovery: "interrupted" }))
-    await settlesOn("other", "--status-warning")
-    assert.equal(await chevron("other").getAttribute("aria-label"), "Clear 1 subsession interrupted")
-    for (const extra of [{ retry: { attempt: 1, message: "Retry", next: 0 } }]) {
+    // Interrupted and retrying stay out of the idle projection.
+    for (const extra of [{ generationRecovery: "interrupted" }, { retry: { attempt: 1, message: "Retry", next: 0 } }]) {
       await page.evaluate(extra => (window as any).fixture.idle("other-grandchild", Date.now(), extra), extra)
       assert.equal(await chevron("other").getAttribute("data-child-activity"), null)
+      if (extra.generationRecovery) {
+        await page.evaluate(() => (window as any).fixture.acknowledgeInterruption("other-grandchild"))
+        assert.equal(await chevron("other").getAttribute("data-child-activity"), null, "acknowledged interruptions stay out of the idle projection too")
+      }
     }
 
     // A new activity in the viewed conversation reveals it without pointer interaction.

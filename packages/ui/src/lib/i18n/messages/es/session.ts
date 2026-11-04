@@ -35,8 +35,6 @@ export const sessionMessages = {
   "sessionList.childActivity.idle.other": "{count} subsesiones inactivas",
   "sessionList.status.interrupted": "Interrumpido",
   "sessionList.status.clear": "Descartar",
-  "sessionList.childActivity.interrupted.one": "{count} subsesión interrumpida",
-  "sessionList.childActivity.interrupted.other": "{count} subsesiones interrumpidas",
   "sessionList.status.clearAriaLabel": "Descartar {status}",
   "sessionList.status.retrying": "Reintentando",
   "sessionList.status.retryingIn": "Reintentando en {seconds}s",

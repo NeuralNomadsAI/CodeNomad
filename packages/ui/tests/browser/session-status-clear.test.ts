@@ -84,28 +84,6 @@ test("dragging from a badge clears every Idle or Interrupted badge it crosses an
       [null, null, "WORKING", "NEEDS PERMISSION", "NEEDS INPUT", null])
     assert.deepEqual(await selected(page), [], "the release opens nothing")
 
-    // A collapsed parent's idle chevron stands for its subsessions' badges: dragging out of it
-    // clears them and neither expands the parent nor opens the row released on.
-    const chevron = page.locator('[data-session-id="parent-f"] .session-item-expander')
-    assert.equal(await chevron.getAttribute("data-child-activity"), "interrupted")
-    assert.equal(await chevron.getAttribute("title"), "Clear")
-    assert.equal(await chevron.getAttribute("aria-label"), "Clear 1 subsession interrupted, 1 subsession idle")
-    const box = (await chevron.boundingBox())!
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-    await page.mouse.down()
-    await page.mouse.move(box.x + box.width + 60, box.y + box.height / 2, { steps: 8 })
-    await page.mouse.up()
-    assert.equal(await chevron.getAttribute("data-child-activity"), null)
-    assert.equal(await chevron.getAttribute("aria-expanded"), "false")
-    assert.deepEqual(await selected(page), [])
-    const other = page.locator('[data-session-id="parent-g"] .session-item-expander')
-    await other.focus()
-    await page.keyboard.press("Space")
-    assert.equal(await other.getAttribute("data-child-activity"), null, "a terminal parent indicator clears by keyboard too")
-    assert.equal(await other.getAttribute("aria-expanded"), "false")
-    await chevron.click()
-    await page.locator('[data-session-id="f-2"]').waitFor()
-    assert.deepEqual(await statuses(page, ["f-1", "f-2"]), [null, null])
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -156,18 +134,50 @@ test("parent work and input indicators stay visible and keep their expand action
   } finally { await page.close() }
 })
 
-test("clicking a collapsed terminal indicator clears descendants without expanding or selecting", async () => {
+test("a parent with Idle and native Interrupted children expands and collapses without clearing badges", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 700 } })
   try {
     const errors = await open(page)
+    await page.evaluate(() => (window as any).fixture.interrupt("f-2"))
+    await page.waitForFunction(() => (window as any).fixture.session("f-2").generationRecovery === "interrupted")
     const chevron = page.locator('[data-session-id="parent-f"] .session-item-expander')
-    await chevron.click()
-    assert.equal(await chevron.getAttribute("data-child-activity"), null)
     assert.equal(await chevron.getAttribute("aria-expanded"), "false")
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await chevron.click()
+      assert.equal(await chevron.getAttribute("aria-expanded"), "true", "the first click expands, including with terminal attention")
+      await badge(page, "f-1").waitFor()
+      await badge(page, "f-2").waitFor()
+      assert.deepEqual(await statuses(page, ["f-1", "f-2"]), ["IDLE", "INTERRUPTED"])
+      assert.equal(await chevron.getAttribute("aria-label"), "Collapse session")
+      assert.equal(await chevron.getAttribute("title"), "Collapse")
+      assert.equal(await chevron.getAttribute("data-child-activity"), null)
+      assert.equal(await chevron.getAttribute("data-toggle-sweep"), null)
+      await chevron.click()
+      assert.equal(await chevron.getAttribute("aria-expanded"), "false")
+      await badge(page, "f-1").waitFor({ state: "hidden" })
+      await badge(page, "f-2").waitFor({ state: "hidden" })
+      assert.equal(await chevron.getAttribute("aria-label"), "Expand session — 1 subsession idle")
+      assert.equal(await chevron.getAttribute("title"), "Expand — 1 subsession idle")
+      assert.equal(await chevron.getAttribute("data-child-activity"), "idle")
+      assert.equal(await chevron.getAttribute("data-toggle-sweep"), null)
+    }
     assert.deepEqual(await selected(page), [])
-    await chevron.click()
-    assert.deepEqual(await statuses(page, ["f-1", "f-2"]), [null, null])
+    assert.equal(await page.evaluate(() => (window as any).fixture.session("f-1").idleSince), 5)
     assert.equal(await page.evaluate(() => (window as any).fixture.session("f-2").generationRecovery), "interrupted")
+
+    // An Interrupted-only branch has a plain chevron and the same keyboard action.
+    const other = page.locator('[data-session-id="parent-g"] .session-item-expander')
+    assert.equal(await other.getAttribute("data-child-activity"), null)
+    assert.equal(await other.getAttribute("aria-label"), "Expand session")
+    assert.equal(await other.getAttribute("title"), "Expand")
+    assert.equal(await other.getAttribute("data-toggle-sweep"), null)
+    await other.focus()
+    await page.keyboard.press("Space")
+    assert.equal(await other.getAttribute("aria-expanded"), "true")
+    assert.equal(await badge(page, "g-1").innerText(), "INTERRUPTED")
+    await page.keyboard.press("Enter")
+    assert.equal(await other.getAttribute("aria-expanded"), "false")
+    assert.deepEqual(await selected(page), [])
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

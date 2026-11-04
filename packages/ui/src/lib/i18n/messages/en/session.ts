@@ -35,8 +35,6 @@ export const sessionMessages = {
   "sessionList.childActivity.idle.other": "{count} subsessions idle",
   "sessionList.status.interrupted": "Interrupted",
   "sessionList.status.clear": "Clear",
-  "sessionList.childActivity.interrupted.one": "{count} subsession interrupted",
-  "sessionList.childActivity.interrupted.other": "{count} subsessions interrupted",
   "sessionList.status.clearAriaLabel": "Clear {status}",
   "sessionList.status.retrying": "Retrying",
   "sessionList.status.retryingIn": "Retrying in {seconds}s",
