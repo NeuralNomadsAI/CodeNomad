@@ -195,7 +195,7 @@ while an explicit action runs.
 
 ## Start OpenCode at login
 
-`host-lifetime/opencode-login-start.ts` backs Settings → OpenCode **Start OpenCode at login**:
+`host-lifetime/opencode-login-start.ts` backs Settings → OpenCode **Start OpenCode at startup** (started at login):
 a voluntary preference, off by default, whose only state is one OS artifact per account.
 Missions never read or change it. `GET|POST /api/opencode/login-start`
 (`server/routes/opencode-login-start.ts`) returns `{ state: "on" | "off" | "unavailable" }`

@@ -1,6 +1,6 @@
 export const openCodeLoginStartMessages = {
-  "settings.loginStart.title": "Запускать OpenCode при входе в систему",
-  "settings.loginStart.info": "Запускает службу OpenCode в фоне при входе в систему на компьютере, где работает CodeNomad.",
+  "settings.loginStart.title": "Запускать OpenCode при старте системы",
+  "settings.loginStart.info": "OpenCode запускается при входе в ваш сеанс пользователя.",
   "settings.loginStart.unavailable": "Недоступно в этой системе.",
   "settings.loginStart.error.read": "Не удалось прочитать этот параметр.",
   "settings.loginStart.error.failed": "Не удалось изменить этот параметр. Повторите попытку.",
