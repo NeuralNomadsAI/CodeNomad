@@ -36,8 +36,11 @@ async function withPage(run: (page: Page) => Promise<void>) {
   } finally { await page.close() }
 }
 
-async function decodedImages(page: Page, count: number) {
-  await page.waitForFunction(count => {
+/** Event-driven projections coalesce onto the next animation frame. */
+const frames = (page: Page) => page.evaluate(() =>
+  new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+
+async function decodedImages(page: Page, count: number) {  await page.waitForFunction(count => {
     const images = Array.from(document.querySelectorAll<HTMLImageElement>(".tool-call-output-images img"))
     return images.length === count && images.every(img => img.complete && img.naturalWidth === 800)
   }, count)
@@ -147,6 +150,7 @@ test("Code Mode renders native progress, nested errors, script, images and histo
   await firstCall.click()
   await firstCall.focus()
   await page.evaluate(() => (window as any).fixture.execute("progress"))
+  await frames(page)
   assert.equal(await page.locator(".execute-calls li").count(), 3)
   assert.equal(await page.locator(".execute-calls details").first().getAttribute("open"), "")
   assert.equal(await firstCall.evaluate(el => el === document.activeElement), true)
