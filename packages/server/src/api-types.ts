@@ -966,4 +966,7 @@ export interface ServiceUsageSnapshot {
   connection?: string
   stats: import("@opencode/client").SessionStatsInfo
 }
-export type { SupervisionSettingsResponse, SupervisionSettingsControl } from "./host-lifetime/service-supervision-service"
+/** Settings → OpenCode "Start OpenCode at login": the presence of the OS login artifact. */
+export type LoginStartState = "on" | "off" | "unavailable"
+export interface LoginStartResponse { state: LoginStartState }
+export interface LoginStartControl { enabled: boolean }

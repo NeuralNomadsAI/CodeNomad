@@ -53,7 +53,7 @@ export async function readNativeServiceRegistration(input: {
 }
 
 /** Internal credential-scoped channel resolution. Credentials stay in memory. */
-export async function readNativeServiceChannel(configDirectory: string, password: string) {
+async function readNativeServiceChannel(configDirectory: string, password: string) {
   const names = (await readdir(configDirectory)).filter(name => serviceFile.test(name))
   if (names.length > MAX_CONFIGS) throw new Error("Too many native service configurations")
   const matches: Array<{ name: string; config: Record<string, unknown> }> = []

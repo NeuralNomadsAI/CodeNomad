@@ -89,7 +89,7 @@ describe("enforceSpeechCredentialPairing", () => {
   })
 })
 
-it("both explicit executable settings paths publish after save; unrelated settings and reads stay passive", async t => {
+it("both explicit executable settings paths refresh the login start after save; unrelated settings and reads stay passive", async t => {
   const app = Fastify(), order: string[] = []
   t.after(() => app.close())
   const settings = {
@@ -98,12 +98,12 @@ it("both explicit executable settings paths publish after save; unrelated settin
     mergePatchOwner: (_kind: string, _owner: string, patch: object) => { order.push("save"); return patch },
   } as unknown as SettingsService
   registerSettingsRoutes(app, { settings, logger: {} as Logger,
-    publishSupervisionTarget: async () => { order.push("publish") } })
+    refreshLoginStart: async () => { order.push("refresh") } })
   for (const [url, payload] of [["/api/storage/config", { server: { opencodeBinary: "C:\\with spaces\\opencode.exe" } }],
     ["/api/storage/config/server", { opencodeBinary: "C:\\with spaces\\opencode.exe" }]] as const) {
     order.length = 0
     assert.equal((await app.inject({ method: "PATCH", url, payload })).statusCode, 200)
-    assert.deepEqual(order, ["save", "publish"])
+    assert.deepEqual(order, ["save", "refresh"])
   }
   order.length = 0
   await app.inject({ method: "PATCH", url: "/api/storage/config/server", payload: { logLevel: "INFO" } })

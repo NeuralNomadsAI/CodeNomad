@@ -26,7 +26,6 @@ async function fixture(t: test.TestContext) {
   const profile = canonicalScope("stable", yaml, root, root), workspace = {}, app = Fastify({ logger: false })
   const fence = new WorktreeDeletionFence(5000)
   const state = { human: true, owned: true, workspace, profile, checkout: root, canonical: root, projectID: "project",
-    plays: [] as string[],
     writes: [] as MissionScheduleRequest[], reads: [] as Array<{ missionID: string; requestID?: string }>, entries: 0,
     write: undefined as ((input: MissionScheduleRequest) => Promise<unknown>) | undefined,
     read: undefined as ((input: { missionID: string; requestID?: string }) => Promise<unknown>) | undefined,
@@ -63,10 +62,6 @@ async function fixture(t: test.TestContext) {
     getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix" }
   app.addHook("preHandler", async request => { state.abort = () => { request.raw.emit("aborted") } })
   registerMissionScheduled(app, { workspaceManager: manager, worktreeDeletionFence: fence, bridgeToken: "fixture-token",
-    // Play never consults service supervision: a stray dependency must stay unused.
-    supervision: { missionPlay: async (_connection: unknown, requestID: string) => {
-      state.plays.push(requestID); throw new Error("supervision-platform-unavailable")
-    } },
     auth: { isAuthEnabled: () => true, getSessionFromRequest: () => state.human ? { sessionId: "human_cookie", username: "human" } : undefined },
     settings: { getProfileScope: () => state.profile, configYamlPathForAuthority: () => yaml },
   } as never)
@@ -80,7 +75,7 @@ async function fixture(t: test.TestContext) {
   }
 }
 
-test("authenticated schedule Play dispatches without service supervision; a lost human refuses it", async t => {
+test("authenticated schedule Play dispatches; a lost human refuses it", async t => {
   const f = await fixture(t)
   const create = { action: "create", requestID: "create_paused", expectedRevision: 0, configuration: config }
   assert.equal((await f.post(create, "/api/workspaces/owned/missions/scheduled")).statusCode, 200)
@@ -88,11 +83,9 @@ test("authenticated schedule Play dispatches without service supervision; a lost
   assert.equal((await f.post({ action: "configure", requestID: "configure_paused", expectedRevision: 1, configuration: config })).statusCode, 200)
   assert.equal((await f.post(control)).statusCode, 200)
   assert.equal(f.state.writes.at(-1)!.requestID, control.requestID)
-  assert.deepEqual(f.state.plays, [])
   f.state.human = false
   assert.equal((await f.post({ ...control, requestID: "unauthenticated_play" })).statusCode, 401)
   assert.equal(f.state.writes.at(-1)!.requestID, control.requestID)
-  assert.deepEqual(f.state.plays, [])
 })
 
 test("creation status locates the original request after losing the HTTP document identity, without another write", async t => {
@@ -115,7 +108,6 @@ test("creation status locates the original request after losing the HTTP documen
   assert.equal((await f.app.inject({ method: "GET", url })).statusCode, 200)
   assert.equal(f.state.reads.at(-1)!.missionID, original.missionID)
   assert.equal(f.state.writes.length, 1)
-  assert.deepEqual(f.state.plays, [])
 })
 
 test("exact original complete ACK releases; missing/null/partial receipts and negative reads keep deletion fenced", async t => {

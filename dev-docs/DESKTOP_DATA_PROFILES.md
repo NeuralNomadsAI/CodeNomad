@@ -10,7 +10,7 @@ Three independent notions:
 
 OpenCode sessions and messages live in the shared OpenCode daemon and are the same in every profile. Server configuration (`CLI_CONFIG`, default `~/.config/codenomad/config.yaml`) is also independent of the profile; a non-default config file gets its own scope.
 
-**Keep OpenCode running** is shared by the native service, with its manifest and artifacts outside data profiles; changing or deleting a profile preserves this preference and its supervision ([runtime setup](OPENCODE_RUNTIME_SETUP.md#service-supervision-primitives-and-native-adapters)).
+**Start OpenCode at login** belongs to the OS account, outside data profiles; changing or deleting a profile preserves it ([runtime setup](OPENCODE_RUNTIME_SETUP.md#start-opencode-at-login)).
 
 ## Selecting a profile
 

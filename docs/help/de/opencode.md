@@ -31,17 +31,17 @@ Unter Windows läuft eine ausgewählte WSL-Programmdatei in der gewählten Distr
 
 OpenCode verwaltet seine globale Dienstregistrierung, Sitzungen, Nachrichten und Datenbank. CodeNomad erstellt keine private OpenCode-Datenbank pro Fenster oder Projekt. Das Schließen eines Projekt-Tabs schließt das Projekt in CodeNomad; Sitzungen laufen in OpenCode weiter und erscheinen wieder, wenn Sie das Projekt erneut öffnen. CodeNomad entlädt niemals native Locations. Das Schließen eines ganzen Fensters, Beenden oder Neuladen bewahrt Projektverbindungen für die Wiederherstellung; weder diese Aktionen noch das Herunterfahren des Backends beenden den gemeinsamen Daemon. Siehe [Projekte](projects.md).
 
-## OpenCode gestartet halten {#service-supervision}
+## OpenCode bei der Anmeldung starten {#login-start}
 
-Unter Windows laufen Überwachung und Wiederherstellung ohne Terminalfenster im Hintergrund. CodeNomad-Updates erhalten Ihre gespeicherte Auswahl und den laufenden OpenCode-Dienst; aktualisierte Aufgabenaktionen gelten bei den nächsten Starts.
+Unter **Einstellungen → OpenCode** lässt **OpenCode bei der Anmeldung starten** das Betriebssystem den OpenCode-Dienst bei Ihrer Anmeldung im Hintergrund starten, auch wenn CodeNomad geschlossen ist. Die Einstellung bleibt aus, bis Sie sie einschalten, wirkt ab Ihrer nächsten Anmeldung und gilt für Ihr Konto auf dem Computer, auf dem der CodeNomad-Server läuft. Sie startet die auf der Karte **OpenCode-Binärdatei** gewählte Programmdatei; die Auswahl einer anderen nativen Programmdatei aktualisiert sie, sonst startet sie weiter die bisherige.
 
-Unter **Einstellungen → OpenCode** installiert **OpenCode gestartet halten** eine Systemüberwachung auf dem Ausführungshost, gemeinsam für alle CodeNomad-Profile dieses Dienstes. Sie arbeitet auch bei geschlossenem CodeNomad und bleibt aus, bis Sie sie einschalten.
+| System | Was OpenCode startet | Nach einem Absturz |
+| --- | --- | --- |
+| Windows | Eine verborgene geplante Aufgabe für Ihr Konto, ohne Kennwort oder Administratorrechte. Eine WSL-Programmdatei startet in ihrer Distribution. | Kein Neustart. |
+| macOS | Ein LaunchAgent. | Neustart durch macOS. |
+| Linux | Ein systemd-Benutzerdienst, der bei der Anmeldung startet, ohne Lingering zu aktivieren. | Neustart durch systemd. |
 
-Beim Ausschalten wird die Überwachung entfernt; OpenCode läuft weiter und wird nicht mehr neu gestartet. Für einen dauerhaften Stopp zuerst ausschalten und dann OpenCode ausdrücklich stoppen. Bei aktiver Überwachung folgt auf `opencode service stop` ein Neustart.
-
-**Läuft · Überwachung aktiv** erfordert einen aktiven Systemwächter und einen gesunden OpenCode-Dienst. **Installiert · Dienst startet**, **Überwachung wird installiert oder entfernt…** und **Überwachung fehlgeschlagen** unterscheiden die Zustände. Ein antwortender Dienst allein bestätigt keine aktive Überwachung. Details zeigen Ursache, letzten Versuch, nächsten Wächterversuch und System-Sicherheitsprüfung, soweit bekannt. **Überwachungsstatus prüfen** liest nur; **Überwachung erneut versuchen** repariert ausdrücklich die angeforderte Einrichtung. Eine unbestätigte Aktion behält ihre ursprüngliche Anfrage; **Ursprüngliche Aktion erneut versuchen** sendet genau diese erneut. Eine geänderte Revision wird zur Prüfung aktualisiert statt überschrieben.
-
-Windows, macOS und WSL starten nach der Anmeldung. WSL benötigt Localhost-Weiterleitung für die gewählte Distribution. Unter nativem Linux startet Linger **alle aktivierten Benutzerdienste** vor der Anmeldung und hält sie nach der Abmeldung aktiv. Beim Ausschalten wird Linger nur zurückgesetzt, wenn CodeNomad es aktiviert hat und keine andere Überwachung es benötigt; persönliche Einstellungen bleiben erhalten. Könnte das Zurücksetzen die freigegebenen OpenCode-Prozesse beenden, während keine Benutzersitzung geöffnet ist, wird es aufgeschoben und bleibt mit **Überwachung erneut versuchen** sichtbar. Versuchen Sie es erneut, sobald eine Benutzersitzung geöffnet ist oder die freigegebenen OpenCode-Prozesse beendet sind und ein sicheres Zurücksetzen möglich ist. Benötigt Linux eine Berechtigung, diese auf dem Ausführungshost erteilen und erneut versuchen; die angeforderte Einstellung bleibt gespeichert. Schlaf und Ruhezustand steuert das Betriebssystem. Nicht verfügbare oder nicht unterstützte Hosts zeigen eine deaktivierte Steuerung mit Erklärung.
+Ausschalten entfernt nur diese Aufgabe, diesen LaunchAgent oder Dienst; ein laufendes OpenCode läuft weiter. Lässt sich die Einstellung nicht ändern, erscheint darunter ein Fehler: Wählen Sie das native OpenCode-Programm statt eines Skript-Wrappers oder prüfen Sie die Aufgabenplanung bzw. die Benutzerdienste des Systems und versuchen Sie es erneut. **Auf diesem System nicht verfügbar** erscheint, wenn der CodeNomad-Server in WSL oder auf einem anderen System ohne Anmeldestart läuft.
 
 ## Aktualisieren, neu starten oder neu laden {#maintenance}
 

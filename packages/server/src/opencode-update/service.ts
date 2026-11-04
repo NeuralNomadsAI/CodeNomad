@@ -41,7 +41,8 @@ export interface OpenCodeUpdateServiceDeps {
   admitActivation?: (binary: ResolvedBinary) => void
   reload?: (binary: ResolvedBinary, assertCurrent: () => void) => Promise<void>
   inspectRuntime?: (endpoint: Endpoint) => Promise<{ reload: boolean }>
-  publishSupervisionTarget?: (assertCurrent: () => void) => Promise<void>
+  /** An installed login start follows a verified installation; its failure never fails the update. */
+  refreshLoginStart?: () => Promise<void>
 }
 
 export class OpenCodeUpdateError extends Error {
@@ -192,10 +193,6 @@ export class OpenCodeUpdateService {
       assertCurrent()
       return this.getStatus()
     }
-    // Publication must precede stop: a guard racing the explicit restart must
-    // start the validated replacement, never its previously selected executable.
-    if (restart || !previous) await this.deps.publishSupervisionTarget?.(assertCurrent)
-    assertCurrent()
     const endpoint = restart && previous ? await lifecycle.restart?.() : previous ?? await lifecycle.ensure()
     const identity = endpoint && runtimeIdentity(endpoint)
     if (!identity) throw new Error("OpenCode did not report an authenticated runtime version")
@@ -260,9 +257,7 @@ export class OpenCodeUpdateService {
           `OpenCode reported ${result.version}, but the configured binary is ${installedVersion} instead of ${latestVersion}`,
         )
       }
-      await this.deps.publishSupervisionTarget?.(() => {
-        if (this.deps.resolveBinary().path !== installedBinary.path) throw new Error("OpenCode selection changed during installation")
-      })
+      await this.deps.refreshLoginStart?.().catch(() => {})
       return { success: true, version: installedVersion }
     } catch (error) {
       if (error instanceof OpenCodeUpdateError || error instanceof InstallationBusyError) throw error
@@ -331,7 +326,7 @@ export async function resolveLatestOpenCodeVersion(fetchRegistry: RegistryFetch 
 export function createOpenCodeUpdateService(
   settings: SettingsService,
   workspaceManager: WorkspaceManager,
-  supervision?: { selectBinary(assertCurrent: () => void): Promise<void> },
+  loginStart?: { refresh(): Promise<void> },
 ): OpenCodeUpdateService {
   const binaryResolver = new BinaryResolver(settings)
   // Explicit custom executables and WSL selections are never installed over.
@@ -366,7 +361,7 @@ export function createOpenCodeUpdateService(
     reconnect: binary => workspaceManager.reconnectAfterSetup(binary.path),
     admitActivation: binary => workspaceManager.assertSetupExecutionHost(binary.path),
     reload: (binary, assertCurrent) => workspaceManager.reloadConfigurationAfterSetup(binary.path, assertCurrent),
-    publishSupervisionTarget: supervision ? check => supervision.selectBinary(check) : undefined,
+    refreshLoginStart: loginStart ? () => loginStart.refresh() : undefined,
   })
 }
 

@@ -15,6 +15,7 @@ import "../../../src/index.css"
 serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
 serverApi.fetchStateOwner = async () => ({}) as any
 serverApi.patchConfigOwner = async (_owner, patch) => patch as any
+serverApi.getOpenCodeLoginStart = async () => ({ state: "off" })
 let resumed = 0
 let replacementResult: boolean | string | null | undefined
 const params = new URLSearchParams(location.search)
