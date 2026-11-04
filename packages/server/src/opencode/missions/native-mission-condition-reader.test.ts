@@ -12,7 +12,7 @@ import { controlOperationID, controlReceiptID, controlResumeAdmissionID } from "
 import type { MissionJsonValue } from "../../missions/model"
 import type { MissionDocument } from "../../missions/mission-document"
 import { missionDocumentPassage } from "../../missions/mission-document-passage-storage"
-import { documentWatchCheckpointSchema } from "../../missions/mission-document-passage-input"
+import { documentWatchCheckpointSchema, documentWatchKey } from "../../missions/mission-document-passage-input"
 import { createMissionConditionReader, assertMissionSourceAcyclic } from "./native-mission-condition-reader"
 import { prepareNativeDocumentSources } from "./native-scheduled-passage-sources"
 import { nativePassageMessageDigest, type MissionNativeService } from "./native-service-adapter"
@@ -190,6 +190,31 @@ test("conversation baseline, exact stable prefixes, technical/self exclusion, re
   f.native.get = async value => ({ ...await get(value), metadata: { "codenomad.mission": { document: { missionID: doc.id } } } } as never)
   await assert.rejects(prepareNativeDocumentSources(doc, f.native, signal, current), /excluded/)
   assert.equal(nativePassageMessageDigest(anchor).length, 64)
+})
+
+test("a followed-conversation trigger mark consumes seen messages without moving the context cursor", async () => {
+  const f = await fixture(), doc = await f.read("target"), signal = new AbortController().signal
+  doc.configuration.launch = { when: [{ kind: "conversation-message", conversationID: "ses_followed" }], onlyIf: [] }
+  const anchor = Schema.decodeUnknownSync(SessionMessage.Info)({ id: "msg_anchor", type: "user", text: "before Play", time: { created: at } })
+  f.native.sourceBaseline = async () => anchor
+  f.native.message = async () => anchor
+  let messages = [] as Awaited<ReturnType<MissionNativeService["sourceMessages"]>>
+  f.native.sourceMessages = async () => structuredClone(messages)
+  const baseline = await prepareNativeDocumentSources(doc, f.native, signal, current)
+  doc.firstPlayedAt = at; doc.checkpoints = baseline.checkpoints
+  messages = [{ id: "msg_one", type: "user", text: "first", nativeDigest: "b".repeat(64) }]
+  const first = await prepareNativeDocumentSources(doc, f.native, signal, current)
+  assert.equal(first.news.triggers, true)
+  assert.deepEqual(first.marks, [{ key: documentWatchKey("ses_followed"), value: "msg_one" }])
+  doc.triggerMarks = first.marks
+  const consumed = await prepareNativeDocumentSources(doc, f.native, signal, current)
+  assert.equal(consumed.news.triggers, false, "a message seen by a skipped passage is consumed")
+  assert.deepEqual(documentWatchCheckpointSchema.parse(consumed.checkpoints[0].value).source!.messages.map(message => message.id), ["msg_one"],
+    "the next passage still reads it as context: the cursor stays at the last passage")
+  assert.deepEqual(doc.checkpoints, baseline.checkpoints)
+  messages.push({ id: "msg_two", type: "assistant", text: "second", nativeDigest: "c".repeat(64) })
+  const fresh = await prepareNativeDocumentSources(doc, f.native, signal, current)
+  assert.equal(fresh.news.triggers, true); assert.deepEqual(fresh.marks, [{ key: documentWatchKey("ses_followed"), value: "msg_two" }])
 })
 
 test("conversation exclusion walks passage ancestry, rejects cycles and recognizes the carrier marker", async () => {

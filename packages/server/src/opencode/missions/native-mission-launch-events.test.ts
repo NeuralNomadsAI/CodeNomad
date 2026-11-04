@@ -41,6 +41,23 @@ test("every listed event is read once by its own key; any change is enough withi
     "a policy without events reports no news; its schedules trigger on their own")
 })
 
+test("a skipped trigger's mark consumes its news; conditions keep measuring from the last passage", async () => {
+  const doc = document("marked", [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }, commits], [files])
+  const value = (kind: string, head: string) => ({ kind, head })
+  let head = "b"
+  const reader = async (_doc: MissionDocument, condition: MissionCondition) => ({ checkpoint: { key: missionSourceKey(condition), kind: condition.kind,
+    placementDigest: "a".repeat(64), value: value(condition.kind, condition.kind === "branch-commits" ? head : "x") }, changed: true, current })
+  const first = await prepareNativeDocumentSources(doc, native, new AbortController().signal, current, reader)
+  assert.deepEqual(first.news, { triggers: true, conditions: true })
+  assert.deepEqual(first.marks, [{ key: missionSourceKey(commits), value: value("branch-commits", "b") }], "only When events are marked")
+  doc.triggerMarks = first.marks
+  const consumed = await prepareNativeDocumentSources(doc, native, new AbortController().signal, current, reader)
+  assert.deepEqual(consumed.news, { triggers: false, conditions: true }, "the marked commit is consumed; the condition still counts")
+  assert.deepEqual(consumed.checkpoints, first.checkpoints, "references are read as before")
+  head = "c"
+  assert.equal((await prepareNativeDocumentSources(doc, native, new AbortController().signal, current, reader)).news.triggers, true)
+})
+
 test("Mission source edges are walked across every listed event, refusing a cycle through a second event", async () => {
   const documents = new Map<string, MissionDocument>([
     ["msn_a", document("msn_a", [files, { kind: "schedule-success", missionID: "msn_b" }])],

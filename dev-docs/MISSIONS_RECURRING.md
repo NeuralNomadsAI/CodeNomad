@@ -22,8 +22,13 @@ no calendar: at every trigger, whatever its kind, the Mission launches only if o
 condition changed since the last successful passage (conditions OR together);
 otherwise the wake is consumed as a check (`missionLaunches` in
 `missions/mission-document-state.ts`). Source snapshots report news per role
-(`{ triggers, conditions }`). Baselines advance only with a passage, so a changed
-trigger event that waits for a condition is seen again at the next check. The codec
+(`{ triggers, conditions }`). A passage skipped for lack of a condition consumes the
+trigger events its check saw: it stores their current values as `triggerMarks`, and
+later trigger news is measured from those marks (for a followed conversation, only
+messages after the marked one count). Source references, including a followed
+conversation's context cursor, still advance only with a successful passage, so
+conditions and the next passage's context keep measuring from the last passage; a
+reserved passage or a launch-criteria edit clears the marks. The codec
 requires a trigger whenever there are conditions, unique schedules, events unique
 across both roles, at most eight events and at most eight principals. Criteria have
 no end date.

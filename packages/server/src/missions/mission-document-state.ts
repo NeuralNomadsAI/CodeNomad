@@ -4,7 +4,7 @@ import { missionCoordinatorSessionID } from "./session-identity"
 import { documentID, documentTimestamp, missionConfigurationSchema, missionEventPrincipal, missionEventPrincipalSlot, missionLaunchLimit, missionLaunchModel,
   missionPrincipalCount, missionSlotEndsAt, requiresMissionCalendar, type MissionConfiguration } from "./launch-policy"
 import { missionCheckpointsSchema, missionDocumentPassageID, missionSourceKey, missionWakeSchema, projectMissionDocument,
-  type MissionCalendar, type MissionDocument, type MissionDocumentPending, type MissionSourceCheckpoint, type MissionWake } from "./mission-document"
+  type MissionCalendar, type MissionDocument, type MissionDocumentPending, type MissionSourceCheckpoint, type MissionTriggerMark, type MissionWake } from "./mission-document"
 import { missionDocumentDeletionIdentitySchema } from "./mission-document"
 
 const same = (a: unknown, b: unknown) => canonicalAuthority(a) === canonicalAuthority(b)
@@ -79,7 +79,7 @@ export const missionDocumentChanges = {
       const model = missionLaunchModel(value.launch)
       return { schedules: model.schedules, triggers: model.triggers, conditions: model.conditions }
     }
-    if (!same(criteria(config), criteria(doc.configuration))) doc.deferred = null
+    if (!same(criteria(config), criteria(doc.configuration))) { doc.deferred = null; doc.triggerMarks = null }
     doc.configuration = config
     doc.configurationGeneration++
     if (changedTime) {
@@ -144,6 +144,11 @@ export const missionDocumentChanges = {
     doc.deferred = { afterPassageID, dueAt: Math.max(old?.dueAt ?? 0, wake.dueAt),
       scheduled: !!old?.scheduled || missionWakesSchedule(doc, [wake]) }
   },
+  /** A passage skipped for lack of a condition consumes the When events seen by its check. */
+  consumeTriggers(doc: MissionDocument, news: MissionEventNews, marks: readonly MissionTriggerMark[] | undefined) {
+    if (!news.triggers || !marks?.length) return
+    doc.triggerMarks = [...new Map([...(doc.triggerMarks ?? []), ...structuredClone(marks)].map(item => [item.key, item])).values()]
+  },
   processWake(doc: MissionDocument, input: MissionWake) {
     const wake = missionWakeSchema.parse(input), calendar = exactCalendar(doc, wake)
     // Caller proves this exact technical occurrence was ignored/consumed, even
@@ -173,8 +178,10 @@ export const missionDocumentChanges = {
       documentID.parse(origin.requestID)
       if (origin.kind === "immediate" && requiresMissionCalendar(doc.configuration.launch)) throw new Error("Mission needs native wake")
     }
-    // Any reserved passage answers the triggers that waited for the previous one.
+    // Any reserved passage answers the triggers that waited for the previous one; its
+    // references replace the marks of triggers consumed by skipped passages.
     doc.deferred = null
+    doc.triggerMarks = null
     const dueAt = origin.kind === "wake" ? Math.max(...origin.wakes.map(wake => wake.dueAt)) : origin.kind === "deferred" ? origin.dueAt : now
     // ends.at bounds recorded slots, never the wall-clock arrival of a late wake.
     if (doc.slotEndsAt !== null && dueAt > doc.slotEndsAt) throw new Error("Mission slot past end")

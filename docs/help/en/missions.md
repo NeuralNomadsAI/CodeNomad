@@ -165,7 +165,7 @@ Expand **Scheduling** in Create or Edit. **Launch when** lists the criteria that
 
 Add several schedules for several times, such as 09:15 and 17:45. Each one is a cron; recognized expressions reopen as their shortcut. The [events](#scheduling-conditions) are the other criteria: **When** events are checked every 15 minutes, with no frequency to set; **Only if** events are read at each launch.
 
-Schedules are always **When** criteria. Each event card has a switch with two icons: **When** (lightning) makes the event launch the mission; **Only if** (funnel) makes it a condition. At each launch, by a schedule or a **When** event, the mission starts only if one of the **Only if** events occurred since the last passage; otherwise that passage is skipped. Conditions need at least one **When** criterion.
+Schedules are always **When** criteria. Each event card has a switch with two icons: **When** (lightning) makes the event launch the mission; **Only if** (funnel) makes it a condition. At each launch, by a schedule or a **When** event, the mission starts only if one of the **Only if** events occurred since the last passage; otherwise that passage is skipped and the **When** events it saw cannot launch later. Conditions need at least one **When** criterion.
 
 A passage in progress is never doubled. Schedules or events that occur while it runs are grouped into one passage, launched when it ends; that grouped passage still needs its **Only if** conditions.
 
@@ -187,7 +187,7 @@ Schedules have no end date. A schedule saved with an end date keeps respecting i
 
 **Launched passages** counts each passage once when its coordinator's first input is admitted, including **Run now** and a passage that later fails. Checks, unchanged events and refused wakes count nothing. Counts survive edits and restarts.
 
-A schedule stored with a frequency and an optional condition opens as criteria: a frequency becomes schedules, a frequency with a condition adds that event in **Only if**, and a condition alone becomes a **When** event; reopening and saving unchanged keeps the saved schedule exactly, including a single launch on that event. An interval, a delay, a single date, a maximum number of passages or an end after a number of hours keeps working as saved and is shown under **Stored scheduling policy** until you replace it.
+A schedule stored with a frequency and an optional condition opens as criteria: a frequency becomes schedules, a frequency with a condition adds that event in **Only if**, and a condition alone becomes a **When** event; reopening and saving unchanged keeps the saved schedule exactly, including a single launch on that event; saving an edit removes that single-launch limit, so the event launches the mission each time it occurs. An interval, a delay, a single date, a maximum number of passages or an end after a number of hours keeps working as saved and is shown under **Stored scheduling policy** until you replace it.
 
 The selected native schedule shows **Desired state**, **Native calendar**, **Next wake** or **Next check**, **Checks** with **Tracked since**, **Launched passages**, **Successful passages**, its end and **Past runs**. Read a past passage through **Open conversation**. **Schedule finished** describes the schedule's end; inspect the passage outcome separately. Results retain the latest 30 entries; lifetime counts survive that window. **Load more Missions** loads the next saved-object page.
 

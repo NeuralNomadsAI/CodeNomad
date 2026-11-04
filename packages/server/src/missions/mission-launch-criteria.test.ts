@@ -117,7 +117,7 @@ async function fixture(launch: MissionLaunchPolicy) {
     observe: async () => terminal ? { outcome: failed ? "failed" : "completed", current } : undefined,
   }
   const engine = new MissionDocumentPassageEngine(store, ports)
-  return { store, read, wake, auxiliary, engine, launches: () => admitted, tick: (ms = 60_000) => { now += ms },
+  return { store, read, wake, auxiliary, engine, ports, checkpoints, launches: () => admitted, tick: (ms = 60_000) => { now += ms },
     set triggers(value: boolean) { triggers = value }, set conditions(value: boolean) { conditions = value }, set terminal(value: boolean) { terminal = value }, set failed(value: boolean) { failed = value } }
 }
 const run = (f: Awaited<ReturnType<typeof fixture>>, wake: DocumentPassageWake) => f.engine.wake({ missionID: "criteria", wake })
@@ -144,16 +144,43 @@ test("conditions gate every schedule slot: a slot without a changed condition is
   assert.equal(f.launches(), 1)
 })
 
-test("conditions also gate trigger events: a changed trigger waits for a changed condition", async () => {
-  const f = await fixture({ when: [commits], onlyIf: [files] })
-  f.conditions = true
+test("a trigger event skipped for lack of a condition is consumed; a later condition alone never launches", async () => {
+  const f = await fixture({ when: [commits], onlyIf: [files] }), key = missionSourceKey(commits)
+  // Source double: the trigger's news is measured from its mark when a skip left one, else from the Play baseline.
+  let head = "a", fileHash = "x"
+  f.ports.snapshot = async doc => {
+    const seen = doc.triggerMarks?.find(item => item.key === key)?.value ?? "a"
+    return { news: { triggers: head !== seen, conditions: fileHash !== "x" }, marks: [{ key, value: head }], checkpoints: f.checkpoints(), current }
+  }
+  f.tick(); fileHash = "y"
   assert.equal(await run(f, f.wake(0)), "ignored", "a changed condition alone never triggers")
-  f.tick(); f.conditions = false; f.triggers = true
-  assert.equal(await run(f, f.wake(0)), "ignored", "a new commit alone is not enough")
-  // Baselines advance only with a passage: the commit is still news at the next check.
-  f.tick(); f.conditions = true
-  assert.equal(await run(f, f.wake(0)), "started")
+  assert.equal((await f.read()).triggerMarks ?? null, null, "no trigger news, nothing to consume")
+  f.tick(); fileHash = "x"; head = "b"
+  assert.equal(await run(f, f.wake(0)), "ignored", "a new commit without a condition skips the passage")
+  assert.deepEqual((await f.read()).triggerMarks, [{ key, value: "b" }], "the skipped commit is consumed")
+  const references = (await f.read()).checkpoints
+  f.tick(); fileHash = "y"
+  assert.equal(await run(f, f.wake(0)), "ignored", "the consumed commit never launches with a later condition")
+  assert.deepEqual((await f.read()).checkpoints, references, "skips never move the source references")
+  f.tick(); head = "c"
+  assert.equal(await run(f, f.wake(0)), "started", "a new commit with a condition launches")
+  assert.equal((await f.read()).triggerMarks ?? null, null, "a passage clears the marks: its references advance")
   assert.equal(f.launches(), 1)
+})
+
+test("a grouped event check skipped for lack of a condition also consumes its trigger", async () => {
+  const f = await fixture({ when: [daily, commits], onlyIf: [files] }), key = missionSourceKey(commits)
+  let head = "a", fileHash = "x"
+  f.ports.snapshot = async doc => {
+    const seen = doc.triggerMarks?.find(item => item.key === key)?.value ?? "a"
+    return { news: { triggers: head !== seen, conditions: fileHash !== "x" }, marks: [{ key, value: head }], checkpoints: f.checkpoints(), current }
+  }
+  fileHash = "y"; assert.equal(await run(f, f.wake(0)), "started"); fileHash = "x"
+  f.tick(); head = "b"; assert.equal(await run(f, f.wake(1)), "pending")
+  assert.equal((await f.read()).deferred!.scheduled, false)
+  f.terminal = true; await f.engine.reconcile({ missionID: "criteria" })
+  assert.equal(f.launches(), 1, "no condition since the passage: the grouped check is skipped")
+  assert.deepEqual((await f.read()).triggerMarks, [{ key, value: "b" }])
 })
 
 test("a running passage is never doubled: later triggers group into one passage after it settles", async () => {

@@ -1,6 +1,6 @@
 import { missionDocumentChanges as changes, missionLaunches, missionWakesSchedule, type MissionEventNews } from "./mission-document-state"
 import { missionLaunchLimit, missionLaunchModel } from "./launch-policy"
-import type { MissionDocument, MissionSourceCheckpoint, MissionWake } from "./mission-document"
+import type { MissionDocument, MissionSourceCheckpoint, MissionTriggerMark, MissionWake } from "./mission-document"
 import type { NativeMissionDocumentStore } from "./mission-document-store"
 
 export type DocumentPassageWake = { missionID: string; generation: number; scheduleID: string; sessionID: string; run: number; messageID: string; dueAt?: number }
@@ -16,7 +16,8 @@ export interface DocumentPassagePorts {
   current(): true
   verifyWake(doc: MissionDocument, wake: DocumentPassageWake): Promise<{ wake: MissionWake; current(): true }>
   coverage(doc: MissionDocument, window: DocumentFanInWindow): Promise<{ complete: boolean; wakes: MissionWake[]; current(): true }>
-  snapshot(doc: MissionDocument): Promise<{ news: MissionEventNews; checkpoints: MissionSourceCheckpoint[]; current(): true; revalidate?(): Promise<void> }>
+  /** `marks`: the When events' current values, consumed when the check skips its passage. */
+  snapshot(doc: MissionDocument): Promise<{ news: MissionEventNews; marks?: MissionTriggerMark[]; checkpoints: MissionSourceCheckpoint[]; current(): true; revalidate?(): Promise<void> }>
   admit(doc: MissionDocument, locked: NativeMissionDocumentStore): Promise<DocumentPassageAdmission>
   observe(doc: MissionDocument, locked: NativeMissionDocumentStore): Promise<{ outcome: "completed" | "failed" | "ended-without-report"; current(): true } | undefined>
   retired?(doc: MissionDocument): void
@@ -115,7 +116,8 @@ export class MissionDocumentPassageEngine {
         const snapshot = await this.ports.snapshot(doc)
         snapshot.current(); coverage.current()
         if (!missionLaunches(doc, missionWakesSchedule(doc, wakes), snapshot.news)) {
-          await this.consume(locked, doc, wakes, () => { snapshot.current(); return coverage.current() }, snapshot.revalidate, true)
+          await this.consume(locked, doc, wakes, () => { snapshot.current(); return coverage.current() }, snapshot.revalidate, true,
+            next => changes.consumeTriggers(next, snapshot.news, snapshot.marks))
           return await this.launchDeferred(locked, doc.id) ?? "ignored"
         }
         // reserve accepts one next occurrence per principal. Older contiguous
@@ -248,7 +250,10 @@ export class MissionDocumentPassageEngine {
     let snapshot: Awaited<ReturnType<DocumentPassagePorts["snapshot"]>>
     try { snapshot = await this.ports.snapshot(doc); snapshot.current() } catch { return undefined }
     if (!missionLaunches(doc, owed.scheduled, snapshot.news)) {
-      await this.change(locked, doc, next => { this.recordCheck(next); next.deferred = null }, snapshot.current, snapshot.revalidate)
+      await this.change(locked, doc, next => {
+        this.recordCheck(next); next.deferred = null
+        changes.consumeTriggers(next, snapshot.news, snapshot.marks)
+      }, snapshot.current, snapshot.revalidate)
       return undefined
     }
     doc = await this.change(locked, doc, next => {
@@ -277,9 +282,11 @@ export class MissionDocumentPassageEngine {
       principalIDs: doc.calendars.filter(item => item.role === "principal").map(item => item.scheduleID).sort(), completed: false, suppress,
       ...(suppress ? { overlap: true } : {}) }
   }
-  private consume(locked: NativeMissionDocumentStore, doc: MissionDocument, wakes: MissionWake[], current: () => true, prepare?: () => Promise<void>, checked = false) {
+  private consume(locked: NativeMissionDocumentStore, doc: MissionDocument, wakes: MissionWake[], current: () => true, prepare?: () => Promise<void>, checked = false,
+    skipped?: (next: MissionDocument) => void) {
     return this.change(locked, doc, next => {
       if (checked) this.recordCheck(next)
+      skipped?.(next)
       const after = next.fanIn?.overlap ? next.pending?.id ?? next.history.at(-1)?.id : undefined
       for (const wake of [...wakes].sort((a, b) => a.run - b.run)) {
         if (after) changes.defer(next, wake, after)

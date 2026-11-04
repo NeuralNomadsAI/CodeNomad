@@ -69,6 +69,11 @@ const origin = z.union([
 /** `scheduled`: a schedule slot triggered it; otherwise a trigger event must still show news. */
 const deferred = z.object({ afterPassageID: documentID, dueAt: documentTimestamp, scheduled: z.boolean() }).strict()
 export type MissionDeferredLaunch = z.infer<typeof deferred>
+/** The value a When event had when a passage was skipped for lack of a condition: its
+ * trigger news is measured from here until the next passage advances the references.
+ * Source references, including a followed conversation's context cursor, never move. */
+const triggerMarks = z.array(checkpoint.pick({ key: true, value: true })).max(8).refine(items => new Set(items.map(item => item.key)).size === items.length)
+export type MissionTriggerMark = z.infer<typeof triggerMarks>[number]
 const pending = z.object({ id: documentID, missionID: documentID, coordinatorSessionID: nativeDocumentID, messageID: nativeDocumentID,
   configurationGeneration: generation, timeGeneration: generation, createdAt: documentTimestamp, dueAt: documentTimestamp,
   origin, configuration: missionConfigurationSchema, checkpoints, admittedAt: documentTimestamp.nullable(),
@@ -102,6 +107,7 @@ const document = z.object({ version: z.literal(1), id: documentID, projectID: na
     principalIDs: z.array(nativeDocumentID).max(8).refine(ids => new Set(ids).size === ids.length), completed: z.boolean(), suppress: z.boolean(),
     overlap: z.boolean().optional() }).strict().nullable().default(null),
   deferred: deferred.nullable().optional(),
+  triggerMarks: triggerMarks.nullable().optional(),
   calendars: z.array(calendar).max(9),
   synchronization: z.object({ requestID: documentID, kind: z.enum(["arm", "replace", "disarm", "delete"]),
     retiredCalendars: z.array(calendar).max(9) }).strict().nullable(),
