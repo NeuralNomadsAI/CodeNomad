@@ -16,7 +16,7 @@ import {
 } from "./opencode-data-events"
 import { mergePageWithSnapshot, snapshotRows, type OpenCodeRowSnapshot } from "./opencode-data-read-merge"
 import { createReconnect, type ReconnectCapture } from "./opencode-reconnect"
-import { cancelTranscriptProjections } from "./opencode-projection-frame"
+import { cancelTranscriptProjections, flushTranscriptProjections } from "./opencode-projection-frame"
 
 const log = getLogger("session")
 
@@ -921,6 +921,10 @@ function retireDrainedTranscript(instanceId: string, sessionId: string, transcri
   // settle only in it.
   const data = transcript.entry.data
   if (data.session.pending.list(sessionId).length || data.session.message.list(sessionId).some(isUnsettledAtSettlement)) return
+  // The reducer's final coalesced page — e.g. a tool that settled after the
+  // execution did — publishes here, before normal retirement destroys the
+  // entry; resets, eviction and destructive teardown cancel instead.
+  flushTranscriptProjections(instanceId, sessionId)
   destroyOpenCodeData(instanceId, sessionId)
 }
 

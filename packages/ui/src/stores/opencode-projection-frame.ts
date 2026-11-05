@@ -87,10 +87,22 @@ export function scheduleTranscriptProjection(
   requestScheduledRun()
 }
 
-/** Publishes every pending projection now. Selection changes call this so a
- * page admitted under the previous selection still lands before its gates move. */
-export function flushTranscriptProjections(): void {
-  drain(true)
+/** Publishes pending projections now. Selection changes call this so a
+ * page admitted under the previous selection still lands before its gates move;
+ * a normal reducer retirement publishes its session's final page (including
+ * usage obligations) before the reducer goes away, while resets, eviction and
+ * destructive teardown stay cancel-only. An optional scope publishes only the
+ * matching sessions and leaves the rest on their frame. */
+export function flushTranscriptProjections(instanceId?: string, sessionId?: string): void {
+  if (instanceId === undefined) {
+    drain(true)
+    return
+  }
+  const prefix = `${instanceId}\u0000`
+  const matches = sessionId === undefined
+    ? (key: string) => key.startsWith(prefix)
+    : (key: string) => key === projectionKey(instanceId, sessionId)
+  drain(true, matches)
 }
 
 /** Removes and returns a session's pending projection. A synchronous
@@ -128,11 +140,16 @@ function disarm(): void {
   }
 }
 
-function drain(bypassActiveGate: boolean): void {
+function drain(bypassActiveGate: boolean, matches?: (key: string) => boolean): void {
+  if (!pending.size || !gates) {
+    disarm()
+    return
+  }
+  const keys = matches === undefined ? [...pending.keys()] : [...pending.keys()].filter(matches)
+  if (!keys.length) return
   disarm()
-  if (!pending.size || !gates) return
-  const entries = [...pending.values()]
-  pending.clear()
+  const entries = keys.map(key => pending.get(key)!)
+  for (const key of keys) pending.delete(key)
   for (const entry of entries) {
     try {
       applyProjection(entry, bypassActiveGate)
@@ -142,6 +159,8 @@ function drain(bypassActiveGate: boolean): void {
       })
     }
   }
+  // A scoped drain leaves other sessions pending; keep their frame armed.
+  if (pending.size) requestScheduledRun()
 }
 
 function applyProjection(entry: PendingProjection, bypassActiveGate: boolean): void {

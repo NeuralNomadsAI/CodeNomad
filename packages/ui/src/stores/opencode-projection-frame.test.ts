@@ -7,6 +7,7 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages } from "./opencode-data.ts"
+import { flushTranscriptProjections } from "./opencode-projection-frame.ts"
 import { setActiveSession, setSessions, getSessionInfo } from "./session-state.ts"
 
 const sessionId = "ses_frame"
@@ -324,6 +325,28 @@ test("a merged frame keeps the last event's confirmation and accumulates usage",
     confirming.cleanup()
   } finally {
     clock.restore()
+  }
+})
+
+test("a retirement-scoped flush publishes the pending final page and its usage", ctx => {
+  const clock = frameClock()
+  const f = fixture("frame-retire-flush")
+  try {
+    const hydration = ctx.mock.method(f.store, "hydrateMessages")
+    const { streamId, joined } = f.stream(8)
+    f.dispatch("session.step.ended", { assistantMessageID: "msg_live", finish: "stop", cost: 2, tokens: { input: 30, output: 88, reasoning: 0, cache: { read: 0, write: 0 } } })
+    assert.equal(hydration.mock.callCount(), 0, "the final tool page only scheduled")
+    // Normal retirement publishes the session's page before destroying the
+    // reducer; the display must not stay on the pre-settlement running row.
+    flushTranscriptProjections(f.instanceId, sessionId)
+    assert.equal(hydration.mock.callCount(), 1, "the scoped flush publishes without a frame")
+    assert.equal(f.storeText(streamId), joined)
+    assert.notEqual(getSessionInfo(f.instanceId, sessionId), undefined, "usage obligations publish with the page")
+    clock.fire()
+    assert.equal(hydration.mock.callCount(), 1, "nothing further remains scheduled")
+  } finally {
+    clock.restore()
+    f.cleanup()
   }
 })
 
