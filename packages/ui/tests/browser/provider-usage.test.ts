@@ -147,9 +147,9 @@ test("native account events and reconnect clear old quotas; hidden panels do not
   } finally { await page.close() }
 })
 
-for (const [locale, message] of [
-  ["en-US", "OpenAI does not provide usage for this ChatGPT sign-in method. You can still chat."],
-  ["fr-FR", "OpenAI ne permet pas de consulter l'utilisation avec cette méthode de connexion ChatGPT. Les conversations restent disponibles."],
+for (const [locale, message, linkLabel] of [
+  ["en-US", "OpenAI does not provide usage for this ChatGPT sign-in method. You can still chat.", "View ChatGPT usage"],
+  ["fr-FR", "OpenAI ne permet pas de consulter l'utilisation avec cette méthode de connexion ChatGPT. Les conversations restent disponibles.", "Consulter l’utilisation ChatGPT"],
 ]) test(`ChatGPT sign-in limitation replaces old quota and clears on account change (${locale})`, async () => {
   const page = await browser.newPage({ locale, viewport: { width: 320, height: 200 } })
   try {
@@ -161,17 +161,29 @@ for (const [locale, message] of [
     await requests[1].fulfill({ json: {
       requestedProviderId: "openai", providerId: "codex", providerName: "Codex", supported: true,
       configured: true, ok: false, fetchedAt: Date.now(), windows: {}, unavailableReason: "openai-token-sharing-unsupported",
+      unavailableAction: "chatgpt-usage",
     } })
     await page.getByText(message, { exact: true }).waitFor()
-    assert.equal(await page.getByRole("status").textContent(), message)
+    const link = page.getByRole("status").getByRole("link", { name: linkLabel, exact: true })
+    await link.waitFor()
+    assert.equal(await link.getAttribute("href"), "https://chatgpt.com/settings/usage")
+    assert.equal(await link.getAttribute("target"), "_blank")
+    assert.equal(await link.getAttribute("rel"), "noopener noreferrer")
+    assert.equal(await link.evaluate(el => getComputedStyle(el).textDecorationLine), "underline")
+    await page.keyboard.press("Tab")
+    assert.equal(await link.evaluate(el => document.activeElement === el), true)
+    assert.notEqual(await link.evaluate(el => getComputedStyle(el).outlineStyle), "none")
     assert.equal(await page.getByRole("status").evaluate(el => el.classList.contains("right-panel-empty-text")), false)
     assert.equal(await page.getByRole("progressbar").count(), 0)
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
     if (process.env.CODENOMAD_USAGE_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_USAGE_CAPTURE.replace(/\.png$/, `-${locale}.png`) })
     await page.evaluate(() => (window as any).usageFixture.event("credential.switched"))
-    await waitRequests(requests, 3); await fulfill(requests[2], 20)
+    await waitRequests(requests, 3)
+    assert.equal(await link.count(), 0, "account changes revoke the link before the next quota arrives")
+    await fulfill(requests[2], 20)
     await page.getByRole("progressbar").waitFor()
     assert.equal(await page.getByText(message, { exact: true }).count(), 0)
+    assert.equal(await link.count(), 0)
     assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "20")
     assert.deepEqual(errors, [])
   } finally { await page.close() }

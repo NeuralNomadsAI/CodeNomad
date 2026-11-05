@@ -52,7 +52,7 @@
 
 对于 OpenCode Zen 免费模型，**用量**根据此服务自 00:00 UTC 起记录的步骤数估算消耗，以假定的每天 200 次请求为参考，并将下一个 UTC 午夜作为预计重置时间。步骤数近似请求数；其他流量和动态 IP 限制可能使其与实际配额用量不同。
 
-OpenAI 不为某一种 ChatGPT 登录方式提供用量：此时用量面板会说明这一点，而不显示配额窗口。聊天仍可正常使用，重新连接同一登录也不会恢复该读数。
+OpenAI 不为某一种 ChatGPT 登录方式提供用量：此时用量面板会说明这一点，而不显示配额窗口。选择[查看 ChatGPT 用量](https://chatgpt.com/settings/usage)，即可在 ChatGPT 中查看应用用量，并管理应用对您的套餐和额度的访问。聊天仍可正常使用，重新连接同一登录也不会恢复该读数。
 
 用量跟随所选原生凭据。通过 `anthropic`/`claude` 使用 Claude 时，采用 OpenCode 的 Anthropic OAuth。OpenCode 的 **Claude Agent** 提供商（`claude-agent`）和 `claude-code` 提供商使用守护进程主机上的 Claude Code 登录，包括其 WSL 发行版：先用 `CLAUDE_CODE_OAUTH_TOKEN`，再用已存储登录，文件存储由 `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` 或 `~/.claude` 决定；本地 macOS 可使用钥匙串。CodeNomad 不会用一种 Claude 登录替代另一种。
 

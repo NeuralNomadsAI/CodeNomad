@@ -52,7 +52,7 @@ Verwenden Sie **Nutzung** im rechten Panel für die Anbieter-Planfenster, Rücks
 
 Für kostenlose OpenCode-Zen-Modelle schätzt **Nutzung** den Verbrauch anhand der seit 00:00 UTC aufgezeichneten Schritte dieses Dienstes bei angenommenen 200 Anfragen/Tag und einer geschätzten Rücksetzung zur nächsten UTC-Mitternacht. Schritte nähern Anfragen an; anderer Datenverkehr und variable IP-Limits können die tatsächliche Kontingentnutzung abweichen lassen.
 
-Für eine ChatGPT-Anmeldemethode stellt OpenAI keine Nutzungsdaten bereit: Nutzung weist darauf hin, statt Kontingentfenster anzuzeigen. Chatten funktioniert weiterhin, und eine erneute Verbindung derselben Anmeldung stellt den Wert nicht wieder her.
+Für eine ChatGPT-Anmeldemethode stellt OpenAI keine Nutzungsdaten bereit: Nutzung weist darauf hin, statt Kontingentfenster anzuzeigen. Wählen Sie [ChatGPT-Nutzung anzeigen](https://chatgpt.com/settings/usage), um die App-Nutzung einzusehen und den Zugriff auf Ihren Tarif und Ihr Guthaben in ChatGPT zu verwalten. Chatten funktioniert weiterhin, und eine erneute Verbindung derselben Anmeldung stellt den Wert nicht wieder her.
 
 Nutzung folgt den ausgewählten nativen Zugangsdaten. Claude über `anthropic`/`claude` verwendet OpenCodes Anthropic-OAuth. OpenCodes Anbieter **Claude Agent** (`claude-agent`) und der Anbieter `claude-code` verwenden die Claude-Code-Anmeldung auf dem Daemon-Host einschließlich dessen WSL-Distribution: zuerst `CLAUDE_CODE_OAUTH_TOKEN`, dann die gespeicherte Anmeldung, wobei `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` oder `~/.claude` den Dateispeicher bestimmen; lokales macOS kann den Schlüsselbund verwenden. CodeNomad ersetzt keine Claude-Anmeldung durch die andere.
 

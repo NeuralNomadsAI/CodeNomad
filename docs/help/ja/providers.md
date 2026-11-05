@@ -52,7 +52,7 @@
 
 OpenCode Zenの無料モデルでは、**使用量** はこのサービスの00:00 UTC以降の記録ステップ数を、仮定した1日200件と比較し、次のUTC午前0時を推定リセット時刻とします。ステップ数はリクエスト数の近似です。他の通信や変動するIP制限により、実際の使用枠とは異なる場合があります。
 
-OpenAI は、ChatGPT のサインイン方式の 1 つについて使用量を提供していません。その場合、**使用量** は割り当て量の期間を表示する代わりにその旨を示します。チャットは引き続き利用でき、同じログインで再接続しても測定値は戻りません。
+OpenAI は、ChatGPT のサインイン方式の 1 つについて使用量を提供していません。その場合、**使用量** は割り当て量の期間を表示する代わりにその旨を示します。[ChatGPT の使用状況を確認](https://chatgpt.com/settings/usage) を選ぶと、ChatGPT でアプリの使用状況を確認し、プランやクレジットへのアクセスを管理できます。チャットは引き続き利用でき、同じログインで再接続しても測定値は戻りません。
 
 使用量は選択されたネイティブ認証情報に従います。`anthropic`／`claude` 経由の Claude は OpenCode の Anthropic OAuth を使用します。OpenCode の **Claude Agent** プロバイダー（`claude-agent`）と `claude-code` プロバイダーは、WSL ディストリビューションを含むデーモンホストの Claude Code ログインを使用します。`CLAUDE_CODE_OAUTH_TOKEN`、次に保存済みログインの順で、`CLAUDE_SECURESTORAGE_CONFIG_DIR`／`CLAUDE_CONFIG_DIR` または `~/.claude` がファイル保存場所を決めます。ローカル macOS では Keychain を使用できます。CodeNomad は、一方の Claude ログインを他方の代わりにしません。
 

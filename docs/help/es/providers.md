@@ -52,7 +52,7 @@ Usa **Uso** en el panel derecho para ver los periodos del plan del proveedor de 
 
 Para los modelos gratuitos de OpenCode Zen, **Uso** estima el consumo con los pasos registrados por este servicio desde las 00:00 UTC, sobre una base supuesta de 200 solicitudes/día y un reinicio estimado a la siguiente medianoche UTC. Los pasos aproximan las solicitudes; otro tráfico y los límites variables por IP pueden diferir del uso real de la cuota.
 
-OpenAI no proporciona datos de uso para uno de los métodos de inicio de sesión de ChatGPT: Uso lo indica en lugar de mostrar periodos de cuota. Chatear sigue funcionando, y volver a conectar el mismo inicio de sesión no restaura la lectura.
+OpenAI no proporciona datos de uso para uno de los métodos de inicio de sesión de ChatGPT: Uso lo indica en lugar de mostrar periodos de cuota. Elija [Ver uso de ChatGPT](https://chatgpt.com/settings/usage) para consultar el uso de las aplicaciones y gestionar su acceso a su plan y créditos en ChatGPT. Chatear sigue funcionando, y volver a conectar el mismo inicio de sesión no restaura la lectura.
 
 Uso sigue la credencial nativa seleccionada. Claude mediante `anthropic`/`claude` usa el OAuth de Anthropic de OpenCode. El proveedor **Claude Agent** de OpenCode (`claude-agent`) y el proveedor `claude-code` usan el inicio de sesión de Claude Code en el equipo del daemon, incluida su distribución WSL: `CLAUDE_CODE_OAUTH_TOKEN`, después el inicio de sesión almacenado, con `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` o `~/.claude` determinando el almacenamiento de archivos; macOS local puede usar el Llavero. CodeNomad no sustituye un inicio de sesión de Claude por el otro.
 

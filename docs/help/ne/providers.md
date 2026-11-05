@@ -52,7 +52,7 @@ authorization विन्डो रोकिए प्रवाहबाट **�
 
 निःशुल्क OpenCode Zen मोडेलका लागि **प्रयोग** ले यस सेवामा 00:00 UTC देखि रेकर्ड भएका चरणबाट, दैनिक 200 अनुरोधको मानिएको आधार र अर्को UTC मध्यरातमा अनुमानित रिसेट प्रयोग गरी खपत अनुमान गर्छ। चरणले अनुरोधको अनुमान दिन्छ; अन्य ट्राफिक र बदलिने IP सीमाका कारण वास्तविक कोटा प्रयोग फरक हुन सक्छ।
 
-OpenAI ले एउटा ChatGPT sign-in विधिका लागि usage दिँदैन: त्यसमा **प्रयोग** ले quota window देखाउनुको सट्टा त्यही बताउँछ। च्याट भने चलिरहन्छ, र उही login फेरि जोड्दा reading फर्किँदैन।
+OpenAI ले एउटा ChatGPT sign-in विधिका लागि usage दिँदैन: त्यसमा **प्रयोग** ले quota window देखाउनुको सट्टा त्यही बताउँछ। ChatGPT मा एपहरूको प्रयोग हेर्न र आफ्नो योजना तथा क्रेडिटमा तिनको पहुँच व्यवस्थापन गर्न [ChatGPT को प्रयोग हेर्नुहोस्](https://chatgpt.com/settings/usage) रोज्नुहोस्। च्याट भने चलिरहन्छ, र उही login फेरि जोड्दा reading फर्किँदैन।
 
 Usage ले चयनित नेटिभ credential पछ्याउँछ। `anthropic`/`claude` मार्फत Claude ले OpenCode को Anthropic OAuth प्रयोग गर्छ। OpenCode को **Claude Agent** provider (`claude-agent`) र `claude-code` provider ले daemon होस्टको Claude Code login, त्यसको WSL वितरणसमेत, प्रयोग गर्छ: `CLAUDE_CODE_OAUTH_TOKEN`, त्यसपछि सुरक्षित login; `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` वा `~/.claude` ले फाइल भण्डारण निर्धारण गर्छन्; स्थानीय macOS ले Keychain प्रयोग गर्न सक्छ। CodeNomad ले एउटा Claude login को सट्टा अर्को राख्दैन।
 

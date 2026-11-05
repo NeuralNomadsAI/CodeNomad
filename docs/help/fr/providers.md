@@ -52,7 +52,7 @@ Utilisez **Utilisation** dans le panneau droit pour les fenêtres de quota du fo
 
 Pour les modèles gratuits OpenCode Zen, **Utilisation** estime la consommation à partir des étapes enregistrées par ce service depuis 00 h UTC, sur une base indicative de 200 requêtes/jour et avec une réinitialisation estimée au prochain minuit UTC. Les étapes approchent les requêtes ; le trafic externe et les limites variables par IP peuvent faire diverger l’estimation du quota réel.
 
-OpenAI ne fournit pas l’utilisation pour l’une des méthodes de connexion ChatGPT : Utilisation l’indique au lieu d’afficher les fenêtres de quota. Le chat fonctionne toujours, et reconnecter la même connexion ne rétablit pas la lecture.
+OpenAI ne fournit pas l’utilisation pour l’une des méthodes de connexion ChatGPT : Utilisation l’indique au lieu d’afficher les fenêtres de quota. Choisissez [Consulter l’utilisation ChatGPT](https://chatgpt.com/settings/usage) pour consulter l’utilisation des applications et gérer leur accès à votre forfait et à vos crédits dans ChatGPT. Le chat fonctionne toujours, et reconnecter la même connexion ne rétablit pas la lecture.
 
 L’utilisation suit l’identifiant natif sélectionné. Claude via `anthropic`/`claude` utilise l’OAuth Anthropic d’OpenCode. Le fournisseur **Claude Agent** d’OpenCode (`claude-agent`) et le fournisseur `claude-code` utilisent la connexion Claude Code sur l’hôte du démon, y compris sa distribution WSL : `CLAUDE_CODE_OAUTH_TOKEN`, puis la connexion enregistrée, avec `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` ou `~/.claude` déterminant le stockage fichier ; macOS local peut utiliser le Trousseau. CodeNomad ne remplace pas une connexion Claude par l’autre.
 

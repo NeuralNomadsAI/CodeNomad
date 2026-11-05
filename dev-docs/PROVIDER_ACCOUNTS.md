@@ -42,8 +42,11 @@ exchanges tokens.
 
 OpenAI's `chatgpt-token-sharing` grant cannot read Codex usage ([confirmed by
 OpenAI](https://github.com/openai/sign-in-with-chatgpt-devkit/issues/3#issuecomment-5936080960)):
-Usage shows the localized `openai-token-sharing-unsupported` explanation for that
-login; its quota stays unknown, so automatic selection rejects it.
+Usage shows the localized `openai-token-sharing-unsupported` explanation and a
+translated **View ChatGPT usage** link to `https://chatgpt.com/settings/usage`
+for that login, as [OpenAI recommends](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions#tracking-usage).
+The reader returns the `chatgpt-usage` action; the UI owns the fixed destination.
+Its quota stays unknown, so automatic selection rejects it.
 
 Pay-as-you-go integrations (`zai`, `minimax`, OpenRouter, DeepInfra, Kilo,
 ZenMux, DeepSeek, credit providers), the Console's Zen provider and readers that
