@@ -30,8 +30,8 @@ MIT/Apache-2.0 crates, including licenses, selected through `[patch.crates-io]`.
   depends on the engine's default handling. Storage Access API
   consent depends on tracking-prevention settings; storage-access grants also have
   an automatic cookie-policy path. These routes bypass the public media callback.
-  Keep the macOS renderer path gated pending native qualification of supported OS
-  versions; use the iframe fallback if those defaults permit native requests.
+  The macOS native preview uses these per-instance guards on macOS 14+.
+  Requalify engine-default permission handling when updating the runtime or OS support.
   Never substitute JavaScript rejection shims for native permission enforcement,
   add a global permission denial or replace the delegate after construction.
 

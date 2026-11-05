@@ -20,8 +20,8 @@ installation, or the independently managed OpenCode daemon.
 For a runtime update, run the server and desktop tests with the pinned Node,
 then rebuild and smoke-test the packaged applications on Windows, macOS, and
 Linux. Check the upstream Node platform requirements before changing the pin;
-Node 24 requires macOS 13.5 or later. Keep both desktop bundle minimum versions
-aligned. Keep the version exact rather than resolving `latest` or `lts/*` at
+Node 24 and Electron require macOS 13.5 or later; Tauri requires macOS 14 or
+later for identified WKWebView preview stores. Keep the version exact rather than resolving `latest` or `lts/*` at
 build time so release inputs remain reproducible.
 
 ## Quick Start
@@ -127,8 +127,9 @@ Electron names deb architectures the Debian way (`amd64`) and Tauri keeps its na
 
 ### macOS
 
-- **Build on:** macOS 13.5+ with the required Xcode tools (CI uses macOS 15)
-- **Run on:** macOS 13.5+ (Intel and Apple Silicon; required by bundled Node 24)
+- **Build on:** macOS 13.5+ for Electron, macOS 14+ for Tauri, with the required Xcode tools (CI uses macOS 15)
+- **Run on:** Electron macOS 13.5+; Tauri macOS 14+ (Intel and Apple Silicon)
+- **Tauri bundles:** keep `minimumSystemVersion` and `LSMinimumSystemVersion` at 14.0 for both architectures; scope any `MACOSX_DEPLOYMENT_TARGET=14.0` override to Tauri build steps.
 - **Code signing:** Optional (recommended for distribution)
 
 ### Windows

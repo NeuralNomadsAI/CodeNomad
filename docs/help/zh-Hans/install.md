@@ -10,11 +10,11 @@
 
 | 平台 | Electron 发行包 | Tauri 发行包 | 平台说明 |
 | --- | --- | --- | --- |
-| macOS | ZIP，Intel 或 Apple Silicon | ZIP，Intel 或 Apple Silicon | 随附运行时要求 macOS 13.5 或更高版本。 |
+| macOS | ZIP，Intel 或 Apple Silicon | ZIP，Intel 或 Apple Silicon | Tauri：macOS 14+；Electron：macOS 13.5+。 |
 | Windows | ZIP，x64 | 安装程序，x64 | Windows 10 或更高版本；Tauri 使用 WebView2。 |
 | Linux | Debian 软件包，x64 | AppImage，x64 | 在 Ubuntu 24.04 上构建和测试；不保证兼容更早的发行版。 |
 
-桌面发行包包含后端和 OpenCode 安装程序所需的运行时资源，无需另行安装 Node.js/npm。不附带 Git。Electron 和 Windows Tauri 支持原生浏览器自动化；其他 Tauri 平台使用 iframe 预览。
+桌面发行包包含后端和 OpenCode 安装程序所需的运行时资源，无需另行安装 Node.js/npm。不附带 Git。Electron 和 Tauri 使用原生嵌入式网页预览。Electron 和 Windows Tauri 支持智能体浏览器自动化；Tauri macOS/Linux 预览支持手动浏览，预设仅调整尺寸。
 
 已验证的下载若在启动时被阻止，请参阅[平台故障排查](troubleshooting.md#desktop-launch)。切勿仅为绕过警告而运行不可信的压缩包。
 

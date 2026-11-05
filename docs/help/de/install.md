@@ -10,11 +10,11 @@ Wählen Sie einen lokalen Desktop-Host oder betreiben Sie den [eigenständigen S
 
 | Plattform | Electron-Release | Tauri-Release | Plattformhinweise |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel oder Apple Silicon | ZIP, Intel oder Apple Silicon | Die gebündelte Laufzeit erfordert macOS 13.5 oder neuer. |
+| macOS | ZIP, Intel oder Apple Silicon | ZIP, Intel oder Apple Silicon | Tauri: macOS 14+; Electron: macOS 13.5+. |
 | Windows | ZIP, x64 | Installationsprogramm, x64 | Windows 10 oder neuer; Tauri verwendet WebView2. |
 | Linux | Debian-Paket, x64 | AppImage, x64 | Unter Ubuntu 24.04 gebaut und getestet; Kompatibilität mit älteren Distributionen ist nicht garantiert. |
 
-Desktop-Releases enthalten die Laufzeitressourcen für Backend und OpenCode-Installation; dafür benötigen Sie keine separate Node.js/npm-Installation. Git wird nicht mitgeliefert. Native Browser-Automatisierung wird in Electron und Windows-Tauri unterstützt; andere Tauri-Plattformen verwenden iframe-Vorschauen.
+Desktop-Releases enthalten die Laufzeitressourcen für Backend und OpenCode-Installation; dafür benötigen Sie keine separate Node.js/npm-Installation. Git wird nicht mitgeliefert. Electron und Tauri verwenden native eingebettete Web-Vorschauen. Browser-Automatisierung durch Agenten wird in Electron und Windows-Tauri unterstützt; Tauri-Vorschauen unter macOS/Linux unterstützen manuelles Browsen mit Vorlagen, die nur die Abmessungen ändern.
 
 Wird ein überprüfter Download beim Start blockiert, lesen Sie die [plattformbezogene Fehlerbehebung](troubleshooting.md#desktop-launch). Führen Sie niemals ein nicht vertrauenswürdiges Archiv aus, nur um eine Warnung zu umgehen.
 

@@ -10,11 +10,11 @@
 
 | प्लेटफर्म | Electron रिलिज | Tauri रिलिज | प्लेटफर्म टिप्पणी |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel वा Apple Silicon | ZIP, Intel वा Apple Silicon | समावेश गरिएको रनटाइमका लागि macOS 13.5 वा पछिको आवश्यक छ। |
+| macOS | ZIP, Intel वा Apple Silicon | ZIP, Intel वा Apple Silicon | Tauri: macOS 14 वा पछिको; Electron: macOS 13.5 वा पछिको। |
 | Windows | ZIP, x64 | Installer, x64 | Windows 10 वा पछिको; Tauri ले WebView2 प्रयोग गर्छ। |
 | Linux | Debian प्याकेज, x64 | AppImage, x64 | Ubuntu 24.04 मा build र परीक्षण गरिएको; पुराना वितरणसँग अनुकूलता सुनिश्चित छैन। |
 
-डेस्कटप रिलिजमा ब्याकएन्ड र OpenCode installer लाई चाहिने रनटाइम स्रोत समावेश छन्, त्यसैले प्रयोग गर्न छुट्टै Node.js/npm स्थापना चाहिँदैन। Git समावेश छैन। नेटिभ ब्राउजर स्वचालन Electron र Windows Tauri मा समर्थित छ; अन्य Tauri प्लेटफर्मले iframe पूर्वावलोकन प्रयोग गर्छन्।
+डेस्कटप रिलिजमा ब्याकएन्ड र OpenCode installer लाई चाहिने रनटाइम स्रोत समावेश छन्, त्यसैले प्रयोग गर्न छुट्टै Node.js/npm स्थापना चाहिँदैन। Git समावेश छैन। Electron र Tauri ले नेटिभ embedded वेब पूर्वावलोकन प्रयोग गर्छन्। एजेन्ट ब्राउजर स्वचालन Electron र Windows Tauri मा समर्थित छ; macOS/Linux Tauri पूर्वावलोकनले आयाम-मात्र preset सहित म्यानुअल browsing समर्थन गर्छन्।
 
 प्रमाणित डाउनलोड सुरु गर्दा रोकिएमा [प्लेटफर्म समस्या समाधान](troubleshooting.md#desktop-launch) हेर्नुहोस्। चेतावनी छल्नकै लागि अविश्वसनीय archive कहिल्यै नचलाउनुहोस्।
 

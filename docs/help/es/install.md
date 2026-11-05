@@ -10,11 +10,11 @@ Elige un equipo de escritorio local o ejecuta el [servidor independiente](server
 
 | Plataforma | Versión Electron | Versión Tauri | Notas de la plataforma |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel o Apple Silicon | ZIP, Intel o Apple Silicon | El entorno de ejecución incluido requiere macOS 13.5 o posterior. |
+| macOS | ZIP, Intel o Apple Silicon | ZIP, Intel o Apple Silicon | Tauri: macOS 14+; Electron: macOS 13.5+. |
 | Windows | ZIP, x64 | Instalador, x64 | Windows 10 o posterior; Tauri usa WebView2. |
 | Linux | Paquete Debian, x64 | AppImage, x64 | Compilado y probado en Ubuntu 24.04; no se garantiza la compatibilidad con distribuciones anteriores. |
 
-Las versiones de escritorio incluyen los recursos de ejecución necesarios para el backend y el instalador de OpenCode, por lo que no necesitas instalar Node.js/npm por separado para usarlas. Git no está incluido. La automatización nativa del navegador es compatible con Electron y Tauri para Windows; las demás plataformas Tauri usan vistas previas iframe.
+Las versiones de escritorio incluyen los recursos de ejecución necesarios para el backend y el instalador de OpenCode, por lo que no necesitas instalar Node.js/npm por separado para usarlas. Git no está incluido. Electron y Tauri usan vistas previas web nativas integradas. La automatización del navegador por agentes es compatible con Electron y Tauri para Windows; las vistas previas de Tauri para macOS/Linux permiten navegar manualmente con plantillas de solo dimensiones.
 
 Si una descarga verificada se bloquea al iniciarse, consulta la [solución de problemas de la plataforma](troubleshooting.md#desktop-launch). Nunca ejecutes un archivo de origen no fiable solo para eludir una advertencia.
 

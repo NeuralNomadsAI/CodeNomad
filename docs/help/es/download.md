@@ -11,7 +11,7 @@ Aplicación de escritorio gratuita y de código abierto (MIT) para Windows, macO
 | Plataforma | Tauri (recomendada) | Electron |
 | --- | --- | --- |
 | Windows 10 o posterior | [Instalador, x64](release:tauri-windows-x64) | [ZIP, x64](release:electron-windows-x64) |
-| macOS 13.5 o posterior | [ZIP, Apple Silicon](release:tauri-macos-arm64) · [ZIP, Intel](release:tauri-macos-x64) | [ZIP, Apple Silicon](release:electron-macos-arm64) · [ZIP, Intel](release:electron-macos-x64) |
+| macOS – Tauri 14+; Electron 13.5+ | [ZIP, Apple Silicon](release:tauri-macos-arm64) · [ZIP, Intel](release:tauri-macos-x64) | [ZIP, Apple Silicon](release:electron-macos-arm64) · [ZIP, Intel](release:electron-macos-x64) |
 | Linux x64 (probado en Ubuntu 24.04) | [AppImage, x64](release:tauri-linux-x64) | [Paquete Debian, x64](release:electron-linux-x64) |
 
 Ambas compilaciones ofrecen el mismo espacio de trabajo. Tauri puede instalar actualizaciones desde la propia aplicación; Electron se actualiza descargando una nueva versión y admite la automatización nativa del navegador en todas las plataformas (Tauri solo en Windows). [Compara las compilaciones](install.md#desktop-downloads).

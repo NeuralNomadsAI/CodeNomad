@@ -20,16 +20,19 @@ Native previews share cookies, sign-ins and site storage across projects/session
 | --- | --- | --- | --- |
 | Electron on supported desktop platforms | Native Chromium guest | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
 | Windows Tauri | Native WebView2 child | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
-| macOS/Linux Tauri | Sandboxed iframe | No native browser automation | Dimensions only |
+| macOS Tauri | Native WKWebView child | Unavailable; use Electron or Windows Tauri | Dimensions only |
+| Linux Tauri | Native WebKitGTK child | Unavailable; use Electron or Windows Tauri | Dimensions only |
 | Plain browser/remote view | Iframe fallback | No local native preview target | Dimensions only |
 
-Native automation is prepared at desktop startup and uses the session-bound `codenomad.browser` tool for open, navigate, snapshot, screenshot and page actions: click, type, select, hover, drag, scroll, key presses and waiting for text. Tool availability is not authorization for every window: execution checks the owning backend, native capabilities, session and visible target. An action whose page was hidden, replaced or navigated meanwhile is refused rather than sent to another page, and an action is never repeated automatically. Page contents remain untrusted. An iframe may fail because the target forbids embedding; use an external browser rather than weakening its protections.
+On Electron and Windows Tauri, native automation is prepared at desktop startup and uses the session-bound `codenomad.browser` tool for open, navigate, snapshot, screenshot and page actions: click, type, select, hover, drag, scroll, key presses and waiting for text. Tool availability is not authorization for every window: execution checks the owning backend, native capabilities, session and visible target. An action whose page was hidden, replaced or navigated meanwhile is refused rather than sent to another page, and an action is never repeated automatically. Page contents remain untrusted. An iframe may fail because the target forbids embedding; use an external browser rather than weakening its protections.
+
+Tauri macOS/Linux previews open manually, retain shared sign-ins across restarts and use native Back/Forward history. Native previews hide beneath local menus and dialogs; element comments are unavailable in native mode. `codenomad.browser` refuses all actions on Tauri macOS/Linux, even with a visible preview.
 
 ## Choose one of six viewport templates {#templates}
 
 1. Open the preview's viewport menu.
 2. Select a template below. Use the portrait/landscape entries directly; there is no separate rotate control.
-3. Expect a native reload when entering/changing mobile emulation or returning to a dimensions-only template.
+3. On Electron and Windows Tauri, expect a native reload when entering/changing mobile emulation or returning to a dimensions-only template.
 
 | Template | CSS viewport |
 | --- | --- |
@@ -40,7 +43,7 @@ Native automation is prepared at desktop startup and uses the session-bound `cod
 | Mobile viewport | 390 × 844 |
 | Mobile landscape | 844 × 390 |
 
-Native mobile templates set Android/Chromium identity, orientation, touch and DPR 2.75 on the owned guest only. Returning to responsive/desktop/tablet clears those overrides and reloads. Iframe fallback only resizes. These are reproducible layout references, not Safari/Firefox emulation or simulations of phone keyboards, browser/system bars or mobile OS text settings. Save page work before changing templates because reload can discard unsent page state.
+On Electron and Windows Tauri, mobile templates set Android/Chromium identity, orientation, touch and DPR 2.75 on the owned guest only. Returning to responsive/desktop/tablet clears those overrides and reloads. Tauri macOS/Linux and iframe fallback only resize. These are reproducible layout references, not Safari/Firefox emulation or simulations of phone keyboards, browser/system bars or mobile OS text settings. Save page work before changing templates because reload can discard unsent page state.
 
 ## Register a SideCar {#register-sidecar}
 

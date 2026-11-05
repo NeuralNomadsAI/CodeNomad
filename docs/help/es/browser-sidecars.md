@@ -20,16 +20,19 @@ Las vistas previas nativas comparten cookies, inicios de sesión y almacenamient
 | --- | --- | --- | --- |
 | Electron en plataformas de escritorio compatibles | Navegador invitado Chromium nativo | Compatible para la vista previa visible de la sesión propia | Emulación de identidad Android/Chromium, entrada táctil y densidad |
 | Tauri para Windows | Ventana hija nativa WebView2 | Compatible para la vista previa visible de la sesión propia | Emulación de identidad Android/Chromium, entrada táctil y densidad |
-| Tauri para macOS/Linux | Iframe aislado | Sin automatización nativa de navegador | Solo dimensiones |
+| Tauri para macOS | Ventana hija nativa WKWebView | No disponible; usa Electron o Tauri para Windows | Solo dimensiones |
+| Tauri para Linux | Ventana hija nativa WebKitGTK | No disponible; usa Electron o Tauri para Windows | Solo dimensiones |
 | Navegador normal/vista remota | Alternativa iframe | Sin objetivo local de vista previa nativa | Solo dimensiones |
 
-La automatización nativa se prepara al iniciar el escritorio y usa la herramienta `codenomad.browser` vinculada a la sesión para abrir, navegar, obtener una instantánea, capturar pantalla y realizar acciones en la página: hacer clic, escribir, seleccionar, pasar el cursor, arrastrar, desplazarse, pulsar teclas y esperar un texto. Que una herramienta esté disponible no autoriza todas las ventanas: la ejecución comprueba el backend propietario, las capacidades nativas, la sesión y el objetivo visible. Una acción cuya página se ocultó, se sustituyó o navegó mientras tanto se rechaza en lugar de enviarse a otra página, y una acción nunca se repite automáticamente. El contenido de las páginas sigue sin ser fiable. Un iframe puede fallar porque el destino prohíbe incrustarlo; usa un navegador externo en lugar de debilitar sus protecciones.
+En Electron y Tauri para Windows, la automatización nativa se prepara al iniciar el escritorio y usa la herramienta `codenomad.browser` vinculada a la sesión para abrir, navegar, obtener una instantánea, capturar pantalla y realizar acciones en la página: hacer clic, escribir, seleccionar, pasar el cursor, arrastrar, desplazarse, pulsar teclas y esperar un texto. Que una herramienta esté disponible no autoriza todas las ventanas: la ejecución comprueba el backend propietario, las capacidades nativas, la sesión y el objetivo visible. Una acción cuya página se ocultó, se sustituyó o navegó mientras tanto se rechaza en lugar de enviarse a otra página, y una acción nunca se repite automáticamente. El contenido de las páginas sigue sin ser fiable. Un iframe puede fallar porque el destino prohíbe incrustarlo; usa un navegador externo en lugar de debilitar sus protecciones.
+
+Las vistas previas de Tauri para macOS/Linux se abren manualmente, conservan los inicios de sesión compartidos entre reinicios y usan el historial nativo Atrás/Adelante. Las vistas previas nativas se ocultan bajo los menús y diálogos locales; los comentarios sobre elementos no están disponibles en modo nativo. `codenomad.browser` rechaza todas las acciones en Tauri para macOS/Linux, incluso con una vista previa visible.
 
 ## Elegir una de seis plantillas de área visible {#templates}
 
 1. Abre el menú de área visible de la vista previa.
 2. Selecciona una plantilla de las siguientes. Usa directamente las entradas vertical/horizontal; no hay un control de giro separado.
-3. Espera una recarga nativa al entrar/cambiar la emulación móvil o volver a una plantilla de solo dimensiones.
+3. En Electron y Tauri para Windows, espera una recarga nativa al entrar/cambiar la emulación móvil o volver a una plantilla de solo dimensiones.
 
 | Plantilla | Área visible CSS |
 | --- | --- |
@@ -40,7 +43,7 @@ La automatización nativa se prepara al iniciar el escritorio y usa la herramien
 | Área visible móvil | 390 × 844 |
 | Móvil horizontal | 844 × 390 |
 
-Las plantillas móviles nativas establecen identidad Android/Chromium, orientación, entrada táctil y DPR 2.75 solo en el navegador invitado propio. Volver a adaptable/escritorio/tableta borra esos valores y recarga. La alternativa iframe solo cambia el tamaño. Son referencias de disposición reproducibles, no emulación Safari/Firefox ni simulaciones de teclados de teléfono, barras del navegador/sistema o ajustes de texto del sistema móvil. Guarda el trabajo de la página antes de cambiar plantillas porque la recarga puede descartar estado sin enviar.
+En Electron y Tauri para Windows, las plantillas móviles establecen identidad Android/Chromium, orientación, entrada táctil y DPR 2.75 solo en el navegador invitado propio. Volver a adaptable/escritorio/tableta borra esos valores y recarga. Tauri para macOS/Linux y la alternativa iframe solo cambian el tamaño. Son referencias de disposición reproducibles, no emulación Safari/Firefox ni simulaciones de teclados de teléfono, barras del navegador/sistema o ajustes de texto del sistema móvil. Guarda el trabajo de la página antes de cambiar plantillas porque la recarga puede descartar estado sin enviar.
 
 ## Registrar un SideCar {#register-sidecar}
 

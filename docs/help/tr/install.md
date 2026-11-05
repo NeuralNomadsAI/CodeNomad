@@ -10,11 +10,11 @@ Yerel bir masaüstü ana bilgisayarı seçin veya [bağımsız sunucu](server.md
 
 | Platform | Electron sürümü | Tauri sürümü | Platform notları |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel veya Apple Silicon | ZIP, Intel veya Apple Silicon | Paket çalışma zamanı için macOS 13.5 veya üzeri gereklidir. |
+| macOS | ZIP, Intel veya Apple Silicon | ZIP, Intel veya Apple Silicon | Tauri: macOS 14+; Electron: macOS 13.5+. |
 | Windows | ZIP, x64 | Yükleyici, x64 | Windows 10 veya sonrası; Tauri WebView2 kullanır. |
 | Linux | Debian paketi, x64 | AppImage, x64 | Ubuntu 24.04'te oluşturulmuş ve test edilmiştir; eski dağıtımlarla uyumluluk garanti edilmez. |
 
-Masaüstü sürümleri, arka uç ve OpenCode yükleyicisinin ihtiyaç duyduğu çalışma zamanı kaynaklarını içerir; dolayısıyla bunları kullanmak için ayrı bir Node.js/npm kurulumuna ihtiyacınız yoktur. Git pakete dahil değildir. Yerel tarayıcı otomasyonu Electron ve Windows Tauri'de desteklenir; diğer Tauri platformları iframe önizlemelerini kullanır.
+Masaüstü sürümleri, arka uç ve OpenCode yükleyicisinin ihtiyaç duyduğu çalışma zamanı kaynaklarını içerir; dolayısıyla bunları kullanmak için ayrı bir Node.js/npm kurulumuna ihtiyacınız yoktur. Git pakete dahil değildir. Electron ve Tauri, yerel gömülü web önizlemelerini kullanır. Ajan tarayıcı otomasyonu Electron ve Windows Tauri'de desteklenir; Tauri macOS/Linux önizlemeleri, yalnızca boyutları değiştiren şablonlarla elle gezinmeyi destekler.
 
 Başlatma sırasında engellenen doğrulanmış bir indirme için, bkz. [platform sorunlarını giderme](troubleshooting.md#desktop-launch). Asla güvenilmeyen bir arşivi yalnızca bir uyarıyı atlamak için çalıştırmayın.
 

@@ -10,11 +10,11 @@
 
 | プラットフォーム | Electron リリース | Tauri リリース | 注意事項 |
 | --- | --- | --- | --- |
-| macOS | ZIP、Intel または Apple Silicon | ZIP、Intel または Apple Silicon | 同梱ランタイムには macOS 13.5 以降が必要です。 |
+| macOS | ZIP、Intel または Apple Silicon | ZIP、Intel または Apple Silicon | Tauri：macOS 14 以降。Electron：macOS 13.5 以降。 |
 | Windows | ZIP、x64 | インストーラー、x64 | Windows 10 以降。Tauri は WebView2 を使用します。 |
 | Linux | Debian パッケージ、x64 | AppImage、x64 | Ubuntu 24.04 でビルド・テスト済み。古いディストリビューションとの互換性は保証されません。 |
 
-デスクトップリリースには、バックエンドと OpenCode インストーラーに必要なランタイムリソースが含まれるため、別途 Node.js/npm をインストールする必要はありません。Git は同梱されません。ネイティブのブラウザー自動操作は Electron と Windows Tauri でサポートされ、その他の Tauri 環境は iframe プレビューを使用します。
+デスクトップリリースには、バックエンドと OpenCode インストーラーに必要なランタイムリソースが含まれるため、別途 Node.js/npm をインストールする必要はありません。Git は同梱されません。Electron と Tauri はネイティブの埋め込み Web プレビューを使用します。エージェントのブラウザー自動操作は Electron と Windows Tauri でサポートされ、macOS/Linux Tauri のプレビューは寸法のみのプリセットでの手動閲覧に対応します。
 
 確認済みのダウンロードが起動時にブロックされる場合は、[プラットフォーム別のトラブルシューティング](troubleshooting.md#desktop-launch)を参照してください。警告を回避するためだけに、信頼できないアーカイブを実行しないでください。
 
