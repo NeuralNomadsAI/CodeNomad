@@ -112,4 +112,9 @@ export const folderSelectionMessages = {
   "folderSelection.recent.sidecar": "SideCar",
   "folderSelection.newSidecar": "Nouveau SideCar",
   "folderSelection.remoteProject.serverMissing": "Serveur introuvable",
+  "newTab.title": "Nouvel onglet",
+  "newTab.home": "Accueil",
+  "newTab.items.one": "{count} élément",
+  "newTab.items.other": "{count} éléments",
+  "newTab.sponsor": "Sponsor",
 } as const

@@ -333,7 +333,7 @@ test("the home page's Recent and Browse tabs match the launcher's sections, whic
 
     // Right: two tabs, Recent tabs first, with the launcher's search.
     const tabList = page.getByRole("tablist")
-    assert.deepEqual(await tabList.getByRole("tab").allTextContents(), ["Recent", "Browse"])
+    assert.deepEqual(await tabList.locator(".panel-title").allTextContents(), ["Recent", "Browse"])
     const recentTab = tabList.getByRole("tab", { name: "Recent" })
     assert.equal(await recentTab.getAttribute("aria-selected"), "true")
     const search = page.getByRole("textbox", { name: "Search recent projects" })
@@ -345,7 +345,7 @@ test("the home page's Recent and Browse tabs match the launcher's sections, whic
     await page.keyboard.press("ArrowRight")
     const browseTab = tabList.getByRole("tab", { name: "Browse" })
     assert.equal(await browseTab.getAttribute("aria-selected"), "true")
-    assert.equal(await page.evaluate(() => document.activeElement?.textContent), "Browse")
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Browse")
     const panel = page.getByRole("tabpanel", { name: "Browse" })
     assert.equal(await panel.locator(".browse-menu-toggle").count(), 0)
     const homeRows = await panel.locator(".browse-menu-row").allTextContents()

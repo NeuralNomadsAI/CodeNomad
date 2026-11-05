@@ -112,4 +112,9 @@ export const folderSelectionMessages = {
   "folderSelection.recent.sidecar": "SideCar",
   "folderSelection.newSidecar": "新建 SideCar",
   "folderSelection.remoteProject.serverMissing": "找不到服务器",
+  "newTab.title": "新标签页",
+  "newTab.home": "主页",
+  "newTab.items.one": "{count} 个项目",
+  "newTab.items.other": "{count} 个项目",
+  "newTab.sponsor": "赞助",
 } as const

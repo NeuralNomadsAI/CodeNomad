@@ -100,4 +100,9 @@ export const folderSelectionMessages = {
   "folderSelection.recent.sidecar": "SideCar",
   "folderSelection.newSidecar": "Yeni SideCar",
   "folderSelection.remoteProject.serverMissing": "Sunucu bulunamadı",
+  "newTab.title": "Yeni sekme",
+  "newTab.home": "Ana sayfa",
+  "newTab.items.one": "{count} öğe",
+  "newTab.items.other": "{count} öğe",
+  "newTab.sponsor": "Sponsor",
 } as const

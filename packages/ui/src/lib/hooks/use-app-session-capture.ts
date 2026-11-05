@@ -69,7 +69,7 @@ function captureRuntimeState(
   return { unseenIdleSince, generationRecovery, ...(Object.keys(seenInterruptions).length ? { seenInterruptions } : {}) }
 }
 function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>) {
-  const tabs = appTabs()
+  const tabs = appTabs().filter((tab) => tab.kind !== "blank")
   const nextOccurrence = new Map<string, number>()
   const occurrenceByInstance = new Map<string, number>()
   for (const instance of instances().values()) {

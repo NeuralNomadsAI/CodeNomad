@@ -36,7 +36,39 @@ export interface RemoteProjectAppTab {
   remoteProjectTab: RemoteProjectTabRecord
 }
 
-export type AppTabRecord = InstanceAppTab | SideCarAppTab | RemoteProjectAppTab
+export interface BlankAppTab {
+  id: string
+  kind: "blank"
+}
+
+export type AppTabRecord = InstanceAppTab | SideCarAppTab | RemoteProjectAppTab | BlankAppTab
+
+const [blankTabs, setBlankTabs] = createSignal<BlankAppTab[]>([])
+
+/** Empty tabs live only in this window, without a backend record or persisted state. */
+export function openBlankTab(): void {
+  const tab: BlankAppTab = { id: `blank:${crypto.randomUUID()}`, kind: "blank" }
+  setBlankTabs((tabs) => [...tabs, tab])
+  selectAppTab(tab.id)
+}
+
+export function closeBlankTab(id: string): void {
+  const fallback = activeAppTabId() === id ? getAdjacentAppTabId(id) : activeAppTabId()
+  setBlankTabs((tabs) => tabs.filter((tab) => tab.id !== id))
+  setTabOrder((ids) => ids.filter((entry) => entry !== id))
+  ensureActiveAppTab(fallback)
+}
+
+/** A successful choice occupies its originating blank tab's position, even after an asynchronous opening. */
+export function replaceBlankTab(blankId: string | null | undefined, chosenId: string): void {
+  if (!blankId || !blankTabs().some((tab) => tab.id === blankId) || !getAppTabById(chosenId)) return
+  const ids = appTabs().map((tab) => tab.id).filter((id) => id !== chosenId)
+  setTabOrder(ids.map((id) => id === blankId ? chosenId : id))
+  setBlankTabs((tabs) => tabs.filter((tab) => tab.id !== blankId))
+  setAppTabOrderRevision((revision) => revision + 1)
+}
+
+export const activeBlankTabId = () => activeAppTab()?.kind === "blank" ? activeAppTabId() ?? undefined : undefined
 
 function getInstanceAppTabId(instanceId: string): string {
   return `instance:${instanceId}`
@@ -88,6 +120,7 @@ const appTabs = createMemo<AppTabRecord[]>((previous = []) => {
   // project must not remount every shell (and restart their Git/status reads).
   const previousById = new Map(previous.map((tab) => [tab.id, tab]))
   const currentTabs = [
+    ...blankTabs(),
     ...Array.from(instances().values())
       .filter((instance) => openInstanceTabIds().has(instance.id))
       .map((instance) => previousById.get(getInstanceAppTabId(instance.id)) ?? ({
@@ -157,7 +190,7 @@ function selectAppTab(tabId: string | null, options?: { source?: "restore" }) {
     return
   }
   setActiveRemoteProjectToken(null)
-  setActiveSidecarToken(tab.sidecarTab.token)
+  setActiveSidecarToken(tab.kind === "sidecar" ? tab.sidecarTab.token : null)
 }
 
 function selectRemoteProjectTab(token: string) {

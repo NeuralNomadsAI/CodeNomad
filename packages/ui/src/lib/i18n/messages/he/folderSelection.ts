@@ -112,4 +112,9 @@ export const folderSelectionMessages = {
   "folderSelection.recent.sidecar": "SideCar",
   "folderSelection.newSidecar": "SideCar חדש",
   "folderSelection.remoteProject.serverMissing": "השרת לא נמצא",
+  "newTab.title": "לשונית חדשה",
+  "newTab.home": "דף הבית",
+  "newTab.items.one": "פריט {count}",
+  "newTab.items.other": "{count} פריטים",
+  "newTab.sponsor": "תמיכה",
 } as const

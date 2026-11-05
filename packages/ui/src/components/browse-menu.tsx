@@ -8,6 +8,7 @@ import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles
 import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { openSidecar } from "../stores/sidecar-open"
 import ServerAddField from "./server-add-field"
+import { remoteServers as savedServers } from "../stores/preferences"
 import { ensureSidecarsLoaded, sidecars } from "../stores/sidecars"
 
 interface BrowseMenuProps {
@@ -22,6 +23,9 @@ interface BrowseMenuProps {
 
 // One disclosure state per window for the launcher's section.
 const [expanded, setExpanded] = createSignal(false)
+
+/** Choices only: this computer, available saved servers and configured SideCars (the add field is an action). */
+export const browseEntryCount = () => 1 + (canOpenRemoteWindows() ? savedServers().length : 0) + sidecars().size
 
 /**
  * Browse, shared by the home page (a tab) and the new-instance launcher (a

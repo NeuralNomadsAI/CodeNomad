@@ -2,7 +2,7 @@ import type { RemoteServerProfile } from "../../../server/src/api-types"
 import { canOpenRemoteProjectTabs } from "../lib/native/remote-view"
 import { serverDisplayName } from "../lib/codenomad-link"
 import { mixRecents, type LaunchableRecent } from "../lib/remote-project-recents"
-import { selectRemoteProjectTab } from "./app-tabs"
+import { activeBlankTabId, replaceBlankTab, getRemoteProjectAppTabId, selectRemoteProjectTab } from "./app-tabs"
 import { recentFolders, remoteProjectRecents, remoteServers, sidecarRecents } from "./preferences"
 import { sidecars } from "./sidecars"
 import { openRemoteProjectTab, remoteProjectTabs, type RemoteProjectTabRecord } from "./remote-project-tabs"
@@ -12,9 +12,10 @@ import { setShowFolderSelection } from "./ui"
 export const opensRemoteProjectTab = (profile: Pick<RemoteServerProfile, "skipTlsVerify">) =>
   !profile.skipTlsVerify && canOpenRemoteProjectTabs()
 
-export function openRemoteProject(profileId: string, options: { folder?: string; entryUrl?: string } = {}): void {
+export function openRemoteProject(profileId: string, options: { folder?: string; entryUrl?: string } = {}, blankId: string | null = activeBlankTabId() ?? null): void {
   const tab = openRemoteProjectTab(profileId, options)
   selectRemoteProjectTab(tab.token)
+  replaceBlankTab(blankId, getRemoteProjectAppTabId(tab.token))
   setShowFolderSelection(false)
 }
 

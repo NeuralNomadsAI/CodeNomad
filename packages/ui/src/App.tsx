@@ -16,6 +16,8 @@ import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
 import { SettingsScreen } from "./components/settings-screen"
 import { NativeTitlebar, hasNativeTitlebar } from "./components/native-titlebar"
+import BlankTabView from "./components/blank-tab-view"
+import { activeBlankTabId, openBlankTab, closeBlankTab, replaceBlankTab, getInstanceAppTabId } from "./stores/app-tabs"
 import { SideCarView } from "./components/sidecar-view"
 import { RemoteProjectView } from "./components/remote-project-view"
 import { EmbeddedProjectPicker } from "./components/embedded-project-picker"
@@ -457,7 +459,7 @@ const App: Component = () => {
     return recent?.projectName?.trim() || getPathBasename(folderPath)
   }
 
-  async function handleSelectFolder(folderPath: string): Promise<boolean> {
+  async function handleSelectFolder(folderPath: string, blankId = activeBlankTabId()): Promise<boolean> {
     if (!folderPath) {
       return false
     }
@@ -472,12 +474,14 @@ const App: Component = () => {
       recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, folderPath)
       if (result.reused) {
         selectInstanceTab(result.instanceId)
+        replaceBlankTab(blankId, getInstanceAppTabId(result.instanceId))
         setShowFolderSelection(false)
         log.info("Selected reused instance", { instanceId: result.instanceId, folderPath })
         return true
       }
 
       selectInstanceTab(result.instanceId)
+      replaceBlankTab(blankId, getInstanceAppTabId(result.instanceId))
       setShowFolderSelection(false)
 
       log.info("Created instance", {
@@ -494,7 +498,7 @@ const App: Component = () => {
       )
       const missingBinary = isMissingBinaryMessage(message)
       if (missingBinary || message.includes("opencode_update_required")) {
-        openOpenCodeSetup(() => handleSelectFolder(folderPath))
+        openOpenCodeSetup(() => handleSelectFolder(folderPath, blankId))
         return false
       }
       showLaunchError({ source: "create", message, binaryPath: selectedBinary, missingBinary })
@@ -540,11 +544,13 @@ const App: Component = () => {
     })
   }
 
-  async function handleNewTemporaryInstance(): Promise<void> {
+  async function handleNewTemporaryInstance(blankId = activeBlankTabId()): Promise<void> {
     clearLaunchError()
     setIsSelectingFolder(true)
     try {
-      selectInstanceTab(await openTemporaryInstance())
+      const id = await openTemporaryInstance()
+      selectInstanceTab(id)
+      replaceBlankTab(blankId, getInstanceAppTabId(id))
       setShowFolderSelection(false)
     } catch (error) {
       const message = formatLaunchErrorMessage(
@@ -555,7 +561,7 @@ const App: Component = () => {
       )
       const missingBinary = isMissingBinaryMessage(message)
       if (missingBinary || message.includes("opencode_update_required")) {
-        openOpenCodeSetup(() => handleNewTemporaryInstance())
+        openOpenCodeSetup(() => handleNewTemporaryInstance(blankId))
         return
       }
       showLaunchError({ source: "create", message, binaryPath: serverSettings().opencodeBinary || "opencode2", missingBinary })
@@ -566,10 +572,12 @@ const App: Component = () => {
   }
 
   function handleSelectExistingInstance(instanceId: string, recentPath: string) {
+    const blankId = activeBlankTabId()
     const instance = instances().get(instanceId)
     if (!instance) return
     recordWorkspaceLaunch(instance.folder, recentPath)
     selectInstanceTab(instanceId)
+    replaceBlankTab(blankId, getInstanceAppTabId(instanceId))
     setShowFolderSelection(false)
     log.info("Selected existing instance", { instanceId, folderPath: instance.folder })
   }
@@ -584,7 +592,8 @@ const App: Component = () => {
   }
 
   function handleNewInstanceRequest() {
-    setShowFolderSelection(true)
+    openBlankTab()
+    setShowFolderSelection(false)
   }
 
   const [launcherOpen, setLauncherOpen] = createSignal(false)
@@ -645,6 +654,8 @@ const App: Component = () => {
       closeInstanceTab(tab.instance.id)
     } else if (tab.kind === "remote-project") {
       closeRemoteProjectTab(tab.remoteProjectTab.token)
+    } else if (tab.kind === "blank") {
+      closeBlankTab(tab.id)
     } else {
       closeSidecarTab(tab.sidecarTab.token)
     }
@@ -778,7 +789,7 @@ const App: Component = () => {
       </Dialog>
       <div class="h-screen w-screen flex flex-col" style={{ height: "100dvh", "padding-bottom": "var(--keyboard-offset, 0px)" }}>
         <Show when={hasNativeTitlebar && !embeddedProject}>
-          <NativeTitlebar title={t("window.title.main")} logo menus actions />
+          <NativeTitlebar title={t("window.title.main")} logo menus actions onHome={() => setShowFolderSelection(true)} />
         </Show>
         <Show when={mobileFullscreenMode()}>
           <div class="mobile-fullscreen-exit-wrapper">
@@ -855,6 +866,13 @@ const App: Component = () => {
                       data-tab-visible={isVisible() ? "true" : "false"}
                     >
                       <RemoteProjectView tab={tab.remoteProjectTab} active={isVisible()} />
+                    </div>
+                  ) : tab.kind === "blank" ? (
+                    <div class="flex-1 min-h-0 overflow-auto" style={{ display: isVisible() ? "flex" : "none" }}
+                      data-tab-id={tab.id} data-tab-kind="blank" data-tab-visible={isVisible() ? "true" : "false"}>
+                      <BlankTabView active={isVisible()} isLoading={isSelectingFolder()}
+                        onSelectFolder={(path) => void handleSelectFolder(path, tab.id)} onSelectExistingInstance={handleSelectExistingInstance}
+                        onNewTemporaryInstance={() => void handleNewTemporaryInstance(tab.id)} />
                     </div>
                   ) : (
                     <div

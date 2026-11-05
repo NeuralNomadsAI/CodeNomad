@@ -9,6 +9,7 @@ import { showAlertDialog } from "../../stores/alerts"
 import { useConfig } from "../../stores/preferences"
 import { closeRemoteProjectTabsForServer } from "../../stores/remote-project-tabs"
 import { openRemoteProject, opensRemoteProjectTab } from "../../stores/remote-project-open"
+import { activeBlankTabId } from "../../stores/app-tabs"
 import type { RemoteServerProfile } from "../../../../server/src/api-types"
 
 export type RemoteServerInput = {
@@ -111,9 +112,9 @@ export function useRemoteServerProfiles() {
   }
 
   /** A saved server opens a project tab, or its own window when it cannot (unverified certificate, no tabs here). */
-  const openServer = (profile: RemoteServerProfile, entryUrl?: string) => {
+  const openServer = (profile: RemoteServerProfile, entryUrl?: string, blankId: string | null = activeBlankTabId() ?? null) => {
     if (opensRemoteProjectTab(profile)) {
-      openRemoteProject(profile.id, entryUrl ? { entryUrl } : {})
+      openRemoteProject(profile.id, entryUrl ? { entryUrl } : {}, blankId)
       void markRemoteServerConnected(profile.id).catch(() => {})
     } else {
       void connectSavedServer(profile.id)
@@ -125,9 +126,10 @@ export function useRemoteServerProfiles() {
    * link, whose single-use code is consumed where the server opens (a tab, else its own window).
    */
   const submitServer = async (input: RemoteServerInput, open: boolean) => {
+    const blankId = activeBlankTabId() ?? null
     if (!opensRemoteProjectTab(input)) return void await saveServer(input, open)
     const { profile, entryUrl } = await saveProfile(input)
-    if (open || entryUrl) openServer(profile, entryUrl)
+    if (open || entryUrl) openServer(profile, entryUrl, blankId)
   }
 
   // A removed server's project tabs close with it.

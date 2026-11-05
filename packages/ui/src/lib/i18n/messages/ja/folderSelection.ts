@@ -112,4 +112,9 @@ export const folderSelectionMessages = {
   "folderSelection.recent.sidecar": "SideCar",
   "folderSelection.newSidecar": "新しい SideCar",
   "folderSelection.remoteProject.serverMissing": "サーバーが見つかりません",
+  "newTab.title": "新しいタブ",
+  "newTab.home": "ホーム",
+  "newTab.items.one": "{count} 件",
+  "newTab.items.other": "{count} 件",
+  "newTab.sponsor": "スポンサー",
 } as const

@@ -3,7 +3,11 @@ import { Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, X, 
 import { removeRemoteProjectRecent, removeSideCarRecent, useConfig } from "../stores/preferences"
 import { launchableRecents, openRemoteProject } from "../stores/remote-project-open"
 import { recentKey, type LaunchableRecent } from "../lib/remote-project-recents"
-import BrowseMenu from "./browse-menu"
+import BrowseMenu, { browseEntryCount } from "./browse-menu"
+import EntryCount from "./entry-count"
+import { ensureSidecarsLoaded } from "../stores/sidecars"
+import { helpUrl } from "../lib/help-url"
+import { Heart } from "lucide-solid"
 import NewTabActions from "./new-tab-actions"
 import RecentTabIcon from "./recent-tab-icon"
 import { openSidecar } from "../stores/sidecar-open"
@@ -39,7 +43,8 @@ interface FolderSelectionViewProps {
 
 const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const { removeRecentFolder } = useConfig()
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
+  onMount(() => void ensureSidecarsLoaded())
   const [selectedIndex, setSelectedIndex] = createSignal(0)
   const [hoveredRecentActionPath, setHoveredRecentActionPath] = createSignal<string | null>(null)
   const [focusedRecentActionPath, setFocusedRecentActionPath] = createSignal<string | null>(null)
@@ -393,6 +398,12 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
             </div>
             <h1 class="mb-2 text-3xl font-semibold text-primary">CodeNomad</h1>
             <div class="mt-3 flex justify-center gap-2">
+              <a href={helpUrl(locale(), "sponsor")} class="selector-button selector-button-secondary w-auto px-3 py-1.5 inline-flex items-center justify-center gap-1.5"
+                onClick={(event) => { event.preventDefault(); void openExternalUrl(helpUrl(locale(), "sponsor"), "help").then((opened) => {
+                  if (!opened) showAlertDialog(t("commands.openSponsor.failed", { url: helpUrl(locale(), "sponsor") }), { variant: "warning" })
+                }) }}>
+                <Heart class="w-4 h-4" aria-hidden="true" /><span>{t("newTab.sponsor")}</span>
+              </a>
               <a
                 href={GITHUB_URL}
                 target="_blank"
@@ -453,6 +464,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                           <button
                             type="button"
                             role="tab"
+                            aria-label={t(tab === "recent" ? "newInstanceLauncher.recentTitle" : "folderSelection.browseMenu.title")}
                             id={`folder-home-tab-${tab}`}
                             data-home-tab={tab}
                             aria-selected={homeTab() === tab}
@@ -467,6 +479,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                               style={{ color: homeTab() === tab ? "var(--text-primary)" : "var(--text-secondary)" }}>
                               {t(tab === "recent" ? "newInstanceLauncher.recentTitle" : "folderSelection.browseMenu.title")}
                             </span>
+                            <EntryCount count={tab === "recent" ? allRecents().length : browseEntryCount()} />
                           </button>
                         )}
                       </For>
