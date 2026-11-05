@@ -344,6 +344,10 @@ test("only enumerated public reasons, bounded numeric codes and associated fixed
     const linked = await read({ unavailableReason: "openai-token-sharing-unsupported", unavailableAction: "chatgpt-usage" })
     assert.equal(linked.unavailableAction, "chatgpt-usage")
     assert.equal((await read({ unavailableAction: "chatgpt-usage" })).unavailableAction, undefined)
+    const minimax = await read({ unavailableReason: "minimax-limits-not-shared", unavailableAction: "chatgpt-usage", providerErrorCode: "1004" })
+    assert.equal(minimax.unavailableReason, "minimax-limits-not-shared")
+    assert.equal(minimax.unavailableAction, undefined)
+    assert.equal(minimax.providerErrorCode, undefined)
   } finally { provider.fetchQuota = original; clearProviderUsageCache() }
 })
 

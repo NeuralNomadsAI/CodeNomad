@@ -266,6 +266,7 @@ export const settingsMessages = {
   "providerUsage.providerErrorCode": "שגיאת ספק ({code}).",
   "providerUsage.viewChatGPTUsage": "הצגת השימוש ב-ChatGPT",
   "providerUsage.unavailableValue": "--",
+  "providerUsage.minimaxLimitsNotShared": "MiniMax לא משתפת את המגבלות שלה",
   "providerUsage.usedPercent": "{percent}% בשימוש",
   "providerUsage.resets": "איפוס {time}",
   "providerUsage.progressLabel": "שימוש בתוכנית {window}",

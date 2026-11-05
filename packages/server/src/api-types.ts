@@ -208,7 +208,7 @@ export interface ProviderUsageWindow {
   valueLabel?: string
 }
 
-export type ProviderUsageUnavailableReason = "openai-token-sharing-unsupported" | "provider-error"
+export type ProviderUsageUnavailableReason = "openai-token-sharing-unsupported" | "provider-error" | "minimax-limits-not-shared"
 export type ProviderUsageUnavailableAction = "chatgpt-usage"
 
 export interface ProviderUsageResponse {

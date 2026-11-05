@@ -83,6 +83,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   const unavailableMessage = createMemo(() => {
     const data = usage()
     if (data?.unavailableReason === "openai-token-sharing-unsupported") return t("providerUsage.openaiTokenSharingUnsupported")
+    if (data?.unavailableReason === "minimax-limits-not-shared") return t("providerUsage.minimaxLimitsNotShared")
     if (data?.unavailableReason === "provider-error") return data.providerErrorCode && /^\d{1,8}$/.test(data.providerErrorCode) && data.providerErrorCode.trim() === data.providerErrorCode
       ? t("providerUsage.providerErrorCode", { code: data.providerErrorCode }) : t("providerUsage.unavailable")
     return null

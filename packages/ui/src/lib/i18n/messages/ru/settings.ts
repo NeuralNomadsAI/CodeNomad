@@ -266,6 +266,7 @@ export const settingsMessages = {
   "providerUsage.providerErrorCode": "Ошибка провайдера ({code}).",
   "providerUsage.viewChatGPTUsage": "Посмотреть использование ChatGPT",
   "providerUsage.unavailableValue": "--",
+  "providerUsage.minimaxLimitsNotShared": "MiniMax не сообщает свои лимиты",
   "providerUsage.usedPercent": "Использовано {percent}%",
   "providerUsage.resets": "Сброс {time}",
   "providerUsage.progressLabel": "Использование тарифа {window}",

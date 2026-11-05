@@ -58,6 +58,8 @@ Nutzung folgt den ausgewählten nativen Zugangsdaten. Claude über `anthropic`/`
 
 Aktualisieren/melden Sie sich bei abgelaufener Anbieteranmeldung über deren Eigentümer an – OpenCode, Claude Code oder Codex CLI – und aktualisieren Sie dann CodeNomad. CodeNomad tauscht keine extern verwalteten Refresh-Tokens aus. Eine abgelaufene CodeNomad-Serveranmeldung ist davon getrennt: Verbinden/melden Sie sich bei CodeNomad neu an, ohne die Wiederholung einer fehlgeschlagenen Anbieteranfrage anzunehmen. Siehe [Fehlerbehebung](troubleshooting.md).
 
+Wenn MiniMax erfolgreich ohne Limits antwortet, zeigt **Nutzung** statt Kontingentwerten **MiniMax teilt seine Limits nicht mit** an.
+
 ### Optionale Umgebungsvariablen für Nutzung {#usage-environment}
 
 Setzen Sie diese vor dem Start in der Umgebung des **CodeNomad-Backend-Prozesses**. Sie sind Zugangsdaten für Nutzungsleser, keine Browsereinstellungen oder Modellauswahl. Änderungen im Sitzungseditor **Umgebungsvariablen** aktualisieren nicht das `process.env` eines laufenden Backends für diese Leser. Starten Sie bei Änderungen das Backend mit der vorgesehenen Umgebung neu; starten Sie nicht nur wegen einer Nutzungslesevariable den gemeinsamen OpenCode-Dienst neu.

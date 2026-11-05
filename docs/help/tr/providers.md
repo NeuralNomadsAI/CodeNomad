@@ -58,6 +58,8 @@ Kullanım, seçili OpenCode kimlik bilgisini izler. Claude, `anthropic`/`claude`
 
 Süresi dolmuş bir sağlayıcı girişi için, sahibi (OpenCode, Claude Code veya Codex CLI) aracılığıyla yenileyin/oturum açın, ardından CodeNomad'i yenileyin. CodeNomad, harici olarak sahip olunan yenileme belirteçlerini takas etmez. CodeNomad sunucu oturum açma süresinin sona ermesi ayrıdır: başarısız bir sağlayıcı isteğinin yeniden gönderileceğini varsaymadan CodeNomad'e yeniden bağlanın/oturum açın. Bkz. [Sorun Giderme](troubleshooting.md).
 
+MiniMax başarılı yanıtında sınırları sağlamadığında, **Kullanım** kota değerleri yerine **MiniMax sınırlarını paylaşmıyor** gösterir.
+
 ### İsteğe bağlı kullanım ortamı değişkenleri {#usage-environment}
 
 Bunları başlatmadan önce **CodeNomad arka uç sürecinin** ortamında ayarlayın. Bunlar tarayıcı ayarı veya model seçimi değil, kullanım okuyucusu kimlik bilgileridir. Oturum **Ortam Değişkenleri** düzenleyicisini değiştirmek çalışan arka ucun bu okuyucular için kullandığı `process.env` değerini güncellemez. Değiştirirken arka ucu amaçlanan ortamda yeniden başlatın; yalnızca kullanım okuyucusu değişkeni için ortak OpenCode hizmetini yeniden başlatmayın.

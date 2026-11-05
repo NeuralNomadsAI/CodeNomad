@@ -58,6 +58,8 @@ Uso sigue la credencial nativa seleccionada. Claude mediante `anthropic`/`claude
 
 Si caduca el inicio de sesión de un proveedor, actualiza/inicia sesión mediante su propietario —OpenCode, Claude Code o Codex CLI— y actualiza después CodeNomad. CodeNomad no intercambia tokens de actualización de propietarios externos. La caducidad del inicio de sesión del servidor CodeNomad es independiente: reconecta/inicia sesión en CodeNomad sin suponer que una solicitud fallida del proveedor se reenviará. Consulta [Solución de problemas](troubleshooting.md).
 
+Cuando MiniMax responde correctamente sin proporcionar límites, **Uso** muestra **MiniMax no comparte sus límites** en lugar de los valores de cuota.
+
 ### Variables de entorno opcionales para Uso {#usage-environment}
 
 Establécelas en el entorno del **proceso del backend de CodeNomad** antes de iniciarlo. Son credenciales de lectores de uso, no ajustes de navegador ni controles de selección de modelo. Cambiar el editor **Variables de entorno** de la sesión no actualiza el `process.env` de un backend en ejecución para estos lectores. Reinicia el backend con el entorno previsto al cambiarlas; no reinicies el servicio compartido de OpenCode solo por una variable del lector de uso.

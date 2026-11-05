@@ -58,6 +58,8 @@ Usage ले चयनित नेटिभ credential पछ्याउँछ
 
 प्रदायक login म्याद सकिए यसको स्वामी—OpenCode, Claude Code वा Codex CLI—मार्फत refresh/sign in गरी CodeNomad रिफ्रेस गर्नुहोस्। CodeNomad ले बाह्य स्वामित्वका refresh token साट्दैन। CodeNomad सर्भर-login expiry छुट्टै हो: असफल प्रदायक अनुरोध फेरि पठाइन्छ नठानी CodeNomad reconnect/sign in गर्नुहोस्। [समस्या समाधान](troubleshooting.md) हेर्नुहोस्।
 
+MiniMax ले सफल जवाफमा सीमाहरू नदिएमा, **प्रयोग** ले कोटा मानहरूको सट्टा **MiniMax ले आफ्ना सीमाहरू साझा गर्दैन** देखाउँछ।
+
 ### ऐच्छिक usage वातावरण variable {#usage-environment}
 
 यी **CodeNomad ब्याकएन्ड प्रक्रियाको** वातावरणमा सुरु गर्नुअघि सेट गर्नुहोस्। यी usage-reader credential हुन्, ब्राउजर सेटिङ वा मोडेल-चयन नियन्त्रण होइनन्। सत्रको **वातावरण चरहरू (Environment Variables)** editor बदल्दा यी reader का लागि चलिरहेको ब्याकएन्डको `process.env` अद्यावधिक हुँदैन। बदल्दा अभिप्रेत वातावरणमा ब्याकएन्ड पुनः सुरु गर्नुहोस्; usage-reader variable का लागि मात्र साझा OpenCode सेवा restart नगर्नुहोस्।

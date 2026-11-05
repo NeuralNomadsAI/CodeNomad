@@ -189,6 +189,50 @@ for (const [locale, message, linkLabel] of [
   } finally { await page.close() }
 })
 
+for (const [locale, message] of [
+  ["en-US", "MiniMax doesn't share its limits"],
+  ["fr-FR", "MiniMax ne partage pas ses limites"],
+  ["de-DE", "MiniMax teilt seine Limits nicht mit"],
+  ["es-ES", "MiniMax no comparte sus límites"],
+  ["he-IL", "MiniMax לא משתפת את המגבלות שלה"],
+  ["ja-JP", "MiniMax は上限を公開していません"],
+  ["ne-NP", "MiniMax ले आफ्ना सीमाहरू साझा गर्दैन"],
+  ["ru-RU", "MiniMax не сообщает свои лимиты"],
+  ["tr-TR", "MiniMax sınırlarını paylaşmıyor"],
+  ["zh-CN", "MiniMax 不公开其限额"],
+]) test(`MiniMax unshared limits replace old quota with a localized status (${locale})`, async () => {
+  const page = await browser.newPage({ locale, viewport: { width: 320, height: 200 } })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1)
+    await fulfill(requests[0], 10)
+    await page.getByRole("progressbar").waitFor()
+    await page.evaluate(() => (window as any).usageFixture.select({ providerId: "minimax-coding-plan", modelId: "MiniMax-M*" }))
+    await waitRequests(requests, 2)
+    assert.equal(new URL(requests[1].request().url()).pathname, "/api/usage/minimax-coding-plan")
+    await fulfill(requests[1], 10)
+    await page.getByRole("progressbar").waitFor()
+    await page.evaluate(() => (window as any).usageFixture.event("provider.updated"))
+    await waitRequests(requests, 3)
+    await requests[2].fulfill({ json: {
+      requestedProviderId: "minimax-coding-plan", providerId: "minimax-coding-plan", providerName: "MiniMax Coding Plan",
+      supported: true, configured: true, ok: false, windows: {}, fetchedAt: Date.now(), unavailableReason: "minimax-limits-not-shared",
+    } })
+    await page.getByRole("status").getByText(message, { exact: true }).waitFor()
+    assert.equal(await page.getByRole("progressbar").count(), 0)
+    assert.equal(await page.getByRole("status").getByRole("link").count(), 0)
+    assert.equal(await page.getByText(/10\s*%/).count(), 0)
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
+    await page.evaluate(() => (window as any).usageFixture.event("provider.updated"))
+    await waitRequests(requests, 4)
+    await fulfill(requests[3], 20)
+    await page.getByRole("progressbar").waitFor()
+    assert.equal(await page.getByRole("status").count(), 0)
+    assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "20")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("public reason cards replace stale quota and open only their fixed accessible destination", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   try {

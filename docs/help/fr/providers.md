@@ -58,6 +58,8 @@ L’utilisation suit l’identifiant natif sélectionné. Claude via `anthropic`
 
 Pour une connexion fournisseur expirée, actualisez/reconnectez-vous via son propriétaire — OpenCode, Claude Code ou Codex CLI — puis actualisez CodeNomad. CodeNomad n’échange pas de jetons de rafraîchissement externes. L’expiration de connexion au serveur CodeNomad est distincte : reconnectez-vous à CodeNomad sans supposer qu’une requête fournisseur échouée sera renvoyée. Voir [Dépannage](troubleshooting.md).
 
+Quand MiniMax répond avec succès sans fournir de limites, **Utilisation** affiche **MiniMax ne partage pas ses limites** à la place des valeurs de quota.
+
 ### Variables d’environnement d’utilisation facultatives {#usage-environment}
 
 Définissez-les dans l’environnement du **processus backend CodeNomad** avant son lancement. Ce sont des identifiants pour les lecteurs d’utilisation, pas des paramètres navigateur ou commandes de sélection de modèle. Modifier l’éditeur de session **Variables d'environnement** ne met pas à jour le `process.env` d’un backend actif pour ces lecteurs. Redémarrez le backend dans l’environnement voulu pour les changer ; ne redémarrez pas le service OpenCode partagé uniquement pour une variable de lecture d’utilisation.

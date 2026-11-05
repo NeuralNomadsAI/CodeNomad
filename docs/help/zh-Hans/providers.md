@@ -58,6 +58,8 @@ OpenAI 不为某一种 ChatGPT 登录方式提供用量：此时用量面板会�
 
 提供商登录过期时，通过其所属方——OpenCode、Claude Code 或 Codex CLI——刷新/登录，再刷新 CodeNomad。CodeNomad 不交换外部所有的刷新令牌。CodeNomad 服务器登录过期是另一回事：重新连接/登录 CodeNomad，不要假定失败的提供商请求会重发。参阅[故障排查](troubleshooting.md)。
 
+当 MiniMax 成功响应但未提供限额时，**用量**会显示 **MiniMax 不公开其限额**，而不是配额数值。
+
 ### 可选用量环境变量 {#usage-environment}
 
 启动前在 **CodeNomad 后端进程**环境中设置以下变量。它们是用量读取器凭据，而非浏览器设置或模型选择控件。更改会话**环境变量**编辑器不会更新运行中后端供这些读取器使用的 `process.env`。更改时请以目标环境重启后端；不要仅为用量读取器变量重启共享 OpenCode 服务。

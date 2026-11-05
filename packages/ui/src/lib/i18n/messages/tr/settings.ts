@@ -259,6 +259,7 @@ export const settingsMessages = {
   "providerUsage.providerErrorCode": "Sağlayıcı hatası ({code}).",
   "providerUsage.viewChatGPTUsage": "ChatGPT kullanımını görüntüle",
   "providerUsage.unavailableValue": "--",
+  "providerUsage.minimaxLimitsNotShared": "MiniMax sınırlarını paylaşmıyor",
   "providerUsage.usedPercent": "%{percent} kullanıldı",
   "providerUsage.resets": "Sıfırlanma: {time}",
   "providerUsage.progressLabel": "{window} plan kullanımı",

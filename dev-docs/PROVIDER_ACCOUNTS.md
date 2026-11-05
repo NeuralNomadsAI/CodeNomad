@@ -74,6 +74,16 @@ unversioned and only partly verified: the parser accepts the current
 `usage.{rolling,weekly,monthly}` and older `*Usage` shapes, and treats anything
 else as unknown. Console OAuth usage with `x-org-id` is unverified upstream.
 
+MiniMax's international and China readers try Token Plan, then Coding Plan when
+needed. A final successful response (`base_resp.status_code === 0`) with absent
+or empty `model_remains` publishes `minimax-limits-not-shared`; Usage shows its
+localized status card with unknown quota. This is a narrow interpretation of a
+successful empty quota response: the [M Plan FAQ](https://platform.minimax.io/docs/m-plan/faq.md)
+and [official CLI](https://github.com/MiniMax-AI/cli/blob/main/src/commands/quota/show.ts)
+establish the endpoint and response fields; a dedicated unshared-limits signal
+remains unverified. [API errors](https://platform.minimax.io/docs/api-reference/errorcode.md),
+HTTP/transport failures and malformed payloads keep their existing failure path.
+
 ## Auto-select account
 
 - Opt-in per integration, persisted under CodeNomad's

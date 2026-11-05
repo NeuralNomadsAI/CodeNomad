@@ -93,7 +93,7 @@ export async function getProviderUsage(
   }
   const result = await fetchProvider(provider, options.auth ?? {}, options.context)
   options.context?.signal?.throwIfAborted()
-  const reason = !result.ok && (result.unavailableReason === "openai-token-sharing-unsupported" || result.unavailableReason === "provider-error")
+  const reason = !result.ok && (result.unavailableReason === "openai-token-sharing-unsupported" || result.unavailableReason === "provider-error" || result.unavailableReason === "minimax-limits-not-shared")
     ? result.unavailableReason : undefined
   return {
     requestedProviderId,

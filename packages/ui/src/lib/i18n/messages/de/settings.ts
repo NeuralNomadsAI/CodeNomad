@@ -266,6 +266,7 @@ export const settingsMessages = {
   "providerUsage.providerErrorCode": "Anbieterfehler ({code}).",
   "providerUsage.viewChatGPTUsage": "ChatGPT-Nutzung anzeigen",
   "providerUsage.unavailableValue": "--",
+  "providerUsage.minimaxLimitsNotShared": "MiniMax teilt seine Limits nicht mit",
   "providerUsage.usedPercent": "{percent} % verwendet",
   "providerUsage.resets": "Zurücksetzung {time}",
   "providerUsage.progressLabel": "Tarifnutzung {window}",

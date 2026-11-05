@@ -267,6 +267,7 @@ export const settingsMessages = {
   "providerUsage.viewChatGPTUsage": "View ChatGPT usage",
   "providerUsage.openaiTokenSharingUnsupported": "OpenAI does not provide usage for this ChatGPT sign-in method. You can still chat.",
   "providerUsage.unavailableValue": "--",
+  "providerUsage.minimaxLimitsNotShared": "MiniMax doesn't share its limits",
   "providerUsage.usedPercent": "{percent}% used",
   "providerUsage.resets": "Resets {time}",
   "providerUsage.progressLabel": "{window} plan usage",

@@ -58,6 +58,8 @@ Usage follows the selected native credential. Claude through `anthropic`/`claude
 
 For an expired provider login, refresh/sign in through its owner—OpenCode, Claude Code or Codex CLI—then refresh CodeNomad. CodeNomad does not exchange externally owned refresh tokens. A CodeNomad server-login expiry is separate: reconnect/sign in to CodeNomad without assuming a failed provider request will be resent. See [Troubleshooting](troubleshooting.md).
 
+When MiniMax successfully returns no limits, **Usage** shows **MiniMax doesn't share its limits** in place of quota values.
+
 ### Optional usage environment variables {#usage-environment}
 
 Set these in the environment of the **CodeNomad backend process** before launching it. They are usage-reader credentials, not browser settings or model-selection controls. Changing the session **Environment Variables** editor does not update a running backend's `process.env` for these readers. Restart the backend under the intended environment when changing them; do not restart the shared OpenCode service just for a usage-reader variable.

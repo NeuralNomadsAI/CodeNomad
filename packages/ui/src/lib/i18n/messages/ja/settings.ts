@@ -266,6 +266,7 @@ export const settingsMessages = {
   "providerUsage.providerErrorCode": "プロバイダーエラー（{code}）。",
   "providerUsage.viewChatGPTUsage": "ChatGPT の使用状況を確認",
   "providerUsage.unavailableValue": "--",
+  "providerUsage.minimaxLimitsNotShared": "MiniMax は上限を公開していません",
   "providerUsage.usedPercent": "{percent}% 使用",
   "providerUsage.resets": "リセット {time}",
   "providerUsage.progressLabel": "{window} のプラン使用量",
