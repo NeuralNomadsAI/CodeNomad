@@ -20,6 +20,7 @@ import { openSessionPreview } from "../stores/session-previews"
 import { instances } from "../stores/instances"
 import { showAlertDialog } from "../stores/alerts"
 import { previewsUnavailable, previewsAvailabilityResolved, getServerMeta } from "../lib/server-meta"
+import { projectScope } from "../lib/backend-identity"
 
 const log = getLogger("session")
 
@@ -142,8 +143,8 @@ export function Markdown(props: MarkdownProps) {
   // A loopback link click opens the session preview on the instance owning
   // the session; failures surface through the shared alert dialog.
   const openLoopbackPreview = (instanceId: string, sessionId: string, url: string) => {
-    const folder = instances().get(instanceId)?.folder ?? ""
-    void openSessionPreview(sessionId, url, folder).catch((error) => {
+    const instance = instances().get(instanceId)
+    void openSessionPreview(sessionId, url, instance ? projectScope(instance) : "").catch((error) => {
       showAlertDialog(t("sessionPreview.open.title"), {
         title: t("sessionPreview.open.title"),
         detail: error instanceof Error ? error.message : String(error),

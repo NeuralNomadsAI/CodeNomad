@@ -1,4 +1,5 @@
 import type { LocationPublicInfo, McpListOutput, OpenCodeClient, Project } from "@opencode/client"
+import type { BackendId } from "../lib/backend-transport"
 
 export interface LogEntry {
   timestamp: number
@@ -23,7 +24,10 @@ export interface InstanceMetadata {
 
 
 export interface Instance {
+  /** UI-wide key: the workspace id for the local backend, `${backendId}~${workspaceId}` otherwise (`lib/backend-identity.ts`). */
   id: string
+  /** The CodeNomad backend owning this workspace; absent for the local backend. */
+  backendId?: BackendId
   folder: string
   projectName?: string
   port: number

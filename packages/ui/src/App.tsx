@@ -89,6 +89,7 @@ import {
   ensureSidecarsLoaded,
   openSidecarTab,
 } from "./stores/sidecars"
+import { projectScope } from "./lib/backend-identity"
 import {
   activeAppTab,
   activeAppTabId,
@@ -286,7 +287,7 @@ const App: Component = () => {
       if (!await claimNativeBrowserOpen(requestID)) return
       try {
         const instance = owner
-        await openSessionPreview(sessionID, url, instance.folder)
+        await openSessionPreview(sessionID, url, projectScope(instance))
         if (disposed) {
           await releaseNativeBrowserOpen(requestID)
           return

@@ -9,7 +9,7 @@ import {
   onInstanceTabCloseRequested,
   openInstanceTabIds,
 } from "./app-tab-membership"
-import { normalizeWorkspacePath } from "./app-session-reconciliation"
+import { workspaceIdentity } from "./app-session-reconciliation"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 
 export interface InstanceAppTab {
@@ -137,11 +137,14 @@ function selectInstanceTab(instanceId: string) {
 function publishLocalInstanceTabLifecycle(type: "opened" | "removed", instanceId: string): void {
   const instance = instances().get(instanceId)
   if (!instance) return
-  const folder = normalizeWorkspacePath(instance.folder)
+  const project = workspaceIdentity(instance.folder, instance.backendId)
   const occurrence = Array.from(instances().values())
-    .filter((candidate) => normalizeWorkspacePath(candidate.folder) === folder)
+    .filter((candidate) => workspaceIdentity(candidate.folder, candidate.backendId) === project)
     .findIndex((candidate) => candidate.id === instanceId)
-  if (occurrence >= 0) publishInstanceLifecycleAuthority({ type, instanceId, folder: instance.folder, occurrence })
+  if (occurrence >= 0) publishInstanceLifecycleAuthority({
+    type, instanceId, folder: instance.folder, occurrence,
+    ...(instance.backendId ? { backendId: instance.backendId } : {}),
+  })
 }
 
 function attachInstanceTab(instanceId: string, options?: { source?: "restore" }): void {

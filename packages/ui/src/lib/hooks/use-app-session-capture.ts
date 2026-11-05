@@ -8,7 +8,7 @@ import {
   type RestorableSessionState, type RestorableTabState, type RestorableWorkspaceTabState,
 } from "../../stores/client-state"
 import { storage } from "../storage"
-import { normalizeWorkspacePath } from "../../stores/app-session-reconciliation"
+import { workspaceIdentity } from "../../stores/app-session-reconciliation"
 import {
   createRestorableSessionPreservation, createRestoredTabCommitGuard, markPreservedWorkspaceRemoved,
   markPreservedWorkspaceReopened, markPreservedWorkspaceUnavailable,
@@ -68,12 +68,12 @@ function captureRuntimeState(
   const seenInterruptions = captureSeenInterruptions(instanceId, sessions)
   return { unseenIdleSince, generationRecovery, ...(Object.keys(seenInterruptions).length ? { seenInterruptions } : {}) }
 }
-function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>) {
+export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>) {
   const tabs = appTabs()
   const nextOccurrence = new Map<string, number>()
   const occurrenceByInstance = new Map<string, number>()
   for (const instance of instances().values()) {
-    const path = normalizeWorkspacePath(instance.folder)
+    const path = workspaceIdentity(instance.folder, instance.backendId)
     const occurrence = nextOccurrence.get(path) ?? 0
     nextOccurrence.set(path, occurrence + 1)
     occurrenceByInstance.set(instance.id, occurrence)
@@ -88,6 +88,7 @@ function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>)
     const prioritySessionIds = [sessionId, "__no_session_draft__"].filter((value): value is string => Boolean(value))
     const result: RestorableWorkspaceTabState = {
       kind: "workspace", folder: tab.instance.folder, occurrence: occurrenceByInstance.get(id) ?? 0,
+      ...(tab.instance.backendId ? { backendId: tab.instance.backendId } : {}),
       ...serializeDraftAttachments(
         getSessionDraftPromptsForInstance(id), getSessionAttachmentsForInstance(id), prioritySessionIds,
       ),
@@ -143,7 +144,7 @@ export function useAppSessionCapture() {
     const instance = instances().get(instanceId)
     if (!instance) return
     const snapshot = getPreservedWorkspaceState(preservation, {
-      runtimeTabId: getInstanceAppTabId(instanceId), folder: instance.folder, occurrence: 0,
+      runtimeTabId: getInstanceAppTabId(instanceId), folder: instance.folder, occurrence: 0, backendId: instance.backendId,
     })
     if (!snapshot) return
     hydrateWorkspacePromptState(
@@ -251,7 +252,7 @@ export function useAppSessionCapture() {
         schedule()
         return
       }
-      const workspace = { runtimeTabId: getInstanceAppTabId(event.instanceId), folder: event.folder, occurrence: event.occurrence }
+      const workspace = { runtimeTabId: getInstanceAppTabId(event.instanceId), folder: event.folder, occurrence: event.occurrence, backendId: event.backendId }
       if (event.type === "unavailable") {
         const captured = captureState(scrollAuthority)
         const index = captured.tabIds.indexOf(workspace.runtimeTabId)

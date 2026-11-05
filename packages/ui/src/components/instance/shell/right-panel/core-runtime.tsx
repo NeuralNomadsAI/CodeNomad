@@ -16,6 +16,7 @@ import { useGitInit } from "./useGitInit"
 import { FILES_PANEL_MODE_KEY, type FilesPanelMode } from "./files-panel-state"
 import { readStoredEnum } from "../storage"
 import { writeClientLayoutValue } from "../../../../stores/client-state"
+import { projectScope } from "../../../../lib/backend-identity"
 
 const LazyFilesPanel = lazy(() => import("./tabs/FilesPanel"))
 const LazyStatusTab = lazy(() => import("./tabs/StatusTab"))
@@ -70,7 +71,7 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
   const openFile = (file: Pick<FilePreviewTarget, "kind" | "path" | "originalPath" | "scope" | "commit" | "subject">) => {
     const sessionId = options.activeSessionId()
     if (!sessionId || sessionId === "info") return
-    const preview = getSessionPreview(sessionId, options.instance.folder)
+    const preview = getSessionPreview(sessionId, projectScope(options.instance))
     if (preview) showSessionChat(preview.storageKey)
     openFilePreview(options.instanceId, { ...file, sessionId, slug: slug(), directory: directory(), serviceDirectory: worktree()?.serviceDirectory })
   }

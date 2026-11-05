@@ -36,6 +36,7 @@ import { sessionListRestored } from "../../../../../stores/session-list-restorat
 import { createMissionScheduleList } from "../../../../mission-schedule-list"
 import { MissionPanelScope } from "../../../../mission-panel-scope"
 import { MissionPanelPaging } from "../../../../mission-panel-paging"
+import { projectScope } from "../../../../../lib/backend-identity"
 
 interface MissionControlProps {
   instanceId: string
@@ -56,7 +57,7 @@ const UNAVAILABLE_DETAIL: Record<MissionUnavailableReason, string> = {
 
 const MissionControl: Component<MissionControlProps> = (props) => {
   const { locale } = useI18n()
-  const scope = () => instances().get(props.instanceId)?.folder ?? props.instanceId
+  const scope = () => { const instance = instances().get(props.instanceId); return instance ? projectScope(instance) : props.instanceId }
   const selectedMissionId = () => missionProjectView(scope()).selected
   const selectedSchedule = () => missionProjectView(scope()).selectedRecurrence
   const selectedScheduled = () => missionProjectView(scope()).selectedScheduled

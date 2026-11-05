@@ -116,7 +116,9 @@ import { cancelRestoreCreation } from "./restore-creation-cancellation"
 import {
   RestoreWorkspaceCommitGates, type RestoreWorkspaceCommitGate, type RestoreWorkspaceTerminal,
 } from "./restore-workspace-commit-gates"
-import { WorkspaceListReconciliationFence } from "./workspace-list-reconciliation-fence"
+import { BackendWorkspaceListReconciliationFence } from "./workspace-list-reconciliation-fence"
+import { backendIdOf, instanceKey, LOCAL_BACKEND_ID } from "../lib/backend-identity"
+import type { BackendId } from "../lib/backend-transport"
 import { usesClientState } from "../lib/runtime-env"
 
 const log = getLogger("api")
@@ -456,7 +458,7 @@ function invalidatePendingRequestSync(instanceId: string): void {
   bumpEpoch(pendingFormMutationEpochs, instanceId)
 }
 type RestoreWorkspaceDescriptor = WorkspaceDescriptor & { reused?: boolean }
-const workspaceListReconciliationFence = new WorkspaceListReconciliationFence()
+const workspaceListReconciliationFence = new BackendWorkspaceListReconciliationFence()
 
 const restoreCreatedWorkspaceCleanup = new AbortCreatedWorkspaceCleanup<RestoreWorkspaceDescriptor>({
   discardWorkspace: (workspace) => {
@@ -610,10 +612,11 @@ function reconcilePendingSessionIndicators(instanceId: string): void {
   )
 }
 
-function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectName?: string): Instance {
+function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectName?: string, backendId: BackendId = LOCAL_BACKEND_ID): Instance {
   const existing = instances().get(descriptor.id)
   return {
     id: descriptor.id,
+    ...(backendId !== LOCAL_BACKEND_ID ? { backendId } : {}),
     folder: descriptor.path,
     projectName: projectName ?? existing?.projectName ?? descriptor.name,
     port: descriptor.port ?? existing?.port ?? 0,
@@ -631,10 +634,11 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectN
   }
 }
 
-function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) {
+/** `descriptor.id` is the instance key of a workspace of `backendId`. */
+function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string, backendId: BackendId = LOCAL_BACKEND_ID) {
   // A workspace (re)created after a stop event keeps its instance.
   pendingWorkspaceStops.delete(descriptor.id)
-  const mapped = workspaceDescriptorToInstance(descriptor, projectName)
+  const mapped = workspaceDescriptorToInstance(descriptor, projectName, backendId)
   if (instances().has(descriptor.id)) {
     updateInstance(descriptor.id, mapped)
   } else {
@@ -1237,15 +1241,26 @@ function clearReloadableInstanceState(instanceId: string): void {
   markPendingRecovery(instanceId, true)
 }
 
-async function refreshWorkspaceList(): Promise<void> {
+/** Reconciles one backend's workspaces; another backend's instances and tabs are left untouched. */
+async function refreshWorkspaceList(
+  backendId: BackendId = LOCAL_BACKEND_ID,
+  api: Pick<typeof serverApi, "fetchWorkspaces"> = serverApi,
+): Promise<void> {
   // Preferences imports shared controls, but does not own workspace/session
   // hydration. Its provider editor receives an explicit location from the host.
   if (!usesClientState()) return
-  const requestFence = workspaceListReconciliationFence.begin()
-  const removalCandidates = new Set(instances().keys())
+  if (backendId !== LOCAL_BACKEND_ID && api === serverApi) throw new Error("A non-local workspace list needs its backend API")
+  const requestFence = workspaceListReconciliationFence.begin(backendId)
+  const removalCandidates = new Set([...instances().values()]
+    .filter((instance) => backendIdOf(instance) === backendId).map(({ id }) => id))
   try {
-    const workspaces = await serverApi.fetchWorkspaces()
+    const listed = await api.fetchWorkspaces()
     if (!workspaceListReconciliationFence.isCurrent(requestFence)) return
+    // Workspaces are keyed by instance key: the workspace id itself for the local backend.
+    const workspaces = listed.map((workspace) => {
+      const id = instanceKey(backendId, workspace.id)
+      return id === workspace.id ? workspace : { ...workspace, id }
+    })
     const remoteIds = new Set(workspaces.map(({ id }) => id))
     for (const workspace of workspaces) {
       if (!workspaceListReconciliationFence.allows(requestFence, workspace.id)) continue
@@ -1255,7 +1270,7 @@ async function refreshWorkspaceList(): Promise<void> {
         restoreCreatedWorkspaceCleanup.track(workspace)
         continue
       }
-      upsertWorkspace(workspace)
+      upsertWorkspace(workspace, undefined, backendId)
     }
     const unchangedCandidates = [...removalCandidates]
       .filter((id) => workspaceListReconciliationFence.allows(requestFence, id))
@@ -1469,7 +1484,7 @@ function setInstanceLogStreaming(instanceId: string, enabled: boolean) {
 
 function addInstance(instance: Instance) {
   const occurrence = Array.from(instances().values())
-    .filter((existing) => normalizeInstanceFolderPath(existing.folder) === normalizeInstanceFolderPath(instance.folder))
+    .filter((existing) => isSameProject(existing, instance))
     .length
   pendingRequestSyncGenerations.set(instance.id, ++nextPendingRequestSyncGeneration)
   setInstances((prev) => {
@@ -1484,6 +1499,7 @@ function addInstance(instance: Instance) {
     instanceId: instance.id,
     folder: instance.folder,
     occurrence,
+    ...(instance.backendId ? { backendId: instance.backendId } : {}),
   })
   syncHasInstancesFlag()
 }
@@ -1520,7 +1536,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   const removedInstance = instances().get(id)
   const removedOccurrence = removedInstance
     ? Array.from(instances().values())
-        .filter((instance) => normalizeInstanceFolderPath(instance.folder) === normalizeInstanceFolderPath(removedInstance.folder))
+        .filter((instance) => isSameProject(instance, removedInstance))
         .findIndex((instance) => instance.id === id)
     : -1
   if (removedInstance && removedOccurrence >= 0 && options.authoritative === false) {
@@ -1529,6 +1545,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
       instanceId: id,
       folder: removedInstance.folder,
       occurrence: removedOccurrence,
+      ...(removedInstance.backendId ? { backendId: removedInstance.backendId } : {}),
     })
   }
   detachInstanceTabMembership(id)
@@ -1603,6 +1620,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
       instanceId: id,
       folder: removedInstance.folder,
       occurrence: removedOccurrence,
+      ...(removedInstance.backendId ? { backendId: removedInstance.backendId } : {}),
     })
   }
   syncHasInstancesFlag()
@@ -1788,12 +1806,16 @@ function normalizeInstanceFolderPath(folder: string): string {
   return trimmed.replace(/\\/g, "/").toLowerCase()
 }
 
-function getExistingInstanceForFolder(folder: string): Instance | null {
+/** One project is one folder of one backend. */
+function isSameProject(a: Pick<Instance, "folder" | "backendId">, b: Pick<Instance, "folder" | "backendId">): boolean {
+  return backendIdOf(a) === backendIdOf(b) && normalizeInstanceFolderPath(a.folder) === normalizeInstanceFolderPath(b.folder)
+}
+
+function getExistingInstanceForFolder(folder: string, backendId: BackendId = LOCAL_BACKEND_ID): Instance | null {
   if (!folder) return null
-  const target = normalizeInstanceFolderPath(folder)
   const matches = Array.from(instances().values()).filter((instance) => {
     if (instance.status === "stopped") return false
-    return normalizeInstanceFolderPath(instance.folder) === target
+    return isSameProject(instance, { folder, backendId })
   })
 
   if (matches.length === 0) return null
@@ -1802,13 +1824,12 @@ function getExistingInstanceForFolder(folder: string): Instance | null {
   return matches.find((instance) => instance.id === activeId) ?? matches.find((instance) => instance.status === "ready") ?? matches[0] ?? null
 }
 
-function updateProjectNameForFolder(folder: string, projectName: string): void {
+function updateProjectNameForFolder(folder: string, projectName: string, backendId: BackendId = LOCAL_BACKEND_ID): void {
   const name = projectName.trim()
   if (!folder || !name) return
-  const target = normalizeInstanceFolderPath(folder)
   for (const instance of instances().values()) {
     if (instance.status === "stopped") continue
-    if (normalizeInstanceFolderPath(instance.folder) === target) {
+    if (isSameProject(instance, { folder, backendId })) {
       updateInstance(instance.id, { projectName: name })
     }
   }
@@ -2466,6 +2487,7 @@ export {
   waitForInstanceInitialSessionHydration,
   waitForInstanceWorkspaceMetadataHydration,
   getExistingInstanceForFolder,
+  refreshWorkspaceList,
   updateProjectNameForFolder,
   closeWorkspace,
   trackWorkspaceClose,

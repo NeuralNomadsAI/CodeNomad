@@ -1,6 +1,7 @@
 import { batch, onCleanup, onMount } from "solid-js"
 import { getLogger } from "../logger"
 import { isWebHost } from "../runtime-env"
+import { backendIdOf, LOCAL_BACKEND_ID } from "../backend-identity"
 import { useAppSessionCapture, type AppSessionCaptureController } from "./use-app-session-capture"
 import {
   clientStateIsPrimary, loadedRestorableSession, restorePreviousStateEnabled,
@@ -81,9 +82,9 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
   }
   if (signal.aborted) return Promise.all(sidecars).then(() => undefined)
   const matches = reconcileWorkspaceTabs(snapshot.tabs.map((tab) => tab.kind === "workspace"
-    ? { kind: tab.kind, folderPath: tab.folder, occurrence: tab.occurrence }
+    ? { kind: tab.kind, folderPath: tab.folder, occurrence: tab.occurrence, ...(tab.backendId ? { backendId: tab.backendId } : {}) }
      : { kind: tab.kind }), Array.from(instances().values())
-       .map(({ id, folder, status }) => ({ id, folderPath: folder, status })))
+       .map(({ id, folder, status, backendId }) => ({ id, folderPath: folder, status, ...(backendId ? { backendId } : {}) })))
     .filter(match => !retryIndexes || (retryIndexes.get(match.tabIndex)?.() && !hasLocalRestoredTab(capture, match.tabIndex)))
   const existing = matches.filter(({ existingWorkspaceId }) => existingWorkspaceId)
   const missing = matches.filter(({ existingWorkspaceId }) => !existingWorkspaceId)
@@ -122,7 +123,9 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
           onBeforeCreateCommit: (id) => seedRestoredWorkspaceState(id, tab),
           onCreateCommit: (id) => capture.recordRestoredTab(match.tabIndex, getInstanceAppTabId(id)),
         })
-        const creation = existingId || isWebHost() ? null : await create()
+        // Only the local backend creates workspaces here; another backend's saved tab
+        // stays preserved until that backend lists its workspace.
+        const creation = existingId || isWebHost() || backendIdOf(tab) !== LOCAL_BACKEND_ID ? null : await create()
         if (creation && finishCreateCommit) await waitForWorkspaceMountAdoption()
         finishCreateCommit?.()
         const id = existingId ?? creation?.instanceId ?? null

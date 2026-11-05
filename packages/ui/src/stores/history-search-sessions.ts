@@ -8,6 +8,7 @@ import { showSessionChatFor } from "./session-previews"
 import { getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "./sessions"
 import { setSessionSearchDestination } from "./session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
+import { projectScope } from "../lib/backend-identity"
 
 export interface HistorySessionLabel {
   title: string
@@ -123,7 +124,8 @@ export async function openHistoryMatchSession(instanceId: string, sessionId: str
   batch(() => {
     if (highlight) setSessionSearchDestination(instanceId, sessionId, highlight.query, highlight.match)
     setActiveSessionFromList(instanceId, sessionId)
-    showSessionChatFor(sessionId, instances().get(instanceId)?.folder ?? "")
+    const instance = instances().get(instanceId)
+    showSessionChatFor(sessionId, instance ? projectScope(instance) : "")
   })
   return true
 }
