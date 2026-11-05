@@ -53,6 +53,16 @@ const fulfill = (route: Route, usedPercent: number) => route.fulfill({ contentTy
   windows: { "5h": { usedPercent, remainingPercent: 100 - usedPercent, windowSeconds: 18000, resetAt: null } },
 }) })
 
+test("provider usage window keys stay aligned in all ten locales without fallback", async () => {
+  const { settingsMessages: english } = await import("../../src/lib/i18n/messages/en/settings")
+  const windowKeys = (messages: Record<string, string>) => Object.keys(messages).filter(key => key.startsWith("providerUsage.windows.")).sort()
+  for (const locale of ["en", "de", "es", "fr", "he", "ja", "ne", "ru", "tr", "zh-Hans"]) {
+    const { settingsMessages } = await import(new URL(`../../src/lib/i18n/messages/${locale}/settings.ts`, import.meta.url).href)
+    assert.deepEqual(windowKeys(settingsMessages), windowKeys(english), locale)
+    for (const key of windowKeys(english)) assert.ok(settingsMessages[key].trim(), `${locale}: ${key}`)
+  }
+})
+
 test("free-model usage shows an estimate and estimated reset, then clears them on a provider switch", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   try {
@@ -359,6 +369,43 @@ test("Claude Code sessions label model-scoped limits beside the plan windows", a
     await page.getByText("7 days · Opus", { exact: true }).waitFor({ timeout: 5000 })
     assert.equal(await page.getByRole("progressbar").count(), 3)
     for (const label of ["5 hours", "7 days"]) assert.equal(await page.getByText(label, { exact: true }).count(), 1)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+for (const [locale, labels, fiveHours, weekly, used] of [
+  ["en-US", ["Requests", "Tokens", "Input tokens", "Output tokens", "Usage"], "5 hours", "Weekly", "25% used"],
+  ["fr-FR", ["Requêtes", "Tokens", "Tokens d’entrée", "Tokens de sortie", "Utilisation"], "5 heures", "Hebdomadaire", "25 % utilisé"],
+] as const) test(`Google quota window labels preserve model names and used percentages (${locale})`, async () => {
+  const page = await browser.newPage({ locale })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1)
+    await page.evaluate(() => (window as any).usageFixture.select({ providerId: "google", modelId: "gemini-2.5-pro" }))
+    await waitRequests(requests, 2)
+    const request = new URL(requests[1].request().url())
+    assert.equal(request.pathname, "/api/usage/google")
+    assert.equal(request.searchParams.get("modelId"), "gemini-2.5-pro")
+    const quota = { usedPercent: 25, remainingPercent: 75, resetAt: null, windowSeconds: null }
+    const response = { requestedProviderId: "google", providerId: "google", supported: true, configured: true, ok: true, fetchedAt: Date.now() }
+    await requests[1].fulfill({ json: { ...response, providerName: "Gemini CLI", windows: Object.fromEntries(
+      ["requests", "tokens", "input_tokens", "output_tokens", "usage"].map(key => [`${key}:gemini-2.5-pro`, quota]),
+    ) } })
+    for (const label of labels) await page.getByText(`${label} · gemini-2.5-pro`, { exact: true }).waitFor({ timeout: 5000 })
+    assert.equal(await page.getByRole("progressbar").count(), 5)
+    assert.deepEqual(await page.getByRole("progressbar").evaluateAll(bars => bars.map(bar => bar.getAttribute("aria-valuenow"))), Array(5).fill("25"))
+    assert.equal(await page.getByText(used, { exact: true }).count(), 5)
+
+    // Antigravity shares the Google provider and emits plan/family-scoped windows.
+    await page.evaluate(() => (window as any).usageFixture.event("credential.switched"))
+    await waitRequests(requests, 3)
+    await requests[2].fulfill({ json: { ...response, providerName: "Antigravity", windows: {
+      "5h": { ...quota, windowSeconds: 18000 }, "weekly:Claude and GPT": { ...quota, windowSeconds: 604800 },
+    } } })
+    await page.getByText(fiveHours, { exact: true }).waitFor()
+    await page.getByText(`${weekly} · Claude and GPT`, { exact: true }).waitFor()
+    assert.equal(await page.getByRole("progressbar").count(), 2)
+    assert.equal(await page.getByText(used, { exact: true }).count(), 2)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
