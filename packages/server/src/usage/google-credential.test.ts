@@ -5,6 +5,7 @@ import { googleOAuthClients } from "./google-credential"
 
 const fakeClients = {
   "gemini-cli": { client_id: "fake-gemini-client-id", client_secret: "fake-gemini-client-secret" },
+  antigravity: { client_id: "fake-antigravity-client-id", client_secret: "fake-antigravity-client-secret" },
 }
 beforeEach(t => {
   assert.ok("mock" in t)
@@ -16,7 +17,7 @@ const login = (changes: Record<string, unknown> = {}) => ({ google: { type: "oau
 const signal = () => AbortSignal.timeout(2000)
 
 test("Google parser selects only the declared client and separates refresh/project context", () => {
-  for (const methodID of ["oauth", "antigravity", "unknown", undefined]) assert.equal(googleCredential(login({ methodID })), null)
+  for (const methodID of ["oauth", "unknown", undefined]) assert.equal(googleCredential(login({ methodID })), null)
   for (const entry of [undefined, "fake-key", { type: "key", methodID: "gemini-cli", key: "fake" }]) {
     assert.equal(googleCredential({ google: entry }), null)
   }
@@ -27,12 +28,49 @@ test("Google parser selects only the declared client and separates refresh/proje
   assert.equal(googleCredential(login({ refresh: "fake-refresh|fake-project" }))!.project, "fake-project")
   assert.equal(googleCredential(login({ refresh: "fake-refresh||fake-managed" }))!.project, "fake-managed")
   assert.equal(googleCredential(login({ refresh: "fake-refresh" }))!.project, null)
+  const antigravity = googleCredential(login({ methodID: "antigravity", access: "" }))!
+  assert.equal(antigravity.methodID, "antigravity")
+  assert.equal(antigravity.access, null)
+  assert.equal(antigravity.refresh, "fake-refresh")
+  assert.equal(antigravity.project, "fake-managed")
+  assert.equal(googleCredential(login({ methodID: "antigravity", refresh: "fake-refresh|fake-project" }))!.project, "fake-project")
   for (const change of [{ methodID: "oauth" }, { refresh: "other|fake-project|fake-managed" }, { access: "other" },
     { expires: 2 }, { refresh: "fake-refresh|other|fake-managed" }, { metadata: { accountID: "other" } }, { credentialID: "other" }]) {
     assert.notEqual(googleCredential(login(change))?.identity, parsed.identity)
   }
   assert.equal(googleCredential(login({ access: "x".repeat(16_385) })), null)
   assert.equal(googleCredential(login({ refresh: "x".repeat(16_385) })), null)
+})
+
+test("Antigravity refresh-only and expired credentials use their own client and isolated in-memory cache", async t => {
+  let now = 10_000
+  t.mock.method(Date, "now", () => now)
+  const clients: string[] = [], refreshes: string[] = []
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    assert.equal(String(input), "https://oauth2.googleapis.com/token")
+    assert.equal(init?.redirect, "error")
+    const form = new URLSearchParams(String(init?.body))
+    clients.push(form.get("client_id")!)
+    refreshes.push(form.get("refresh_token")!)
+    assert.equal(form.get("client_secret"), clients.at(-1) === "fake-antigravity-client-id"
+      ? "fake-antigravity-client-secret" : "fake-gemini-client-secret")
+    return Response.json({ access_token: `fake-antigravity-refreshed-${clients.length}`, expires_in: 10,
+      refresh_token: "fake-returned-refresh-never-retained" })
+  })
+  const read = createGoogleTokenReader()
+  const auth = login({ methodID: "antigravity", access: "", expires: now + 100_000 })
+  const original = JSON.stringify(auth)
+  const credential = googleCredential(auth)!
+  assert.equal(await read(credential, signal()), "fake-antigravity-refreshed-1", "empty access refreshes despite a future expiry")
+  assert.equal(await read(credential, signal()), "fake-antigravity-refreshed-1")
+  now += 10_000
+  assert.equal(await read(credential, signal()), "fake-antigravity-refreshed-2")
+  assert.equal(await read(googleCredential(login({ methodID: "antigravity", access: "fake-expired-antigravity" }))!, signal()), "fake-antigravity-refreshed-3")
+  assert.equal(await read(googleCredential(login({ access: "" }))!, signal()), "fake-antigravity-refreshed-4", "same refresh/context with another method cannot reuse access")
+  assert.deepEqual(clients, [...Array(3).fill("fake-antigravity-client-id"),
+    "fake-gemini-client-id"])
+  assert.deepEqual(refreshes, Array(4).fill("fake-refresh"))
+  assert.equal(JSON.stringify(auth), original)
 })
 
 test("uses native access until its actual expiry, then refreshes once and caches only access", async t => {

@@ -79,7 +79,7 @@ test("missing project, malformed quota, HTTP errors, redirects, timeout and over
   assert.equal((await googleUsage.fetchQuota(auth({ refresh: "fake-project-missing" }))).ok, false)
   const before = calls
   assert.equal((await googleUsage.fetchQuota(auth(), AbortSignal.abort())).ok, false)
-  for (const methodID of ["antigravity", "oauth", "unknown"]) {
+  for (const methodID of ["oauth", "unknown"]) {
     const reading = await googleUsage.fetchQuota(auth({ methodID }))
     assert.equal(reading.configured, true)
     assert.equal(reading.ok, false)

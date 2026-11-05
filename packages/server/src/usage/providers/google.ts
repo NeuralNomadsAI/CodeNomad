@@ -3,6 +3,7 @@ import { postBoundedJson } from "../bounded-fetch"
 import { createGoogleTokenReader, googleCredential } from "../google-credential"
 import { asObject, getString, notConfigured, result, toTimestamp, toUsageWindow } from "../shared"
 import type { ProviderResult, ProviderUsage, UsageProvider } from "../types"
+import { antigravityQuota } from "./antigravity"
 
 const readToken = createGoogleTokenReader()
 
@@ -29,10 +30,16 @@ export const googleUsage: UsageProvider = {
   async fetchQuota(auth, signal = AbortSignal.timeout(15_000)) {
     const entry = asObject(auth.google)
     if (!entry) return notConfigured("google", "Gemini CLI")
+    const name = entry.methodID === "antigravity" ? "Antigravity" : "Gemini CLI"
     try {
       const credential = googleCredential(auth)
       if (!credential) throw new Error("Google usage unavailable")
+      if (credential.methodID === "antigravity" && !credential.project) throw new Error("Google usage unavailable")
       const access = await readToken(credential, signal)
+      if (credential.methodID === "antigravity") {
+        return result("google", name, { configured: true, ok: true,
+          usage: await antigravityQuota(access, credential.project!, signal) })
+      }
       const headers = { Authorization: `Bearer ${access}` }
       let project = credential.project
       if (!project) {
@@ -64,7 +71,7 @@ export const googleUsage: UsageProvider = {
       return result("google", "Gemini CLI", { configured: true, ok: true, usage: { windows: {}, models } })
     } catch {
       // Refresh/quota failures are unknown usage, never connection errors or upstream prose.
-      return result("google", "Gemini CLI", { configured: true, ok: false })
+      return result("google", name, { configured: true, ok: false })
     }
   },
 }

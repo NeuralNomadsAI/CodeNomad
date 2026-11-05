@@ -9,14 +9,21 @@ const GEMINI_CLIENT = {
   client_id: "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
   client_secret: "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",
 }
+// Public installed-application client:
+// https://github.com/NoeFabris/opencode-antigravity-auth/blob/main/src/constants.ts
+const ANTIGRAVITY_CLIENT = {
+  client_id: "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
+  client_secret: "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",
+}
 /** Server-only client lookup; tests replace it with synthetic installed-app clients. */
 export const googleOAuthClients = {
-  get(methodID: string) { return GEMINI_CLIENT },
+  get(methodID: string) { return methodID === "antigravity" ? ANTIGRAVITY_CLIENT : GEMINI_CLIENT },
 }
 const MAX_IDENTITIES = 32
 const MAX_SECRET_LENGTH = 16_384
 
 interface GoogleCredential {
+  methodID: "gemini-cli" | "antigravity"
   identity: string
   access: string | null
   refresh: string | null
@@ -27,16 +34,18 @@ interface GoogleCredential {
 /** Server-only. Client selection comes exclusively from the native method. */
 export function googleCredential(auth: AuthFile): GoogleCredential | null {
   const entry = asObject(auth.google)
-  if (entry?.type !== "oauth" || entry.methodID !== "gemini-cli") return null
+  if (entry?.type !== "oauth" || (entry.methodID !== "gemini-cli" && entry.methodID !== "antigravity")) return null
   const access = getString(entry.access)
   const packed = getString(entry.refresh)
   if ((access?.length ?? 0) > MAX_SECRET_LENGTH || (packed?.length ?? 0) > MAX_SECRET_LENGTH) return null
   const [refresh, project, managedProject] = (packed ?? "").split("|")
   return {
+    methodID: entry.methodID,
     identity: createHash("sha256").update(JSON.stringify(entry)).digest("hex"),
     access,
     refresh: getString(refresh),
     expires: typeof entry.expires === "number" && Number.isFinite(entry.expires) ? entry.expires : 0,
+    // Saved-context priority: opencode-antigravity-auth/src/plugin/project.ts.
     project: getString(managedProject) ?? getString(project),
   }
 }
@@ -59,7 +68,8 @@ export function createGoogleTokenReader() {
     const request = (async () => {
       const started = Date.now()
       const payload = asObject(await postBoundedJson("https://oauth2.googleapis.com/token", {}, new URLSearchParams({
-        grant_type: "refresh_token", refresh_token: credential.refresh!, ...googleOAuthClients.get("gemini-cli"),
+        grant_type: "refresh_token", refresh_token: credential.refresh!,
+        ...googleOAuthClients.get(credential.methodID),
       }), signal))
       const access = getString(payload?.access_token)
       const seconds = payload?.expires_in
