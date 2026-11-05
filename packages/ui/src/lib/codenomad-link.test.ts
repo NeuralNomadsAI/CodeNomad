@@ -1,6 +1,27 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { classifyCodeNomadLink, codeNomadLinkName } from "./codenomad-link.ts"
+import { classifyCodeNomadLink, codeNomadLinkName, serverDisplayName } from "./codenomad-link.ts"
+
+describe("saved server names", () => {
+  it("show the saved name, else the host name, never a raw address", () => {
+    assert.equal(serverDisplayName({ name: "Box", baseUrl: "https://box.example" }), "Box")
+    // A pasted address is saved under its host: it reads as the host name.
+    assert.equal(serverDisplayName({ name: "127.0.0.1:9911", baseUrl: "http://127.0.0.1:9911" }), "127.0.0.1")
+    assert.equal(serverDisplayName({ name: "http://127.0.0.1:9911", baseUrl: "http://127.0.0.1:9911" }), "127.0.0.1")
+    assert.equal(serverDisplayName({ name: "https://desk.opentunnel.xyz/", baseUrl: "https://desk.opentunnel.xyz" }), "desk.opentunnel.xyz")
+    assert.equal(serverDisplayName({ name: "  ", baseUrl: "https://box.example:8443" }), "box.example")
+  })
+
+  it("keep the port only to tell apart servers on the same host", () => {
+    const first = { id: "a", name: "127.0.0.1:9911", baseUrl: "http://127.0.0.1:9911" }
+    const second = { id: "b", name: "127.0.0.1:9912", baseUrl: "http://127.0.0.1:9912" }
+    const named = { id: "c", name: "Lab", baseUrl: "http://127.0.0.1:9913" }
+    assert.equal(serverDisplayName(first, [first, second, named]), "127.0.0.1:9911")
+    assert.equal(serverDisplayName(first, [first, named]), "127.0.0.1:9911", "a named server on the same host still shares it")
+    assert.equal(serverDisplayName(first, [first]), "127.0.0.1")
+    assert.equal(serverDisplayName(named, [first, second, named]), "Lab")
+  })
+})
 
 describe("pasted CodeNomad links", () => {
   it("recognizes a Remote Control pairing link and keeps its code out of the saved address", () => {
