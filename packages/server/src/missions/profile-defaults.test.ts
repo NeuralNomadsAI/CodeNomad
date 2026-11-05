@@ -108,14 +108,15 @@ test("Compare's missing judge inherits only the coordinator model and its origin
   assert.equal(withoutCoordinator.origins.roles.comparator, "opencode-default")
 })
 
-test("Compare's selected judge stays whole even when empty or agent-only", () => {
+test("Compare fills a selected judge's missing model while retaining the slot's agent and origin", () => {
   for (const comparator of [{}, { agent: "judge" }, specialist]) {
     const explicit = resolveMissionCreationDefaults({ template: "compare", preferences, profiles: { roles: { comparator } } })
-    assert.deepEqual(explicit.profiles.roles.comparator, comparator)
+    const expected = { ...comparator, model: "model" in comparator ? comparator.model : coordinator.model }
+    assert.deepEqual(explicit.profiles.roles.comparator, expected)
     assert.equal(explicit.origins.roles.comparator, "explicit")
     const preferred = resolveMissionCreationDefaults({ template: "compare", preferences: [...preferences,
       { template: "compare", profiles: { roles: { comparator } } }] })
-    assert.deepEqual(preferred.profiles.roles.comparator, comparator)
+    assert.deepEqual(preferred.profiles.roles.comparator, expected)
     assert.equal(preferred.origins.roles.comparator, "preference")
   }
 })
@@ -152,7 +153,7 @@ test("legacy custom preferences migrate to all without changing the input", () =
   assert.deepEqual(legacy, snapshot)
 })
 
-test("an omitted Compare judge freezes a known coordinator model without completing selected judge slots", () => {
+test("Compare fills omitted, explicit and preferred judge models from a known native coordinator", () => {
   const coordinatorModel = { providerID: "p", id: "known", variant: "default" }
   const inherited = resolveMissionCreationDefaults({ template: "compare", preferences: [], coordinatorModel })
   assert.deepEqual(inherited.profiles.coordinator, {})
@@ -160,11 +161,11 @@ test("an omitted Compare judge freezes a known coordinator model without complet
   assert.equal(inherited.origins.roles.comparator, "opencode-default")
   for (const comparator of [{}, { agent: "judge" }]) {
     const explicit = resolveMissionCreationDefaults({ template: "compare", preferences: [], coordinatorModel, profiles: { roles: { comparator } } })
-    assert.deepEqual(explicit.profiles.roles.comparator, comparator)
+    assert.deepEqual(explicit.profiles.roles.comparator, { ...comparator, model: { providerID: "p", id: "known" } })
     assert.equal(explicit.origins.roles.comparator, "explicit")
     const preference = resolveMissionCreationDefaults({ template: "compare", coordinatorModel,
       preferences: [{ template: "compare", profiles: { roles: { comparator } } }] })
-    assert.deepEqual(preference.profiles.roles.comparator, comparator)
+    assert.deepEqual(preference.profiles.roles.comparator, { ...comparator, model: { providerID: "p", id: "known" } })
     assert.equal(preference.origins.roles.comparator, "preference")
   }
 })

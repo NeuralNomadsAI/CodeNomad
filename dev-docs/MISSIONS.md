@@ -145,15 +145,19 @@ refuse otherwise. Only one-time coordinators are offered and told about
   slot; the global `specialist` supplies task roles, with the Compare judge using
   the coordinator's model by default. Each supplied profile slot wins whole,
   including `{}` (OpenCode defaults) or an agent-only profile; `profiles: {}`
-  leaves every slot eligible for preferences. An explicit `taskMode` wins over
+  leaves every slot eligible for preferences. After slot selection, Compare fills
+  any missing judge model from the known coordinator model through shared
+  `freezeCompareProfiles`, including explicit/preference `{}` or agent-only slots;
+  a judge's own model stays unchanged. An explicit `taskMode` wins over
   the playbook preference, then the global preference; the final fallback is
   `native`. Missing profile preferences fall back to OpenCode defaults.
 
   Creation responses include `selection: { profiles, taskMode, origins }`:
   the saved coordinator and every role of the selected playbook, plus origins
   `explicit`, `preference` or `opencode-default` for the coordinator, each role
-  and task mode. The default Compare judge inherits the coordinator's origin
-  along with its model. These are saved requested selectors; catalog validation and native
+  and task mode. A chosen Compare judge slot retains its explicit/preference origin
+  even when its model is inherited; an absent judge slot inherits the coordinator's
+  origin. These are saved requested selectors; catalog validation and native
   execution checks establish availability and actual execution separately.
   `inspect({ start })` uses the caller as coordinator and requires its existing
   native profile to match the resolved coordinator selection. An unreadable

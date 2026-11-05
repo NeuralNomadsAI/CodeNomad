@@ -21,12 +21,16 @@ slots and `taskMode` inherit the user's Missions preferences: playbook exception
 then global defaults (the global specialist supplies task roles; the Compare judge
 defaults to the coordinator's model). Each explicit profile slot wins whole:
 `{}` selects OpenCode defaults for that slot, and an agent-only slot keeps its
-native model default. `profiles: {}` inherits all slots. With absent preferences,
+native model default, except for the Compare judge: after slot selection, any
+missing judge model inherits the known coordinator model, including explicit or
+preference `{}` and agent-only slots; a judge's own model stays unchanged.
+`profiles: {}` inherits all slots. With absent preferences,
 profiles use OpenCode defaults and task mode uses `native`.
 Read the creation response's `selection.profiles`, `selection.taskMode` and
 `selection.origins` to check the saved coordinator and every playbook role:
-`explicit`, `preference` or `opencode-default` (the default Compare judge inherits
-the coordinator's origin). Unreadable/invalid preferences refuse creation; report
+`explicit`, `preference` or `opencode-default`. A chosen judge slot keeps its
+explicit/preference origin even with an inherited model; an absent judge slot
+inherits the coordinator's origin. Unreadable/invalid preferences refuse creation; report
 the error and arrange recovery of the Missions preferences before retrying.
 `inspect({ start })` requires the caller's existing coordinator profile to match
 the resolved selection. For `prepare`, reuse the same requestID and original

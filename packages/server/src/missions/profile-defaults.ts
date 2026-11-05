@@ -82,7 +82,7 @@ export interface MissionCreationDefaults {
   origins: { coordinator: MissionDefaultOrigin; roles: Record<string, MissionDefaultOrigin>; taskMode: MissionDefaultOrigin }
 }
 
-/** Resolve whole slots once, before creation; an empty slot deliberately selects native defaults. */
+/** Resolve whole slots, then freeze Compare's missing judge model against the coordinator. */
 export function resolveMissionCreationDefaults(input: {
   template: MissionTemplateId
   preferences: unknown
@@ -105,7 +105,6 @@ export function resolveMissionCreationDefaults(input: {
   for (const role of missionProfileRoles[input.template]) {
     const selected = slot(explicit?.roles?.[role], defaults?.roles?.[role])
     if (input.template === "compare" && role === "comparator" && selected.origin === "opencode-default") {
-      selected.execution = freezeCompareProfiles("compare", { coordinator: coordinator.execution }, input.coordinatorModel)?.roles?.comparator ?? {}
       selected.origin = coordinator.origin
     }
     roles[role] = selected.execution
@@ -114,7 +113,7 @@ export function resolveMissionCreationDefaults(input: {
   const preferredTaskMode = preferences.find(item => item.template === input.template)?.taskMode
     ?? preferences.find(item => item.template === "all")?.taskMode
   return structuredClone({
-    profiles: { coordinator: coordinator.execution, roles },
+    profiles: freezeCompareProfiles(input.template, { coordinator: coordinator.execution, roles }, input.coordinatorModel) as Required<MissionProfiles>,
     taskMode: parseMissionTaskMode(input.taskMode === undefined ? preferredTaskMode : input.taskMode),
     origins: { coordinator: coordinator.origin, roles: origins,
       taskMode: input.taskMode !== undefined ? "explicit" : preferredTaskMode !== undefined ? "preference" : "opencode-default" },
