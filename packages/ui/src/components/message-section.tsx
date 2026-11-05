@@ -1,5 +1,5 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack, type JSX } from "solid-js"
-import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search } from "lucide-solid"
+import { ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpToLine, ChevronDown, ChevronUp, Search } from "lucide-solid"
 import { Portal } from "solid-js/web"
 import { matchesHotkey, withHotkey } from "../lib/hotkeys"
 import DismissibleWindow from "./dismissible-window"
@@ -81,6 +81,8 @@ function TimelinePlacement(props: { mount?: HTMLElement; children: JSX.Element }
 
 export interface MessageSectionProps {
   timelineMount?: HTMLElement
+  /** The composer corner cell; the first/latest controls render there instead of over the transcript. */
+  scrollCornerMount?: HTMLElement
   instanceId: string
   sessionId: string
   loading?: boolean
@@ -1518,7 +1520,7 @@ export default function MessageSection(props: MessageSectionProps) {
           scrollToBottomAriaLabel={() => t("messageSection.scroll.toLatestAriaLabel")}
           registerApi={registerListApi}
           registerState={(state) => setListState(state)}
-          renderControls={() => (
+          renderControls={() => props.scrollCornerMount ? undefined : (
             <div class="message-scroll-controls">
               <Show when={showFirstButton()}>
                 <button
@@ -1833,6 +1835,33 @@ export default function MessageSection(props: MessageSectionProps) {
             />
           </div>
           </TimelinePlacement>
+        </Show>
+        <Show when={props.scrollCornerMount}>
+          {(mount) => (
+            <Portal mount={mount()}>
+              {/* Both stay in place; the end the reader is already at is dimmed. */}
+              <button
+                type="button"
+                class="session-scroll-corner-button"
+                classList={{ "session-scroll-corner-button--reached": !showFirstButton() }}
+                onClick={() => void pageWindow("oldest", (api) => api.scrollToTop({ immediate: true }))}
+                aria-label={t("messageSection.scroll.toFirstAriaLabel")}
+                title={t("messageSection.scroll.toFirstAriaLabel")}
+              >
+                <ArrowUpToLine class="w-4 h-4" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                class="session-scroll-corner-button"
+                classList={{ "session-scroll-corner-button--reached": !showLatestButton() }}
+                onClick={() => void pageWindow("latest", (api) => api.scrollToBottom({ immediate: true }))}
+                aria-label={t("messageSection.scroll.toLatestAriaLabel")}
+                title={t("messageSection.scroll.toLatestAriaLabel")}
+              >
+                <ArrowDownToLine class="w-4 h-4" aria-hidden="true" />
+              </button>
+            </Portal>
+          )}
         </Show>
       </div>
     </div>

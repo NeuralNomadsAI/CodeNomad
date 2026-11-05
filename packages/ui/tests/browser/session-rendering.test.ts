@@ -240,7 +240,6 @@ test("return to latest from a 620-record history replaces the saved older-page s
     await page.mouse.move(box.x + 10, box.y + box.height / 2)
     await page.mouse.wheel(0, -400)
     await page.waitForFunction(() => { const el = document.querySelector(".message-stream")!; return el.scrollHeight - el.clientHeight - el.scrollTop > 100 }, undefined, { timeout: 5000 })
-    await page.locator(".message-scroll-controls").hover()
     await page.getByRole("button", { name: "Scroll to latest message", exact: true }).click()
     await page.waitForFunction(() => (window as any).fixture.snapshot().window.kind === "latest")
     await page.waitForFunction(() => (window as any).fixture.snapshot().scroll?.windowIsLatest === true, undefined, { timeout: 5000 })

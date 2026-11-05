@@ -1327,7 +1327,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       if (!isActive() || scrollController.snapshot().restoring) return
       if (canPinFollowBottom()) {
         pinFollowBottom("viewport-resize")
-      } else if (!readerSettlement.held()) {
+      } else if (!readerSettlement.held() && element.scrollTop > TOP_SCROLL_EPSILON_PX) {
+        // A reader at the start stays there; others keep the content above the composer.
         const before = element.scrollTop
         writeScroll("viewport-resize", { type: "dom", top: getBottomAnchoredViewportOffset(before, heightDelta), record: true })
         // The rolled reader's place follows the bottom-anchored (and clamped) content.

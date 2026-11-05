@@ -107,10 +107,12 @@ async function open(run: (page: Page) => Promise<void>, { name = "session", hist
   }
 }
 
-const latestButton = (page: Page, scope = "") => page.locator(`${scope} .message-scroll-controls`).getByRole("button", { name: "Scroll to latest message", exact: true })
+// SessionView keeps both controls in the composer corner and dims the end the reader reached.
+const cornerButton = (page: Page, label: string, scope = "") =>
+  page.locator(`${scope} .session-scroll-corner-button[aria-label="${label}"]:not(.session-scroll-corner-button--reached)`)
+const latestButton = (page: Page, scope = "") => cornerButton(page, "Scroll to latest message", scope)
 
 async function bottom(page: Page, scope = "") {
-  await page.locator(`${scope} .message-scroll-controls`).hover()
   const button = latestButton(page, scope)
   if (await button.count()) await button.click()
   await frames(page)
@@ -1026,6 +1028,41 @@ test("a viewport resize during a rolling window stays bottom-anchored", async ()
     const after = await gap()
     assert.ok(Math.abs(after - before) <= 2, `The resize was not bottom-anchored: ${JSON.stringify({ before, after })}`)
   }, { name: "list" })
+})
+
+// The composer growing pushes a reader down to keep the bottom lines in place,
+// except at the start: there the first message stays in view.
+test("a viewport resize keeps a reader at the start there", async () => {
+  await open(async page => {
+    const stream = page.locator(".message-stream")
+    assert.equal(await stream.evaluate(el => el.scrollTop), 0)
+    await page.evaluate(() => { document.getElementById("root")!.style.height = "560px" })
+    await frames(page, 30)
+    assert.equal(await stream.evaluate(el => el.scrollTop), 0)
+  }, { name: "list" })
+})
+
+// The first/latest controls live in the composer corner under the rail, never
+// over the transcript; both stay and the end the reader reached is dimmed.
+test("first/latest controls stay in the composer corner and dim the reached end", async () => {
+  await open(async page => {
+    const reached = () => page.locator(".session-scroll-corner-button").evaluateAll(buttons =>
+      buttons.map(button => button.classList.contains("session-scroll-corner-button--reached")))
+    assert.deepEqual(await reached(), [false, true])
+    assert.equal(await page.locator(".message-scroll-button").count(), 0)
+    const geometry = await page.evaluate(() => {
+      const view = document.querySelector(".session-view")!.getBoundingClientRect()
+      const corner = document.querySelector(".session-scroll-corner")!.getBoundingClientRect()
+      const footer = document.querySelector(".prompt-input-footer")!.getBoundingClientRect()
+      return { right: Math.round(view.right - corner.right), bottom: Math.round(view.bottom - corner.bottom),
+        width: Math.round(corner.width), top: Math.round(corner.top - footer.top), footerRight: Math.round(corner.left - footer.right) }
+    })
+    assert.deepEqual(geometry, { right: 0, bottom: 0, width: 40, top: 0, footerRight: 0 }, JSON.stringify(geometry))
+    await cornerButton(page, "Scroll to first message").click()
+    await page.waitForFunction(() => document.querySelector(".message-stream")!.scrollTop === 0)
+    await frames(page)
+    assert.deepEqual(await reached(), [true, false])
+  })
 })
 
 // A following list hidden by display:none (still mounted), whose streaming
@@ -2138,8 +2175,7 @@ test("a First jump during a pending send still lands on the first message", asyn
     await prompt.press("Enter")
     await page.waitForFunction(() => (window as any).fixture.admitted())
     await frames(page, 120)
-    await page.locator(".message-scroll-controls").hover()
-    await page.getByRole("button", { name: "Scroll to first message", exact: true }).click()
+    await cornerButton(page, "Scroll to first message").click()
     // The fixture serves this window from its newest records; what matters is that
     // the loaded window replaces the latest one and is then entered at its top.
     await page.waitForFunction(() => (window as any).fixture.snapshot().window.kind !== "latest")

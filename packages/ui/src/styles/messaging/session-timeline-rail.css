@@ -17,7 +17,12 @@
   display: flex;
 }
 
-.session-view:has(> .session-timeline-slot .message-timeline-sidebar) .prompt-input-footer::after {
+/* The corner cell under the rail stays, with or without the timeline, and holds the first/latest controls. */
+.session-view:not(:has(> .session-timeline-slot .message-timeline-sidebar)) .prompt-input-footer {
+  margin-inline-end: 40px;
+}
+
+.session-view .prompt-input-footer::after {
   content: "";
   position: absolute;
   inset-block: -1px 0;
@@ -43,9 +48,11 @@
   .session-view:has(> .session-timeline-slot .message-timeline-sidebar) {
     padding-inline-end: var(--touch-target-size);
   }
-  .session-timeline-slot { width: var(--touch-target-size); }
-  .session-view:has(> .session-timeline-slot .message-timeline-sidebar) .prompt-input-footer::after {
-    width: var(--touch-target-size);
+  .session-timeline-slot,
+  .session-scroll-corner,
+  .session-view .prompt-input-footer::after { width: var(--touch-target-size); }
+  .session-view:not(:has(> .session-timeline-slot .message-timeline-sidebar)) .prompt-input-footer {
+    margin-inline-end: var(--touch-target-size);
   }
 }
 
@@ -56,9 +63,12 @@
   }
 
   .session-timeline-slot,
-  .message-timeline-sidebar,
-  .session-view:has(> .session-timeline-slot .message-timeline-sidebar) .prompt-input-footer::after {
+  .message-timeline-sidebar {
     display: none;
+  }
+
+  .session-view .prompt-input-footer {
+    margin-inline-end: 40px;
   }
 
   .message-layout--with-timeline {
@@ -68,4 +78,43 @@
 
 .session-view.mission-reading:has(> .session-timeline-slot .message-timeline-sidebar) { padding-inline-end: 0; }
 .session-view.mission-reading .session-timeline-slot,
+.session-view.mission-reading .session-scroll-corner,
 .session-view.mission-reading .prompt-input-footer::after { display: none; }
+.session-view.mission-reading .prompt-input-footer { margin-inline-end: 0; }
+
+.session-scroll-corner {
+  position: absolute;
+  inset-block-end: 0;
+  inset-inline-end: 0;
+  width: 40px;
+  block-size: var(--composer-footer-block-size, 30px);
+  padding-block-start: 1px;
+  padding-inline-start: 1px;
+}
+
+.session-scroll-corner > div {
+  display: flex;
+  height: 100%;
+}
+
+.session-scroll-corner-button {
+  flex: 1 1 0;
+  display: grid;
+  place-items: center;
+  color: var(--accent-primary);
+  background: transparent;
+}
+
+.session-scroll-corner-button:hover {
+  background-color: var(--surface-hover-overlay);
+}
+
+.session-scroll-corner-button:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
+.session-scroll-corner-button--reached {
+  color: var(--text-muted);
+  opacity: 0.5;
+}

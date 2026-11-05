@@ -144,6 +144,16 @@ shows only the run's part after them; a continuation stands for that part. A
 selected continuation a reveal joins to its run hands the selection to the run's
 marker (`survivingTimelineSegmentId`). A tool inside a collapsed technical group stands for that group's header.
 
+The first/latest controls sit side by side in the composer corner cell under the
+rail (`.session-scroll-corner`, a `SessionView` mount that `MessageSection`
+portals into). The cell stays without the timeline, the footer then reserving its
+width, and spans the footer height `observeTimelineRailBoundary` publishes as
+`--composer-footer-block-size`. Both controls always render; the end the reader
+has reached is dimmed but stays clickable. First is reached at the top of a window
+without an older cursor: the oldest load (the first ascending page) stores none,
+because native boundary cursors do not promise another page. A viewport resize
+keeps a reader at offset 0 there instead of bottom-anchoring the content.
+
 A click (or a user-message jump) makes its marker active until the reader
 scrolls: the key jump holds that marker's own block at the top, through row
 remounts and window loads, rather than the message row. A send, the first/latest

@@ -7,6 +7,8 @@ export function observeTimelineRailBoundary(rail: HTMLElement): () => void {
   const update = () => {
     const bottom = view.getBoundingClientRect().bottom - footer.getBoundingClientRect().top
     rail.style.insetBlockEnd = `${Math.max(0, bottom)}px`
+    // The corner cell under the rail spans the same footer height.
+    view.style.setProperty("--composer-footer-block-size", `${Math.max(0, bottom)}px`)
   }
   const observer = new ResizeObserver(update)
   observer.observe(view)
