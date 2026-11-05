@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { readdirSync, readFileSync } from "node:fs"
 import { join, relative, sep } from "node:path"
-import { test } from "node:test"
+import { test, type TestContext } from "node:test"
 import { fileURLToPath } from "node:url"
 import { serverApi } from "./api-client"
 import { authenticatedFetch, authRecovery } from "./auth-recovery"
@@ -61,14 +61,25 @@ function fakeBackend(baseUrl: string, answer: (path: string) => Response = () =>
   return { client, requests, sources }
 }
 
-test("two backend clients keep their requests, events, pongs and login recovery apart", async (t) => {
+/** A renderer page; the local singletons were imported before it, without a browser. */
+function useRendererWindow(t: TestContext) {
   const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window")
   t.after(() => {
     if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor)
     else Reflect.deleteProperty(globalThis, "window")
   })
-  // A renderer page; the local singleton was imported before it, without a browser.
   Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { origin: "https://ui.invalid" } } })
+}
+
+test("a backend client needs an absolute http(s) base URL", () => {
+  for (const baseUrl of [undefined, "", "/api", "b.invalid", "ws://b.invalid", "file:///srv"]) {
+    assert.throws(() => createBackendClient({ id: "b", baseUrl: baseUrl as string }), TypeError, String(baseUrl))
+  }
+  assert.equal(createBackendClient({ id: "b", baseUrl: "http://b.invalid:9898" }).url("/api/meta"), "http://b.invalid:9898/api/meta")
+})
+
+test("two backend clients keep their requests, events, pongs and login recovery apart", async (t) => {
+  useRendererWindow(t)
 
   let aAuthenticated = true
   const a = fakeBackend("https://a.invalid", path => path === "/api/auth/status"
@@ -128,6 +139,66 @@ test("two backend clients keep their requests, events, pongs and login recovery 
   b.sources.forEach(source => source.close())
 })
 
+test("two backend clients keep their OpenCode clients, stored owners and server meta apart", async (t) => {
+  useRendererWindow(t)
+  // Anything reaching the global fetch went through a local singleton.
+  const globalRequests: string[] = []
+  const globalFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = globalFetch })
+  globalThis.fetch = async (input) => {
+    globalRequests.push(String(input instanceof Request ? input.url : input))
+    return new Response("{}", { status: 599 })
+  }
+
+  const answers = (name: string) => (path: string) => {
+    if (path === "/api/auth/status") return Response.json({ authenticated: true })
+    if (path === "/api/meta") return Response.json({ host: name })
+    if (path === "/api/storage/config/ui") return Response.json({ from: name })
+    if (path.startsWith("/workspaces/ws/instance/")) return new Response("{}", { status: 401 })
+    return Response.json({})
+  }
+  const a = fakeBackend("https://a.invalid", answers("a"))
+  const b = fakeBackend("https://b.invalid", answers("b"))
+
+  // B's OpenCode client is proxied by B, and its 401 probes only B's login.
+  assert.notEqual(b.client.sdk, localBackend.sdk)
+  const native = b.client.sdk.createClient("ws", "/workspaces/ws/instance")
+  await assert.rejects(native.session.prompt({ sessionID: "owned", text: "fixture" }))
+  await until(() => b.requests.includes("https://b.invalid/api/auth/status"), "B's login is probed")
+  assert.deepEqual(b.requests, ["https://b.invalid/workspaces/ws/instance/api/session/owned/prompt", "https://b.invalid/api/auth/status"])
+  assert.deepEqual(a.requests, [])
+
+  // Each client caches its own backend's meta.
+  assert.notEqual(b.client.meta, localBackend.meta)
+  assert.deepEqual(await b.client.meta.getServerMeta(), { host: "b" })
+  assert.deepEqual(await b.client.meta.getServerMeta(), { host: "b" })
+  assert.deepEqual(await a.client.meta.getServerMeta(), { host: "a" })
+  assert.equal(b.requests.filter(url => url === "https://b.invalid/api/meta").length, 1)
+  assert.deepEqual(a.requests, ["https://a.invalid/api/meta"])
+
+  // Each client reads its own backend's owners, and only its stream updates them.
+  assert.notEqual(b.client.storage, localBackend.storage)
+  assert.deepEqual(await a.client.storage.loadConfigOwner("ui"), { from: "a" })
+  assert.deepEqual(await b.client.storage.loadConfigOwner("ui"), { from: "b" })
+  assert.ok(b.requests.includes("https://b.invalid/api/storage/config/ui"))
+  const changes: string[] = []
+  t.after(a.client.storage.onConfigOwnerChanged("ui", value => { changes.push(`a:${value.from}`) }))
+  t.after(b.client.storage.onConfigOwnerChanged("ui", value => { changes.push(`b:${value.from}`) }))
+  t.after(localBackend.storage.onConfigOwnerChanged("ui", value => { changes.push(`local:${value.from}`) }))
+  changes.length = 0
+  a.client.events.start()
+  b.client.events.start()
+  await until(() => a.sources.length === 1 && b.sources.length === 1, "each started client opens its stream")
+  b.sources[0].onmessage!({ data: JSON.stringify({ type: "storage.configChanged", owner: "ui", value: { from: "b2" } }) })
+  assert.deepEqual(changes, ["b:b2"])
+  assert.deepEqual(await b.client.storage.loadConfigOwner("ui"), { from: "b2" })
+  assert.deepEqual(await a.client.storage.loadConfigOwner("ui"), { from: "a" })
+
+  assert.deepEqual(globalRequests, [])
+  a.sources.forEach(source => source.close())
+  b.sources.forEach(source => source.close())
+})
+
 test("only the transport modules read the injected API base and events URL", () => {
   const root = fileURLToPath(new URL("..", import.meta.url))
   const readers: string[] = []
@@ -137,7 +208,7 @@ test("only the transport modules read the injected API base and events URL", () 
       if (entry.isDirectory()) visit(path)
       else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) && !entry.name.endsWith(".d.ts")) {
         const source = readFileSync(path, "utf8")
-        if (/CODENOMAD_API_BASE|__CODENOMAD_EVENTS_URL__|["'][./]*\/api-base["']/.test(source)) readers.push(relative(root, path).split(sep).join("/"))
+        if (/CODENOMAD_API_BASE|__CODENOMAD_EVENTS_URL__|["'][^"']*\/api-base["']/.test(source)) readers.push(relative(root, path).split(sep).join("/"))
       }
     }
   }

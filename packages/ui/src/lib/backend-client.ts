@@ -24,12 +24,23 @@ export interface BackendClient {
 }
 
 export interface BackendClientOptions extends BackendTransportOptions {
+  /** Absolute http(s) URL of the other backend. */
+  baseUrl: string
   /** Replaces the global fetch, resolved per request when omitted. */
   fetcher?: typeof fetch
 }
 
+function assertAbsoluteHttpUrl(baseUrl: string) {
+  let protocol: string | undefined
+  try { protocol = new URL(baseUrl).protocol } catch { /* relative or malformed */ }
+  if (protocol !== "http:" && protocol !== "https:") {
+    throw new TypeError(`A backend client needs an absolute http(s) base URL, not ${JSON.stringify(baseUrl)}`)
+  }
+}
+
 /** A client of another backend. Its events stream connects only when `events.start()` is called. */
 export function createBackendClient(options: BackendClientOptions): BackendClient {
+  assertAbsoluteHttpUrl(options.baseUrl)
   const transport = createBackendTransport(options)
   const auth = createAuthRecovery(transport.baseUrl, options.fetcher)
   const fetch = createAuthenticatedFetch(auth, options.fetcher)
