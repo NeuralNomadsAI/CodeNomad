@@ -83,7 +83,7 @@ Meldet ein Client eine Zertifikatswarnung, halten Sie an und prüfen Sie Hostnam
 
 ## Remote-Server speichern {#saved-servers}
 
-1. Wählen Sie auf der Desktop-Startseite oder im Starter **Tab öffnen** die Schaltfläche **Neuer Server**. **Einstellungen → Server** bietet dasselbe mit **Server hinzufügen…**.
+1. Wählen Sie auf der Desktop-Startseite **Neuer Server** oder am Ende von **Durchsuchen** den Eintrag **Server hinzufügen…**, auf der Startseite oder im Starter **Tab öffnen**. **Einstellungen → Server** bietet dasselbe mit **Server hinzufügen…**.
 2. Geben Sie in **Mit Server verbinden** unter **Server-URL** einen vertrauenswürdigen HTTPS-Ursprung oder einen Kopplungslink ein. **Servername** ist optional; ohne ihn zeigt der Server seinen Hostnamen. Lassen Sie **TLS-Verifizierung für selbstsignierte Zertifikate überspringen.** deaktiviert; stellen Sie stattdessen Vertrauen her. Besteht das Zertifikat die Prüfung nicht, meldet der Dialog dies.
 3. Wählen Sie **Speichern** für ein Lesezeichen oder **Verbinden** zum Speichern und Öffnen. Melden Sie sich auf diesem Server an.
 
@@ -99,7 +99,7 @@ Fügen Sie für Fernsteuerung stattdessen einen frischen Kopplungslink in **Serv
 
 In der Desktop-App (Electron oder Tauri unter Windows) kann ein gespeicherter Server eines seiner Projekte auch in einem Tab dieses Fensters öffnen, neben Ihren lokalen Projekten:
 
-1. Öffnen Sie auf der Startseite oder im Starter **Tab öffnen** den Bereich **Durchsuchen** und wählen Sie einen Server, oder wählen Sie **Neuer Server**, um einen hinzuzufügen.
-2. Wählen Sie den Ordner im Tab. Der Tab zeigt dann das Serversymbol und den Projektnamen, und das Projekt erscheint unter **Zuletzt geöffnete Tabs**: Dort ausgewählt, öffnet es diesen Server und Ordner direkt wieder.
+1. Öffnen Sie auf der Startseite oder im Starter **Tab öffnen** den Bereich **Durchsuchen** und wählen Sie einen Server oder **Server hinzufügen…**, um einen hinzuzufügen.
+2. Wählen Sie den Ordner im Tab. Der Tab zeigt dann das Serversymbol und den Projektnamen, und das Projekt erscheint unter **Zuletzt verwendet**: Dort ausgewählt, öffnet es diesen Server und Ordner direkt wieder.
 
 Der Tab zeigt nur dieses Projekt; seine Unterhaltungen, Dateien, Git, Einstellungen und Missions laufen auf dem Remote-Server. Er nutzt den Speicher des Remote-Fensters dieses Servers, sodass eine bestehende Anmeldung oder ein gekoppeltes Gerät wiederverwendet wird, und Remote-Tabs kehren zurück, wenn CodeNomad Ihre Tabs wiederherstellt. Ein Server ohne diesen Modus zeigt im Tab seine vollständige Oberfläche. Server, die die TLS-Prüfung überspringen, sowie der Tauri-Build unter macOS und Linux öffnen weiterhin ein Remote-Fenster. Die Seite in einem Tab kann Benachrichtigungen anzeigen, hat aber sonst keinen Zugriff auf diesen Computer und bleibt auf ihrem Server. Webclients und Remote-Control-Geräte haben keine Remote-Tabs. **Gespeicherten Server entfernen** in **Einstellungen → Server** schließt auch seine Tabs. Bevor ein Projekt gewählt ist, zeigt der Tab den Namen des Servers. Melden Sie sich auf der Seite des Servers im Tab an; CodeNomad verwendet diese Anmeldung bei späteren Starts wieder.

@@ -47,7 +47,7 @@ Yerel mobil şablonlar Android/Chromium kimliğini, yönelimini, dokunuşunu ve 
 1. Web aracını CodeNomad arka ucunun ana bilgisayarında ayrı olarak başlatıp `127.0.0.1:<port>` adresinde dinlemesini sağlayın.
 2. **Ayarlar → SideCars** öğesini açın. **Ad** ve **Port** öğesini girin; türetilen **Temel yol** öğesini (`/sidecars/<id>`) kontrol edin.
 3. **Protokol** öğesini yukarı akış hizmetiyle eşleşecek şekilde ayarlayın ve **Ön ek modu** öğesini seçin.
-4. **SideCar ekle** seçin, ardından SideCar'ı ana sayfadaki veya başlatıcıdaki **Gözat** bölümünden açın; sonra **Son sekmeler** arasında görünür. **Yeni SideCar** bu formu açar.
+4. **SideCar ekle** seçin, ardından SideCar'ı ana sayfadaki veya başlatıcıdaki **Gözat** bölümünden açın; sonra **Son kullanılanlar** arasında görünür. **Yeni SideCar** bu formu açar.
 
 | Seçim | Kesin etki |
 | --- | --- |

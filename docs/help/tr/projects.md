@@ -5,7 +5,7 @@ Bir proje sekmesi CodeNomad'i arka uç bilgisayarındaki bir klasöre bağlar. S
 ## Bir proje açın {#open-project}
 
 1. Ana sayfayı açmak için **Yeni instance** (`+`) öğesine tıklayın.
-2. **Son sekmeler** içinde bir proje seçin; ya da **Gözat** bölümünü açıp **Bu bilgisayar** seçin, ardından arka uç klasörünü seçip açın. **Gözat** kayıtlı CodeNomad sunucularını ([uzak proje sekmeleri](remote-access.md#remote-project-tabs)) ve SideCar'ları ([SideCar'lar](browser-sidecars.md#register-sidecar)) da listeler.
+2. **Son kullanılanlar** içinde bir proje seçin; ya da **Gözat** bölümünü açıp **Bu bilgisayar** seçin, ardından arka uç klasörünü seçip açın. **Gözat** kayıtlı CodeNomad sunucularını ([uzak proje sekmeleri](remote-access.md#remote-project-tabs)) ve SideCar'ları ([SideCar'lar](browser-sidecars.md#register-sidecar)) da listeler.
 3. Depoyu kopyalamak için **Git Deposunu Klonla** eylemini seçin; **Depo URL'si** ve **Hedef klasör** alanlarını doldurup **Klonla** eylemini seçin. **Hedef klasör**, son klonunuzun bulunduğu klasörde (yoksa en son projenizin yanında) depo adıyla önceden doldurulur. **Göz At** klonu içerecek klasörü seçer; klon klasörünün adı dahil yolu elle de düzenleyebilirsiniz.
 
 Uzak bir sunucuya göz atmak, telefonunuzun veya dizüstü bilgisayarınızın değil, o sunucunun dosya sistemine göz atmak anlamına gelir. Bir projeyi açmak, her sekme için ayrı bir OpenCode arka plan programı oluşturmaz. Konuşmalar yerel OpenCode oturumlarıdır; bunların ömrü sekmenin ömrü değildir.
@@ -17,7 +17,7 @@ Son kullanılan kayıtlar birer kısayoldur. **Workspace'i yeniden adlandır** g
 ## Yeni örnek başlatıcıyı kullanın {#new-instance-launcher}
 
 1. `+`'ye uzun basın veya sağ tıklayın; Klavye odağı oradayken **Alt+Down**, **Shift+F10** veya Menü tuşunu kullanın.
-2. **Sekme aç** içinde **Son sekmeler** arasında arayın (projeler, uzak projeler ve SideCar'lar), **Gözat** bölümünü açın ya da **Git Deposunu Klonla**, **Yeni geçici sekme**, **Yeni sunucu** veya **Yeni SideCar** seçin.
+2. **Sekme aç** içinde **Son kullanılanlar** arasında arayın (projeler, uzak projeler ve SideCar'lar), **Gözat** bölümünü açın ya da **Git Deposunu Klonla** veya **Yeni geçici sekme** seçin.
 
 Normal bir tıklama yine aynı seçenekleri sunan tam ana sayfayı açar. Son sekmeleri orada yeniden adlandırın veya kaldırın; sunucuları **Ayarlar → Sunucular**, SideCar'ları ise **Ayarlar → SideCars** bölümünde yönetin. Escape başlatıcıyı kapatır ve odağı `+` düğmesine döndürür.
 

@@ -5,7 +5,7 @@ Ein Projekt-Tab verbindet CodeNomad mit einem Ordner auf dem Backend-Rechner. Da
 ## Projekt öffnen {#open-project}
 
 1. Klicken Sie auf **Neue Instanz** (`+`), um die Startseite zu öffnen.
-2. Wählen Sie unter **Zuletzt geöffnete Tabs** ein Projekt; oder öffnen Sie **Durchsuchen**, wählen Sie **Dieser Computer**, dann den Backend-Ordner, und öffnen Sie ihn. **Durchsuchen** listet auch gespeicherte CodeNomad-Server ([Remote-Projekt-Tabs](remote-access.md#remote-project-tabs)) und SideCars ([SideCars](browser-sidecars.md#register-sidecar)) auf.
+2. Wählen Sie unter **Zuletzt verwendet** ein Projekt; oder öffnen Sie **Durchsuchen**, wählen Sie **Dieser Computer**, dann den Backend-Ordner, und öffnen Sie ihn. **Durchsuchen** listet auch gespeicherte CodeNomad-Server ([Remote-Projekt-Tabs](remote-access.md#remote-project-tabs)) und SideCars ([SideCars](browser-sidecars.md#register-sidecar)) auf.
 3. Für eine Repository-Kopie wählen Sie **Git-Repo klonen**, geben **Repository-URL** und **Zielordner** ein und wählen **Klonen**. **Zielordner** wird mit dem Repository-Namen im Ordner, der Ihren letzten Klon enthält vorbelegt, sonst neben Ihrem zuletzt geöffneten Projekt. **Durchsuchen** wählt den Ordner, der den Klon enthält; Sie können den Pfad auch bearbeiten, einschließlich des Ordnernamens des Klons.
 
 Einen Remote-Server zu durchsuchen bedeutet, dessen Dateisystem zu durchsuchen, nicht Ihr Telefon oder Notebook. Das Öffnen eines Projekts erzeugt keinen separaten OpenCode-Daemon pro Tab. Unterhaltungen sind native OpenCode-Sitzungen; ihre Lebensdauer entspricht nicht der des Tabs.
@@ -17,7 +17,7 @@ Zuletzt verwendete Einträge sind Verknüpfungen. **Arbeitsbereich umbenennen** 
 ## Schnellstarter für neue Instanzen verwenden {#new-instance-launcher}
 
 1. Halten Sie `+` gedrückt oder klicken Sie mit der rechten Maustaste darauf; bei Tastaturfokus dort verwenden Sie **Alt+Down**, **Shift+F10** oder die Menütaste.
-2. Durchsuchen Sie in **Tab öffnen** die **Zuletzt geöffnete Tabs** (Projekte, Remote-Projekte und SideCars), öffnen Sie **Durchsuchen**, oder wählen Sie **Git-Repo klonen**, **Neuer temporärer Tab**, **Neuer Server** oder **Neuer SideCar**.
+2. Durchsuchen Sie in **Tab öffnen** die Liste **Zuletzt verwendet** (Projekte, Remote-Projekte und SideCars), öffnen Sie **Durchsuchen**, oder wählen Sie **Git-Repo klonen** oder **Neuer temporärer Tab**.
 
 Ein normaler Klick öffnet weiterhin die vollständige Startseite mit denselben Möglichkeiten. Benennen Sie zuletzt geöffnete Tabs dort um oder entfernen Sie sie; verwalten Sie Server unter **Einstellungen → Server** und SideCars unter **Einstellungen → SideCars**. Escape schließt den Starter und gibt den Fokus an `+` zurück.
 

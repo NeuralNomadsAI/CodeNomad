@@ -5,7 +5,7 @@ A project tab connects CodeNomad to a folder on the backend computer. Opening a 
 ## Open a project {#open-project}
 
 1. Click **New instance** (`+`) to open the home page.
-2. In **Recent tabs**, choose a project; or open **Browse**, choose **This computer**, then select the backend folder and open it. **Browse** also lists saved CodeNomad servers ([remote project tabs](remote-access.md#remote-project-tabs)) and SideCars ([SideCars](browser-sidecars.md#register-sidecar)).
+2. In **Recent**, choose a project; or open **Browse**, choose **This computer**, then select the backend folder and open it. **Browse** also lists saved CodeNomad servers ([remote project tabs](remote-access.md#remote-project-tabs)) and SideCars ([SideCars](browser-sidecars.md#register-sidecar)).
 3. For a repository copy, choose **Clone Git Repo**, enter **Repository URL** and **Destination folder**, then **Clone**. **Destination folder** is prefilled with the repository name in the folder that holds your last clone, or next to your most recent project. **Browse** chooses the folder that contains the clone; you can also edit the path, including the clone's folder name.
 
 Browsing a remote server means browsing that server's filesystem, not your phone or laptop. Opening a project does not create a separate OpenCode daemon for each tab. Conversations are native OpenCode sessions; their lifetime is not the tab's lifetime.
@@ -17,7 +17,7 @@ Recent entries are shortcuts. **Rename workspace** changes its displayed name; *
 ## Use the new-instance launcher {#new-instance-launcher}
 
 1. Long-press or right-click `+`; with keyboard focus there, use **Alt+Down**, **Shift+F10** or the Menu key.
-2. In **Open a tab**, search **Recent tabs** (projects, remote projects and SideCars), open **Browse**, or choose **Clone Git Repo**, **New temporary tab**, **New server** or **New SideCar**.
+2. In **Open a tab**, search **Recent** (projects, remote projects and SideCars), open **Browse**, or choose **Clone Git Repo** or **New temporary tab**.
 
 A normal click still opens the full home page, which offers the same choices. Rename or remove recent tabs there; manage servers in **Settings → Servers** and SideCars in **Settings → SideCars**. Escape dismisses the launcher and returns focus to `+`.
 

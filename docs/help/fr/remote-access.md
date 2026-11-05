@@ -83,7 +83,7 @@ Si un client signale un avertissement de certificat, arrêtez-vous et vérifiez 
 
 ## Enregistrer un serveur distant {#saved-servers}
 
-1. Sur l’accueil de bureau ou dans le lanceur **Ouvrir un onglet**, choisissez **Nouveau serveur**. **Paramètres → Serveurs** propose la même chose avec **Ajouter un serveur…**.
+1. Sur l’accueil de bureau, choisissez **Nouveau serveur**, ou **Ajouter un serveur…** en fin de **Parcourir**, sur l’accueil ou dans le lanceur **Ouvrir un onglet**. **Paramètres → Serveurs** propose la même chose avec **Ajouter un serveur…**.
 2. Dans **Se connecter à un serveur**, saisissez **URL du serveur** : une origine HTTPS de confiance, ou un lien d’appairage. **Nom du serveur** est facultatif ; sans lui, le serveur affiche son nom d’hôte. Laissez **Ignorer la vérification TLS pour les certificats auto-signés.** décoché ; établissez plutôt la confiance. Si le certificat échoue à la vérification, le dialogue l’indique.
 3. Choisissez **Enregistrer** pour ajouter un favori, ou **Se connecter** pour l’enregistrer et l’ouvrir. Connectez-vous sur ce serveur.
 
@@ -99,7 +99,7 @@ Pour le Contrôle à distance, collez plutôt un lien d’appairage récent dans
 
 Dans l'application de bureau (Electron, ou Tauri sous Windows), un serveur enregistré peut aussi ouvrir l'un de ses projets dans un onglet de cette fenêtre, à côté de vos projets locaux :
 
-1. Sur l’accueil ou dans le lanceur **Ouvrir un onglet**, ouvrez **Parcourir** et choisissez un serveur, ou choisissez **Nouveau serveur** pour en ajouter un.
-2. Choisissez le dossier dans l'onglet. L'onglet affiche alors l'icône serveur et le nom du projet, et le projet rejoint **Onglets récents** : le choisir à cet endroit rouvre directement ce serveur et ce dossier.
+1. Sur l’accueil ou dans le lanceur **Ouvrir un onglet**, ouvrez **Parcourir** et choisissez un serveur, ou **Ajouter un serveur…** pour en ajouter un.
+2. Choisissez le dossier dans l'onglet. L'onglet affiche alors l'icône serveur et le nom du projet, et le projet rejoint **Récents** : le choisir à cet endroit rouvre directement ce serveur et ce dossier.
 
 L'onglet n'affiche que ce projet ; ses conversations, fichiers, Git, paramètres et Missions s'exécutent sur le serveur distant. Il utilise le stockage de la fenêtre distante du serveur : une connexion ou un appareil appairé existant est donc réutilisé, et les onglets distants reviennent quand CodeNomad restaure vos onglets. Un serveur sans ce mode affiche son interface complète dans l'onglet. Les serveurs qui ignorent la vérification TLS, ainsi que la version Tauri sous macOS et Linux, continuent d'ouvrir une fenêtre distante. La page d'un onglet peut afficher des notifications, sans autre accès à cet ordinateur, et reste sur son serveur. Les clients web et les appareils Remote Control n'ont pas d'onglets distants. **Supprimer le serveur enregistré**, dans **Paramètres → Serveurs**, ferme aussi ses onglets. Avant le choix d’un projet, l’onglet affiche le nom du serveur. Connectez-vous sur la page du serveur, dans l’onglet ; CodeNomad réutilise cette connexion aux lancements suivants.

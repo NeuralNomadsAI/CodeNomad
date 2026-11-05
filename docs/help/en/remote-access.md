@@ -83,7 +83,7 @@ If a client reports a certificate warning, stop and check the hostname, SANs, tr
 
 ## Save a remote server {#saved-servers}
 
-1. On the desktop home page or in the **Open a tab** launcher, choose **New server**. **Settings → Servers** offers the same with **Add server…**.
+1. On the desktop home page, choose **New server**, or choose **Add server…** at the end of **Browse**, on the home page or in the **Open a tab** launcher. **Settings → Servers** offers the same with **Add server…**.
 2. In **Connect to Server**, enter **Server URL**: a trusted HTTPS origin, or a pairing link. **Server name** is optional; without it the server shows its host name. Leave **Skip TLS verification for self-signed certificates.** unchecked; establish trust instead. If the certificate fails the check, the dialog says so.
 3. Choose **Save** to bookmark, or **Connect** to save and open it. Sign in on that server.
 
@@ -99,7 +99,7 @@ For Remote Control, paste a fresh pairing link into **Server URL** instead. The 
 
 In the desktop app (Electron, or Tauri on Windows), a saved server can also open one of its projects in a tab of this window, beside your local projects:
 
-1. On the home page or in the **Open a tab** launcher, open **Browse** and choose a server, or choose **New server** to add one.
-2. Pick the folder in the tab. The tab then shows the server icon and the project name, and the project joins **Recent tabs**: choosing it there reopens that server and folder directly.
+1. On the home page or in the **Open a tab** launcher, open **Browse** and choose a server, or **Add server…** to add one.
+2. Pick the folder in the tab. The tab then shows the server icon and the project name, and the project joins **Recent**: choosing it there reopens that server and folder directly.
 
 The tab shows only that project; its conversations, files, Git, settings and Missions run on the remote server. It uses the storage of the server's remote window, so an existing sign-in or paired device is reused, and remote tabs come back when CodeNomad restores your tabs. A server without this mode shows its full interface in the tab. Servers that skip TLS verification, and the Tauri build on macOS and Linux, keep opening a remote window. The page in a tab can show notifications but has no other access to this computer and stays on its server. Web clients and Remote Control devices have no remote tabs. **Remove saved server**, in **Settings → Servers**, also closes its tabs. Before a project is chosen, the tab shows the server's name. Sign in on the server's page in the tab; CodeNomad reuses that sign-in on later launches.

@@ -47,7 +47,7 @@ Native mobile templates set Android/Chromium identity, orientation, touch and DP
 1. Start the web tool separately on the CodeNomad backend host, listening on `127.0.0.1:<port>`.
 2. Open **Settings → SideCars**. Enter **Name** and **Port**; check the derived **Base path** (`/sidecars/<id>`).
 3. Set **Protocol** to match the upstream service, and choose **Prefix mode**.
-4. Choose **Add SideCar**, then open the SideCar from **Browse** on the home page or in the launcher; it then joins **Recent tabs**. **New SideCar** opens this form.
+4. Choose **Add SideCar**, then open the SideCar from **Browse** on the home page or in the launcher; it then joins **Recent**. **New SideCar** opens this form.
 
 | Choice | Exact effect |
 | --- | --- |

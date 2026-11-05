@@ -5,7 +5,7 @@ Una pestaña de proyecto conecta CodeNomad a una carpeta del equipo del backend.
 ## Abrir un proyecto {#open-project}
 
 1. Haz clic en **Nueva instancia** (`+`) para abrir la página de inicio.
-2. En **Pestañas recientes**, elige un proyecto; o abre **Explorar**, elige **Este equipo** y luego selecciona la carpeta del backend y ábrela. **Explorar** también lista los servidores CodeNomad guardados ([pestañas de proyectos remotos](remote-access.md#remote-project-tabs)) y los SideCars ([SideCars](browser-sidecars.md#register-sidecar)).
+2. En **Recientes**, elige un proyecto; o abre **Explorar**, elige **Este equipo** y luego selecciona la carpeta del backend y ábrela. **Explorar** también lista los servidores CodeNomad guardados ([pestañas de proyectos remotos](remote-access.md#remote-project-tabs)) y los SideCars ([SideCars](browser-sidecars.md#register-sidecar)).
 3. Para obtener una copia de un repositorio, elige **Clonar repo Git**, introduce la **URL del repositorio** y la **Carpeta de destino** y pulsa **Clonar**. La **Carpeta de destino** se rellena con el nombre del repositorio en la carpeta que contiene tu último clon, o junto a tu proyecto más reciente. **Buscar** elige la carpeta que contendrá el clon; también puedes editar la ruta, incluido el nombre de la carpeta del clon.
 
 Explorar un servidor remoto significa explorar el sistema de archivos de ese servidor, no el de tu teléfono o portátil. Abrir un proyecto no crea un daemon de OpenCode distinto para cada pestaña. Las conversaciones son sesiones nativas de OpenCode; su duración no es la de la pestaña.
@@ -17,7 +17,7 @@ Las entradas recientes son accesos directos. **Renombrar workspace** cambia su n
 ## Usar el lanzador de nuevas instancias {#new-instance-launcher}
 
 1. Mantén pulsado `+` o haz clic derecho; con el foco del teclado allí, usa **Alt+Down**, **Shift+F10** o la tecla Menú.
-2. En **Abrir una pestaña**, busca en **Pestañas recientes** (proyectos, proyectos remotos y SideCars), abre **Explorar** o elige **Clonar repo Git**, **Nueva pestaña temporal**, **Nuevo servidor** o **Nuevo SideCar**.
+2. En **Abrir una pestaña**, busca en **Recientes** (proyectos, proyectos remotos y SideCars), abre **Explorar** o elige **Clonar repo Git** o **Nueva pestaña temporal**.
 
 Un clic normal sigue abriendo la página de inicio completa, que ofrece las mismas opciones. Cambia el nombre o quita pestañas recientes allí; gestiona los servidores en **Configuración → Servidores** y los SideCars en **Configuración → SideCars**. Escape cierra el lanzador y devuelve el foco a `+`.
 
