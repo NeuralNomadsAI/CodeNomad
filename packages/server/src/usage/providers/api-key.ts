@@ -1,8 +1,11 @@
 import type { UsageProvider } from "../types"
+import { fetchBoundedJson, parseQuotaBaseURL } from "../bounded-fetch"
 import {
+  asObject,
   fetchJson,
   getCredential,
   notConfigured,
+  result,
   resolveWindowLabel,
   safeFetch,
   toNumber,
@@ -84,24 +87,41 @@ const openRouter: UsageProvider = {
   id: "openrouter",
   name: "OpenRouter",
   aliases: openRouterAliases,
-  async fetchQuota(auth) {
-    const key = getCredential(auth, openRouterAliases, ["key", "token"])
+  async fetchQuota(auth, context) {
+    const key = context?.settings?.apiKey ?? getCredential(auth, openRouterAliases, ["key", "token"])
     if (!key) return notConfigured(this.id, this.name)
+    // An unreadable native configuration cannot authorize the public fallback.
+    if (context?.settingsStatus === "unavailable" || context?.settingsStatus === "unresolved") {
+      return result(this.id, this.name, { ok: false, configured: true, unavailableReason: "provider-error" })
+    }
+    const base = parseQuotaBaseURL(context?.settings?.baseURL ?? "https://openrouter.ai/api/v1")
+    if (!base) return result(this.id, this.name, { ok: false, configured: true, unavailableReason: "invalid-base-url" })
+    const baseURL = base.href.replace(/\/+$/, "")
+    const headers = { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }
+    const signal = context?.signal ?? AbortSignal.timeout(15_000)
     return safeFetch(this.id, this.name, async () => {
-      const payload = await fetchJson("https://openrouter.ai/api/v1/credits", {
-        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      })
-      const total = toNumber(payload?.data?.total_credits)
-      const used = toNumber(payload?.data?.total_usage)
-      const remaining = total !== null && used !== null ? Math.max(0, total - used) : null
-      return {
-        windows: {
-          credits: toUsageWindow({
-            usedPercent: total && used !== null ? (used / total) * 100 : null,
-            valueLabel: remaining !== null && total !== null ? `$${remaining.toFixed(2)} / $${total.toFixed(2)}` : null,
-          }),
-        },
+      const data = asObject(asObject(await fetchBoundedJson(`${baseURL}/key`, headers, signal))?.data)
+      const limit = toNumber(data?.limit)
+      const remaining = toNumber(data?.limit_remaining)
+      if (!data || (data.limit !== null && (limit === null || limit < 0))) throw new Error("Invalid key quota")
+      const windows: Record<string, ReturnType<typeof toUsageWindow>> = {}
+      if (limit !== null) {
+        windows.key_limit = {
+          ...toUsageWindow({ usedPercent: remaining === null ? null : limit > 0 ? ((limit - remaining) / limit) * 100 : 100 }),
+          ...(remaining !== null ? { balanceUSD: { remaining: Math.max(0, remaining), total: limit } } : {}),
+        }
       }
+      // Account credits require a management key; failure leaves the key limit usable.
+      const creditsSignal = AbortSignal.any([signal, AbortSignal.timeout(5_000)])
+      const credits = asObject(asObject(await fetchBoundedJson(`${baseURL}/credits`, headers, creditsSignal).catch(() => null))?.data)
+      const total = toNumber(credits?.total_credits)
+      const used = toNumber(credits?.total_usage)
+      if (total !== null && total >= 0 && used !== null && used >= 0) windows.credits = {
+        ...toUsageWindow({ usedPercent: total > 0 ? (used / total) * 100 : null }),
+        balanceUSD: { remaining: Math.max(0, total - used), total },
+      }
+      signal.throwIfAborted()
+      return { windows }
     })
   },
 }

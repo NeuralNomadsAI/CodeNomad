@@ -84,6 +84,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
     const data = usage()
     if (data?.unavailableReason === "openai-token-sharing-unsupported") return t("providerUsage.openaiTokenSharingUnsupported")
     if (data?.unavailableReason === "minimax-limits-not-shared") return t("providerUsage.minimaxLimitsNotShared")
+    if (data?.unavailableReason === "invalid-base-url") return t("providerUsage.invalidBaseURL")
     if (data?.unavailableReason === "provider-error") return data.providerErrorCode && /^\d{1,8}$/.test(data.providerErrorCode) && data.providerErrorCode.trim() === data.providerErrorCode
       ? t("providerUsage.providerErrorCode", { code: data.providerErrorCode }) : t("providerUsage.unavailable")
     return null
@@ -106,6 +107,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
       daily: "daily",
       monthly: "monthly",
       credits: "credits",
+      key_limit: "keyLimit",
       credits_balance: "credits",
       billing_cycle: "billingCycle",
       session: "session",
@@ -118,6 +120,10 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   }
 
   const displayValue = (window: ProviderUsageWindow) => {
+    if (window.balanceUSD) {
+      const money = new Intl.NumberFormat(locale(), { style: "currency", currency: "USD" })
+      return `${money.format(window.balanceUSD.remaining)} / ${money.format(window.balanceUSD.total)}`
+    }
     if (window.valueLabel) return window.valueLabel
     if (window.usedPercent === null) return t("providerUsage.unavailableValue")
     return t("providerUsage.usedPercent", { percent: new Intl.NumberFormat(locale()).format(Math.round(window.usedPercent)) })

@@ -60,6 +60,8 @@ Si caduca el inicio de sesión de un proveedor, actualiza/inicia sesión mediant
 
 Cuando MiniMax responde correctamente sin proporcionar límites, **Uso** muestra **MiniMax no comparte sus límites** en lugar de los valores de cuota.
 
+En OpenRouter, **Límite de la clave** muestra el importe restante en USD frente al límite de gasto de la clave; las claves sin límite no tienen esa fila. Los créditos de la cuenta aparecen por separado cuando la API permite el acceso. Uso emplea el `baseURL` configurado del proveedor, incluido su prefijo de ruta, o `https://openrouter.ai/api/v1` si no existe. Usa un nombre de host HTTPS público sin credenciales, puerto explícito, consulta ni fragmento; se rechazan direcciones IP y localhost. Una URL no válida o una pasarela sin `/key` deja el uso no disponible; la clave permanece en el destino configurado y se rechazan las redirecciones.
+
 ### Variables de entorno opcionales para Uso {#usage-environment}
 
 Establécelas en el entorno del **proceso del backend de CodeNomad** antes de iniciarlo. Son credenciales de lectores de uso, no ajustes de navegador ni controles de selección de modelo. Cambiar el editor **Variables de entorno** de la sesión no actualiza el `process.env` de un backend en ejecución para estos lectores. Reinicia el backend con el entorno previsto al cambiarlas; no reinicies el servicio compartido de OpenCode solo por una variable del lector de uso.

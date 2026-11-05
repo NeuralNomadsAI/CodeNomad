@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { apiKeyProviders } from "./api-key"
+import { clearProviderUsageCache, getProviderUsage } from "../service"
+import type { ProviderReadContext } from "../types"
 
 const auth = { "zai-coding-plan": { type: "api", key: "test-zai-key" }, "zhipuai-coding-plan": { type: "api", key: "test-zhipu-key" } }
 
@@ -109,4 +111,144 @@ test("keeps legacy token and time windows intact for the bigmodel endpoint", asy
   const windows = result.usage!.windows
   assert.equal(windows["1h"]?.usedPercent, 42)
   assert.equal(windows["mcp-tools"]?.usedPercent, 11)
+})
+
+const openrouter = apiKeyProviders.find(provider => provider.id === "openrouter")!
+const routerAuth = { openrouter: { type: "api", key: "synthetic-stored-key" } }
+
+async function withRouterStub(run: (requests: string[]) => Promise<void>, keyData: unknown = { limit: 100, limit_remaining: 75, usage: 999 }, creditsStatus = 403) {
+  const previous = globalThis.fetch
+  const requests: string[] = []
+  globalThis.fetch = async (input, init) => {
+    requests.push(String(input))
+    assert.equal(init?.redirect, "error")
+    assert.equal(init?.signal instanceof AbortSignal, true)
+    assert.match(new Headers(init?.headers).get("Authorization") ?? "", /^Bearer synthetic-/)
+    return String(input).endsWith("/key") ? respondWith({ data: keyData })
+      : new Response(JSON.stringify({ data: { total_credits: 200, total_usage: 50 } }), { status: creditsStatus })
+  }
+  clearProviderUsageCache()
+  try { await run(requests) } finally { globalThis.fetch = previous; clearProviderUsageCache() }
+}
+
+for (const baseURL of [undefined, "https://gateway.example/prefix/api/v1", "https://gateway.example/prefix/api/v1/"]) {
+  test(`OpenRouter reads /key and optional /credits at the validated base ${baseURL ?? "default"}`, async () => {
+    await withRouterStub(async requests => {
+      const result = await openrouter.fetchQuota(routerAuth, { settings: { baseURL } })
+      const base = (baseURL ?? "https://openrouter.ai/api/v1").replace(/\/+$/, "")
+      assert.deepEqual(requests, [`${base}/key`, `${base}/credits`])
+      assert.equal(result.ok, true, "a /credits denial leaves the key limit available")
+      assert.equal(result.usage?.windows.key_limit.usedPercent, 25, "lifetime usage is unrelated to the current key limit")
+      assert.deepEqual(result.usage?.windows.key_limit.balanceUSD, { remaining: 75, total: 100 })
+      assert.equal(result.usage?.windows.key_limit.valueLabel, undefined)
+      assert.equal(result.usage?.windows.credits, undefined)
+    })
+  })
+}
+
+test("OpenRouter rejects invalid destinations and unreadable settings without any request or public fallback", async () => {
+  await withRouterStub(async requests => {
+    for (const baseURL of ["", "http://gateway.example/v1", "https://user:pass@gateway.example/v1", "https://gateway.example:443/v1", "https://gateway.example/v1?q=1", "https://gateway.example/v1#frag", "https://localhost/v1", "https://sub.localhost/v1", "https://127.0.0.1/v1", "https://[::1]/v1", "https://2130706433/v1", "{env:ROUTER_URL}"]) {
+      const response = await getProviderUsage("openrouter", { auth: routerAuth, context: { settings: { baseURL } } })
+      assert.equal(response.unavailableReason, "invalid-base-url")
+      assert.equal(response.ok, false)
+      assert.deepEqual(response.windows, {})
+      assert.equal(JSON.stringify(response).includes(baseURL || "synthetic-"), false)
+    }
+    for (const settingsStatus of ["unavailable", "unresolved"] as const) {
+      const response = await openrouter.fetchQuota(routerAuth, { settingsStatus })
+      assert.equal(response.ok, false)
+      assert.equal(response.unavailableReason, "provider-error")
+    }
+    assert.deepEqual(requests, [])
+  })
+})
+
+test("OpenRouter keeps account credits distinct and omits an unlimited key's limit", async () => {
+  await withRouterStub(async () => {
+    const result = await openrouter.fetchQuota(routerAuth)
+    assert.equal(result.ok, true)
+    assert.equal(result.usage?.windows.key_limit, undefined)
+    assert.equal(result.usage?.windows.credits.usedPercent, 25)
+    assert.deepEqual(result.usage?.windows.credits.balanceUSD, { remaining: 150, total: 200 })
+  }, { limit: null, limit_remaining: null, usage: 999 }, 200)
+})
+
+test("OpenRouter's explicit zero limit is exhausted rather than unlimited", async () => {
+  await withRouterStub(async () => {
+    const result = await openrouter.fetchQuota(routerAuth)
+    assert.equal(result.usage?.windows.key_limit.usedPercent, 100)
+  }, { limit: 0, limit_remaining: 0 })
+})
+
+test("OpenRouter shows the key limit and successful account credits as separate rows", async () => {
+  await withRouterStub(async () => {
+    const result = await openrouter.fetchQuota(routerAuth)
+    assert.deepEqual(Object.keys(result.usage!.windows), ["key_limit", "credits"])
+    assert.deepEqual(result.usage?.windows.key_limit.balanceUSD, { remaining: 75, total: 100 })
+    assert.deepEqual(result.usage?.windows.credits.balanceUSD, { remaining: 150, total: 200 })
+  }, { limit: 100, limit_remaining: 75 }, 200)
+})
+
+test("OpenRouter leaves an unlimited key without a fake zero-percent window when account credits are denied", async () => {
+  await withRouterStub(async () => {
+    const result = await openrouter.fetchQuota(routerAuth)
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.usage?.windows, {})
+  }, { limit: null, limit_remaining: null })
+})
+
+test("OpenRouter's optional credit read can time out without discarding the key limit", async () => {
+  const previous = globalThis.fetch
+  globalThis.fetch = async input => {
+    if (String(input).endsWith("/key")) return respondWith({ data: { limit: 100, limit_remaining: 75 } })
+    throw new DOMException("Synthetic timeout", "TimeoutError")
+  }
+  try {
+    const result = await openrouter.fetchQuota(routerAuth)
+    assert.equal(result.ok, true)
+    assert.equal(result.usage?.windows.key_limit.usedPercent, 25)
+    assert.equal(result.usage?.windows.credits, undefined)
+  } finally { globalThis.fetch = previous }
+})
+
+test("OpenRouter never invents a limit from lifetime usage or a malformed payload", async () => {
+  for (const data of [null, {}, { usage: 999 }, { limit: -1, limit_remaining: 1 }]) await withRouterStub(async requests => {
+    const result = await openrouter.fetchQuota(routerAuth)
+    assert.equal(result.ok, false)
+    assert.equal(requests.length, 1)
+  }, data)
+})
+
+test("OpenRouter gateway without /key preserves HTTP status and never forwards the key elsewhere", async () => {
+  const previous = globalThis.fetch
+  const requests: string[] = []
+  globalThis.fetch = async input => { requests.push(String(input)); return new Response(null, { status: 404 }) }
+  try {
+    const result = await openrouter.fetchQuota(routerAuth, { settings: { baseURL: "https://gateway.example/prefix" } })
+    assert.equal(result.ok, false)
+    assert.equal(result.status, 404)
+    assert.deepEqual(requests, ["https://gateway.example/prefix/key"])
+  } finally { globalThis.fetch = previous }
+})
+
+test("OpenRouter settings keys and changed base URLs are used and fence the display cache", async () => {
+  const previous = globalThis.fetch
+  const requests: string[] = []
+  globalThis.fetch = async (input, init) => {
+    requests.push(String(input))
+    assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer synthetic-configured-key")
+    return String(input).endsWith("/key") ? respondWith({ data: { limit: 100, limit_remaining: requests.length === 1 ? 75 : 50 } })
+      : new Response(null, { status: 403 })
+  }
+  clearProviderUsageCache()
+  try {
+    const context: ProviderReadContext = { settingsStatus: "available", settings: { apiKey: "synthetic-configured-key", baseURL: "https://first.example/api/v1" } }
+    const read = () => getProviderUsage("openrouter", { auth: routerAuth, context })
+    assert.equal((await read()).windows.key_limit.usedPercent, 25)
+    assert.equal((await read()).windows.key_limit.usedPercent, 25)
+    context.settings!.baseURL = "https://second.example/prefix"
+    assert.equal((await read()).windows.key_limit.usedPercent, 50)
+    assert.deepEqual(requests, ["https://first.example/api/v1/key", "https://first.example/api/v1/credits", "https://second.example/prefix/key", "https://second.example/prefix/credits"])
+  } finally { globalThis.fetch = previous; clearProviderUsageCache() }
 })

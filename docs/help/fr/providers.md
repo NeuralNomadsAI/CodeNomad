@@ -60,6 +60,8 @@ Pour une connexion fournisseur expirée, actualisez/reconnectez-vous via son pro
 
 Quand MiniMax répond avec succès sans fournir de limites, **Utilisation** affiche **MiniMax ne partage pas ses limites** à la place des valeurs de quota.
 
+Pour OpenRouter, **Plafond de la clé** affiche le montant restant en USD par rapport au plafond de dépenses de la clé ; une clé sans plafond n’a pas cette ligne. Les crédits du compte apparaissent séparément lorsque l’API en autorise la lecture. L’utilisation emploie le `baseURL` configuré du fournisseur, préfixe de chemin compris, ou `https://openrouter.ai/api/v1` s’il est absent. Utilisez un nom d’hôte HTTPS public sans identifiants, port explicite, paramètres ni fragment ; les adresses IP et localhost sont refusés. Une URL invalide ou une passerelle sans `/key` rend la lecture indisponible ; la clé reste à la destination configurée et les redirections sont refusées.
+
 ### Variables d’environnement d’utilisation facultatives {#usage-environment}
 
 Définissez-les dans l’environnement du **processus backend CodeNomad** avant son lancement. Ce sont des identifiants pour les lecteurs d’utilisation, pas des paramètres navigateur ou commandes de sélection de modèle. Modifier l’éditeur de session **Variables d'environnement** ne met pas à jour le `process.env` d’un backend actif pour ces lecteurs. Redémarrez le backend dans l’environnement voulu pour les changer ; ne redémarrez pas le service OpenCode partagé uniquement pour une variable de lecture d’utilisation.

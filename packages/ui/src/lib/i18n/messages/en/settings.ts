@@ -279,6 +279,8 @@ export const settingsMessages = {
   "providerUsage.windows.daily": "Daily",
   "providerUsage.windows.monthly": "Monthly",
   "providerUsage.windows.credits": "Credits",
+  "providerUsage.windows.keyLimit": "Key Limit",
+  "providerUsage.invalidBaseURL": "Invalid provider base URL. Configure a public HTTPS URL.",
   "providerUsage.windows.billingCycle": "Billing cycle",
   "providerUsage.windows.session": "Session",
   "providerUsage.windows.premium": "Premium requests",

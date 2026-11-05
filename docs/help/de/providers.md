@@ -60,6 +60,8 @@ Aktualisieren/melden Sie sich bei abgelaufener Anbieteranmeldung über deren Eig
 
 Wenn MiniMax erfolgreich ohne Limits antwortet, zeigt **Nutzung** statt Kontingentwerten **MiniMax teilt seine Limits nicht mit** an.
 
+Bei OpenRouter zeigt **Schlüssellimit** den verbleibenden USD-Betrag im Verhältnis zum Ausgabenlimit des Schlüssels; Schlüssel ohne Limit haben diese Zeile nicht. Kontoguthaben erscheint separat, wenn die API den Zugriff erlaubt. Die Nutzung verwendet die konfigurierte `baseURL` des Anbieters einschließlich Pfadpräfix oder ohne Einstellung `https://openrouter.ai/api/v1`. Verwenden Sie einen öffentlichen HTTPS-Hostnamen ohne Zugangsdaten, expliziten Port, Abfrage oder Fragment; IP-Adressen und localhost werden abgelehnt. Eine ungültige URL oder ein Gateway ohne `/key` macht die Nutzung nicht verfügbar; der Schlüssel bleibt am konfigurierten Ziel, Weiterleitungen werden abgelehnt.
+
 ### Optionale Umgebungsvariablen für Nutzung {#usage-environment}
 
 Setzen Sie diese vor dem Start in der Umgebung des **CodeNomad-Backend-Prozesses**. Sie sind Zugangsdaten für Nutzungsleser, keine Browsereinstellungen oder Modellauswahl. Änderungen im Sitzungseditor **Umgebungsvariablen** aktualisieren nicht das `process.env` eines laufenden Backends für diese Leser. Starten Sie bei Änderungen das Backend mit der vorgesehenen Umgebung neu; starten Sie nicht nur wegen einer Nutzungslesevariable den gemeinsamen OpenCode-Dienst neu.

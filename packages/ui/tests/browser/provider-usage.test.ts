@@ -53,6 +53,46 @@ const fulfill = (route: Route, usedPercent: number) => route.fulfill({ contentTy
   windows: { "5h": { usedPercent, remainingPercent: 100 - usedPercent, windowSeconds: 18000, resetAt: null } },
 }) })
 
+for (const [locale, label, invalid] of [
+  ["en-US", "Key Limit", "Invalid provider base URL. Configure a public HTTPS URL."],
+  ["fr-FR", "Plafond de la clé", "URL de base du fournisseur invalide. Configurez une URL HTTPS publique."],
+  ["de-DE", "Schlüssellimit", "Ungültige Anbieter-Basis-URL. Konfigurieren Sie eine öffentliche HTTPS-URL."],
+  ["es-ES", "Límite de la clave", "URL base del proveedor no válida. Configura una URL HTTPS pública."],
+  ["he-IL", "מגבלת המפתח", "כתובת הבסיס של הספק אינה תקינה. יש להגדיר כתובת HTTPS ציבורית."],
+  ["ja-JP", "キーの上限", "プロバイダーのベース URL が無効です。公開 HTTPS URL を設定してください。"],
+  ["ne-NP", "कुञ्जीको सीमा", "प्रदायकको आधार URL अमान्य छ। सार्वजनिक HTTPS URL कन्फिगर गर्नुहोस्।"],
+  ["ru-RU", "Лимит ключа", "Недопустимый базовый URL провайдера. Укажите публичный HTTPS URL."],
+  ["tr-TR", "Anahtar sınırı", "Sağlayıcının temel URL'si geçersiz. Herkese açık bir HTTPS URL'si yapılandırın."],
+  ["zh-CN", "密钥限额", "提供商基础 URL 无效。请配置公共 HTTPS URL。"],
+]) test(`OpenRouter renders the localized Key Limit, USD values and invalid destination status (${locale})`, async () => {
+  const page = await browser.newPage({ locale })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1)
+    const base = { requestedProviderId: "openrouter", providerId: "openrouter", providerName: "OpenRouter",
+      supported: true, configured: true, fetchedAt: Date.now() }
+    await requests[0].fulfill({ json: { ...base, ok: true, windows: { key_limit: {
+      usedPercent: 25, remainingPercent: 75, windowSeconds: null, resetAt: null, balanceUSD: { remaining: 75.5, total: 100 },
+    } } } })
+    await page.getByText(label, { exact: true }).waitFor()
+    const numberLocale = locale === "zh-CN" ? "zh-Hans" : locale
+    // Compare against the browser's ICU data (currency symbols vary across ICU versions).
+    const amount = await page.evaluate(locale => {
+      const money = new Intl.NumberFormat(locale, { style: "currency", currency: "USD" })
+      return `${money.format(75.5)} / ${money.format(100)}`
+    }, numberLocale)
+    await page.getByText(amount, { exact: true }).waitFor()
+    assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "25")
+    assert.equal(await page.getByText("key_limit", { exact: true }).count(), 0)
+    await page.evaluate(() => (window as any).usageFixture.event("provider.updated"))
+    await waitRequests(requests, 2)
+    await requests[1].fulfill({ json: { ...base, ok: false, windows: {}, unavailableReason: "invalid-base-url" } })
+    await page.getByRole("status").getByText(invalid, { exact: true }).waitFor()
+    assert.equal(await page.getByRole("progressbar").count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("free-model usage shows an estimate and estimated reset, then clears them on a provider switch", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   try {

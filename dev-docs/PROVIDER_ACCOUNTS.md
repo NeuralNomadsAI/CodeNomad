@@ -84,6 +84,22 @@ establish the endpoint and response fields; a dedicated unshared-limits signal
 remains unverified. [API errors](https://platform.minimax.io/docs/api-reference/errorcode.md),
 HTTP/transport failures and malformed payloads keep their existing failure path.
 
+OpenRouter display reads use the effective native provider `baseURL` (path prefix
+preserved, trailing slashes normalized), defaulting to `https://openrouter.ai/api/v1`
+only when absent. `parseQuotaBaseURL` admits public HTTPS hostnames without userinfo,
+explicit port, query, fragment, IP literals or localhost; invalid destinations publish
+`invalid-base-url` before any request. Unreadable/unresolved native settings leave
+usage unavailable. The bounded transport rejects redirects; an incompatible gateway
+stays unavailable at its configured destination. [GET /key](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key)
+provides the key's own USD `limit` and `limit_remaining`: `key_limit` (**Key Limit**)
+computes consumption as `limit - limit_remaining`, independently of lifetime `usage`.
+A null limit omits that row; zero is an exhausted limit. `limit_reset` supplies an
+interval name rather than an instant, so the reader leaves `resetAt` unknown.
+[GET /credits](https://openrouter.ai/docs/api/api-reference/credits/get-credits)
+requires a management key and adds a separate credits row only on a usable success;
+its failure preserves the key-limit row. `ProviderUsageWindow.balanceUSD` carries
+numeric remaining/total amounts, formatted with the UI locale's `Intl.NumberFormat`.
+
 ## Auto-select account
 
 - Opt-in per integration, persisted under CodeNomad's

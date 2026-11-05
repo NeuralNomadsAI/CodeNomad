@@ -271,6 +271,8 @@ export const settingsMessages = {
   "providerUsage.windows.daily": "Günlük",
   "providerUsage.windows.monthly": "Aylık",
   "providerUsage.windows.credits": "Kredi",
+  "providerUsage.windows.keyLimit": "Anahtar sınırı",
+  "providerUsage.invalidBaseURL": "Sağlayıcının temel URL'si geçersiz. Herkese açık bir HTTPS URL'si yapılandırın.",
   "providerUsage.windows.billingCycle": "Faturalandırma dönemi",
   "providerUsage.windows.session": "Session",
   "providerUsage.windows.premium": "Premium istekler",

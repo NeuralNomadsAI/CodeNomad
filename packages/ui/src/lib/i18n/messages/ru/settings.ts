@@ -278,6 +278,8 @@ export const settingsMessages = {
   "providerUsage.windows.daily": "За день",
   "providerUsage.windows.monthly": "За месяц",
   "providerUsage.windows.credits": "Кредиты",
+  "providerUsage.windows.keyLimit": "Лимит ключа",
+  "providerUsage.invalidBaseURL": "Недопустимый базовый URL провайдера. Укажите публичный HTTPS URL.",
   "providerUsage.windows.billingCycle": "Расчётный период",
   "providerUsage.windows.session": "Сессия",
   "providerUsage.windows.premium": "Премиум-запросы",

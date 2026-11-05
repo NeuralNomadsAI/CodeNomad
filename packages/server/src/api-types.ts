@@ -206,9 +206,10 @@ export interface ProviderUsageWindow {
   windowSeconds: number | null
   resetAt: number | null
   valueLabel?: string
+  balanceUSD?: { remaining: number; total: number }
 }
 
-export type ProviderUsageUnavailableReason = "openai-token-sharing-unsupported" | "provider-error" | "minimax-limits-not-shared"
+export type ProviderUsageUnavailableReason = "openai-token-sharing-unsupported" | "provider-error" | "minimax-limits-not-shared" | "invalid-base-url"
 export type ProviderUsageUnavailableAction = "chatgpt-usage"
 
 export interface ProviderUsageResponse {
