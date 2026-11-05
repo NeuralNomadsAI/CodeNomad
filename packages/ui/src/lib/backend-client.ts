@@ -50,7 +50,7 @@ export function createBackendClient(options: BackendClientOptions): BackendClien
     id: transport.id, baseUrl: transport.baseUrl, eventsUrl: transport.eventsUrl, url: transport.url, fetch, auth, api, events,
     storage: new ServerStorage({ api, events }),
     meta: createServerMetaCache(api),
-    sdk: new SDKManager({ baseUrl: transport.baseUrl, fetch }),
+    sdk: new SDKManager({ baseUrl: transport.url("/"), fetch }),
   })
 }
 

@@ -32,6 +32,7 @@ function buildEventsUrl(base: string | undefined, path: string): string {
   }
   if (base) {
     const normalized = path.startsWith("/") ? path : `/${path}`
+    if (/^https?:\/\//i.test(base)) return new URL(normalized, base).toString()
     return `${base}${normalized}`
   }
   return path
