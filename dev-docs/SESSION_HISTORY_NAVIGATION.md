@@ -144,6 +144,23 @@ shows only the run's part after them; a continuation stands for that part. A
 selected continuation a reveal joins to its run hands the selection to the run's
 marker (`survivingTimelineSegmentId`). A tool inside a collapsed technical group stands for that group's header.
 
+With General's `scrollControlsInTimelineCorner` preference on (off by default)
+and the rail shown, the first/latest controls sit side by side in the composer
+corner cell below it (`.session-scroll-corner`, which `PromptInput` renders inside
+its footer for `SessionView` and `MessageSection` portals into). Positioned past the footer's
+inline end, the cell spans the footer's height and follows the composer when an
+open interruption dock makes the session stack scroll; one view-scoped width,
+`--session-corner-width` (40px; two compact touch targets on a coarse pointer),
+sizes it, and the footer reserves what exceeds the rail.
+An empty cell, a Mission reader and a conversation under 420px (where the rail
+hides) show no cell and reserve nothing. Without the cell the controls float over
+the transcript; under 420px the floating controls, mounted as the cell's
+fallback, take over. In the cell both controls always render; the end the reader
+has reached is dimmed but stays clickable. First is reached at the top of a window
+without an older cursor: the oldest load (the first ascending page) stores none,
+because native boundary cursors do not promise another page. A viewport resize
+keeps a reader at offset 0 there instead of bottom-anchoring the content.
+
 A click (or a user-message jump) makes its marker active until the reader
 scrolls: the key jump holds that marker's own block at the top, through row
 remounts and window loads, rather than the message row. A send, the first/latest

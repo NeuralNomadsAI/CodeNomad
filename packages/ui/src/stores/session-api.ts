@@ -1762,7 +1762,10 @@ async function loadMessages(
         if (!isCurrent()) return false
       }
     }
-    const olderCursor = (responseAscending ? response.cursor?.previous : response.cursor?.next) ?? undefined
+    // The first ascending page is the oldest: its boundary cursor promises no older page.
+    const olderCursor = intent === "oldest"
+      ? undefined
+      : (responseAscending ? response.cursor?.previous : response.cursor?.next) ?? undefined
     const newerCursor = (responseAscending ? response.cursor?.next : response.cursor?.previous) ?? undefined
     const responseCursor = intent === "oldest" || planned.forward ? newerCursor : olderCursor
     if (planned.cursor && responseCursor === planned.cursor) {

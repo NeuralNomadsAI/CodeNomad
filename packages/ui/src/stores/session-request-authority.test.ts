@@ -1567,6 +1567,25 @@ describe("session request authority", () => {
     }
   })
 
+  it("an oldest window never keeps the native boundary cursor as older history", async () => {
+    const instanceId = "oldest-boundary-cursor", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    ;(client as any).message = { list: (input: any) => input.order === "asc"
+      ? Promise.resolve({ data: [apiMessage("first")], cursor: { previous: "boundary", next: "newer" } })
+      : Promise.resolve({ data: [apiMessage("latest")], cursor: { next: "older" } }) }
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    try {
+      await loadMessages(instanceId, sessionId)
+      assert.equal(hasMoreMessages(instanceId, sessionId), true)
+      assert.equal(await loadOldestMessageWindow(instanceId, sessionId), true)
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["first"])
+      assert.equal(hasMoreMessages(instanceId, sessionId), false)
+    } finally {
+      destroyOpenCodeData(instanceId)
+      cleanup()
+    }
+  })
+
   it("fences a newer-page response when revert occurs from an old history window", async () => {
     const instanceId = "old-history-revert-fence", sessionId = "session"
     const { client, cleanup } = setup(instanceId)

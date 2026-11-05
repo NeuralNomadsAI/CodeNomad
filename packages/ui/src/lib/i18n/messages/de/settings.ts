@@ -581,6 +581,7 @@ export const settingsMessages = {
   "settings.behavior.thinkingDefault.title": "Denken-Standard",
   "settings.behavior.thinkingDefault.subtitle": "Wählen Sie, ob Denkabschnitte standardmäßig aus- oder eingeklappt sind.",
   "settings.behavior.messageTimeline.title": "Nachrichten-Zeitleiste anzeigen",
+  "settings.behavior.scrollControlsInTimelineCorner.title": "Pfeile für erste/neueste Nachricht unter der Zeitleiste anzeigen",
   "settings.behavior.diffView.title": "Diffs von Tool-Aufrufen geteilt anzeigen",
   "settings.behavior.toolOutputsDefault.title": "Standard für Tool-Ausgaben",
   "settings.behavior.toolOutputsDefault.subtitle": "Wählen Sie, ob Tool-Ausgaben standardmäßig aus- oder eingeklappt sind.",

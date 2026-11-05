@@ -43,6 +43,33 @@ async function open(run: (page: Page) => Promise<void>, saveDelay = 0) {
   finally { await page.close() }
 }
 
+// General offers the timeline-corner layout beside the timeline itself: off by
+// default, saved through the ui config owner and restored after a reload.
+test("General offers the first/latest arrows under the timeline, off by default and kept across reload", async () => {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1100 }, locale: "en-US" })
+  let config: any = {}
+  await page.route("**/api/**", async route => {
+    const request = route.request(), ui = request.url().includes("/storage/config/ui")
+    if (ui && request.method() === "PATCH") config = merge(config, request.postDataJSON())
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify(ui ? config : {}) })
+  })
+  const option = page.getByRole("checkbox", { name: "Put the first/latest message arrows under the timeline", exact: true })
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).appearanceFixture))
+    assert.equal(await option.isChecked(), false)
+    await Promise.all([
+      page.waitForResponse(response => response.url().includes("/storage/config/ui") && response.request().method() === "PATCH"),
+      option.click(),
+    ])
+    assert.equal(config.settings?.scrollControlsInTimelineCorner, true)
+    await page.reload()
+    await page.waitForFunction(() => Boolean((window as any).appearanceFixture))
+    await page.waitForFunction(() => document.querySelector<HTMLInputElement>('input[type="checkbox"]:checked') !== null)
+    assert.equal(await option.isChecked(), true)
+  } finally { await page.close() }
+})
+
 test("mode filters a flat palette list and retains both choices across reload", async () => open(async page => {
   const picker = page.locator(".theme-scheme-picker")
   const mode = async (name: string) => {

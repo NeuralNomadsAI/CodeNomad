@@ -113,6 +113,8 @@ export interface UiSettings {
   showThinkingBlocks: boolean
   thinkingBlocksExpansion: ExpansionPreference
   showMessageTimeline: boolean
+  /** First/latest controls in the corner under a shown timeline instead of floating over the transcript. */
+  scrollControlsInTimelineCorner: boolean
   holdLongAssistantReplies: boolean
   promptSubmitOnEnter: boolean
   hotkeyOverrides: HotkeyOverrides
@@ -231,6 +233,7 @@ const defaultUiSettings: UiSettings = {
   showThinkingBlocks: false,
   thinkingBlocksExpansion: "collapsed",
   showMessageTimeline: true,
+  scrollControlsInTimelineCorner: false,
   holdLongAssistantReplies: true,
   promptSubmitOnEnter: true,
   hotkeyOverrides: {},
@@ -343,6 +346,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
     showMessageTimeline: sanitized.showMessageTimeline ?? defaultUiSettings.showMessageTimeline,
+    scrollControlsInTimelineCorner: sanitized.scrollControlsInTimelineCorner ?? defaultUiSettings.scrollControlsInTimelineCorner,
     holdLongAssistantReplies: sanitized.holdLongAssistantReplies ?? defaultUiSettings.holdLongAssistantReplies,
     promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
     hotkeyOverrides: normalizeHotkeyOverrides(sanitized.hotkeyOverrides),

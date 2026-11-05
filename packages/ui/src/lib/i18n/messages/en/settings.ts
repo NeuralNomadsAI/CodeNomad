@@ -582,6 +582,7 @@ export const settingsMessages = {
   "settings.behavior.thinkingDefault.title": "Thinking default",
   "settings.behavior.thinkingDefault.subtitle": "Choose whether thinking sections start expanded or collapsed.",
   "settings.behavior.messageTimeline.title": "Show the message timeline",
+  "settings.behavior.scrollControlsInTimelineCorner.title": "Put the first/latest message arrows under the timeline",
   "settings.behavior.diffView.title": "Split tool-call diffs",
   "settings.behavior.toolOutputsDefault.title": "Tool outputs default",
   "settings.behavior.toolOutputsDefault.subtitle": "Choose whether tool outputs start expanded or collapsed.",

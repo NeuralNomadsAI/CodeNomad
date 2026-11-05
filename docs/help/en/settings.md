@@ -48,7 +48,7 @@ Built-in layout is window layout, not a project mutation. Extension checkboxes a
 
 1. Open **Chat** to choose transcript detail defaults. Presets are **Nothing**, **Minimal**, **Balanced** and **Everything**; individual changes produce **Custom**.
 2. Set each row's **Default state** (**Hidden**, **Collapsed** or **Expanded**) for thinking, diagnostics, tool inputs, tokens, system messages and each tool type, or use the conversation's **Message content** popup, which shares these choices.
-3. In **General**, check **Show the message timeline**, **Split tool-call diffs** and **Queue sent prompts** (queue prompts sent while a session works instead of steering it) as needed.
+3. In **General**, check **Show the message timeline**, **Put the first/latest message arrows under the timeline**, **Split tool-call diffs** and **Queue sent prompts** (queue prompts sent while a session works instead of steering it) as needed.
 4. Resize the composer using its resize control; long drafts scroll inside the field.
 
 The timeline has one marker for each reply, thinking block, tool, compaction and system context shown in the conversation, in the same order. Its markers follow **Message content**: hiding a tool type, thinking or system messages there also hides their markers, except a tool with a pending permission, and **Nothing** hides every tool marker. Visibility and expansion settings only change presentation. They do not remove stored tools/reasoning or compact the model context. See [History and cleanup](history.md) for destructive operations.

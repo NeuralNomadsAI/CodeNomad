@@ -145,6 +145,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   let rootRef: HTMLDivElement | undefined
   const [timelineMount, setTimelineMount] = createSignal<HTMLDivElement>()
+  const [scrollCornerMount, setScrollCornerMount] = createSignal<HTMLDivElement>()
   createEffect(() => {
     const rail = timelineMount()
     if (rail) onCleanup(observeTimelineRailBoundary(rail))
@@ -636,6 +637,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         >
             <MessageSection
               timelineMount={timelineMount()}
+              scrollCornerMount={scrollCornerMount()}
               instanceId={props.instanceId}
               sessionId={props.sessionId}
               loading={messagesLoading()}
@@ -719,6 +721,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
             />
           }
           registerPromptInputApi={registerPromptInputApi}
+          footerCornerRef={setScrollCornerMount}
         />
         <div class="session-timeline-slot" inert={readingMission()} ref={setTimelineMount} />
         </Show>

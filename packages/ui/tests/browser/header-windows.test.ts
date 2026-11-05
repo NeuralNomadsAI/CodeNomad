@@ -286,7 +286,7 @@ for (const device of ["Pixel 5", "iPhone 13", "Desktop Chrome"] as const) test(`
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
-    await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: true }))
+    await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: true, scrollControlsInTimelineCorner: true }))
     await page.getByText("Fixture message", { exact: true }).waitFor()
     const timeline = page.locator(".message-timeline-sidebar")
     await timeline.waitFor({ state: "attached" })
@@ -308,14 +308,19 @@ for (const device of ["Pixel 5", "iPhone 13", "Desktop Chrome"] as const) test(`
           return { width: el.getBoundingClientRect().width, visible: rail.getBoundingClientRect().width > 0,
             worktreeWidth: worktree.getBoundingClientRect().width, worktreeLabelHidden: getComputedStyle(label).position === "absolute",
             padding: parseFloat(getComputedStyle(view).paddingInlineEnd),
-            footer: getComputedStyle(el.querySelector(".prompt-input-footer")!, "::after").display }
+            corner: (() => {
+              const corner = el.querySelector(".session-scroll-corner")!.getBoundingClientRect()
+              return corner.width > 0 ? Math.round(corner.left - el.querySelector(".prompt-input-footer")!.getBoundingClientRect().right) : "hidden"
+            })(),
+            floating: getComputedStyle(el.querySelector(".message-scroll-controls")!).display }
         }, density)
         assert.equal(Math.round(result.width), width)
         assert.equal(result.visible, expected, JSON.stringify({ width, height, density, result }))
         assert.equal(result.padding > 0, expected, "hidden timeline leaves no reserved rail")
         assert.equal(result.worktreeLabelHidden, width < 460, "worktree label uses its own conversation-width breakpoint")
         if (width < 460) assert.equal(result.worktreeWidth, 32, "arrow-only worktree frees room for other selectors")
-        if (!expected) assert.equal(result.footer, "none", "hidden rail leaves no footer extension")
+        assert.equal(result.corner, expected ? 0 : "hidden", "the composer corner sits beside the footer only under the rail")
+        assert.equal(result.floating === "none", expected, "the floating controls stand in where the rail hides")
       }
     }
     await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: false }))

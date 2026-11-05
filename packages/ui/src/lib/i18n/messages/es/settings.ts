@@ -580,6 +580,7 @@ export const settingsMessages = {
   "settings.behavior.thinkingDefault.title": "Pensamiento por defecto",
   "settings.behavior.thinkingDefault.subtitle": "Elige si las secciones de pensamiento comienzan expandidas o contraídas.",
   "settings.behavior.messageTimeline.title": "Mostrar la cronología de mensajes",
+  "settings.behavior.scrollControlsInTimelineCorner.title": "Colocar las flechas de primer/último mensaje bajo la cronología",
   "settings.behavior.diffView.title": "Dividir los diffs de las llamadas a herramientas",
   "settings.behavior.toolOutputsDefault.title": "Salidas de herramientas por defecto",
   "settings.behavior.toolOutputsDefault.subtitle": "Elige si las salidas de herramientas comienzan expandidas o contraídas.",
