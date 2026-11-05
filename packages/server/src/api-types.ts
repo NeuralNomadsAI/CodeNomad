@@ -235,6 +235,7 @@ export interface ProviderUsageResponse {
   /** UI-owned fixed destination, admitted only for its associated reason. */
   unavailableAction?: ProviderUsageUnavailableAction
   console?: import("./api-types-provider-usage").OpenCodeConsoleUsage
+  freeEstimate?: import("./api-types-provider-usage").OpenCodeFreeEstimate
   /** Computed locally from recorded activity because the provider publishes no counter. */
   estimated?: true
 }

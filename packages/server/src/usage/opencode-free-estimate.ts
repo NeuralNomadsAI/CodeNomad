@@ -27,6 +27,7 @@ export function estimateOpenCodeFreeUsage(stats: Pick<SessionStatsInfo, "models"
   return {
     requestedProviderId: providerId, providerId: "opencode-free", providerName: "OpenCode Zen", modelId,
     supported: true, configured: true, ok: true, estimated: true, fetchedAt: now,
+    freeEstimate: { requests: steps, reference: OPENCODE_FREE_DAILY_REQUESTS, exhausted: false },
     windows: { daily: { usedPercent, remainingPercent: 100 - usedPercent, windowSeconds: DAY_MS / 1000,
       resetAt: openCodeFreeWindow(now).resetAt, valueLabel: `${steps} / ${OPENCODE_FREE_DAILY_REQUESTS}` } },
   }

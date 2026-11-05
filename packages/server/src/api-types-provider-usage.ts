@@ -13,3 +13,9 @@ export interface OpenCodeConsoleUsage {
     items: Array<{ id: string; name: string; spentUsd: number; limitUsd: number; resetAt: number }>
   }
 }
+
+export interface OpenCodeFreeEstimate {
+  requests: number | null
+  reference: number
+  exhausted: boolean
+}

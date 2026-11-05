@@ -292,6 +292,36 @@ Service-account budget status is `unavailable` with empty items: its endpoint
 returns 404. The budget contract reserves named account items with spend, limit
 and reset for an available upstream endpoint.
 
+## OpenCode free-model display
+
+Free `opencode` models (`big-pickle` and `*-free`) use the display-only
+`usage/opencode-free-usage.ts` orchestration. Native `session.stats` since 00:00
+UTC (`tools: "none"`) supplies the summed free-model step estimate against a
+200-request reference. `freeEstimate` carries the actual `requests` (null when
+stats fail), `reference` and `exhausted`; `estimated` and the `windows.daily`
+gauge remain available. Unknown counts stay unknown; exhaustion forces the gauge
+to 100% while keeping any known count unchanged.
+
+`usage/opencode-free-exhaustion.ts` captures the model at `session.step.started`,
+then accepts only a matching session/assistant message's structured
+`session.step.failed` `provider.quota`. The connection-local weak state shares a
+mark across all free models until the failing UTC day's next midnight. Duplicate,
+ambiguous, missing-start and previous-day failures are ignored. The memo admits
+1,024 bounded step identities per connection and evicts conservatively. The
+observer receives events before rotation deduplication, independently of saved
+credentials and automatic-selection policy. Marks live in backend memory and
+are lost on restart. Never feed this evidence to account selection.
+
+`OPENCODE_FREE_CONSOLE_CALIBRATION` in `usage/opencode-free-usage.ts` defaults to
+false, keeping free usage credential-free. Enabling it requires proof that the
+Console counts free traffic in the relevant scope. The enabled path uses the
+same bounded models parser for sequential `range=24h` pages and raises a known
+local count to the maximum of local and Console free-model requests. Its
+separate demand cache keys by credential digest and UTC day (32 entries, 60-second
+TTL capped by midnight and OAuth expiry). Console failures retain the local
+estimate and exhaustion; reads crossing midnight discard the previous day's
+counter. Publication reapplies exhaustion after asynchronous ownership checks.
+
 ## Auto-select account
 
 - Opt-in per integration, persisted under CodeNomad's
@@ -381,4 +411,4 @@ exhausts the current mock account. Never add a simulation action to production.
 - Public usage failures use `ProviderUsageUnavailableReason` (`api-types.ts`), shared by `ProviderResult`: an enumerated `unavailableReason`, an optional numeric `providerErrorCode` of one to eight digits for `provider-error`, and an optional enumerated `unavailableAction` associated with its known reason. `usage/service.ts` allowlists these fields and clears failure windows. Never serialize `ProviderResult.error`, native errors, upstream bodies, arbitrary messages, URLs or secrets. The UI maps reasons to translated text and actions to fixed destinations (`chatgpt-usage` for `openai-token-sharing-unsupported`); readers opt into the action explicitly. Failure cards use `role="status"`, without quota bars or retained values; their real external anchors have explicit underlined labels, keyboard focus, `noopener noreferrer` and `openExternalUrl`. Add every new public reason/action to the service allowlist, UI mapping, all ten locales and regression tests together.
 - Provider accounts use a native dropdown like Web search defaults; never add an Accounts disclosure or selectable account rows. Provider headers keep the name and text Manage models button on one row; a faint separator distinguishes the account controls below. Account actions are always visible. The `provider-account` container stacks the label above the dropdown/actions at narrow card widths. Native account ordering supplies the current account; rename/remove drafts stay keyed by credential. Environment connections are read-only. The browser never reads credential secrets. Native labels win; only `default` may display a sanitized login email from the owned server adapter. Opt-in rotation is per integration (`providerAccounts.autoSelect.<integrationID>`) through the selection-adapter registry in `provider-accounts/adapters.ts`, for subscription accounts with quota windows only: Codex, OpenCode Go (Go key and Console sign-in, Go provider only), Claude Pro/Max (OpenCode Anthropic OAuth, never the Claude Code login), GitHub Copilot and key-based coding plans; pay-as-you-go keys/credits stay manual. It runs before prompt/command admission, reading each explicit credential's fresh quota (reusing Usage readers) without activating candidates or refreshing tokens, with local manual-change fences and no mutation/prompt replay; the only switch condition is a full current account. Native `provider.quota` failures add bounded in-memory per-connection marks (`quota-observer.ts`); reactive adapters (Go, Console, Claude) accept unknown-but-unmarked candidates, others need "available". Account styling lives in `styles/components/provider-accounts.css`, backend policy in `provider-accounts/`. Browser preview percentages are simulated.
 - Provider usage providers receive credentials explicitly: the route projects each integration's active native `credential.list` entry through `usage/native-credentials.ts` (never host auth.json; a missing endpoint is unavailability) and caches snapshots per provider credential identity. Codex uses its selected-connection adapter. Claude quotas follow the session's login (`usage/claude-credential.ts`): `anthropic`/`claude` use only OpenCode's Anthropic OAuth; the providers that run Claude Code inside the daemon, opencode-claude's `claude-code` and OpenCode's Claude Agent `claude-agent` (native method `claude-login`, external), resolve to one `claude-code` reader (shared snapshot and rate-limit backoff) and use only the Claude Code login the route resolves on the daemon host (session environment, WSL path translation, Claude Code's token/Keychain/file order) and injects as the `claude-code` entry, so it joins the cache identity; never cross-fall back between them. Never rewrite an OpenCode connection to read usage. Allow an in-memory access-token refresh only for providers whose refresh token stays stable on each use, including Google's Gemini CLI and Antigravity connections; use their matching public installed-application clients as described under Google usage. Model-scoped limits add `window:Model` rows beside the plan windows.
-- OpenCode Zen free models (`opencode` provider, `big-pickle` or a `-free` model ID) use the local display estimate in `usage/opencode-free-estimate.ts`: native `session.stats` since 00:00 UTC (`tools: "none"`), summing every identified free model's steps against an assumed 200 requests per day. The next UTC midnight is the estimated reset. The `estimated` response flag enables a localized caveat and reset label; steps approximate requests, other clients' traffic is unseen, and actual IP-based limits vary. This credential-free path keeps the existing session ownership and connection publication fences. Never present the estimate as an upstream reading or feed it to account selection.
+- OpenCode free usage follows the connection-local display contract above. Steps approximate requests, other clients' traffic is unseen, and actual IP-based limits vary. Keep the `estimated` caveat, ownership/publication fences and unknown counts intact. Never present the estimate as an upstream reading or feed it to account selection.

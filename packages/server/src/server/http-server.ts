@@ -118,6 +118,8 @@ import { validatePromptAttachmentBudget } from "./prompt-attachment-budget"
 import { ProviderAccountsService, AccountSelectionFailed } from "../provider-accounts/service"
 import { registerProviderAccountsRoutes } from "./routes/provider-accounts"
 import { observeProviderQuotaFailures } from "../provider-accounts/quota-observer"
+import { createOpenCodeFreeExhaustion } from "../usage/opencode-free-exhaustion"
+import { createOpenCodeFreeUsage } from "../usage/opencode-free-usage"
 import { deferPendingDiscovery, grantPendingReconciliation, PENDING_DISCOVERY_DEFERRED, PENDING_RECONCILIATION_HEADER } from "../workspaces/pending-discovery"
 
 interface HttpServerDeps {
@@ -402,8 +404,10 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, refreshLoginStart: () => loginStart.refresh(),
     withConfigLock: memory ? action => memory.withSettingsLock(action) : undefined })
   const accounts = new ProviderAccountsService(deps.settings)
-  const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts)
-  app.addHook("onClose", async () => stopQuotaObserver())
+  const freeExhaustion = createOpenCodeFreeExhaustion()
+  const freeUsage = createOpenCodeFreeUsage(freeExhaustion)
+  const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts, freeExhaustion.observe)
+  app.addHook("onClose", async () => { stopQuotaObserver(); freeExhaustion.dispose(); freeUsage.dispose() })
   registerProviderAccountsRoutes(app, { accounts, workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerOpenCodeUpdateRoutes(app, {
     service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager, loginStart),
@@ -445,7 +449,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     remoteDevices: deps.remoteControlManager,
   })
   app.addHook("onClose", async () => developerCdp.close())
-  registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
+  registerUsageRoutes(app, { workspaceManager: deps.workspaceManager, freeUsage })
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings,
     scheduleSettingsActivation: new NativeScheduleSettingsActivation(configurationControls, deps.workspaceManager),
     scheduleCapability: new NativeScheduleCapabilityReader(configurationControls, deps.workspaceManager),

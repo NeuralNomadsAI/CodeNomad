@@ -2,7 +2,8 @@ import type { OpenCodeConsoleUsage } from "../../api-types-provider-usage"
 import { BoundedResponseError, fetchBoundedJson } from "../bounded-fetch"
 import { openCodeConsoleCredential } from "../native-credentials"
 import { ProviderHttpError } from "../shared"
-import type { ProviderResult, UsageProvider } from "../types"
+import type { AuthFile, ProviderResult, UsageProvider } from "../types"
+import { isOpenCodeFreeModel } from "../opencode-free-estimate"
 
 const BASE = "https://opencode.ai/console"
 const PAGE_SIZE = 50
@@ -66,6 +67,34 @@ export function parseOpenCodeConsoleModelsPage(payload: unknown, requestedPage: 
   return { models, totals, pageCount, total }
 }
 
+async function readModels(range: "24h" | "30d", read: (path: string) => Promise<unknown>) {
+  const models: OpenCodeConsoleUsage["models"] = []
+  const totals = METRICS.map(() => 0)
+  let expected: { total: number; pageCount: number } | undefined
+  for (let page = 1; ; page++) {
+    const parsed = parseOpenCodeConsoleModelsPage(await read(`usage/models?range=${range}&page=${page}&pageSize=${PAGE_SIZE}`), page)
+    if (parsed.pageCount > MAX_PAGES || parsed.total > MAX_ROWS || (expected &&
+      (expected.total !== parsed.total || expected.pageCount !== parsed.pageCount))) throw new BoundedResponseError()
+    expected = parsed
+    parsed.totals.forEach((count, index) => { totals[index] = integer(totals[index] + count) })
+    models.push(...parsed.models)
+    if (page >= parsed.pageCount) break
+  }
+  return models
+}
+
+/** Console's 24h range begins at UTC midnight. Failure stays unknown, never zero. */
+export async function readOpenCodeConsoleFreeRequests(auth: AuthFile, signal: AbortSignal): Promise<number> {
+  const credential = openCodeConsoleCredential(auth)
+  if ("reason" in credential) throw new Error("Console credential unavailable")
+  const bounded = AbortSignal.any([signal, AbortSignal.timeout(15_000)])
+  const models = await readModels("24h", path => fetchBoundedJson(`${BASE}/api/${path}`, credential.headers, bounded))
+  bounded.throwIfAborted()
+  // The model's native provider can be an upstream vendor, rather than opencode.
+  return models.filter(row => isOpenCodeFreeModel("opencode", row.model))
+    .reduce((sum, row) => integer(sum + row.requests), 0)
+}
+
 export const openCodeConsole: UsageProvider = {
   id: "opencode-console",
   name: "OpenCode Console",
@@ -82,18 +111,7 @@ export const openCodeConsole: UsageProvider = {
       for (const range of ["24h", "7d", "30d"] as const) {
         requests[range] = parseOpenCodeConsoleSummary(await read(`usage/summary?range=${range}`)).requests
       }
-      const models: OpenCodeConsoleUsage["models"] = []
-      const totals = METRICS.map(() => 0)
-      let expected: { total: number; pageCount: number } | undefined
-      for (let page = 1; ; page++) {
-        const parsed = parseOpenCodeConsoleModelsPage(await read(`usage/models?range=30d&page=${page}&pageSize=${PAGE_SIZE}`), page)
-        if (parsed.pageCount > MAX_PAGES || parsed.total > MAX_ROWS || (expected &&
-          (expected.total !== parsed.total || expected.pageCount !== parsed.pageCount))) throw new BoundedResponseError()
-        expected = parsed
-        parsed.totals.forEach((count, index) => { totals[index] = integer(totals[index] + count) })
-        models.push(...parsed.models)
-        if (page >= parsed.pageCount) break
-      }
+      const models = await readModels("30d", read)
       bounded.throwIfAborted()
       return { ...base, ok: true, usage: { windows: {}, console: {
         requests, models, budgets: { status: "unavailable", items: [] },

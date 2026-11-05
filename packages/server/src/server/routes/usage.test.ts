@@ -9,6 +9,8 @@ import type { ServiceConnection } from "../../workspaces/opencode-service"
 import { registerUsageRoutes, type UsageRouteDeps } from "./usage"
 import { clearProviderUsageCache, resolveUsageProvider } from "../../usage/service"
 import type { ProviderReadContext } from "../../usage/types"
+import { createOpenCodeFreeExhaustion } from "../../usage/opencode-free-exhaustion"
+import { createOpenCodeFreeUsage } from "../../usage/opencode-free-usage"
 
 function harness() {
   const expires = Date.now() + 3600000
@@ -69,8 +71,11 @@ function harness() {
     getServiceWslDistro: () => "Ubuntu",
     getHostPathForServicePath: async (_id, servicePath) => state.hostFiles.get(servicePath)?.path,
   }
-  registerUsageRoutes(app, { workspaceManager: manager })
-  return { app, state, logs }
+  const exhaustion = createOpenCodeFreeExhaustion()
+  const freeUsage = createOpenCodeFreeUsage(exhaustion)
+  registerUsageRoutes(app, { workspaceManager: manager, freeUsage })
+  app.addHook("onClose", async () => { exhaustion.dispose(); freeUsage.dispose() })
+  return { app, state, logs, exhaustion, connection }
 }
 const url = "/api/usage/openai?instanceId=instance&sessionId=session&modelId=gpt-5"
 const freeUrl = "/api/usage/opencode?instanceId=instance&sessionId=session&modelId=big-pickle"
@@ -119,9 +124,35 @@ test("missing stats or invalid step counts report unavailable rather than unused
   const { app, state } = harness()
   try {
     state.statsMissing = true
-    assert.equal((await app.inject(freeUrl)).statusCode, 503)
+    const missing = await app.inject(freeUrl)
+    assert.equal(missing.statusCode, 200)
+    assert.equal(missing.json().ok, false)
+    assert.equal(missing.json().freeEstimate.requests, null)
+    assert.deepEqual(missing.json().windows, {})
     state.statsMissing = false; state.freeSteps = -1
-    assert.equal((await app.inject(freeUrl)).statusCode, 503)
+    const invalid = await app.inject(freeUrl)
+    assert.equal(invalid.statusCode, 200)
+    assert.equal(invalid.json().ok, false)
+    assert.equal(invalid.json().freeEstimate.requests, null)
+  } finally { await app.close() }
+})
+
+test("free exhaustion survives stats failure and appears on other free models without credentials", async () => {
+  const { app, state, connection, exhaustion } = harness()
+  try {
+    const now = Date.now()
+    exhaustion.observe(connection, { type: "session.step.started", created: now - 1,
+      data: { sessionID: "another-session", assistantMessageID: "m", model: { providerID: "opencode", id: "big-pickle" } } })
+    exhaustion.observe(connection, { type: "session.step.failed", created: now,
+      data: { sessionID: "another-session", assistantMessageID: "m", error: { type: "provider.quota" } } })
+    state.statsMissing = true
+    const response = await app.inject(freeUrl.replace("big-pickle", "example-free"))
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.json().ok, true)
+    assert.deepEqual(response.json().freeEstimate, { requests: null, reference: 200, exhausted: true })
+    assert.equal(response.json().windows.daily.usedPercent, 100)
+    assert.equal(response.json().windows.daily.valueLabel, undefined)
+    assert.equal(state.nativeCalls.includes("/api/credential"), false)
   } finally { await app.close() }
 })
 

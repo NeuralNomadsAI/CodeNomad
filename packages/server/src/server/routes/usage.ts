@@ -7,8 +7,8 @@ import { claudeCodeAuthEntry, claudeCodeCredential, type ClaudeCodeHost } from "
 import { readUsageCredentials } from "../../usage/native-credentials"
 import { readUsageProviderSettings } from "../../usage/native-settings"
 import { getProviderUsage, resolveUsageProvider } from "../../usage/service"
-import { estimateOpenCodeFreeUsage, isOpenCodeFreeModel, openCodeFreeWindow } from "../../usage/opencode-free-estimate"
-import type { ServiceConnection } from "../../workspaces/opencode-service"
+import { isOpenCodeFreeModel } from "../../usage/opencode-free-estimate"
+import type { OpenCodeFreeUsage } from "../../usage/opencode-free-usage"
 
 const UsageParamsSchema = z.object({ providerId: z.string().trim().min(1) })
 const UsageQuerySchema = z.object({
@@ -17,6 +17,7 @@ const UsageQuerySchema = z.object({
 }).strict()
 
 export interface UsageRouteDeps {
+  freeUsage: OpenCodeFreeUsage
   workspaceManager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "ownsLocation"
     | "getSessionEnvironment" | "getServiceWslDistro" | "getHostPathForServicePath">
 }
@@ -37,6 +38,7 @@ async function claudeCodeHost(manager: UsageRouteDeps["workspaceManager"], insta
 
 export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) {
   const nativeCodexUsage = createNativeCodexUsage()
+  const freeUsage = deps.freeUsage
   app.get<{ Params: { providerId: string }; Querystring: z.infer<typeof UsageQuerySchema> }>(
     "/api/usage/:providerId",
     async (request, reply) => {
@@ -74,7 +76,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
           connection.assertCurrent()
           const free = isOpenCodeFreeModel(params.data.providerId, modelId)
           const provider = free ? null : resolveUsageProvider(params.data.providerId)
-          const native = free ? await openCodeFreeUsage(connection, params.data.providerId, modelId, signal)
+          const native = free ? await freeUsage.read(connection, params.data.providerId, modelId, signal)
             : !provider || provider.id === "codex"
             ? await nativeCodexUsage(connection, { instanceId, sessionId, directory: location.directory,
               providerId: params.data.providerId, modelId }, signal)
@@ -112,7 +114,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
           }
           signal.throwIfAborted()
           connection.assertCurrent()
-          return usage
+          return free ? freeUsage.refreshExhaustion(connection, usage) : usage
         }, signal)
       } catch (error) {
         // Do not serialize/log SDK errors: credential exports and request bodies
@@ -125,12 +127,6 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
       }
     },
   )
-}
-
-async function openCodeFreeUsage(connection: ServiceConnection, providerId: string, modelId: string | undefined, signal: AbortSignal) {
-  const now = Date.now(), { from, to } = openCodeFreeWindow(now)
-  const stats = to === from ? { models: [] } : await connection.client.session.stats({ from, to, timezone: "UTC", tools: "none" }, { signal })
-  return estimateOpenCodeFreeUsage(stats, providerId, modelId, now)
 }
 
 async function boundedRead<T>(operation: () => Promise<T>, signal: AbortSignal): Promise<T> {
