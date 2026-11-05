@@ -132,3 +132,56 @@ test("repeated new-session entries share one creation and activate it once settl
     teardown(instanceId)
   }
 })
+
+test("a session created as its project opens waits for the agent and model catalogue", async () => {
+  const instanceId = "create-waits-catalogue"
+  let releaseCatalogue!: () => void
+  const catalogue = new Promise<void>(resolve => { releaseCatalogue = resolve })
+  const created: Array<{ agent: string | null; model: { providerID: string; id: string } | null }> = []
+  const client = {
+    session: {
+      create: async (input: any) => {
+        created.push({ agent: input.agent, model: input.model })
+        return { id: "opened", projectID: "project", title: "New", location: { directory: "/work" }, time: { created: 1, updated: 1 },
+          cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } }
+      },
+      list: async () => ({ data: [], cursor: {} }),
+      active: async () => ({}),
+    },
+    message: { list: async () => ({ data: [], cursor: {} }) },
+    // The project's catalogue arrives only after the creation was requested.
+    agent: {
+      list: async () => {
+        await catalogue
+        return { data: [
+          { id: "build", name: "Build", mode: "primary", model: { providerID: "fixture", id: "fast" } },
+          { id: "plan", name: "Plan", mode: "primary" },
+        ] }
+      },
+      get: async () => { throw new Error("not listed") },
+    },
+    provider: { list: async () => { await catalogue; return { data: [{ id: "fixture", name: "Fixture" }] } } },
+    model: {
+      list: async () => ({ data: [{ providerID: "fixture", id: "fast", name: "Fast", status: "active",
+        limit: { context: 1000, output: 100 }, cost: [{ input: 0, output: 0 }], variants: [] }] }),
+      default: async () => ({ data: null }),
+    },
+    command: { list: async () => ({ data: [] }) },
+  } as any
+  ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+  addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+  try {
+    const creating = createSession(instanceId)
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.deepEqual(created, [], "no session starts before the catalogue")
+    assert.equal(isCreatingSession(instanceId), true)
+    releaseCatalogue()
+    const session = await creating
+    // Without the wait it started with "Aucun / Aucun": no agent and no model.
+    assert.deepEqual(created, [{ agent: "build", model: { providerID: "fixture", id: "fast" } }])
+    assert.equal(session.agent, "build")
+    assert.deepEqual(session.model, { providerId: "fixture", modelId: "fast" })
+  } finally {
+    teardown(instanceId)
+  }
+})
