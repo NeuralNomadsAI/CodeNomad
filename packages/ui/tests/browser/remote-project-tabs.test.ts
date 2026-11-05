@@ -31,10 +31,11 @@ interface Scenario {
   uiState?: Record<string, unknown>
   /** A saved native session, restored by a local Electron window. */
   restore?: unknown
+  sidecars?: unknown[]
 }
 
 async function open(page: Page, path: string, scenario: Scenario) {
-  const { context, host = "web", uiState = {}, restore } = scenario
+  const { context, host = "web", uiState = {}, restore, sidecars = [] } = scenario
   await page.addInitScript({ content: `{
     const w = window, context = ${JSON.stringify(context ?? null)}, host = ${JSON.stringify(host)}, restore = ${JSON.stringify(restore ?? null)}
     if (context) w.__CODENOMAD_WINDOW_CONTEXT__ = context
@@ -89,6 +90,7 @@ async function open(page: Page, path: string, scenario: Scenario) {
       state = { ...state, ...(request.postDataJSON() as Record<string, unknown>) }
       return route.fulfill({ json: state })
     }
+    if (pathname === "/api/sidecars") return route.fulfill({ json: { sidecars } })
     const body = pathname === "/api/workspaces" ? []
       : pathname === "/api/storage/config/ui" ? { settings: { locale: "en" } }
       : pathname === "/api/storage/state/ui" ? state : {}
@@ -98,15 +100,17 @@ async function open(page: Page, path: string, scenario: Scenario) {
   return { created, probes, state: () => state }
 }
 
-// Unfolds Browse, which stays unfolded in a window once opened.
+// Shows Browse: the home page's tab, else the launcher's section, which stays unfolded once opened.
 async function browse(page: Page) {
+  const tab = page.getByRole("tab", { name: "Browse", exact: true })
+  await tab.or(page.locator(".browse-menu-toggle")).first().waitFor()
+  if (await tab.count()) return tab.click()
   const toggle = page.getByRole("button", { name: "Browse", exact: true })
   if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click()
 }
 
 async function addServer(page: Page) {
-  await browse(page)
-  await page.getByRole("button", { name: "Add server…", exact: true }).click()
+  await page.getByRole("button", { name: "New server", exact: true }).click()
   const dialog = page.getByRole("dialog", { name: "Connect to Server" })
   await dialog.waitFor()
   return dialog
@@ -181,7 +185,7 @@ test("without the parameter a remote page keeps its full interface and lists no 
       await browse(page)
       await page.getByRole("button", { name: "This computer", exact: true }).waitFor()
       assert.equal(await page.locator("[data-remote-server]").count(), 0)
-      assert.equal(await page.getByRole("button", { name: "Add server…" }).count(), 0)
+      assert.equal(await page.getByRole("button", { name: "New server" }).count(), 0)
     } finally { await page.close() }
   }
 })
@@ -262,7 +266,7 @@ test("Browse lists saved servers by name and a server's tab shows that name befo
     await open(page, "", { context: "local", host: "electron", uiState: { remoteServers: [server("box"), pasted] } })
     await page.locator(".folder-home-root").waitFor()
     await browse(page)
-    assert.deepEqual(await page.locator(".browse-menu-row").allTextContents(), ["This computer", "Box", "127.0.0.1", "Add server…"])
+    assert.deepEqual(await page.locator(".browse-menu-row").allTextContents(), ["This computer", "Box", "127.0.0.1"])
     // Servers are managed in Settings, not from Browse.
     await page.getByRole("button", { name: "Open a project on Box" }).click({ button: "right" })
     assert.equal(await page.getByRole("menuitem").count(), 0)
@@ -287,6 +291,69 @@ test("an added address whose certificate fails the check can skip it and keeps i
     assert.deepEqual(fixture.probes, ["https://selfsigned.example skipTls=false", "https://selfsigned.example skipTls=true"])
     const saved = (fixture.state() as { remoteServers: Array<{ baseUrl: string; skipTlsVerify: boolean }> }).remoteServers
     assert.deepEqual(saved.map((entry) => [entry.baseUrl, entry.skipTlsVerify]), [["https://selfsigned.example", true]])
+  } finally { await page.close() }
+})
+
+const sidecar = (id: string, name: string, status: "running" | "stopped") => ({
+  id, kind: "port", name, port: 3000, insecure: false, prefixMode: "strip", status,
+  createdAt: "2026-11-01T10:00:00.000Z", updatedAt: "2026-11-01T10:00:00.000Z",
+})
+
+test("Browse opens a running SideCar, which then joins the recent tabs of the home page and the launcher", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
+  try {
+    const fixture = await open(page, "", {
+      context: "local", host: "electron", uiState: { remoteServers: [server("box")] },
+      sidecars: [sidecar("docs", "Docs", "running"), sidecar("wiki", "Wiki", "stopped")],
+    })
+    await page.locator(".folder-home-root").waitFor()
+    // The former Open SideCar button and its window are gone.
+    assert.equal(await page.getByRole("button", { name: "Open SideCar" }).count(), 0)
+    assert.equal(await page.getByRole("dialog").count(), 0)
+
+    await browse(page)
+    const rows = page.locator(".browse-menu-row")
+    await page.locator('[data-sidecar="docs"]').waitFor()
+    assert.deepEqual(await rows.allTextContents(), ["This computer", "Box", "DocsRunning", "WikiStopped"])
+    // A stopped SideCar shows its state and cannot open.
+    assert.equal(await page.locator('[data-sidecar="wiki"]').isDisabled(), true)
+    await page.locator('[data-sidecar="docs"]').click()
+    await page.locator(".tab-pill", { hasText: "Docs" }).waitFor()
+    assert.equal(await page.locator(".folder-home-root").count(), 0)
+
+    // Only its id is remembered, never its address or a proxy token.
+    type Saved = { sidecarRecents?: Array<Record<string, unknown>> }
+    for (let attempt = 0; attempt < 50 && !(fixture.state() as Saved).sidecarRecents?.length; attempt++) await page.waitForTimeout(100)
+    const saved = (fixture.state() as Saved).sidecarRecents!
+    assert.deepEqual(saved.map((entry) => Object.keys(entry).sort()), [["lastAccessed", "sidecarId"]])
+    assert.equal(saved[0].sidecarId, "docs")
+
+    await page.locator(".new-instance-button").click()
+    const recent = page.locator('.folder-home-recent-item[data-sidecar="docs"]')
+    await recent.waitFor()
+    assert.match(await recent.innerText(), /Docs[\s\S]*SideCar/)
+    await recent.locator(".folder-home-recent-primary-action").click()
+    await page.waitForFunction(() => document.querySelectorAll(".tab-pill").length === 2)
+
+    // The launcher lists the same recent tab and the same Browse rows.
+    await page.locator(".new-instance-button").click({ button: "right" })
+    const launcher = page.locator(".new-instance-launcher")
+    await launcher.getByRole("option", { name: /Docs/ }).waitFor()
+    await launcher.getByRole("button", { name: "Browse", exact: true }).click()
+    assert.deepEqual(await launcher.locator(".browse-menu-row").allTextContents(), ["This computer", "Box", "DocsRunning", "WikiStopped"])
+  } finally { await page.close() }
+})
+
+test("New SideCar opens the SideCar form in Settings on its name field", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
+  try {
+    // A web client shows Settings in the window; servers stay out of it.
+    await open(page, "", {})
+    await page.locator(".folder-home-root").waitFor()
+    assert.equal(await page.getByRole("button", { name: "New server" }).count(), 0)
+    await page.getByRole("button", { name: "New SideCar", exact: true }).click()
+    await page.waitForFunction(() => document.activeElement?.id === "sidecar-add")
+    assert.equal(await page.locator('.settings-nav-button[aria-current="page"]').innerText(), "SideCars")
   } finally { await page.close() }
 })
 

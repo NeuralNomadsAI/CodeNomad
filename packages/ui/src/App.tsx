@@ -16,7 +16,6 @@ import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
 import { SettingsScreen } from "./components/settings-screen"
 import { NativeTitlebar, hasNativeTitlebar } from "./components/native-titlebar"
-import { SideCarPickerDialog } from "./components/sidecar-picker-dialog"
 import { SideCarView } from "./components/sidecar-view"
 import { RemoteProjectView } from "./components/remote-project-view"
 import { RemoteServerEditor } from "./components/remote-server-editor"
@@ -25,7 +24,6 @@ import { embeddedProject, publishEmbeddedProject, rememberEmbeddedSession, remem
 import { restoreEmbeddedSession } from "./stores/embedded-project-session"
 import { closeRemoteProjectTab } from "./stores/remote-project-tabs"
 import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
-import { showAlertDialog } from "./stores/alerts"
 import { initGithubStars } from "./stores/github-stars"
 import { reloadWorktrees } from "./stores/worktrees"
 
@@ -91,11 +89,7 @@ import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-s
 import { hasWakeLockEligibleWork, getSessionStatus } from "./stores/session-status"
 import { openSettings } from "./stores/settings-screen"
 import { showCommandPalette } from "./stores/command-palette"
-import {
-  closeSidecarTab,
-  ensureSidecarsLoaded,
-  openSidecarTab,
-} from "./stores/sidecars"
+import { closeSidecarTab } from "./stores/sidecars"
 import {
   activeAppTab,
   activeAppTabId,
@@ -109,7 +103,6 @@ import {
   moveAppTab,
   selectAppTab,
   selectInstanceTab,
-  selectSidecarTab,
 } from "./stores/app-tabs"
 const log = getLogger("actions")
 const FOREGROUND_REFRESH_TIMEOUT_MS = 10_000
@@ -157,7 +150,6 @@ const App: Component = () => {
   } = useConfig()
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
   const [instanceTabBarHeight, setInstanceTabBarHeight] = createSignal(0)
-  const [sidecarPickerOpen, setSidecarPickerOpen] = createSignal(false)
   const phoneQuery = useMediaQuery("(max-width: 767px)")
   const isPhoneLayout = createMemo(() => phoneQuery())
 
@@ -603,27 +595,6 @@ const App: Component = () => {
     if (showFolderSelection() || appTabs().length === 0) setLauncherOpen(false)
   })
 
-  function handleOpenSidecarPicker() {
-    setSidecarPickerOpen(true)
-    void ensureSidecarsLoaded()
-  }
-
-  async function handleOpenSidecar(sidecarId: string) {
-    try {
-      const tab = await openSidecarTab(sidecarId)
-      selectSidecarTab(tab.token)
-      setShowFolderSelection(false)
-      setSidecarPickerOpen(false)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      showAlertDialog(message, {
-        variant: "error",
-        title: t("sidecars.open.errorTitle"),
-      })
-      log.error("Failed to open SideCar", error)
-    }
-  }
-
   async function handleDisconnectedInstanceClose() {
     const instanceId = disconnectedInstance()?.id
     try {
@@ -911,7 +882,6 @@ const App: Component = () => {
               onSelectExistingInstance={handleSelectExistingInstance}
               onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
               isLoading={isSelectingFolder() || shouldShowAppRestoreLoading(loadedRestorableSession())}
-              onOpenSidecar={handleOpenSidecarPicker}
             />
           </Show>
         </Show>
@@ -924,8 +894,7 @@ const App: Component = () => {
                 onSelectExistingInstance={handleSelectExistingInstance}
                 onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
                 isLoading={isSelectingFolder()}
-                onOpenSidecar={handleOpenSidecarPicker}
-                onClose={() => {
+                  onClose={() => {
                   setShowFolderSelection(false)
                   clearLaunchError()
                 }}
@@ -945,7 +914,6 @@ const App: Component = () => {
         />
         <SettingsScreen />
         <RemoteServerEditor />
-        <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
         <AlertDialog />
         <AuthRecoveryDialog />
 

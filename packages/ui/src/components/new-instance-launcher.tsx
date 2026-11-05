@@ -1,10 +1,13 @@
 import { Popover } from "@kobalte/core/popover"
 import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js"
-import { Folder, GitBranch, Hourglass, Search, Server } from "lucide-solid"
+import { Search } from "lucide-solid"
 import { createNewInstanceDialogs } from "./new-instance-dialogs"
 import BrowseMenu from "./browse-menu"
+import NewTabActions from "./new-tab-actions"
+import RecentTabIcon from "./recent-tab-icon"
 import { useI18n } from "../lib/i18n"
-import { formatRelativeTime, getDisplayPath, getProjectDisplayName } from "../lib/recent-folder-display"
+import { filterRecents, formatRelativeTime, getDisplayPath, getProjectDisplayName } from "../lib/recent-folder-display"
+import { openSidecar } from "../stores/sidecar-open"
 import type { LaunchableRecent } from "../lib/remote-project-recents"
 import { getExistingInstanceForFolder } from "../stores/instances"
 import { launchableRecents, openRemoteProject, openRemoteProjectTabFor } from "../stores/remote-project-open"
@@ -22,9 +25,10 @@ interface NewInstanceLauncherProps {
 
 /**
  * Compact launcher opened by a long press, right-click or Alt+Down on the
- * new-instance button: recent projects first (type to filter, Enter to open),
- * then project creation actions. Management (rename, remove, settings) stays
- * on the full home page.
+ * new-instance button, the home page's logic in short: recent tabs first
+ * (projects, remote projects and SideCars; type to filter, Enter to open), the
+ * folded Browse section, then the creation buttons. Managing recents stays on
+ * the full home page, servers and SideCars in Settings.
  */
 export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
   const { t } = useI18n()
@@ -34,19 +38,12 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
   const recentFolders = () => launchableRecents()
 
   const dialogs = createNewInstanceDialogs({
-    defaultPath: () => recentFolders().find((folder) => !folder.remote)?.path,
+    defaultPath: () => recentFolders().find((folder) => !folder.remote && !folder.sidecar)?.path,
     isLoading: () => props.isLoading,
     onSelectFolder: (path) => props.onSelectFolder(path),
   })
 
-  const matches = createMemo(() => {
-    const needle = query().trim().toLowerCase()
-    const folders = recentFolders()
-    if (!needle) return folders
-    return folders.filter((folder) =>
-      getProjectDisplayName(folder.path, folder.projectName).toLowerCase().includes(needle)
-      || folder.path.toLowerCase().includes(needle))
-  })
+  const matches = createMemo(() => filterRecents(recentFolders(), query()))
 
   // Only Escape returns focus to the button: actions, outside clicks, other
   // windows and the home page all hand it elsewhere.
@@ -75,9 +72,12 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
   }
 
   const isOpen = (folder: LaunchableRecent) =>
-    folder.remote ? Boolean(openRemoteProjectTabFor(folder)) : Boolean(getExistingInstanceForFolder(folder.path))
+    folder.sidecar ? false
+      : folder.remote ? Boolean(openRemoteProjectTabFor(folder)) : Boolean(getExistingInstanceForFolder(folder.path))
 
   function openRecent(folder: LaunchableRecent) {
+    const sidecar = folder.sidecar
+    if (sidecar) return run(() => void openSidecar(sidecar.sidecarId))
     const remote = folder.remote
     if (remote) return run(() => openRemoteProject(remote.profileId, { folder: folder.path }))
     const existing = getExistingInstanceForFolder(folder.path)
@@ -146,7 +146,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
             </div>
 
             <div class="new-instance-launcher-section-title" id="new-instance-launcher-recents-title">
-              {t("newInstanceLauncher.recentTitle")}
+              {t("folderSelection.recentTabs.title")}
             </div>
             <div
               class="window-body new-instance-launcher-recents"
@@ -176,12 +176,11 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
                       onMouseMove={() => setActiveIndex(index())}
                       onClick={() => openRecent(folder)}
                     >
-                      <Show when={folder.remote} fallback={<Folder class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />}>
-                        <Server class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
-                      </Show>
+                      <RecentTabIcon recent={folder} class="w-4 h-4 icon-muted shrink-0" />
                       <span class="new-instance-launcher-recent-name">{getProjectDisplayName(folder.path, folder.projectName)}</span>
                       <span class="new-instance-launcher-recent-path" dir="ltr">
-                        {folder.remote ? `${folder.remote.serverName} · ${getDisplayPath(folder.path)}` : getDisplayPath(folder.path)}
+                        {folder.sidecar ? t("folderSelection.recent.sidecar")
+                          : folder.remote ? `${folder.remote.serverName} · ${getDisplayPath(folder.path)}` : getDisplayPath(folder.path)}
                       </span>
                       <Show
                         when={existing()}
@@ -198,17 +197,11 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
               </For>
             </div>
 
-            <div class="new-instance-launcher-actions">
-              <button type="button" class="window-action" disabled={props.isLoading} onClick={() => run(props.onNewTemporaryInstance)}>
-                <Hourglass class="w-4 h-4" aria-hidden="true" />
-                <span>{t("newInstanceLauncher.temporary")}</span>
-              </button>
-              <button type="button" class="window-action" disabled={props.isLoading} onClick={() => run(dialogs.clone)}>
-                <GitBranch class="w-4 h-4" aria-hidden="true" />
-                <span>{t("newInstanceLauncher.clone")}</span>
-              </button>
-            </div>
             <BrowseMenu isLoading={props.isLoading} onRun={close} onBrowseLocal={() => void dialogs.browse()} />
+            <div class="new-instance-launcher-actions">
+              <NewTabActions variant="launcher" isLoading={props.isLoading} onRun={close}
+                onClone={dialogs.clone} onNewTemporary={props.onNewTemporaryInstance} />
+            </div>
           </Popover.Content>
         </Popover.Portal>
       </Popover>

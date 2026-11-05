@@ -31,7 +31,7 @@ function Fixture() {
     <input id="other-surface" aria-label="Other surface" />
   </>}>
     <Home onSelectFolder={(path) => calls.push(`folder:${path}`)} onSelectExistingInstance={() => {}}
-      onNewTemporaryInstance={() => calls.push("temporary")} onOpenSidecar={() => calls.push("sidecar")} />
+      onNewTemporaryInstance={() => calls.push("temporary")} />
   </Show>
 }
 

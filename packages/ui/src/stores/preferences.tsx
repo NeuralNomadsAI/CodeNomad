@@ -4,6 +4,10 @@ import { storage, ConfigOwnerReconciliationPendingError, type OwnerBucket } from
 import type { RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
 import {
   normalizeRemoteProjectRecents,
+  normalizeSideCarRecents,
+  withSideCarRecent,
+  withoutSideCarRecent,
+  type SideCarRecent,
   withoutRemoteProjectRecent,
   withRemoteProjectRecent,
   type RemoteProjectRecent,
@@ -203,6 +207,7 @@ interface UiStateBucket {
   opencodeBinaries?: OpenCodeBinary[]
   remoteServers?: RemoteServerProfile[]
   remoteProjectRecents?: unknown
+  sidecarRecents?: unknown
   models?: {
     recents?: ModelPreference[]
     favorites?: ModelPreference[]
@@ -217,6 +222,7 @@ interface NormalizedUiState {
   opencodeBinaries: OpenCodeBinary[]
   remoteServers: RemoteServerProfile[]
   remoteProjectRecents: RemoteProjectRecent[]
+  sidecarRecents: SideCarRecent[]
   models: {
     recents: ModelPreference[]
     favorites: ModelPreference[]
@@ -519,6 +525,7 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
       return right.localeCompare(left)
     }),
     remoteProjectRecents: normalizeRemoteProjectRecents(source.remoteProjectRecents),
+    sidecarRecents: normalizeSideCarRecents(source.sidecarRecents),
     models: {
       recents: cloneArray<ModelPreference>((source.models as any)?.recents, (m) => {
         if (!m || typeof m !== "object") return null
@@ -698,6 +705,7 @@ const recentFolders = createMemo<RecentFolder[]>(() => uiState().recentFolders)
 const opencodeBinaries = createMemo<OpenCodeBinary[]>(() => uiState().opencodeBinaries)
 const remoteServers = createMemo<RemoteServerProfile[]>(() => uiState().remoteServers)
 const remoteProjectRecents = createMemo<RemoteProjectRecent[]>(() => uiState().remoteProjectRecents)
+const sidecarRecents = createMemo<SideCarRecent[]>(() => uiState().sidecarRecents)
 
 let loadPromise: Promise<void> | null = null
 
@@ -1184,6 +1192,15 @@ function recordRemoteProjectRecent(entry: Omit<RemoteProjectRecent, "lastAccesse
     .catch((error) => log.error("Failed to record remote project", error))
 }
 
+/** A SideCar joins the recent tabs when it opens; only its id is kept. */
+function recordSideCarRecent(sidecarId: string): void {
+  void patchStateOwner("ui", { sidecarRecents: withSideCarRecent(sidecarRecents(), sidecarId) })
+}
+
+function removeSideCarRecent(sidecarId: string): void {
+  void patchStateOwner("ui", { sidecarRecents: withoutSideCarRecent(sidecarRecents(), sidecarId) })
+}
+
 function removeRemoteProjectRecent(profileId: string, folder: string): void {
   void patchStateOwner("ui", { remoteProjectRecents: withoutRemoteProjectRecent(remoteProjectRecents(), profileId, folder) })
     .catch((error) => log.error("Failed to remove remote project", error))
@@ -1591,6 +1608,9 @@ export {
   remoteProjectRecents,
   recordRemoteProjectRecent,
   removeRemoteProjectRecent,
+  sidecarRecents,
+  recordSideCarRecent,
+  removeSideCarRecent,
   opencodeBinaries,
   themePreference,
   setThemePreference,

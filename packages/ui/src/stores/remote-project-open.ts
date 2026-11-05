@@ -3,7 +3,8 @@ import { canOpenRemoteProjectTabs } from "../lib/native/remote-view"
 import { serverDisplayName } from "../lib/codenomad-link"
 import { mixRecents, type LaunchableRecent } from "../lib/remote-project-recents"
 import { selectRemoteProjectTab } from "./app-tabs"
-import { recentFolders, remoteProjectRecents, remoteServers } from "./preferences"
+import { recentFolders, remoteProjectRecents, remoteServers, sidecarRecents } from "./preferences"
+import { sidecars } from "./sidecars"
 import { openRemoteProjectTab, remoteProjectTabs, type RemoteProjectTabRecord } from "./remote-project-tabs"
 import { setShowFolderSelection } from "./ui"
 
@@ -17,12 +18,11 @@ export function openRemoteProject(profileId: string, options: { folder?: string;
   setShowFolderSelection(false)
 }
 
-/** This computer's recent folders with the remote projects this window can reopen. */
+/** The recent tabs: this computer's folders, the remote projects this window can reopen and configured SideCars. */
 export function launchableRecents(): LaunchableRecent[] {
-  if (!canOpenRemoteProjectTabs()) return recentFolders()
-  const servers = remoteServers()
-  return mixRecents(recentFolders(), remoteProjectRecents(), servers.filter(opensRemoteProjectTab)
-    .map((server) => ({ id: server.id, name: serverDisplayName(server, servers) })))
+  const servers = canOpenRemoteProjectTabs() ? remoteServers() : []
+  return mixRecents(recentFolders(), canOpenRemoteProjectTabs() ? remoteProjectRecents() : [], servers.filter(opensRemoteProjectTab)
+    .map((server) => ({ id: server.id, name: serverDisplayName(server, servers) })), sidecarRecents(), [...sidecars().values()])
 }
 
 /** The project name the embedded page reported, else its server's name (never its raw address). */

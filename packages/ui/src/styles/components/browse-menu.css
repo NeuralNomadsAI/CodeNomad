@@ -79,6 +79,28 @@
   font-size: var(--font-size-sm);
 }
 
+.browse-menu-meta {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.browse-menu-meta[data-status="running"] {
+  color: var(--session-status-idle-fg, var(--text-secondary));
+}
+
+/* The home page's Browse tab: the list fills its panel, without its own frame. */
+.browse-menu--open {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.browse-menu--open .browse-menu-body {
+  border: 0;
+  background-color: transparent;
+}
+
 /* The launcher aligns it with its section titles. */
 .new-instance-launcher .browse-menu {
   padding: var(--space-xs) var(--window-inline-padding);
