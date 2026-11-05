@@ -11,7 +11,7 @@ Uzaktan Kontrol, eşleştirilmiş bir tarayıcının veya masaüstü istemcisini
 
 Bağlantı **beş dakika** süreyle geçerlidir ve **bir kez** başarılı olur. Bunu bir kimlik bilgisi olarak değerlendirin: Bunu tüketen herkes eşleştirilmiş bir cihaz haline gelebilir. Kod, sorgu dizesinde değil, URL parçasında bulunur. **Yeni eşleştirme bağlantısı oluştur**, önceki kullanılmayan bağlantıyı anında geçersiz kılar. Durdurma, arka uç kapatma ve tünel arızası, bekleyen eşleştirme bağlantılarını iptal eder.
 
-Başka masaüstü CodeNomad istemcisini eşleştirmek için onun ana sayfasında **Yeni sunucu** seçin ve bağlantıyı **Sunucu URL'si** alanına yapıştırın: sunucu açılır ve eşleşir, **Kaydet** ile bile, çünkü bağlantıyı açmak kodu tüketir. Yer imi yalnızca tünelin origin adresini saklar; kod saklanmaz. Eşleştirme bağlantılarında TLS doğrulaması etkin kalır.
+Başka masaüstü CodeNomad istemcisini eşleştirmek için onun ana sayfasında **Gözat** bölümünü açın ve bağlantıyı **Sunucu adresi veya bağlantısı** alanına yapıştırın: sunucu açılır ve eşleşir. Yer imi yalnızca tünelin origin adresini saklar; kod saklanmaz. Eşleştirme bağlantılarında TLS doğrulaması etkin kalır.
 
 ## Eşleştirilmiş cihazları yönetin {#paired-devices}
 

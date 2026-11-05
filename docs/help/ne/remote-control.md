@@ -11,7 +11,7 @@ Remote Control ले paired browser वा desktop client लाई inbound net
 
 link **पाँच मिनेट** मान्य हुन्छ र **एकपटक** सफल हुन्छ। credential झैं लिनुहोस्: प्रयोग गर्ने जोकोही paired device बन्न सक्छ। code URL fragment मा हुन्छ, query string मा होइन। **नयाँ जोडी लिंक बनाउनुहोस्** ले अघिल्लो unused link तुरुन्त अमान्य गर्छ। Stop, backend shutdown र tunnel failure ले बाँकी pairing link रद्द गर्छन्।
 
-अर्को desktop CodeNomad pair गर्न त्यसको गृह पृष्ठमा **नयाँ सर्भर** छान्नुहोस् र link **सर्भर URL** मा टाँस्नुहोस्: सर्भर खुल्छ र pair हुन्छ, **बचत गर्नुहोस्** बाट पनि, किनकि खोल्दा नै code खपत हुन्छ। bookmark मा tunnel origin मात्र बचत हुन्छ; code रहँदैन। pairing link मा TLS verification enabled रहन्छ।
+अर्को desktop CodeNomad pair गर्न त्यसको गृह पृष्ठमा **ब्राउज गर्नुहोस्** खोली link **सर्भरको ठेगाना वा लिङ्क** मा टाँस्नुहोस्: सर्भर खुल्छ र pair हुन्छ। bookmark मा tunnel origin मात्र बचत हुन्छ; code रहँदैन। pairing link मा TLS verification enabled रहन्छ।
 
 ## paired device व्यवस्थापन {#paired-devices}
 
