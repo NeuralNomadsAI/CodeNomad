@@ -221,7 +221,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
                       {link().label}
                     </a>}</Show>
                     <Show when={["opencode-console-missing-credential", "opencode-console-access-denied", "opencode-console-invalid-credential"].includes(data().unavailableReason ?? "")}>
-                      <button type="button" class="window-text-button" onClick={() => void openSettings("providers")}>{t("providerUsage.console.settings")}</button>
+                      <button type="button" class="window-action mt-1" onClick={() => void openSettings("providers")}>{t("providerUsage.console.settings")}</button>
                     </Show>
                   </div>}
                 </Show>

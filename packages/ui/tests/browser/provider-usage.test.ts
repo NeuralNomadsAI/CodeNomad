@@ -954,6 +954,7 @@ test("Console counters render without gauges, model homonyms retain providers, b
     await waitRequests(requests, 2); await requests[1].fulfill({ json: consoleUsage(usage) })
     await page.getByRole("table").waitFor()
     assert.equal(await page.getByRole("columnheader").count(), 3)
+    assert.equal(await page.getByRole("columnheader", { name: "Requests", exact: true }).evaluate(el => getComputedStyle(el).textAlign), "end")
     assert.equal(await page.getByRole("row").count(), 4)
     assert.equal(await page.getByRole("cell", { name: "same-model", exact: true }).count(), 2)
     await page.getByText("Budgets unavailable.", { exact: true }).waitFor()
@@ -991,6 +992,60 @@ for (const [reason, message, link] of [
       assert.deepEqual(await page.evaluate(() => (window as any).usageFixture.settings()), { open: true, section: "providers" })
     }
     assert.equal(await page.getByRole("progressbar").count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+for (const colorScheme of ["light", "dark"] as const) test(`Console error text and action meet AA contrast (${colorScheme})`, async () => {
+  const page = await browser.newPage({ locale: "en-US", colorScheme, viewport: { width: 300, height: 200 } })
+  try {
+    await page.addInitScript("window.__name = f => f")
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1)
+    await requests[0].fulfill({ json: { ...consoleUsage(emptyConsole()), console: undefined, ok: false,
+      unavailableReason: "opencode-console-access-denied" } })
+    const message = page.getByText("Console access denied. Check your OpenCode Console connection.", { exact: true })
+    const action = page.getByRole("button", { name: "Settings → Providers", exact: true })
+    await message.waitFor()
+    for (const [name, target] of [["message", message], ["action", action]] as const) {
+      const ratio = await target.evaluate(element => {
+        const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!
+        const rgba = (color: string) => {
+          ctx.clearRect(0, 0, 1, 1)
+          ctx.fillStyle = color
+          ctx.fillRect(0, 0, 1, 1)
+          const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data
+          return [r, g, b, a / 255]
+        }
+        const over = (front: number[], back: number[]) => {
+          const alpha = front[3] + back[3] * (1 - front[3])
+          return [...front.slice(0, 3).map((value, i) => alpha ? (value * front[3] + back[i] * back[3] * (1 - front[3])) / alpha : 0), alpha]
+        }
+        let foreground = rgba(getComputedStyle(element).color), background = [0, 0, 0, 0]
+        for (let node: Element | null = element; node; node = node.parentElement) {
+          const style = getComputedStyle(node)
+          if (style.backgroundImage !== "none") throw new Error("Contrast sampling requires solid backgrounds")
+          const fill = rgba(style.backgroundColor)
+          foreground = over(foreground, fill)
+          background = over(background, fill)
+          foreground[3] *= Number(style.opacity)
+          background[3] *= Number(style.opacity)
+        }
+        const luminance = (color: number[]) => {
+          const [r, g, b] = over(color, [255, 255, 255, 1]).slice(0, 3).map(value => {
+            const c = value / 255
+            return c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4
+          })
+          return .2126 * r + .7152 * g + .0722 * b
+        }
+        const [light, dark] = [luminance(foreground), luminance(background)].sort((a, b) => b - a)
+        return (light + .05) / (dark + .05)
+      })
+      console.log(`${colorScheme} Console ${name} contrast: ${ratio.toFixed(2)}:1`)
+      assert.ok(ratio >= 4.5, `${colorScheme} ${name} contrast ${ratio.toFixed(2)}:1`)
+    }
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    if (process.env.CODENOMAD_USAGE_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_USAGE_CAPTURE.replace(/\.png$/, `-error-${colorScheme}.png`) })
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

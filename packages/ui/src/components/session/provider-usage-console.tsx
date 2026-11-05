@@ -24,7 +24,7 @@ export function ProviderUsageConsole(props: { usage: OpenCodeConsoleUsage }) {
       <h4 class="mb-1 font-medium">{t("providerUsage.console.models")}</h4>
       <Show when={props.usage.models.length} fallback={<p class="text-secondary">{t("providerUsage.console.noRequests")}</p>}>
         <table class="w-full table-fixed text-start text-[11px]">
-          <thead><tr><For each={["model", "provider", "count"]}>{key => <th scope="col" class="text-start font-medium">{t(`providerUsage.console.${key}`)}</th>}</For></tr></thead>
+          <thead><tr><For each={["model", "provider", "count"]}>{key => <th scope="col" class={key === "count" ? "text-end font-medium" : "text-start font-medium"}>{t(`providerUsage.console.${key}`)}</th>}</For></tr></thead>
           <tbody><For each={props.usage.models}>{row => <tr>
             <td class="align-top break-words pe-1"><bdi>{row.model}</bdi></td>
             <td class="align-top break-words pe-1"><bdi>{row.provider}</bdi></td>
