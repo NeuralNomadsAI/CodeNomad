@@ -21,8 +21,8 @@ export class MissionMutationError extends HttpResponseError {
 
 // Only reviewed redacted codes cross this seam. Never display or log arbitrary
 // upstream error text, and never replay an already dispatched mutation.
-export async function missionMutationRequest(url: string, method: "POST" | "PATCH", input: object): Promise<{ mission: MissionMap }> {
-  const response = await authenticatedFetch(url, { method, credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) })
+export async function missionMutationRequest(url: string, method: "POST" | "PATCH", input: object, fetcher: typeof fetch = authenticatedFetch): Promise<{ mission: MissionMap }> {
+  const response = await fetcher(url, { method, credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) })
   if (!response.ok) {
     const operation = method === "POST" ? "create" : "edit"
     const body: unknown = await response.json().catch(() => undefined)

@@ -1,6 +1,6 @@
 import type { ToolFileContent } from "@opencode/client"
 import { isSessionMediaPath } from "../../../server/src/opencode/session-media-contract"
-import { CODENOMAD_API_BASE } from "./api-base"
+import { localTransport } from "./backend-transport"
 
 /** Images stay in native content; text projections must not stringify their bytes. */
 export function isToolImageContent(value: unknown): value is ToolFileContent {
@@ -10,7 +10,7 @@ export function isToolImageContent(value: unknown): value is ToolFileContent {
     && typeof part.uri === "string"
 }
 
-export function toolImageSource(file: ToolFileContent, apiBase = CODENOMAD_API_BASE): string | undefined {
+export function toolImageSource(file: ToolFileContent, apiBase = localTransport.baseUrl): string | undefined {
   // A large image that a transcript page deferred; CodeNomad serves its bytes.
   if (isSessionMediaPath(file.uri)) return `${(apiBase ?? "").replace(/\/+$/, "")}${file.uri}`
   if (/^data:/i.test(file.uri)) {

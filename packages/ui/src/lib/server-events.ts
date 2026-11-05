@@ -1,6 +1,6 @@
 import { batch as solidBatch } from "solid-js"
 import type { WorkspaceEventPayload, WorkspaceEventType } from "../../../server/src/api-types"
-import { serverApi } from "./api-client"
+import { serverApi, type ServerApi } from "./api-client"
 import { getClientIdentity } from "./client-identity"
 import {
   connectWorkspaceEvents,
@@ -10,7 +10,7 @@ import {
 import { getLogger } from "./logger"
 import { retryWithBackoff, isRetryableError } from "./retry-utils"
 import { createStreamStalenessWatchdog } from "./stream-staleness"
-import { authRecovery } from "./auth-recovery"
+import { authRecovery, type AuthRecovery } from "./auth-recovery"
 
 const RETRY_BASE_DELAY = 1000
 const RETRY_MAX_DELAY = 10000
@@ -24,7 +24,16 @@ function logSse(message: string, context?: Record<string, unknown>) {
   log.info(message)
 }
 
-class ServerEvents {
+export interface ServerEventsOptions {
+  api: Pick<ServerApi, "connectEvents" | "sendClientConnectionPong">
+  auth: Pick<AuthRecovery, "check" | "onRestored">
+}
+
+/** One backend's events stream; it connects only once `start()` is called. */
+export class ServerEvents {
+  private readonly api: ServerEventsOptions["api"]
+  private readonly auth: ServerEventsOptions["auth"]
+  private started = false
   private handlers = new Map<WorkspaceEventType | "*", Set<(event: WorkspaceEventPayload) => void>>()
   private openHandlers = new Set<() => void>()
   private statusHandlers = new Set<(status: WorkspaceEventTransportStatus) => void>()
@@ -36,8 +45,15 @@ class ServerEvents {
     onStale: () => this.restart("stream stale"),
   })
 
-  constructor() {
-    authRecovery.onRestored(() => this.restart("authentication restored"))
+  constructor(options: ServerEventsOptions) {
+    this.api = options.api
+    this.auth = options.auth
+  }
+
+  start(): void {
+    if (this.started) return
+    this.started = true
+    this.auth.onRestored(() => this.restart("authentication restored"))
     if (typeof window !== "undefined") {
       // Minimal renderer globals (tests, embedded previews) may define window
       // without event APIs; the probes are enhancements, never requirements.
@@ -103,7 +119,7 @@ class ServerEvents {
           const pongPayload = { ...identity, pingTs: payload.ts }
 
           void retryWithBackoff(
-            (signal) => serverApi.sendClientConnectionPong(pongPayload, signal),
+            (signal) => this.api.sendClientConnectionPong(pongPayload, signal),
             {
               maxAttempts: 3,
               initialDelayMs: 100,
@@ -115,7 +131,7 @@ class ServerEvents {
             log.warn("Failed to send client connection pong after retries", error)
           })
         },
-      })
+      }, this.api)
 
       if (generation !== this.connectGeneration) {
         connection.disconnect()
@@ -140,7 +156,7 @@ class ServerEvents {
   private scheduleReconnect() {
     // EventSource hides HTTP status. Probe our own auth endpoint so a server
     // restart is recoverable even when the user has not made another API call.
-    void authRecovery.check()
+    void this.auth.check()
     if (this.retryTimer) {
       return
     }
@@ -253,4 +269,5 @@ class ServerEvents {
   }
 }
 
-export const serverEvents = new ServerEvents()
+export const serverEvents = new ServerEvents({ api: serverApi, auth: authRecovery })
+serverEvents.start()

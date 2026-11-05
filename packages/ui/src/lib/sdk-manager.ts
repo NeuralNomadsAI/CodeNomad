@@ -1,13 +1,16 @@
 import { OpenCode, type OpenCodeClient } from "@opencode/client"
-import { CODENOMAD_API_BASE } from "./api-client"
 import { backgroundReads } from "./background-read-queue"
-import { authenticatedFetch } from "./auth-recovery"
+import { authenticatedFetch, localHttp } from "./auth-recovery"
+import type { BackendHttp } from "./backend-transport"
 import { prioritizedRead } from "./prioritized-read"
 import { SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../../../server/src/api-types"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
 
-class SDKManager {
+/** OpenCode clients of one backend, reached through its workspace instance proxy. */
+export class SDKManager {
   private clients = new Map<string, OpenCodeClient>()
+
+  constructor(private readonly backend: Pick<BackendHttp, "baseUrl" | "fetch"> = localHttp) {}
 
   private key(instanceId: string, proxyPath: string): string {
     return `${instanceId}:${normalizeProxyPath(proxyPath)}`
@@ -20,8 +23,8 @@ class SDKManager {
       return existing
     }
 
-    const baseUrl = buildInstanceBaseUrl(proxyPath)
-    const client = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl, isForeground) })
+    const baseUrl = buildInstanceBaseUrl(proxyPath, this.backend.baseUrl)
+    const client = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl, isForeground, this.backend.fetch) })
 
     this.clients.set(key, client)
 
@@ -39,13 +42,13 @@ class SDKManager {
 
 export type { OpenCodeClient }
 
-export function buildInstanceBaseUrl(proxyPath: string, apiBase = CODENOMAD_API_BASE): string {
+export function buildInstanceBaseUrl(proxyPath: string, apiBase = localHttp.baseUrl): string {
   const normalized = normalizeProxyPath(proxyPath)
   const base = stripTrailingSlashes(apiBase ?? "")
   return `${base}${normalized}/`
 }
 
-export function createInstanceFetch(baseUrl: string, isForeground: () => boolean = () => false): typeof globalThis.fetch {
+export function createInstanceFetch(baseUrl: string, isForeground: () => boolean = () => false, fetcher: typeof fetch = authenticatedFetch): typeof globalThis.fetch {
   return (input, init) => {
     const requestUrl = new URL(input instanceof Request ? input.url : input)
     const basePath = new URL(baseUrl, requestUrl).pathname.replace(/\/+$/, "") + "/"
@@ -57,7 +60,7 @@ export function createInstanceFetch(baseUrl: string, isForeground: () => boolean
     // Transcript pages: CodeNomad defers their large tool images to session-media paths.
     const requestInit = method === "GET" && /^\/api\/session\/[^/]+\/message\/?$/.test(apiPath) ? withDeferredMedia(input, init) : init
     const read = async () => {
-      const response = await authenticatedFetch(input, {
+      const response = await fetcher(input, {
         ...requestInit,
         credentials: init?.credentials ?? "include",
       })
