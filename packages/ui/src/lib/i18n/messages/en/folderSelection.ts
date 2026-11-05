@@ -77,7 +77,6 @@ export const folderSelectionMessages = {
   "folderSelection.tabs.servers": "Servers",
   "folderSelection.servers.title": "Saved Servers",
   "folderSelection.servers.subtitle": "Open a saved remote CodeNomad server in a new window",
-  "folderSelection.servers.count": "{count} Servers",
   "folderSelection.servers.empty.title": "No Saved Servers",
   "folderSelection.servers.empty.description": "Add a remote server to reconnect quickly from this device",
   "folderSelection.servers.connectTitle": "Connect to Server",
@@ -126,5 +125,6 @@ export const folderSelectionMessages = {
   "folderSelection.remoteProject.add": "Add server",
   "folderSelection.remoteProject.addPlaceholder": "Pairing link or address",
   "folderSelection.remoteProject.removeConfirm": "Remove {name}?",
+  "folderSelection.remoteProject.edit": "Edit server",
   "folderSelection.remoteProject.serverMissing": "Server not found",
 } as const

@@ -66,7 +66,6 @@ export const folderSelectionMessages = {
   "folderSelection.tabs.servers": "Sunucular",
   "folderSelection.servers.title": "Kayıtlı Sunucular",
   "folderSelection.servers.subtitle": "Kayıtlı bir uzak CodeNomad sunucusunu yeni pencerede aç",
-  "folderSelection.servers.count": "{count} Sunucu",
   "folderSelection.servers.empty.title": "Kayıtlı Sunucu Yok",
   "folderSelection.servers.empty.description": "Bu cihazdan hızlıca yeniden bağlanmak için bir uzak sunucu ekleyin",
   "folderSelection.servers.connectTitle": "Sunucuya Bağlan",
@@ -114,5 +113,6 @@ export const folderSelectionMessages = {
   "folderSelection.remoteProject.add": "Sunucu ekle",
   "folderSelection.remoteProject.addPlaceholder": "Eşleştirme bağlantısı veya adres",
   "folderSelection.remoteProject.removeConfirm": "{name} kaldırılsın mı?",
+  "folderSelection.remoteProject.edit": "Sunucuyu düzenle",
   "folderSelection.remoteProject.serverMissing": "Sunucu bulunamadı",
 } as const

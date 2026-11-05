@@ -77,7 +77,6 @@ export const folderSelectionMessages = {
   "folderSelection.tabs.servers": "サーバー",
   "folderSelection.servers.title": "保存済みサーバー",
   "folderSelection.servers.subtitle": "保存したリモート CodeNomad サーバーを新しいウィンドウで開きます",
-  "folderSelection.servers.count": "{count} サーバー",
   "folderSelection.servers.empty.title": "保存済みサーバーはありません",
   "folderSelection.servers.empty.description": "この端末からすばやく再接続できるように、リモートサーバーを追加してください",
   "folderSelection.servers.connectTitle": "サーバーに接続",
@@ -126,5 +125,6 @@ export const folderSelectionMessages = {
   "folderSelection.remoteProject.add": "サーバーを追加",
   "folderSelection.remoteProject.addPlaceholder": "ペアリングリンクまたはアドレス",
   "folderSelection.remoteProject.removeConfirm": "{name} を削除しますか？",
+  "folderSelection.remoteProject.edit": "サーバーを編集",
   "folderSelection.remoteProject.serverMissing": "サーバーが見つかりません",
 } as const

@@ -77,7 +77,6 @@ export const folderSelectionMessages = {
   "folderSelection.tabs.servers": "सर्भरहरू",
   "folderSelection.servers.title": "बचत गरिएका सर्भरहरू",
   "folderSelection.servers.subtitle": "नयाँ विन्डोमा सुरक्षित गरिएको रिमोट CodeNomad सर्भर खोल्नुहोस्",
-  "folderSelection.servers.count": "{count} सर्भरहरू",
   "folderSelection.servers.empty.title": "कुनै बचत गरिएका सर्भरहरू छैनन्",
   "folderSelection.servers.empty.description": "यो उपकरणबाट छिटो पुन: जडान गर्न रिमोट सर्भर थप्नुहोस्",
   "folderSelection.servers.connectTitle": "सर्भरमा जडान गर्नुहोस्",
@@ -126,5 +125,6 @@ export const folderSelectionMessages = {
   "folderSelection.remoteProject.add": "सर्भर थप्नुहोस्",
   "folderSelection.remoteProject.addPlaceholder": "पेयरिङ लिङ्क वा ठेगाना",
   "folderSelection.remoteProject.removeConfirm": "{name} हटाउने?",
+  "folderSelection.remoteProject.edit": "सर्भर सम्पादन गर्नुहोस्",
   "folderSelection.remoteProject.serverMissing": "सर्भर फेला परेन",
 } as const

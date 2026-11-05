@@ -62,6 +62,7 @@ async function open(page: Page, path: string, scenario: Scenario) {
     }
   }` })
   const created: string[] = []
+  const probes: string[] = []
   let state = uiState
   await page.route(/\/(?:api|workspaces)\//, async route => {
     const request = route.request()
@@ -76,6 +77,12 @@ async function open(page: Page, path: string, scenario: Scenario) {
     }
     if (pathname === "/api/remote-servers/probe") {
       const { baseUrl, skipTlsVerify } = request.postDataJSON() as { baseUrl: string; skipTlsVerify?: boolean }
+      probes.push(`${baseUrl} skipTls=${Boolean(skipTlsVerify)}`)
+      // A self-signed server answers only once its certificate check is skipped.
+      if (baseUrl.includes("selfsigned") && !skipTlsVerify) {
+        return route.fulfill({ json: { ok: false, reachable: false, normalizedUrl: baseUrl, skipTlsVerify: false, requiresAuth: false,
+          authenticated: false, error: "Certificate check failed while connecting to the remote server.", errorCode: "tls_error" } })
+      }
       return route.fulfill({ json: { ok: true, reachable: true, normalizedUrl: baseUrl, skipTlsVerify: Boolean(skipTlsVerify), requiresAuth: true, authenticated: false } })
     }
     if (pathname === "/api/storage/state/ui" && request.method() === "PATCH") {
@@ -88,7 +95,7 @@ async function open(page: Page, path: string, scenario: Scenario) {
     await route.fulfill({ json: body })
   })
   await page.goto(`${url}${path}`)
-  return { created, state: () => state }
+  return { created, probes, state: () => state }
 }
 
 const views = (page: Page) => page.evaluate(() => (window as any).fixtureViews as {
@@ -227,6 +234,69 @@ test("a pasted pairing link adds the server and pairs in its new tab; other text
     assert.equal(opened.baseUrl, tunnel)
     assert.equal(JSON.stringify(fixture.state()).includes("single-use-code"), false)
     assert.deepEqual((fixture.state() as { remoteServers: Array<{ baseUrl: string }> }).remoteServers.map((entry) => entry.baseUrl), [tunnel])
+  } finally { await page.close() }
+})
+
+test("Remotes replaces the home Servers tab: saved servers are listed, edited there and name their tabs", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
+  try {
+    // An existing user's profiles, one saved under its pasted address.
+    const pasted = server("pasted", { name: "127.0.0.1:9911", baseUrl: "http://127.0.0.1:9911" })
+    const fixture = await open(page, "", { context: "local", host: "electron", uiState: { remoteServers: [server("box"), pasted] } })
+    await page.locator(".folder-home-root").waitFor()
+    assert.equal(await page.getByRole("button", { name: /^Servers/ }).count(), 0)
+    assert.equal(await page.getByRole("button", { name: "Connect CodeNomad Server", exact: true }).count(), 0)
+
+    await page.getByRole("button", { name: "Remotes" }).click()
+    await page.getByRole("button", { name: "Open a project on Box" }).waitFor()
+    const row = page.getByRole("button", { name: "Open a project on 127.0.0.1" })
+    await row.click()
+    // Before a project is chosen the tab shows the server's name, not its raw address.
+    await page.locator(".tab-pill", { hasText: "127.0.0.1" }).waitFor()
+    assert.equal(await page.locator(".tab-pill", { hasText: "127.0.0.1:9911" }).count(), 0)
+
+    await page.locator(".new-instance-button").click()
+    await page.getByRole("button", { name: "Remotes" }).click()
+    await page.getByRole("button", { name: "Open a project on 127.0.0.1" }).click({ button: "right" })
+    await page.getByRole("menuitem", { name: "Edit server" }).click()
+    const dialog = page.getByRole("dialog", { name: "Edit server" })
+    await dialog.waitFor()
+    assert.equal(await dialog.getByLabel("Server URL").inputValue(), "http://127.0.0.1:9911")
+    assert.equal(await dialog.getByRole("button", { name: "Connect", exact: true }).count(), 0)
+    await dialog.getByLabel("Server name").fill("Lab VM")
+    await dialog.getByRole("button", { name: "Save", exact: true }).click()
+    await dialog.waitFor({ state: "detached" })
+
+    // Renaming keeps the server's identity, and so its storage and sign-in, without probing it.
+    const saved = (fixture.state() as { remoteServers: Array<{ id: string; name: string; baseUrl: string; skipTlsVerify: boolean; createdAt: string }> }).remoteServers
+    const renamed = saved.find((entry) => entry.id === "pasted")!
+    assert.deepEqual([renamed.name, renamed.baseUrl, renamed.skipTlsVerify, renamed.createdAt], ["Lab VM", pasted.baseUrl, false, pasted.createdAt])
+    assert.equal(saved.length, 2)
+    assert.deepEqual(fixture.probes, [])
+    await page.getByRole("button", { name: "Open a project on Lab VM" }).waitFor()
+    assert.equal(await page.locator(".tab-pill", { hasText: "Lab VM" }).count(), 1)
+  } finally { await page.close() }
+})
+
+test("a pasted address whose certificate fails the check is offered in the server dialog and keeps its own window", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
+  try {
+    const fixture = await open(page, "", { context: "local", host: "electron" })
+    await page.getByRole("button", { name: "Remotes" }).click()
+    const field = page.getByRole("textbox", { name: "Add server" })
+    await field.fill("https://selfsigned.example")
+    await field.press("Enter")
+    const dialog = page.getByRole("dialog", { name: "Connect to Server" })
+    await dialog.waitFor()
+    await dialog.getByText("Certificate check failed while connecting to the remote server.").waitFor()
+    assert.equal(await dialog.getByLabel("Server URL").inputValue(), "https://selfsigned.example")
+    await dialog.getByRole("checkbox").check()
+    await dialog.getByRole("button", { name: "Connect", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixtureViews.windows.length === 1)
+    assert.equal((await views(page)).opened.length, 0, "an unverified certificate never opens a tab")
+    assert.deepEqual(fixture.probes, ["https://selfsigned.example skipTls=false", "https://selfsigned.example skipTls=true"])
+    const saved = (fixture.state() as { remoteServers: Array<{ baseUrl: string; skipTlsVerify: boolean }> }).remoteServers
+    assert.deepEqual(saved.map((entry) => [entry.baseUrl, entry.skipTlsVerify]), [["https://selfsigned.example", true]])
   } finally { await page.close() }
 })
 

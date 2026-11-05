@@ -287,14 +287,14 @@ test("the new-instance button follows the last tab like a browser", async () => 
   } finally { await page.close() }
 })
 
-test("the full home page keeps saved servers, server setup and SideCar actions", async () => {
+test("the full home page lists saved servers under Remotes and keeps SideCar actions", async () => {
   const { page, errors, calls } = await prepare(1100, true)
   try {
-    await page.getByRole("button", { name: "Servers 1 Servers", exact: true }).click()
-    await page.getByRole("button", { name: /^Saved remote/ }).waitFor()
-    await page.getByRole("button", { name: "Connect CodeNomad Server", exact: true }).click()
-    await page.getByRole("dialog", { name: "Connect to Server", exact: true }).waitFor()
-    await page.getByRole("button", { name: "Cancel", exact: true }).click()
+    // Remotes replaces the former Servers tab and Connect button; saved servers keep appearing there.
+    assert.equal(await page.getByRole("button", { name: /^Servers/ }).count(), 0)
+    assert.equal(await page.getByRole("button", { name: "Connect CodeNomad Server", exact: true }).count(), 0)
+    await page.getByRole("button", { name: "Remotes", exact: true }).click()
+    await page.getByRole("button", { name: /^Open a project on Saved remote/ }).waitFor()
     await page.getByRole("button", { name: "Open SideCar", exact: true }).click()
     assert.deepEqual(await calls(), ["sidecar"])
     assert.deepEqual(errors, [])

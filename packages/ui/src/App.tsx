@@ -19,6 +19,7 @@ import { NativeTitlebar, hasNativeTitlebar } from "./components/native-titlebar"
 import { SideCarPickerDialog } from "./components/sidecar-picker-dialog"
 import { SideCarView } from "./components/sidecar-view"
 import { RemoteProjectView } from "./components/remote-project-view"
+import { RemoteServerEditor } from "./components/remote-server-editor"
 import { EmbeddedProjectPicker } from "./components/embedded-project-picker"
 import { embeddedProject, publishEmbeddedProject, rememberEmbeddedSession, rememberedEmbeddedSession } from "./lib/embed-mode"
 import { restoreEmbeddedSession } from "./stores/embedded-project-session"
@@ -943,6 +944,7 @@ const App: Component = () => {
           onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
         />
         <SettingsScreen />
+        <RemoteServerEditor />
         <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
         <AlertDialog />
         <AuthRecoveryDialog />

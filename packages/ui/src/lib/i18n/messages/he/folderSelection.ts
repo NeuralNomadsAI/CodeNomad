@@ -77,7 +77,6 @@ export const folderSelectionMessages = {
   "folderSelection.tabs.servers": "שרתים",
   "folderSelection.servers.title": "שרתים שמורים",
   "folderSelection.servers.subtitle": "פתח שרת CodeNomad מרוחק שמור בחלון חדש",
-  "folderSelection.servers.count": "{count} שרתים",
   "folderSelection.servers.empty.title": "אין שרתים שמורים",
   "folderSelection.servers.empty.description": "הוסף שרת מרוחק כדי להתחבר אליו במהירות מהמכשיר הזה",
   "folderSelection.servers.connectTitle": "התחבר לשרת",
@@ -126,5 +125,6 @@ export const folderSelectionMessages = {
   "folderSelection.remoteProject.add": "הוספת שרת",
   "folderSelection.remoteProject.addPlaceholder": "קישור צימוד או כתובת",
   "folderSelection.remoteProject.removeConfirm": "להסיר את {name}?",
+  "folderSelection.remoteProject.edit": "עריכת שרת",
   "folderSelection.remoteProject.serverMissing": "השרת לא נמצא",
 } as const

@@ -1,13 +1,14 @@
 import { ContextMenu } from "@kobalte/core/context-menu"
 import { For, Show, createSignal } from "solid-js"
-import { ChevronRight, Loader2, Plus, Server, Trash2 } from "lucide-solid"
+import { ChevronRight, Loader2, Pencil, Plus, Server, Trash2 } from "lucide-solid"
 import type { RemoteServerProfile } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
-import { classifyCodeNomadLink, codeNomadLinkName } from "../lib/codenomad-link"
-import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles"
+import { classifyCodeNomadLink, codeNomadLinkName, serverDisplayName } from "../lib/codenomad-link"
+import { RemoteServerProbeError, useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { showConfirmDialog } from "../stores/alerts"
-import { openRemoteProject, opensRemoteProjectTab } from "../stores/remote-project-open"
+import { opensRemoteProjectTab } from "../stores/remote-project-open"
+import { openRemoteServerEditor } from "../stores/remote-server-editor"
 
 interface RemoteProjectMenuProps {
   isLoading: boolean
@@ -22,7 +23,7 @@ interface RemoteProjectMenuProps {
  */
 export default function RemoteProjectMenu(props: RemoteProjectMenuProps) {
   const { t } = useI18n()
-  const { remoteServers, saveProfile, saveServer, connectSavedServer, markRemoteServerConnected, removeRemoteServerProfile } = useRemoteServerProfiles()
+  const { remoteServers, saveProfile, saveServer, openServer, removeRemoteServerProfile } = useRemoteServerProfiles()
   const [expanded, setExpanded] = createSignal(false)
   const [busy, setBusy] = createSignal(false)
   const [address, setAddress] = createSignal("")
@@ -32,15 +33,17 @@ export default function RemoteProjectMenu(props: RemoteProjectMenuProps) {
 
   const navItems = () => [...(bodyRef?.querySelectorAll<HTMLElement>("[data-remote-nav]") ?? [])].filter((item) => !item.hasAttribute("disabled"))
   const focusFirst = () => queueMicrotask(() => navItems()[0]?.focus())
+  const displayName = (profile: RemoteServerProfile) => serverDisplayName(profile, remoteServers())
 
   function open(profile: RemoteServerProfile, entryUrl?: string) {
-    if (opensRemoteProjectTab(profile)) {
-      openRemoteProject(profile.id, entryUrl ? { entryUrl } : {})
-      void markRemoteServerConnected(profile.id).catch(() => {})
-    } else {
-      void connectSavedServer(profile.id)
-    }
+    openServer(profile, entryUrl)
     props.onOpened?.()
+  }
+
+  function edit(request: Parameters<typeof openRemoteServerEditor>[0]) {
+    // The launcher closes first; the dialog lives outside it.
+    props.onOpened?.()
+    openRemoteServerEditor(request)
   }
 
   async function add(text: string) {
@@ -50,7 +53,10 @@ export default function RemoteProjectMenu(props: RemoteProjectMenuProps) {
     const link = classifyCodeNomadLink(value)
     if (!link) return setAddError(t("folderSelection.servers.dialog.errorConnect"))
     const existing = remoteServers().find((server) => server.baseUrl === link.baseUrl)
-    const input = { id: existing?.id, name: existing?.name ?? codeNomadLinkName(link.baseUrl), baseUrl: value, skipTlsVerify: false }
+    const input = {
+      id: existing?.id, name: existing?.name ?? codeNomadLinkName(link.baseUrl), baseUrl: value,
+      skipTlsVerify: existing?.skipTlsVerify ?? false,
+    }
     setBusy(true)
     try {
       if (opensRemoteProjectTab(input)) {
@@ -63,14 +69,21 @@ export default function RemoteProjectMenu(props: RemoteProjectMenuProps) {
       }
       setAddress("")
     } catch (error) {
-      setAddError(error instanceof Error && error.message ? error.message : t("folderSelection.servers.dialog.errorConnect"))
+      const message = error instanceof Error && error.message ? error.message : t("folderSelection.servers.dialog.errorConnect")
+      // A certificate that failed the check needs an explicit choice: the server dialog offers it.
+      if (error instanceof RemoteServerProbeError && error.code === "tls_error" && link.kind === "address") {
+        setAddress("")
+        edit({ initial: input, initialError: message })
+      } else {
+        setAddError(message)
+      }
     } finally {
       setBusy(false)
     }
   }
 
   async function remove(profile: RemoteServerProfile) {
-    const confirmed = await showConfirmDialog(t("folderSelection.remoteProject.removeConfirm", { name: profile.name }), {
+    const confirmed = await showConfirmDialog(t("folderSelection.remoteProject.removeConfirm", { name: displayName(profile) }), {
       title: t("folderSelection.servers.remove"),
       variant: "warning",
       confirmLabel: t("folderSelection.servers.remove"),
@@ -105,13 +118,13 @@ export default function RemoteProjectMenu(props: RemoteProjectMenuProps) {
           aria-busy={busy()} onKeyDown={handleKeyDown}>
           <For each={remoteServers()}>
             {(profile) => (
-              // Removal lives in the row's context menu (right-click, Shift+F10, Menu key).
+              // Editing and removal live in the row's context menu (right-click, Shift+F10, Menu key).
               <ContextMenu>
                 <ContextMenu.Trigger as="button" type="button" class="remote-project-row" data-remote-nav data-remote-server={profile.id}
                   disabled={props.isLoading || busy()} title={profile.baseUrl} onClick={() => open(profile)}
-                  aria-label={t("folderSelection.remoteProject.openProject", { name: profile.name })}>
+                  aria-label={t("folderSelection.remoteProject.openProject", { name: displayName(profile) })}>
                   <Server class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
-                  <bdi class="remote-project-name" dir="auto">{profile.name}</bdi>
+                  <bdi class="remote-project-name" dir="auto">{displayName(profile)}</bdi>
                   <span class="window-action shrink-0" aria-hidden="true">
                     <Plus class="w-3.5 h-3.5" />
                     <span>{t("folderSelection.remoteProject.project")}</span>
@@ -119,6 +132,11 @@ export default function RemoteProjectMenu(props: RemoteProjectMenuProps) {
                 </ContextMenu.Trigger>
                 <ContextMenu.Portal>
                   <ContextMenu.Content class="action-overflow-content">
+                    <ContextMenu.Item class="action-overflow-item"
+                      onSelect={() => edit({ initial: { id: profile.id, name: displayName(profile), baseUrl: profile.baseUrl, skipTlsVerify: profile.skipTlsVerify } })}>
+                      <span class="action-overflow-item-icon" aria-hidden="true"><Pencil class="w-3.5 h-3.5" /></span>
+                      <span class="action-overflow-item-label">{t("folderSelection.remoteProject.edit")}</span>
+                    </ContextMenu.Item>
                     <ContextMenu.Item class="action-overflow-item" onSelect={() => void remove(profile)}>
                       <span class="action-overflow-item-icon" aria-hidden="true"><Trash2 class="w-3.5 h-3.5" /></span>
                       <span class="action-overflow-item-label">{t("folderSelection.servers.remove")}</span>

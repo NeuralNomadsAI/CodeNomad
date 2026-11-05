@@ -77,7 +77,6 @@ export const folderSelectionMessages = {
   "folderSelection.tabs.servers": "服务器",
   "folderSelection.servers.title": "已保存的服务器",
   "folderSelection.servers.subtitle": "在新窗口中打开已保存的远程 CodeNomad 服务器",
-  "folderSelection.servers.count": "{count} 个服务器",
   "folderSelection.servers.empty.title": "没有已保存的服务器",
   "folderSelection.servers.empty.description": "添加远程服务器，以便在此设备上快速重新连接",
   "folderSelection.servers.connectTitle": "连接到服务器",
@@ -126,5 +125,6 @@ export const folderSelectionMessages = {
   "folderSelection.remoteProject.add": "添加服务器",
   "folderSelection.remoteProject.addPlaceholder": "配对链接或地址",
   "folderSelection.remoteProject.removeConfirm": "移除 {name}？",
+  "folderSelection.remoteProject.edit": "编辑服务器",
   "folderSelection.remoteProject.serverMissing": "找不到服务器",
 } as const
