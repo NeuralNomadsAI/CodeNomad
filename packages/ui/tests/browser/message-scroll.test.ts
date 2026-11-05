@@ -2140,8 +2140,7 @@ test("a First jump during a pending send still lands on the first message", asyn
     await frames(page, 120)
     await page.locator(".message-scroll-controls").hover()
     await page.getByRole("button", { name: "Scroll to first message", exact: true }).click()
-    // The fixture serves this window from its newest records; what matters is that
-    // the loaded window replaces the latest one and is then entered at its top.
+    // The oldest window replaces the latest one and is then entered at its top.
     await page.waitForFunction(() => (window as any).fixture.snapshot().window.kind !== "latest")
     await frames(page, 60)
     const state = await page.evaluate(() => {
@@ -2152,6 +2151,72 @@ test("a First jump during a pending send still lands on the first message", asyn
     assert.ok(state.scrollTop <= 2 && state.mode === "escaped" && state.firstTop !== null && Math.abs(state.firstTop) <= 2, JSON.stringify(state))
     await page.evaluate(() => (window as any).fixture.acceptPrompt())
   }, { history: 620 })
+})
+
+// Right after a window replacement Virtua can apply a size compensation computed
+// against its previous offset, after the jump's write (long real transcripts):
+// an immediate jump to the top holds its landing while the rows settle.
+test("an immediate jump to the top holds its landing against a late compensation", async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.bottom())
+    await frames(page)
+    await page.evaluate(() => new Promise<void>(resolve => {
+      ;(window as any).fixture.top()
+      requestAnimationFrame(() => {
+        // The stale compensation lands one frame after the jump's write.
+        document.querySelector<HTMLElement>(".message-stream")!.scrollTop = 5000
+        resolve()
+      })
+    }))
+    await frames(page, 10)
+    assert.equal(await page.locator(".message-stream").evaluate(el => el.scrollTop), 0)
+  }, { name: "list" })
+})
+
+// The top landing reveals nothing: moving focus within the first message (Tab to
+// one of its controls) scrolls to that control and ends the hold.
+test("focus moving within the first row ends the top hold", async () => {
+  await open(async page => {
+    await page.evaluate(() => (window as any).fixture.resizeRow("row-0", 2400))
+    await page.evaluate(() => (window as any).fixture.bottom())
+    await frames(page)
+    await page.evaluate(() => (window as any).fixture.top())
+    await frames(page, 2)
+    await page.evaluate(() => {
+      const content = document.querySelector<HTMLElement>('[data-virtual-follow-key="row-0"]')!.firstElementChild as HTMLElement
+      content.style.position = "relative"
+      const button = document.createElement("button")
+      button.textContent = "Inside the first row"
+      button.style.cssText = "position:absolute;top:2000px"
+      content.append(button)
+      button.focus()
+    })
+    await frames(page, 40)
+    const state = await page.evaluate(() => {
+      const button = document.activeElement as HTMLElement, el = document.querySelector<HTMLElement>(".message-stream")!
+      const rect = button.getBoundingClientRect(), bounds = el.getBoundingClientRect()
+      return { scrollTop: el.scrollTop, visible: rect.top >= bounds.top && rect.bottom <= bounds.bottom }
+    })
+    assert.ok(state.scrollTop > 1000 && state.visible, JSON.stringify(state))
+  }, { name: "list" })
+})
+
+// Below two pages the oldest and latest windows share messages: one First jump
+// from the bottom must still land on the first message, not on the bottom of
+// the oldest window where the shared rows sit.
+test("a First jump into an overlapping oldest window lands on the first message", async () => {
+  await open(async page => {
+    await page.locator(".message-scroll-controls").hover()
+    await page.getByRole("button", { name: "Scroll to first message", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.snapshot().window.kind !== "latest")
+    await frames(page, 60)
+    const state = await page.evaluate(() => {
+      const el = document.querySelector<HTMLElement>(".message-stream")!, bounds = el.getBoundingClientRect(), key = (window as any).fixture.snapshot().ids[0]
+      const first = el.querySelector(`[data-virtual-follow-key="${key}"]`)
+      return { key, scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, firstTop: first ? Math.round(first.getBoundingClientRect().top - bounds.top) : null }
+    })
+    assert.ok(state.scrollTop <= 2 && state.firstTop !== null && Math.abs(state.firstTop) <= 2, JSON.stringify(state))
+  }, { history: 205 })
 })
 
 const AT_BOTTOM = { scrollTop: 0, atBottom: true, followModeType: "following" }
