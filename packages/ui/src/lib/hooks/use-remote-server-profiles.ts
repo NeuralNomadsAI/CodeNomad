@@ -3,6 +3,7 @@ import { serverApi } from "../api-client"
 import { useI18n } from "../i18n"
 import { openRemoteServerWindow, type RemoteWindowOpenOptions } from "../native/remote-window"
 import { splitPairingLink } from "../remote-pairing-link"
+import { codeNomadLinkName } from "../codenomad-link"
 import { canOpenRemoteWindows, isTauriHost } from "../runtime-env"
 import { showAlertDialog } from "../../stores/alerts"
 import { useConfig } from "../../stores/preferences"
@@ -33,9 +34,12 @@ export function useRemoteServerProfiles() {
   /** Probes and saves a server; a pairing link's single-use entry is returned, never saved. */
   const saveProfile = async (input: RemoteServerInput) => {
     const pairing = splitPairingLink(input.baseUrl)
-    const name = input.name.trim()
     const baseUrl = pairing?.baseUrl ?? input.baseUrl.trim()
-    if (!name || !baseUrl) throw new Error(t("folderSelection.servers.dialog.errorRequired"))
+    if (!baseUrl) throw new Error(t("folderSelection.servers.dialog.errorRequired"))
+    // Nothing secret is ever saved with a server: an address carrying credentials is refused.
+    if (!pairing && /^[a-z][a-z\d+.-]*:\/\/[^/?#]*@/i.test(baseUrl)) throw new Error(t("folderSelection.servers.dialog.errorConnect"))
+    // The name is optional: a server without one reads as its host name.
+    const name = input.name.trim() || codeNomadLinkName(baseUrl)
     // Remote Control certificates are publicly trusted. Skipping verification would later route Tauri through the
     // TLS proxy, whose incognito window store does not keep the paired device cookie.
     const skipTlsVerify = pairing ? false : input.skipTlsVerify
@@ -48,11 +52,12 @@ export function useRemoteServerProfiles() {
 
     const probe = await serverApi.probeRemoteServer({ baseUrl, skipTlsVerify })
     if (!probe.ok) throw new RemoteServerProbeError(probe.error || t("folderSelection.servers.dialog.errorConnect"), probe.errorCode)
+    const existing = remoteServers().find((server) => server.baseUrl === probe.normalizedUrl)
 
     const profile = await saveRemoteServerProfile({
-      // Pairing a saved server again reuses its window storage instead of adding a duplicate.
-      id: input.id ?? (pairing ? remoteServers().find((server) => server.baseUrl === probe.normalizedUrl)?.id : undefined),
-      name,
+      // Adding or pairing a saved server again reuses its window storage instead of adding a duplicate.
+      id: input.id ?? existing?.id,
+      name: input.name.trim() || existing?.name || name,
       baseUrl: probe.normalizedUrl,
       skipTlsVerify,
     })
@@ -115,11 +120,21 @@ export function useRemoteServerProfiles() {
     }
   }
 
+  /**
+   * The server dialog's submit: saves the server, then opens it on Connect, or always for a pairing
+   * link, whose single-use code is consumed where the server opens (a tab, else its own window).
+   */
+  const submitServer = async (input: RemoteServerInput, open: boolean) => {
+    if (!opensRemoteProjectTab(input)) return void await saveServer(input, open)
+    const { profile, entryUrl } = await saveProfile(input)
+    if (open || entryUrl) openServer(profile, entryUrl)
+  }
+
   // A removed server's project tabs close with it.
   const removeServer = (id: string) => {
     closeRemoteProjectTabsForServer(id)
     removeRemoteServerProfile(id)
   }
 
-  return { remoteServers, connectingServerId, saveProfile, saveServer, connectSavedServer, openServer, removeRemoteServerProfile: removeServer }
+  return { remoteServers, connectingServerId, saveServer, submitServer, openServer, removeRemoteServerProfile: removeServer }
 }

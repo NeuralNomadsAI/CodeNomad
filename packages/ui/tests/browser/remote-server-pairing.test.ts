@@ -78,26 +78,6 @@ test("pairing a saved server again reuses it instead of adding a duplicate", asy
   } finally { await page.close() }
 })
 
-test("the Settings Servers card renames a saved server in place, keeping its identity, without probing it", async () => {
-  const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
-  try {
-    await page.goto(`${url}?scenario=saved&card`)
-    await page.getByRole("button", { name: "Edit server: Desk", exact: true }).click()
-    const dialog = page.getByRole("dialog", { name: "Edit server", exact: true })
-    await dialog.waitFor()
-    assert.equal(await dialog.getByLabel("Server URL").inputValue(), TUNNEL)
-    await dialog.getByLabel("Server name").fill("Office")
-    await dialog.getByRole("button", { name: "Save", exact: true }).click()
-    await dialog.waitFor({ state: "detached" })
-    await page.getByRole("button", { name: "Edit server: Office", exact: true }).waitFor()
-    const state = JSON.parse(await page.evaluate(() => (window as unknown as { uiState: () => string }).uiState()))
-    assert.deepEqual(state.remoteServers.map((server: { id: string; name: string; baseUrl: string }) => [server.id, server.name, server.baseUrl]),
-      [["saved-tunnel", "Office", TUNNEL]])
-    assert.deepEqual(await page.evaluate(() => (window as unknown as { probes: string[] }).probes), [])
-    assert.deepEqual(await opened(page), [])
-  } finally { await page.close() }
-})
-
 test("an ordinary address saved without Connect opens no window", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
   try {

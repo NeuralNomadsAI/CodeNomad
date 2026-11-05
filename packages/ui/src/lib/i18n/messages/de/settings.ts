@@ -301,6 +301,8 @@ export const settingsMessages = {
   "settings.behavior.holdLongAssistantReplies.subtitle": "Automatisches Folgen beenden, wenn eine laufende Antwort über das Ansichtsfenster hinausgeht.",
   "settings.nav.notifications": "Benachrichtigungen",
   "settings.nav.remote": "Remote-Zugriff",
+  "settings.nav.servers": "Server",
+  "settings.servers.open": "Öffnen",
   "settings.nav.speech": "Sprache",
   "settings.nav.providers": "Anbieter",
   "settings.nav.opencode": "OpenCode",

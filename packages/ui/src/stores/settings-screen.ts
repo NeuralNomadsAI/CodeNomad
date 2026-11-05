@@ -11,6 +11,7 @@ export type SettingsSectionId =
   | "notifications"
   | "speech"
   | "remote"
+  | "servers"
   | "opencode"
   | "providers"
   | "missions"

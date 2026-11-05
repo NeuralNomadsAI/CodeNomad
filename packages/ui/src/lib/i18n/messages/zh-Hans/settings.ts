@@ -301,6 +301,8 @@ export const settingsMessages = {
   "settings.behavior.holdLongAssistantReplies.subtitle": "当流式回复超出视口时停止自动跟随。",
   "settings.nav.notifications": "通知",
   "settings.nav.remote": "远程访问",
+  "settings.nav.servers": "服务器",
+  "settings.servers.open": "打开",
   "settings.nav.speech": "语音",
   "settings.nav.providers": "提供商",
   "settings.nav.opencode": "OpenCode",

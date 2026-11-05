@@ -301,6 +301,8 @@ export const settingsMessages = {
   "settings.behavior.holdLongAssistantReplies.subtitle": "Deja de seguir automáticamente cuando una respuesta en curso supera la ventana.",
   "settings.nav.notifications": "Notificaciones",
   "settings.nav.remote": "Acceso remoto",
+  "settings.nav.servers": "Servidores",
+  "settings.servers.open": "Abrir",
   "settings.nav.speech": "Voz",
   "settings.nav.providers": "Proveedores",
   "settings.nav.opencode": "OpenCode",

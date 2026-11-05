@@ -120,7 +120,7 @@
 
 .new-instance-launcher-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-xs);
   padding: var(--space-xs) var(--window-inline-padding);
   border-top: 1px solid color-mix(in srgb, var(--border-base) 50%, transparent);

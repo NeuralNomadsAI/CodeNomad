@@ -301,6 +301,8 @@ export const settingsMessages = {
   "settings.behavior.holdLongAssistantReplies.subtitle": "ストリーミング応答が画面を超えたときに自動追従を停止します。",
   "settings.nav.notifications": "通知",
   "settings.nav.remote": "リモートアクセス",
+  "settings.nav.servers": "サーバー",
+  "settings.servers.open": "開く",
   "settings.nav.speech": "音声",
   "settings.nav.providers": "プロバイダー",
   "settings.nav.opencode": "OpenCode",

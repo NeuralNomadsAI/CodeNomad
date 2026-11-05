@@ -301,6 +301,8 @@ export const settingsMessages = {
   "settings.behavior.holdLongAssistantReplies.subtitle": "הפסק מעקב אוטומטי כאשר תשובה זורמת חורגת מחלון התצוגה.",
   "settings.nav.notifications": "התראות",
   "settings.nav.remote": "גישה מרוחקת",
+  "settings.nav.servers": "שרתים",
+  "settings.servers.open": "פתיחה",
   "settings.nav.speech": "קול",
   "settings.nav.providers": "ספקים",
   "settings.nav.opencode": "OpenCode",

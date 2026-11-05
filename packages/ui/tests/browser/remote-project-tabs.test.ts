@@ -98,6 +98,20 @@ async function open(page: Page, path: string, scenario: Scenario) {
   return { created, probes, state: () => state }
 }
 
+// Unfolds Browse, which stays unfolded in a window once opened.
+async function browse(page: Page) {
+  const toggle = page.getByRole("button", { name: "Browse", exact: true })
+  if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click()
+}
+
+async function addServer(page: Page) {
+  await browse(page)
+  await page.getByRole("button", { name: "Add server…", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "Connect to Server" })
+  await dialog.waitFor()
+  return dialog
+}
+
 const views = (page: Page) => page.evaluate(() => (window as any).fixtureViews as {
   opened: Array<{ viewId: string; profileId: string; baseUrl: string; url: string; bounds: { width: number; height: number } }>
   updates: Array<{ viewId: string; visible: boolean }>; closed: string[]; windows: Array<{ id: string }>
@@ -114,7 +128,7 @@ test("the embedded page shows no tab bar or home, only a folder picker that open
     await picker.waitFor()
     assert.equal(await page.locator(".tab-bar-instance").count(), 0)
     assert.equal(await page.locator(".folder-home-root").count(), 0)
-    assert.equal(await page.getByRole("button", { name: "Remotes" }).count(), 0)
+    assert.equal(await page.locator(".browse-menu").count(), 0)
     await picker.getByRole("button", { name: "Browse Folders" }).waitFor()
     await picker.getByRole("button", { name: /App/ }).click()
     await page.waitForFunction(() => document.title === "App")
@@ -163,8 +177,11 @@ test("without the parameter a remote page keeps its full interface and lists no 
     try {
       await open(page, "", { ...scenario, uiState: { remoteServers: [server("box")] } })
       await page.locator(".folder-home-root").waitFor()
-      // A web client or Remote Control device never opens another server (no rebound).
-      assert.equal(await page.getByRole("button", { name: "Remotes" }).count(), 0)
+      // A web client or Remote Control device browses only its own folders, never another server (no rebound).
+      await browse(page)
+      await page.getByRole("button", { name: "This computer", exact: true }).waitFor()
+      assert.equal(await page.locator("[data-remote-server]").count(), 0)
+      assert.equal(await page.getByRole("button", { name: "Add server…" }).count(), 0)
     } finally { await page.close() }
   }
 })
@@ -173,7 +190,7 @@ test("a local window opens a saved server as a project tab whose view follows th
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
   try {
     const fixture = await open(page, "", { context: "local", host: "electron", uiState: { remoteServers: [server("box"), server("lab", { skipTlsVerify: true })] } })
-    await page.getByRole("button", { name: "Remotes" }).click()
+    await browse(page)
     await page.getByRole("button", { name: "Open a project on Box" }).click()
     const tab = page.locator(".tab-pill", { hasText: "Box" })
     await tab.waitFor()
@@ -204,7 +221,7 @@ test("a local window opens a saved server as a project tab whose view follows th
     await page.waitForFunction((viewId) => (window as any).fixtureViews.updates.some((update: { viewId: string; visible: boolean }) => update.viewId === viewId && !update.visible), opened.viewId)
 
     // A server with an unverified certificate keeps its separate window.
-    await page.getByRole("button", { name: "Remotes" }).click()
+    await browse(page)
     await page.getByRole("button", { name: "Open a project on lab" }).click()
     await page.waitForFunction(() => (window as any).fixtureViews.windows.length === 1)
     assert.equal((await views(page)).windows[0].id, "lab")
@@ -212,20 +229,20 @@ test("a local window opens a saved server as a project tab whose view follows th
   } finally { await page.close() }
 })
 
-test("a pasted pairing link adds the server and pairs in its new tab; other text is refused", async () => {
+test("Add server pairs a pasted pairing link in its new tab and refuses an address carrying credentials", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
   try {
     const fixture = await open(page, "", { context: "local", host: "electron" })
-    await page.getByRole("button", { name: "Remotes" }).click()
-    const field = page.getByRole("textbox", { name: "Add server" })
-    await field.fill("http://user:secret@box.example:4096")
-    await field.press("Enter")
-    await page.getByRole("alert").waitFor()
-    assert.equal((await views(page)).opened.length, 0)
+    const dialog = await addServer(page)
+    await dialog.getByLabel("Server URL").fill("http://user:secret@box.example:4096")
+    await dialog.getByRole("button", { name: "Connect", exact: true }).click()
+    await dialog.getByText("Could not connect to the remote server.").waitFor()
+    assert.deepEqual(fixture.probes, [])
 
+    // The name is optional; a pairing link opens even from Save, since opening consumes its code.
     const tunnel = "https://desk.opentunnel.test"
-    await field.fill(`${tunnel}/remote-pair#single-use-code`)
-    await field.press("Enter")
+    await dialog.getByLabel("Server URL").fill(`${tunnel}/remote-pair#single-use-code`)
+    await dialog.getByRole("button", { name: "Save", exact: true }).click()
     await page.locator(".tab-pill", { hasText: "desk.opentunnel.test" }).waitFor()
     await page.waitForFunction(() => (window as any).fixtureViews.opened.length === 1)
     const [opened] = (await views(page)).opened
@@ -237,59 +254,32 @@ test("a pasted pairing link adds the server and pairs in its new tab; other text
   } finally { await page.close() }
 })
 
-test("Remotes replaces the home Servers tab: saved servers are listed, edited there and name their tabs", async () => {
+test("Browse lists saved servers by name and a server's tab shows that name before a project is chosen", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
   try {
     // An existing user's profiles, one saved under its pasted address.
     const pasted = server("pasted", { name: "127.0.0.1:9911", baseUrl: "http://127.0.0.1:9911" })
-    const fixture = await open(page, "", { context: "local", host: "electron", uiState: { remoteServers: [server("box"), pasted] } })
+    await open(page, "", { context: "local", host: "electron", uiState: { remoteServers: [server("box"), pasted] } })
     await page.locator(".folder-home-root").waitFor()
-    assert.equal(await page.getByRole("button", { name: /^Servers/ }).count(), 0)
-    assert.equal(await page.getByRole("button", { name: "Connect CodeNomad Server", exact: true }).count(), 0)
-
-    await page.getByRole("button", { name: "Remotes" }).click()
-    await page.getByRole("button", { name: "Open a project on Box" }).waitFor()
-    const row = page.getByRole("button", { name: "Open a project on 127.0.0.1" })
-    await row.click()
-    // Before a project is chosen the tab shows the server's name, not its raw address.
+    await browse(page)
+    assert.deepEqual(await page.locator(".browse-menu-row").allTextContents(), ["This computer", "Box", "127.0.0.1", "Add server…"])
+    // Servers are managed in Settings, not from Browse.
+    await page.getByRole("button", { name: "Open a project on Box" }).click({ button: "right" })
+    assert.equal(await page.getByRole("menuitem").count(), 0)
+    await page.getByRole("button", { name: "Open a project on 127.0.0.1" }).click()
     await page.locator(".tab-pill", { hasText: "127.0.0.1" }).waitFor()
     assert.equal(await page.locator(".tab-pill", { hasText: "127.0.0.1:9911" }).count(), 0)
-
-    await page.locator(".new-instance-button").click()
-    await page.getByRole("button", { name: "Remotes" }).click()
-    await page.getByRole("button", { name: "Open a project on 127.0.0.1" }).click({ button: "right" })
-    await page.getByRole("menuitem", { name: "Edit server" }).click()
-    const dialog = page.getByRole("dialog", { name: "Edit server" })
-    await dialog.waitFor()
-    assert.equal(await dialog.getByLabel("Server URL").inputValue(), "http://127.0.0.1:9911")
-    assert.equal(await dialog.getByRole("button", { name: "Connect", exact: true }).count(), 0)
-    await dialog.getByLabel("Server name").fill("Lab VM")
-    await dialog.getByRole("button", { name: "Save", exact: true }).click()
-    await dialog.waitFor({ state: "detached" })
-
-    // Renaming keeps the server's identity, and so its storage and sign-in, without probing it.
-    const saved = (fixture.state() as { remoteServers: Array<{ id: string; name: string; baseUrl: string; skipTlsVerify: boolean; createdAt: string }> }).remoteServers
-    const renamed = saved.find((entry) => entry.id === "pasted")!
-    assert.deepEqual([renamed.name, renamed.baseUrl, renamed.skipTlsVerify, renamed.createdAt], ["Lab VM", pasted.baseUrl, false, pasted.createdAt])
-    assert.equal(saved.length, 2)
-    assert.deepEqual(fixture.probes, [])
-    await page.getByRole("button", { name: "Open a project on Lab VM" }).waitFor()
-    assert.equal(await page.locator(".tab-pill", { hasText: "Lab VM" }).count(), 1)
   } finally { await page.close() }
 })
 
-test("a pasted address whose certificate fails the check is offered in the server dialog and keeps its own window", async () => {
+test("an added address whose certificate fails the check can skip it and keeps its own window", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
   try {
     const fixture = await open(page, "", { context: "local", host: "electron" })
-    await page.getByRole("button", { name: "Remotes" }).click()
-    const field = page.getByRole("textbox", { name: "Add server" })
-    await field.fill("https://selfsigned.example")
-    await field.press("Enter")
-    const dialog = page.getByRole("dialog", { name: "Connect to Server" })
-    await dialog.waitFor()
+    const dialog = await addServer(page)
+    await dialog.getByLabel("Server URL").fill("https://selfsigned.example")
+    await dialog.getByRole("button", { name: "Connect", exact: true }).click()
     await dialog.getByText("Certificate check failed while connecting to the remote server.").waitFor()
-    assert.equal(await dialog.getByLabel("Server URL").inputValue(), "https://selfsigned.example")
     await dialog.getByRole("checkbox").check()
     await dialog.getByRole("button", { name: "Connect", exact: true }).click()
     await page.waitForFunction(() => (window as any).fixtureViews.windows.length === 1)

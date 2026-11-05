@@ -167,3 +167,90 @@ test("a row hint from another window focuses the linked setting row on the nativ
     assert.deepEqual(errors, [])
   } finally { await context.close() }
 })
+
+test("Settings → Servers is the one place that opens, edits, adds and removes saved servers; Remote Access keeps none", async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 760 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.addInitScript({ content: `{
+    const w = window
+    w.__CODENOMAD_RUNTIME_HOST__ = "electron"
+    w.__CODENOMAD_WINDOW_CONTEXT__ = "preferences"
+    w.windows = []
+    w.electronAPI = {
+      getPreferencesRequest: async () => ({ section: "remote" }),
+      acceptPreferencesRequest: async () => {},
+      preferencesReady: async () => { w.ready = true },
+      onPreferencesSection: () => () => {},
+      onPreferencesCloseRequested: () => () => {},
+      onPreferencesTransitionRequested: () => () => {},
+      openRemoteWindow: async (payload) => { w.windows.push(payload.id) },
+      closeWindow: async () => {},
+    }
+  }` })
+  let state: Record<string, unknown> = { remoteServers: [{ id: "box", name: "Box", baseUrl: "https://box.example", skipTlsVerify: false,
+    createdAt: "2026-11-01T10:00:00.000Z", updatedAt: "2026-11-01T10:00:00.000Z" }] }
+  const probes: string[] = []
+  await page.route("**/api/**", route => {
+    const request = route.request()
+    const pathname = new URL(request.url()).pathname
+    if (pathname === "/api/remote-servers/probe") {
+      const { baseUrl } = request.postDataJSON() as { baseUrl: string }
+      probes.push(baseUrl)
+      return route.fulfill({ json: { ok: true, reachable: true, normalizedUrl: baseUrl, skipTlsVerify: false, requiresAuth: true, authenticated: false } })
+    }
+    if (pathname === "/api/storage/state/ui" && request.method() === "PATCH") {
+      state = { ...state, ...(request.postDataJSON() as Record<string, unknown>) }
+      return route.fulfill({ json: state })
+    }
+    return route.fulfill({ json: pathname === "/api/storage/state/ui" ? state : {} })
+  })
+  const servers = () => (state.remoteServers as Array<{ id: string; name: string; baseUrl: string }>).map(({ id, name, baseUrl }) => [id, name, baseUrl])
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => (window as any).ready)
+    await page.locator(".settings-screen-scroll").getByText("Remote Control", { exact: false }).first().waitFor()
+    const nav = await page.locator(".settings-nav-button").allTextContents()
+    assert.equal(nav[nav.indexOf("Remote Access") + 1], "Servers")
+    // Remote Access only lets other devices drive this computer.
+    for (const gone of ["Saved Servers", "Connect CodeNomad Server", "Add server…", "Box"]) {
+      assert.equal(await page.locator(".settings-screen-scroll").getByText(gone, { exact: true }).count(), 0, gone)
+    }
+
+    await page.getByRole("button", { name: "Servers", exact: true }).click()
+    const row = page.locator('[data-remote-server="box"]')
+    await row.getByText("https://box.example").waitFor()
+    assert.equal(await row.locator("svg").count() >= 1, true, "the row shows the server icon")
+
+    // Editing keeps the server's identity without probing it.
+    await page.getByRole("button", { name: "Edit server: Box", exact: true }).click()
+    const edit = page.getByRole("dialog", { name: "Edit server", exact: true })
+    await edit.getByLabel("Server name").fill("Office")
+    await edit.getByRole("button", { name: "Save", exact: true }).click()
+    await edit.waitFor({ state: "detached" })
+    await page.getByRole("button", { name: "Edit server: Office", exact: true }).waitFor()
+    assert.deepEqual(servers(), [["box", "Office", "https://box.example"]])
+    assert.deepEqual(probes, [])
+
+    // Adding: the name is optional, the server then reads as its host name.
+    await page.getByRole("button", { name: "Add server…", exact: true }).click()
+    const add = page.getByRole("dialog", { name: "Connect to Server", exact: true })
+    await add.getByLabel("Server URL").fill("https://lab.example")
+    await add.getByRole("button", { name: "Save", exact: true }).click()
+    await add.waitFor({ state: "detached" })
+    await page.getByRole("button", { name: "Edit server: lab.example", exact: true }).waitFor()
+    assert.deepEqual(probes, ["https://lab.example"])
+
+    // Preferences has no tabs: a server opens in its own window.
+    await page.getByRole("button", { name: "Open: Office", exact: true }).click()
+    await page.waitForFunction(() => (window as any).windows.length === 1)
+    assert.deepEqual(await page.evaluate(() => (window as any).windows), ["box"])
+
+    await page.getByRole("button", { name: "Remove saved server: Office", exact: true }).click()
+    // The confirmation's own button; the row's carries the server's name.
+    await page.getByRole("button", { name: "Remove saved server", exact: true }).click()
+    await row.waitFor({ state: "detached" })
+    assert.deepEqual(servers().map(([, name]) => name), ["lab.example"])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})

@@ -1,8 +1,8 @@
 import { Popover } from "@kobalte/core/popover"
 import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js"
-import { Folder, FolderPlus, GitBranch, Hourglass, Search, Server } from "lucide-solid"
+import { Folder, GitBranch, Hourglass, Search, Server } from "lucide-solid"
 import { createNewInstanceDialogs } from "./new-instance-dialogs"
-import RemoteProjectMenu from "./remote-project-menu"
+import BrowseMenu from "./browse-menu"
 import { useI18n } from "../lib/i18n"
 import { formatRelativeTime, getDisplayPath, getProjectDisplayName } from "../lib/recent-folder-display"
 import type { LaunchableRecent } from "../lib/remote-project-recents"
@@ -199,10 +199,6 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
             </div>
 
             <div class="new-instance-launcher-actions">
-              <button type="button" class="window-action" disabled={props.isLoading} onClick={() => run(() => void dialogs.browse())}>
-                <FolderPlus class="w-4 h-4" aria-hidden="true" />
-                <span>{t("newInstanceLauncher.browse")}</span>
-              </button>
               <button type="button" class="window-action" disabled={props.isLoading} onClick={() => run(props.onNewTemporaryInstance)}>
                 <Hourglass class="w-4 h-4" aria-hidden="true" />
                 <span>{t("newInstanceLauncher.temporary")}</span>
@@ -212,7 +208,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
                 <span>{t("newInstanceLauncher.clone")}</span>
               </button>
             </div>
-            <RemoteProjectMenu isLoading={props.isLoading} onOpened={close} />
+            <BrowseMenu isLoading={props.isLoading} onRun={close} onBrowseLocal={() => void dialogs.browse()} />
           </Popover.Content>
         </Popover.Portal>
       </Popover>

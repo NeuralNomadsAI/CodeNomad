@@ -302,6 +302,8 @@ export const settingsMessages = {
   "settings.behavior.holdLongAssistantReplies.subtitle": "Stop following automatically when a streaming reply grows beyond the viewport.",
   "settings.nav.notifications": "Notifications",
   "settings.nav.remote": "Remote Access",
+  "settings.nav.servers": "Servers",
+  "settings.servers.open": "Open",
   "settings.nav.speech": "Speech",
   "settings.nav.providers": "Providers",
   "settings.nav.opencode": "OpenCode",

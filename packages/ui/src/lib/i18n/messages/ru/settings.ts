@@ -301,6 +301,8 @@ export const settingsMessages = {
   "settings.behavior.holdLongAssistantReplies.subtitle": "Прекращать автоматическое следование, когда потоковый ответ выходит за пределы окна.",
   "settings.nav.notifications": "Уведомления",
   "settings.nav.remote": "Удалённый доступ",
+  "settings.nav.servers": "Серверы",
+  "settings.servers.open": "Открыть",
   "settings.nav.speech": "Речь",
   "settings.nav.providers": "Провайдеры",
   "settings.nav.opencode": "OpenCode",

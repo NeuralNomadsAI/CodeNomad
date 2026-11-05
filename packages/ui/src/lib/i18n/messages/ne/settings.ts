@@ -301,6 +301,8 @@ export const settingsMessages = {
   "settings.behavior.holdLongAssistantReplies.subtitle": "स्ट्रिमिङ जवाफ दृश्यभन्दा बाहिर जाँदा स्वचालित पछ्याइ रोक्नुहोस्।",
   "settings.nav.notifications": "सूचनाहरू",
   "settings.nav.remote": "रिमोट पहुँच",
+  "settings.nav.servers": "सर्भरहरू",
+  "settings.servers.open": "खोल्नुहोस्",
   "settings.nav.speech": "वाचन (Speech)",
   "settings.nav.providers": "प्रदायकहरू",
   "settings.nav.opencode": "OpenCode",

@@ -293,6 +293,8 @@ export const settingsMessages = {
   "settings.behavior.holdLongAssistantReplies.subtitle": "Streaming bir yanıt görünüm alanını aşınca otomatik takibi durdurur.",
   "settings.nav.notifications": "Bildirimler",
   "settings.nav.remote": "Uzak Erişim",
+  "settings.nav.servers": "Sunucular",
+  "settings.servers.open": "Aç",
   "settings.nav.speech": "Konuşma",
   "settings.nav.providers": "Provider'lar",
   "settings.nav.opencode": "OpenCode",

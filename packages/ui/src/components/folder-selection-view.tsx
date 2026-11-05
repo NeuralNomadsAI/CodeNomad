@@ -3,8 +3,8 @@ import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, S
 import { removeRemoteProjectRecent, useConfig } from "../stores/preferences"
 import { launchableRecents, openRemoteProject } from "../stores/remote-project-open"
 import { recentKey, type LaunchableRecent } from "../lib/remote-project-recents"
-import RemoteProjectMenu from "./remote-project-menu"
-import { isHotkeyRecording, matchesHotkey, withHotkey } from "../lib/hotkeys"
+import BrowseMenu from "./browse-menu"
+import { isHotkeyRecording, matchesHotkey } from "../lib/hotkeys"
 import ProjectRenameDialog from "./project-rename-dialog"
 import { useFolderDrop } from "../lib/hooks/use-folder-drop"
 import VersionPill from "./version-pill"
@@ -593,23 +593,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
               <div class="panel shrink-0">
                 <div class="panel-body flex flex-col gap-3">
                   <button
-                    onClick={() => void handleBrowse()}
-                    disabled={props.isLoading}
-                    title={withHotkey(t("folderSelection.browse.button"), "browse-folder")}
-                    class="button-primary w-full flex items-center justify-center text-sm disabled:cursor-not-allowed"
-                    onMouseEnter={() => setFocusMode("new")}
-                  >
-                    <div class="flex items-center gap-2">
-                      <FolderPlus class="w-4 h-4" />
-                      <span>
-                        {props.isLoading
-                          ? t("folderSelection.browse.buttonOpening")
-                          : t("folderSelection.browse.button")}
-                      </span>
-                    </div>
-                  </button>
-
-                  <button
                     type="button"
                     onClick={openCloneDialog}
                     disabled={props.isLoading}
@@ -647,7 +630,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     </div>
                   </button>
 
-                  <RemoteProjectMenu isLoading={isLoading()} />
+                  <BrowseMenu isLoading={isLoading()} onBrowseLocal={() => void handleBrowse()} />
                 </div>
 
                 {/* OpenCode settings section */}

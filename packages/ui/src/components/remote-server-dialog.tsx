@@ -10,8 +10,6 @@ interface RemoteServerDialogProps {
   onSubmit: (input: RemoteServerInput, openWindow: boolean) => Promise<unknown>
   /** Edits this saved server (same id, so its storage and sign-in stay); Save only. */
   initial?: RemoteServerInput
-  /** Why the dialog opened, e.g. a pasted address whose certificate failed the check. */
-  initialError?: string
 }
 
 export const RemoteServerDialog: Component<RemoteServerDialogProps> = (props) => {
@@ -29,7 +27,7 @@ export const RemoteServerDialog: Component<RemoteServerDialogProps> = (props) =>
     setName(props.initial?.name ?? "")
     setBaseUrl(props.initial?.baseUrl ?? "")
     setSkipTlsVerify(props.initial?.skipTlsVerify ?? false)
-    setError(props.initialError ?? null)
+    setError(null)
   })
 
   const submit = async (openWindow: boolean) => {
@@ -58,10 +56,6 @@ export const RemoteServerDialog: Component<RemoteServerDialogProps> = (props) =>
               </Dialog.Title>
               <Dialog.Description class="text-sm text-secondary mt-2">{t("folderSelection.servers.dialog.description")}</Dialog.Description>
             </div>
-            <label class="flex flex-col gap-2 text-sm text-secondary">
-              <span>{t("folderSelection.servers.dialog.name")}</span>
-              <input class="selector-input w-full" value={name()} onInput={(event) => setName(event.currentTarget.value)} placeholder={t("folderSelection.servers.dialog.namePlaceholder")} />
-            </label>
             <div class="flex flex-col gap-2 text-sm text-secondary">
               <label class="flex flex-col gap-2">
                 <span>{t("folderSelection.servers.dialog.url")}</span>
@@ -69,6 +63,11 @@ export const RemoteServerDialog: Component<RemoteServerDialogProps> = (props) =>
               </label>
               <span id={urlHintId} class="text-xs">{t("folderSelection.servers.dialog.urlHint")}</span>
             </div>
+            {/* Optional: a server without a name reads as its host name. */}
+            <label class="flex flex-col gap-2 text-sm text-secondary">
+              <span>{t("folderSelection.servers.dialog.name")}</span>
+              <input class="selector-input w-full" value={name()} onInput={(event) => setName(event.currentTarget.value)} placeholder={t("folderSelection.servers.dialog.namePlaceholder")} />
+            </label>
             <label class="flex items-start gap-3 text-sm text-secondary">
               <input type="checkbox" checked={skipTlsVerify()} onChange={(event) => setSkipTlsVerify(event.currentTarget.checked)} />
               <span>{t("folderSelection.servers.dialog.skipTls")}</span>
