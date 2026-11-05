@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import { CODENOMAD_API_BASE } from "./api-base"
+import { localTransport, resolveBackendUrl, type BackendHttp } from "./backend-transport"
 
 /** Browser login recovery only. Never retries a failed application request or
  * interprets an upstream OpenCode 401 as proof of an expired CodeNomad login. */
@@ -10,7 +10,7 @@ export function createAuthRecovery(base: string | undefined, fetcher: typeof fet
   const restored = new Set<() => void>()
   let generation = 0
   let checking: Promise<void> | undefined
-  const url = (path: string) => base ? new URL(path, base).toString() : path
+  const url = (path: string) => resolveBackendUrl(base, path)
 
   function authenticated() {
     const wasRequired = required()
@@ -70,10 +70,20 @@ export function createAuthRecovery(base: string | undefined, fetcher: typeof fet
   }
 }
 
-export const authRecovery = createAuthRecovery(CODENOMAD_API_BASE)
+export type AuthRecovery = ReturnType<typeof createAuthRecovery>
 
-export const authenticatedFetch: typeof fetch = async (input, init) => {
-  const response = await globalThis.fetch(input, init)
-  if (response.status === 401) void authRecovery.check()
-  return response
+/** Probes only `auth`'s backend on a 401, whichever URL answered it. */
+export function createAuthenticatedFetch(auth: AuthRecovery, fetcher: typeof fetch = (input, init) => globalThis.fetch(input, init)): typeof fetch {
+  return async (input, init) => {
+    const response = await fetcher(input, init)
+    if (response.status === 401) void auth.check()
+    return response
+  }
 }
+
+export const authRecovery = createAuthRecovery(localTransport.baseUrl)
+
+export const authenticatedFetch: typeof fetch = createAuthenticatedFetch(authRecovery)
+
+/** The local backend's transport with its authenticated fetch. */
+export const localHttp: BackendHttp = { ...localTransport, fetch: authenticatedFetch }

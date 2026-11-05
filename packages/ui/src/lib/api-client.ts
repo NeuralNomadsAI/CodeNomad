@@ -82,8 +82,8 @@ import { HttpResponseError, retryFileSearch } from "./retryable-file-search"
 import { deleteMissionRequest, type MissionDeletionRequest } from "./mission-cleanup"
 import { missionMutationRequest } from "./mission-mutation"
 import { missionLifecycleRequest, type MissionLifecycleInput } from "./mission-lifecycle-request"
-import { authenticatedFetch } from "./auth-recovery"
-import { CODENOMAD_API_BASE as API_BASE } from "./api-base"
+import { localHttp } from "./auth-recovery"
+import type { BackendHttp } from "./backend-transport"
 import { backgroundReads } from "./background-read-queue"
 import { readMissionTaskPage, readMissionPanelWindow, readMissionCurrentIdentity, type MissionPanelReadScope } from "./mission-task-page-read"
 import type { MissionCurrentSource } from "../../../server/src/missions/mission-current-source"
@@ -94,22 +94,6 @@ import { validMissionContentSlice } from "./mission-content-slice"
 import { assertTaskReadLive, TASK_READ_TIMEOUT_MS, MissionTaskPageReadError } from "./mission-task-read-lifetime"
 import type { MissionTaskPageContext } from "./mission-task-page-schema"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
-
-const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
-const EVENTS_URL = buildEventsUrl(API_BASE, DEFAULT_EVENTS_PATH)
-
-export const CODENOMAD_API_BASE = API_BASE
-
-function buildEventsUrl(base: string | undefined, path: string): string {
-  if (path.startsWith("http://") || path.startsWith("https://")) {
-    return path
-  }
-  if (base) {
-    const normalized = path.startsWith("/") ? path : `/${path}`
-    return `${base}${normalized}`
-  }
-  return path
-}
 
 const httpLogger = getLogger("api")
 const sseLogger = getLogger("sse")
@@ -123,7 +107,7 @@ function secondaryRead<T>(signal: AbortSignal | undefined, read: () => Promise<T
   return backgroundReads.run(signal ?? new AbortController().signal, read, priority)
 }
 
-function currentPassageTransport(instanceId: string, source: MissionCurrentSource, scope: MissionPanelReadScope, body?: MissionContentRequest) {
+function currentPassageTransport(ctx: BackendHttp, instanceId: string, source: MissionCurrentSource, scope: MissionPanelReadScope, body?: MissionContentRequest) {
   source = structuredClone(source)
   body = body && structuredClone(body)
   const deadline = Math.min(scope.deadline ?? Infinity, performance.now() + TASK_READ_TIMEOUT_MS)
@@ -135,7 +119,7 @@ function currentPassageTransport(instanceId: string, source: MissionCurrentSourc
       const payload = JSON.stringify({ source, selector: JSON.parse(selector), ...(body ? { body } : {}) })
       if (new TextEncoder().encode(payload).length > 16384) throw new MissionTaskPageReadError("invalid")
       const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(source.scheduleID)}/current/${encodeURIComponent(source.passageID)}/page`
-      return authenticatedFetch(API_BASE ? new URL(path, API_BASE).toString() : path, { method: "POST", body: payload, signal, credentials: "include", headers: { "Content-Type": "application/json" } })
+      return ctx.fetch(ctx.url(path), { method: "POST", body: payload, signal, credentials: "include", headers: { "Content-Type": "application/json" } })
     } }
 }
 
@@ -187,8 +171,8 @@ async function readErrorMessage(response: Response): Promise<string> {
   return text
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const url = API_BASE ? new URL(path, API_BASE).toString() : path
+async function sendRequest<T>(ctx: BackendHttp, path: string, init?: RequestInit): Promise<T> {
+  const url = ctx.url(path)
   const headers = normalizeHeaders(init?.headers)
   if (init?.body !== undefined) {
     headers["Content-Type"] = "application/json"
@@ -201,7 +185,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   logHttp(`${method} ${logPath}`)
 
   try {
-    const response = await authenticatedFetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
+    const response = await ctx.fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
     if (!response.ok) {
       const body = await response.clone().json().catch(() => undefined)
       const code = typeof body?.code === "string" && body.code.length <= 100 ? body.code : undefined
@@ -221,8 +205,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
-async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
-  const url = API_BASE ? new URL(path, API_BASE).toString() : path
+async function sendRawRequest(ctx: BackendHttp, path: string, init?: RequestInit): Promise<Response> {
+  const url = ctx.url(path)
   const headers = normalizeHeaders(init?.headers)
   if (init?.body !== undefined && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json"
@@ -232,7 +216,7 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
   const startedAt = Date.now()
   logHttp(`${method} ${path}`)
 
-  const response = await authenticatedFetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
+  const response = await ctx.fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
   if (!response.ok) {
     const message = await readErrorMessage(response)
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
@@ -244,749 +228,760 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 }
 
 
-export const serverApi = {
-  fetchPermissionReceipts(instanceId: string, sessionId: string, scope: { messageId: string } | { unanchored: true }, cursor?: string, signal?: AbortSignal): Promise<PermissionReceiptPage> {
-    const params = new URLSearchParams("messageId" in scope ? { messageId: scope.messageId } : { unanchored: "true" })
-    if (cursor) params.set("cursor", cursor)
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/sessions/${encodeURIComponent(sessionId)}/permission-receipts?${params}`, { signal })
-  },
-  fetchHistoryWindow(instanceId: string, sessionID: string, target: NavigationTarget, signal?: AbortSignal): Promise<NavigationWindowResult> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/window`, {
-      method: "POST", body: JSON.stringify({ sessionID, target }), signal,
-      // A transcript page, like the native message list: large tool images load on demand.
-      headers: { [DEFERRED_MEDIA_HEADER]: DEFERRED_MEDIA_VALUE },
-    })
-  },
-  fetchSessionOutline(instanceId: string, sessionID: string, cursor?: { after: number; through: number }, signal?: AbortSignal, after?: number, known?: OutlineCheckpoint[]): Promise<OutlineResult> {
-    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outline`, {
-      method: "POST", body: JSON.stringify({ sessionID, cursor, after, known }), signal,
-    }))
-  },
-  fetchOutlinePreviews(instanceId: string, sessionID: string, messageIDs: string[], signal?: AbortSignal): Promise<OutlinePreviewResult> {
-    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outlinePreview`, {
-      method: "POST", body: JSON.stringify({ sessionID, messageIDs }), signal,
-    }))
-  },
-  querySessionHistory(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryResult> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/query`, {
-      method: "POST", body: JSON.stringify(input), signal,
-    })
-  },
-  queryRankedHistory(instanceId: string, input: HistoryRankedInput, signal?: AbortSignal): Promise<RankedHistoryResult> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/ranked`, {
-      method: "POST", body: JSON.stringify(input), signal,
-    })
-  },
-  pruneSessionHistory(instanceId: string, input: PruneBatch, signal?: AbortSignal): Promise<PruneBatchResult> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/prune`, {
-      method: "POST", body: JSON.stringify(input), signal,
-    })
-  },
-  imagesConversation(instanceId: string, input: ImagesConversationRequest): Promise<ImagesConversationResponse> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/images-conversation`, {
-      method: "POST", body: JSON.stringify(input),
-    })
-  },
-  fetchSessionGoal(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<SessionGoalResponse> {
-    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/sessions/${encodeURIComponent(sessionId)}/goal`, { signal }))
-  },
-  pruneSessionMessage(instanceId: string, input: PruneRequest): Promise<PruneResult> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-pruning/prune`, {
-      method: "POST", body: JSON.stringify(input),
-    })
-  },
-  fetchWorkspaces(signal?: AbortSignal): Promise<WorkspaceDescriptor[]> {
-    return request<WorkspaceDescriptor[]>("/api/workspaces", { signal })
-  },
+/** Every CodeNomad HTTP and events call of one backend, addressed through `ctx`. */
+export function createServerApi(ctx: BackendHttp) {
+  const request = <T>(path: string, init?: RequestInit) => sendRequest<T>(ctx, path, init)
+  const requestRaw = (path: string, init?: RequestInit) => sendRawRequest(ctx, path, init)
 
-  fetchProviderUsage(instanceId: string, sessionId: string, providerId: string, modelId?: string): Promise<ProviderUsageResponse> {
-    const params = new URLSearchParams({ instanceId, sessionId })
-    if (modelId) params.set("modelId", modelId)
-    const query = params.toString()
-    return request<ProviderUsageResponse>(`/api/usage/${encodeURIComponent(providerId)}${query ? `?${query}` : ""}`)
-  },
+  return {
+    fetchPermissionReceipts(instanceId: string, sessionId: string, scope: { messageId: string } | { unanchored: true }, cursor?: string, signal?: AbortSignal): Promise<PermissionReceiptPage> {
+      const params = new URLSearchParams("messageId" in scope ? { messageId: scope.messageId } : { unanchored: "true" })
+      if (cursor) params.set("cursor", cursor)
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/sessions/${encodeURIComponent(sessionId)}/permission-receipts?${params}`, { signal })
+    },
+    fetchHistoryWindow(instanceId: string, sessionID: string, target: NavigationTarget, signal?: AbortSignal): Promise<NavigationWindowResult> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/window`, {
+        method: "POST", body: JSON.stringify({ sessionID, target }), signal,
+        // A transcript page, like the native message list: large tool images load on demand.
+        headers: { [DEFERRED_MEDIA_HEADER]: DEFERRED_MEDIA_VALUE },
+      })
+    },
+    fetchSessionOutline(instanceId: string, sessionID: string, cursor?: { after: number; through: number }, signal?: AbortSignal, after?: number, known?: OutlineCheckpoint[]): Promise<OutlineResult> {
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outline`, {
+        method: "POST", body: JSON.stringify({ sessionID, cursor, after, known }), signal,
+      }))
+    },
+    fetchOutlinePreviews(instanceId: string, sessionID: string, messageIDs: string[], signal?: AbortSignal): Promise<OutlinePreviewResult> {
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outlinePreview`, {
+        method: "POST", body: JSON.stringify({ sessionID, messageIDs }), signal,
+      }))
+    },
+    querySessionHistory(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryResult> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/query`, {
+        method: "POST", body: JSON.stringify(input), signal,
+      })
+    },
+    queryRankedHistory(instanceId: string, input: HistoryRankedInput, signal?: AbortSignal): Promise<RankedHistoryResult> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/ranked`, {
+        method: "POST", body: JSON.stringify(input), signal,
+      })
+    },
+    pruneSessionHistory(instanceId: string, input: PruneBatch, signal?: AbortSignal): Promise<PruneBatchResult> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/prune`, {
+        method: "POST", body: JSON.stringify(input), signal,
+      })
+    },
+    imagesConversation(instanceId: string, input: ImagesConversationRequest): Promise<ImagesConversationResponse> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/images-conversation`, {
+        method: "POST", body: JSON.stringify(input),
+      })
+    },
+    fetchSessionGoal(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<SessionGoalResponse> {
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/sessions/${encodeURIComponent(sessionId)}/goal`, { signal }))
+    },
+    pruneSessionMessage(instanceId: string, input: PruneRequest): Promise<PruneResult> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-pruning/prune`, {
+        method: "POST", body: JSON.stringify(input),
+      })
+    },
+    fetchWorkspaces(signal?: AbortSignal): Promise<WorkspaceDescriptor[]> {
+      return request<WorkspaceDescriptor[]>("/api/workspaces", { signal })
+    },
 
-  fetchWorktrees(id: string, fresh = false): Promise<WorktreeListResponse> {
-    return request<WorktreeListResponse>(`/api/workspaces/${encodeURIComponent(id)}/worktrees${fresh ? "?fresh=true" : ""}`)
-  },
+    fetchProviderUsage(instanceId: string, sessionId: string, providerId: string, modelId?: string): Promise<ProviderUsageResponse> {
+      const params = new URLSearchParams({ instanceId, sessionId })
+      if (modelId) params.set("modelId", modelId)
+      const query = params.toString()
+      return request<ProviderUsageResponse>(`/api/usage/${encodeURIComponent(providerId)}${query ? `?${query}` : ""}`)
+    },
 
-  fetchLocalGitBranches(id: string, directory: string, signal?: AbortSignal): Promise<{ branches: string[] }> {
-    return request(`/api/workspaces/${encodeURIComponent(id)}/git-branches?${new URLSearchParams({ directory })}`, { signal })
-  },
+    fetchWorktrees(id: string, fresh = false): Promise<WorktreeListResponse> {
+      return request<WorktreeListResponse>(`/api/workspaces/${encodeURIComponent(id)}/worktrees${fresh ? "?fresh=true" : ""}`)
+    },
 
-  createWorktree(id: string, payload: WorktreeCreateRequest): Promise<{ slug: string; directory: string; branch?: string }> {
-    return request<{ slug: string; directory: string; branch?: string }>(`/api/workspaces/${encodeURIComponent(id)}/worktrees`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    })
-  },
+    fetchLocalGitBranches(id: string, directory: string, signal?: AbortSignal): Promise<{ branches: string[] }> {
+      return request(`/api/workspaces/${encodeURIComponent(id)}/git-branches?${new URLSearchParams({ directory })}`, { signal })
+    },
 
-  deleteWorktree(id: string, slug: string, options?: { force?: boolean }): Promise<void> {
-    const params = new URLSearchParams()
-    if (options?.force) {
-      params.set("force", "true")
-    }
-    const suffix = params.toString() ? `?${params.toString()}` : ""
-    return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}${suffix}`, {
-      method: "DELETE",
-    })
-  },
+    createWorktree(id: string, payload: WorktreeCreateRequest): Promise<{ slug: string; directory: string; branch?: string }> {
+      return request<{ slug: string; directory: string; branch?: string }>(`/api/workspaces/${encodeURIComponent(id)}/worktrees`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      })
+    },
 
-  moveSessionFamily(id: string, sessionId: string, payload: WorktreeSessionMoveRequest): Promise<WorktreeSessionMoveResponse> {
-    return request<WorktreeSessionMoveResponse>(`/api/workspaces/${encodeURIComponent(id)}/sessions/${encodeURIComponent(sessionId)}/worktree`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    })
-  },
+    deleteWorktree(id: string, slug: string, options?: { force?: boolean }): Promise<void> {
+      const params = new URLSearchParams()
+      if (options?.force) {
+        params.set("force", "true")
+      }
+      const suffix = params.toString() ? `?${params.toString()}` : ""
+      return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}${suffix}`, {
+        method: "DELETE",
+      })
+    },
 
-  createWorkspace(payload: WorkspaceCreateRequest, options?: { signal?: AbortSignal }): Promise<WorkspaceCreateResponse> {
-    return request<WorkspaceCreateResponse>("/api/workspaces", {
-      method: "POST",
-      body: JSON.stringify(payload),
-      signal: options?.signal,
-    })
-  },
-  cancelWorkspaceCreation(requestId: string): Promise<void> {
-    return request("/api/workspaces/creation/cancel", {
-      method: "POST",
-      body: JSON.stringify({ requestId }),
-    })
-  },
-  releaseWorkspaceCreation(id: string, requestId: string): Promise<void> {
-    return request(`/api/workspaces/${encodeURIComponent(id)}/creation/release`, {
-      method: "POST",
-      body: JSON.stringify({ requestId }),
-    })
-  },
-  fetchSidecars(): Promise<{ sidecars: SideCar[] }> {
-    return request<{ sidecars: SideCar[] }>("/api/sidecars")
-  },
-  createSidecar(payload: {
-    kind: "port"
-    name: string
-    port: number
-    insecure: boolean
-    prefixMode: "strip" | "preserve"
-  }): Promise<SideCar> {
-    return request<SideCar>("/api/sidecars", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    })
-  },
-  updateSidecar(
-    id: string,
-    payload: Partial<{ name: string; port: number; insecure: boolean; prefixMode: "strip" | "preserve" }>,
-  ): Promise<SideCar> {
-    return request<SideCar>(`/api/sidecars/${encodeURIComponent(id)}`, {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    })
-  },
-  deleteSidecar(id: string): Promise<void> {
-    return request(`/api/sidecars/${encodeURIComponent(id)}`, { method: "DELETE" })
-  },
-  createPreview(payload: { sessionId: string; url: string }): Promise<PreviewSession> {
-    return request<PreviewSession>("/api/previews", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    })
-  },
-  deletePreview(token: string): Promise<void> {
-    return request(`/api/previews/${encodeURIComponent(token)}`, { method: "DELETE" })
-  },
-  fetchServerMeta(): Promise<ServerMeta> {
-    return request<ServerMeta>("/api/meta")
-  },
-  probeRemoteServer(payload: RemoteServerProbeRequest): Promise<RemoteServerProbeResponse> {
-    return request<RemoteServerProbeResponse>("/api/remote-servers/probe", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    })
-  },
-  createRemoteProxySession(payload: RemoteProxySessionCreateRequest): Promise<RemoteProxySessionCreateResponse> {
-    return request<RemoteProxySessionCreateResponse>("/api/remote-proxy/sessions", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    })
-  },
-  deleteRemoteProxySession(id: string): Promise<void> {
-    return request(`/api/remote-proxy/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
-  },
-  fetchRemoteControlStatus(): Promise<RemoteControlStatus> {
-    return request<RemoteControlStatus>("/api/remote-control/status")
-  },
-  startRemoteControl(): Promise<RemoteControlStartResponse> {
-    return request<RemoteControlStartResponse>("/api/remote-control/start", { method: "POST" })
-  },
-  stopRemoteControl(): Promise<RemoteControlStatus> {
-    return request<RemoteControlStatus>("/api/remote-control", { method: "DELETE" })
-  },
-  createRemoteControlPairing(): Promise<RemoteControlPairing> {
-    return request<RemoteControlPairing>("/api/remote-control/pairings", { method: "POST" })
-  },
-  setRemoteControlPreviews(enabled: boolean): Promise<RemoteControlStatus> {
-    return request<RemoteControlStatus>("/api/remote-control/previews", { method: "PUT", body: JSON.stringify({ enabled }) })
-  },
-  fetchRemoteControlDevices(): Promise<{ devices: RemoteControlDevice[] }> {
-    return request<{ devices: RemoteControlDevice[] }>("/api/remote-control/devices")
-  },
-  revokeRemoteControlDevice(id: string): Promise<void> {
-    return request(`/api/remote-control/devices/${encodeURIComponent(id)}`, { method: "DELETE" })
-  },
-  fetchAuthStatus(): Promise<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }> {
-    return request<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }>("/api/auth/status")
-  },
-  listConfigFiles(): Promise<ConfigFileListResponse> {
-    return request<ConfigFileListResponse>("/api/config-files")
-  },
-  readConfigFile(id: string): Promise<ConfigFileContentResponse> {
-    return request<ConfigFileContentResponse>(`/api/config-files/${encodeURIComponent(id)}/content`)
-  },
-  writeConfigFile(id: string, contents: string): Promise<void> {
-    const body: ConfigFileContentRequest = { contents }
-    return request(`/api/config-files/${encodeURIComponent(id)}/content`, {
-      method: "PUT",
-      body: JSON.stringify(body),
-    })
-  },
-  getPluginControls(instanceId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<PluginControlsSnapshot> {
-    const params = new URLSearchParams({ directory: location.directory })
-    if (location.workspaceID) params.set("workspaceID", location.workspaceID)
-    return secondaryRead(signal, () => request<PluginControlsSnapshot>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls?${params.toString()}`, { signal }))
-  },
-  getWebSearchSettings(instanceId: string, directory: string): Promise<import("../../../server/src/api-types").WebSearchSettingsSnapshot> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings?${new URLSearchParams({ directory })}`)
-  },
-  getServiceUsageOwner(instanceId: string, signal?: AbortSignal): Promise<{ owner: string; identity?: string; connection?: string }> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage/owner`, { signal })
-  },
-  getCachedServiceUsage(instanceId: string, timezone: string, days?: number, signal?: AbortSignal): Promise<{ days: number; owner?: string; identity?: string; connection?: string; snapshot?: import("../../../server/src/api-types").ServiceUsageSnapshot }> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage/cache?${new URLSearchParams({ timezone, ...(days ? { days: String(days) } : {}) })}`, { signal })
-  },
-  getServiceUsage(instanceId: string, query: { from: number; to: number; timezone: string; restorePeriod?: boolean }, signal?: AbortSignal): Promise<import("../../../server/src/api-types").ServiceUsageSnapshot> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage?${new URLSearchParams({ from: String(query.from), to: String(query.to), timezone: query.timezone, ...(query.restorePeriod ? { restorePeriod: "true" } : {}) })}`, { signal })
-  },
-  setWebSearchSettings(instanceId: string, payload: import("../../../server/src/api-types").WebSearchSettingsMutation): Promise<void> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings`, { method: "PUT", body: JSON.stringify(payload) })
-  },
-  getImageSettings(instanceId: string, directory: string): Promise<import("../../../server/src/api-types").ImageSettingsSnapshot> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/image-settings?${new URLSearchParams({ directory })}`)
-  },
-  setImageSettings(instanceId: string, payload: import("../../../server/src/api-types").ImageSettingsMutation): Promise<void> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/image-settings`, { method: "PUT", body: JSON.stringify(payload) })
-  },
-  getSubagentDepth(instanceId: string, directory: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").SubagentDepthSnapshot> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/subagent-depth?${new URLSearchParams({ directory })}`, { signal })
-  },
-  setSubagentDepth(instanceId: string, payload: { location: { directory: string }; depth: number | null; expectation: string }): Promise<void> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/subagent-depth`, { method: "PUT", body: JSON.stringify(payload) })
-  },
-  setPluginActivation(instanceId: string, payload: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse> {
-    return request<PluginActivationMutationResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls`, {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    })
-  },
-  addPluginSource(instanceId: string, payload: PluginSourceAddRequest): Promise<PluginSourceMutationResponse> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-sources`, { method: "POST", body: JSON.stringify(payload) })
-  },
-  removePluginSource(instanceId: string, payload: PluginSourceRemoveRequest): Promise<PluginSourceMutationResponse> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-sources`, { method: "DELETE", body: JSON.stringify(payload) })
-  },
-  setServerPassword(password: string): Promise<{ ok: boolean; username: string; passwordUserProvided: boolean }> {
-    return request<{ ok: boolean; username: string; passwordUserProvided: boolean }>("/api/auth/password", {
-      method: "POST",
-      body: JSON.stringify({ password }),
-    })
-  },
-  deleteWorkspace(id: string): Promise<void> {
-    return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
-  },
-  createTemporaryFolder(): Promise<{ path: string }> {
-    return request("/api/workspaces/temporary", { method: "POST" })
-  },
-  abandonTemporaryFolder(path: string): Promise<void> {
-    return request("/api/workspaces/temporary/abandon", { method: "POST", body: JSON.stringify({ path }) })
-  },
-  keepTemporaryWorkspace(id: string): Promise<void> {
-    return request(`/api/workspaces/${encodeURIComponent(id)}/keep`, { method: "POST" })
-  },
-  discardTemporaryWorkspace(id: string, options: { onlyIfEmpty?: boolean } = {}): Promise<void> {
-    return request(`/api/workspaces/${encodeURIComponent(id)}/discard`, { method: "POST", body: JSON.stringify(options) })
-  },
-  getPendingRequests(id: string, directories: string[], signal?: AbortSignal, optionalDirectories: string[] = []): Promise<WorkspacePendingRequestsResponse> {
-    const query = new URLSearchParams(directories.map((directory) => ["directories", directory]))
-    for (const directory of optionalDirectories) query.append("optionalDirectories", directory)
-    return request(`/api/workspaces/${encodeURIComponent(id)}/pending-requests?${query}`, { signal })
-  },
-  cloneWorkspaceRepository(payload: WorkspaceCloneRequest): Promise<WorkspaceCloneResponse> {
-    return request<WorkspaceCloneResponse>("/api/workspaces/clone", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    })
-  },
-  listWorkspaceFiles(id: string, relativePath = ".", directory?: string, signal?: AbortSignal): Promise<FileSystemEntry[]> {
-    const params = new URLSearchParams({ path: relativePath })
-    if (directory) params.set("directory", directory)
-    return request<FileSystemEntry[]>(`/api/workspaces/${encodeURIComponent(id)}/files?${params.toString()}`, { signal })
-  },
-  searchWorkspaceFiles(
-    id: string,
-    query: string,
-    opts?: { limit?: number; type?: "file" | "directory" | "all"; signal?: AbortSignal; directory?: string },
-  ): Promise<WorkspaceFileSearchResponse> {
-    const trimmed = query.trim()
-    if (!trimmed) {
-      return Promise.resolve([])
-    }
-    const params = new URLSearchParams({ q: trimmed })
-    if (opts?.directory) params.set("directory", opts.directory)
-    if (opts?.limit) {
-      params.set("limit", String(opts.limit))
-    }
-    if (opts?.type) {
-      params.set("type", opts.type)
-    }
-    const search = () => request<WorkspaceFileSearchResponse>(
-      `/api/workspaces/${encodeURIComponent(id)}/files/search?${params.toString()}`,
-      { signal: opts?.signal },
-    )
-    return opts?.signal ? retryFileSearch(search, opts.signal) : search()
-  },
-  previewWorkspaceFile(id: string, relativePath: string, directory: string, signal?: AbortSignal): Promise<WorkspaceFileResponse> {
-    const params = new URLSearchParams({ path: relativePath, directory })
-    return request(`/api/workspaces/${encodeURIComponent(id)}/files/preview?${params}`, { signal })
-  },
-  readWorkspaceFile(id: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
-    const params = new URLSearchParams({ path: relativePath })
-    if (options?.encoding) {
-      params.set("encoding", options.encoding)
-    }
-    return request<WorkspaceFileResponse>(
-      `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
-    )
-  },
-  writeWorkspaceFile(id: string, relativePath: string, contents: string, options?: { worktree?: string; directory?: string }): Promise<void> {
-    const params = new URLSearchParams({ path: relativePath })
-    if (options?.directory) params.set("directory", options.directory)
-    if (options?.worktree && options.worktree !== "root") {
-      params.set("worktree", options.worktree)
-    }
-    return request(
-      `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
-      {
+    moveSessionFamily(id: string, sessionId: string, payload: WorktreeSessionMoveRequest): Promise<WorktreeSessionMoveResponse> {
+      return request<WorktreeSessionMoveResponse>(`/api/workspaces/${encodeURIComponent(id)}/sessions/${encodeURIComponent(sessionId)}/worktree`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      })
+    },
+
+    createWorkspace(payload: WorkspaceCreateRequest, options?: { signal?: AbortSignal }): Promise<WorkspaceCreateResponse> {
+      return request<WorkspaceCreateResponse>("/api/workspaces", {
+        method: "POST",
+        body: JSON.stringify(payload),
+        signal: options?.signal,
+      })
+    },
+    cancelWorkspaceCreation(requestId: string): Promise<void> {
+      return request("/api/workspaces/creation/cancel", {
+        method: "POST",
+        body: JSON.stringify({ requestId }),
+      })
+    },
+    releaseWorkspaceCreation(id: string, requestId: string): Promise<void> {
+      return request(`/api/workspaces/${encodeURIComponent(id)}/creation/release`, {
+        method: "POST",
+        body: JSON.stringify({ requestId }),
+      })
+    },
+    fetchSidecars(): Promise<{ sidecars: SideCar[] }> {
+      return request<{ sidecars: SideCar[] }>("/api/sidecars")
+    },
+    createSidecar(payload: {
+      kind: "port"
+      name: string
+      port: number
+      insecure: boolean
+      prefixMode: "strip" | "preserve"
+    }): Promise<SideCar> {
+      return request<SideCar>("/api/sidecars", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      })
+    },
+    updateSidecar(
+      id: string,
+      payload: Partial<{ name: string; port: number; insecure: boolean; prefixMode: "strip" | "preserve" }>,
+    ): Promise<SideCar> {
+      return request<SideCar>(`/api/sidecars/${encodeURIComponent(id)}`, {
         method: "PUT",
-        body: JSON.stringify({ contents }),
-      },
-    )
-  },
-  fetchWorktreeGitStatus(id: string, slug: string, signal?: AbortSignal, options?: { hideWhitespace?: boolean }): Promise<WorktreeGitStatusResponse> {
-    return request<WorktreeGitStatusResponse>(
-      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-status${options?.hideWhitespace ? "?hideWhitespace=1" : ""}`,
-      { signal },
-    )
-  },
-  fetchGitHistory(id: string, slug: string, offset = 0, head?: string, signal?: AbortSignal): Promise<GitHistoryPage> {
-    const query = new URLSearchParams({ offset: String(offset), ...(head ? { head } : {}) })
-    return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-history?${query}`, { signal })
-  },
-  fetchGitCommit(id: string, slug: string, commit: string, signal?: AbortSignal): Promise<GitCommitDetails> {
-    return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-history/${encodeURIComponent(commit)}`, { signal })
-  },
-  fetchGitCommitDiff(id: string, slug: string, commit: string, path: string, signal?: AbortSignal): Promise<GitCommitDiff> {
-    return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-history/${encodeURIComponent(commit)}?${new URLSearchParams({ path })}`, { signal })
-  },
-  fetchWorktreeGitDiff(id: string, slug: string, requestPayload: WorktreeGitDiffRequest, signal?: AbortSignal): Promise<WorktreeGitDiffResponse> {
-    const params = new URLSearchParams({ path: requestPayload.path, scope: requestPayload.scope })
-    if (requestPayload.originalPath) {
-      params.set("originalPath", requestPayload.originalPath)
-    }
-    return request<WorktreeGitDiffResponse>(
-      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-diff?${params.toString()}`,
-      { signal },
-    )
-  },
-  stageWorktreeGitPaths(id: string, slug: string, payload: WorktreeGitPathsRequest): Promise<WorktreeGitMutationResponse> {
-    return request<WorktreeGitMutationResponse>(
-      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-stage`,
-      {
-        method: "POST",
         body: JSON.stringify(payload),
-      },
-    )
-  },
-  unstageWorktreeGitPaths(id: string, slug: string, payload: WorktreeGitPathsRequest): Promise<WorktreeGitMutationResponse> {
-    return request<WorktreeGitMutationResponse>(
-      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-unstage`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-      },
-    )
-  },
-  initializeWorkspaceGit(id: string, directory: string): Promise<WorktreeGitMutationResponse> {
-    return request<WorktreeGitMutationResponse>(`/api/workspaces/${encodeURIComponent(id)}/git-init`, {
-      method: "POST",
-      body: JSON.stringify({ directory }),
-    })
-  },
-  commitWorktreeGitChanges(id: string, slug: string, payload: WorktreeGitCommitRequest): Promise<WorktreeGitCommitResponse> {
-    return request<WorktreeGitCommitResponse>(
-      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-commit`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-      },
-    )
-  },
-
-  getProviderAccounts(instanceId: string, integrationID: string, directory: string): Promise<ProviderAccountsSnapshot> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/provider-accounts/${encodeURIComponent(integrationID)}?${new URLSearchParams({ directory })}`)
-  },
-  setProviderAccountSelection(instanceId: string, integrationID: string, directory: string, enabled: boolean): Promise<ProviderAccountsSnapshot> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/provider-accounts/${encodeURIComponent(integrationID)}`, {
-      method: "PUT", body: JSON.stringify({ directory, enabled }),
-    })
-  },
-  fetchConfigOwner<T extends Record<string, any> = Record<string, any>>(owner: string, signal?: AbortSignal): Promise<T> {
-    return request<T>(`/api/storage/config/${encodeURIComponent(owner)}`, { signal })
-  },
-  patchConfigOwner<T extends Record<string, any> = Record<string, any>>(owner: string, patch: unknown): Promise<T> {
-    return request<T>(`/api/storage/config/${encodeURIComponent(owner)}`, {
-      method: "PATCH",
-      body: JSON.stringify(patch ?? {}),
-    })
-  },
-  patchMissionPreferences<T extends Record<string, any> = Record<string, any>>(patch: unknown, expected: MissionPreferenceExpectation[]): Promise<T> {
-    return request<T>("/api/storage/config/ui?conditional=missions-v1", {
-      method: "PATCH", body: JSON.stringify({ patch, expected }),
-    })
-  },
-  fetchStateOwner<T extends Record<string, any> = Record<string, any>>(owner: string): Promise<T> {
-    return request<T>(`/api/storage/state/${encodeURIComponent(owner)}`)
-  },
-  patchStateOwner<T extends Record<string, any> = Record<string, any>>(owner: string, patch: unknown): Promise<T> {
-    return request<T>(`/api/storage/state/${encodeURIComponent(owner)}`, {
-      method: "PATCH",
-      body: JSON.stringify(patch ?? {}),
-    })
-  },
-
-  validateBinary(path: string): Promise<BinaryValidationResult> {
-    return request<BinaryValidationResult>("/api/storage/binaries/validate", {
-      method: "POST",
-      body: JSON.stringify({ path }),
-    })
-  },
-  /** `recheck` marks an explicit user check, which refreshes the server's cached version probes. */
-  fetchOpenCodeUpdateStatus(options: { recheck?: boolean } = {}): Promise<OpenCodeUpdateStatus> {
-    return request<OpenCodeUpdateStatus>(options.recheck ? "/api/opencode/update?recheck=1" : "/api/opencode/update")
-  },
-  getOpenCodeLoginStart(): Promise<import("../../../server/src/api-types").LoginStartResponse> {
-    return request("/api/opencode/login-start")
-  },
-  setOpenCodeLoginStart(input: import("../../../server/src/api-types").LoginStartControl): Promise<import("../../../server/src/api-types").LoginStartResponse> {
-    return request("/api/opencode/login-start", { method: "POST", body: JSON.stringify(input) })
-  },
-  updateOpenCode(options: { replaceLegacy?: { path: string; version: string } } = {}): Promise<OpenCodeUpdateResponse> {
-    return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST",
-      body: JSON.stringify(options.replaceLegacy ? { replaceLegacy: { path: options.replaceLegacy.path, version: options.replaceLegacy.version } } : {}) })
-  },
-  startOpenCode(restart = false): Promise<OpenCodeUpdateStatus> {
-    return request<OpenCodeUpdateStatus>("/api/opencode/service", { method: "POST", body: JSON.stringify({ restart }) })
-  },
-  reloadOpenCodeConfiguration(): Promise<OpenCodeUpdateStatus> {
-    return request<OpenCodeUpdateStatus>("/api/opencode/service", { method: "POST", body: JSON.stringify({ reload: true }) })
-  },
-  fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
-    return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")
-  },
-  transcribeAudio(payload: {
-    audioBase64: string
-    mimeType: string
-    filename?: string
-    language?: string
-    prompt?: string
-  }): Promise<SpeechTranscriptionResponse> {
-    return request<SpeechTranscriptionResponse>("/api/speech/transcribe", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    })
-  },
-  synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" }): Promise<SpeechSynthesisResponse> {
-    return request<SpeechSynthesisResponse>("/api/speech/synthesize", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    })
-  },
-  synthesizeSpeechStream(
-    payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" },
-    signal?: AbortSignal,
-  ): Promise<Response> {
-    return requestRaw("/api/speech/synthesize/stream", {
-      method: "POST",
-      body: JSON.stringify(payload),
-      signal,
-    })
-  },
-  listFileSystem(path?: string, options?: { includeFiles?: boolean }): Promise<FileSystemListResponse> {
-    const params = new URLSearchParams()
-    if (path && path !== ".") {
-      params.set("path", path)
-    }
-    if (options?.includeFiles !== undefined) {
-      params.set("includeFiles", String(options.includeFiles))
-    }
-    const query = params.toString()
-    return request<FileSystemListResponse>(query ? `/api/filesystem?${query}` : "/api/filesystem")
-  },
-
-  createFileSystemFolder(parentPath: string | undefined, name: string): Promise<FileSystemCreateFolderResponse> {
-    return request<FileSystemCreateFolderResponse>("/api/filesystem/folders", {
-      method: "POST",
-      body: JSON.stringify({ parentPath, name }),
-    })
-  },
-  readFileSystemFile(path: string, options?: { encoding?: "utf-8" | "base64" }): Promise<FileSystemFileContentResponse> {
-    const params = new URLSearchParams({ path })
-    if (options?.encoding) {
-      params.set("encoding", options.encoding)
-    }
-    return request<FileSystemFileContentResponse>(`/api/filesystem/files/content?${params.toString()}`)
-  },
-  readInstanceData(id: string): Promise<InstanceData> {
-    return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)
-  },
-  fetchMissionPanel(instanceId: string, selector: Exclude<import("../../../server/src/missions/mission-panel-wire").MissionPanelPageRequest, { source: "tasks" }>, scope: MissionPanelReadScope) {
-    const deadline = Math.min(scope.deadline ?? Infinity, performance.now() + TASK_READ_TIMEOUT_MS)
-    const signal = AbortSignal.any([...(scope.signal ? [scope.signal] : []), AbortSignal.timeout(Math.max(0, Math.ceil(deadline - performance.now())))])
-    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/panel-page`
-    return readMissionPanelWindow(selector, { ...scope, signal, deadline, runTransfer: read => secondaryRead(signal, read), exchange: body => {
-      if (!scope.current()) throw new DOMException("Obsolete panel read", "AbortError")
-      assertTaskReadLive(signal, deadline)
-      return authenticatedFetch(API_BASE ? new URL(path, API_BASE).toString() : path, {
-        method: "POST", body, signal, credentials: "include", headers: { "Content-Type": "application/json" },
       })
-    } })
-  },
-  /** One mission's compact map and cleanups, for display reconciliation (lost acknowledgements, cleanup retries). */
-  fetchMission(instanceId: string, missionId: string): Promise<MissionReadResponse> {
-    return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`)
-  },
-  /** More of one mission's tasks for display: a window of its display order or tasks by name;
-   * it shares the secondary read budget. */
-  fetchMissionTasks(instanceId: string, missionId: string, input: import("../../../server/src/missions/mission-panel-map").MissionTaskRequest,
-    scope: { projectID: string; current(): boolean; signal?: AbortSignal; deadline?: number; context?: MissionTaskPageContext }):
-    Promise<import("../../../server/src/missions/mission-panel-map").MissionTaskPageResponse> {
-    const deadline = Math.min(scope.deadline ?? Infinity, performance.now() + TASK_READ_TIMEOUT_MS)
-    const timeout = AbortSignal.timeout(Math.max(0, Math.ceil(deadline - performance.now())))
-    const signal = scope.signal ? AbortSignal.any([scope.signal, timeout]) : timeout
-    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/panel-page`
-    return readMissionTaskPage(missionId, input, { ...scope, signal, deadline, runTransfer: read => secondaryRead(signal, read), exchange: body => {
-      if (!scope.current()) throw new DOMException("Obsolete task read", "AbortError")
-      assertTaskReadLive(signal, deadline)
-      return authenticatedFetch(API_BASE ? new URL(path, API_BASE).toString() : path, {
-        method: "POST", body, signal, credentials: "include", headers: { "Content-Type": "application/json" },
+    },
+    deleteSidecar(id: string): Promise<void> {
+      return request(`/api/sidecars/${encodeURIComponent(id)}`, { method: "DELETE" })
+    },
+    createPreview(payload: { sessionId: string; url: string }): Promise<PreviewSession> {
+      return request<PreviewSession>("/api/previews", {
+        method: "POST",
+        body: JSON.stringify(payload),
       })
-    } })
-  },
-  /** One slice of a mission body, for display only; it shares the secondary read budget. */
-  fetchMissionContent(instanceId: string, missionId: string, input: Omit<import("../../../server/src/missions/mission-content-wire").MissionContentRequest, "missionID">,
-    signal: AbortSignal): Promise<import("../../../server/src/missions/mission-content-wire").MissionContentResponse> {
-    const params = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
-    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/content?${params}`, { signal }))
-  },
-  /** This backend's playbook definitions, as its Missions prompts are built from them. */
-  fetchMissionPlaybooks(taskMode: import("../../../server/src/missions/task-execution-mode").MissionTaskMode): Promise<import("../../../server/src/missions/playbook-details").MissionPlaybookDetails> {
-    return request(`/api/missions/playbooks?taskMode=${encodeURIComponent(taskMode)}`)
-  },
-  fetchMissionSchedules(instanceId: string, input: { after?: string; limit?: number; directory?: string } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleList> {
-    const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
-    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/scheduled?${query}`, { signal }))
-  },
-  fetchMissionScheduleCapability(instanceId: string, directory?: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleCapability> {
-    const query = new URLSearchParams(directory === undefined ? {} : { directory })
-    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/scheduled/capabilities?${query}`, { signal }))
-  },
-  fetchMissionSchedule(instanceId: string, missionID: string, input: { directory?: string; requestID?: string } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
-    const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined) as [string, string][])
-    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionID)}/schedule?${query}`, { signal }))
-  },
-  fetchMissionScheduleCreation(instanceId: string, requestID: string, directory?: string): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
-    const query = new URLSearchParams(directory === undefined ? {} : { directory })
-    return secondaryRead(undefined, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/scheduled/requests/${encodeURIComponent(requestID)}?${query}`))
-  },
-  saveMissionSchedule(instanceId: string, input: import("../stores/mission-schedule-editor-holds").MissionScheduleEditorRequest): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
-    const { missionID, ...body } = input
-    const target = missionID ? `${encodeURIComponent(missionID)}/schedule` : "scheduled"
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${target}`, { method: "POST", body: JSON.stringify(body) })
-  },
-  controlMissionSchedule(instanceId: string, missionID: string, input: { action: "play" | "resume" | "pause" | "stop" | "check" | "run-now" | "delete";
-    requestID: string; expectedRevision: number; directory?: string; deleteManagedSessions?: boolean }): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionID)}/schedule`, {
-      method: "POST", body: JSON.stringify(input) })
-  },
-  missionScheduleSettings(instanceId: string, missionID: string, input: { requestID: string; expectedDocumentRevision: number }, apply = false): Promise<{ document: import("../../../server/src/missions/mission-document-one-time").MissionDocumentSummary }> {
-    const url = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionID)}/schedule-settings`
-    return apply ? request(url, { method: "POST", body: JSON.stringify(input) })
-      : secondaryRead(undefined, () => request(`${url}?${new URLSearchParams({ requestID: input.requestID, expectedDocumentRevision: String(input.expectedDocumentRevision) })}`))
-  },
-  /** The same read, with the full map, from the authoritative full snapshot, for admitting an application-authored prompt. */
-  fetchMissionAdmission(instanceId: string, missionId: string): Promise<MissionReadResponse<MissionMap>> {
-    return request<MissionReadResponse<MissionMap>>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/admission`)
-  },
-  fetchMissionCurrentPassage(instanceId: string, scheduleID: string, signal?: AbortSignal, owner: "daily" | "scheduled" = "daily"): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrent> {
-    const deadline = performance.now() + TASK_READ_TIMEOUT_MS
-    const live = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(TASK_READ_TIMEOUT_MS)])
-    return secondaryRead(live, async () => {
-      assertTaskReadLive(live, deadline)
-      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current${owner === "scheduled" ? "?owner=scheduled" : ""}`
-      return readMissionCurrentIdentity(await authenticatedFetch(API_BASE ? new URL(path, API_BASE).toString() : path, { signal: live, credentials: "include" }), live)
-    })
-  },
-  fetchMissionCurrentPanel(instanceId: string, source: MissionCurrentSource, selector: Exclude<MissionPanelPageRequest, { source: "tasks" }>, scope: MissionPanelReadScope) {
-    return readMissionPanelWindow(selector, currentPassageTransport(instanceId, source, scope))
-  },
-  fetchMissionCurrentTasks(instanceId: string, source: MissionCurrentSource, task: import("../../../server/src/missions/mission-panel-map").MissionTaskRequest, scope: MissionPanelReadScope) {
-    return readMissionTaskPage(source.missionID, task, currentPassageTransport(instanceId, source, scope))
-  },
-  async fetchMissionCurrentBody(instanceId: string, source: MissionCurrentSource, body: MissionContentRequest, signal: AbortSignal, deadline = performance.now() + TASK_READ_TIMEOUT_MS) {
-    source = structuredClone(source)
-    body = structuredClone(body)
-    const answer = await readMissionPanelWindow({ source: "mission", missionID: source.missionID, field: "body", window: { offset: 0 } },
-      currentPassageTransport(instanceId, source, { signal, deadline, current: () => !signal.aborted }, body))
-    if (answer.values.length !== 1) throw new MissionTaskPageReadError("invalid")
-    const value = answer.values[0] as import("../../../server/src/missions/mission-content-wire").MissionContentResponse
-    if (!value || !value.available || value.projectID !== source.projectID || !("missionID" in value) || value.missionID !== source.missionID) throw new MissionTaskPageReadError("invalid")
-    if ("content" in value) {
-      if (!Number.isSafeInteger(value.content.characters) || value.content.characters > TASK_WINDOW_CHARACTERS) throw new MissionTaskPageReadError("too-large")
-      const { missionID: _mission, digest, offset, ...selector } = body
-      validMissionContentSlice(selector, { offset, digest }, value.content)
-    }
-    assertTaskReadLive(signal, deadline)
-    return value
-  },
-  fetchMissionCurrentContent(instanceId: string, input: import("../../../server/src/missions/recurrence-current").RecurrenceCurrentContentInput, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrentContent> {
-    const { scheduleID, passageID, ...query } = input
-    const params = new URLSearchParams(Object.entries(query).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current/${encodeURIComponent(passageID)}/content?${params}`, { signal })
-  },
-  async fetchMissionRecurrence(instanceId: string, signal?: AbortSignal): Promise<MissionRecurrenceSnapshot> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { signal })
-  },
-  async controlMissionRecurrence(instanceId: string, scheduleID: string, input: RecurrenceControlIntent): Promise<RecurrenceControlStatus> {
-    return readRecurrenceControlResult(await request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/control`, {
-      method: "POST", body: JSON.stringify(input),
-    }))
-  },
-  async missionRecurrenceControlStatus(instanceId: string, scheduleID: string, input: RecurrenceControlIntent): Promise<RecurrenceControlStatus> {
-    return readRecurrenceControlResult(await request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/control/status`, {
-      method: "POST", body: JSON.stringify(recurrenceControlStatusInput(input)),
-    }))
-  },
-  async runMissionRecurrenceNow(instanceId: string, input: RecurrenceControlIntent): Promise<RecurrenceManualResult> {
-    const { requestID, expectedRevision, directory } = input
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(input.scheduleID)}/run-now`, {
-      method: "POST", body: JSON.stringify({ requestID, expectedRevision, ...(directory ? { directory } : {}) }),
-    })
-  },
-  async missionRecurrenceRunNowStatus(instanceId: string, input: RecurrenceControlIntent): Promise<RecurrenceManualResult> {
-    const query = new URLSearchParams({ requestID: input.requestID, expectedRevision: String(input.expectedRevision),
-      ...(input.directory ? { directory: input.directory } : {}) })
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(input.scheduleID)}/run-now/status?${query}`)
-  },
-  fetchMissionRecurrencePassagePage(instanceId: string, scheduleID: string, passageID: string,
-    input: { section: number; page: number; revision?: number }, signal?: AbortSignal): Promise<MissionRecurrenceReadPage> {
-    const query = new URLSearchParams({ section: String(input.section), page: String(input.page),
-      ...(input.revision === undefined ? {} : { revision: String(input.revision) }) })
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/passages/${encodeURIComponent(passageID)}?${query}`, { signal })
-  },
-  createMissionRecurrence(instanceId: string, input: { requestID: string; title: string; instructions: string;
-    notes?: string; template: MissionMap["template"];
-    clock: { time: string; zone: string }; watchedConversationIDs: string[];
-    profiles: MissionProfiles; taskMode: "native" | "independent"; directory?: string
-  }): Promise<{ schedule: { id: string; revision: number; state: "paused"; digest: string; projectID: string; projectCanonical: string } }> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { method: "POST", body: JSON.stringify(input) })
-  },
-  createMission(instanceId: string, input: { title?: string; objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; taskMode?: "native" | "independent"; directory?: string; requestId: string }): Promise<{ mission: MissionMap }> {
-    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions`
-    return missionMutationRequest(API_BASE ? new URL(path, API_BASE).toString() : path, "POST", input)
-  },
-  editMission(instanceId: string, missionId: string, input: { objective: string; notes?: string; expectedRevision: number; requestId: string }): Promise<{ mission: MissionMap }> {
-    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`
-    return missionMutationRequest(API_BASE ? new URL(path, API_BASE).toString() : path, "PATCH", input)
-  },
-  deleteMission(instanceId: string, missionId: string, input: MissionDeletionRequest) {
-    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`
-    return deleteMissionRequest(API_BASE ? new URL(path, API_BASE).toString() : path, input)
-  },
-  controlMission(instanceId: string, missionId: string, input: MissionLifecycleInput): Promise<{ mission: MissionMap }> {
-    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/control`
-    return missionLifecycleRequest(API_BASE ? new URL(path, API_BASE).toString() : path, input)
-  },
-  async recoverMission(instanceId: string, missionId: string, input: { expectedRevision: number; target: "coordinator" | "report"; taskKey?: string }): Promise<{ mission: MissionMap; admitted: true }> {
-    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/recover`
-    // Keep the structured classification: generic request() intentionally projects
-    // errors to text. Recovery must never display upstream text or replay a POST.
-    const response = await authenticatedFetch(API_BASE ? new URL(path, API_BASE).toString() : path, {
-      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
-    })
-    if (!response.ok) {
-      const body: unknown = await response.json().catch(() => undefined)
-      const code = body && typeof body === "object" && "code" in body && typeof body.code === "string" ? body.code : undefined
-      throw Object.assign(new Error("Mission recovery was not admitted"), { code, status: response.status })
-    }
-    return await response.json() as { mission: MissionMap; admitted: true }
-  },
-  writeInstanceData(id: string, data: InstanceData): Promise<void> {
-    return request(`/api/storage/instances/${encodeURIComponent(id)}`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    })
-  },
-  deleteInstanceData(id: string): Promise<void> {
-    return request(`/api/storage/instances/${encodeURIComponent(id)}`, { method: "DELETE" })
-  },
-  getYoloState(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
-    return request<YoloStateResponse>(
-      `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}`,
-    )
-  },
-  toggleYolo(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
-    return request<YoloStateResponse>(
-      `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}/toggle`,
-      { method: "POST" },
-    )
-  },
-  sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }, signal?: AbortSignal): Promise<void> {
-    const init: RequestInit = {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }
-    if (signal) {
-      init.signal = signal
-    }
-    return request<void>("/api/client-connections/pong", init)
-  },
-  connectEvents(
-    onEvent: (event: WorkspaceEventPayload) => void,
-    onError?: () => void,
-    onPing?: (payload: { ts?: number }) => void,
-  ) {
-    const identity = getClientIdentity()
-    const url = buildClientEventsUrl(identity)
-    sseLogger.info(`Connecting to ${url}`)
-    const source = new EventSource(url, { withCredentials: true } as any)
-    attachEventSourceHandlers(source, { onEvent, onError, onPing, logger: sseLogger })
-    return source
-  },
+    },
+    deletePreview(token: string): Promise<void> {
+      return request(`/api/previews/${encodeURIComponent(token)}`, { method: "DELETE" })
+    },
+    fetchServerMeta(): Promise<ServerMeta> {
+      return request<ServerMeta>("/api/meta")
+    },
+    probeRemoteServer(payload: RemoteServerProbeRequest): Promise<RemoteServerProbeResponse> {
+      return request<RemoteServerProbeResponse>("/api/remote-servers/probe", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      })
+    },
+    createRemoteProxySession(payload: RemoteProxySessionCreateRequest): Promise<RemoteProxySessionCreateResponse> {
+      return request<RemoteProxySessionCreateResponse>("/api/remote-proxy/sessions", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      })
+    },
+    deleteRemoteProxySession(id: string): Promise<void> {
+      return request(`/api/remote-proxy/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
+    },
+    fetchRemoteControlStatus(): Promise<RemoteControlStatus> {
+      return request<RemoteControlStatus>("/api/remote-control/status")
+    },
+    startRemoteControl(): Promise<RemoteControlStartResponse> {
+      return request<RemoteControlStartResponse>("/api/remote-control/start", { method: "POST" })
+    },
+    stopRemoteControl(): Promise<RemoteControlStatus> {
+      return request<RemoteControlStatus>("/api/remote-control", { method: "DELETE" })
+    },
+    createRemoteControlPairing(): Promise<RemoteControlPairing> {
+      return request<RemoteControlPairing>("/api/remote-control/pairings", { method: "POST" })
+    },
+    setRemoteControlPreviews(enabled: boolean): Promise<RemoteControlStatus> {
+      return request<RemoteControlStatus>("/api/remote-control/previews", { method: "PUT", body: JSON.stringify({ enabled }) })
+    },
+    fetchRemoteControlDevices(): Promise<{ devices: RemoteControlDevice[] }> {
+      return request<{ devices: RemoteControlDevice[] }>("/api/remote-control/devices")
+    },
+    revokeRemoteControlDevice(id: string): Promise<void> {
+      return request(`/api/remote-control/devices/${encodeURIComponent(id)}`, { method: "DELETE" })
+    },
+    fetchAuthStatus(): Promise<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }> {
+      return request<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }>("/api/auth/status")
+    },
+    listConfigFiles(): Promise<ConfigFileListResponse> {
+      return request<ConfigFileListResponse>("/api/config-files")
+    },
+    readConfigFile(id: string): Promise<ConfigFileContentResponse> {
+      return request<ConfigFileContentResponse>(`/api/config-files/${encodeURIComponent(id)}/content`)
+    },
+    writeConfigFile(id: string, contents: string): Promise<void> {
+      const body: ConfigFileContentRequest = { contents }
+      return request(`/api/config-files/${encodeURIComponent(id)}/content`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      })
+    },
+    getPluginControls(instanceId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<PluginControlsSnapshot> {
+      const params = new URLSearchParams({ directory: location.directory })
+      if (location.workspaceID) params.set("workspaceID", location.workspaceID)
+      return secondaryRead(signal, () => request<PluginControlsSnapshot>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls?${params.toString()}`, { signal }))
+    },
+    getWebSearchSettings(instanceId: string, directory: string): Promise<import("../../../server/src/api-types").WebSearchSettingsSnapshot> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings?${new URLSearchParams({ directory })}`)
+    },
+    getServiceUsageOwner(instanceId: string, signal?: AbortSignal): Promise<{ owner: string; identity?: string; connection?: string }> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage/owner`, { signal })
+    },
+    getCachedServiceUsage(instanceId: string, timezone: string, days?: number, signal?: AbortSignal): Promise<{ days: number; owner?: string; identity?: string; connection?: string; snapshot?: import("../../../server/src/api-types").ServiceUsageSnapshot }> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage/cache?${new URLSearchParams({ timezone, ...(days ? { days: String(days) } : {}) })}`, { signal })
+    },
+    getServiceUsage(instanceId: string, query: { from: number; to: number; timezone: string; restorePeriod?: boolean }, signal?: AbortSignal): Promise<import("../../../server/src/api-types").ServiceUsageSnapshot> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage?${new URLSearchParams({ from: String(query.from), to: String(query.to), timezone: query.timezone, ...(query.restorePeriod ? { restorePeriod: "true" } : {}) })}`, { signal })
+    },
+    setWebSearchSettings(instanceId: string, payload: import("../../../server/src/api-types").WebSearchSettingsMutation): Promise<void> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings`, { method: "PUT", body: JSON.stringify(payload) })
+    },
+    getImageSettings(instanceId: string, directory: string): Promise<import("../../../server/src/api-types").ImageSettingsSnapshot> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/image-settings?${new URLSearchParams({ directory })}`)
+    },
+    setImageSettings(instanceId: string, payload: import("../../../server/src/api-types").ImageSettingsMutation): Promise<void> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/image-settings`, { method: "PUT", body: JSON.stringify(payload) })
+    },
+    getSubagentDepth(instanceId: string, directory: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").SubagentDepthSnapshot> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/subagent-depth?${new URLSearchParams({ directory })}`, { signal })
+    },
+    setSubagentDepth(instanceId: string, payload: { location: { directory: string }; depth: number | null; expectation: string }): Promise<void> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/subagent-depth`, { method: "PUT", body: JSON.stringify(payload) })
+    },
+    setPluginActivation(instanceId: string, payload: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse> {
+      return request<PluginActivationMutationResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      })
+    },
+    addPluginSource(instanceId: string, payload: PluginSourceAddRequest): Promise<PluginSourceMutationResponse> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-sources`, { method: "POST", body: JSON.stringify(payload) })
+    },
+    removePluginSource(instanceId: string, payload: PluginSourceRemoveRequest): Promise<PluginSourceMutationResponse> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-sources`, { method: "DELETE", body: JSON.stringify(payload) })
+    },
+    setServerPassword(password: string): Promise<{ ok: boolean; username: string; passwordUserProvided: boolean }> {
+      return request<{ ok: boolean; username: string; passwordUserProvided: boolean }>("/api/auth/password", {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      })
+    },
+    deleteWorkspace(id: string): Promise<void> {
+      return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
+    },
+    createTemporaryFolder(): Promise<{ path: string }> {
+      return request("/api/workspaces/temporary", { method: "POST" })
+    },
+    abandonTemporaryFolder(path: string): Promise<void> {
+      return request("/api/workspaces/temporary/abandon", { method: "POST", body: JSON.stringify({ path }) })
+    },
+    keepTemporaryWorkspace(id: string): Promise<void> {
+      return request(`/api/workspaces/${encodeURIComponent(id)}/keep`, { method: "POST" })
+    },
+    discardTemporaryWorkspace(id: string, options: { onlyIfEmpty?: boolean } = {}): Promise<void> {
+      return request(`/api/workspaces/${encodeURIComponent(id)}/discard`, { method: "POST", body: JSON.stringify(options) })
+    },
+    getPendingRequests(id: string, directories: string[], signal?: AbortSignal, optionalDirectories: string[] = []): Promise<WorkspacePendingRequestsResponse> {
+      const query = new URLSearchParams(directories.map((directory) => ["directories", directory]))
+      for (const directory of optionalDirectories) query.append("optionalDirectories", directory)
+      return request(`/api/workspaces/${encodeURIComponent(id)}/pending-requests?${query}`, { signal })
+    },
+    cloneWorkspaceRepository(payload: WorkspaceCloneRequest): Promise<WorkspaceCloneResponse> {
+      return request<WorkspaceCloneResponse>("/api/workspaces/clone", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      })
+    },
+    listWorkspaceFiles(id: string, relativePath = ".", directory?: string, signal?: AbortSignal): Promise<FileSystemEntry[]> {
+      const params = new URLSearchParams({ path: relativePath })
+      if (directory) params.set("directory", directory)
+      return request<FileSystemEntry[]>(`/api/workspaces/${encodeURIComponent(id)}/files?${params.toString()}`, { signal })
+    },
+    searchWorkspaceFiles(
+      id: string,
+      query: string,
+      opts?: { limit?: number; type?: "file" | "directory" | "all"; signal?: AbortSignal; directory?: string },
+    ): Promise<WorkspaceFileSearchResponse> {
+      const trimmed = query.trim()
+      if (!trimmed) {
+        return Promise.resolve([])
+      }
+      const params = new URLSearchParams({ q: trimmed })
+      if (opts?.directory) params.set("directory", opts.directory)
+      if (opts?.limit) {
+        params.set("limit", String(opts.limit))
+      }
+      if (opts?.type) {
+        params.set("type", opts.type)
+      }
+      const search = () => request<WorkspaceFileSearchResponse>(
+        `/api/workspaces/${encodeURIComponent(id)}/files/search?${params.toString()}`,
+        { signal: opts?.signal },
+      )
+      return opts?.signal ? retryFileSearch(search, opts.signal) : search()
+    },
+    previewWorkspaceFile(id: string, relativePath: string, directory: string, signal?: AbortSignal): Promise<WorkspaceFileResponse> {
+      const params = new URLSearchParams({ path: relativePath, directory })
+      return request(`/api/workspaces/${encodeURIComponent(id)}/files/preview?${params}`, { signal })
+    },
+    readWorkspaceFile(id: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
+      const params = new URLSearchParams({ path: relativePath })
+      if (options?.encoding) {
+        params.set("encoding", options.encoding)
+      }
+      return request<WorkspaceFileResponse>(
+        `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
+      )
+    },
+    writeWorkspaceFile(id: string, relativePath: string, contents: string, options?: { worktree?: string; directory?: string }): Promise<void> {
+      const params = new URLSearchParams({ path: relativePath })
+      if (options?.directory) params.set("directory", options.directory)
+      if (options?.worktree && options.worktree !== "root") {
+        params.set("worktree", options.worktree)
+      }
+      return request(
+        `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
+        {
+          method: "PUT",
+          body: JSON.stringify({ contents }),
+        },
+      )
+    },
+    fetchWorktreeGitStatus(id: string, slug: string, signal?: AbortSignal, options?: { hideWhitespace?: boolean }): Promise<WorktreeGitStatusResponse> {
+      return request<WorktreeGitStatusResponse>(
+        `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-status${options?.hideWhitespace ? "?hideWhitespace=1" : ""}`,
+        { signal },
+      )
+    },
+    fetchGitHistory(id: string, slug: string, offset = 0, head?: string, signal?: AbortSignal): Promise<GitHistoryPage> {
+      const query = new URLSearchParams({ offset: String(offset), ...(head ? { head } : {}) })
+      return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-history?${query}`, { signal })
+    },
+    fetchGitCommit(id: string, slug: string, commit: string, signal?: AbortSignal): Promise<GitCommitDetails> {
+      return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-history/${encodeURIComponent(commit)}`, { signal })
+    },
+    fetchGitCommitDiff(id: string, slug: string, commit: string, path: string, signal?: AbortSignal): Promise<GitCommitDiff> {
+      return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-history/${encodeURIComponent(commit)}?${new URLSearchParams({ path })}`, { signal })
+    },
+    fetchWorktreeGitDiff(id: string, slug: string, requestPayload: WorktreeGitDiffRequest, signal?: AbortSignal): Promise<WorktreeGitDiffResponse> {
+      const params = new URLSearchParams({ path: requestPayload.path, scope: requestPayload.scope })
+      if (requestPayload.originalPath) {
+        params.set("originalPath", requestPayload.originalPath)
+      }
+      return request<WorktreeGitDiffResponse>(
+        `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-diff?${params.toString()}`,
+        { signal },
+      )
+    },
+    stageWorktreeGitPaths(id: string, slug: string, payload: WorktreeGitPathsRequest): Promise<WorktreeGitMutationResponse> {
+      return request<WorktreeGitMutationResponse>(
+        `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-stage`,
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        },
+      )
+    },
+    unstageWorktreeGitPaths(id: string, slug: string, payload: WorktreeGitPathsRequest): Promise<WorktreeGitMutationResponse> {
+      return request<WorktreeGitMutationResponse>(
+        `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-unstage`,
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        },
+      )
+    },
+    initializeWorkspaceGit(id: string, directory: string): Promise<WorktreeGitMutationResponse> {
+      return request<WorktreeGitMutationResponse>(`/api/workspaces/${encodeURIComponent(id)}/git-init`, {
+        method: "POST",
+        body: JSON.stringify({ directory }),
+      })
+    },
+    commitWorktreeGitChanges(id: string, slug: string, payload: WorktreeGitCommitRequest): Promise<WorktreeGitCommitResponse> {
+      return request<WorktreeGitCommitResponse>(
+        `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-commit`,
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        },
+      )
+    },
+
+    getProviderAccounts(instanceId: string, integrationID: string, directory: string): Promise<ProviderAccountsSnapshot> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/provider-accounts/${encodeURIComponent(integrationID)}?${new URLSearchParams({ directory })}`)
+    },
+    setProviderAccountSelection(instanceId: string, integrationID: string, directory: string, enabled: boolean): Promise<ProviderAccountsSnapshot> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/provider-accounts/${encodeURIComponent(integrationID)}`, {
+        method: "PUT", body: JSON.stringify({ directory, enabled }),
+      })
+    },
+    fetchConfigOwner<T extends Record<string, any> = Record<string, any>>(owner: string, signal?: AbortSignal): Promise<T> {
+      return request<T>(`/api/storage/config/${encodeURIComponent(owner)}`, { signal })
+    },
+    patchConfigOwner<T extends Record<string, any> = Record<string, any>>(owner: string, patch: unknown): Promise<T> {
+      return request<T>(`/api/storage/config/${encodeURIComponent(owner)}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch ?? {}),
+      })
+    },
+    patchMissionPreferences<T extends Record<string, any> = Record<string, any>>(patch: unknown, expected: MissionPreferenceExpectation[]): Promise<T> {
+      return request<T>("/api/storage/config/ui?conditional=missions-v1", {
+        method: "PATCH", body: JSON.stringify({ patch, expected }),
+      })
+    },
+    fetchStateOwner<T extends Record<string, any> = Record<string, any>>(owner: string): Promise<T> {
+      return request<T>(`/api/storage/state/${encodeURIComponent(owner)}`)
+    },
+    patchStateOwner<T extends Record<string, any> = Record<string, any>>(owner: string, patch: unknown): Promise<T> {
+      return request<T>(`/api/storage/state/${encodeURIComponent(owner)}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch ?? {}),
+      })
+    },
+
+    validateBinary(path: string): Promise<BinaryValidationResult> {
+      return request<BinaryValidationResult>("/api/storage/binaries/validate", {
+        method: "POST",
+        body: JSON.stringify({ path }),
+      })
+    },
+    /** `recheck` marks an explicit user check, which refreshes the server's cached version probes. */
+    fetchOpenCodeUpdateStatus(options: { recheck?: boolean } = {}): Promise<OpenCodeUpdateStatus> {
+      return request<OpenCodeUpdateStatus>(options.recheck ? "/api/opencode/update?recheck=1" : "/api/opencode/update")
+    },
+    getOpenCodeLoginStart(): Promise<import("../../../server/src/api-types").LoginStartResponse> {
+      return request("/api/opencode/login-start")
+    },
+    setOpenCodeLoginStart(input: import("../../../server/src/api-types").LoginStartControl): Promise<import("../../../server/src/api-types").LoginStartResponse> {
+      return request("/api/opencode/login-start", { method: "POST", body: JSON.stringify(input) })
+    },
+    updateOpenCode(options: { replaceLegacy?: { path: string; version: string } } = {}): Promise<OpenCodeUpdateResponse> {
+      return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST",
+        body: JSON.stringify(options.replaceLegacy ? { replaceLegacy: { path: options.replaceLegacy.path, version: options.replaceLegacy.version } } : {}) })
+    },
+    startOpenCode(restart = false): Promise<OpenCodeUpdateStatus> {
+      return request<OpenCodeUpdateStatus>("/api/opencode/service", { method: "POST", body: JSON.stringify({ restart }) })
+    },
+    reloadOpenCodeConfiguration(): Promise<OpenCodeUpdateStatus> {
+      return request<OpenCodeUpdateStatus>("/api/opencode/service", { method: "POST", body: JSON.stringify({ reload: true }) })
+    },
+    fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
+      return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")
+    },
+    transcribeAudio(payload: {
+      audioBase64: string
+      mimeType: string
+      filename?: string
+      language?: string
+      prompt?: string
+    }): Promise<SpeechTranscriptionResponse> {
+      return request<SpeechTranscriptionResponse>("/api/speech/transcribe", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      })
+    },
+    synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" }): Promise<SpeechSynthesisResponse> {
+      return request<SpeechSynthesisResponse>("/api/speech/synthesize", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      })
+    },
+    synthesizeSpeechStream(
+      payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" },
+      signal?: AbortSignal,
+    ): Promise<Response> {
+      return requestRaw("/api/speech/synthesize/stream", {
+        method: "POST",
+        body: JSON.stringify(payload),
+        signal,
+      })
+    },
+    listFileSystem(path?: string, options?: { includeFiles?: boolean }): Promise<FileSystemListResponse> {
+      const params = new URLSearchParams()
+      if (path && path !== ".") {
+        params.set("path", path)
+      }
+      if (options?.includeFiles !== undefined) {
+        params.set("includeFiles", String(options.includeFiles))
+      }
+      const query = params.toString()
+      return request<FileSystemListResponse>(query ? `/api/filesystem?${query}` : "/api/filesystem")
+    },
+
+    createFileSystemFolder(parentPath: string | undefined, name: string): Promise<FileSystemCreateFolderResponse> {
+      return request<FileSystemCreateFolderResponse>("/api/filesystem/folders", {
+        method: "POST",
+        body: JSON.stringify({ parentPath, name }),
+      })
+    },
+    readFileSystemFile(path: string, options?: { encoding?: "utf-8" | "base64" }): Promise<FileSystemFileContentResponse> {
+      const params = new URLSearchParams({ path })
+      if (options?.encoding) {
+        params.set("encoding", options.encoding)
+      }
+      return request<FileSystemFileContentResponse>(`/api/filesystem/files/content?${params.toString()}`)
+    },
+    readInstanceData(id: string): Promise<InstanceData> {
+      return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)
+    },
+    fetchMissionPanel(instanceId: string, selector: Exclude<import("../../../server/src/missions/mission-panel-wire").MissionPanelPageRequest, { source: "tasks" }>, scope: MissionPanelReadScope) {
+      const deadline = Math.min(scope.deadline ?? Infinity, performance.now() + TASK_READ_TIMEOUT_MS)
+      const signal = AbortSignal.any([...(scope.signal ? [scope.signal] : []), AbortSignal.timeout(Math.max(0, Math.ceil(deadline - performance.now())))])
+      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/panel-page`
+      return readMissionPanelWindow(selector, { ...scope, signal, deadline, runTransfer: read => secondaryRead(signal, read), exchange: body => {
+        if (!scope.current()) throw new DOMException("Obsolete panel read", "AbortError")
+        assertTaskReadLive(signal, deadline)
+        return ctx.fetch(ctx.url(path), {
+          method: "POST", body, signal, credentials: "include", headers: { "Content-Type": "application/json" },
+        })
+      } })
+    },
+    /** One mission's compact map and cleanups, for display reconciliation (lost acknowledgements, cleanup retries). */
+    fetchMission(instanceId: string, missionId: string): Promise<MissionReadResponse> {
+      return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`)
+    },
+    /** More of one mission's tasks for display: a window of its display order or tasks by name;
+     * it shares the secondary read budget. */
+    fetchMissionTasks(instanceId: string, missionId: string, input: import("../../../server/src/missions/mission-panel-map").MissionTaskRequest,
+      scope: { projectID: string; current(): boolean; signal?: AbortSignal; deadline?: number; context?: MissionTaskPageContext }):
+      Promise<import("../../../server/src/missions/mission-panel-map").MissionTaskPageResponse> {
+      const deadline = Math.min(scope.deadline ?? Infinity, performance.now() + TASK_READ_TIMEOUT_MS)
+      const timeout = AbortSignal.timeout(Math.max(0, Math.ceil(deadline - performance.now())))
+      const signal = scope.signal ? AbortSignal.any([scope.signal, timeout]) : timeout
+      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/panel-page`
+      return readMissionTaskPage(missionId, input, { ...scope, signal, deadline, runTransfer: read => secondaryRead(signal, read), exchange: body => {
+        if (!scope.current()) throw new DOMException("Obsolete task read", "AbortError")
+        assertTaskReadLive(signal, deadline)
+        return ctx.fetch(ctx.url(path), {
+          method: "POST", body, signal, credentials: "include", headers: { "Content-Type": "application/json" },
+        })
+      } })
+    },
+    /** One slice of a mission body, for display only; it shares the secondary read budget. */
+    fetchMissionContent(instanceId: string, missionId: string, input: Omit<import("../../../server/src/missions/mission-content-wire").MissionContentRequest, "missionID">,
+      signal: AbortSignal): Promise<import("../../../server/src/missions/mission-content-wire").MissionContentResponse> {
+      const params = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/content?${params}`, { signal }))
+    },
+    /** This backend's playbook definitions, as its Missions prompts are built from them. */
+    fetchMissionPlaybooks(taskMode: import("../../../server/src/missions/task-execution-mode").MissionTaskMode): Promise<import("../../../server/src/missions/playbook-details").MissionPlaybookDetails> {
+      return request(`/api/missions/playbooks?taskMode=${encodeURIComponent(taskMode)}`)
+    },
+    fetchMissionSchedules(instanceId: string, input: { after?: string; limit?: number; directory?: string } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleList> {
+      const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/scheduled?${query}`, { signal }))
+    },
+    fetchMissionScheduleCapability(instanceId: string, directory?: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleCapability> {
+      const query = new URLSearchParams(directory === undefined ? {} : { directory })
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/scheduled/capabilities?${query}`, { signal }))
+    },
+    fetchMissionSchedule(instanceId: string, missionID: string, input: { directory?: string; requestID?: string } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
+      const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined) as [string, string][])
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionID)}/schedule?${query}`, { signal }))
+    },
+    fetchMissionScheduleCreation(instanceId: string, requestID: string, directory?: string): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
+      const query = new URLSearchParams(directory === undefined ? {} : { directory })
+      return secondaryRead(undefined, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/scheduled/requests/${encodeURIComponent(requestID)}?${query}`))
+    },
+    saveMissionSchedule(instanceId: string, input: import("../stores/mission-schedule-editor-holds").MissionScheduleEditorRequest): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
+      const { missionID, ...body } = input
+      const target = missionID ? `${encodeURIComponent(missionID)}/schedule` : "scheduled"
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${target}`, { method: "POST", body: JSON.stringify(body) })
+    },
+    controlMissionSchedule(instanceId: string, missionID: string, input: { action: "play" | "resume" | "pause" | "stop" | "check" | "run-now" | "delete";
+      requestID: string; expectedRevision: number; directory?: string; deleteManagedSessions?: boolean }): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionID)}/schedule`, {
+        method: "POST", body: JSON.stringify(input) })
+    },
+    missionScheduleSettings(instanceId: string, missionID: string, input: { requestID: string; expectedDocumentRevision: number }, apply = false): Promise<{ document: import("../../../server/src/missions/mission-document-one-time").MissionDocumentSummary }> {
+      const url = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionID)}/schedule-settings`
+      return apply ? request(url, { method: "POST", body: JSON.stringify(input) })
+        : secondaryRead(undefined, () => request(`${url}?${new URLSearchParams({ requestID: input.requestID, expectedDocumentRevision: String(input.expectedDocumentRevision) })}`))
+    },
+    /** The same read, with the full map, from the authoritative full snapshot, for admitting an application-authored prompt. */
+    fetchMissionAdmission(instanceId: string, missionId: string): Promise<MissionReadResponse<MissionMap>> {
+      return request<MissionReadResponse<MissionMap>>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/admission`)
+    },
+    fetchMissionCurrentPassage(instanceId: string, scheduleID: string, signal?: AbortSignal, owner: "daily" | "scheduled" = "daily"): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrent> {
+      const deadline = performance.now() + TASK_READ_TIMEOUT_MS
+      const live = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(TASK_READ_TIMEOUT_MS)])
+      return secondaryRead(live, async () => {
+        assertTaskReadLive(live, deadline)
+        const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current${owner === "scheduled" ? "?owner=scheduled" : ""}`
+        return readMissionCurrentIdentity(await ctx.fetch(ctx.url(path), { signal: live, credentials: "include" }), live)
+      })
+    },
+    fetchMissionCurrentPanel(instanceId: string, source: MissionCurrentSource, selector: Exclude<MissionPanelPageRequest, { source: "tasks" }>, scope: MissionPanelReadScope) {
+      return readMissionPanelWindow(selector, currentPassageTransport(ctx, instanceId, source, scope))
+    },
+    fetchMissionCurrentTasks(instanceId: string, source: MissionCurrentSource, task: import("../../../server/src/missions/mission-panel-map").MissionTaskRequest, scope: MissionPanelReadScope) {
+      return readMissionTaskPage(source.missionID, task, currentPassageTransport(ctx, instanceId, source, scope))
+    },
+    async fetchMissionCurrentBody(instanceId: string, source: MissionCurrentSource, body: MissionContentRequest, signal: AbortSignal, deadline = performance.now() + TASK_READ_TIMEOUT_MS) {
+      source = structuredClone(source)
+      body = structuredClone(body)
+      const answer = await readMissionPanelWindow({ source: "mission", missionID: source.missionID, field: "body", window: { offset: 0 } },
+        currentPassageTransport(ctx, instanceId, source, { signal, deadline, current: () => !signal.aborted }, body))
+      if (answer.values.length !== 1) throw new MissionTaskPageReadError("invalid")
+      const value = answer.values[0] as import("../../../server/src/missions/mission-content-wire").MissionContentResponse
+      if (!value || !value.available || value.projectID !== source.projectID || !("missionID" in value) || value.missionID !== source.missionID) throw new MissionTaskPageReadError("invalid")
+      if ("content" in value) {
+        if (!Number.isSafeInteger(value.content.characters) || value.content.characters > TASK_WINDOW_CHARACTERS) throw new MissionTaskPageReadError("too-large")
+        const { missionID: _mission, digest, offset, ...selector } = body
+        validMissionContentSlice(selector, { offset, digest }, value.content)
+      }
+      assertTaskReadLive(signal, deadline)
+      return value
+    },
+    fetchMissionCurrentContent(instanceId: string, input: import("../../../server/src/missions/recurrence-current").RecurrenceCurrentContentInput, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrentContent> {
+      const { scheduleID, passageID, ...query } = input
+      const params = new URLSearchParams(Object.entries(query).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current/${encodeURIComponent(passageID)}/content?${params}`, { signal })
+    },
+    async fetchMissionRecurrence(instanceId: string, signal?: AbortSignal): Promise<MissionRecurrenceSnapshot> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { signal })
+    },
+    async controlMissionRecurrence(instanceId: string, scheduleID: string, input: RecurrenceControlIntent): Promise<RecurrenceControlStatus> {
+      return readRecurrenceControlResult(await request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/control`, {
+        method: "POST", body: JSON.stringify(input),
+      }))
+    },
+    async missionRecurrenceControlStatus(instanceId: string, scheduleID: string, input: RecurrenceControlIntent): Promise<RecurrenceControlStatus> {
+      return readRecurrenceControlResult(await request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/control/status`, {
+        method: "POST", body: JSON.stringify(recurrenceControlStatusInput(input)),
+      }))
+    },
+    async runMissionRecurrenceNow(instanceId: string, input: RecurrenceControlIntent): Promise<RecurrenceManualResult> {
+      const { requestID, expectedRevision, directory } = input
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(input.scheduleID)}/run-now`, {
+        method: "POST", body: JSON.stringify({ requestID, expectedRevision, ...(directory ? { directory } : {}) }),
+      })
+    },
+    async missionRecurrenceRunNowStatus(instanceId: string, input: RecurrenceControlIntent): Promise<RecurrenceManualResult> {
+      const query = new URLSearchParams({ requestID: input.requestID, expectedRevision: String(input.expectedRevision),
+        ...(input.directory ? { directory: input.directory } : {}) })
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(input.scheduleID)}/run-now/status?${query}`)
+    },
+    fetchMissionRecurrencePassagePage(instanceId: string, scheduleID: string, passageID: string,
+      input: { section: number; page: number; revision?: number }, signal?: AbortSignal): Promise<MissionRecurrenceReadPage> {
+      const query = new URLSearchParams({ section: String(input.section), page: String(input.page),
+        ...(input.revision === undefined ? {} : { revision: String(input.revision) }) })
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/passages/${encodeURIComponent(passageID)}?${query}`, { signal })
+    },
+    createMissionRecurrence(instanceId: string, input: { requestID: string; title: string; instructions: string;
+      notes?: string; template: MissionMap["template"];
+      clock: { time: string; zone: string }; watchedConversationIDs: string[];
+      profiles: MissionProfiles; taskMode: "native" | "independent"; directory?: string
+    }): Promise<{ schedule: { id: string; revision: number; state: "paused"; digest: string; projectID: string; projectCanonical: string } }> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { method: "POST", body: JSON.stringify(input) })
+    },
+    createMission(instanceId: string, input: { title?: string; objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; taskMode?: "native" | "independent"; directory?: string; requestId: string }): Promise<{ mission: MissionMap }> {
+      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions`
+      return missionMutationRequest(ctx.url(path), "POST", input, ctx.fetch)
+    },
+    editMission(instanceId: string, missionId: string, input: { objective: string; notes?: string; expectedRevision: number; requestId: string }): Promise<{ mission: MissionMap }> {
+      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`
+      return missionMutationRequest(ctx.url(path), "PATCH", input, ctx.fetch)
+    },
+    deleteMission(instanceId: string, missionId: string, input: MissionDeletionRequest) {
+      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`
+      return deleteMissionRequest(ctx.url(path), input, ctx.fetch)
+    },
+    controlMission(instanceId: string, missionId: string, input: MissionLifecycleInput): Promise<{ mission: MissionMap }> {
+      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/control`
+      return missionLifecycleRequest(ctx.url(path), input, ctx.fetch)
+    },
+    async recoverMission(instanceId: string, missionId: string, input: { expectedRevision: number; target: "coordinator" | "report"; taskKey?: string }): Promise<{ mission: MissionMap; admitted: true }> {
+      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/recover`
+      // Keep the structured classification: generic request() intentionally projects
+      // errors to text. Recovery must never display upstream text or replay a POST.
+      const response = await ctx.fetch(ctx.url(path), {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+      })
+      if (!response.ok) {
+        const body: unknown = await response.json().catch(() => undefined)
+        const code = body && typeof body === "object" && "code" in body && typeof body.code === "string" ? body.code : undefined
+        throw Object.assign(new Error("Mission recovery was not admitted"), { code, status: response.status })
+      }
+      return await response.json() as { mission: MissionMap; admitted: true }
+    },
+    writeInstanceData(id: string, data: InstanceData): Promise<void> {
+      return request(`/api/storage/instances/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      })
+    },
+    deleteInstanceData(id: string): Promise<void> {
+      return request(`/api/storage/instances/${encodeURIComponent(id)}`, { method: "DELETE" })
+    },
+    getYoloState(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
+      return request<YoloStateResponse>(
+        `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}`,
+      )
+    },
+    toggleYolo(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
+      return request<YoloStateResponse>(
+        `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}/toggle`,
+        { method: "POST" },
+      )
+    },
+    sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }, signal?: AbortSignal): Promise<void> {
+      const init: RequestInit = {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }
+      if (signal) {
+        init.signal = signal
+      }
+      return request<void>("/api/client-connections/pong", init)
+    },
+    connectEvents(
+      onEvent: (event: WorkspaceEventPayload) => void,
+      onError?: () => void,
+      onPing?: (payload: { ts?: number }) => void,
+    ) {
+      const identity = getClientIdentity()
+      const url = buildClientEventsUrl(ctx.eventsUrl, identity)
+      sseLogger.info(`Connecting to ${url}`)
+      const source = ctx.openEventSource(url, { withCredentials: true })
+      attachEventSourceHandlers(source, { onEvent, onError, onPing, logger: sseLogger })
+      return source
+    },
+  }
 }
 
-function buildClientEventsUrl(identity: { clientId: string; connectionId: string }): string {
-  const url = new URL(EVENTS_URL, typeof window !== "undefined" ? window.location.origin : "http://localhost")
+export type ServerApi = ReturnType<typeof createServerApi>
+
+/** The local backend's API. Tests replace its methods in place, so it stays one mutable object. */
+export const serverApi: ServerApi = createServerApi(localHttp)
+
+function buildClientEventsUrl(eventsUrl: string, identity: { clientId: string; connectionId: string }): string {
+  const url = new URL(eventsUrl, typeof window !== "undefined" ? window.location.origin : "http://localhost")
   url.searchParams.set("clientId", identity.clientId)
   url.searchParams.set("connectionId", identity.connectionId)
-  if (EVENTS_URL.startsWith("http://") || EVENTS_URL.startsWith("https://")) {
+  if (eventsUrl.startsWith("http://") || eventsUrl.startsWith("https://")) {
     return url.toString()
   }
   return `${url.pathname}${url.search}`

@@ -352,6 +352,10 @@ jobs:
           packages/ui/src/lib/height-delta.test.ts
           packages/ui/src/lib/scroll-gesture-routing.test.ts
           packages/ui/src/lib/client-identity.test.ts
+          packages/ui/src/lib/backend-client.test.ts
+          packages/ui/src/lib/backend-transport.test.ts
+          packages/ui/src/lib/backend-route-joining.test.ts
+          packages/ui/src/lib/local-route-joining.test.ts
           packages/ui/src/lib/filesystem-events.test.ts
           packages/ui/src/lib/global-cache.test.ts
           packages/ui/src/lib/monaco/model-cache.test.ts

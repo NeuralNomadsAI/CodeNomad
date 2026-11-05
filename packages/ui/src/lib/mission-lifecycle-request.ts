@@ -20,8 +20,8 @@ export function isRejectedLifecycleIntent(error: unknown): boolean {
   return error instanceof MissionLifecycleRequestError && error.status === 409 && error.code === "revision-conflict"
 }
 
-export async function missionLifecycleRequest(url: string, input: MissionLifecycleInput): Promise<{ mission: MissionMap }> {
-  const response = await authenticatedFetch(url, { method: "POST", credentials: "include",
+export async function missionLifecycleRequest(url: string, input: MissionLifecycleInput, fetcher: typeof fetch = authenticatedFetch): Promise<{ mission: MissionMap }> {
+  const response = await fetcher(url, { method: "POST", credentials: "include",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) })
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => undefined)
