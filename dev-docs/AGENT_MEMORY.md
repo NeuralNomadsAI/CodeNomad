@@ -48,6 +48,54 @@ The namespace is SHA-256 of `remote:<normalized-remote>` or
 remote credentials and physical fallback paths stay private. Callers resolve
 again for authoritative operations so remote edits and session moves take effect.
 
+## Local storage and Git transactions
+
+`memory/store.ts` constructs `MemoryStore` from `ConfigLocation.baseDir`. The
+server's listeners share this instance. Its lazily initialized repository is
+`<baseDir>/memory/`, with `global/<id>.md` and
+`projects/<projectId>/<id>.md`. Project IDs use the resolver's SHA-256 namespace.
+Missing folders read as empty; invalid UTF-8, malformed or extra header fields,
+duplicate YAML keys, filename/header mismatches, symbolic links and unreadable
+files produce explicit scope errors. Storage bounds encoded files and journals to 16 KiB and
+preserve Markdown content, including trailing whitespace and line endings.
+
+The server policy calls `mutate(namespace, decide)` to read a fresh scope and
+choose `{ kind: "save", entry, result }`, `{ kind: "delete", id, result }` or
+`{ kind: "none", result }`. The callback owns enablement, capacity, deduplication
+and preservation of entry identity/provenance. Its decision and the resulting
+commit share one repository-wide interprocess lock. `list` and `read` use the
+same lock for existing storage; pristine empty reads leave the filesystem
+unchanged. `read` resolves an exact ID first, then an exact title. Session-facing
+consumers apply the safety projection to every returned entry.
+
+Writes fsync a uniquely named temporary in the destination directory, then
+rename over the target. A failed replacement preserves the target and removes
+the pending journal. Before publication, an atomic `.transaction.json` records
+the intended file operation and its unique transaction ID. A failed commit
+keeps that journal, and later access completes the operation and its commit
+before returning data. Interrupted deletions follow the same roll-forward
+policy. Each accepted write has a commit, including identical content. Recovery
+recognizes the transaction ID and tree at the current commit to avoid duplicate
+history. Corrupt recovery data fails explicitly.
+
+`memory/lock.ts` atomically publishes a populated `memory.lock/` directory next
+to the repository. Live or inaccessible owner processes retain ownership;
+contenders wait up to 30 seconds. A demonstrably exited PID permits recovery.
+PID reuse conservatively retains the lock. Recovery keeps a nonempty
+`memory.lock.dead-<nonce>/` marker so concurrent recovery attempts cannot move a
+successor's lock. These small ownership markers remain beside the repository.
+Incomplete unpublished candidates have unique names and leave acquisition free.
+
+`memory/git.ts` uses `runGitProcess` and `requireHostGit`. Missing host Git keeps
+the shared `git_required` failure contract. Git commands explicitly name the
+private repository and worktree, clear inherited `GIT_*` overrides, ignore
+system/global Git configuration and use the local identity `CodeNomad Memory
+<memory@codenomad.local>`. Template hooks, runtime hooks, signing, automatic GC,
+fsmonitor and content filters are bypassed. Per-transaction indexes and Git
+plumbing write exact bytes, commit and compare-and-swap the local branch;
+the ordinary index is published after the commit. Unrecoverable Git metadata
+or filesystem errors leave memory unavailable until the storage is repaired.
+
 ## Optional native instructions capability
 
 `memory/instructions-capability.ts` reads the authenticated `/openapi.json`

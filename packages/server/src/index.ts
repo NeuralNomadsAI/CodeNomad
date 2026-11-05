@@ -54,6 +54,7 @@ import { RemoteControlManager } from "./remote-control/manager"
 import { RemoteControlOwnerLease } from "./remote-control/owner-lease"
 import { WorktreeDeletionFence } from "./workspaces/worktree-session-evacuation"
 import { IntegrationCatalogSource } from "./opencode/integrations/catalog"
+import { MemoryStore } from "./memory/store"
 
 const require = createRequire(import.meta.url)
 
@@ -296,6 +297,7 @@ async function main() {
 
   const configLocation = resolveConfigLocation(options.configPath)
   const configDir = configLocation.baseDir
+  const memoryStore = new MemoryStore(configLocation.baseDir)
 
   if ((options.tlsKeyPath && !options.tlsCertPath) || (!options.tlsKeyPath && options.tlsCertPath)) {
     throw new InvalidArgumentError("--tls-key and --tls-cert must be provided together")
@@ -523,6 +525,7 @@ async function main() {
 
   // The same application behind every listener of this backend.
   const listenerDeps = {
+    memoryStore,
     workspaceManager,
     settings,
     fileSystemBrowser,
