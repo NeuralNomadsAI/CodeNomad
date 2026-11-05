@@ -36,7 +36,7 @@ exchanges tokens.
 | `opencode` (Console, `opencode-go` provider only) | OAuth `device`, service-account key | same, with `x-org-id` | accepted unless marked |
 | `anthropic` (Claude Pro/Max) | OpenCode Anthropic OAuth only, never Claude Code's `claude-code` login, even as fallback | Usage tab Claude reader | accepted unless marked |
 | `github-copilot` | OAuth (github.com only) | Usage tab Copilot reader (premium requests) | rejected |
-| `zai-coding-plan`, `zhipuai-coding-plan` | plan key | Usage tab token-limit reader (MCP tool allowance ignored) | rejected |
+| `zai-coding-plan`, `zhipuai-coding-plan` | plan key | Usage tab credit/token-limit reader (MCP tool allowance ignored) | rejected |
 | `kimi-for-coding` | plan key | Usage tab Kimi reader | rejected |
 | `minimax-coding-plan`, `minimax-cn-coding-plan` | plan key | Usage tab MiniMax reader | rejected |
 
@@ -55,8 +55,8 @@ stay manual, outside the registry.
 
 Usage-backed adapters reuse the Usage tab readers with a one-entry projection
 (`usage/native-credentials.ts` `projectCredential`) and a small selection view
-that keeps only plan windows with a positive duration. Those readers keep their
-display transport (15-second timeout, no response-size cap); Codex and Go use
+that keeps only plan windows with a positive duration. Readers use a 15-second
+display transport; z.ai/Zhipu, Codex and Go use
 the bounded credential-free transport in `usage/bounded-fetch.ts` (64 KiB,
 redirects rejected, abortable). Readers keep the upstream HTTP status, and any
 definite client error (4xx except 408/429, e.g. a Zen key answering 402 or a
@@ -99,6 +99,29 @@ interval name rather than an instant, so the reader leaves `resetAt` unknown.
 requires a management key and adds a separate credits row only on a usable success;
 its failure preserves the key-limit row. `ProviderUsageWindow.balanceUSD` carries
 numeric remaining/total amounts, formatted with the UI locale's `Intl.NumberFormat`.
+
+The z.ai and Zhipu readers use the native effective `apiKey` first, then the
+explicitly supplied stored credential when that setting is absent or unresolved.
+Provider configuration owns the model-call key; native `provider.get` performs
+`{env:…}` and `{file:…}` substitution in the daemon's scope (relative files are
+relative to the configuration directory, `~` uses the daemon's home). Empty or
+unresolved settings without a stored credential produce the unconfigured state
+before any request. Selection adapters keep their explicit candidate key.
+Both readers use bounded, redirect-free GETs with Bearer authentication at
+`https://api.z.ai/api/monitor/usage/quota/limit` and
+`https://open.bigmodel.cn/api/monitor/usage/quota/limit`, respectively.
+An HTTP 200 envelope with `success: false` or a non-200 business `code` publishes
+`provider-error`, with only a one-to-eight-digit code; the UI uses its translated
+generic error. Empty/unusable quota payloads publish that reason without a code.
+Never expose upstream `msg` or activate gift resets. HTTP failures retain their
+status for account selection. `CREDIT_LIMIT` uses `percentage`, or consumption
+from `currentValue` / `usage` (falling back to `remaining`); credits are plan units.
+`unit: 3, number: 5` supplies five hours and `unit: 6, number: 1` supplies a week;
+`nextResetTime` supplies the reset in milliseconds. `TOKENS_LIMIT` and the separate
+`TIME_LIMIT` MCP-tools row remain supported. The [plan guide](https://docs.z.ai/devpack/overview.md)
+and [usage revision](https://docs.z.ai/devpack/notice/usage-revision.md) document
+credit-based and legacy windows; the public quota endpoints return the business
+error envelope even without authentication.
 
 ## Auto-select account
 

@@ -273,6 +273,36 @@ for (const [locale, message] of [
   } finally { await page.close() }
 })
 
+for (const [locale, message] of [
+  ["en-US", "Provider error (1001)."],
+  ["fr-FR", "Erreur du fournisseur (1001)."],
+  ["de-DE", "Anbieterfehler (1001)."],
+  ["es-ES", "Error del proveedor (1001)."],
+  ["he-IL", "שגיאת ספק (1001)."],
+  ["ja-JP", "プロバイダーエラー（1001）。"],
+  ["ne-NP", "प्रदायक त्रुटि (1001)।"],
+  ["ru-RU", "Ошибка провайдера (1001)."],
+  ["tr-TR", "Sağlayıcı hatası (1001)."],
+  ["zh-CN", "提供商错误（1001）。"],
+]) test(`z.ai business errors replace quotas with a localized status (${locale})`, async () => {
+  const page = await browser.newPage({ locale })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1)
+    await fulfill(requests[0], 10)
+    await page.getByRole("progressbar").waitFor()
+    await page.evaluate(() => (window as any).usageFixture.select({ providerId: "zai-coding-plan", modelId: "glm-5" }))
+    await waitRequests(requests, 2)
+    assert.equal(new URL(requests[1].request().url()).pathname, "/api/usage/zai-coding-plan")
+    await requests[1].fulfill({ json: { requestedProviderId: "zai-coding-plan", providerId: "zai-coding-plan", providerName: "z.ai",
+      supported: true, configured: true, ok: false, windows: {}, fetchedAt: Date.now(), unavailableReason: "provider-error", providerErrorCode: "1001" } })
+    await page.getByRole("status").getByText(message, { exact: true }).waitFor()
+    assert.equal(await page.getByRole("progressbar").count(), 0)
+    assert.equal(await page.getByRole("status").getByRole("link").count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("public reason cards replace stale quota and open only their fixed accessible destination", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   try {

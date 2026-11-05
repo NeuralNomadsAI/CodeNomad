@@ -4,6 +4,7 @@ import test from "node:test"
 import { apiKeyProviders } from "./api-key"
 import { clearProviderUsageCache, getProviderUsage } from "../service"
 import type { ProviderReadContext } from "../types"
+import { readUsageProviderSettings } from "../native-settings"
 
 const auth = { "zai-coding-plan": { type: "api", key: "test-zai-key" }, "zhipuai-coding-plan": { type: "api", key: "test-zhipu-key" } }
 
@@ -30,6 +31,97 @@ async function withFetchStub<T>(payload: unknown, run: () => Promise<T>): Promis
 
 const zai = apiKeyProviders.find((provider) => provider.id === "zai-coding-plan")!
 const zhipu = apiKeyProviders.find((provider) => provider.id === "zhipuai-coding-plan")!
+
+const tokenQuota = { code: 200, success: true, data: { limits: [
+  { type: "TOKENS_LIMIT", unit: 3, number: 5, percentage: 25 },
+] } }
+
+async function nativeKeyContext(providerID: string, apiKey: string) {
+  const directory = "D:/synthetic-project"
+  const connection = { assertCurrent() {}, client: { provider: { get: async () => ({
+    location: { directory }, data: { id: providerID, settings: { apiKey } },
+  }) } } } as unknown as Parameters<typeof readUsageProviderSettings>[0]
+  return (await readUsageProviderSettings(connection, providerID, directory, AbortSignal.timeout(15_000))).context
+}
+
+for (const provider of [zai, zhipu]) {
+  test(`${provider.id} prefers the effective native key, including resolved file/env references`, async () => {
+    const previous = globalThis.fetch
+    const keys: string[] = []
+    globalThis.fetch = async (url, init) => {
+      assert.equal(String(url), provider === zai ? "https://api.z.ai/api/monitor/usage/quota/limit" : "https://open.bigmodel.cn/api/monitor/usage/quota/limit")
+      assert.equal(init?.method ?? "GET", "GET", "quota reads never activate gifts")
+      assert.equal(init?.redirect, "error")
+      assert.equal(init?.signal instanceof AbortSignal, true)
+      keys.push(new Headers(init?.headers).get("Authorization")!)
+      return respondWith(tokenQuota)
+    }
+    try {
+      // Native substitution is qualified separately by test-usage-settings-native.mjs.
+      for (const key of ["synthetic-literal-key", "synthetic-env-key", "synthetic-file-key"]) {
+        const context = await nativeKeyContext(provider.id, key)
+        assert.equal((await provider.fetchQuota(auth, context)).ok, true)
+      }
+      assert.deepEqual(keys, ["Bearer synthetic-literal-key", "Bearer synthetic-env-key", "Bearer synthetic-file-key"])
+      for (const value of ["", "{env:SYNTHETIC_MISSING}", "{file:./synthetic-missing.txt}"]) {
+        const context = await nativeKeyContext(provider.id, value)
+        const missing = await provider.fetchQuota({}, context)
+        assert.equal(missing.configured, false)
+        assert.equal(missing.ok, false)
+        assert.equal(keys.length, 3, "absent/unresolved references never make a request")
+      }
+      for (const value of ["", "{env:SYNTHETIC_MISSING}", "{file:./synthetic-missing.txt}"]) {
+        const context = await nativeKeyContext(provider.id, value)
+        assert.equal((await provider.fetchQuota(auth, context)).ok, true)
+      }
+      assert.deepEqual(keys.slice(3), Array(3).fill(`Bearer ${provider === zai ? "test-zai-key" : "test-zhipu-key"}`))
+    } finally { globalThis.fetch = previous }
+  })
+
+  test(`${provider.id} publishes only a bounded business code from HTTP 200 failures`, async () => {
+    for (const code of [1001, "1001", 999999999, "1001\n", "synthetic-secret", null]) {
+      clearProviderUsageCache()
+      const { result } = await withFetchStub({ code, success: false, msg: "synthetic-secret", data: tokenQuota.data },
+        () => getProviderUsage(provider.id, { auth }))
+      assert.equal(result.ok, false)
+      assert.equal(result.configured, true)
+      assert.equal(result.unavailableReason, "provider-error")
+      assert.equal(result.providerErrorCode, code === 1001 || code === "1001" ? "1001" : undefined)
+      assert.deepEqual(result.windows, {}, "a business error cannot retain quota values")
+      assert.equal(JSON.stringify(result).includes("synthetic-secret"), false)
+      assert.equal(JSON.stringify(result).includes("test-zai-key"), false)
+    }
+    // An explicit non-success code wins even if success is absent or contradictory.
+    for (const success of [undefined, true]) {
+      const { result } = await withFetchStub({ code: 1001, success, data: tokenQuota.data }, () => provider.fetchQuota(auth))
+      assert.equal(result.ok, false)
+      assert.equal(result.providerErrorCode, "1001")
+    }
+    clearProviderUsageCache()
+  })
+
+  test(`${provider.id} makes empty or unusable payloads unavailable instead of successful empty cards`, async () => {
+    for (const payload of [null, {}, { code: 200, success: true }, { data: { limits: [] } },
+      { data: { limits: [{ type: "TOKENS_LIMIT" }, { type: "CREDIT_LIMIT", usage: 0 }, { type: "GIFT_LIMIT", percentage: 10 }] } }]) {
+      const { result } = await withFetchStub(payload, () => provider.fetchQuota(auth))
+      assert.equal(result.ok, false)
+      assert.equal(result.usage, null)
+      assert.equal(result.unavailableReason, "provider-error")
+    }
+  })
+
+  test(`${provider.id} preserves HTTP failure status and redacts upstream bodies`, async () => {
+    const previous = globalThis.fetch
+    globalThis.fetch = async () => new Response("synthetic-secret", { status: 401 })
+    try {
+      const result = await provider.fetchQuota(auth)
+      assert.equal(result.ok, false)
+      assert.equal(result.status, 401)
+      assert.equal(result.unavailableReason, undefined)
+      assert.equal(JSON.stringify(result).includes("synthetic-secret"), false)
+    } finally { globalThis.fetch = previous }
+  })
+}
 
 test("parses credit-based limits into usage windows", async () => {
   const { result } = await withFetchStub(
@@ -111,6 +203,16 @@ test("keeps legacy token and time windows intact for the bigmodel endpoint", asy
   const windows = result.usage!.windows
   assert.equal(windows["1h"]?.usedPercent, 42)
   assert.equal(windows["mcp-tools"]?.usedPercent, 11)
+})
+
+test("credit consumption uses currentValue when remaining and percentage are absent", async () => {
+  const { result } = await withFetchStub({ code: 200, success: true, data: { limits: [
+    { type: "CREDIT_LIMIT", unit: 3, number: 5, usage: 2000, currentValue: 160, nextResetTime: CREDIT_RESET_AT },
+  ] } }, () => zai.fetchQuota(auth))
+  assert.equal(result.ok, true)
+  assert.equal(result.usage?.windows["5h"].usedPercent, 8)
+  assert.equal(result.usage?.windows["5h"].resetAt, CREDIT_RESET_AT)
+  assert.equal(result.usage?.windows["5h"].balanceUSD, undefined, "plan credits are never USD")
 })
 
 const openrouter = apiKeyProviders.find(provider => provider.id === "openrouter")!

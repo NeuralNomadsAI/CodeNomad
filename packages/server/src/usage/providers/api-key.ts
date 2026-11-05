@@ -5,6 +5,7 @@ import {
   fetchJson,
   getCredential,
   notConfigured,
+  ProviderHttpError,
   result,
   resolveWindowLabel,
   safeFetch,
@@ -139,19 +140,27 @@ function createTokenLimitProvider(input: { id: string; name: string; aliases: re
     id: input.id,
     name: input.name,
     aliases: input.aliases,
-    async fetchQuota(auth) {
-      const key = getCredential(auth, input.aliases, ["key", "token"])
+    async fetchQuota(auth, context) {
+      const key = context?.settings?.apiKey ?? getCredential(auth, input.aliases, ["key", "token"])
       if (!key) return notConfigured(this.id, this.name)
-      return safeFetch(this.id, this.name, async () => {
-        const payload = await fetchJson(input.url, { headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" } })
+      try {
+        const payload = asObject(await fetchBoundedJson(input.url,
+          { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, context?.signal))
+        if (payload?.success === false || (payload?.code !== undefined && toNumber(payload.code) !== 200)) {
+          const code = String(payload?.code)
+          return result(this.id, this.name, { ok: false, configured: true, unavailableReason: "provider-error",
+            ...(/^\d{1,8}$/.test(code) ? { providerErrorCode: code } : {}) })
+        }
         const windows: Record<string, ReturnType<typeof toUsageWindow>> = {}
         for (const limit of Array.isArray(payload?.data?.limits) ? payload.data.limits : []) {
           const number = toNumber(limit?.number)
           if (limit && (limit.type === "TOKENS_LIMIT" || limit.type === "TIME_LIMIT")) {
+            const usedPercent = toNumber(limit.percentage)
+            if (usedPercent === null) continue
             const seconds = limit.type === "TIME_LIMIT" ? 30 * 86_400 : unitWindowSeconds(limit.unit, number)
             const label = limit.type === "TIME_LIMIT" ? "mcp-tools" : resolveWindowLabel(seconds)
             windows[label] = toUsageWindow({
-              usedPercent: toNumber(limit.percentage),
+              usedPercent,
               windowSeconds: seconds,
               resetAt: toTimestamp(limit.nextResetTime),
             })
@@ -159,17 +168,25 @@ function createTokenLimitProvider(input: { id: string; name: string; aliases: re
             const usedPercent = toNumber(limit.percentage)
             const remaining = toNumber(limit.remaining)
             const allowance = toNumber(limit.usage)
-            if (usedPercent === null && (remaining === null || allowance === null)) continue
+            const consumed = toNumber(limit.currentValue) ?? (allowance !== null && remaining !== null ? allowance - remaining : null)
+            const percent = usedPercent ?? (allowance !== null && allowance > 0 && consumed !== null ? (consumed / allowance) * 100 : null)
+            if (percent === null) continue
             const seconds = unitWindowSeconds(limit.unit, number)
             windows[resolveWindowLabel(seconds)] = toUsageWindow({
-              usedPercent: usedPercent ?? (allowance !== null && allowance > 0 && remaining !== null ? ((allowance - remaining) / allowance) * 100 : null),
+              usedPercent: percent,
               windowSeconds: seconds,
               resetAt: toTimestamp(limit.nextResetTime),
             })
           }
         }
-        return { windows }
-      })
+        if (!Object.keys(windows).length) return result(this.id, this.name, {
+          ok: false, configured: true, unavailableReason: "provider-error",
+        })
+        return result(this.id, this.name, { ok: true, configured: true, usage: { windows } })
+      } catch (error) {
+        return result(this.id, this.name, { ok: false, configured: true,
+          ...(error instanceof ProviderHttpError ? { status: error.status } : { unavailableReason: "provider-error" as const }) })
+      }
     },
   }
 }

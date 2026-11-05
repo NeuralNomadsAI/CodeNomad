@@ -62,6 +62,8 @@ When MiniMax successfully returns no limits, **Usage** shows **MiniMax doesn't s
 
 OpenRouter **Key Limit** shows the key's remaining USD allowance against its spending limit; a key without a spending limit has no such row. Account credits appear separately when the API permits access. Usage uses the provider's configured `baseURL`, including its path prefix, or `https://openrouter.ai/api/v1` when absent. Use a public HTTPS hostname without credentials, an explicit port, query or fragment; IP addresses and localhost are rejected. An invalid URL or a gateway without `/key` makes usage unavailable; the key stays at the configured destination and redirects are rejected.
 
+For z.ai and Zhipu, Usage prefers the configured `apiKey`, including `{env:…}` and `{file:…}` values resolved by OpenCode on its host, then uses the saved credential if that key is unavailable. A missing key with no saved credential is shown as unconfigured. Business errors show a translated provider error and its numeric code when available, instead of quota values. Plan credits use the five-hour and weekly windows; MCP tools have a separate allowance.
+
 ### Optional usage environment variables {#usage-environment}
 
 Set these in the environment of the **CodeNomad backend process** before launching it. They are usage-reader credentials, not browser settings or model-selection controls. Changing the session **Environment Variables** editor does not update a running backend's `process.env` for these readers. Restart the backend under the intended environment when changing them; do not restart the shared OpenCode service just for a usage-reader variable.

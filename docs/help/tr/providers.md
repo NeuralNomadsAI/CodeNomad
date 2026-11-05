@@ -62,6 +62,8 @@ MiniMax başarılı yanıtında sınırları sağlamadığında, **Kullanım** k
 
 OpenRouter **Anahtar sınırı**, anahtarın harcama sınırına göre kalan USD tutarını gösterir; sınırı olmayan anahtarda bu satır bulunmaz. API erişime izin verdiğinde hesap kredileri ayrı gösterilir. Kullanım, yol öneki dahil sağlayıcının yapılandırılmış `baseURL` değerini, yoksa `https://openrouter.ai/api/v1` adresini kullanır. Kimlik bilgisi, açık port, sorgu veya parça içermeyen, herkese açık bir HTTPS ana makine adı kullanın; IP adresleri ve localhost reddedilir. Geçersiz URL veya `/key` içermeyen ağ geçidi kullanımı erişilemez kılar; anahtar yapılandırılmış hedefte kalır ve yönlendirmeler reddedilir.
 
+z.ai ve Zhipu için Kullanım, OpenCode'un kendi ana makinesinde çözümlediği `{env:…}` ve `{file:…}` değerleri dahil yapılandırılmış `apiKey` değerine öncelik verir; bu anahtar yoksa kayıtlı kimlik bilgisini kullanır. Anahtar ve kayıtlı kimlik bilgisi yoksa sağlayıcı yapılandırılmamış olarak gösterilir. İş mantığı hatalarında kota değerleri yerine çevrilmiş sağlayıcı hatası ve varsa sayısal kod gösterilir. Plan kredileri beş saatlik ve haftalık pencereleri kullanır; MCP araçlarının ayrı bir kotası vardır.
+
 ### İsteğe bağlı kullanım ortamı değişkenleri {#usage-environment}
 
 Bunları başlatmadan önce **CodeNomad arka uç sürecinin** ortamında ayarlayın. Bunlar tarayıcı ayarı veya model seçimi değil, kullanım okuyucusu kimlik bilgileridir. Oturum **Ortam Değişkenleri** düzenleyicisini değiştirmek çalışan arka ucun bu okuyucular için kullandığı `process.env` değerini güncellemez. Değiştirirken arka ucu amaçlanan ortamda yeniden başlatın; yalnızca kullanım okuyucusu değişkeni için ortak OpenCode hizmetini yeniden başlatmayın.
