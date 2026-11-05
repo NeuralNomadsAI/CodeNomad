@@ -1,4 +1,54 @@
-# Tao native window backports
+# Native runtime patches
+
+## Embedded WebKit views
+
+`tauri-runtime-wry-2.10.1/` and `wry-0.54.4/` are complete published
+MIT/Apache-2.0 crates, including licenses, selected through `[patch.crates-io]`.
+
+- Crates: https://static.crates.io/crates/tauri-runtime-wry/tauri-runtime-wry-2.10.1.crate
+  and https://static.crates.io/crates/wry/wry-0.54.4.crate.
+- Published SHA-256: runtime `e11ea2e6f801d275fdd890d6c9603736012742a1c33b96d0db788c9cdebf7f9e`;
+  Wry `e5a8135d8676225e5744de000d4dff5a082501bf7db6a1c1495034f8c314edbc`.
+- GTK: the runtime lazily installs a window-owned `GtkOverlay` inside Tao's
+  content box, below its menu bar. Primary content stays boxed; child webviews use
+  `GtkFixed`. The overlay passes uncovered input through to the primary view.
+  Primary-only windows keep their ordinary box. Reparenting uses the destination
+  window's own child container.
+- Wry stores child positions in `GtkFixed` and sizes in GTK size requests, alongside
+  immediate allocation, so resize/menu/hide-show allocations keep the rectangle.
+  Bounds follow the actual parent after reparenting. IPC callbacks keep weak
+  WebView references so destruction releases both the view and its IPC manager.
+- WKWebView: the runtime supplies `with_id(&label)` to Wry. During construction,
+  Wry derives a delegate-local `deny_permissions` flag for `browser-` and
+  `embedded-remote-` labels. Camera/microphone requests are
+  denied. File-upload panels retain their user-driven selection. Application views retain
+  media grants and upload behavior.
+- Permission inventory: Wry's WKUIDelegate implements media capture and
+  upload decisions. New-window and download decisions use consumer callbacks.
+  The public motion permission callback is unavailable on macOS. Location and web
+  notifications have no grant handler in this delegate. Display-capture permission
+  depends on the engine's default handling. Storage Access API
+  consent depends on tracking-prevention settings; storage-access grants also have
+  an automatic cookie-policy path. These routes bypass the public media callback.
+  Keep the macOS renderer path gated pending native qualification of supported OS
+  versions; use the iframe fallback if those defaults permit native requests.
+  Never substitute JavaScript rejection shims for native permission enforcement,
+  add a global permission denial or replace the delegate after construction.
+
+Keep these overrides until the resolved upstream runtime supports the same child
+layout, persistent geometry and per-instance permission policy. Requalify both GTK
+backends and macOS permission behavior before removing either override.
+
+The Linux native regression is
+`python3 tauri-runtime-wry-2.10.1/examples/gtk-child-trial.py` from this directory,
+with the GNOME session environment, Cargo dependencies cached and `python3-dbus`
+installed. It compiles through a temporary manifest using the actual runtime layout
+module and vendored Wry, then exercises Wayland and X11 with Mutter-seat input:
+rectangles, relayout, menus, reparenting, hide/show, independent owning windows,
+destruction, permission/download denial and distinct persistent data managers.
+Full application checks additionally exercise Tauri's dispatch integration.
+
+## Tao native window backports
 
 `tao-0.34.6/` is the published Apache-2.0 crate (license included), with
 the Windows input backport from upstream [tao#1215], the macOS

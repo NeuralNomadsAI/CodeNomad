@@ -1869,6 +1869,10 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(navigation_guard)
         .manage(browser_controller.embedded_views.clone())
+        .manage(embedded_view::StorageIdentity::new(
+            scope.profile.clone(),
+            scope.config_identity.clone(),
+        ))
         .manage(local_windows::LocalWindows::default())
         .manage(notification_badge::NotificationBadge::default())
         .manage(window_constraints::WindowConstraints::default())

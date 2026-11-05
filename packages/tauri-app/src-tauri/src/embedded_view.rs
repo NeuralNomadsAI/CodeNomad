@@ -5,8 +5,36 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime};
 
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod windows;
+
+/// Full, normalized desktop identity. The caller resolves config aliases before startup.
+pub(crate) struct StorageIdentity {
+    profile: String,
+    config: String,
+}
+
+impl StorageIdentity {
+    pub(crate) fn new(profile: String, config: String) -> Self {
+        Self { profile, config }
+    }
+
+    pub(crate) fn identifier(&self, domain: &str) -> [u8; 16] {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        for part in [domain, self.profile.as_str(), self.config.as_str()] {
+            hash.update((part.len() as u64).to_be_bytes());
+            hash.update(part.as_bytes());
+        }
+        hash.finalize()[..16]
+            .try_into()
+            .expect("16-byte store identifier")
+    }
+}
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 pub(crate) struct Bounds {
@@ -34,8 +62,23 @@ pub(crate) fn browser_storage(profile: &Path) -> PathBuf {
     profile.join("shared-v1")
 }
 
+/// The directory selects file-backed stores; the domain separates macOS stores.
+pub(crate) struct Storage {
+    pub(crate) directory: PathBuf,
+    pub(crate) domain: String,
+}
+
+impl From<PathBuf> for Storage {
+    fn from(directory: PathBuf) -> Self {
+        Self {
+            directory,
+            domain: "browser/shared-v1".into(),
+        }
+    }
+}
+
 fn reserved_label(label: &str) -> bool {
-    label.starts_with("browser-") || label.starts_with("remote-view-")
+    label.starts_with("browser-") || label.starts_with("embedded-remote-")
 }
 
 #[derive(Default)]
@@ -133,12 +176,12 @@ impl EmbeddedViews {
         reserved_label(label).then_some(false)
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     pub(crate) fn create(
         &self,
         window: &tauri::Window,
         label: &str,
-        storage: PathBuf,
+        storage: impl Into<Storage>,
         bounds: Bounds,
         on_page_load: impl Fn(tauri::Webview, tauri::webview::PageLoadPayload<'_>)
             + Send
@@ -153,16 +196,29 @@ impl EmbeddedViews {
             bounds,
             on_page_load,
             on_navigation,
-            windows::install,
+            {
+                #[cfg(windows)]
+                {
+                    windows::install
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    linux::install
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    macos::install
+                }
+            },
         )
     }
 
-    #[cfg(any(windows, test))]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos", test))]
     fn create_with<R: Runtime>(
         &self,
         window: &tauri::Window<R>,
         label: &str,
-        storage: PathBuf,
+        storage: impl Into<Storage>,
         bounds: Bounds,
         on_page_load: impl Fn(tauri::Webview<R>, tauri::webview::PageLoadPayload<'_>)
             + Send
@@ -172,7 +228,14 @@ impl EmbeddedViews {
         install: impl FnOnce(&tauri::Webview<R>) -> Result<(), String>,
     ) -> Result<tauri::Webview<R>, String> {
         use tauri::webview::{NewWindowResponse, WebviewBuilder};
+        let storage = storage.into();
         validate_bounds(bounds)?;
+        #[cfg(target_os = "macos")]
+        let storage_identifier = window
+            .app_handle()
+            .try_state::<StorageIdentity>()
+            .ok_or("Embedded view storage identity is unavailable")?
+            .identifier(&storage.domain);
         if !window
             .app_handle()
             .get_webview(window.label())
@@ -188,7 +251,7 @@ impl EmbeddedViews {
             label,
             tauri::WebviewUrl::External("about:blank".parse().expect("static neutral URL")),
         )
-        .data_directory(storage)
+        .data_directory(storage.directory)
         .focused(false)
         .on_page_load(on_page_load)
         .on_navigation(move |url| {
@@ -197,6 +260,8 @@ impl EmbeddedViews {
         })
         .on_new_window(|_, _| NewWindowResponse::Deny)
         .on_download(|_, _| false);
+        #[cfg(target_os = "macos")]
+        let builder = builder.data_store_identifier(storage_identifier);
         // Tauri has no hidden-child builder flag. Keep the neutral child off-canvas
         // until hide completes, then apply its real physical bounds while hidden.
         let result = window

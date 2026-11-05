@@ -47,12 +47,14 @@ fn tauri_authority_does_not_grant_parent_capabilities_to_preview_children() {
             url: url.parse().unwrap(),
         };
         for command in &commands {
-            assert!(
-                authority
-                    .resolve_access(command, OWNER, "browser-preview", &origin)
-                    .is_none(),
-                "preview inherited {command} at {url}"
-            );
+            for child in ["browser-preview", "embedded-remote-preview"] {
+                assert!(
+                    authority
+                        .resolve_access(command, OWNER, child, &origin)
+                        .is_none(),
+                    "{child} inherited {command} at {url}"
+                );
+            }
         }
     }
     let origin = tauri::ipc::Origin::Remote {

@@ -16,6 +16,16 @@ fn child_policy_is_registered_before_creation_and_fails_closed() {
     );
     assert_eq!(views.navigation_allowed(OWNER, &http), None);
     assert!(views.reserve("remote-guest", "browser-child").is_err());
+    let remote = views.reserve(OWNER, "embedded-remote-child").unwrap();
+    assert_eq!(
+        views.navigation_allowed("embedded-remote-child", &http),
+        Some(true)
+    );
+    views.remove_exact("embedded-remote-child", &remote);
+    assert_eq!(
+        views.navigation_allowed("embedded-remote-child", &http),
+        Some(false)
+    );
     let record = views.reserve(OWNER, "browser-child").unwrap();
     assert!(views.owned(OTHER, "browser-child").is_err());
     assert!(views.owned(OWNER, "browser-missing").is_err());
@@ -70,6 +80,10 @@ fn failed_creation_rolls_back_only_its_exact_reservation() {
 #[test]
 fn native_creation_installs_protections_before_return_and_rolls_back_failure() {
     let app = mock_builder().build(mock_context(noop_assets())).unwrap();
+    app.manage(StorageIdentity::new(
+        "dev".into(),
+        "/home/me/config.yaml".into(),
+    ));
     WebviewWindowBuilder::new(&app, OWNER, WebviewUrl::default())
         .build()
         .unwrap();
@@ -201,4 +215,52 @@ fn owner_cleanup_removes_ready_and_pending_children_without_touching_other_owner
     assert!(views.owned(OTHER, "browser-other").is_ok());
     views.close(app.handle(), OWNER, "browser-ready").unwrap();
     assert!(app.get_webview(OWNER).is_some());
+}
+#[test]
+fn storage_identifiers_share_only_the_same_full_identity_and_domain() {
+    let storage = Storage::from(browser_storage(std::path::Path::new("profile/browser")));
+    assert_eq!(
+        storage.directory,
+        std::path::Path::new("profile/browser/shared-v1")
+    );
+    assert_eq!(storage.domain, "browser/shared-v1");
+    let identity = super::StorageIdentity::new("dev".into(), "/home/me/config.yaml".into());
+    let id = identity.identifier("browser/shared-v1");
+    assert_eq!(
+        id,
+        [
+            0xf8, 0x14, 0x9e, 0x7f, 0x1a, 0x96, 0x3c, 0x98, 0xdd, 0x87, 0xcc, 0xfa, 0x46, 0x6b,
+            0x6f, 0xad
+        ]
+    );
+    assert_eq!(id, identity.identifier("browser/shared-v1"));
+    assert_ne!(id, identity.identifier("local"));
+    assert_ne!(id, identity.identifier("remote/server"));
+    assert_ne!(
+        id,
+        super::StorageIdentity::new("stable".into(), "/home/me/config.yaml".into())
+            .identifier("browser/shared-v1")
+    );
+    assert_ne!(
+        id,
+        super::StorageIdentity::new("dev".into(), "/home/other/config.yaml".into())
+            .identifier("browser/shared-v1")
+    );
+    // Length framing also separates identities containing the delimiter used by older stores.
+    assert_ne!(
+        super::StorageIdentity::new("a\0b".into(), "c".into()).identifier("browser/shared-v1"),
+        super::StorageIdentity::new("a".into(), "b\0c".into()).identifier("browser/shared-v1"),
+    );
+    use sha2::{Digest, Sha256};
+    let app_store: [u8; 16] = Sha256::digest(b"local")[..16].try_into().unwrap();
+    assert_ne!(id, app_store);
+    let cwd = std::path::Path::new("/home/me");
+    let home = std::path::Path::new("/home/me");
+    let normalized = |path| crate::identity::normalize_config_identity(Some(path), cwd, home);
+    assert_eq!(
+        super::StorageIdentity::new("dev".into(), normalized("config.json"))
+            .identifier("browser/shared-v1"),
+        super::StorageIdentity::new("dev".into(), normalized("./config.yaml"))
+            .identifier("browser/shared-v1"),
+    );
 }
