@@ -5,7 +5,7 @@ Un onglet de projet relie CodeNomad à un dossier sur l’ordinateur du backend.
 ## Ouvrir un projet {#open-project}
 
 1. Cliquez sur **Nouvelle instance** (`+`) pour ouvrir l’accueil.
-2. Choisissez **Parcourir les dossiers**, sélectionnez le dossier du backend et ouvrez-le ; ou choisissez une entrée sous **Dossiers récents**.
+2. Ouvrez **Parcourir** et choisissez **Cet ordinateur**, sélectionnez le dossier du backend et ouvrez-le ; ou choisissez une entrée sous **Dossiers récents**. **Parcourir** liste aussi les serveurs CodeNomad enregistrés ([onglets de projets distants](remote-access.md#remote-project-tabs)).
 3. Pour une copie de dépôt, choisissez **Cloner un depot Git**, saisissez **URL du depot** et **Dossier de destination**, puis **Cloner**. **Dossier de destination** est prérempli avec le nom du dépôt, dans le dossier qui contient votre dernier clone, sinon à côté de votre projet le plus récent. **Parcourir** choisit le dossier qui contiendra le clone ; vous pouvez aussi modifier le chemin, y compris le nom du dossier du clone.
 
 Parcourir un serveur distant signifie parcourir son système de fichiers, pas votre téléphone ou ordinateur portable. Ouvrir un projet ne crée pas un démon OpenCode distinct par onglet. Les conversations sont des sessions natives OpenCode ; leur durée de vie n’est pas celle de l’onglet.
@@ -17,9 +17,9 @@ Les entrées récentes sont des raccourcis. **Renommer l'espace de travail** cha
 ## Utiliser le lanceur de nouvelle instance {#new-instance-launcher}
 
 1. Appuyez longuement ou faites un clic droit sur `+` ; lorsque ce bouton a le focus clavier, utilisez **Alt+Down**, **Shift+F10** ou la touche Menu.
-2. Recherchez les projets récents ou sélectionnez **Parcourir…**, **Temporaire** ou **Cloner…**.
+2. Recherchez parmi les projets récents, sélectionnez **Temporaire** ou **Cloner…**, ou ouvrez **Parcourir**.
 
-Un clic normal ouvre toujours l’accueil complet. Le lanceur est un raccourci, pas l’interface de gestion : renommez/retirez les projets récents et gérez les serveurs enregistrés depuis l’accueil. Échap ferme le lanceur et rend le focus à `+`.
+Un clic normal ouvre toujours l’accueil complet. Le lanceur est un raccourci, pas l’endroit de gestion : renommez ou retirez les projets récents sur l’accueil, et gérez les serveurs dans **Paramètres → Serveurs**. Échap ferme le lanceur et rend le focus à `+`.
 
 ## Fermer un onglet de projet {#close-stop}
 

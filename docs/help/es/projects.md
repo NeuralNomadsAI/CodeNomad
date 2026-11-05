@@ -5,7 +5,7 @@ Una pestaña de proyecto conecta CodeNomad a una carpeta del equipo del backend.
 ## Abrir un proyecto {#open-project}
 
 1. Haz clic en **Nueva instancia** (`+`) para abrir la página de inicio.
-2. Elige **Buscar carpetas**, selecciona la carpeta del backend y ábrela; o elige una entrada de **Carpetas recientes**.
+2. Abre **Explorar** y elige **Este equipo**, selecciona la carpeta del backend y ábrela; o elige una entrada en **Carpetas recientes**. **Explorar** también lista los servidores CodeNomad guardados ([pestañas de proyectos remotos](remote-access.md#remote-project-tabs)).
 3. Para obtener una copia de un repositorio, elige **Clonar repo Git**, introduce la **URL del repositorio** y la **Carpeta de destino** y pulsa **Clonar**. La **Carpeta de destino** se rellena con el nombre del repositorio en la carpeta que contiene tu último clon, o junto a tu proyecto más reciente. **Buscar** elige la carpeta que contendrá el clon; también puedes editar la ruta, incluido el nombre de la carpeta del clon.
 
 Explorar un servidor remoto significa explorar el sistema de archivos de ese servidor, no el de tu teléfono o portátil. Abrir un proyecto no crea un daemon de OpenCode distinto para cada pestaña. Las conversaciones son sesiones nativas de OpenCode; su duración no es la de la pestaña.
@@ -17,9 +17,9 @@ Las entradas recientes son accesos directos. **Renombrar workspace** cambia su n
 ## Usar el lanzador de nuevas instancias {#new-instance-launcher}
 
 1. Mantén pulsado `+` o haz clic derecho; con el foco del teclado allí, usa **Alt+Down**, **Shift+F10** o la tecla Menú.
-2. Busca proyectos recientes o selecciona **Examinar…**, **Temporal** o **Clonar…**.
+2. Busca entre los proyectos recientes, selecciona **Temporal** o **Clonar…**, o abre **Explorar**.
 
-Un clic normal sigue abriendo la página de inicio completa. El lanzador es un acceso directo, no la superficie de gestión: renombra/elimina proyectos recientes y gestiona los marcadores de servidores en la página de inicio. Escape cierra el lanzador y devuelve el foco a `+`.
+Un clic normal sigue abriendo la página de inicio completa. El lanzador es un atajo, no la superficie de gestión: cambia el nombre o quita proyectos recientes en la página de inicio, y gestiona los servidores en **Configuración → Servidores**. Escape cierra el lanzador y devuelve el foco a `+`.
 
 ## Cerrar una pestaña de proyecto {#close-stop}
 

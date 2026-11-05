@@ -5,7 +5,7 @@ Ein Projekt-Tab verbindet CodeNomad mit einem Ordner auf dem Backend-Rechner. Da
 ## Projekt öffnen {#open-project}
 
 1. Klicken Sie auf **Neue Instanz** (`+`), um die Startseite zu öffnen.
-2. Wählen Sie **Ordner durchsuchen**, wählen und öffnen Sie den Backend-Ordner; oder wählen Sie einen Eintrag unter **Letzte Ordner**.
+2. Öffnen Sie **Durchsuchen** und wählen Sie **Dieser Computer**, wählen Sie den Backend-Ordner aus und öffnen Sie ihn; oder wählen Sie einen Eintrag unter **Letzte Ordner**. **Durchsuchen** listet auch gespeicherte CodeNomad-Server auf ([Remote-Projekt-Tabs](remote-access.md#remote-project-tabs)).
 3. Für eine Repository-Kopie wählen Sie **Git-Repo klonen**, geben **Repository-URL** und **Zielordner** ein und wählen **Klonen**. **Zielordner** wird mit dem Repository-Namen im Ordner, der Ihren letzten Klon enthält vorbelegt, sonst neben Ihrem zuletzt geöffneten Projekt. **Durchsuchen** wählt den Ordner, der den Klon enthält; Sie können den Pfad auch bearbeiten, einschließlich des Ordnernamens des Klons.
 
 Einen Remote-Server zu durchsuchen bedeutet, dessen Dateisystem zu durchsuchen, nicht Ihr Telefon oder Notebook. Das Öffnen eines Projekts erzeugt keinen separaten OpenCode-Daemon pro Tab. Unterhaltungen sind native OpenCode-Sitzungen; ihre Lebensdauer entspricht nicht der des Tabs.
@@ -17,9 +17,9 @@ Zuletzt verwendete Einträge sind Verknüpfungen. **Arbeitsbereich umbenennen** 
 ## Schnellstarter für neue Instanzen verwenden {#new-instance-launcher}
 
 1. Halten Sie `+` gedrückt oder klicken Sie mit der rechten Maustaste darauf; bei Tastaturfokus dort verwenden Sie **Alt+Down**, **Shift+F10** oder die Menütaste.
-2. Suchen Sie zuletzt verwendete Projekte oder wählen Sie **Durchsuchen…**, **Temporär** oder **Klonen…**.
+2. Durchsuchen Sie die zuletzt verwendeten Projekte, wählen Sie **Temporär** oder **Klonen…**, oder öffnen Sie **Durchsuchen**.
 
-Ein normaler Klick öffnet weiterhin die vollständige Startseite. Der Schnellstarter ist ein Direktzugriff, keine Verwaltungsoberfläche: Benennen/entfernen Sie zuletzt verwendete Projekte und verwalten Sie Server-Lesezeichen auf der Startseite. Escape schließt den Schnellstarter und setzt den Fokus auf `+` zurück.
+Ein normaler Klick öffnet weiterhin die vollständige Startseite. Der Starter ist eine Abkürzung, keine Verwaltungsoberfläche: Benennen Sie zuletzt verwendete Projekte auf der Startseite um oder entfernen Sie sie dort, und verwalten Sie Server unter **Einstellungen → Server**. Escape schließt den Starter und gibt den Fokus an `+` zurück.
 
 ## Projekt-Tab schließen {#close-stop}
 

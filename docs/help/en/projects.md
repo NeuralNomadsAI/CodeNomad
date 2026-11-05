@@ -5,7 +5,7 @@ A project tab connects CodeNomad to a folder on the backend computer. Opening a 
 ## Open a project {#open-project}
 
 1. Click **New instance** (`+`) to open the home page.
-2. Choose **Browse Folders**, select the backend folder and open it; or choose an entry under **Recent Folders**.
+2. Open **Browse** and choose **This computer**, select the backend folder and open it; or choose an entry under **Recent Folders**. **Browse** also lists saved CodeNomad servers ([remote project tabs](remote-access.md#remote-project-tabs)).
 3. For a repository copy, choose **Clone Git Repo**, enter **Repository URL** and **Destination folder**, then **Clone**. **Destination folder** is prefilled with the repository name in the folder that holds your last clone, or next to your most recent project. **Browse** chooses the folder that contains the clone; you can also edit the path, including the clone's folder name.
 
 Browsing a remote server means browsing that server's filesystem, not your phone or laptop. Opening a project does not create a separate OpenCode daemon for each tab. Conversations are native OpenCode sessions; their lifetime is not the tab's lifetime.
@@ -17,9 +17,9 @@ Recent entries are shortcuts. **Rename workspace** changes its displayed name; *
 ## Use the new-instance launcher {#new-instance-launcher}
 
 1. Long-press or right-click `+`; with keyboard focus there, use **Alt+Down**, **Shift+F10** or the Menu key.
-2. Search recent projects, or select **Browse…**, **Temporary** or **Clone…**.
+2. Search recent projects, select **Temporary** or **Clone…**, or open **Browse**.
 
-A normal click still opens the full home page. The launcher is a shortcut, not the management surface: rename/remove recent projects and manage server bookmarks on the home page. Escape dismisses the launcher and returns focus to `+`.
+A normal click still opens the full home page. The launcher is a shortcut, not the management surface: rename or remove recent projects on the home page, and manage servers in **Settings → Servers**. Escape dismisses the launcher and returns focus to `+`.
 
 ## Close a project tab {#close-stop}
 
