@@ -12,6 +12,7 @@ mod client_state;
 mod data_profile;
 mod data_profile_cleanup;
 mod developer_mode;
+mod embedded_view;
 mod external_open;
 mod identity;
 mod launch;
@@ -829,9 +830,8 @@ fn open_remote_external_url(url: &Url, open: impl FnOnce(&Url)) -> bool {
 
 fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
     let window_label = webview.label().to_string();
-    let state = webview.app_handle().state::<AppState>();
-    if let Some(allowed) = state
-        .browser_controller
+    if let Some(allowed) = webview.app_handle()
+        .state::<embedded_view::EmbeddedViews>()
         .navigation_allowed(&window_label, url)
     {
         return allowed;
@@ -1835,6 +1835,9 @@ fn main() {
     let notification_badge_host = Arc::new(Mutex::new(None::<Arc<AppHandle>>));
     let setup_notification_badge_host = Arc::clone(&notification_badge_host);
 
+    let browser_controller = browser_controller::BrowserController::new(
+        setup_scope.webview_data_directory.join("browser"),
+    );
     desktop_updater::register(tauri::Builder::default(), context.config())
         .plugin(single_instance)
         .plugin(tauri_plugin_dialog::init())
@@ -1865,6 +1868,7 @@ fn main() {
         )
         .plugin(tauri_plugin_notification::init())
         .plugin(navigation_guard)
+        .manage(browser_controller.embedded_views.clone())
         .manage(local_windows::LocalWindows::default())
         .manage(notification_badge::NotificationBadge::default())
         .manage(window_constraints::WindowConstraints::default())
@@ -1894,9 +1898,7 @@ fn main() {
                 backend_config.clone(),
             ),
             developer_mode,
-            browser_controller: browser_controller::BrowserController::new(
-                setup_scope.webview_data_directory.join("browser"),
-            ),
+            browser_controller,
             wake_lock: Mutex::new(WakeLockState::default()),
             remote_navigation: Mutex::new(HashMap::new()),
             remote_navigation_generation: AtomicU64::new(0),

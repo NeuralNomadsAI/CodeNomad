@@ -139,8 +139,9 @@ fn registration() -> Registration {
 }
 
 fn controller_with_registration() -> (BrowserController, Registration) {
-    let controller = BrowserController::new(std::path::PathBuf::new());
+    let mut controller = BrowserController::new(std::path::PathBuf::new());
     let registration = registration();
+    controller.embedded_views = EmbeddedViews::for_test(OWNER, &registration.webview_label);
     {
         let mut inner = controller.inner.0.lock().unwrap();
         inner
@@ -216,6 +217,75 @@ fn only_primary_renderer_reload_disposes_its_native_browser_children() {
             "https://example.com/"
         )
         .is_ok());
+}
+
+#[test]
+fn older_creation_and_foreign_window_cannot_replace_current_registration() {
+    let (controller, mut current) = controller_with_registration();
+    current.generation = 3;
+    controller
+        .publish_registration(current.clone(), 0, "https://example.com/")
+        .unwrap();
+    let mut stale = current.clone();
+    stale.generation = 2;
+    assert!(controller
+        .publish_registration(stale, 0, "https://example.com/")
+        .is_err());
+    let mut foreign = current.clone();
+    foreign.window_label = OTHER.into();
+    foreign.generation = 4;
+    assert!(controller
+        .publish_registration(foreign, 0, "https://example.com/")
+        .is_err());
+    assert_eq!(
+        controller
+            .owned_registration(OWNER, "preview")
+            .unwrap()
+            .generation,
+        3
+    );
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .registrations
+        .remove("preview");
+    current.generation = 2;
+    assert!(controller
+        .publish_registration(current, 0, "https://example.com/")
+        .is_err());
+}
+
+#[test]
+fn hiding_revokes_page_authority_even_when_native_hide_fails() {
+    let (app, _, child) = app_with_preview();
+    let (controller, registration) = controller_with_registration();
+    let lease = controller
+        .reserve_page(registration, &uuid::Uuid::new_v4().to_string())
+        .unwrap();
+    child.close().unwrap();
+    assert!(controller
+        .update(
+            app.handle(),
+            OWNER,
+            BrowserTargetUpdate {
+                registration_id: "preview".into(),
+                bounds: None,
+                visible: Some(false),
+            }
+        )
+        .is_err());
+    assert!(
+        !controller
+            .owned_registration(OWNER, "preview")
+            .unwrap()
+            .visible
+    );
+    assert!(controller
+        .check_page_state(&lease, Instant::now() + Duration::from_secs(1))
+        .is_err());
+    assert!(controller.inner.0.lock().unwrap().page_leases.is_empty());
 }
 
 #[test]

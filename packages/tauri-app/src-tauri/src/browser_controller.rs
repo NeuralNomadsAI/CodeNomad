@@ -1,3 +1,6 @@
+use crate::embedded_view::{
+    is_allowed_url, validate_bounds, Bounds as BrowserTargetBounds, EmbeddedViews,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -5,7 +8,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::webview::PageLoadEvent;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Window};
+use tauri::{AppHandle, Emitter, Manager, Window};
+#[cfg(test)]
+use tauri::{PhysicalPosition, PhysicalSize};
 
 #[cfg(windows)]
 #[path = "browser_emulation.rs"]
@@ -21,14 +26,6 @@ pub(crate) struct BrowserTargetRegistration {
     registration_id: String,
     url: String,
     bounds: BrowserTargetBounds,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-pub(crate) struct BrowserTargetBounds {
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -79,6 +76,7 @@ struct OpenClaim {
 struct Inner {
     emulation_profiles: HashMap<String, String>,
     registrations: HashMap<String, Registration>,
+    published_generations: HashMap<String, (String, u64)>,
     renderer_versions: HashMap<String, u64>,
     page_leases: HashMap<String, page::PageLease>,
     navigation_versions: HashMap<String, u64>,
@@ -94,11 +92,12 @@ pub(crate) struct BrowserController {
     profile: Arc<std::path::PathBuf>,
     registration_sequence: Arc<AtomicU64>,
     run_id: Arc<String>,
+    pub(crate) embedded_views: EmbeddedViews,
 }
 
 impl BrowserController {
     fn storage_directory(&self) -> std::path::PathBuf {
-        self.profile.join("shared-v1")
+        crate::embedded_view::browser_storage(&self.profile)
     }
 
     pub(crate) fn new(profile: std::path::PathBuf) -> Self {
@@ -108,6 +107,7 @@ impl BrowserController {
             profile: Arc::new(profile),
             registration_sequence: Arc::new(AtomicU64::new(1)),
             run_id: Arc::new(uuid::Uuid::new_v4().to_string()),
+            embedded_views: EmbeddedViews::default(),
         }
     }
 
@@ -117,20 +117,15 @@ impl BrowserController {
         window: &Window,
         input: BrowserTargetRegistration,
     ) -> Result<(), String> {
-        use tauri::webview::{NewWindowResponse, WebviewBuilder};
-        use tauri::WebviewUrl;
-
         validate_id(&input.session_id, 256)?;
         validate_id(&input.registration_id, 128)?;
         let url = allowed_url(&input.url)?;
-        let blank = "about:blank"
-            .parse()
-            .map_err(|error| format!("failed to prepare browser preview: {error}"))?;
         validate_bounds(input.bounds)?;
         let renderer_version = self.renderer_version(window.label())?;
-        let label = format!("browser-{}", input.registration_id);
         let registration_id = input.registration_id.clone();
         let generation = self.registration_sequence.fetch_add(1, Ordering::Relaxed);
+        // Native labels are unique across replacements, including in-flight creations.
+        let label = format!("browser-{}-{generation}", input.registration_id);
         let navigation_controller = self.clone();
         let navigation_registration_id = registration_id.clone();
         let policy_controller = self.clone();
@@ -138,19 +133,12 @@ impl BrowserController {
         // Every preview is a tab in the same browser profile. Its navigation
         // history and automation attachment remain owned by its session.
         let profile = self.storage_directory();
-        let builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(blank))
-            .data_directory(profile)
-            .on_navigation(move |url| {
-                let allowed = url.as_str() == "about:blank" || is_allowed_url(url);
-                if allowed {
-                    policy_controller
-                        .invalidate_page_for_generation(&policy_registration_id, generation);
-                }
-                allowed
-            })
-            .on_new_window(|_, _| NewWindowResponse::Deny)
-            .on_download(|_, _| false)
-            .on_page_load(move |webview, payload| {
+        let webview = self.embedded_views.create(
+            window,
+            &label,
+            profile,
+            input.bounds,
+            move |webview, payload| {
                 if payload.event() == PageLoadEvent::Started
                     && payload.url().as_str() != "about:blank"
                 {
@@ -161,16 +149,13 @@ impl BrowserController {
                         json!({ "registrationId": registration_id, "url": payload.url().as_str() }),
                     );
                 }
-            });
-        let webview = window
-            .add_child(
-                builder,
-                PhysicalPosition::new(input.bounds.x, input.bounds.y),
-                PhysicalSize::new(input.bounds.width, input.bounds.height),
-            )
-            .map_err(|error| format!("failed to create browser preview: {error}"))?;
-        #[cfg(windows)]
-        crate::windows_browser_accelerators::bind(&webview);
+            },
+            move |_| {
+                policy_controller
+                    .invalidate_page_for_generation(&policy_registration_id, generation);
+                true
+            },
+        )?;
         if let Err(error) = install_webview2_handlers(
             &webview,
             self.clone(),
@@ -178,19 +163,17 @@ impl BrowserController {
             window.label().to_string(),
             generation,
         ) {
-            let _ = webview.close();
+            let _ = self
+                .embedded_views
+                .close(window.app_handle(), window.label(), &label);
             return Err(error);
-        }
-        if let Err(error) = webview.show() {
-            let _ = webview.close();
-            return Err(error.to_string());
         }
 
         let registration = Registration {
             session_id: input.session_id,
             registration_id: input.registration_id.clone(),
             window_label: window.label().to_string(),
-            webview_label: label,
+            webview_label: label.clone(),
             generation,
             visible: true,
         };
@@ -198,19 +181,52 @@ impl BrowserController {
         {
             Ok(previous) => previous,
             Err(error) => {
-                let _ = webview.close();
+                let _ = self
+                    .embedded_views
+                    .close(window.app_handle(), window.label(), &label);
                 return Err(error);
             }
         };
         if let Some(previous) = previous {
-            if let Some(previous_webview) = window.app_handle().get_webview(&previous.webview_label)
-            {
-                let _ = previous_webview.close();
-            }
+            let _ = self.embedded_views.close(
+                window.app_handle(),
+                &previous.window_label,
+                &previous.webview_label,
+            );
         }
         if let Err(error) = webview.navigate(url) {
-            let _ = self.unregister(window.app_handle(), window.label(), &input.registration_id);
+            let _ = self.unregister_generation(
+                window.app_handle(),
+                window.label(),
+                &input.registration_id,
+                Some(generation),
+            );
             return Err(error.to_string());
+        }
+        let current = self.owned_registration(window.label(), &input.registration_id);
+        match current {
+            Ok(current) if current.generation == generation => {
+                if let Err(error) = self.embedded_views.set_visible(
+                    window.app_handle(),
+                    window.label(),
+                    &label,
+                    current.visible,
+                ) {
+                    let _ = self.unregister_generation(
+                        window.app_handle(),
+                        window.label(),
+                        &input.registration_id,
+                        Some(generation),
+                    );
+                    return Err(error);
+                }
+            }
+            _ => {
+                let _ = self
+                    .embedded_views
+                    .close(window.app_handle(), window.label(), &label);
+                return Err("Browser target changed during creation".into());
+            }
         }
         Ok(())
     }
@@ -242,6 +258,26 @@ impl BrowserController {
             return Err("Browser preview renderer is no longer current".to_string());
         }
         let id = registration.registration_id.clone();
+        if inner
+            .registrations
+            .get(&id)
+            .is_some_and(|current| current.window_label != registration.window_label)
+        {
+            return Err("Browser target belongs to another window".into());
+        }
+        if inner
+            .published_generations
+            .get(&id)
+            .is_some_and(|(_, generation)| *generation > registration.generation)
+        {
+            return Err("Browser target changed during creation".into());
+        }
+        // Keep the high-water mark through unregister so an older in-flight
+        // creation cannot resurrect a replacement that has already been closed.
+        inner.published_generations.insert(
+            id.clone(),
+            (registration.window_label.clone(), registration.generation),
+        );
         let previous = inner.registrations.insert(id.clone(), registration);
         inner
             .page_leases
@@ -272,27 +308,30 @@ impl BrowserController {
         Err(unsupported())
     }
 
-    pub(crate) fn update(
+    pub(crate) fn update<R: tauri::Runtime>(
         &self,
-        app: &AppHandle,
+        app: &AppHandle<R>,
         window_label: &str,
         input: BrowserTargetUpdate,
     ) -> Result<(), String> {
         let registration = self.owned_registration(window_label, &input.registration_id)?;
-        let webview = app
-            .get_webview(&registration.webview_label)
-            .ok_or_else(|| "Browser preview is no longer available".to_string())?;
         let visible = input.visible.unwrap_or(true);
         if visible {
             let bounds = input
                 .bounds
                 .ok_or_else(|| "Visible browser target bounds are required".to_string())?;
-            validate_bounds(bounds)?;
-            webview
-                .set_position(PhysicalPosition::new(bounds.x, bounds.y))
-                .and_then(|()| webview.set_size(PhysicalSize::new(bounds.width, bounds.height)))
-                .and_then(|()| webview.show())
-                .map_err(|error| error.to_string())?;
+            self.embedded_views.set_bounds(
+                app,
+                window_label,
+                &registration.webview_label,
+                bounds,
+            )?;
+            self.embedded_views.set_visible(
+                app,
+                window_label,
+                &registration.webview_label,
+                true,
+            )?;
         } else {
             // Revoke authority before the native hide's UI-thread round trip.
             let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
@@ -306,7 +345,12 @@ impl BrowserController {
                 .page_leases
                 .retain(|_, lease| lease.registration.registration_id != input.registration_id);
             drop(inner);
-            webview.hide().map_err(|error| error.to_string())?;
+            self.embedded_views.set_visible(
+                app,
+                window_label,
+                &registration.webview_label,
+                false,
+            )?;
         }
         let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
         if let Some(current) = inner.registrations.get_mut(&input.registration_id) {
@@ -390,6 +434,16 @@ impl BrowserController {
         window_label: &str,
         registration_id: &str,
     ) -> Result<(), String> {
+        self.unregister_generation(app, window_label, registration_id, None)
+    }
+
+    fn unregister_generation(
+        &self,
+        app: &AppHandle,
+        window_label: &str,
+        registration_id: &str,
+        generation: Option<u64>,
+    ) -> Result<(), String> {
         let (inner, ready) = &*self.inner;
         let mut inner = inner.lock().map_err(|error| error.to_string())?;
         let Some(registration) = inner.registrations.get(registration_id) else {
@@ -397,6 +451,9 @@ impl BrowserController {
         };
         if registration.window_label != window_label {
             return Err("Browser target belongs to another window".to_string());
+        }
+        if generation.is_some_and(|generation| generation != registration.generation) {
+            return Ok(());
         }
         let registration = inner.registrations.remove(registration_id).unwrap();
         inner.emulation_profiles.remove(registration_id);
@@ -407,9 +464,8 @@ impl BrowserController {
         inner.page_load_expectations.remove(registration_id);
         drop(inner);
         ready.notify_all();
-        if let Some(webview) = app.get_webview(&registration.webview_label) {
-            webview.close().map_err(|error| error.to_string())?;
-        }
+        self.embedded_views
+            .close(app, window_label, &registration.webview_label)?;
         Ok(())
     }
 
@@ -467,32 +523,30 @@ impl BrowserController {
     }
 
     pub(crate) fn remove_window<R: tauri::Runtime>(&self, app: &AppHandle<R>, window_label: &str) {
-        let (labels, retries) = if let Ok(mut inner) = self.inner.0.lock() {
+        let retries = if let Ok(mut inner) = self.inner.0.lock() {
             let version = inner
                 .renderer_versions
                 .entry(window_label.to_string())
                 .or_default();
             *version = version.wrapping_add(1);
+            inner
+                .published_generations
+                .retain(|_, (owner, _)| owner != window_label);
             let ids = inner
                 .registrations
                 .values()
                 .filter(|registration| registration.window_label == window_label)
                 .map(|registration| registration.registration_id.clone())
                 .collect::<Vec<_>>();
-            let labels = ids
-                .into_iter()
-                .filter_map(|id| {
-                    inner
-                        .page_leases
-                        .retain(|_, lease| lease.registration.registration_id != id);
-                    inner.navigation_versions.remove(&id);
-                    inner.page_load_expectations.remove(&id);
-                    inner
-                        .registrations
-                        .remove(&id)
-                        .map(|item| item.webview_label)
-                })
-                .collect::<Vec<_>>();
+            for id in ids {
+                inner
+                    .page_leases
+                    .retain(|_, lease| lease.registration.registration_id != id);
+                inner.navigation_versions.remove(&id);
+                inner.page_load_expectations.remove(&id);
+                inner.registrations.remove(&id);
+                inner.emulation_profiles.remove(&id);
+            }
             let retries = inner
                 .open_claims
                 .iter_mut()
@@ -505,15 +559,11 @@ impl BrowserController {
                     Some((request_id.clone(), claim.clone()))
                 })
                 .collect::<Vec<_>>();
-            (labels, retries)
+            retries
         } else {
-            (Vec::new(), Vec::new())
+            Vec::new()
         };
-        for label in labels {
-            if let Some(webview) = app.get_webview(&label) {
-                let _ = webview.close();
-            }
-        }
+        self.embedded_views.remove_owner(app, window_label);
         for (request_id, claim) in retries {
             Self::emit_open_request(app, &request_id, &claim);
         }
@@ -738,22 +788,6 @@ impl BrowserController {
             [registration] => Ok(registration.clone()),
             _ => Err("Multiple visible browser targets exist for this session".to_string()),
         }
-    }
-
-    pub(crate) fn navigation_allowed(&self, webview_label: &str, url: &tauri::Url) -> Option<bool> {
-        if webview_label
-            .strip_prefix("browser-")
-            .is_some_and(|id| validate_id(id, 128).is_ok())
-        {
-            return Some(is_allowed_url(url));
-        }
-        self.inner.0.lock().ok().and_then(|inner| {
-            inner
-                .registrations
-                .values()
-                .any(|registration| registration.webview_label == webview_label)
-                .then(|| is_allowed_url(url))
-        })
     }
 
     #[cfg(windows)]
@@ -1026,25 +1060,11 @@ fn request_deadline(deadline_ms: u64) -> Result<Instant, String> {
         .ok_or_else(|| "Invalid native request deadline".to_string())
 }
 
-fn validate_bounds(bounds: BrowserTargetBounds) -> Result<(), String> {
-    if bounds.width == 0 || bounds.height == 0 || bounds.width > 16_384 || bounds.height > 16_384 {
-        return Err("Invalid browser target bounds".to_string());
-    }
-    Ok(())
-}
-
 fn allowed_url(raw: &str) -> Result<tauri::Url, String> {
     let url = tauri::Url::parse(raw).map_err(|_| navigation_error())?;
     is_allowed_url(&url)
         .then_some(url)
         .ok_or_else(navigation_error)
-}
-
-fn is_allowed_url(url: &tauri::Url) -> bool {
-    matches!(url.scheme(), "http" | "https")
-        && url.host().is_some()
-        && url.username().is_empty()
-        && url.password().is_none()
 }
 
 fn navigation_error() -> String {
@@ -1078,9 +1098,8 @@ fn install_webview2_handlers(
 ) -> Result<(), String> {
     use std::sync::mpsc;
     use webview2_com::{
-        CoTaskMemPWSTR, Microsoft::Web::WebView2::Win32::COREWEBVIEW2_PERMISSION_STATE_DENY,
-        NavigationCompletedEventHandler, NavigationStartingEventHandler,
-        PermissionRequestedEventHandler, SourceChangedEventHandler,
+        CoTaskMemPWSTR, NavigationCompletedEventHandler, NavigationStartingEventHandler,
+        SourceChangedEventHandler,
     };
 
     let app = webview.app_handle().clone();
@@ -1089,15 +1108,6 @@ fn install_webview2_handlers(
         .with_webview(move |platform| {
             let result = (|| {
                 let core = unsafe { platform.controller().CoreWebView2() }?;
-                let permission = PermissionRequestedEventHandler::create(Box::new(|_, args| {
-                    if let Some(args) = args {
-                        unsafe { args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)? };
-                    }
-                    Ok(())
-                }));
-                let mut permission_token = 0;
-                unsafe { core.add_PermissionRequested(&permission, &mut permission_token)? };
-
                 let started_controller = controller.clone();
                 let started_registration_id = registration_id.clone();
                 let started = NavigationStartingEventHandler::create(Box::new(move |_, args| {
