@@ -510,6 +510,8 @@ export type PluginRuntimeSource =
 
 export interface PluginRuntimeInventoryEntry {
   key: string
+  /** Proven local installation published by CodeNomad. */
+  managedBy?: "codenomad"
   id?: string
   source: PluginRuntimeSource
   /** `gui`: the package ships parts the OpenCode desktop app loads only from Global configuration. */
@@ -528,11 +530,12 @@ export interface PluginConfiguredRule {
 
 export interface PluginConfiguredSource {
   target: string
+  managedBy?: "codenomad"
   scope: PluginConfigScope
   path?: string
   entryIndex: number
   hasOptions: boolean
-  /** The runtime plugin this declaration loaded, when the inventory reports it. */
+  /** Plugin associated by runtime inventory or a verified managed installation. */
   pluginId?: string
   /** Opaque confirmed-document identity, present on writable removal descriptors. */
   expectedRevision?: string
@@ -542,6 +545,7 @@ export type PluginScopeRuleState = "default" | "enabled" | "disabled"
 
 export interface PluginActivationControl {
   id: string
+  managedBy?: "codenomad"
   runtime?: PluginRuntimeInventoryEntry
   /** True for OpenCode-owned plugins, including disabled builtins absent from runtime inventory. */
   builtin: boolean

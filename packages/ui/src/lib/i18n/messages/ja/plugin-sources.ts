@@ -1,4 +1,12 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.system.attention": "CodeNomad プラグインの確認が必要です",
+  "instanceServiceStatus.plugins.system.disabled": "{name} — {scope}で無効",
+  "instanceServiceStatus.plugins.system.failed": "{name} — 読み込みに失敗",
+  "instanceServiceStatus.plugins.system.reenable": "再度有効化",
+  "instanceServiceStatus.plugins.system.reenableAriaLabel": "{scope}で {name} を再度有効化",
+  "instanceServiceStatus.plugins.system.reenabling": "再度有効化中…",
+  "instanceServiceStatus.plugins.system.unconfirmed": "{name} — 読み込み未確認",
+  "instanceServiceStatus.plugins.system.details": "{name} の詳細",
   "instanceServiceStatus.plugins.sources.removeWarning": "このプラグインを削除すると、使用中の会話で利用や接続が中断される可能性があります。",
   "instanceServiceStatus.plugins.sources.removeGlobalWarning": "他のプロジェクトの会話にも影響する可能性があります。",
   "instanceServiceStatus.plugins.sources.removeRecovery": "再インストールで利用可能になる場合がありますが、再読み込みや再接続が必要なことがあります。中断した操作は再開されない場合があります。",

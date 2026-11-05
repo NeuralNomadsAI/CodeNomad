@@ -79,6 +79,29 @@ async function verifiedBundle(plugin: string, bundle: Uint8Array, hash: string, 
 /** Test-only scheduling seam: runs after a directory link was observed, before it is removed. */
 export const bundleRepairSchedule: { beforeLinkRemoval?: (plugin: string) => Promise<void> } = {}
 
+/** Bounded, existing-only read with the same single-file identity rules as publication. */
+export async function readDesktopPluginFile(file: string, maximumBytes: number): Promise<Buffer | undefined> {
+  const named = await lstatOrUndefined(file)
+  if (!singleFile(named) || named.size > BigInt(maximumBytes)) return undefined
+  const handle = await openBundle(file)
+  if (!handle) return undefined
+  try {
+    const before = await handle.stat({ bigint: true })
+    if (!singleFile(before) || before.size !== named.size || !await matchesIdentity(file, named, before)) return undefined
+    const bytes = Buffer.alloc(Number(before.size))
+    for (let offset = 0; offset < bytes.length;) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset)
+      if (!bytesRead) return undefined
+      offset += bytesRead
+    }
+    if ((await handle.read(Buffer.alloc(1), 0, 1, bytes.length)).bytesRead) return undefined
+    const after = await handle.stat({ bigint: true }), current = await lstatOrUndefined(file)
+    if (!singleFile(current) || after.size !== before.size || after.mtimeNs !== before.mtimeNs
+      || after.ctimeNs !== before.ctimeNs || !await matchesIdentity(file, current, before)) return undefined
+    return bytes
+  } finally { await handle.close() }
+}
+
 /**
  * Renames a complete private copy over `plugin`, replacing the name itself, never a
  * link's target: a rename replaces a file link atomically. Windows cannot rename a file

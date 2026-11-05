@@ -1,4 +1,12 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.system.attention": "CodeNomad 插件需要处理",
+  "instanceServiceStatus.plugins.system.disabled": "{name} — 已在{scope}中禁用",
+  "instanceServiceStatus.plugins.system.failed": "{name} — 加载失败",
+  "instanceServiceStatus.plugins.system.reenable": "重新启用",
+  "instanceServiceStatus.plugins.system.reenableAriaLabel": "在{scope}中重新启用 {name}",
+  "instanceServiceStatus.plugins.system.reenabling": "正在重新启用…",
+  "instanceServiceStatus.plugins.system.unconfirmed": "{name} — 加载尚未确认",
+  "instanceServiceStatus.plugins.system.details": "{name} 的详情",
   "instanceServiceStatus.plugins.sources.removeWarning": "移除此插件可能中断使用它的对话中的可用性和连接。",
   "instanceServiceStatus.plugins.sources.removeGlobalWarning": "这也可能影响其他项目中的对话。",
   "instanceServiceStatus.plugins.sources.removeRecovery": "重新安装可能恢复可用性，但可能需要重新加载或重新附加。中断的操作可能无法继续。",

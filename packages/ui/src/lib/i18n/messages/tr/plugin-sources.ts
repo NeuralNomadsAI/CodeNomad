@@ -1,4 +1,12 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.system.attention": "CodeNomad eklentileri ilgilenmenizi gerektiriyor",
+  "instanceServiceStatus.plugins.system.disabled": "{name} — {scope} kapsamında devre dışı",
+  "instanceServiceStatus.plugins.system.failed": "{name} — Yüklenemedi",
+  "instanceServiceStatus.plugins.system.reenable": "Yeniden etkinleştir",
+  "instanceServiceStatus.plugins.system.reenableAriaLabel": "{name} eklentisini {scope} kapsamında yeniden etkinleştir",
+  "instanceServiceStatus.plugins.system.reenabling": "Yeniden etkinleştiriliyor…",
+  "instanceServiceStatus.plugins.system.unconfirmed": "{name} — Yükleme doğrulanmadı",
+  "instanceServiceStatus.plugins.system.details": "{name} ayrıntıları",
   "instanceServiceStatus.plugins.sources.removeWarning": "Bu eklentiyi kaldırmak, onu kullanan konuşmalarda kullanılabilirliğini ve bağlantılarını kesintiye uğratabilir.",
   "instanceServiceStatus.plugins.sources.removeGlobalWarning": "Diğer projelerdeki konuşmalar da etkilenebilir.",
   "instanceServiceStatus.plugins.sources.removeRecovery": "Yeniden kurulum kullanılabilirliği geri getirebilir; yeniden yükleme veya bağlama gerekebilir. Kesilen işlemler devam etmeyebilir.",

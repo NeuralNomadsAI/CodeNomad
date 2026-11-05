@@ -1,4 +1,12 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.system.attention": "Los plugins de CodeNomad requieren atención",
+  "instanceServiceStatus.plugins.system.disabled": "{name} — Desactivado en {scope}",
+  "instanceServiceStatus.plugins.system.failed": "{name} — Error al cargar",
+  "instanceServiceStatus.plugins.system.reenable": "Reactivar",
+  "instanceServiceStatus.plugins.system.reenableAriaLabel": "Reactivar {name} en {scope}",
+  "instanceServiceStatus.plugins.system.reenabling": "Reactivando…",
+  "instanceServiceStatus.plugins.system.unconfirmed": "{name} — Carga no confirmada",
+  "instanceServiceStatus.plugins.system.details": "Detalles de {name}",
   "instanceServiceStatus.plugins.sources.removeWarning": "Retirar este plugin puede interrumpir su disponibilidad y sus conexiones en las conversaciones que lo usan.",
   "instanceServiceStatus.plugins.sources.removeGlobalWarning": "También puede afectar a conversaciones de otros proyectos.",
   "instanceServiceStatus.plugins.sources.removeRecovery": "Reinstalarlo puede restablecer la disponibilidad; puede ser necesario recargar o volver a adjuntar. Las operaciones interrumpidas podrían no reanudarse.",

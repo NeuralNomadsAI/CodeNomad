@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { mkdir, readFile, rename, rm, stat, writeFile, utimes } from "node:fs/promises"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { fileURLToPath, pathToFileURL } from "node:url"
+import { pathToFileURL } from "node:url"
 import { PRESENCE_INTERVAL_MS, PRESENCE_READY_SUFFIX } from "./desktop-plugin-presence"
 
 // Two presence checks plus a scan. Paid in full only when no marker can come:
@@ -10,8 +10,9 @@ import { PRESENCE_INTERVAL_MS, PRESENCE_READY_SUFFIX } from "./desktop-plugin-pr
 export const PRESENCE_READY_WAIT_MS = 5_000
 const PRESENCE_READY_POLL_MS = 100
 import { isLegacyAutomationPlugin } from "./automation-plugin"
-import { assertNativePluginPath, type DesktopPluginNativePath } from "./desktop-plugin-wsl-paths"
+import { type DesktopPluginNativePath } from "./desktop-plugin-wsl-paths"
 import { installDesktopPluginArtifact } from "./desktop-plugin-artifact"
+import { parseManagedDesktopPluginEntry } from "./desktop-plugin-managed"
 import type { NativeScheduleCarrierInstallation } from "./missions/native-schedule-carrier-binding"
 
 export type DesktopMissionArtifacts = Readonly<Pick<NativeScheduleCarrierInstallation, "provider" | "runtime">>
@@ -29,44 +30,8 @@ export type DesktopPluginFeature = "session-pruning" | "automation" | "missions"
 // readable during migration, but new heartbeats must leave the watched root.
 async function managedStorage(feature: DesktopPluginFeature, existing: string | undefined, marker: string, paths: DesktopPluginPaths, assertCurrent: () => void) {
   if (!existing?.startsWith(marker)) return undefined
-  const match = /^import \{ desktopPlugin \} from ("(?:[^"\\]|\\.)*")\nexport default desktopPlugin\((.+)\)\n$/.exec(existing.slice(marker.length))
-  if (!match) throw new Error("Invalid managed CodeNomad plugin entry")
-  const url = new URL(JSON.parse(match[1]) as string)
-  const arguments_: unknown[] = JSON.parse(`[${match[2]}]`)
-  if (!arguments_.length || arguments_.length > 2) throw new Error("Invalid managed CodeNomad plugin arguments")
-  const [argument, artifacts] = arguments_
-  const presenceDirectories = typeof argument === "string" ? [argument] : argument
-  const nativePaths = paths.nativeData ? path.posix : path
-  if (!Array.isArray(presenceDirectories) || !presenceDirectories.length || presenceDirectories.length > 8
-    || !presenceDirectories.every(directory => typeof directory === "string" && nativePaths.isAbsolute(directory)
-      && !directory.includes("\0") && nativePaths.basename(directory) === "presence"
-      && nativePaths.basename(nativePaths.dirname(directory)) === feature)) {
-    throw new Error("Invalid managed CodeNomad plugin presence")
-  }
-  const nativeLeases = presenceDirectories[0] as string
-  const nativeDirectory = nativePaths.dirname(nativeLeases)
-  const plugin = paths.nativeData ? decodeURIComponent(url.pathname) : fileURLToPath(url)
-  if (url.protocol !== "file:" || url.search || url.hash || (paths.nativeData && url.hostname)
-    || !nativePaths.isAbsolute(nativeDirectory) || nativePaths.basename(nativeDirectory) !== feature
-    || nativePaths.basename(nativeLeases) !== "presence" || nativePaths.dirname(plugin) !== nativeDirectory
-    || !/^[a-f\d]{64}\.mjs$/.test(nativePaths.basename(plugin))) {
-    throw new Error("Invalid managed CodeNomad plugin storage")
-  }
-  if (arguments_.length === 2) {
-    if (feature !== "missions" || !artifacts || typeof artifacts !== "object" || Array.isArray(artifacts)
-      || Object.keys(artifacts).sort().join(",") !== "provider,runtime") throw new Error("Invalid managed Missions artifacts")
-    for (const role of ["provider", "runtime"] as const) {
-      const artifact = (artifacts as DesktopMissionArtifacts)[role]
-      if (!artifact || Object.keys(artifact).sort().join(",") !== "file,sha256"
-        || typeof artifact.file !== "string" || typeof artifact.sha256 !== "string" || !/^[a-f\d]{64}$/.test(artifact.sha256)
-        || nativePaths.dirname(artifact.file) !== nativeDirectory
-        || nativePaths.basename(artifact.file) !== `${artifact.sha256}${role === "provider" ? ".provider" : ""}.mjs`
-        || role === "runtime" && artifact.file !== plugin) throw new Error("Invalid managed Missions artifacts")
-      if (paths.nativeData) assertNativePluginPath(artifact.file)
-    }
-  }
+  const { nativeDirectory, presenceDirectories } = parseManagedDesktopPluginEntry(feature, existing, paths.nativeData ? path.posix : path)!
   if (!paths.nativeData) return { directory: nativeDirectory, nativeDirectory, presenceDirectories: presenceDirectories as string[] }
-  for (const directory of presenceDirectories) assertNativePluginPath(directory)
   if (!paths.resolveNativePath) throw new Error("Missing managed WSL plugin path resolver")
   const resolved = await paths.resolveNativePath(nativeDirectory, assertCurrent)
   return { directory: resolved.host, nativeDirectory, presenceDirectories: presenceDirectories as string[] }
