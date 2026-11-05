@@ -83,7 +83,7 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
 - Remote devices authenticate even with `--dangerously-skip-auth`, and the
   local session cookie is never accepted on the ingress.
 - A desktop CodeNomad pairs as a device: pasting a pairing link into the server
-  dialog (Browse → Add server…, or Settings → Servers) saves only the tunnel
+  dialog (New server on the home page or in the launcher, or Settings → Servers) saves only the tunnel
   origin and opens the server once on the link, even from Save
   (`lib/remote-pairing-link.ts`). The profile keeps TLS verification on, since
   a Tauri TLS-proxy window uses an incognito store without the device cookie.
@@ -97,7 +97,7 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
 - `--connect-server` opens a saved server or URL at launch through that same
   connect flow ([architecture.md](architecture.md#native-profiles-windows-and-client-state)).
   It refuses URLs with user info or a fragment, so a pairing code or password
-  never travels on a command line; pair from Add server… instead.
+  never travels on a command line; pair from New server instead.
 
 ## Validation
 

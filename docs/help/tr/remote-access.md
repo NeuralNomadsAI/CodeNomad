@@ -83,7 +83,7 @@ Bir istemci bir sertifika uyarısı bildirirse, durdurun ve ana bilgisayar adın
 
 ## Uzak sunucuyu kaydedin {#saved-servers}
 
-1. Masaüstü ana sayfasında veya **Yeni instance** başlatıcısında **Gözat** bölümünü açın ve **Sunucu ekle…** seçin. **Ayarlar → Sunucular** de aynısını sunar.
+1. Masaüstü ana sayfasında veya **Sekme aç** başlatıcısında **Yeni sunucu** seçin. **Ayarlar → Sunucular** de **Sunucu ekle…** ile aynısını sunar.
 2. **Sunucuya Bağlan** içinde **Sunucu URL'si** alanına güvenilir bir HTTPS kaynağı veya eşleştirme bağlantısı girin. **Sunucu adı** isteğe bağlıdır; girilmezse sunucu ana bilgisayar adıyla görünür. **Kendinden imzalı sertifikalar için TLS doğrulamasını atla.** seçeneğini işaretsiz bırakın; bunun yerine güven oluşturun. Sertifika doğrulamayı geçemezse iletişim kutusu bunu belirtir.
 3. Yer imlerine eklemek için **Kaydet** öğesini veya kaydedip açmak için **Bağlan** öğesini seçin. Bu sunucuda oturum açın.
 
@@ -99,7 +99,7 @@ Uzaktan Kontrol için bunun yerine **Sunucu URL'si** öğesine yeni bir eşleşt
 
 Masaüstü uygulamasında (Electron veya Windows'ta Tauri), kayıtlı bir sunucu projelerinden birini yerel projelerinizin yanında bu pencerenin bir sekmesinde de açabilir:
 
-1. Ana sayfada veya **Yeni instance** başlatıcısında **Gözat** bölümünü açın ve bir sunucu seçin ya da eklemek için **Sunucu ekle…** seçin.
-2. Klasörü sekmede seçin. Sekme ardından sunucu simgesini ve proje adını gösterir ve proje **Son Klasörler** listesine eklenir: oradan seçmek o sunucuyu ve klasörü doğrudan yeniden açar.
+1. Ana sayfada veya **Sekme aç** başlatıcısında **Gözat** bölümünü açıp bir sunucu seçin ya da eklemek için **Yeni sunucu** seçin.
+2. Klasörü sekmede seçin. Sekme ardından sunucu simgesini ve proje adını gösterir ve proje **Son sekmeler** listesine eklenir: oradan seçmek o sunucuyu ve klasörü doğrudan yeniden açar.
 
 Sekme yalnızca o projeyi gösterir; konuşmaları, dosyaları, Git'i, ayarları ve Missions uzak sunucuda çalışır. Sekme sunucunun uzak penceresiyle aynı depolamayı kullanır; böylece mevcut bir oturum veya eşleştirilmiş cihaz yeniden kullanılır ve CodeNomad sekmelerinizi geri yüklediğinde uzak sekmeler de geri gelir. Bu modu olmayan bir sunucu sekmede tam arayüzünü gösterir. TLS doğrulamasını atlayan sunucular ile macOS ve Linux'taki Tauri sürümü uzak pencere açmaya devam eder. Sekmedeki sayfa bildirim gösterebilir, ancak bu bilgisayara başka erişimi yoktur ve kendi sunucusunda kalır. Web istemcilerinde ve Remote Control cihazlarında uzak sekme yoktur. **Ayarlar → Sunucular** içindeki **Kayıtlı sunucuyu kaldır** sunucunun sekmelerini de kapatır. Proje seçilmeden önce sekme sunucunun adını gösterir. Sekmenin içinde sunucunun sayfasında oturum açın; CodeNomad bu oturumu sonraki açılışlarda yeniden kullanır.

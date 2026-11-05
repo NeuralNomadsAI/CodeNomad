@@ -11,7 +11,7 @@ Remote Control lets a paired browser or desktop client use your running CodeNoma
 
 The link is valid for **five minutes** and succeeds **once**. Treat it as a credential: anyone who consumes it can become a paired device. The code lives in the URL fragment, not the query string. **Create new pairing link** immediately invalidates the preceding unused link. Stop, backend shutdown and tunnel failure cancel outstanding pairing links.
 
-To pair another desktop CodeNomad, open **Browse** on its home page, choose **Add server…** and paste the link into **Server URL**: the server opens and pairs, even from **Save**, because opening it consumes the code. Only the tunnel origin is saved as the bookmark; the code is not retained. TLS verification stays enabled for pairing links.
+To pair another desktop CodeNomad, choose **New server** on its home page and paste the link into **Server URL**: the server opens and pairs, even from **Save**, because opening it consumes the code. Only the tunnel origin is saved as the bookmark; the code is not retained. TLS verification stays enabled for pairing links.
 
 ## Manage paired devices {#paired-devices}
 

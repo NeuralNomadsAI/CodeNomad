@@ -83,7 +83,7 @@ Si un cliente muestra una advertencia de certificado, detente y comprueba el nom
 
 ## Guardar un servidor remoto {#saved-servers}
 
-1. En la página de inicio de escritorio o en el lanzador **Nueva instancia**, abre **Explorar** y elige **Añadir servidor…**. **Configuración → Servidores** ofrece lo mismo.
+1. En la página de inicio de escritorio o en el lanzador **Abrir una pestaña**, elige **Nuevo servidor**. **Configuración → Servidores** ofrece lo mismo con **Añadir servidor…**.
 2. En **Conectar a un servidor**, introduce en **URL del servidor** un origen HTTPS de confianza o un enlace de emparejamiento. **Nombre del servidor** es opcional; sin él, el servidor muestra su nombre de host. Deja **Omitir la verificación TLS para certificados autofirmados.** sin marcar; establece la confianza en su lugar. Si el certificado no supera la verificación, el diálogo lo indica.
 3. Elige **Guardar** para crear un marcador o **Conectar** para guardarlo y abrirlo. Inicia sesión en ese servidor.
 
@@ -99,7 +99,7 @@ Para Control remoto, pega en su lugar un enlace de emparejamiento nuevo en **URL
 
 En la aplicación de escritorio (Electron, o Tauri en Windows), un servidor guardado también puede abrir uno de sus proyectos en una pestaña de esta ventana, junto a tus proyectos locales:
 
-1. En la página de inicio o en el lanzador **Nueva instancia**, abre **Explorar** y elige un servidor, o **Añadir servidor…** para añadir uno.
-2. Elige la carpeta en la pestaña. La pestaña muestra entonces el icono de servidor y el nombre del proyecto, y el proyecto se suma a **Carpetas recientes**: elegirlo allí vuelve a abrir directamente ese servidor y esa carpeta.
+1. En la página de inicio o en el lanzador **Abrir una pestaña**, abre **Explorar** y elige un servidor, o elige **Nuevo servidor** para añadir uno.
+2. Elige la carpeta en la pestaña. La pestaña muestra entonces el icono de servidor y el nombre del proyecto, y el proyecto se suma a **Pestañas recientes**: elegirlo allí vuelve a abrir directamente ese servidor y esa carpeta.
 
 La pestaña muestra solo ese proyecto; sus conversaciones, archivos, Git, ajustes y Missions se ejecutan en el servidor remoto. Usa el almacenamiento de la ventana remota del servidor, así que se reutiliza un inicio de sesión o un dispositivo emparejado existente, y las pestañas remotas vuelven cuando CodeNomad restaura tus pestañas. Un servidor sin este modo muestra su interfaz completa en la pestaña. Los servidores que omiten la verificación TLS, y la versión Tauri en macOS y Linux, siguen abriendo una ventana remota. La página de una pestaña puede mostrar notificaciones, pero no tiene otro acceso a este equipo y permanece en su servidor. Los clientes web y los dispositivos de Remote Control no tienen pestañas remotas. **Eliminar servidor guardado**, en **Configuración → Servidores**, también cierra sus pestañas. Antes de elegir un proyecto, la pestaña muestra el nombre del servidor. Inicia sesión en la página del servidor, dentro de la pestaña; CodeNomad reutiliza ese inicio de sesión en los siguientes arranques.
