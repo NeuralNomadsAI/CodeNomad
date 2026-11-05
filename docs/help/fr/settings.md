@@ -30,6 +30,10 @@ L’interface se met à jour sans redémarrer de conversation. L’hébreu utili
 
 Si les couleurs deviennent difficiles à lire, sélectionnez une palette intégrée ou réinitialisez celle modifiée. Changer de palette peut demander d’abandonner les modifications de couleur non enregistrées ; cela n’abandonne pas un brouillon de conversation.
 
+## Garder l’ordinateur éveillé {#keep-computer-awake}
+
+Dans **Paramètres → Général**, **Garder l’ordinateur éveillé tant que CodeNomad tourne** est désactivé par défaut. Activez cette option pour empêcher la mise en veille tant que CodeNomad est ouvert, même sans session au travail ; l’écran peut toujours s’éteindre. Lorsque cette option est désactivée, CodeNomad garde l’ordinateur éveillé uniquement pendant qu’une session travaille. Le **i** à côté du titre explique ce comportement. Cette option apparaît uniquement dans l’application de bureau et reste masquée dans un navigateur web.
+
 ## Panneaux et sections Statut {#panels-status}
 
 Faites glisser le bord intérieur d’un panneau ancré pour le redimensionner. La poignée reste surlignée et garde la capture du pointeur pendant tout le glissement, même si le pointeur dépasse son bord. Relâchez pour terminer.

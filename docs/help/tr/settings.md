@@ -30,6 +30,10 @@ Kullanıcı arayüzü, bir konuşmayı yeniden başlatmadan güncellenir. İbran
 
 Renklerin okunması zorlaşırsa yerleşik bir palet seçin veya düzenlenen paleti sıfırlayın. Paletler arasında geçiş yapmak, kaydedilmemiş renk düzenlemelerini iptal etmenizi isteyebilir; bir konuşma taslağını atmaz.
 
+## Bilgisayarı uyanık tutma {#keep-computer-awake}
+
+**Ayarlar → Genel** bölümündeki **CodeNomad çalışırken bilgisayarı uyanık tut** seçeneği varsayılan olarak kapalıdır. Hiçbir oturum çalışmasa bile CodeNomad açıkken sistemin uykuya geçmesini önlemek için açın; ekran yine de kapanabilir. Bu seçenek kapalıyken CodeNomad, bilgisayarı yalnızca bir oturum çalışırken uyanık tutar. Başlığın yanındaki **i**, bu davranışı açıklar. Seçenek yalnızca masaüstü uygulamasında görünür ve web tarayıcısında gizlidir.
+
 ## Paneller ve Durum bölümleri {#panels-status}
 
 Sabitlenmiş bir paneli yeniden boyutlandırmak için iç kenarını sürükleyin. İşaretçi kenarın dışına çıksa bile sürükleme boyunca tutamaç vurgulanır ve işaretçi yakalama korunur. Bitirmek için bırakın.
