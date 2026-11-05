@@ -134,7 +134,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       kind: "toggle",
       id: "behavior.scrollControlsInTimelineCorner",
       titleKey: "settings.behavior.scrollControlsInTimelineCorner.title",
-      get: (p) => Boolean(p.scrollControlsInTimelineCorner ?? true),
+      get: (p) => Boolean(p.scrollControlsInTimelineCorner ?? false),
       set: (next) => updatePreferences?.({ scrollControlsInTimelineCorner: next }),
     },
     {

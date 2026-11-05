@@ -107,12 +107,14 @@ async function open(run: (page: Page) => Promise<void>, { name = "session", hist
   }
 }
 
-// SessionView keeps both controls in the composer corner and dims the end the reader reached.
+const latestButton = (page: Page, scope = "") => page.locator(`${scope} .message-scroll-controls`).getByRole("button", { name: "Scroll to latest message", exact: true })
+
+// With the corner option on, SessionView keeps both controls under the rail and dims the end the reader reached.
 const cornerButton = (page: Page, label: string, scope = "") =>
   page.locator(`${scope} .session-scroll-corner-button[aria-label="${label}"]:not(.session-scroll-corner-button--reached)`)
-const latestButton = (page: Page, scope = "") => cornerButton(page, "Scroll to latest message", scope)
 
 async function bottom(page: Page, scope = "") {
+  await page.locator(`${scope} .message-scroll-controls`).hover()
   const button = latestButton(page, scope)
   if (await button.count()) await button.click()
   await frames(page)
@@ -1046,6 +1048,7 @@ test("a viewport resize keeps a reader at the start there", async () => {
 // over the transcript; both stay and the end the reader reached is dimmed.
 test("first/latest controls stay in the composer corner and dim the reached end", async () => {
   await open(async page => {
+    await applySettings(page, { scrollControlsInTimelineCorner: true })
     const reached = () => page.locator(".session-scroll-corner-button").evaluateAll(buttons =>
       buttons.map(button => button.classList.contains("session-scroll-corner-button--reached")))
     assert.deepEqual(await reached(), [false, true])
@@ -1080,6 +1083,7 @@ const footerInset = (page: Page) => page.evaluate(() =>
 for (const hasTouch of [false, true]) {
   test(`the composer corner never covers Send (${hasTouch ? "touch" : "mouse"})`, async () => {
     await open(async page => {
+      await applySettings(page, { scrollControlsInTimelineCorner: true })
       const layout = await page.evaluate(() => {
         const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect()
         const corner = box(".session-scroll-corner"), footer = box(".prompt-input-footer"), send = box(".prompt-input-footer .send-button")
@@ -1108,11 +1112,11 @@ for (const hasTouch of [false, true]) {
   })
 }
 
-// Without a shown rail, or with the option off, the controls float over the
-// transcript as before and the footer reserves no corner.
+// With the option off (the default), or without a shown rail, the controls
+// float over the transcript as before and the footer reserves no corner.
 for (const [name, settings, inset] of [
-  ["the timeline is hidden", { showMessageTimeline: false }, 0],
-  ["the corner option is off", { scrollControlsInTimelineCorner: false }, 40],
+  ["the corner option is off", {}, 40],
+  ["the timeline is hidden", { scrollControlsInTimelineCorner: true, showMessageTimeline: false }, 0],
 ] as const) {
   test(`the floating controls return when ${name}`, async () => {
     await open(async page => {
@@ -2239,7 +2243,8 @@ test("a First jump during a pending send still lands on the first message", asyn
     await prompt.press("Enter")
     await page.waitForFunction(() => (window as any).fixture.admitted())
     await frames(page, 120)
-    await cornerButton(page, "Scroll to first message").click()
+    await page.locator(".message-scroll-controls").hover()
+    await page.getByRole("button", { name: "Scroll to first message", exact: true }).click()
     // The fixture serves this window from its newest records; what matters is that
     // the loaded window replaces the latest one and is then entered at its top.
     await page.waitForFunction(() => (window as any).fixture.snapshot().window.kind !== "latest")

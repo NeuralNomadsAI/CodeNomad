@@ -1440,7 +1440,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const showTimeline = createMemo(() => showMessageTimelinePreference() && hasTimelineSegments())
   // The corner exists only under a shown rail; otherwise the controls float over the transcript.
   const scrollCornerMount = () =>
-    showTimeline() && (preferences().scrollControlsInTimelineCorner ?? true) ? props.scrollCornerMount : undefined
+    showTimeline() && (preferences().scrollControlsInTimelineCorner ?? false) ? props.scrollCornerMount : undefined
 
   createEffect(on(isSearchOpen, open => { if (!open) closeSearch() }, { defer: true }))
   createEffect(() => { if (!isActive()) setIsSearchOpen(false) })

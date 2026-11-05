@@ -233,7 +233,7 @@ const defaultUiSettings: UiSettings = {
   showThinkingBlocks: false,
   thinkingBlocksExpansion: "collapsed",
   showMessageTimeline: true,
-  scrollControlsInTimelineCorner: true,
+  scrollControlsInTimelineCorner: false,
   holdLongAssistantReplies: true,
   promptSubmitOnEnter: true,
   hotkeyOverrides: {},

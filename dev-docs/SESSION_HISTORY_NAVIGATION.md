@@ -144,10 +144,10 @@ shows only the run's part after them; a continuation stands for that part. A
 selected continuation a reveal joins to its run hands the selection to the run's
 marker (`survivingTimelineSegmentId`). A tool inside a collapsed technical group stands for that group's header.
 
-Under a shown rail, the first/latest controls sit side by side in the composer
+With General's `scrollControlsInTimelineCorner` preference on (off by default)
+and the rail shown, the first/latest controls sit side by side in the composer
 corner cell below it (`.session-scroll-corner`, which `PromptInput` renders inside
-its footer for `SessionView` and `MessageSection` portals into), unless General's
-`scrollControlsInTimelineCorner` preference is off. Positioned past the footer's
+its footer for `SessionView` and `MessageSection` portals into). Positioned past the footer's
 inline end, the cell spans the footer's height and follows the composer when an
 open interruption dock makes the session stack scroll; one view-scoped width,
 `--session-corner-width` (40px; two compact touch targets on a coarse pointer),

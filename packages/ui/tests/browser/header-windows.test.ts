@@ -286,7 +286,7 @@ for (const device of ["Pixel 5", "iPhone 13", "Desktop Chrome"] as const) test(`
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
-    await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: true }))
+    await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: true, scrollControlsInTimelineCorner: true }))
     await page.getByText("Fixture message", { exact: true }).waitFor()
     const timeline = page.locator(".message-timeline-sidebar")
     await timeline.waitFor({ state: "attached" })
