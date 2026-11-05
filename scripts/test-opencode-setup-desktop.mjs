@@ -3,7 +3,7 @@
 import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { mkdtemp, mkdir, readFile, writeFile, readdir, copyFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, writeFile, readdir, copyFile, open, cp } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
 import { fileURLToPath } from "node:url"
@@ -42,10 +42,24 @@ async function findPort(directory) {
     if (entry.isDirectory()) { const port = await findPort(name); if (port) return port }
   }
 }
-for (const [host, executable] of Object.entries(artifacts)) {
+for (const [host, sourceExecutable] of Object.entries(artifacts)) {
   if (requested !== "both" && requested !== host) continue
   const profile = path.join(root, host)
   await mkdir(profile)
+  let executable = sourceExecutable
+  if (host === "electron") {
+    // Packaged Electron filters NODE_OPTIONS on GUI launch. Keep the production
+    // artifact intact and inject the registry guard into a private server copy.
+    const application = path.join(profile, "application")
+    await cp(path.dirname(sourceExecutable), application, { recursive: true })
+    executable = path.join(application, path.basename(sourceExecutable))
+    const bin = path.join(application, "resources/server/dist/bin.js")
+    const source = await readFile(bin, "utf8")
+    const marker = '["--import", loaderArg, cliEntry'
+    assert.ok(source.includes(marker), "Fixture requires the packaged server launcher")
+    await writeFile(bin, source.replace(marker,
+      `["--require", ${JSON.stringify(path.join(workspace, "scripts/fixtures/setup-path-registration.cjs"))}, "--import", loaderArg, cliEntry`))
+  }
   const project = path.join(profile, "synthetic-project")
   await mkdir(project)
   const config = path.join(profile, "config.yaml")
@@ -62,7 +76,7 @@ for (const [host, executable] of Object.entries(artifacts)) {
     OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_CONFIG_CONTENT: "{}", OPENCODE_DISABLE_MODELS_FETCH: "1",
     CLI_CONFIG: config, CLI_LOG_LEVEL: "debug", ELECTRON_ENABLE_LOGGING: "1", PATH: `${process.env.SystemRoot}\\System32`,
     npm_config_cache: path.join(profile, "npm-cache"), npm_config_userconfig: path.join(profile, "npmrc"),
-    NODE_OPTIONS: `--require="${path.join(workspace, "scripts/fixtures/setup-path-registration.cjs").replaceAll("\\", "/")}"`,
+    ...(host === "tauri" ? { NODE_OPTIONS: `--require="${path.join(workspace, "scripts/fixtures/setup-path-registration.cjs").replaceAll("\\", "/")}"` } : {}),
   })
   for (const key of ["APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "OPENCODE_CONFIG_DIR"]) await mkdir(env[key], { recursive: true })
   if (privateCopy) {
@@ -81,7 +95,7 @@ for (const [host, executable] of Object.entries(artifacts)) {
   const record = { host, executable, profile, servicePort, oldDaemon, compatibleDaemon, privateCopy, sha256: createHash("sha256").update(await readFile(executable)).digest("hex"), checks: [] }
   const resources = path.join(path.dirname(executable), "resources")
   record.packagedFiles = {}
-  for (const relative of ["server/dist/opencode-update/service.js", "server/dist/workspaces/opencode-cli-service.js", "server/dist/workspaces/native-service-registration.js", "server/public/index.html", "node/win32-x64/node.exe", "node/win32-x64/node_modules/npm/package.json"]) {
+  for (const relative of ["server/dist/opencode-update/service.js", "server/dist/workspaces/opencode-cli-service.js", "server/dist/workspaces/native-service-registration.js", "server/public/index.html", ...(host === "electron" ? ["node/win32-x64/npm/package.json"] : ["node/win32-x64/node.exe", "node/win32-x64/node_modules/npm/package.json"])]) {
     record.packagedFiles[relative] = createHash("sha256").update(await readFile(path.join(resources, relative))).digest("hex")
   }
   for (const retired of ["opencode-update/legacy-package.js", "opencode/compatibility/requests.js", "opencode/compatibility/events.js"]) {
@@ -133,6 +147,8 @@ for (const [host, executable] of Object.entries(artifacts)) {
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 30_000 })
     page = await until(() => browser.contexts().flatMap(context => context.pages()).find(candidate => /^https?:\/\/127\.0\.0\.1/.test(candidate.url())), `${host}: application page not found`)
     page.setDefaultTimeout(90_000)
+    await until(async () => Boolean(await readFile(path.join(profile, "path-preload-ready.json"), "utf8").catch(() => "")),
+      "Fixture registry protection did not load; installation is forbidden", 15_000)
     observe(page)
     for (const context of browser.contexts()) context.on("page", observe)
     if (privateCopy) {
@@ -145,10 +161,10 @@ for (const [host, executable] of Object.entries(artifacts)) {
     await page.getByText(/^(OpenCode is not installed\.|OpenCode n’est pas installé\.)$/).waitFor()
     await page.screenshot({ path: path.join(profile, "01-missing.png") })
     await page.getByText(/^(Version details|Détails des versions)$/).click()
-    await page.getByText(/introduced the native step-start timestamp|horodatage natif de début d’étape/).waitFor()
+    await page.getByText(/requires OpenCode .*image|nécessite OpenCode .*génération d’images/).waitFor()
     record.checks.push("real missing setup screen with separate technical minimum and recommendation")
     await page.getByRole("button", { name: /^(Close|Fermer)$/ }).click()
-    await page.locator('[role="status"] button').click()
+    await page.getByRole("button", { name: /^(OpenCode setup required|Configuration d’OpenCode requise)$/ }).click()
     await page.getByRole("dialog").waitFor()
     record.checks.push("dismiss and persistent recovery reentry")
     await page.getByRole("button", { name: /^(Install and start OpenCode|Installer et démarrer OpenCode)$/ }).click()
@@ -160,7 +176,7 @@ for (const [host, executable] of Object.entries(artifacts)) {
       cli = path.join(prefix, "node_modules/@opencode/cli/bin/opencode.exe")
       return cli
     }, `${host}: bundled npm install failed`, 300_000)
-    record.checks.push("bundled Node/npm installed real CLI with system Node and opencode absent from PATH")
+    record.checks.push("desktop runtime and bundled npm installed real CLI with system Node and opencode absent from PATH")
     if (oldDaemon) {
       const restart = page.getByRole("button", { name: /^(Restart shared service|Redémarrer le service partagé)$/ })
       await until(async () => await restart.isVisible() || statuses.some(item => item.url.endsWith("/api/opencode/service") && item.method === "POST"), "Old daemon recovery did not settle")
@@ -182,6 +198,10 @@ for (const [host, executable] of Object.entries(artifacts)) {
       await page.getByRole("button", { name: /^(Close|Fermer)$/ }).click()
       record.checks.push("usable older daemon retained with identical PID/version; restart optional after installation")
     }
+    if (!resumeFolder && !compatibleDaemon) {
+      await page.getByText(/^(OpenCode is connected\.|OpenCode est connecté\.)$/).waitFor()
+      await page.getByRole("button", { name: /^(Close|Fermer)$/ }).click()
+    }
     await page.getByRole("dialog").waitFor({ state: "hidden", timeout: 120_000 })
     await page.screenshot({ path: path.join(profile, "02-installed-connected.png") })
     record.cliVersion = runCli(cli, ["--version"])
@@ -190,7 +210,7 @@ for (const [host, executable] of Object.entries(artifacts)) {
     // actual isolated endpoint instead of accepting either status text alone.
     record.connectedDaemon = await daemonInfo()
     assert.ok(record.connectedDaemon.version)
-    record.checks.push("native-parent service activation, supported daemon admission, setup closes")
+    record.checks.push("native-parent service activation, supported daemon admission, setup dismissed after connection")
     if (resumeFolder) {
       record.workspaces = await until(async () => {
         const data = await page.evaluate(async () => (await fetch("/api/workspaces", { signal: AbortSignal.timeout(10_000) })).json())
@@ -203,6 +223,7 @@ for (const [host, executable] of Object.entries(artifacts)) {
       await page.getByRole("button", { name: "OpenCode", exact: true }).click()
       const preferences = await until(() => browser.contexts().flatMap(context => context.pages()).find(candidate => candidate.url().includes("preferences")), "Native preferences page did not open")
       preferences.setDefaultTimeout(90_000)
+      await preferences.getByText(/^(Troubleshooting|Dépannage)$/).click()
       const reload = preferences.getByRole("button", { name: /^(Reload OpenCode configuration|Recharger la configuration OpenCode)$/ })
       await reload.waitFor()
       await preferences.screenshot({ path: path.join(profile, "03-reload-warning.png") })
@@ -215,6 +236,16 @@ for (const [host, executable] of Object.entries(artifacts)) {
     }
     await boundedFixtureOperation(() => Promise.all(observerTasks), Date.now() + 12_000, "response observers")
     assert.deepEqual(observerErrors, [])
+    if (host === "electron") {
+      record.backend = await page.evaluate(() => window.electronAPI.getCliStatus())
+      assert.equal(record.backend.state, "ready")
+      await page.evaluate(() => { void window.electronAPI.closeWindow() })
+      await until(() => child.exitCode !== null, "Electron graceful shutdown did not complete", 30_000)
+      assert.equal(child.exitCode, 0)
+      assert.throws(() => process.kill(record.backend.pid, 0), { code: "ESRCH" })
+      await (await open(executable, "r+")).close()
+      record.checks.push("packaged Electron backend ready; window close exits cleanly and releases the backend executable")
+    }
     record.pass = true
   } catch (error) {
     record.error = error.stack
@@ -225,7 +256,7 @@ for (const [host, executable] of Object.entries(artifacts)) {
     console.error(`${host}: ${error.message}`)
   } finally {
     const cleanupErrors = []
-    if (browser) await boundedFixtureOperation(() => browser.close(), Date.now() + 5_000, "CDP cleanup").catch(error => cleanupErrors.push(error.message))
+    if (browser?.isConnected()) await boundedFixtureOperation(() => browser.close(), Date.now() + 5_000, "CDP cleanup").catch(error => cleanupErrors.push(error.message))
     // Kill only the exact fixture PID and its descendants, never installed hosts.
     if (child?.pid && child.exitCode === null) {
       try { execFileSync(path.join(process.env.SystemRoot, "System32/taskkill.exe"), ["/pid", String(child.pid), "/t", "/f"], { stdio: "pipe", timeout: 10_000 }) }

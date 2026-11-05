@@ -102,8 +102,8 @@ jobs:
       - name: Build macOS binaries (Electron)
         run: npm run build:mac --workspace @neuralnomads/codenomad-electron-app
 
-      - name: Verify bundled Node resource (Electron macOS)
-        run: node scripts/verify-bundled-node.cjs packages/electron-app/release/mac/CodeNomad.app/Contents/Resources@darwin-x64 packages/electron-app/release/mac-arm64/CodeNomad.app/Contents/Resources@darwin-arm64
+      - name: Verify bundled npm resource (Electron macOS)
+        run: node scripts/verify-bundled-node.cjs --npm-only packages/electron-app/release/mac/CodeNomad.app/Contents/Resources@darwin-x64 packages/electron-app/release/mac-arm64/CodeNomad.app/Contents/Resources@darwin-arm64
 
       - name: Ad-hoc sign Electron macOS app bundles (seal resources)
         shell: bash
@@ -270,8 +270,8 @@ jobs:
       - name: Build Windows binaries (Electron)
         run: npm run build:win --workspace @neuralnomads/codenomad-electron-app
 
-      - name: Verify bundled Node resource (Electron Windows)
-        run: node scripts/verify-bundled-node.cjs packages/electron-app/electron/resources@win32-x64
+      - name: Verify bundled npm resource (Electron Windows)
+        run: node scripts/verify-bundled-node.cjs --npm-only packages/electron-app/electron/resources@win32-x64
 
       # Runs on unsigned builds too, so PR builds prove that the packaging step
       # gives CodeNomad.exe the same product version as the Tauri binaries.
@@ -362,8 +362,8 @@ jobs:
       - name: Build Linux binaries (Electron)
         run: npm run build:linux --workspace @neuralnomads/codenomad-electron-app
 
-      - name: Verify bundled Node resource (Electron Linux)
-        run: node scripts/verify-bundled-node.cjs packages/electron-app/electron/resources@linux-x64
+      - name: Verify bundled npm resource (Electron Linux)
+        run: node scripts/verify-bundled-node.cjs --npm-only packages/electron-app/electron/resources@linux-x64
 
       # The deb installs as root, so its post-install script can give Chromium's
       # sandbox helper the root ownership and 4755 mode a user archive cannot.
@@ -462,7 +462,7 @@ jobs:
           resources_dir="$(dirname "$binary")/resources"
           node scripts/smoke-packaged-resources.cjs \
             --resources "$resources_dir" \
-            --target linux-x64
+            --target linux-x64 --electron "$binary"
 
           app_asar="$resources_dir/app.asar"
           if [ ! -f "$app_asar" ]; then

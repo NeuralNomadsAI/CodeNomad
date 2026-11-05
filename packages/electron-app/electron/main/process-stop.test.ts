@@ -562,6 +562,13 @@ test("process manager keeps incomplete shutdown terminal and interrupts a pendin
   try {
     const { CliProcessManager } = await import("./process-manager")
     const manager = new CliProcessManager()
+    ;(manager as any).resolveProdEntry = () => "/packaged/server/dist/bin.js"
+    const entry = await (manager as any).resolveCliEntry({ dev: false })
+    assert.equal(entry.nodeBinaryPath, process.execPath, "packaged server uses Electron's executable")
+    assert.deepEqual((manager as any).buildDirectSpawn(entry, ["--http-port", "0"]), {
+      command: process.execPath,
+      args: ["--experimental-specifier-resolution=node", "/packaged/server/dist/bin.js", "--http-port", "0"],
+    })
     let enforcements = 0
     ;(manager as EventEmitter).on("shutdownIncomplete", () => { enforcements++ })
 

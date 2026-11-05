@@ -6,7 +6,7 @@ Aynı kullanıcı arayüzü [çoklu proje sekmeleri ve çalışma ağaçları](p
 
 ## Ana bilgisayarı hazırlayın {#prerequisites}
 
-1. Node.js 24 LTS ve npm'yi yükleyin; havuzun sabitlenmiş derleme çalışma zamanı 24.20.0'dır. Masaüstü paketleri Node/npm'yi içerir.
+1. Node.js 24 LTS ve npm'yi yükleyin; havuzun sabitlenmiş derleme çalışma zamanı 24.20.0'dır. Masaüstü paketleri kendi çalışma zamanlarını sağlar: Electron yerleşik Node'unu kullanır, Tauri Node'u paketler ve ikisi de npm içerir.
 2. Git'i **arka uç sürecinin PATH** değişkenine ekleyin. Yalnızca WSL içindeki Git, Windows arka ucu için yeterli değildir.
 3. OpenCode'u yükleyin veya seçin: **2.2.3** gerekli minimum değer, **2.2.5** ise önerilen yeterlilik hedefidir. Daha yeni veya özel derlemeler, test edilmiş sürüm izin verilenler listesine değil, uyumluluk denetimlerine tabi tutulur. Bkz. [OpenCode kurulumu](opencode.md).
 4. Sunucunun başlatılacağı klasörü seçin veya `--workspace-root`'yi açıkça iletin.

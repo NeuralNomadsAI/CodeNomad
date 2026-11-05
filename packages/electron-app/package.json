@@ -39,7 +39,7 @@
     "package:mac": "node scripts/build.js mac",
     "package:win": "node scripts/build.js win",
     "package:linux": "node scripts/build.js linux",
-    "smoke:resources": "node ../../scripts/smoke-packaged-resources.cjs --resources electron/resources --loading dist/renderer"
+    "smoke:resources": "node ../../scripts/smoke-packaged-resources.cjs --resources electron/resources --loading dist/renderer --electron"
   },
   "dependencies": {
     "yaml": "^2.4.2"

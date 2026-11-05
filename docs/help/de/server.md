@@ -6,7 +6,7 @@ Dieselbe Oberfläche unterstützt [mehrere Projekt-Tabs und Worktrees](projects.
 
 ## Host vorbereiten {#prerequisites}
 
-1. Installieren Sie Node.js 24 LTS und npm; die festgelegte Build-Laufzeit des Repositorys ist 24.20.0. Desktop-Pakete enthalten Node/npm.
+1. Installieren Sie Node.js 24 LTS und npm; die festgelegte Build-Laufzeit des Repositorys ist 24.20.0. Desktop-Pakete liefern ihre eigene Laufzeit: Electron nutzt sein integriertes Node, Tauri bündelt Node, und beide enthalten npm.
 2. Stellen Sie Git im **PATH des Backend-Prozesses** bereit. Git allein in WSL genügt für ein Windows-Backend nicht.
 3. Installieren oder wählen Sie OpenCode: **2.2.3** ist das erforderliche Minimum, **2.2.5** das empfohlene Qualifizierungsziel. Neuere/angepasste Builds durchlaufen Kompatibilitätsprüfungen, keine Positivliste getesteter Versionen. Siehe [OpenCode-Einrichtung](opencode.md).
 4. Wählen Sie den Startordner des Servers oder übergeben Sie `--workspace-root` ausdrücklich.

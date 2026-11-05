@@ -4,7 +4,7 @@ const os = require("os")
 const path = require("path")
 const { spawnSync } = require("child_process")
 
-// Keep packaged runtimes and CI on the same exact LTS release.
+// CI, Tauri's Node and both hosts' npm come from this exact LTS release.
 const nodeVersion = fs.readFileSync(path.join(__dirname, "..", ".node-version"), "utf8").trim()
 if (!/^\d+\.\d+\.\d+$/.test(nodeVersion)) {
   throw new Error(".node-version must pin an exact Node.js release")
@@ -132,18 +132,21 @@ function extractArchive(archivePath, destination) {
   run("tar", ["-xzf", archivePath, "-C", destination])
 }
 
-function pruneForRuntime(sourceRoot, destinationRoot, binaryRelativePath) {
+function pruneForRuntime(sourceRoot, destinationRoot, binaryRelativePath, npmOnly = false) {
   const sourceBinary = path.join(sourceRoot, binaryRelativePath)
   const destinationBinary = path.join(destinationRoot, binaryRelativePath)
 
   fs.rmSync(destinationRoot, { recursive: true, force: true })
-  fs.mkdirSync(path.dirname(destinationBinary), { recursive: true })
-  fs.copyFileSync(sourceBinary, destinationBinary)
+  fs.mkdirSync(destinationRoot, { recursive: true })
+  if (!npmOnly) {
+    fs.mkdirSync(path.dirname(destinationBinary), { recursive: true })
+    fs.copyFileSync(sourceBinary, destinationBinary)
+  }
   const npmRelativePath = binaryRelativePath === "node.exe" ? "node_modules/npm" : "lib/node_modules/npm"
   const npmSource = path.join(sourceRoot, npmRelativePath)
   if (!fs.existsSync(path.join(npmSource, "bin/npm-cli.js"))) throw new Error("Node archive is missing npm")
-  fs.cpSync(npmSource, path.join(destinationRoot, npmRelativePath), { recursive: true })
-  fs.copyFileSync(path.join(sourceRoot, "LICENSE"), path.join(destinationRoot, "LICENSE"))
+  fs.cpSync(npmSource, path.join(destinationRoot, npmOnly ? "npm" : npmRelativePath), { recursive: true })
+  if (!npmOnly) fs.copyFileSync(path.join(sourceRoot, "LICENSE"), path.join(destinationRoot, "LICENSE"))
 }
 
 async function prepareBundledNodeRuntime(options) {
@@ -183,18 +186,18 @@ async function prepareBundledNodeRuntime(options) {
       throw new Error(`Node binary missing after extraction: ${path.join(extractedRoot, spec.binary)}`)
     }
 
-    pruneForRuntime(extractedRoot, runtimeRoot, spec.binary)
-    if (!target.startsWith("win32-")) {
+    pruneForRuntime(extractedRoot, runtimeRoot, spec.binary, options.npmOnly)
+    if (!options.npmOnly && !target.startsWith("win32-")) {
       fs.chmodSync(runtimeBinary, 0o755)
     }
 
-    if (target === currentTarget()) {
+    if (!options.npmOnly && target === currentTarget()) {
       run(runtimeBinary, ["--version"])
     } else {
       console.log(`[node-runtime] skipped ${target} execution check on ${currentTarget()} build host`)
     }
     console.log(`[node-runtime] prepared ${target} at ${runtimeRoot}`)
-    return { target, runtimeRoot, runtimeBinary }
+    return { target, runtimeRoot, runtimeBinary: options.npmOnly ? undefined : runtimeBinary }
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true })
   }

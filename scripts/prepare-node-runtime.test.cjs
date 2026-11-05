@@ -9,7 +9,7 @@ const { MANAGED_NODE_VERSION } = require("./prepare-node-runtime.cjs")
 const root = path.resolve(__dirname, "..")
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8")
 
-test("pins the bundled runtime to the exact Node 24 LTS used by CI", () => {
+test("pins Tauri's Node and both hosts' npm source to the exact Node 24 LTS used by CI", () => {
   const version = read(".node-version").trim()
   assert.match(version, /^24\.\d+\.\d+$/)
   assert.equal(MANAGED_NODE_VERSION, `v${version}`)
@@ -42,7 +42,7 @@ test("both macOS bundles require the OS supported by Node 24", () => {
   assert.equal(tauri.bundle.macOS.minimumSystemVersion, "13.5")
 })
 
-test("both desktop resource layouts retain the complete npm runtime and licenses", () => {
+test("full and npm-only resources retain npm dependencies and licenses", () => {
   const { pruneForRuntime } = require("./prepare-node-runtime.cjs")
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-node-packaging-"))
   try {
@@ -58,6 +58,10 @@ test("both desktop resource layouts retain the complete npm runtime and licenses
       assert.equal(fs.readFileSync(path.join(destination, `${npm}/node_modules/fixture/index.js`), "utf8"), `${npm}/node_modules/fixture/index.js`)
       assert.ok(fs.existsSync(path.join(destination, "LICENSE")))
       assert.ok(fs.existsSync(path.join(destination, `${npm}/bin/npm-cli.js`)))
+      pruneForRuntime(source, destination, binary, true)
+      assert.deepEqual(fs.readdirSync(destination), ["npm"])
+      assert.ok(fs.existsSync(path.join(destination, "npm/bin/npm-cli.js")))
+      assert.ok(fs.existsSync(path.join(destination, "npm/node_modules/fixture/index.js")))
     }
   } finally { fs.rmSync(fixture, { recursive: true, force: true }) }
 })

@@ -1,7 +1,7 @@
 import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { bundledNpm, executeInstaller } from "./npm-runtime"
+import { bundledNpm, executeInstaller, executeNpm } from "./npm-runtime"
 import { isRetiredInstallation } from "./retired-installation"
 import { registerUserPath } from "./user-path"
 import { probeBinaryVersionAsync, buildSpawnSpec } from "../workspaces/spawn"
@@ -270,12 +270,7 @@ export async function installSharedOpenCode(version: string, options: Installati
   const npm: string = bundled
   const binary = npmExecutable(prefix, platform)
   const probe = options.probe ?? probeBinaryVersionAsync
-  const npmEnvironment = () => {
-    const env = { ...(options.env ?? process.env) }
-    const key = Object.keys(env).find(key => key.toLowerCase() === "path") ?? "PATH"
-    env[key] = `${path.dirname(node)}${platform === "win32" ? ";" : ":"}${env[key] || ""}`
-    return env
-  }
+  const npmEnvironment = () => ({ ...(options.env ?? process.env) })
   return withInstallationLock(prefix, async () => {
     const current = sharedInstallationPlan(options)
     if (current.prefix !== prefix) throw new Error("The OpenCode installation changed; check its status again")
@@ -289,8 +284,8 @@ export async function installSharedOpenCode(version: string, options: Installati
     const images = legacyNativeImages(legacyNpmPackageRoot(prefix, platform))
     for (const image of images) await assertExecutableWritable(image, platform)
     try {
-      await (options.execute ?? executeInstaller)(node, [npm, "uninstall", "--global", "--prefix", prefix,
-        "--no-audit", "--no-fund", LEGACY_NPM_PACKAGE], npmEnvironment())
+      await executeNpm(node, [npm, "uninstall", "--global", "--prefix", prefix,
+        "--no-audit", "--no-fund", LEGACY_NPM_PACKAGE], npmEnvironment(), platform, options.execute)
     } catch (error) {
       if (error instanceof InstallationBusyError) throw error
       const intact = Boolean(legacyNpmInstallation(legacy.command, prefix, npmCommandDirectory(prefix, platform), platform))
@@ -335,8 +330,8 @@ export async function installSharedOpenCode(version: string, options: Installati
         await upgradeSharedOpenCode({ binary: oldBinary, version: target, prefix, node, npm, env, platform, execute: options.execute })
       } else {
         await assertExecutableWritable(oldBinary, platform)
-        await (options.execute ?? executeInstaller)(node, [npm, "install", "--global", "--prefix", prefix,
-          "--no-audit", "--no-fund", "--registry=https://registry.npmjs.org", `@opencode/cli@${target}`], npmEnvironment())
+        await executeNpm(node, [npm, "install", "--global", "--prefix", prefix,
+          "--no-audit", "--no-fund", "--registry=https://registry.npmjs.org", `@opencode/cli@${target}`], npmEnvironment(), platform, options.execute)
       }
     }
     const result = await probe(binary)

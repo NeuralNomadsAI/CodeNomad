@@ -10,7 +10,7 @@ import { MINIMUM_OPENCODE_VERSION as minimum } from "../opencode/runtime-support
 test("native upgrade scopes bundled npm and prefix and cleans its shim on success/failure", async () => {
   for (const platform of ["win32", "linux"] as const) for (const fail of [false, true]) {
     let shim = ""
-    const env = { Path: "/original", NPM_CONFIG_PREFIX: "/wrong", NPM_CONFIG_REGISTRY: "https://wrong.invalid" }
+    const env = { Path: "/original", ELECTRON_RUN_AS_NODE: "1", NPM_CONFIG_PREFIX: "/wrong", NPM_CONFIG_REGISTRY: "https://wrong.invalid" }
     const pending = upgradeSharedOpenCode({ binary: "/verified/opencode.exe", version: "2.0.16", prefix: "/verified prefix",
       node: "/bundled node/node", npm: "/bundled npm/npm-cli.js", env, platform,
       execute: async (file, args, childEnv, execution) => {
@@ -25,6 +25,8 @@ test("native upgrade scopes bundled npm and prefix and cleans its shim on succes
         const directory = childEnv.Path!.split(platform === "win32" ? ";" : ":/bundled")[0]
         assert.equal(execution?.cwd, directory)
         assert.equal(execution?.timeout, 360_000)
+        assert.equal(childEnv.CODENOMAD_NPM_NODE, "/bundled node/node")
+        assert.match(await readFile(path.join(directory, platform === "win32" ? "node.cmd" : "node"), "utf8"), /CODENOMAD_NPM_NODE/)
         shim = path.join(directory, platform === "win32" ? "npm.cmd" : "npm")
         assert.match(await readFile(shim, "utf8"), /CODENOMAD_UPGRADE_NODE/)
         if (fail) throw new Error("native failure")

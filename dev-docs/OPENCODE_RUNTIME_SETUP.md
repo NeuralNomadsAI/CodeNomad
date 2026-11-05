@@ -56,7 +56,7 @@ command. On Windows, that alias is skipped only when the npm `.cmd` script
 positively invokes the package's `.cjs` target; a customized `.cmd` wrapper
 keeps PATH priority and the automatic npm updater never overwrites it.
 
-Default host installation uses bundled Node/npm to run a standard global npm
+Default host installation uses the desktop Node runtime and bundled npm to run a standard global npm
 installation of `@opencode/cli`. Existing writable npm installations on PATH are
 reused after verifying their manifest and launcher identity; standalone/curl,
 Homebrew and custom installations remain user-managed. With no PATH installation,
@@ -160,6 +160,10 @@ and launcher after installation.
 installer against an isolated prefix/home/service: the installed CLI upgrades
 while the running daemon keeps its PID and version. `CODENOMAD_FIXTURE_NODE`
 selects a packaged Node with bundled npm; cleanup uses the isolated CLI only.
+The install, upgrade and legacy replacement fixtures also accept
+`CODENOMAD_FIXTURE_ELECTRON=1`, `CODENOMAD_FIXTURE_NODE=<packaged Electron executable>`
+and `CODENOMAD_FIXTURE_RESOURCES=<packaged resources directory>` to qualify
+Electron's npm-only package with system Node excluded from PATH.
 
 Explicit custom binaries stay selected. WSL and custom installations receive
 execution-host instructions.
@@ -341,7 +345,10 @@ resolved latest stable, plus the cross-platform native pruning gate.
 ### Reproduce desktop and WSL acceptance
 
 Windows desktop fixtures launch only the specified worktree's built artifacts,
-use isolated native profiles/service ports and dynamically discover instrumentation:
+use isolated native profiles/service ports and dynamically discover instrumentation.
+Electron runs a private copy with an explicit server `--require` for the fixture's
+PATH-registration guard; Tauri loads that guard through `NODE_OPTIONS`.
+Both require its startup receipt before allowing installation.
 
 ```text
 node scripts/test-opencode-setup-desktop.mjs both ABSOLUTE_CURRENT_CLI

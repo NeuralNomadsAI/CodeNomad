@@ -7,7 +7,6 @@ import os from "os"
 import path from "path"
 import { fileURLToPath } from "url"
 import { parse as parseYaml } from "yaml"
-import { ensureManagedNodeBinary } from "./managed-node"
 import { getProcessStartIdentityAsync } from "./client-state-process-identity"
 import {
   CLI_STOP_DEADLINE_MS,
@@ -590,7 +589,7 @@ export class CliProcessManager extends EventEmitter {
     return {
       entry: this.resolveProdEntry(),
       runner: "node",
-      nodeBinaryPath: await ensureManagedNodeBinary(),
+      nodeBinaryPath: process.execPath,
       nodeArgs: ["--experimental-specifier-resolution=node"],
     }
   }

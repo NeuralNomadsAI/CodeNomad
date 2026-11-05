@@ -1,9 +1,16 @@
 # Bundled runtime maintenance
 
-- `.node-version` is an exact pin shared by CI and both desktop packages.
-  `scripts/prepare-node-runtime.cjs` copies npm, including its dependencies,
-  from that official Node archive. A new application release is required to
-  deliver any runtime change to installed applications.
+- `.node-version` exactly pins CI and Tauri's bundled Node. Electron runs the
+  backend with its own Node (`process.execPath`, `ELECTRON_RUN_AS_NODE=1`), so
+  its Node version follows Electron. `scripts/prepare-node-runtime.cjs` copies
+  npm and its dependencies from the pinned official Node archive for both hosts;
+  Electron requests npm-only resources. Qualify the server and that npm version
+  against Electron's Node when updating either runtime. A new application release
+  delivers runtime changes to installed applications.
+- Electron's npm lifecycle scripts receive a temporary `node` command pointing
+  to the Electron executable. Installation and native upgrade scope it to their
+  child environment and clean it after completion; interrupted installers retain
+  their adapter and prefix lock for safe manual recovery.
 - Dependabot checks GitHub Actions weekly and proposes updates against `dev`;
   merges are manual. Composite actions that follow their upstream
   `stable`/latest major stay on those supported references.
