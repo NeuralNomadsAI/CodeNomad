@@ -11,7 +11,7 @@ Control remoto permite a un navegador o cliente de escritorio emparejado usar tu
 
 El enlace es válido durante **cinco minutos** y funciona **una vez**. Trátalo como una credencial: cualquiera que lo consuma puede convertirse en un dispositivo emparejado. El código está en el fragmento de la URL, no en la cadena de consulta. **Crear nuevo enlace de emparejamiento** invalida inmediatamente el enlace anterior sin usar. Detener, apagar el backend y los fallos del túnel cancelan los enlaces de emparejamiento pendientes.
 
-Para emparejar otro CodeNomad de escritorio, elige **Conectar servidor CodeNomad** en su página de inicio, pega el enlace en **URL del servidor** y elige **Conectar**. Un enlace de emparejamiento abre su ventana incluso desde **Guardar**, porque abrirlo consume el código. Solo se guarda el origen del túnel como marcador; el código no se conserva. La verificación TLS permanece activada para enlaces de emparejamiento.
+Para emparejar otro CodeNomad de escritorio, abre **Remotos** en su página de inicio y pega el enlace en **Enlace de emparejamiento o dirección**: el servidor se abre y se empareja. Desde **Configuración → Acceso remoto → Servidores**, un enlace de emparejamiento abre su ventana incluso desde **Guardar**, porque abrirlo consume el código. Solo se guarda el origen del túnel como marcador; el código no se conserva. La verificación TLS permanece activada para enlaces de emparejamiento.
 
 ## Gestionar dispositivos emparejados {#paired-devices}
 
