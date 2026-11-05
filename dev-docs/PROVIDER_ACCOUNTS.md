@@ -49,7 +49,7 @@ The reader returns the `chatgpt-usage` action; the UI owns the fixed destination
 Its quota stays unknown, so automatic selection rejects it.
 
 Pay-as-you-go integrations (`zai`, `minimax`, OpenRouter, DeepInfra, Kilo,
-ZenMux, DeepSeek, credit providers), the Console's Zen provider and readers that
+ZenMux, DeepSeek, credit providers), the Console's paid models and readers that
 need unrelated environment cookies/tokens (Cursor, Ollama, the Go web scrape)
 stay manual, outside the registry.
 
@@ -91,15 +91,15 @@ that keeps plan windows, including Kimi's calendar-month caps with unknown durat
 Readers use a 15-second display transport; Kimi, Copilot, z.ai/Zhipu, Codex and Go use
 the bounded credential-free transport in `usage/bounded-fetch.ts` (64 KiB,
 redirects rejected, abortable). Readers keep the upstream HTTP status, and any
-definite client error (4xx except 408/429, e.g. a Zen key answering 402 or a
+definite client error (4xx except 408/429, e.g. a Console key answering 402 or a
 missing endpoint) rejects a candidate, including for reactive adapters, so an
-unrelated account (or Zen billing account) is never activated. Only reads not
+unrelated account (or Console billing account) is never activated. Only reads not
 performed, transport failures, timeouts, rate limits and 5xx stay unknown.
 Inactive Anthropic/Console OAuth tokens near or past expiry, enterprise Copilot
 tokens and self-hosted Console credentials (OAuth tokens and service-account
 keys alike) stay unread (unknown); never refresh them or send them to the public
 endpoint. The Usage tab sends native Go credentials only for the `opencode-go`
-provider (ID or canonical); pay-as-you-go Zen sessions use the env-cookie reader.
+provider (ID or canonical); paid `opencode` sessions use the Console display reader.
 
 Go API keys read `GET https://opencode.ai/zen/go/v1/usage`: the partly verified,
 unversioned contract supplies consumed `usage.{rolling,weekly,monthly}.percent`
@@ -260,6 +260,37 @@ before publishing quota windows.
 Gemini CLI exposes exact per-model limits; Antigravity exposes explicit 5-hour
 and weekly windows, keeping model-family pools separate. Both stay manual,
 outside automatic account selection.
+
+## OpenCode Console usage display
+
+Paid `opencode` sessions resolve to `usage/providers/opencode-console.ts`.
+The native `opencode` integration supplies a key or OAuth through
+`usage/native-credentials.ts`; OAuth wins regardless of entry order, including
+when expired or invalid. OAuth requires metadata server exactly
+`https://opencode.ai/console`, a matching `org_`/`wrk_` alphanumeric organization
+ID and an unexpired access token. It sends `Authorization: Bearer` plus
+`x-org-id`. Keys declaring another server are refused. Never refresh or exchange
+credentials, fall back to another login, or use this display for account selection.
+
+The fixed public Console API supplies three mandatory `usage/summary` request
+counters (`24h`, `7d`, `30d`) and sequential `usage/models?range=30d` pages of 50.
+These calendar windows begin at UTC midnight today, six days ago and 29 days ago.
+Decimal-string counters, token totals and micro-cent costs must fit safe
+nonnegative integers, including cumulative sums; 100,000,000 micro-cents is USD 1.
+Pagination must remain consistent across the complete read, bounded to 20 pages,
+1,000 model rows, 64 KiB per response and 15 seconds overall. The shared display
+cache keys by credential identity, owns its deadline and isolates caller
+cancellation; OAuth expiry caps its lifetime and aborted reads stay uncached.
+Redirects are refused.
+
+The response's optional `console` field carries request counts and individual
+`(provider, model)` request rows, alongside the existing `windows` field. Any
+mandatory failure discards the whole Console result. Stable unavailable reasons
+distinguish missing credentials, invalid/expired credentials (401), denied access
+(403), malformed/oversized/inconsistent responses and network/timeout failures.
+Service-account budget status is `unavailable` with empty items: its endpoint
+returns 404. The budget contract reserves named account items with spend, limit
+and reset for an available upstream endpoint.
 
 ## Auto-select account
 

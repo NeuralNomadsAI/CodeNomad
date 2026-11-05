@@ -84,10 +84,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
             ? await readUsageProviderSettings(connection, params.data.providerId, location.directory, signal) : undefined
           signal.throwIfAborted()
           if (provider?.id === "opencode-go") {
-            // Go quota follows the session provider's own login (a Go key or the
-            // Console sign-in), and only for the Go provider: pay-as-you-go Zen
-            // sessions keep the env-cookie behaviour and never send Console
-            // credentials to the Go usage endpoint.
+            // Go quota follows the Go session provider's own native login.
             const info = settings?.provider
             const integrationID = info && (info.id === "opencode-go" || info.canonical === "opencode-go")
               ? info.integrationID ?? info.id : undefined

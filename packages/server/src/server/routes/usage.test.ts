@@ -338,7 +338,7 @@ test("Go exposes only its allowlisted expired-key reason and fixed action", asyn
   } finally { clearProviderUsageCache(); await app.close() }
 })
 
-test("pay-as-you-go Zen sessions keep the env-cookie behaviour and never send Console credentials to Go", async () => {
+test("paid opencode sessions read Console counters, never the Go cookie endpoint", async () => {
   const { app, state, logs } = harness()
   const previous = { workspace: process.env.OPENCODE_GO_WORKSPACE_ID, cookie: process.env.OPENCODE_GO_AUTH_COOKIE }
   delete process.env.OPENCODE_GO_WORKSPACE_ID; delete process.env.OPENCODE_GO_AUTH_COOKIE
@@ -347,23 +347,28 @@ test("pay-as-you-go Zen sessions keep the env-cookie behaviour and never send Co
   globalThis.fetch = async (input, init) => {
     const headers = new Headers(init?.headers)
     requests.push({ url: String(input), authorization: headers.get("authorization"), cookie: headers.get("cookie") })
-    return new Response('<script>rollingUsage:{usagePercent:12,resetInSec:60}</script>')
+    return Response.json(String(input).includes("summary") ? {
+      totalRequests: "12", totalInputTokens: "0", totalOutputTokens: "0", totalCacheReadTokens: "0",
+      totalCacheWrite5mTokens: "0", totalCacheWrite1hTokens: "0", totalCostMicroCents: "0", services: [],
+    } : { items: [], pageInfo: { page: 1, pageSize: 50, total: 0, pageCount: 0 } })
   }
   state.integrations.opencode = "opencode"
-  const zenUrl = url.replace("/usage/openai", "/usage/opencode")
+  const consoleUrl = url.replace("/usage/openai", "/usage/opencode")
   clearProviderUsageCache()
   try {
-    const unconfigured = await app.inject({ url: zenUrl })
-    assert.equal(unconfigured.json().configured, false, "previous Not configured result")
-    assert.deepEqual(requests, [])
     process.env.OPENCODE_GO_WORKSPACE_ID = "wrk_fixture"; process.env.OPENCODE_GO_AUTH_COOKIE = "fixture-cookie"
-    clearProviderUsageCache()
-    const scraped = await app.inject({ url: zenUrl })
-    assert.equal(scraped.json().windows["5h"].usedPercent, 12)
-    assert.deepEqual(requests, [{ url: "https://opencode.ai/workspace/wrk_fixture/go", authorization: null, cookie: "auth=fixture-cookie" }])
-    assert.equal([unconfigured.body, scraped.body, ...logs].join("").includes("secret-"), false)
+    const response = await app.inject({ url: consoleUrl })
+    assert.equal(response.json().ok, true)
+    assert.equal(response.json().providerId, "opencode-console")
+    assert.deepEqual(response.json().console.requests, { "24h": 12, "7d": 12, "30d": 12 })
+    assert.deepEqual(response.json().console.budgets, { status: "unavailable", items: [] })
+    assert.equal(requests.length, 4)
+    assert.ok(requests.every(r => r.url.startsWith("https://opencode.ai/console/api/usage/") &&
+      r.authorization === "Bearer secret-console" && r.cookie === null))
+    assert.equal([response.body, ...logs].join("").includes("secret-"), false)
   } finally {
     globalThis.fetch = previousFetch
+    clearProviderUsageCache()
     await app.close()
     if (previous.workspace === undefined) delete process.env.OPENCODE_GO_WORKSPACE_ID
     else process.env.OPENCODE_GO_WORKSPACE_ID = previous.workspace
@@ -371,6 +376,25 @@ test("pay-as-you-go Zen sessions keep the env-cookie behaviour and never send Co
     else process.env.OPENCODE_GO_AUTH_COOKIE = previous.cookie
   }
 })
+
+for (const status of [401, 403]) {
+  test(`Console HTTP ${status} reason reaches the route without upstream secrets or Go fallback`, async t => {
+    const { app, logs } = harness()
+    let calls = 0
+    t.mock.method(globalThis, "fetch", async () => { calls++; return new Response("secret-upstream", { status }) })
+    clearProviderUsageCache()
+    try {
+      const response = await app.inject(url.replace("/usage/openai", "/usage/opencode"))
+      assert.equal(response.statusCode, 200)
+      assert.equal(response.json().ok, false)
+      assert.equal(response.json().unavailableReason, `opencode-console-${status === 401 ? "invalid-credential" : "access-denied"}`)
+      assert.deepEqual(response.json().windows, {})
+      assert.equal(response.json().console, undefined)
+      assert.equal(calls, 1)
+      assert.equal([response.body, ...logs].join("").includes("secret-"), false)
+    } finally { clearProviderUsageCache(); await app.close() }
+  })
+}
 
 // opencode-claude's `claude-code` and OpenCode's own Claude Agent both run Claude Code.
 for (const providerId of ["claude-code", "claude-agent"]) {

@@ -215,6 +215,7 @@ export interface ProviderUsageWindow {
 export type ProviderUsageUnavailableReason = "openai-token-sharing-unsupported" | "provider-error" | "minimax-limits-not-shared" | "invalid-base-url"
   | "cursor-token-expired" | "cursor-team-unavailable" | "cursor-access-denied" | "cursor-usage-unavailable"
   | "opencode-go-key-expired"
+  | import("./api-types-provider-usage").ProviderUsageUnavailableReason
 export type ProviderUsageUnavailableAction = "chatgpt-usage" | "opencode-go-new-key"
 
 export interface ProviderUsageResponse {
@@ -233,6 +234,7 @@ export interface ProviderUsageResponse {
   providerErrorCode?: string
   /** UI-owned fixed destination, admitted only for its associated reason. */
   unavailableAction?: ProviderUsageUnavailableAction
+  console?: import("./api-types-provider-usage").OpenCodeConsoleUsage
   /** Computed locally from recorded activity because the provider publishes no counter. */
   estimated?: true
 }
