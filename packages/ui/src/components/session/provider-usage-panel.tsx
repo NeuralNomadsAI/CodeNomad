@@ -120,6 +120,13 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   }
 
   const displayValue = (window: ProviderUsageWindow) => {
+    const consumption = window.consumption
+    const number = new Intl.NumberFormat(locale(), { maximumFractionDigits: 8 })
+    if (consumption && "used" in consumption) return t("providerUsage.usedCount", {
+      used: number.format(consumption.used), limit: number.format(consumption.limit),
+    })
+    if (consumption && "creditsUsed" in consumption) return t("providerUsage.creditsUsed", { used: number.format(consumption.creditsUsed) })
+    if (consumption && "unlimited" in consumption) return t("providerUsage.unlimited")
     if (window.balanceUSD) {
       const money = new Intl.NumberFormat(locale(), { style: "currency", currency: "USD" })
       return `${money.format(window.balanceUSD.remaining)} / ${money.format(window.balanceUSD.total)}`
@@ -218,7 +225,10 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
         <Show when={usage()?.estimated}>
           <div class="mt-1 text-[10px] text-tertiary">{t("providerUsage.estimated")}</div>
         </Show>
-        <div class="mt-2 truncate text-right text-sm font-semibold text-secondary">{usage()?.providerName ?? props.providerId}</div>
+        <div class="mt-2 truncate text-right text-sm font-semibold text-secondary">
+          {usage()?.providerName ?? props.providerId}
+          <Show when={usage()?.copilotPlan}>{plan => ` · ${t(`providerUsage.copilotPlans.${plan()}`)}`}</Show>
+        </div>
       </Show>
     </div>
   )

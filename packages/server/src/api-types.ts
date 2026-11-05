@@ -207,6 +207,7 @@ export interface ProviderUsageWindow {
   resetAt: number | null
   valueLabel?: string
   balanceUSD?: { remaining: number; total: number }
+  consumption?: { used: number; limit: number } | { creditsUsed: number } | { unlimited: true }
 }
 
 export type ProviderUsageUnavailableReason = "openai-token-sharing-unsupported" | "provider-error" | "minimax-limits-not-shared" | "invalid-base-url"
@@ -216,6 +217,7 @@ export interface ProviderUsageResponse {
   requestedProviderId: string
   providerId: string | null
   providerName: string
+  copilotPlan?: "free" | "pro" | "proPlus" | "business" | "enterprise" | "student" | "max"
   modelId?: string
   supported: boolean
   configured: boolean

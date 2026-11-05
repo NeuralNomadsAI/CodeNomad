@@ -53,6 +53,50 @@ const fulfill = (route: Route, usedPercent: number) => route.fulfill({ contentTy
   windows: { "5h": { usedPercent, remainingPercent: 100 - usedPercent, windowSeconds: 18000, resetAt: null } },
 }) })
 
+for (const [locale, usedTemplate, creditsTemplate, unlimited] of [
+  ["en-US", "{used} / {limit} used", "{used} credits used", "Unlimited"],
+  ["fr-FR", "{used} / {limit} utilisés", "{used} crédits utilisés", "Illimité"],
+  ["de-DE", "{used} / {limit} verbraucht", "{used} Credits verbraucht", "Unbegrenzt"],
+  ["es-ES", "{used} / {limit} usados", "{used} créditos usados", "Ilimitado"],
+  ["he-IL", "{used} / {limit} נוצלו", "{used} נקודות זכות נוצלו", "ללא הגבלה"],
+  ["ja-JP", "{used} / {limit} 使用済み", "{used} クレジット使用済み", "無制限"],
+  ["ne-NP", "{used} / {limit} प्रयोग भयो", "{used} क्रेडिट प्रयोग भयो", "असीमित"],
+  ["ru-RU", "{used} / {limit} использовано", "{used} кредитов использовано", "Без ограничений"],
+  ["tr-TR", "{used} / {limit} kullanıldı", "{used} kredi kullanıldı", "Sınırsız"],
+  ["zh-CN", "已使用 {used} / {limit}", "已使用 {used} 点数", "无限制"],
+]) test(`Copilot renders localized consumption, unlimited credits and plan (${locale})`, async () => {
+  const page = await browser.newPage({ locale })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1)
+    const base = { requestedProviderId: "github-copilot", providerId: "github-copilot", providerName: "GitHub Copilot",
+      supported: true, configured: true, ok: true, fetchedAt: Date.now() }
+    const quotaWindow = { usedPercent: null, remainingPercent: null, resetAt: null, windowSeconds: null }
+    await requests[0].fulfill({ json: { ...base, copilotPlan: "enterprise", windows: {
+      premium: { ...quotaWindow, usedPercent: 25.75, remainingPercent: 74.25, consumption: { used: 25.75, limit: 100 } },
+      chat: { ...quotaWindow, consumption: { creditsUsed: 1234.125 } },
+      completions: { ...quotaWindow, consumption: { unlimited: true } },
+    } } })
+    const formatted = await page.evaluate(locale => {
+      const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 8 })
+      return [25.75, 100, 1234.125].map(value => number.format(value))
+    }, locale === "zh-CN" ? "zh-Hans" : locale)
+    await page.getByText(usedTemplate.replace("{used}", formatted[0]).replace("{limit}", formatted[1]), { exact: true }).waitFor()
+    await page.getByText(creditsTemplate.replace("{used}", formatted[2]), { exact: true }).waitFor()
+    await page.getByText(unlimited, { exact: true }).waitFor()
+    await page.getByText("GitHub Copilot · Enterprise", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("progressbar").count(), 1, "unlimited pools never get a percentage bar")
+    assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "26")
+    await page.evaluate(() => (window as any).usageFixture.event("credential.switched"))
+    await waitRequests(requests, 2)
+    assert.equal(await page.getByText("GitHub Copilot · Enterprise", { exact: true }).count(), 0)
+    await requests[1].fulfill({ json: { ...base, windows: { completions: { ...quotaWindow, consumption: { unlimited: true } } } } })
+    await page.getByText("GitHub Copilot", { exact: true }).waitFor()
+    assert.equal(await page.getByText(/providerUsage\.copilotPlans/).count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 for (const [locale, label, invalid] of [
   ["en-US", "Key Limit", "Invalid provider base URL. Configure a public HTTPS URL."],
   ["fr-FR", "Plafond de la clé", "URL de base du fournisseur invalide. Configurez une URL HTTPS publique."],

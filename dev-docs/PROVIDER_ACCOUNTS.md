@@ -35,7 +35,7 @@ exchanges tokens.
 | `opencode-go` | Go API key | `usage/opencode-go-quota.ts` | accepted unless marked |
 | `opencode` (Console, `opencode-go` provider only) | OAuth `device`, service-account key | same, with `x-org-id` | accepted unless marked |
 | `anthropic` (Claude Pro/Max) | OpenCode Anthropic OAuth only, never Claude Code's `claude-code` login, even as fallback | Usage tab Claude reader | accepted unless marked |
-| `github-copilot` | OAuth (github.com only) | Usage tab Copilot reader (premium requests) | rejected |
+| `github-copilot` | OAuth; automatic selection: github.com only | Usage tab Copilot reader (premium requests and consumed credits; validated Enterprise destinations for display) | rejected |
 | `zai-coding-plan`, `zhipuai-coding-plan` | plan key | Usage tab credit/token-limit reader (MCP tool allowance ignored) | rejected |
 | `kimi-for-coding` | plan key | Usage tab Kimi reader | rejected |
 | `minimax-coding-plan`, `minimax-cn-coding-plan` | plan key | Usage tab MiniMax reader | rejected |
@@ -53,10 +53,42 @@ ZenMux, DeepSeek, credit providers), the Console's Zen provider and readers that
 need unrelated environment cookies/tokens (Cursor, Ollama, the Go web scrape)
 stay manual, outside the registry.
 
+GitHub Copilot display reads project only `metadata.enterpriseUrl` from the native
+[Copilot credential](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/plugin/provider/github-copilot.ts),
+which stores the entered HTTPS root URL as a hostname. Both hostname and HTTPS
+root forms are accepted after raw validation; `parseQuotaBaseURL` checks qualified
+DNS syntax and rejects credentials, explicit ports (including 443), non-root paths,
+queries, fragments, backslashes, controls, IP/numeric address forms and localhost.
+Invalid metadata publishes `invalid-base-url` without a request or public-host
+fallback. The endpoint is exactly `https://api.<host>/copilot_internal/user`, matching
+[GitHub's Enterprise API host](https://docs.github.com/en/enterprise-cloud@latest/admin/data-residency/about-github-enterprise-cloud-with-data-residency#api-access);
+absent metadata uses `https://api.github.com/copilot_internal/user`. The bounded
+transport rejects redirects. Host validation covers syntax; DNS resolution follows
+the backend resolver, including private results. Endpoint availability on arbitrary
+self-hosted servers depends on their API support. Enterprise credentials stay
+unread by automatic selection.
+
+The [VS Code quota contract](https://github.com/microsoft/vscode/blob/main/src/vs/base/common/defaultAccount.ts)
+and [usage calculation](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/services/chat/common/chatEntitlementService.ts)
+supply `quota_snapshots.{chat,completions,premium_interactions}`. Capped usage is
+`entitlement - quota_remaining`, falling back to `entitlement * (100 - percent_remaining) / 100`;
+the bar follows `100 - percent_remaining`, or the count ratio if that percentage
+is absent. Zero entitlements omit the row. Unlimited snapshots expose only
+`credits_used` when available and `has_quota` permits, otherwise the localized
+Unlimited state. `ProviderUsageWindow.consumption` carries numbers/state; the UI
+formats fractional counts with `Intl.NumberFormat` and translates the used/limit,
+credits-used and unlimited labels. Premium requests keep their category label;
+only the `credits_used` value is labelled as credits. `quota_reset_at` is Unix
+seconds and takes precedence over `quota_reset_date_utc`, `quota_reset_date`, then
+`limited_user_reset_date`. `copilotPlan` maps verified `copilot_plan` and
+`access_type_sku` values to Free, Pro, Pro+, Business, Enterprise, Student or Max
+in the footer; unknown/missing plans omit the suffix. These fields belong to the
+client-consumed internal endpoint contract.
+
 Usage-backed adapters reuse the Usage tab readers with a one-entry projection
 (`usage/native-credentials.ts` `projectCredential`) and a small selection view
 that keeps only plan windows with a positive duration. Readers use a 15-second
-display transport; z.ai/Zhipu, Codex and Go use
+display transport; Copilot, z.ai/Zhipu, Codex and Go use
 the bounded credential-free transport in `usage/bounded-fetch.ts` (64 KiB,
 redirects rejected, abortable). Readers keep the upstream HTTP status, and any
 definite client error (4xx except 408/429, e.g. a Zen key answering 402 or a

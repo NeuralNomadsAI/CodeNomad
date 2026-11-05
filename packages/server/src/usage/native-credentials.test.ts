@@ -4,7 +4,7 @@ import { once } from "node:events"
 import test from "node:test"
 import { OpenCode, type CredentialEntry } from "@opencode/client"
 import type { ServiceConnection } from "../workspaces/opencode-service"
-import { projectCredentials, readUsageCredentials } from "./native-credentials"
+import { projectCredential, projectCredentials, readUsageCredentials } from "./native-credentials"
 
 const entries: CredentialEntry[] = [
   { id: "a", integrationID: "deepinfra", label: "Key", active: true, value: { type: "key", key: "secret-key", metadata: { note: "x" } } },
@@ -20,6 +20,16 @@ test("projects only each integration's active native credential, without unrelat
     deepinfra: { type: "api", key: "secret-key" },
     anthropic: { type: "oauth", access: "secret-access", refresh: "secret-refresh", expires: 42, accountId: "acct" },
   })
+})
+
+test("projects only Copilot's raw enterprise destination metadata, retaining invalid values for rejection", () => {
+  for (const enterpriseUrl of ["company.ghe.com", "https://github.example.com/", "https://user@company.ghe.com", "", null, 443]) {
+    const entry: CredentialEntry = { id: "copilot", integrationID: "github-copilot", active: true, label: "Enterprise",
+      value: { type: "oauth", methodID: "device", access: "synthetic", refresh: "synthetic", expires: 0,
+        metadata: { enterpriseUrl, apiEndpoint: "https://unrelated.example.com", unrelated: "omit" } } }
+    assert.deepEqual(projectCredential(entry), { type: "oauth", access: "synthetic", refresh: "synthetic", expires: 0, enterpriseUrl })
+    assert.equal(projectCredential({ ...entry, integrationID: "anthropic" })?.enterpriseUrl, undefined)
+  }
 })
 
 async function daemon(status: number) {

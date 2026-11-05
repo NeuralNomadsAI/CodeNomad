@@ -1,6 +1,7 @@
 import type { ProviderUsageResponse, ProviderUsageWindow } from "../api-types"
 
 export interface ProviderUsage {
+  copilotPlan?: ProviderUsageResponse["copilotPlan"]
   windows: Record<string, ProviderUsageWindow>
   models?: Record<string, { windows: Record<string, ProviderUsageWindow> }>
 }

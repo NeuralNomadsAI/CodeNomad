@@ -191,6 +191,34 @@ test("returns a stable unsupported response without making a provider request", 
   }
 })
 
+test("Copilot publishes numeric consumption and plan while Enterprise metadata fences its display cache", async () => {
+  const previousFetch = globalThis.fetch
+  const endpoints: string[] = []
+  clearProviderUsageCache()
+  globalThis.fetch = async input => {
+    endpoints.push(String(input))
+    return Response.json({ copilot_plan: "enterprise", quota_snapshots: {
+      premium_interactions: { entitlement: 100, quota_remaining: 74.25, percent_remaining: 74.25 },
+    } })
+  }
+  try {
+    const credential = { type: "oauth", access: "synthetic-copilot-cache" }
+    const publicUsage = await getProviderUsage("github-copilot", { auth: { "github-copilot": credential } })
+    assert.equal(publicUsage.copilotPlan, "enterprise")
+    assert.deepEqual(publicUsage.windows.premium.consumption, { used: 25.75, limit: 100 })
+    await getProviderUsage("github-copilot", { auth: { "github-copilot": { ...credential, enterpriseUrl: "company.ghe.com" } } })
+    const invalid = await getProviderUsage("github-copilot", {
+      auth: { "github-copilot": { ...credential, enterpriseUrl: "https://company.ghe.com:443" } },
+    })
+    assert.equal(invalid.unavailableReason, "invalid-base-url")
+    assert.deepEqual(invalid.windows, {})
+    assert.equal(invalid.copilotPlan, undefined)
+    assert.deepEqual(endpoints, ["https://api.github.com/copilot_internal/user", "https://api.company.ghe.com/copilot_internal/user"])
+    assert.equal(JSON.stringify(invalid).includes("synthetic-copilot-cache"), false)
+    assert.equal(JSON.stringify(invalid).includes("company.ghe.com"), false)
+  } finally { globalThis.fetch = previousFetch; clearProviderUsageCache() }
+})
+
 test("shows NeuralWatt allowance percentage instead of the key name", async () => {
   const previousFetch = globalThis.fetch
   globalThis.fetch = async () => Response.json({
@@ -270,7 +298,7 @@ test("deduplicates simultaneous canonical and alias provider requests", async ()
   globalThis.fetch = async () => {
     calls += 1
     await gate
-    return Response.json({ quota_snapshots: { chat: { entitlement: 100, remaining: 50 } } })
+    return Response.json({ quota_snapshots: { chat: { entitlement: 100, quota_remaining: 50 } } })
   }
   clearProviderUsageCache()
 

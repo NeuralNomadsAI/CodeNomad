@@ -99,6 +99,7 @@ export async function getProviderUsage(
     requestedProviderId,
     providerId: provider.id,
     providerName: result.providerName,
+    ...(result.ok && result.usage?.copilotPlan ? { copilotPlan: result.usage.copilotPlan } : {}),
     modelId: options.modelId,
     supported: true,
     configured: result.configured,
