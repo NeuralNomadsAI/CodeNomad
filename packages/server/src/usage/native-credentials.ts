@@ -24,7 +24,9 @@ export function projectCredential(entry: CredentialEntry): AuthEntry | null {
   const scope = { ...(typeof orgId === "string" ? { orgId } : {}), ...(typeof server === "string" ? { server } : {}) }
   return value.type === "key"
     ? { type: "api", key: value.key, ...scope }
-    : { type: "oauth", access: value.access, refresh: value.refresh, expires: value.expires,
+    : { type: "oauth", methodID: value.methodID, access: value.access, refresh: value.refresh, expires: value.expires,
+      // Google refresh/cache identity includes the complete selected native OAuth value.
+      ...(entry.integrationID === "google" ? { credentialID: entry.id, metadata: value.metadata } : {}),
       ...(typeof accountId === "string" ? { accountId } : {}), ...scope }
 }
 

@@ -5,8 +5,9 @@ const MAX_RESPONSE_BYTES = 65_536
 // Credential-bearing quota reads. Errors are generic on purpose: callers must
 // never log or return upstream bodies, headers or transport details.
 export async function fetchBoundedJson(url: string, headers: Record<string, string>, signal: AbortSignal,
-  maxBytes = MAX_RESPONSE_BYTES): Promise<unknown> {
-  const response = await fetch(url, { signal, redirect: "error", headers })
+  maxBytes = MAX_RESPONSE_BYTES, init: RequestInit = {}): Promise<unknown> {
+  signal.throwIfAborted()
+  const response = await fetch(url, { ...init, headers, signal, redirect: "error" })
   if (!response.ok || !response.body) {
     await response.body?.cancel().catch(() => {})
     throw new ProviderHttpError(response.status)
@@ -22,7 +23,7 @@ export async function fetchBoundedJson(url: string, headers: Record<string, stri
       const chunk = await reader.read()
       if (chunk.done) break
       size += chunk.value.byteLength
-      if (size > maxBytes) throw new Error("Quota response too large")
+      if (size > Math.min(maxBytes, MAX_RESPONSE_BYTES)) throw new Error("Quota response too large")
       chunks.push(chunk.value)
     }
     signal.throwIfAborted()
@@ -32,4 +33,11 @@ export async function fetchBoundedJson(url: string, headers: Record<string, stri
     await reader.cancel().catch(() => {})
     reader.releaseLock()
   }
+}
+
+export function postBoundedJson(url: string, headers: Record<string, string>, body: URLSearchParams | Record<string, unknown>,
+  signal: AbortSignal): Promise<unknown> {
+  const form = body instanceof URLSearchParams
+  return fetchBoundedJson(url, { ...headers, "Content-Type": form ? "application/x-www-form-urlencoded" : "application/json" },
+    signal, MAX_RESPONSE_BYTES, { method: "POST", body: form ? body : JSON.stringify(body) })
 }

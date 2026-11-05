@@ -93,7 +93,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
             auth["claude-code"] = claudeCodeAuthEntry(await claudeCodeCredential(await claudeCodeHost(manager, instanceId, signal), signal))
             signal.throwIfAborted()
           }
-          const usage = native ?? await getProviderUsage(params.data.providerId, { modelId, auth })
+          const usage = native ?? await getProviderUsage(params.data.providerId, { modelId, auth, signal })
           // Session movement, workspace eviction and reconnect fence publication too.
           const current = await connection.client.session.get({ sessionID: sessionId }, { signal })
           const currentLocation = readLocationRef(current.location)

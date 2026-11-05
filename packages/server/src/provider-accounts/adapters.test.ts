@@ -34,7 +34,7 @@ test("registry covers subscription integrations only, with Go restricted to its 
   const { adapters } = harness()
   assert.deepEqual([...adapters.keys()].sort(), ["anthropic", "github-copilot", "kimi-for-coding", "minimax-cn-coding-plan",
     "minimax-coding-plan", "openai", "opencode", "opencode-go", "zai-coding-plan", "zhipuai-coding-plan"])
-  for (const payAsYouGo of ["openrouter", "deepinfra", "zai", "minimax", "deepseek", "kilo", "zenmux", "cursor"]) {
+  for (const payAsYouGo of ["openrouter", "deepinfra", "zai", "minimax", "deepseek", "kilo", "zenmux", "cursor", "google", "antigravity"]) {
     assert.equal(adapterForProvider(adapters, { id: payAsYouGo }), undefined)
   }
   assert.equal(adapterForProvider(adapters, { id: "opencode-go", integrationID: "opencode" })?.integrationID, "opencode")

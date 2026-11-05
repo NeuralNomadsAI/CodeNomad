@@ -7,12 +7,13 @@ import { miniMaxProviders } from "./providers/minimax"
 import { oauthProviders } from "./providers/oauth"
 import { specialProviders } from "./providers/special"
 import { xaiProviders } from "./providers/xai"
+import { googleUsage, selectGoogleModelWindows } from "./providers/google"
 import type { AuthFile, ProviderResult, UsageProvider } from "./types"
 
 const CACHE_TTL_MS = 60_000
 const FAILURE_CACHE_TTL_MS = 5_000
 const providers = [
-  ...oauthProviders, ...apiKeyProviders, ...miniMaxProviders, ...specialProviders, ...xaiProviders, ...extraProviders, ...creditProviders,
+  ...oauthProviders, ...apiKeyProviders, ...miniMaxProviders, ...specialProviders, ...xaiProviders, ...extraProviders, ...creditProviders, googleUsage,
 ]
 const registry = new Map<string, UsageProvider>()
 
@@ -53,14 +54,14 @@ export function selectModelWindows(result: ProviderResult, modelId?: string): Re
   return { ...usage.windows, ...Object.fromEntries(scoped) }
 }
 
-async function fetchProvider(provider: UsageProvider, auth: AuthFile): Promise<ProviderResult> {
+async function fetchProvider(provider: UsageProvider, auth: AuthFile, signal?: AbortSignal): Promise<ProviderResult> {
   const identity = createHash("sha256").update(JSON.stringify(provider.aliases.map(alias => auth[alias] ?? null))).digest("hex")
   const cached = cache.get(provider.id)
   if (cached?.identity === identity && cached.expiresAt > Date.now()) return cached.result
   const key = `${provider.id}\0${identity}`
   const inFlight = pending.get(key)
   if (inFlight) return inFlight
-  const request = provider.fetchQuota(auth).then((result) => {
+  const request = provider.fetchQuota(auth, signal).then((result) => {
     cache.set(provider.id, { identity, result, expiresAt: Date.now() + (result.ok ? CACHE_TTL_MS : FAILURE_CACHE_TTL_MS) })
     return result
   }).finally(() => pending.delete(key))
@@ -70,7 +71,7 @@ async function fetchProvider(provider: UsageProvider, auth: AuthFile): Promise<P
 
 export async function getProviderUsage(
   requestedProviderId: string,
-  options: { modelId?: string; auth?: AuthFile } = {},
+  options: { modelId?: string; auth?: AuthFile; signal?: AbortSignal } = {},
 ): Promise<ProviderUsageResponse> {
   const provider = resolveUsageProvider(requestedProviderId)
   if (!provider) {
@@ -86,7 +87,7 @@ export async function getProviderUsage(
       fetchedAt: Date.now(),
     }
   }
-  const result = await fetchProvider(provider, options.auth ?? {})
+  const result = await fetchProvider(provider, options.auth ?? {}, options.signal)
   return {
     requestedProviderId,
     providerId: provider.id,
@@ -95,7 +96,7 @@ export async function getProviderUsage(
     supported: true,
     configured: result.configured,
     ok: result.ok,
-    windows: selectModelWindows(result, options.modelId),
+    windows: provider.id === "google" ? selectGoogleModelWindows(result, options.modelId) : selectModelWindows(result, options.modelId),
     fetchedAt: result.fetchedAt,
   }
 }

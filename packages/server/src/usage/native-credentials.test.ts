@@ -4,7 +4,7 @@ import { once } from "node:events"
 import test from "node:test"
 import { OpenCode, type CredentialEntry } from "@opencode/client"
 import type { ServiceConnection } from "../workspaces/opencode-service"
-import { projectCredentials, readUsageCredentials } from "./native-credentials"
+import { projectCredential, projectCredentials, readUsageCredentials } from "./native-credentials"
 
 const entries: CredentialEntry[] = [
   { id: "a", integrationID: "deepinfra", label: "Key", active: true, value: { type: "key", key: "secret-key", metadata: { note: "x" } } },
@@ -18,8 +18,15 @@ const entries: CredentialEntry[] = [
 test("projects only each integration's active native credential, without unrelated metadata", () => {
   assert.deepEqual(projectCredentials(entries), {
     deepinfra: { type: "api", key: "secret-key" },
-    anthropic: { type: "oauth", access: "secret-access", refresh: "secret-refresh", expires: 42, accountId: "acct" },
+    anthropic: { type: "oauth", methodID: "claude", access: "secret-access", refresh: "secret-refresh", expires: 42, accountId: "acct" },
   })
+})
+
+test("Google's server-only projection keeps its client method and complete selected-credential identity", () => {
+  const value = { type: "oauth" as const, methodID: "gemini-cli", access: "fake-google-access", refresh: "fake-google-refresh|fake-project",
+    expires: 42, metadata: { email: "fake@example.invalid", project: "fake-metadata" } }
+  const entry: CredentialEntry = { id: "fake-google-identity", integrationID: "google", label: "default", active: true, value }
+  assert.deepEqual(projectCredential(entry), { ...value, credentialID: entry.id })
 })
 
 async function daemon(status: number) {

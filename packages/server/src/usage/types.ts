@@ -22,7 +22,7 @@ export interface UsageProvider {
   name: string
   aliases: readonly string[]
   /** `auth` holds each integration's selected credential in the legacy auth.json entry shape. */
-  fetchQuota: (auth: AuthFile) => Promise<ProviderResult>
+  fetchQuota: (auth: AuthFile, signal?: AbortSignal) => Promise<ProviderResult>
 }
 
 export type AuthEntry = Record<string, unknown>

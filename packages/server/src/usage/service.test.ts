@@ -33,6 +33,7 @@ const providerIds = [
   "kilo",
   "zenmux",
   "exe-dev",
+  "google",
 ]
 
 test("registers every supported usage provider", () => {
@@ -45,7 +46,8 @@ test("maps OpenCode provider aliases to their usage provider", () => {
   assert.equal(resolveUsageProvider("openai")?.id, "codex")
   assert.equal(resolveUsageProvider("copilot")?.id, "github-copilot")
   assert.equal(resolveUsageProvider("grok")?.id, "xai")
-  for (const providerId of ["google", "google.oauth", "gemini", "antigravity"]) {
+  assert.equal(resolveUsageProvider("google")?.id, "google")
+  for (const providerId of ["google.oauth", "gemini", "antigravity"]) {
     assert.equal(resolveUsageProvider(providerId), null)
   }
   assert.equal(resolveUsageProvider("opencode")?.id, "opencode-go")
@@ -173,7 +175,7 @@ test("returns a stable unsupported response without making a provider request", 
   assert.equal(response.configured, false)
   assert.equal(response.providerId, null)
   assert.deepEqual(response.windows, {})
-  for (const providerId of ["google", "google.oauth", "gemini", "antigravity"]) {
+  for (const providerId of ["google.oauth", "gemini", "antigravity"]) {
     assert.equal((await getProviderUsage(providerId)).supported, false)
   }
 })
