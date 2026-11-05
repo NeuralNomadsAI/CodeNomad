@@ -94,3 +94,12 @@ Kayıtlı bir sunucuyu doğrudan komut satırından açmak için masaüstü uygu
 Uzak pencere bu bilgisayara dönmenin bir yolunu her zaman bırakır. Uzak pencereler açık kalırken son yerel pencereyi kapatmak sekmelerini korur: uzak penceredeki **Pencere → Yeni pencere** ya da CodeNomad'ı yeniden başlatmak onu yeniden açar. Bir sunucu yüklenemezse penceresi bunu bildirir ve **Yeniden dene**, **Yerel pencere aç** ve **Pencereyi kapat** seçeneklerini sunar; Tauri sürümünde sayfanın yeniden yükleme düğmesini ve **Pencere → Yeni pencere** öğesini kullanın.
 
 Uzaktan Kontrol için bunun yerine **Sunucu URL'si** öğesine yeni bir eşleştirme bağlantısı yapıştırın. Yer imi yalnızca tünelin kökenini korur, asla tek kullanımlık eşleştirme kodunu içermez; Cihaz çerezi kaybından sonra yeniden eşleştirme için bkz. [Uzaktan Kontrol](remote-control.md).
+
+## Uzak bir projeyi sekmede açın {#remote-project-tabs}
+
+Masaüstü uygulamasında (Electron veya Windows'ta Tauri), kayıtlı bir sunucu projelerinden birini yerel projelerinizin yanında bu pencerenin bir sekmesinde de açabilir:
+
+1. Ana sayfada veya **Yeni instance** başlatıcısında **Uzaklar** bölümünü açıp bir sunucu seçin ya da bir eşleştirme bağlantısını veya sunucu adresini **Eşleştirme bağlantısı veya adres** alanına yapıştırın.
+2. Klasörü sekmede seçin. Sekme ardından sunucu simgesini ve proje adını gösterir ve proje **Son Klasörler** listesine eklenir: oradan seçmek o sunucuyu ve klasörü doğrudan yeniden açar.
+
+Sekme yalnızca o projeyi gösterir; konuşmaları, dosyaları, Git'i, ayarları ve Missions uzak sunucuda çalışır. Sekme sunucunun uzak penceresiyle aynı depolamayı kullanır; böylece mevcut bir oturum veya eşleştirilmiş cihaz yeniden kullanılır ve CodeNomad sekmelerinizi geri yüklediğinde uzak sekmeler de geri gelir. Bu modu olmayan bir sunucu sekmede tam arayüzünü gösterir. TLS doğrulamasını atlayan sunucular ile macOS ve Linux'taki Tauri sürümü uzak pencere açmaya devam eder. Sekmedeki sayfa bildirim gösterebilir, ancak bu bilgisayara başka erişimi yoktur ve kendi sunucusunda kalır. Web istemcilerinde ve Remote Control cihazlarında uzak sekme yoktur. Bir sunucunun bağlam menüsündeki **Kayıtlı sunucuyu kaldır** onun sekmelerini de kapatır.

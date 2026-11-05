@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-remote-view-open"
+description = "Enables the remote_view_open command without any pre-configured scope."
+commands.allow = ["remote_view_open"]
+
+[[permission]]
+identifier = "deny-remote-view-open"
+description = "Denies the remote_view_open command without any pre-configured scope."
+commands.deny = ["remote_view_open"]

@@ -94,3 +94,12 @@ Para abrir un servidor guardado directamente desde la línea de comandos, inicia
 Una ventana remota siempre deja una forma de volver a este equipo. Cerrar la última ventana local mientras siguen abiertas ventanas remotas conserva sus pestañas: **Ventana → Nueva ventana** en una ventana remota, o iniciar CodeNomad de nuevo, la vuelve a abrir. Si un servidor no se puede cargar, su ventana lo indica y ofrece **Reintentar**, **Abrir una ventana local** y **Cerrar ventana**; en la versión Tauri, usa el botón de recarga de la página y **Ventana → Nueva ventana**.
 
 Para Control remoto, pega en su lugar un enlace de emparejamiento nuevo en **URL del servidor**. El marcador conserva solo el origen del túnel, nunca el código de un solo uso; consulta [Control remoto](remote-control.md) para volver a emparejar tras perder la cookie del dispositivo.
+
+## Abrir un proyecto remoto en una pestaña {#remote-project-tabs}
+
+En la aplicación de escritorio (Electron, o Tauri en Windows), un servidor guardado también puede abrir uno de sus proyectos en una pestaña de esta ventana, junto a tus proyectos locales:
+
+1. En la página de inicio o en el lanzador **Nueva instancia**, abre **Remotos** y elige un servidor, o pega un enlace de emparejamiento o la dirección de un servidor en **Enlace de emparejamiento o dirección**.
+2. Elige la carpeta en la pestaña. La pestaña muestra entonces el icono de servidor y el nombre del proyecto, y el proyecto se suma a **Carpetas recientes**: elegirlo allí vuelve a abrir directamente ese servidor y esa carpeta.
+
+La pestaña muestra solo ese proyecto; sus conversaciones, archivos, Git, ajustes y Missions se ejecutan en el servidor remoto. Usa el almacenamiento de la ventana remota del servidor, así que se reutiliza un inicio de sesión o un dispositivo emparejado existente, y las pestañas remotas vuelven cuando CodeNomad restaura tus pestañas. Un servidor sin este modo muestra su interfaz completa en la pestaña. Los servidores que omiten la verificación TLS, y la versión Tauri en macOS y Linux, siguen abriendo una ventana remota. La página de una pestaña puede mostrar notificaciones, pero no tiene otro acceso a este equipo y permanece en su servidor. Los clientes web y los dispositivos de Remote Control no tienen pestañas remotas. **Eliminar servidor guardado**, en el menú contextual de un servidor, también cierra sus pestañas.

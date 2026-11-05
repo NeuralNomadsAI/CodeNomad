@@ -17,7 +17,9 @@ export interface RestorableWorkspaceTabState {
 }
 
 export interface RestorableSidecarTabState { kind: "sidecar"; sidecarId: string }
-export type RestorableTabState = RestorableWorkspaceTabState | RestorableSidecarTabState
+/** A remote CodeNomad project tab: its saved server and the folder its page last showed. */
+export interface RestorableRemoteProjectTabState { kind: "remote-project"; profileId: string; folder?: string }
+export type RestorableTabState = RestorableWorkspaceTabState | RestorableSidecarTabState | RestorableRemoteProjectTabState
 export interface RestorableSessionState { tabs: RestorableTabState[]; activeTabIndex: number; homeActive?: boolean }
 export interface ClientSnapshotV1 {
   version: 1; revision: number; savedAt: number
@@ -215,7 +217,7 @@ interface WorkspaceIdentity {
   prioritySessionIds: string[]; priorityDrafts: Record<string, string>
   priorityAttachments: Record<string, RestorableAttachment[]>
 }
-type TabIdentity = WorkspaceIdentity | RestorableSidecarTabState
+type TabIdentity = WorkspaceIdentity | RestorableSidecarTabState | RestorableRemoteProjectTabState
 
 function normalizeIdentity(value: unknown, budget: StringBudget): TabIdentity | null {
   if (!isRecord(value)) return null
@@ -223,6 +225,12 @@ function normalizeIdentity(value: unknown, budget: StringBudget): TabIdentity | 
   if (kind === "sidecar") {
     const sidecarId = takeString(value.sidecarId, MAX_ID, budget)
     return sidecarId === undefined ? null : { kind, sidecarId }
+  }
+  if (kind === "remote-project") {
+    const profileId = takeString(value.profileId, MAX_ID, budget)
+    if (profileId === undefined) return null
+    const folder = value.folder === undefined ? undefined : takeString(value.folder, MAX_PATH, budget)
+    return { kind, profileId, ...(folder === undefined ? {} : { folder }) }
   }
   if (kind !== "workspace" && kind !== "instance") return null
   if (!["drafts", "attachments", "scrollSnapshots", "unseenIdleSince", "generationRecovery"]
@@ -287,7 +295,7 @@ function normalizeSession(value: unknown, budget: StringBudget): RestorableSessi
   const normalizeTabAt = (originalIndex: number, prioritizeDrafts: boolean) => {
     const identity = identityByIndex.get(originalIndex)
     if (!identity) return
-    const tab = identity.kind === "sidecar"
+    const tab = identity.kind !== "workspace"
       ? identity
       : normalizeWorkspaceTab(identity.value, identity, budget, prioritizeDrafts)
     if (tab) normalizedByIndex.set(originalIndex, tab)

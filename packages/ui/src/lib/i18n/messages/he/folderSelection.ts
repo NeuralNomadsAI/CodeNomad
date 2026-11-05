@@ -120,4 +120,11 @@ export const folderSelectionMessages = {
   "projectRenameDialog.actions.cancel": "ביטול",
   "projectRenameDialog.actions.rename": "שנה שם",
   "projectRenameDialog.actions.renaming": "משנה שם...",
+  "folderSelection.remoteProject.title": "מרוחקים",
+  "folderSelection.remoteProject.project": "פרויקט",
+  "folderSelection.remoteProject.openProject": "פתיחת פרויקט בשרת {name}",
+  "folderSelection.remoteProject.add": "הוספת שרת",
+  "folderSelection.remoteProject.addPlaceholder": "קישור צימוד או כתובת",
+  "folderSelection.remoteProject.removeConfirm": "להסיר את {name}?",
+  "folderSelection.remoteProject.serverMissing": "השרת לא נמצא",
 } as const

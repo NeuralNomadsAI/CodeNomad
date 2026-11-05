@@ -1,5 +1,5 @@
 import "./process-output"
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, session } from "electron"
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, session, WebContentsView } from "electron"
 import http from "node:http"
 import https from "node:https"
 import { createHash, randomUUID } from "node:crypto"
@@ -38,6 +38,7 @@ import { resolveProfileRoots } from "./data-profile-cleanup"
 import { setupDataProfileCleanupIPC } from "./data-profile-cleanup-ipc"
 import { openExternalWithFeedback } from "./open-external"
 import { RemoteRecoveryPages, showRemoteUnavailable } from "./remote-recovery"
+import { RemoteViewRegistry } from "./remote-view"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
@@ -178,6 +179,17 @@ function runPrimary(firstIntent: LaunchIntent) {
     const request = (target.protocol === "https:" ? https : http).request(target, { method: "DELETE" }, (response) => response.resume())
     request.on("error", (error) => console.warn("[electron] failed to clean up remote proxy session", sessionId, error))
     request.end()
+  })
+  // Remote project tabs: the remote window's storage and preload, inside a local window.
+  const remoteViews = new RemoteViewRegistry({
+    createView: (profileId) => new WebContentsView({
+      webPreferences: {
+        session: session.fromPartition(resolveRemoteSessionPartition(profileId)), preload: getPreloadPath(),
+        contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, additionalArguments: ["--codenomad-window-context=remote"],
+      },
+    }),
+    openHelp: (url) => { void openExternalWithFeedback(url) },
+    zoomFactor: (owner) => owner.webContents.getZoomFactor(),
   })
   // The unavailable-server documents the host loads in remote windows whose server could not be loaded.
   const remoteRecovery = new RemoteRecoveryPages()
@@ -354,11 +366,15 @@ function runPrimary(firstIntent: LaunchIntent) {
         return { action: "deny" }
       })
     })
-    window.webContents.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
-      if (isMainFrame) setWorkspaceMenuEnabled(window, false)
+    window.webContents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+      if (!isMainFrame) return
+      setWorkspaceMenuEnabled(window, false)
+      // A reloaded or replaced renderer reopens its tabs' views.
+      if (!isInPlace) remoteViews.closeOwner(window)
     })
     window.on("focus", () => registry.markFocused(windowId))
     window.on("closed", () => {
+      remoteViews.closeOwner(window)
       registry.remove(windowId)
       clearWorkspaceMenuWindow(webContentsId)
       remoteOrigins.delete(nativeWindowId)
@@ -434,6 +450,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       void acknowledgeLaunchConnection(connectLaunchHost, id, target, failure, handOff).catch(reportLaunchConnectionError)
     },
     browserController,
+    remoteViews,
   })
   const profileRoots = resolveProfileRoots(baseUserDataPath)
   setupDataProfileCleanupIPC(ipcMain, {

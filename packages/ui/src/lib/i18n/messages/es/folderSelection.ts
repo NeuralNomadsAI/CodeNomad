@@ -120,4 +120,11 @@ export const folderSelectionMessages = {
   "projectRenameDialog.actions.cancel": "Cancelar",
   "projectRenameDialog.actions.rename": "Renombrar",
   "projectRenameDialog.actions.renaming": "Renombrando...",
+  "folderSelection.remoteProject.title": "Remotos",
+  "folderSelection.remoteProject.project": "Proyecto",
+  "folderSelection.remoteProject.openProject": "Abrir un proyecto en {name}",
+  "folderSelection.remoteProject.add": "Añadir servidor",
+  "folderSelection.remoteProject.addPlaceholder": "Enlace de emparejamiento o dirección",
+  "folderSelection.remoteProject.removeConfirm": "¿Quitar {name}?",
+  "folderSelection.remoteProject.serverMissing": "Servidor no encontrado",
 } as const

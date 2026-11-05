@@ -18,6 +18,10 @@ import { SettingsScreen } from "./components/settings-screen"
 import { NativeTitlebar, hasNativeTitlebar } from "./components/native-titlebar"
 import { SideCarPickerDialog } from "./components/sidecar-picker-dialog"
 import { SideCarView } from "./components/sidecar-view"
+import { RemoteProjectView } from "./components/remote-project-view"
+import { EmbeddedProjectPicker } from "./components/embedded-project-picker"
+import { embeddedProject, publishEmbeddedProject } from "./lib/embed-mode"
+import { closeRemoteProjectTab } from "./stores/remote-project-tabs"
 import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
 import { showAlertDialog } from "./stores/alerts"
 import { initGithubStars } from "./stores/github-stars"
@@ -64,6 +68,7 @@ import {
   refreshVolatileInstanceState,
   syncLoadedSessionInboxes,
   syncPendingRequests,
+  waitForInitialWorkspaceLoad,
 } from "./stores/instances"
 import {
   getSessions,
@@ -510,6 +515,17 @@ const App: Component = () => {
   useDesktopFolderLaunch(handleSelectFolder)
   useDesktopConnectionLaunch()
 
+  // The embedded single-project page opens its folder once workspaces are known,
+  // then publishes the project it shows for its host tab.
+  if (embeddedProject) {
+    const folder = embeddedProject.folder
+    if (folder) onMount(() => void waitForInitialWorkspaceLoad().catch(() => {}).then(() => handleSelectFolder(folder)))
+    createEffect(() => {
+      const instance = activeInstance()
+      if (instance && !instance.temporary) publishEmbeddedProject(instance.folder, getProjectNameForFolder(instance.folder))
+    })
+  }
+
   async function handleNewTemporaryInstance(): Promise<void> {
     clearLaunchError()
     setIsSelectingFolder(true)
@@ -634,6 +650,8 @@ const App: Component = () => {
 
     if (tab.kind === "instance") {
       closeInstanceTab(tab.instance.id)
+    } else if (tab.kind === "remote-project") {
+      closeRemoteProjectTab(tab.remoteProjectTab.token)
     } else {
       closeSidecarTab(tab.sidecarTab.token)
     }
@@ -766,7 +784,7 @@ const App: Component = () => {
         </Dialog.Portal>
       </Dialog>
       <div class="h-screen w-screen flex flex-col" style={{ height: "100dvh", "padding-bottom": "var(--keyboard-offset, 0px)" }}>
-        <Show when={hasNativeTitlebar}>
+        <Show when={hasNativeTitlebar && !embeddedProject}>
           <NativeTitlebar title={t("window.title.main")} logo menus actions />
         </Show>
         <Show when={mobileFullscreenMode()}>
@@ -786,7 +804,8 @@ const App: Component = () => {
           when={appTabs().length === 0}
           fallback={
             <>
-              <Show when={!mobileFullscreenMode()}>
+              {/* The embedded single-project page shows its project only, never the tab bar. */}
+              <Show when={!mobileFullscreenMode() && !embeddedProject}>
                 <InstanceTabs
                   tabs={appTabs()}
                   activeTabId={activeAppTabId()}
@@ -806,7 +825,7 @@ const App: Component = () => {
 
               <For each={appTabs()}>
                 {(tab) => {
-                  const isVisible = () => activeAppTabId() === tab.id && !showFolderSelection()
+                  const isVisible = () => activeAppTabId() === tab.id && (!showFolderSelection() || Boolean(embeddedProject))
                   return tab.kind === "instance" ? (
                     <div
                       class="flex-1 min-h-0 overflow-hidden"
@@ -834,6 +853,16 @@ const App: Component = () => {
                         />
                       </InstanceMetadataProvider>
                     </div>
+                  ) : tab.kind === "remote-project" ? (
+                    <div
+                      class="flex-1 min-h-0 overflow-hidden"
+                      style={{ display: isVisible() ? "flex" : "none" }}
+                      data-tab-id={tab.id}
+                      data-tab-kind={tab.kind}
+                      data-tab-visible={isVisible() ? "true" : "false"}
+                    >
+                      <RemoteProjectView tab={tab.remoteProjectTab} active={isVisible()} />
+                    </div>
                   ) : (
                     <div
                       class="flex-1 min-h-0 overflow-hidden"
@@ -851,16 +880,20 @@ const App: Component = () => {
             </>
           }
         >
-          <FolderSelectionView
-            onSelectFolder={handleSelectFolder}
-            onSelectExistingInstance={handleSelectExistingInstance}
-            onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
-            isLoading={isSelectingFolder() || shouldShowAppRestoreLoading(loadedRestorableSession())}
-            onOpenSidecar={handleOpenSidecarPicker}
-          />
+          <Show when={!embeddedProject} fallback={
+            <EmbeddedProjectPicker isLoading={isSelectingFolder()} onSelectFolder={(path) => void handleSelectFolder(path)} />
+          }>
+            <FolderSelectionView
+              onSelectFolder={handleSelectFolder}
+              onSelectExistingInstance={handleSelectExistingInstance}
+              onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
+              isLoading={isSelectingFolder() || shouldShowAppRestoreLoading(loadedRestorableSession())}
+              onOpenSidecar={handleOpenSidecarPicker}
+            />
+          </Show>
         </Show>
 
-        <Show when={shouldShowAppHomeOverlay(showFolderSelection(), appTabs().length)}>
+        <Show when={!embeddedProject && shouldShowAppHomeOverlay(showFolderSelection(), appTabs().length)}>
           <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
             <div class="w-full h-full relative">
               <FolderSelectionView

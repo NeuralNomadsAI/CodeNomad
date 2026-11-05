@@ -8,6 +8,7 @@ import type { BrowserEmulationPreset } from "../lib/native/browser-emulation"
 import {
   controlTauriBrowserTarget,
   emulateBrowserTarget,
+  localOverlayOpen,
   nativeBrowserHost,
   onTauriBrowserNavigation,
   physicalBrowserBounds,
@@ -575,7 +576,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     }
     const bounds = () => {
       if (props.active === false) return null
-      if (viewportMenuOpen() || document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')) return null
+      if (viewportMenuOpen() || localOverlayOpen()) return null
       const rect = element.getBoundingClientRect()
       const clip = frameWrapRef?.getBoundingClientRect() ?? rect
       const left = Math.max(rect.left, clip.left, 0)

@@ -1,11 +1,13 @@
 import { Popover } from "@kobalte/core/popover"
 import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js"
-import { Folder, FolderPlus, GitBranch, Hourglass, Search } from "lucide-solid"
+import { Folder, FolderPlus, GitBranch, Hourglass, Search, Server } from "lucide-solid"
 import { createNewInstanceDialogs } from "./new-instance-dialogs"
+import RemoteProjectMenu from "./remote-project-menu"
 import { useI18n } from "../lib/i18n"
 import { formatRelativeTime, getDisplayPath, getProjectDisplayName } from "../lib/recent-folder-display"
+import type { LaunchableRecent } from "../lib/remote-project-recents"
 import { getExistingInstanceForFolder } from "../stores/instances"
-import { useConfig } from "../stores/preferences"
+import { launchableRecents, openRemoteProject, openRemoteProjectTabFor } from "../stores/remote-project-open"
 
 interface NewInstanceLauncherProps {
   open: boolean
@@ -26,13 +28,13 @@ interface NewInstanceLauncherProps {
  */
 export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
   const { t } = useI18n()
-  const { recentFolders } = useConfig()
   const [query, setQuery] = createSignal("")
   const [activeIndex, setActiveIndex] = createSignal(0)
   let listRef: HTMLDivElement | undefined
+  const recentFolders = () => launchableRecents()
 
   const dialogs = createNewInstanceDialogs({
-    defaultPath: () => recentFolders()[0]?.path,
+    defaultPath: () => recentFolders().find((folder) => !folder.remote)?.path,
     isLoading: () => props.isLoading,
     onSelectFolder: (path) => props.onSelectFolder(path),
   })
@@ -72,9 +74,14 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
     action()
   }
 
-  function openRecent(path: string) {
-    const existing = getExistingInstanceForFolder(path)
-    run(() => existing ? props.onSelectExistingInstance(existing.id, path) : props.onSelectFolder(path))
+  const isOpen = (folder: LaunchableRecent) =>
+    folder.remote ? Boolean(openRemoteProjectTabFor(folder)) : Boolean(getExistingInstanceForFolder(folder.path))
+
+  function openRecent(folder: LaunchableRecent) {
+    const remote = folder.remote
+    if (remote) return run(() => openRemoteProject(remote.profileId, { folder: folder.path }))
+    const existing = getExistingInstanceForFolder(folder.path)
+    run(() => existing ? props.onSelectExistingInstance(existing.id, folder.path) : props.onSelectFolder(folder.path))
   }
 
   function moveActive(delta: number) {
@@ -88,7 +95,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
     else if (event.key === "ArrowUp") { event.preventDefault(); moveActive(-1) }
     else if (event.key === "Enter") {
       const folder = matches()[activeIndex()]
-      if (folder) { event.preventDefault(); openRecent(folder.path) }
+      if (folder) { event.preventDefault(); openRecent(folder) }
     }
   }
 
@@ -155,7 +162,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
                 </p>}
               >
                 {(folder, index) => {
-                  const existing = () => getExistingInstanceForFolder(folder.path)
+                  const existing = () => isOpen(folder)
                   return (
                     <div
                       id={optionId(index())}
@@ -167,11 +174,15 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
                       data-open={existing() ? "true" : undefined}
                       title={folder.path}
                       onMouseMove={() => setActiveIndex(index())}
-                      onClick={() => openRecent(folder.path)}
+                      onClick={() => openRecent(folder)}
                     >
-                      <Folder class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
+                      <Show when={folder.remote} fallback={<Folder class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />}>
+                        <Server class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
+                      </Show>
                       <span class="new-instance-launcher-recent-name">{getProjectDisplayName(folder.path, folder.projectName)}</span>
-                      <span class="new-instance-launcher-recent-path" dir="ltr">{getDisplayPath(folder.path)}</span>
+                      <span class="new-instance-launcher-recent-path" dir="ltr">
+                        {folder.remote ? `${folder.remote.serverName} · ${getDisplayPath(folder.path)}` : getDisplayPath(folder.path)}
+                      </span>
                       <Show
                         when={existing()}
                         fallback={<span class="new-instance-launcher-recent-meta">{formatRelativeTime(t, folder.lastAccessed)}</span>}
@@ -201,6 +212,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
                 <span>{t("newInstanceLauncher.clone")}</span>
               </button>
             </div>
+            <RemoteProjectMenu isLoading={props.isLoading} onOpened={close} />
           </Popover.Content>
         </Popover.Portal>
       </Popover>

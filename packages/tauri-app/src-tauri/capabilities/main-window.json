@@ -54,6 +54,9 @@
     "allow-browser-target-action",
     "allow-browser-target-unregister",
     "allow-browser-target-claim-open",
-    "allow-browser-target-release-open"
+    "allow-browser-target-release-open",
+    "allow-remote-view-open",
+    "allow-remote-view-update",
+    "allow-remote-view-close"
   ]
 }

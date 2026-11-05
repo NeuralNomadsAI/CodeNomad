@@ -94,3 +94,12 @@ Pour ouvrir un serveur enregistré directement depuis la ligne de commande, lanc
 Une fenêtre distante laisse toujours un moyen de revenir sur cet ordinateur. Fermer la dernière fenêtre locale alors que des fenêtres distantes restent ouvertes conserve ses onglets : **Fenêtre → Nouvelle fenêtre** dans une fenêtre distante, ou un nouveau lancement de CodeNomad, la rouvre. Si un serveur ne peut pas être chargé, sa fenêtre l’indique et propose **Réessayer**, **Ouvrir une fenêtre locale** et **Fermer la fenêtre** ; dans la version Tauri, utilisez le bouton d’actualisation de la page et **Fenêtre → Nouvelle fenêtre**.
 
 Pour le Contrôle à distance, collez plutôt un lien d’appairage récent dans **URL du serveur**. Le favori ne conserve que l’origine du tunnel, jamais le code d’appairage à usage unique ; voir [Contrôle à distance](remote-control.md) pour le réappairage après perte du cookie de l’appareil.
+
+## Ouvrir un projet distant dans un onglet {#remote-project-tabs}
+
+Dans l'application de bureau (Electron, ou Tauri sous Windows), un serveur enregistré peut aussi ouvrir l'un de ses projets dans un onglet de cette fenêtre, à côté de vos projets locaux :
+
+1. Sur l'accueil ou dans le lanceur **Nouvelle instance**, ouvrez **Distants** et choisissez un serveur, ou collez un lien d'appairage ou l'adresse d'un serveur dans **Lien d'appairage ou adresse**.
+2. Choisissez le dossier dans l'onglet. L'onglet affiche alors l'icône serveur et le nom du projet, et le projet rejoint **Dossiers récents** : le choisir à cet endroit rouvre directement ce serveur et ce dossier.
+
+L'onglet n'affiche que ce projet ; ses conversations, fichiers, Git, paramètres et Missions s'exécutent sur le serveur distant. Il utilise le stockage de la fenêtre distante du serveur : une connexion ou un appareil appairé existant est donc réutilisé, et les onglets distants reviennent quand CodeNomad restaure vos onglets. Un serveur sans ce mode affiche son interface complète dans l'onglet. Les serveurs qui ignorent la vérification TLS, ainsi que la version Tauri sous macOS et Linux, continuent d'ouvrir une fenêtre distante. La page d'un onglet peut afficher des notifications, sans autre accès à cet ordinateur, et reste sur son serveur. Les clients web et les appareils Remote Control n'ont pas d'onglets distants. **Supprimer le serveur enregistré**, dans le menu contextuel d'un serveur, ferme aussi ses onglets.

@@ -3,6 +3,12 @@ import type { Accessor, ParentComponent } from "solid-js"
 import { storage, ConfigOwnerReconciliationPendingError, type OwnerBucket } from "../lib/storage"
 import type { RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
 import {
+  normalizeRemoteProjectRecents,
+  withoutRemoteProjectRecent,
+  withRemoteProjectRecent,
+  type RemoteProjectRecent,
+} from "../lib/remote-project-recents"
+import {
   ensureInstanceConfigLoaded,
   getInstanceConfig,
   updateInstanceConfig as updateInstanceData,
@@ -196,6 +202,7 @@ interface UiStateBucket {
   lastCloneParent?: string
   opencodeBinaries?: OpenCodeBinary[]
   remoteServers?: RemoteServerProfile[]
+  remoteProjectRecents?: unknown
   models?: {
     recents?: ModelPreference[]
     favorites?: ModelPreference[]
@@ -209,6 +216,7 @@ interface NormalizedUiState {
   lastCloneParent?: string
   opencodeBinaries: OpenCodeBinary[]
   remoteServers: RemoteServerProfile[]
+  remoteProjectRecents: RemoteProjectRecent[]
   models: {
     recents: ModelPreference[]
     favorites: ModelPreference[]
@@ -510,6 +518,7 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
       const right = b.lastConnectedAt ?? b.updatedAt
       return right.localeCompare(left)
     }),
+    remoteProjectRecents: normalizeRemoteProjectRecents(source.remoteProjectRecents),
     models: {
       recents: cloneArray<ModelPreference>((source.models as any)?.recents, (m) => {
         if (!m || typeof m !== "object") return null
@@ -688,6 +697,7 @@ const preferences = uiSettings
 const recentFolders = createMemo<RecentFolder[]>(() => uiState().recentFolders)
 const opencodeBinaries = createMemo<OpenCodeBinary[]>(() => uiState().opencodeBinaries)
 const remoteServers = createMemo<RemoteServerProfile[]>(() => uiState().remoteServers)
+const remoteProjectRecents = createMemo<RemoteProjectRecent[]>(() => uiState().remoteProjectRecents)
 
 let loadPromise: Promise<void> | null = null
 
@@ -1163,7 +1173,20 @@ async function markRemoteServerConnected(id: string): Promise<void> {
 
 function removeRemoteServerProfile(id: string): void {
   const next = remoteServers().filter((entry) => entry.id !== id)
-  void patchStateOwner("ui", { remoteServers: next }).catch((error) => log.error("Failed to remove remote server", error))
+  void patchStateOwner("ui", {
+    remoteServers: next,
+    remoteProjectRecents: withoutRemoteProjectRecent(remoteProjectRecents(), id),
+  }).catch((error) => log.error("Failed to remove remote server", error))
+}
+
+function recordRemoteProjectRecent(entry: Omit<RemoteProjectRecent, "lastAccessed">): void {
+  void patchStateOwner("ui", { remoteProjectRecents: withRemoteProjectRecent(remoteProjectRecents(), entry) })
+    .catch((error) => log.error("Failed to record remote project", error))
+}
+
+function removeRemoteProjectRecent(profileId: string, folder: string): void {
+  void patchStateOwner("ui", { remoteProjectRecents: withoutRemoteProjectRecent(remoteProjectRecents(), profileId, folder) })
+    .catch((error) => log.error("Failed to remove remote project", error))
 }
 
 function recordWorkspaceLaunch(folderPath: string, aliasPath?: string): void {
@@ -1563,6 +1586,11 @@ export {
   rememberCloneParent,
   serverSettings,
   recentFolders,
+  ensureLoaded as waitForConfigLoad,
+  remoteServers,
+  remoteProjectRecents,
+  recordRemoteProjectRecent,
+  removeRemoteProjectRecent,
   opencodeBinaries,
   themePreference,
   setThemePreference,

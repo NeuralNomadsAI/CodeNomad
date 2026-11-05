@@ -14,8 +14,11 @@ import {
 import { getAbortReason, runAbortable } from "../../stores/app-session-restore-timeout"
 import {
   activeAppTabId, appTabs, appTabOrderRevision, appTabSelectionRevision, attachInstanceTab, getInstanceAppTabId,
-  getSidecarAppTabId, selectAppTab, setAppTabOrder,
+  getRemoteProjectAppTabId, getSidecarAppTabId, selectAppTab, setAppTabOrder,
 } from "../../stores/app-tabs"
+import { openRemoteProjectTab } from "../../stores/remote-project-tabs"
+import { opensRemoteProjectTab } from "../../stores/remote-project-open"
+import { remoteServers, waitForConfigLoad } from "../../stores/preferences"
 import {
   createInstance, releaseRestoreCreatedInstance, instances,
   waitForInitialWorkspaceLoad, waitForInstanceInitialSessionHydration,
@@ -69,7 +72,9 @@ function hasLocalRestoredTab(capture: AppSessionCaptureController, index: number
 const waitForWorkspaceMountAdoption = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<number, () => boolean>): Promise<void> {
   const { snapshot, signal, capture } = context
-  const sidecars = retryIndexes ? [] : snapshot.tabs.map((tab, index) => tab.kind === "sidecar" ? restoreSidecar(tab, index) : undefined)
+  const sidecars = retryIndexes ? [] : snapshot.tabs.map((tab, index) => tab.kind === "sidecar"
+    ? restoreSidecar(tab, index)
+    : tab.kind === "remote-project" ? restoreRemoteProject(tab, index) : undefined)
   try {
     await runAbortable(async (operationSignal) => {
       await waitForInitialWorkspaceLoad(operationSignal)
@@ -200,6 +205,23 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
       if (error instanceof SidecarNotFoundError) capture.recordRestoredTab(index, null, new Set())
       if (!signal.aborted) log.warn("Skipped SideCar while restoring app session", { sidecarId: tab.sidecarId, error })
     }
+  }
+  // The tab returns at once; its view loads the server (with the storage of its
+  // remote window) when first shown. A removed or window-only server drops it.
+  async function restoreRemoteProject(tab: Extract<RestorableSessionState["tabs"][number], { kind: "remote-project" }>,
+    index: number) {
+    if (signal.aborted) return
+    await waitForConfigLoad()
+    const profile = remoteServers().find((entry) => entry.id === tab.profileId)
+    if (signal.aborted) return
+    if (!profile || !opensRemoteProjectTab(profile)) {
+      capture.recordRestoredTab(index, null, new Set())
+      return
+    }
+    const opened = openRemoteProjectTab(profile.id, tab.folder ? { folder: tab.folder } : {})
+    const tabId = getRemoteProjectAppTabId(opened.token)
+    capture.recordRestoredTab(index, tabId, new Set())
+    if (index === snapshot.activeTabIndex) context.selectActive(tabId, true)
   }
   const restoreMissing = () => runWithSerializedCommits(
     [...missing].sort((a, b) => Number(b.tabIndex === snapshot.activeTabIndex) - Number(a.tabIndex === snapshot.activeTabIndex) || a.tabIndex - b.tabIndex),

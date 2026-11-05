@@ -120,4 +120,11 @@ export const folderSelectionMessages = {
   "projectRenameDialog.actions.cancel": "रद्द गर्नुहोस्",
   "projectRenameDialog.actions.rename": "पुन: नामकरण गर्नुहोस्",
   "projectRenameDialog.actions.renaming": "पुन: नामकरण गर्दै...",
+  "folderSelection.remoteProject.title": "रिमोटहरू",
+  "folderSelection.remoteProject.project": "परियोजना",
+  "folderSelection.remoteProject.openProject": "{name} मा परियोजना खोल्नुहोस्",
+  "folderSelection.remoteProject.add": "सर्भर थप्नुहोस्",
+  "folderSelection.remoteProject.addPlaceholder": "पेयरिङ लिङ्क वा ठेगाना",
+  "folderSelection.remoteProject.removeConfirm": "{name} हटाउने?",
+  "folderSelection.remoteProject.serverMissing": "सर्भर फेला परेन",
 } as const

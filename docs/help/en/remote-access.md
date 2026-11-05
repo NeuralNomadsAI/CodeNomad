@@ -94,3 +94,12 @@ To open a saved server straight from the command line, start the desktop app wit
 A remote window always leaves a way back to this computer. Closing the last local window while remote windows stay open keeps its tabs: **Window → New Window** in a remote window, or starting CodeNomad again, reopens it. If a server cannot be loaded, its window says so and offers **Try again**, **Open a local window** and **Close window**; in the Tauri build, use the page's reload button and **Window → New Window**.
 
 For Remote Control, paste a fresh pairing link into **Server URL** instead. The bookmark retains only the tunnel origin, never the one-use pairing code; see [Remote Control](remote-control.md) for re-pairing after device-cookie loss.
+
+## Open a remote project in a tab {#remote-project-tabs}
+
+In the desktop app (Electron, or Tauri on Windows), a saved server can also open one of its projects in a tab of this window, beside your local projects:
+
+1. On the home page or in the **New instance** launcher, open **Remotes** and choose a server, or paste a pairing link or server address into **Pairing link or address**.
+2. Pick the folder in the tab. The tab then shows the server icon and the project name, and the project joins **Recent Folders**: choosing it there reopens that server and folder directly.
+
+The tab shows only that project; its conversations, files, Git, settings and Missions run on the remote server. It uses the storage of the server's remote window, so an existing sign-in or paired device is reused, and remote tabs come back when CodeNomad restores your tabs. A server without this mode shows its full interface in the tab. Servers that skip TLS verification, and the Tauri build on macOS and Linux, keep opening a remote window. The page in a tab can show notifications but has no other access to this computer and stays on its server. Web clients and Remote Control devices have no remote tabs. **Remove saved server**, in a server's context menu, also closes its tabs.

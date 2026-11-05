@@ -7,6 +7,7 @@ import { popupTitlebarMenu, setWorkspaceMenuEnabled, type TitlebarMenu } from ".
 import { requireHttpUrl } from "./navigation-security"
 import { validateMainFrame } from "./ipc-security"
 import type { BrowserController } from "./browser-controller"
+import { validateRemoteViewId, validateRemoteViewOpen, type RemoteViewRegistry, type RemoteViewUpdateRequest } from "./remote-view"
 
 interface LocalSender {
   id: string
@@ -30,6 +31,7 @@ interface CliIPCDependencies {
   nextConnection(windowId: string): { target: string; failure?: string; hidden: boolean } | null
   acknowledgeConnection(windowId: string, target: string, failure: string | null, handOff: boolean): void
   browserController: BrowserController
+  remoteViews: Pick<RemoteViewRegistry, "open" | "update" | "close" | "resolve">
 }
 
 interface DialogOpenRequest {
@@ -162,6 +164,19 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     return { ok: true }
   })
 
+  // Remote project tabs belong to the local window that asks for them.
+  ipcMain.handle("remote-view:open", async (event, payload: unknown) => {
+    dependencies.remoteViews.open(local(event).window, validateRemoteViewOpen(payload))
+  })
+  ipcMain.handle("remote-view:update", async (event, payload: unknown) => {
+    const request = payload as Partial<RemoteViewUpdateRequest> | null
+    if (!request || typeof request.visible !== "boolean") throw new Error("Invalid remote view update")
+    dependencies.remoteViews.update(local(event).window, { viewId: validateRemoteViewId(request.viewId), bounds: request.bounds, visible: request.visible })
+  })
+  ipcMain.handle("remote-view:close", async (event, viewId: unknown) => {
+    dependencies.remoteViews.close(local(event).window, validateRemoteViewId(viewId))
+  })
+
   ipcMain.handle("dialog:open", async (event, request: DialogOpenRequest): Promise<DialogOpenResult> => {
     const window = settings(event)
     if (!request || (request.mode !== "directory" && request.mode !== "file")) throw new Error("Invalid dialog request")
@@ -246,7 +261,8 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     return { ok: true }
   })
   ipcMain.handle("notifications:show", async (event, payload: { title?: unknown; body?: unknown }): Promise<{ ok: boolean; reason?: string }> => {
-    anyTrusted(event)
+    // Notifications are the only native access a remote project tab's page has.
+    if (!dependencies.remoteViews.resolve(event)) anyTrusted(event)
     if (!Notification.isSupported()) return { ok: false, reason: "unsupported" }
     try {
       new Notification({ title: typeof payload?.title === "string" ? payload.title : "CodeNomad", body: typeof payload?.body === "string" ? payload.body : "" }).show()

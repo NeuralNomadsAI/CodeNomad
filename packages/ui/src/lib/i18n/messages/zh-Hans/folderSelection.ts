@@ -120,4 +120,11 @@ export const folderSelectionMessages = {
   "projectRenameDialog.actions.cancel": "取消",
   "projectRenameDialog.actions.rename": "重命名",
   "projectRenameDialog.actions.renaming": "正在重命名...",
+  "folderSelection.remoteProject.title": "远程",
+  "folderSelection.remoteProject.project": "项目",
+  "folderSelection.remoteProject.openProject": "在 {name} 上打开项目",
+  "folderSelection.remoteProject.add": "添加服务器",
+  "folderSelection.remoteProject.addPlaceholder": "配对链接或地址",
+  "folderSelection.remoteProject.removeConfirm": "移除 {name}？",
+  "folderSelection.remoteProject.serverMissing": "找不到服务器",
 } as const

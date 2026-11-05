@@ -120,4 +120,11 @@ export const folderSelectionMessages = {
   "projectRenameDialog.actions.cancel": "キャンセル",
   "projectRenameDialog.actions.rename": "名前を変更",
   "projectRenameDialog.actions.renaming": "変更中...",
+  "folderSelection.remoteProject.title": "リモート",
+  "folderSelection.remoteProject.project": "プロジェクト",
+  "folderSelection.remoteProject.openProject": "{name} でプロジェクトを開く",
+  "folderSelection.remoteProject.add": "サーバーを追加",
+  "folderSelection.remoteProject.addPlaceholder": "ペアリングリンクまたはアドレス",
+  "folderSelection.remoteProject.removeConfirm": "{name} を削除しますか？",
+  "folderSelection.remoteProject.serverMissing": "サーバーが見つかりません",
 } as const

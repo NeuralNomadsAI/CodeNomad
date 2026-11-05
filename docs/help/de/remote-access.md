@@ -94,3 +94,12 @@ Um einen gespeicherten Server direkt von der Befehlszeile zu öffnen, starten Si
 Ein Remote-Fenster lässt immer einen Weg zurück zu diesem Computer. Wenn Sie das letzte lokale Fenster schließen, während Remote-Fenster geöffnet bleiben, behält es seine Tabs: **Fenster → Neues Fenster** in einem Remote-Fenster oder ein erneuter Start von CodeNomad öffnet es wieder. Kann ein Server nicht geladen werden, zeigt sein Fenster das an und bietet **Erneut versuchen**, **Lokales Fenster öffnen** und **Fenster schließen**; in der Tauri-Version verwenden Sie die Schaltfläche zum Neuladen der Seite und **Fenster → Neues Fenster**.
 
 Fügen Sie für Fernsteuerung stattdessen einen frischen Kopplungslink in **Server-URL** ein. Das Lesezeichen behält nur die Tunnel-Origin, nie den Einmal-Kopplungscode; siehe [Fernsteuerung](remote-control.md) zur erneuten Kopplung nach Verlust des Geräte-Cookies.
+
+## Ein Remote-Projekt in einem Tab öffnen {#remote-project-tabs}
+
+In der Desktop-App (Electron oder Tauri unter Windows) kann ein gespeicherter Server eines seiner Projekte auch in einem Tab dieses Fensters öffnen, neben Ihren lokalen Projekten:
+
+1. Öffnen Sie auf der Startseite oder im Starter **Neue Instanz** den Bereich **Remote** und wählen Sie einen Server, oder fügen Sie einen Kopplungslink oder eine Serveradresse in **Kopplungslink oder Adresse** ein.
+2. Wählen Sie den Ordner im Tab. Der Tab zeigt dann das Serversymbol und den Projektnamen, und das Projekt erscheint unter **Letzte Ordner**: Dort ausgewählt, öffnet es diesen Server und Ordner direkt wieder.
+
+Der Tab zeigt nur dieses Projekt; seine Unterhaltungen, Dateien, Git, Einstellungen und Missions laufen auf dem Remote-Server. Er nutzt den Speicher des Remote-Fensters dieses Servers, sodass eine bestehende Anmeldung oder ein gekoppeltes Gerät wiederverwendet wird, und Remote-Tabs kehren zurück, wenn CodeNomad Ihre Tabs wiederherstellt. Ein Server ohne diesen Modus zeigt im Tab seine vollständige Oberfläche. Server, die die TLS-Prüfung überspringen, sowie der Tauri-Build unter macOS und Linux öffnen weiterhin ein Remote-Fenster. Die Seite in einem Tab kann Benachrichtigungen anzeigen, hat aber sonst keinen Zugriff auf diesen Computer und bleibt auf ihrem Server. Webclients und Remote-Control-Geräte haben keine Remote-Tabs. **Gespeicherten Server entfernen** im Kontextmenü eines Servers schließt auch seine Tabs.

@@ -108,4 +108,11 @@ export const folderSelectionMessages = {
   "projectRenameDialog.actions.cancel": "İptal",
   "projectRenameDialog.actions.rename": "Yeniden adlandır",
   "projectRenameDialog.actions.renaming": "Yeniden adlandırılıyor...",
+  "folderSelection.remoteProject.title": "Uzaklar",
+  "folderSelection.remoteProject.project": "Proje",
+  "folderSelection.remoteProject.openProject": "{name} üzerinde proje aç",
+  "folderSelection.remoteProject.add": "Sunucu ekle",
+  "folderSelection.remoteProject.addPlaceholder": "Eşleştirme bağlantısı veya adres",
+  "folderSelection.remoteProject.removeConfirm": "{name} kaldırılsın mı?",
+  "folderSelection.remoteProject.serverMissing": "Sunucu bulunamadı",
 } as const

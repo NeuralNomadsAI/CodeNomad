@@ -1,6 +1,7 @@
 import iconUrl from "../images/CodeNomad-Icon.png"
 import { getUnreadToastCount, subscribeToastHistory } from "./notifications"
 import { setNativeNotificationBadge } from "./native/notification-badge"
+import { isEmbeddedProjectView } from "./embed-mode"
 
 /** Follow the bell's in-memory history, not session status or OS notifications. */
 export function startNotificationIconBadge(): () => void {
@@ -59,6 +60,8 @@ export function startNotificationIconBadge(): () => void {
     if (stopped || next === count) return
     count = next
     paint()
+    // A page inside a host's tab has no icon of its own: its host keeps the badge.
+    if (isEmbeddedProjectView()) return
     void setNativeNotificationBadge(count).catch(error => {
       console.warn("[notifications] native icon badge unavailable", error)
     })
@@ -74,6 +77,6 @@ export function startNotificationIconBadge(): () => void {
     image.onload = null
     restore()
     if (!originals.length) links[0].remove()
-    void setNativeNotificationBadge(0).catch(() => {})
+    if (!isEmbeddedProjectView()) void setNativeNotificationBadge(0).catch(() => {})
   }
 }

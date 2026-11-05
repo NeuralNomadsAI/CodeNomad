@@ -6,6 +6,7 @@ import { splitPairingLink } from "../remote-pairing-link"
 import { canOpenRemoteWindows, isTauriHost } from "../runtime-env"
 import { showAlertDialog } from "../../stores/alerts"
 import { useConfig } from "../../stores/preferences"
+import { closeRemoteProjectTabsForServer } from "../../stores/remote-project-tabs"
 
 export type RemoteServerInput = {
   id?: string
@@ -19,14 +20,9 @@ export function useRemoteServerProfiles() {
   const { remoteServers, saveRemoteServerProfile, markRemoteServerConnected, removeRemoteServerProfile } = useConfig()
   const [connectingServerId, setConnectingServerId] = createSignal<string | null>(null)
 
-  const saveServer = async (input: RemoteServerInput, requestedWindow: boolean, windowOptions: RemoteWindowOpenOptions = {}) => {
-    // A Remote Control pairing code is consumed by the window that opens it, so a pairing link opens one where possible.
+  /** Probes and saves a server; a pairing link's single-use entry is returned, never saved. */
+  const saveProfile = async (input: RemoteServerInput) => {
     const pairing = splitPairingLink(input.baseUrl)
-    const openWindow = requestedWindow || (pairing !== null && canOpenRemoteWindows())
-    if (openWindow && !canOpenRemoteWindows()) {
-      throw new Error("Remote server windows can only be opened from a local desktop window")
-    }
-
     const name = input.name.trim()
     const baseUrl = pairing?.baseUrl ?? input.baseUrl.trim()
     if (!name || !baseUrl) throw new Error(t("folderSelection.servers.dialog.errorRequired"))
@@ -44,6 +40,18 @@ export function useRemoteServerProfiles() {
       baseUrl: probe.normalizedUrl,
       skipTlsVerify,
     })
+    return { profile, entryUrl: pairing?.entryUrl }
+  }
+
+  const saveServer = async (input: RemoteServerInput, requestedWindow: boolean, windowOptions: RemoteWindowOpenOptions = {}) => {
+    // A Remote Control pairing code is consumed by the window that opens it, so a pairing link opens one where possible.
+    const pairing = splitPairingLink(input.baseUrl)
+    const openWindow = requestedWindow || (pairing !== null && canOpenRemoteWindows())
+    if (openWindow && !canOpenRemoteWindows()) {
+      throw new Error("Remote server windows can only be opened from a local desktop window")
+    }
+
+    const { profile } = await saveProfile(input)
 
     if (openWindow) {
       const proxySession =
@@ -81,5 +89,11 @@ export function useRemoteServerProfiles() {
     }
   }
 
-  return { remoteServers, connectingServerId, saveServer, connectSavedServer, removeRemoteServerProfile }
+  // A removed server's project tabs close with it.
+  const removeServer = (id: string) => {
+    closeRemoteProjectTabsForServer(id)
+    removeRemoteServerProfile(id)
+  }
+
+  return { remoteServers, connectingServerId, saveProfile, saveServer, connectSavedServer, markRemoteServerConnected, removeRemoteServerProfile: removeServer }
 }

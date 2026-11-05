@@ -1,6 +1,9 @@
 import { Component, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
-import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, X, Globe, Loader2, GitBranch, Pencil, Hourglass } from "lucide-solid"
-import { useConfig } from "../stores/preferences"
+import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, X, Globe, Loader2, GitBranch, Pencil, Hourglass, Server } from "lucide-solid"
+import { removeRemoteProjectRecent, useConfig } from "../stores/preferences"
+import { launchableRecents, openRemoteProject } from "../stores/remote-project-open"
+import { recentKey, type LaunchableRecent } from "../lib/remote-project-recents"
+import RemoteProjectMenu from "./remote-project-menu"
 import { isHotkeyRecording, matchesHotkey, withHotkey } from "../lib/hotkeys"
 import ProjectRenameDialog from "./project-rename-dialog"
 import { useFolderDrop } from "../lib/hooks/use-folder-drop"
@@ -38,10 +41,7 @@ interface FolderSelectionViewProps {
 }
 
 const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
-  const {
-    recentFolders,
-    removeRecentFolder,
-  } = useConfig()
+  const { removeRecentFolder } = useConfig()
   const { remoteServers, connectingServerId, saveServer, connectSavedServer, removeRemoteServerProfile } = useRemoteServerProfiles()
   const { t } = useI18n()
   const [selectedIndex, setSelectedIndex] = createSignal(0)
@@ -55,7 +55,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   let actionsColumnRef: HTMLDivElement | undefined
   let recentListRef: HTMLDivElement | undefined
 
-  const folders = () => recentFolders()
+  // This computer's folders and the remote projects this window reopens, newest first.
+  const folders = () => launchableRecents()
   const serverList = () => remoteServers()
   const isLoading = () => Boolean(props.isLoading)
   const canUseRemoteServerWindows = () => canOpenRemoteWindows()
@@ -168,9 +169,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
     if (activeTab() === "local") {
       const folder = folders()[index]
-      if (folder) {
-        handleFolderSelect(folder.path)
-      }
+      if (folder) openRecent(folder)
       return
     }
 
@@ -262,6 +261,12 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     props.onSelectFolder(path)
   }
 
+  function openRecent(folder: LaunchableRecent) {
+    if (isLoading()) return
+    if (folder.remote) openRemoteProject(folder.remote.profileId, { folder: folder.path })
+    else handleFolderSelect(folder.path)
+  }
+
   function handleExistingInstanceSelect(instanceId: string, recentPath: string) {
     if (isLoading()) return
     props.onSelectExistingInstance(instanceId, recentPath)
@@ -281,7 +286,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   }
 
   const dialogs = createNewInstanceDialogs({
-    defaultPath: () => folders()[0]?.path,
+    defaultPath: () => folders().find((folder) => !folder.remote)?.path,
     isLoading,
     onSelectFolder: handleFolderSelect,
     onSaveServer: saveServer,
@@ -299,10 +304,11 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     await dialogs.browse()
   }
 
-  function handleRemove(path: string, e?: Event) {
+  function handleRemove(folder: LaunchableRecent, e?: Event) {
     if (isLoading()) return
     e?.stopPropagation()
-    removeRecentFolder(path)
+    if (folder.remote) removeRemoteProjectRecent(folder.remote.profileId, folder.path)
+    else removeRecentFolder(folder.path)
 
     const folderList = folders()
     if (selectedIndex() >= folderList.length && folderList.length > 0) {
@@ -607,7 +613,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                       >
                         <For each={folders()}>
                           {(folder, index) => {
-                            const existingInstance = () => getExistingInstanceForFolder(folder.path)
+                            const key = recentKey(folder)
+                            // A remote project reopens its tab from the row itself.
+                            const existingInstance = () => folder.remote ? undefined : getExistingInstanceForFolder(folder.path)
                             const projectName = () => getProjectDisplayName(folder.path, folder.projectName)
                             const projectLabelId = () => `recent-folder-${index()}-name`
                             const openActionLabelId = () => `recent-folder-${index()}-open-action`
@@ -618,8 +626,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                 "panel-list-item-highlight": focusMode() === "recent" && selectedIndex() === index(),
                                 "panel-list-item-disabled": isLoading(),
                                 "folder-home-recent-item-action-active":
-                                  hoveredRecentActionPath() === folder.path || focusedRecentActionPath() === folder.path,
+                                  hoveredRecentActionPath() === key || focusedRecentActionPath() === key,
                               }}
+                              data-remote-server={folder.remote?.profileId}
                               onMouseEnter={() => {
                                 if (isLoading()) return
                                 setFocusMode("recent")
@@ -634,7 +643,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                     class="folder-home-recent-primary-action"
                                     disabled={isLoading()}
                                     aria-labelledby={projectLabelId()}
-                                    onClick={() => handleFolderSelect(folder.path)}
+                                    onClick={() => openRecent(folder)}
                                     onFocus={() => {
                                       setFocusMode("recent")
                                       setSelectedIndex(index())
@@ -643,7 +652,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                   <div class="relative z-[1] pointer-events-none flex items-center justify-between gap-3 w-full">
                                     <div class="flex-1 min-w-0">
                                       <div class="flex items-center gap-2 mb-1">
-                                        <Folder class="w-4 h-4 flex-shrink-0 icon-muted" />
+                                        <Show when={folder.remote} fallback={<Folder class="w-4 h-4 flex-shrink-0 icon-muted" />}>
+                                          <Server class="w-4 h-4 flex-shrink-0 icon-muted" />
+                                        </Show>
                                         <span id={projectLabelId()} class="text-sm font-medium truncate text-primary">
                                           {projectName()}
                                         </span>
@@ -652,8 +663,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                             let ownsHoverState = false
                                             let ownsFocusState = false
                                             onCleanup(() => {
-                                              if (ownsHoverState) setRecentActionHovered(folder.path, false)
-                                              if (ownsFocusState) setRecentActionFocused(folder.path, false)
+                                              if (ownsHoverState) setRecentActionHovered(key, false)
+                                              if (ownsFocusState) setRecentActionFocused(key, false)
                                             })
                                             return (
                                               <button
@@ -665,19 +676,19 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                                 onClick={() => handleExistingInstanceSelect(instance().id, folder.path)}
                                                 onMouseEnter={() => {
                                                   ownsHoverState = true
-                                                  setRecentActionHovered(folder.path, true)
+                                                  setRecentActionHovered(key, true)
                                                 }}
                                                 onMouseLeave={() => {
                                                   ownsHoverState = false
-                                                  setRecentActionHovered(folder.path, false)
+                                                  setRecentActionHovered(key, false)
                                                 }}
                                                 onFocus={() => {
                                                   ownsFocusState = true
-                                                  setRecentActionFocused(folder.path, true)
+                                                  setRecentActionFocused(key, true)
                                                 }}
                                                 onBlur={() => {
                                                   ownsFocusState = false
-                                                  setRecentActionFocused(folder.path, false)
+                                                  setRecentActionFocused(key, false)
                                                 }}
                                               >
                                                 <span id={openActionLabelId()}>{t("folderSelection.recent.openBadge")}</span>
@@ -687,6 +698,9 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                         </Show>
                                       </div>
                                       <div class="flex items-center gap-2 pl-6 text-xs text-muted min-w-0">
+                                        <Show when={folder.remote}>
+                                          {(remote) => <bdi class="flex-shrink-0 truncate" dir="auto" style={{ "max-width": "40%" }}>{remote().serverName}</bdi>}
+                                        </Show>
                                         <span class="font-mono truncate-start flex-1 min-w-0">
                                           {getDisplayPath(folder.path)}
                                         </span>
@@ -695,30 +709,33 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                     </div>
                                   </div>
                                 </div>
-                                <button
-                                  onClick={(e) => openProjectRename(folder.path, folder.projectName, e)}
-                                  disabled={isLoading()}
-                                  class="folder-home-row-action p-2 transition-all hover:bg-surface-hover opacity-70 hover:opacity-100"
-                                  title={t("folderSelection.recent.rename")}
-                                  onMouseEnter={() => setRecentActionHovered(folder.path, true)}
-                                  onMouseLeave={() => setRecentActionHovered(folder.path, false)}
-                                  onFocus={() => setRecentActionFocused(folder.path, true)}
-                                  onBlur={() => setRecentActionFocused(folder.path, false)}
-                                >
-                                  <Pencil class="w-3.5 h-3.5 transition-colors icon-muted" />
-                                </button>
+                                {/* A remote project is renamed on its server. */}
+                                <Show when={!folder.remote}>
+                                  <button
+                                    onClick={(e) => openProjectRename(folder.path, folder.projectName, e)}
+                                    disabled={isLoading()}
+                                    class="folder-home-row-action p-2 transition-all hover:bg-surface-hover opacity-70 hover:opacity-100"
+                                    title={t("folderSelection.recent.rename")}
+                                    onMouseEnter={() => setRecentActionHovered(key, true)}
+                                    onMouseLeave={() => setRecentActionHovered(key, false)}
+                                    onFocus={() => setRecentActionFocused(key, true)}
+                                    onBlur={() => setRecentActionFocused(key, false)}
+                                  >
+                                    <Pencil class="w-3.5 h-3.5 transition-colors icon-muted" />
+                                  </button>
+                                </Show>
                                 <button
                                   onClick={(e) => {
-                                    clearRecentActionState(folder.path)
-                                    handleRemove(folder.path, e)
+                                    clearRecentActionState(key)
+                                    handleRemove(folder, e)
                                   }}
                                   disabled={isLoading()}
                                   class="folder-home-row-action p-2 transition-all hover:bg-red-100 dark:hover:bg-red-900/30 opacity-70 hover:opacity-100"
                                   title={t("folderSelection.recent.remove")}
-                                  onMouseEnter={() => setRecentActionHovered(folder.path, true)}
-                                  onMouseLeave={() => setRecentActionHovered(folder.path, false)}
-                                  onFocus={() => setRecentActionFocused(folder.path, true)}
-                                  onBlur={() => setRecentActionFocused(folder.path, false)}
+                                  onMouseEnter={() => setRecentActionHovered(key, true)}
+                                  onMouseLeave={() => setRecentActionHovered(key, false)}
+                                  onFocus={() => setRecentActionFocused(key, true)}
+                                  onBlur={() => setRecentActionFocused(key, false)}
                                 >
                                   <Trash2 class="w-3.5 h-3.5 transition-colors icon-muted hover:text-red-600 dark:hover:text-red-400" />
                                 </button>
@@ -806,6 +823,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                       </div>
                     </button>
                   </Show>
+
+                  <RemoteProjectMenu isLoading={isLoading()} />
                 </div>
 
                 {/* OpenCode settings section */}

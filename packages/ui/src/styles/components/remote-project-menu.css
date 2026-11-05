@@ -1,0 +1,112 @@
+/* Remotes disclosure shared by the home page and the new-instance launcher. */
+.remote-project-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  border: 0;
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+
+.remote-project-toggle:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.remote-project-menu {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background-color: var(--surface-overlay);
+  border: 1px solid color-mix(in srgb, var(--border-base) 50%, transparent);
+  color: var(--text-secondary);
+  text-align: start;
+}
+
+.remote-project-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  min-height: 2.25rem;
+  padding: var(--space-xs) var(--space-sm);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.remote-project-row:hover:not(:disabled),
+.remote-project-row:focus-visible,
+.remote-project-row[data-expanded] {
+  background-color: var(--menu-item-hover-bg);
+  outline: none;
+}
+
+.remote-project-row:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--list-item-highlight-border);
+}
+
+.remote-project-row:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.remote-project-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.remote-project-add {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding-inline-start: var(--space-sm);
+  background-color: var(--surface-field);
+  border-top: 1px solid color-mix(in srgb, var(--border-base) 50%, transparent);
+}
+
+.remote-project-add-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 2.25rem;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.remote-project-error {
+  margin: 0;
+  padding: var(--space-sm);
+  font-size: var(--font-size-sm);
+  color: var(--status-error-fg);
+  overflow-wrap: anywhere;
+}
+
+/* The launcher keeps its compact spacing. */
+.new-instance-launcher .remote-project-toggle {
+  margin-bottom: var(--space-xs);
+}
+
+.new-instance-launcher .remote-project-menu {
+  margin: 0 var(--window-inline-padding) var(--space-xs);
+}
+
+/* The embedded single-project page, before a project is chosen. */
+.embedded-project-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: min(32rem, 100%);
+  margin: auto;
+  padding: var(--space-lg);
+}

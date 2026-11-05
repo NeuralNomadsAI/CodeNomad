@@ -2,6 +2,12 @@ import { createMemo, createSignal } from "solid-js"
 import type { Instance } from "../types/instance"
 import { activeInstanceId, claimRestoreCreatedInstanceForUser, closeWorkspace, instances, setActiveInstanceId } from "./instances"
 import { activeSidecarToken, setActiveSidecarToken, sidecarTabs, type SideCarTabRecord } from "./sidecars"
+import {
+  activeRemoteProjectToken,
+  remoteProjectTabs,
+  setActiveRemoteProjectToken,
+  type RemoteProjectTabRecord,
+} from "./remote-project-tabs"
 import { appSessionRestoreGateActive } from "./app-session-restore-gate"
 import {
   attachInstanceTabMembership,
@@ -24,7 +30,13 @@ export interface SideCarAppTab {
   sidecarTab: SideCarTabRecord
 }
 
-export type AppTabRecord = InstanceAppTab | SideCarAppTab
+export interface RemoteProjectAppTab {
+  id: string
+  kind: "remote-project"
+  remoteProjectTab: RemoteProjectTabRecord
+}
+
+export type AppTabRecord = InstanceAppTab | SideCarAppTab | RemoteProjectAppTab
 
 function getInstanceAppTabId(instanceId: string): string {
   return `instance:${instanceId}`
@@ -32,6 +44,10 @@ function getInstanceAppTabId(instanceId: string): string {
 
 function getSidecarAppTabId(token: string): string {
   return `sidecar:${token}`
+}
+
+function getRemoteProjectAppTabId(token: string): string {
+  return `remote-project:${token}`
 }
 
 function getAdjacentAppTabId(tabId: string): string | null {
@@ -46,6 +62,9 @@ function getPreferredTabId(): string | null {
   if (sidecarToken) {
     return getSidecarAppTabId(sidecarToken)
   }
+
+  const remoteToken = activeRemoteProjectToken()
+  if (remoteToken) return getRemoteProjectAppTabId(remoteToken)
 
   const instanceId = activeInstanceId()
   if (instanceId) {
@@ -81,6 +100,11 @@ const appTabs = createMemo<AppTabRecord[]>((previous = []) => {
       kind: "sidecar" as const,
       get sidecarTab() { return sidecarTabs().find((tab) => tab.token === sidecarTab.token) ?? sidecarTab },
     })),
+    ...remoteProjectTabs().map((remoteTab) => previousById.get(getRemoteProjectAppTabId(remoteTab.token)) ?? ({
+      id: getRemoteProjectAppTabId(remoteTab.token),
+      kind: "remote-project" as const,
+      get remoteProjectTab() { return remoteProjectTabs().find((tab) => tab.token === remoteTab.token) ?? remoteTab },
+    })),
   ]
 
   const tabsById = new Map(currentTabs.map((tab) => [tab.id, tab]))
@@ -103,6 +127,7 @@ function selectAppTab(tabId: string | null, options?: { source?: "restore" }) {
     setActiveAppTabId(null)
     setActiveInstanceId(null)
     setActiveSidecarToken(null)
+    setActiveRemoteProjectToken(null)
     return
   }
 
@@ -120,12 +145,23 @@ function selectAppTab(tabId: string | null, options?: { source?: "restore" }) {
   if (tab.kind === "instance") {
     if (options?.source !== "restore") claimRestoreCreatedInstanceForUser(tab.instance.id)
     setActiveSidecarToken(null)
+    setActiveRemoteProjectToken(null)
     setActiveInstanceId(tab.instance.id)
     return
   }
 
   setActiveInstanceId(null)
+  if (tab.kind === "remote-project") {
+    setActiveSidecarToken(null)
+    setActiveRemoteProjectToken(tab.remoteProjectTab.token)
+    return
+  }
+  setActiveRemoteProjectToken(null)
   setActiveSidecarToken(tab.sidecarTab.token)
+}
+
+function selectRemoteProjectTab(token: string) {
+  selectAppTab(getRemoteProjectAppTabId(token))
 }
 
 function selectInstanceTab(instanceId: string) {
@@ -277,6 +313,7 @@ export {
   getAdjacentAppTabId,
   getAppTabById,
   getInstanceAppTabId,
+  getRemoteProjectAppTabId,
   getSidecarAppTabId,
   markAppTabUserInteraction,
   moveAppTab,
@@ -286,5 +323,6 @@ export {
   selectInstanceTab,
   selectNextAppTab,
   selectPreviousAppTab,
+  selectRemoteProjectTab,
   selectSidecarTab,
 }

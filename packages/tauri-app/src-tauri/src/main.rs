@@ -28,6 +28,7 @@ mod notification_badge_lifetime;
 mod preferences_window;
 mod profile_selection_dialog;
 mod profile_transition;
+mod remote_view;
 mod shutdown;
 mod title_bar;
 mod update_releases;
@@ -570,6 +571,43 @@ fn browser_target_claim_open(
 }
 
 #[tauri::command]
+async fn remote_view_open(
+    webview: tauri::Webview,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    views: tauri::State<'_, remote_view::RemoteViews>,
+    payload: remote_view::RemoteViewOpen,
+) -> Result<(), String> {
+    require_local_app_webview(&webview, &state)?;
+    let window = webview.window();
+    views.open(&app, &window, webview.label(), payload)
+}
+
+#[tauri::command]
+fn remote_view_update(
+    webview: tauri::Webview,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    views: tauri::State<'_, remote_view::RemoteViews>,
+    payload: remote_view::RemoteViewUpdate,
+) -> Result<(), String> {
+    require_local_app_webview(&webview, &state)?;
+    views.update(&app, webview.label(), payload)
+}
+
+#[tauri::command]
+fn remote_view_close(
+    webview: tauri::Webview,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    views: tauri::State<'_, remote_view::RemoteViews>,
+    view_id: String,
+) -> Result<(), String> {
+    require_local_app_webview(&webview, &state)?;
+    views.close(&app, webview.label(), &view_id)
+}
+
+#[tauri::command]
 fn browser_target_release_open(
     webview: tauri::Webview,
     app: AppHandle,
@@ -1031,15 +1069,7 @@ fn open_remote_window_locked(
         Some(session_id) => format!("{}\0{session_id}", payload.id),
         None => payload.id.clone(),
     };
-    let profile_hash = Sha256::digest(profile_key.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    let data_directory = app
-        .state::<AppState>()
-        .webview_data_directory
-        .join("remote")
-        .join(profile_hash);
+    let data_directory = remote_profile_data_directory(&app, &profile_key);
     let badge_binding = notification_badge::prepare_window(&app, &label);
     let external_app = app.clone();
     let external_label = label.clone();
@@ -1169,6 +1199,18 @@ fn open_remote_window_locked(
     });
 
     Ok(())
+}
+
+/// A saved server's webview storage, shared by its remote window and its project tabs.
+pub(crate) fn remote_profile_data_directory(app: &AppHandle, profile_key: &str) -> std::path::PathBuf {
+    let profile_hash = Sha256::digest(profile_key.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    app.state::<AppState>()
+        .webview_data_directory
+        .join("remote")
+        .join(profile_hash)
 }
 
 fn set_remote_window_metadata(
@@ -1866,6 +1908,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(navigation_guard)
         .manage(local_windows::LocalWindows::default())
+        .manage(remote_view::RemoteViews::default())
         .manage(notification_badge::NotificationBadge::default())
         .manage(window_constraints::WindowConstraints::default())
         .manage(preferences_window::PreferencesWindow::default())
@@ -1920,6 +1963,10 @@ fn main() {
                     .app_handle()
                     .state::<AppState>()
                     .browser_controller
+                    .renderer_page_started(webview);
+                webview
+                    .app_handle()
+                    .state::<remote_view::RemoteViews>()
                     .renderer_page_started(webview);
             }
             if identity::local_window_id(webview.label()).is_ok()
@@ -2049,7 +2096,10 @@ fn main() {
             browser_target_action,
             browser_target_unregister,
             browser_target_claim_open,
-            browser_target_release_open
+            browser_target_release_open,
+            remote_view_open,
+            remote_view_update,
+            remote_view_close
         ])
         .on_menu_event(|app_handle, event| {
             match event.id().0.as_str() {
@@ -2321,6 +2371,9 @@ fn main() {
                 app_handle
                     .state::<AppState>()
                     .browser_controller
+                    .remove_window(&app_handle, &label);
+                app_handle
+                    .state::<remote_view::RemoteViews>()
                     .remove_window(&app_handle, &label);
                 if let Ok(window_id) = identity::local_window_id(&label) {
                     app_handle
