@@ -604,18 +604,34 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     // linger as a permanent "sending" bubble.
     const pendingOptimisticIds: string[] = []
     const omittedIds: string[] = []
+    // HTTP can be ahead of the live reducer: omitted residents may follow or
+    // sit between its rows, rather than all belonging to older history. Keep
+    // each omitted run after its preceding shared row, using native order.
+    const preservedAfter = new Map<string | undefined, string[]>()
+    let precedingId: string | undefined
     for (const id of previousMessageIds) {
-      if (serverIdSet.has(id)) continue
+      if (serverIdSet.has(id)) {
+        precedingId = id
+        continue
+      }
       const record = state.messages[id]
       if (record && preservePendingSendOnOmission(id)) {
         pendingOptimisticIds.push(id)
       } else {
         omittedIds.push(id)
+        if (options?.preserveOmitted) {
+          const run = preservedAfter.get(precedingId) ?? []
+          run.push(id)
+          preservedAfter.set(precedingId, run)
+        }
       }
     }
 
-    const preservedIds = options?.preserveOmitted ? omittedIds : []
-    const incomingIds = [...preservedIds, ...serverIds, ...pendingOptimisticIds]
+    const incomingIds = [
+      ...preservedAfter.get(undefined) ?? [],
+      ...serverIds.flatMap((id) => [id, ...preservedAfter.get(id) ?? []]),
+      ...pendingOptimisticIds,
+    ]
 
     const normalizedRecords: Record<string, MessageRecord> = {}
     const now = Date.now()
