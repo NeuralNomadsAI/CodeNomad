@@ -6,8 +6,7 @@ import type { OpenCodeEvent } from "@opencode/client"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages } from "./opencode-data.ts"
-import { flushTranscriptProjections } from "./opencode-projection-frame.ts"
+import { applyOpenCodeDataEvent, captureOpenCodeRowSnapshot, destroyOpenCodeData, projectOpenCodeMessages } from "./opencode-data.ts"
 import { setActiveSession, setSessions, getSessionInfo } from "./session-state.ts"
 
 const sessionId = "ses_frame"
@@ -328,25 +327,86 @@ test("a merged frame keeps the last event's confirmation and accumulates usage",
   }
 })
 
-test("a retirement-scoped flush publishes the pending final page and its usage", ctx => {
+/** Settles an execution while its tool still runs: the settlement read returns
+ * the running tool, so the reducer stays resident until the tool's terminal event. */
+async function settleWithRunningTool(f: ReturnType<typeof fixture>) {
+  const client = (sdkManager as any).clients.get(`${f.instanceId}:/workspaces/${f.instanceId}/instance`)
+  client.message.list = async () => ({ data: [{
+    id: "msg_tool", type: "assistant", agent: "build", model, time: { created: 500, completed: 600 },
+    content: [{ type: "tool", id: "tool", name: "read", time: { created: 501, ran: 502 }, state: { status: "running", input: {}, metadata: {} } }],
+  }], cursor: {} })
+  f.dispatch("session.step.started", { assistantMessageID: "msg_tool", agent: "build", model, started: 500 })
+  f.dispatch("session.tool.input.started", { assistantMessageID: "msg_tool", id: "tool", name: "read" })
+  f.dispatch("session.tool.called", { assistantMessageID: "msg_tool", id: "tool", input: {}, executed: true })
+  f.dispatch("session.step.ended", { assistantMessageID: "msg_tool", finish: "stop", cost: 3, tokens: { input: 100, output: 12, reasoning: 1, cache: { read: 2, write: 3 } } })
+  f.dispatch("session.execution.succeeded")
+  await new Promise<void>(resolve => setImmediate(resolve))
+}
+
+function finishTool(f: ReturnType<typeof fixture>) {
+  f.dispatch("session.tool.success", { assistantMessageID: "msg_tool", id: "tool", content: [{ type: "text", text: "finished" }], metadata: {}, executed: true })
+}
+
+test("a late tool result publishes before its drained reducer retires", async () => {
   const clock = frameClock()
-  const f = fixture("frame-retire-flush")
+  const f = fixture("frame-retire-late-tool")
+  const tool = () => Object.values(f.store.getMessage("msg_tool")?.parts ?? {})
+    .find(part => part.data.type === "tool")?.data as any
   try {
-    const hydration = ctx.mock.method(f.store, "hydrateMessages")
-    const { streamId, joined } = f.stream(8)
-    f.dispatch("session.step.ended", { assistantMessageID: "msg_live", finish: "stop", cost: 2, tokens: { input: 30, output: 88, reasoning: 0, cache: { read: 0, write: 0 } } })
-    assert.equal(hydration.mock.callCount(), 0, "the final tool page only scheduled")
-    // Normal retirement publishes the session's page before destroying the
-    // reducer; the display must not stay on the pre-settlement running row.
-    flushTranscriptProjections(f.instanceId, sessionId)
-    assert.equal(hydration.mock.callCount(), 1, "the scoped flush publishes without a frame")
-    assert.equal(f.storeText(streamId), joined)
-    assert.notEqual(getSessionInfo(f.instanceId, sessionId), undefined, "usage obligations publish with the page")
+    await settleWithRunningTool(f)
+    assert.equal(tool()?.state?.status, "running")
+    assert.ok(captureOpenCodeRowSnapshot(f.instanceId, sessionId).size > 0, "the running tool keeps its reducer resident")
+    finishTool(f)
+    assert.equal(captureOpenCodeRowSnapshot(f.instanceId, sessionId).size, 0, "the terminal tool event retired the reducer")
+    // Retirement publishes the scheduled final page instead of cancelling it.
+    assert.equal(tool()?.state?.status, "completed")
+    assert.equal(tool()?.state?.output, "finished")
+    assert.equal(getSessionInfo(f.instanceId, sessionId)?.actualUsageTokens, 118)
     clock.fire()
-    assert.equal(hydration.mock.callCount(), 1, "nothing further remains scheduled")
+    assert.equal(tool()?.state?.status, "completed")
   } finally {
     clock.restore()
     f.cleanup()
+  }
+})
+
+test("retirements in other instances keep a hidden session's original wake", async () => {
+  const retiring = Array.from({ length: 4 }, (_, index) => fixture(`frame-wake-retire-${index}`))
+  const waiting = fixture("frame-wake-waiting")
+  const realSetTimeout = globalThis.setTimeout
+  const realClearTimeout = globalThis.clearTimeout
+  // A virtual clock for the hidden-window interval only.
+  let now = 0
+  let nextTimer = 0
+  const timers = new Map<number, { at: number; callback: () => void }>()
+  try {
+    for (const f of retiring) await settleWithRunningTool(f)
+    ;(globalThis as any).document = { hidden: true }
+    ;(globalThis as any).setTimeout = (callback: () => void, ms: number, ...args: unknown[]) => {
+      if (ms !== 250) return (realSetTimeout as any)(callback, ms, ...args)
+      timers.set(++nextTimer, { at: now + ms, callback })
+      return nextTimer
+    }
+    ;(globalThis as any).clearTimeout = (timer: any) => {
+      if (!timers.delete(timer)) realClearTimeout(timer)
+    }
+    const { streamId, joined } = waiting.stream(3)
+    for (const f of retiring) {
+      now += 100
+      for (const [timer, entry] of [...timers]) {
+        if (entry.at > now) continue
+        timers.delete(timer)
+        entry.callback()
+      }
+      finishTool(f)
+    }
+    assert.equal(waiting.storeText(streamId), joined, "unrelated retirements must not postpone the 250ms publication")
+  } finally {
+    globalThis.setTimeout = realSetTimeout
+    globalThis.clearTimeout = realClearTimeout
+    delete (globalThis as any).document
+    for (const f of retiring) f.cleanup()
+    waiting.cleanup()
   }
 })
 

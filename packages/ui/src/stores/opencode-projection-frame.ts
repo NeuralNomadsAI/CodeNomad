@@ -147,9 +147,11 @@ function drain(bypassActiveGate: boolean, matches?: (key: string) => boolean): v
   }
   const keys = matches === undefined ? [...pending.keys()] : [...pending.keys()].filter(matches)
   if (!keys.length) return
-  disarm()
   const entries = keys.map(key => pending.get(key)!)
   for (const key of keys) pending.delete(key)
+  // A scoped drain leaves the other sessions on their already armed wake:
+  // re-arming it would let repeated retirements elsewhere postpone them.
+  if (!pending.size) disarm()
   for (const entry of entries) {
     try {
       applyProjection(entry, bypassActiveGate)
@@ -159,7 +161,7 @@ function drain(bypassActiveGate: boolean, matches?: (key: string) => boolean): v
       })
     }
   }
-  // A scoped drain leaves other sessions pending; keep their frame armed.
+  // Projections scheduled while draining need a wake (a no-op when one is armed).
   if (pending.size) requestScheduledRun()
 }
 
