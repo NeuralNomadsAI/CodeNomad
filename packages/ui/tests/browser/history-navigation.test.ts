@@ -977,12 +977,20 @@ test("resident streaming keeps a distant timeline marker mounted", async () => {
     await f.page.locator(".message-timeline").evaluate(element => { element.scrollTop = element.scrollHeight * 250 / 1500 })
     const marker = f.page.locator('.message-timeline-segment[data-message-id="msg_00250"]')
     await marker.waitFor()
-    const retained = await marker.evaluate(element => {
+    // A Locator re-resolves on every evaluate; an ElementHandle pins the
+    // original node so the identity check catches a clone replacing it.
+    const markerNode = await marker.elementHandle()
+    const retained = await markerNode!.evaluate(element => {
       ;(window as any).fixture.stream("A new resident response while browsing old timeline markers")
       return element.isConnected
     })
     assert(retained, "a resident content update must not remount an unchanged distant click target")
-    assert((await snapshot(f.page)).ids.includes("msg_streaming"), "the resident transcript did receive the streamed message")
+    // The streamed row publishes on its coalesced frame; wait for it before
+    // rechecking the marker, so the identity assertion protects the DOM
+    // invariant instead of racing the publication.
+    await f.page.waitForFunction(() => (window as any).fixture.snapshot().ids.includes("msg_streaming"), undefined, { timeout: 15_000 })
+    assert.equal(await markerNode!.evaluate(element => element.isConnected), true,
+      "the original distant marker node stays mounted after the streamed row publishes")
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })
