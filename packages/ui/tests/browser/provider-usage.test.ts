@@ -8,6 +8,7 @@ import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
+import type { OpenCodeConsoleUsage } from "../../../server/src/api-types-provider-usage"
 
 let server: ViteDevServer, browser: Browser, url: string
 let cache: Awaited<ReturnType<typeof createFixtureCache>>
@@ -15,7 +16,12 @@ before(async () => {
   cache = await createFixtureCache()
   const shutdown = createFixtureShutdown(cache)
   server = await createServer({ configFile: false, cacheDir: cache.cacheDir, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [shutdown.plugin, solid(), { name: "provider-usage-fixture", configureServer(vite) {
+     plugins: [shutdown.plugin, solid(), { name: "provider-usage-fixture", configureServer(vite) {
+      vite.middlewares.use("/api/events", (req, res) => {
+        res.setHeader("Content-Type", "text/event-stream")
+        res.write(": connected\n\n")
+        req.on("close", () => res.end())
+      })
       vite.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
         res.end(await vite.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/provider-usage.tsx"></script></body></html>'))
@@ -35,14 +41,8 @@ async function prepare(page: Page) {
   const errors: string[] = []
   let uiConfig = { settings: {} }
   page.on("pageerror", error => errors.push(error.message))
-  // Do not open any shared server/SSE connection. Events below use the real dispatcher.
-  await page.addInitScript(() => {
-    ;(window as any).EventSource = class {
-      static OPEN = 1; readyState = 1
-      addEventListener() {} removeEventListener() {} close() {}
-    }
-  })
   await page.route("**/api/**", route => {
+    if (new URL(route.request().url()).pathname === "/api/events") return route.continue()
     if (new URL(route.request().url()).pathname.startsWith("/api/usage/")) { requests.push(route); return }
     if (new URL(route.request().url()).pathname === "/api/storage/config/ui") {
       if (route.request().method() === "PATCH") uiConfig = { settings: { ...uiConfig.settings, ...route.request().postDataJSON().settings } }
@@ -462,12 +462,13 @@ test("free-model usage shows an estimate and estimated reset, then clears them o
     await waitRequests(requests, 2)
     assert.equal(new URL(requests[1].request().url()).pathname, "/api/usage/opencode")
     await requests[1].fulfill({ json: {
-      requestedProviderId: "opencode", providerId: "opencode-free", providerName: "OpenCode Zen",
+      requestedProviderId: "opencode", providerId: "opencode-free", providerName: "OpenCode",
       supported: true, configured: true, ok: true, estimated: true, fetchedAt: Date.now(),
-      windows: { daily: { usedPercent: 21, remainingPercent: 79, windowSeconds: 86400, resetAt: Date.UTC(2026, 10, 4), valueLabel: "42 / 200" } },
+      freeEstimate: { requests: 42, reference: 200, exhausted: false },
+      windows: { daily: { usedPercent: 21, remainingPercent: 79, windowSeconds: 86400, resetAt: Date.now() + 86400000, valueLabel: "42 / 200" } },
     } })
     await page.getByText("42 / 200", { exact: true }).waitFor()
-    await page.getByText("(estimation)").waitFor()
+    await page.getByText("Estimated", { exact: true }).waitFor()
     await page.getByText(/Estimated reset/).waitFor()
     assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "21")
     await page.evaluate(() => (window as any).usageFixture.select({ providerId: "openai", modelId: "gpt-5" }))
@@ -919,6 +920,157 @@ for (const [locale, labels, fiveHours, weekly, used] of [
     await page.getByText(`${weekly} · Claude/GPT`, { exact: true }).waitFor()
     assert.equal(await page.getByRole("progressbar").count(), 2)
     assert.equal(await page.getByText(used, { exact: true }).count(), 2)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+const consoleUsage = (console: OpenCodeConsoleUsage) => ({
+  requestedProviderId: "opencode", providerId: "opencode-console", providerName: "OpenCode Console",
+  supported: true, configured: true, ok: true, fetchedAt: Date.now(), windows: {}, console,
+})
+const emptyConsole = (): OpenCodeConsoleUsage => ({ requests: { "24h": 0, "7d": 0, "30d": 0 }, models: [], budgets: { status: "available", items: [] } })
+
+test("Console counters render without gauges, model homonyms retain providers, budgets distinguish empty/unavailable/items", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 320, height: 750 } })
+  try {
+    const { requests, errors } = await prepare(page)
+    await page.getByText("Loading usage…", { exact: true }).waitFor()
+    await waitRequests(requests, 1)
+    await requests[0].fulfill({ json: consoleUsage(emptyConsole()) })
+    await page.getByText("No requests in the last 30 days.", { exact: true }).waitFor()
+    assert.deepEqual(await page.locator("dd").allTextContents(), ["0", "0", "0"])
+    assert.equal(await page.getByRole("progressbar").count(), 0)
+    assert.equal(await page.getByText("Service account budgets", { exact: true }).count(), 0)
+    const info = page.getByRole("button", { name: "Requests", exact: true })
+    await info.focus(); await page.keyboard.press("Enter")
+    await page.getByText(/Counts cover the connected OpenCode Console account/).waitFor()
+    await page.keyboard.press("Escape")
+    const usage = emptyConsole()
+    usage.requests = { "24h": 1234, "7d": 5678, "30d": 9012 }
+    usage.models = [{ model: "same-model", provider: "provider-a", requests: 1000 }, { model: "same-model", provider: "provider-b", requests: 2000 },
+      { model: "a".repeat(150), provider: "p".repeat(150), requests: 12 }]
+    usage.budgets.status = "unavailable"
+    await page.evaluate(() => (window as any).usageFixture.event("provider.updated"))
+    await waitRequests(requests, 2); await requests[1].fulfill({ json: consoleUsage(usage) })
+    await page.getByRole("table").waitFor()
+    assert.equal(await page.getByRole("columnheader").count(), 3)
+    assert.equal(await page.getByRole("row").count(), 4)
+    assert.equal(await page.getByRole("cell", { name: "same-model", exact: true }).count(), 2)
+    await page.getByText("Budgets unavailable.", { exact: true }).waitFor()
+    assert.deepEqual(await page.locator("dd").allTextContents(), ["1,234", "5,678", "9,012"])
+    usage.budgets = { status: "available", items: [{ name: "A long service account ".repeat(10), id: "sa_123", spentUsd: 1.25, limitUsd: 10, resetAt: Date.UTC(2026, 11, 1) }] }
+    await page.evaluate(() => (window as any).usageFixture.event("provider.updated"))
+    await waitRequests(requests, 3); await requests[2].fulfill({ json: consoleUsage(usage) })
+    await page.getByText("$1.25 / $10.00", { exact: true }).waitFor()
+    assert.equal(await page.getByText("Budgets unavailable.", { exact: true }).count(), 0)
+    await page.getByText(/Resets /).waitFor()
+    assert.equal(await page.locator("li bdi").nth(1).textContent(), "sa_123")
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    if (process.env.CODENOMAD_USAGE_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_USAGE_CAPTURE.replace(/\.png$/, "-console.png") })
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+for (const [reason, message, link] of [
+  ["missing-credential", "Connect OpenCode Console to view usage.", true],
+  ["access-denied", "Console access denied. Check your OpenCode Console connection.", true],
+  ["invalid-credential", "OpenCode Console credential is invalid or expired.", true],
+  ["invalid-response", "Invalid Console usage response.", false],
+  ["network-error", "Cannot reach OpenCode Console.", false],
+] as const) test(`Console error ${reason} is localized and offers only relevant connection navigation`, async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1)
+    await requests[0].fulfill({ json: { ...consoleUsage(emptyConsole()), console: undefined, ok: false,
+      configured: reason !== "missing-credential", unavailableReason: `opencode-console-${reason}` } })
+    await page.getByRole("status").getByText(message, { exact: true }).waitFor()
+    assert.equal(await page.getByRole("button", { name: "Settings → Providers", exact: true }).count(), link ? 1 : 0)
+    if (link) {
+      await page.getByRole("button", { name: "Settings → Providers", exact: true }).click()
+      assert.deepEqual(await page.evaluate(() => (window as any).usageFixture.settings()), { open: true, section: "providers" })
+    }
+    assert.equal(await page.getByRole("progressbar").count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("French app locale formats Console numbers, USD and dates despite English browser locale", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  try {
+    const { requests, errors } = await prepare(page)
+    await page.evaluate(() => (window as any).usageFixture.locale("fr"))
+    await page.waitForFunction(() => document.documentElement.lang === "fr")
+    await waitRequests(requests, 1)
+    const usage = emptyConsole()
+    usage.requests["24h"] = 1234
+    const resetAt = Date.UTC(2026, 10, 6)
+    usage.budgets.items = [{ name: "Budget", id: "sa_123", spentUsd: 1234.5, limitUsd: 5000, resetAt }]
+    await requests[0].fulfill({ json: consoleUsage(usage) })
+    await page.getByText("Aujourd’hui (UTC)", { exact: true }).waitFor()
+    const formatted = await page.evaluate(resetAt => ({ number: new Intl.NumberFormat("fr").format(1234),
+      usd: new Intl.NumberFormat("fr", { style: "currency", currency: "USD" }).format(1234.5),
+      date: new Date(resetAt).toLocaleString("fr", { dateStyle: "short", timeStyle: "short" }) }), resetAt)
+    assert.equal(await page.locator("dd").first().textContent(), formatted.number)
+    assert.ok((await page.locator("body").textContent())?.includes(formatted.usd))
+    assert.ok((await page.locator("body").textContent())?.includes(formatted.date))
+    await page.evaluate(() => (window as any).usageFixture.select({ providerId: "opencode", modelId: "big-pickle" }))
+    await waitRequests(requests, 2)
+    await requests[1].fulfill({ json: { ...consoleUsage(emptyConsole()), console: undefined, providerId: "opencode-free", providerName: "OpenCode Zen",
+      estimated: true, freeEstimate: { requests: 1234, reference: 2000, exhausted: true },
+      windows: { daily: { usedPercent: 61.7, remainingPercent: 38.3, resetAt: Date.now() + 86400000, windowSeconds: 86400, valueLabel: "1234 / 2000" } } } })
+    await page.getByText("Épuisé", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100")
+    const expectedFree = await page.evaluate(() => `${new Intl.NumberFormat("fr").format(1234)} / ${new Intl.NumberFormat("fr").format(2000)}`)
+    assert.ok((await page.locator("body").textContent())?.includes(expectedFree))
+    assert.equal(await page.getByText("OpenCode Zen", { exact: true }).count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("free quota events coalesce; exhaustion remains textual with unknown count and expires at UTC midnight", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 320, height: 350 } })
+  try {
+    const midnight = Date.UTC(2026, 10, 7)
+    await page.clock.install({ time: midnight - 1000 })
+    await page.clock.pauseAt(midnight - 1000)
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1); await fulfill(requests[0], 10)
+    await page.evaluate(() => (window as any).usageFixture.select({ providerId: "opencode", modelId: "big-pickle" }))
+    await waitRequests(requests, 2)
+    const free = (exhausted: boolean, resetAt: number, count: number | null = null) => ({
+      requestedProviderId: "opencode", providerId: "opencode-free", providerName: "OpenCode", supported: true, configured: true,
+      ok: true, estimated: true, fetchedAt: midnight - 1000, freeEstimate: { requests: count, reference: 200, exhausted },
+      windows: { daily: { usedPercent: exhausted ? 100 : 0, remainingPercent: exhausted ? 0 : 100, resetAt, windowSeconds: 86400 } },
+    })
+    await requests[1].fulfill({ json: free(true, midnight) })
+    await page.getByText("Exhausted", { exact: true }).waitFor()
+    await page.getByText("Estimated", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100")
+    assert.equal(await page.getByText("200 / 200", { exact: true }).count(), 0)
+    assert.equal(await page.getByText("--", { exact: true }).count(), 1)
+    const info = page.getByRole("button", { name: "Estimated", exact: true })
+    await info.focus(); await page.keyboard.press("Enter")
+    await page.getByText(/Exhaustion clears at 00:00 UTC/).waitFor()
+    await page.keyboard.press("Escape")
+    if (process.env.CODENOMAD_USAGE_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_USAGE_CAPTURE.replace(/\.png$/, "-exhausted.png") })
+    await page.evaluate(() => {
+      for (let i = 0; i < 5; i++) (window as any).usageFixture.event("session.step.failed", "first", "/repo", { error: { type: "provider.quota" } })
+    })
+    await waitRequests(requests, 3)
+    await page.clock.runFor(1000)
+    assert.equal(await page.getByText("Exhausted", { exact: true }).count(), 0, "midnight clears the mark before HTTP settles")
+    assert.equal(requests.length, 3, "midnight shares the active read")
+    await requests[2].fulfill({ json: free(true, midnight) })
+    await waitRequests(requests, 4)
+    assert.equal(await page.getByText("Exhausted", { exact: true }).count(), 0)
+    await requests[3].fulfill({ json: free(false, midnight + 86400000, 0) })
+    await page.getByText("0 / 200", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "0")
+    await page.evaluate(() => (window as any).usageFixture.active(false))
+    await page.evaluate(() => (window as any).usageFixture.event("session.step.failed", "first", "/repo", { error: { type: "provider.quota" } }))
+    await page.clock.fastForward(86400000)
+    assert.equal(requests.length, 4, "hidden panel neither polls nor reads at midnight")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
