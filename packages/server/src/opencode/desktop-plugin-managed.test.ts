@@ -101,7 +101,7 @@ test("translates only filesystem IO while retaining WSL native paths and URL dia
   assert.equal(installations.length, 1)
   assert.equal(installations[0].entry, "/daemon/config/plugins/codenomad-automation.ts")
   assert.equal(path.posix.dirname(installations[0].plugin), `${nativeData}/automation`)
-  assert.deepEqual(translated, ["/daemon/config/plugins", installations[0].plugin])
+  assert.deepEqual(translated, ["/daemon/config/plugins", path.posix.dirname(installations[0].plugin)])
   const url = pathToFileURL(installations[0].plugin, { windows: false }).href
   assert.equal(managedDesktopPluginForSource(installations, url, path.posix), installations[0])
   assert.equal(managedDesktopPluginForSource(installations, installations[0].plugin.replace("literal", "Literal"), path.posix), undefined)
@@ -148,7 +148,7 @@ test("fences publication when the connection retires during path translation", a
   let current = true
   await assert.rejects(readManagedDesktopPlugins({
     globalDirectory: fixture.paths.config, paths: nativePaths,
-    hostPath: async native => { if (native === installed.plugin) current = false; return native },
+    hostPath: async native => { if (native === path.dirname(installed.plugin)) current = false; return native },
     assertCurrent: () => { if (!current) throw new Error("connection retired") },
   }), /connection retired/)
 })

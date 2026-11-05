@@ -197,10 +197,13 @@ shared provisioning error deduplication and pending-request recovery notice.
 
 Artifact identities use exact BigInt device/inode values. When Windows pathname
 stats report device zero, verification opens the name independently and compares
-both handles' nonzero device and inode identities, then rechecks the regular,
-single-link pathname and its size. The payload still passes full SHA-256 and EOF
-verification; the pre-publication recheck repeats this verification for a missing
-pathname device. Known device mismatches, inode changes and links fail closed.
+both handles' device and inode identities, then rechecks the regular,
+single-link pathname and its size. Windows handles require a nonzero device except
+under the reserved `\\wsl.localhost\<distro>\` and `\\wsl$\<distro>\` UNC namespaces,
+where both handles and pathname must agree on device zero and a nonzero inode.
+The payload passes full SHA-256 and EOF verification; the pre-publication recheck
+repeats this verification for a missing pathname or WSL handle device.
+Known device mismatches, inode changes and links fail closed.
 Verification errors identify the failed file, identity, size or digest check.
 
 - Desktop automation and pruning provisioning follows the authenticated OpenCode connection and its `config.get` global discovery directory, including reconnects. Replacing a connection aborts its in-flight provisioning: `opencode/desktop-plugin-provisioning.ts` logs that at debug as superseded (the new connection provisions again) and keeps errors for failures on the current connection, logging each distinct failure once with its consequence and repeats at debug until a provisioning succeeds. Bundle payloads are content-addressed (`<sha256>.mjs`) and shared by every backend of the namespace: `opencode/desktop-plugin-installation.ts` publishes one only by renaming a complete temporary copy, and replaces a name that holds other bytes or is not one regular file (an earlier write cut short, a link) the same way before the entry may point at it, so concurrent installers never read a partial payload and a damaged one never blocks later connections. Never derive a running daemon's roots from backend/startup environment or CLI `debug paths`. OpenCode watches the entire discovery root recursively: keep changing presence leases outside it, in the sibling `.codenomad/<root-hash>/` namespace. Retain existing outside-root storage; migrate inside-root storage while reading older backends' leases without writing there. WSL translates the daemon-reported paths through the selected distro only for filesystem access. Verify heartbeat stability with the isolated native automation fixture.

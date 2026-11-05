@@ -1,4 +1,6 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.scope.other": "継承 / 外部",
+  "instanceServiceStatus.plugins.scope.virtual": "仮想設定",
   "instanceServiceStatus.plugins.system.attention": "CodeNomad プラグインの確認が必要です",
   "instanceServiceStatus.plugins.system.disabled": "{name} — {scope}で無効",
   "instanceServiceStatus.plugins.system.failed": "{name} — 読み込みに失敗",

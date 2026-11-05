@@ -1,4 +1,6 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.scope.other": "विरासत / बाह्य",
+  "instanceServiceStatus.plugins.scope.virtual": "भर्चुअल कन्फिगरेसन",
   "instanceServiceStatus.plugins.system.attention": "CodeNomad प्लगइनहरूमा ध्यान दिनु आवश्यक छ",
   "instanceServiceStatus.plugins.system.disabled": "{name} — {scope} दायरामा निष्क्रिय",
   "instanceServiceStatus.plugins.system.failed": "{name} — लोड गर्न असफल",

@@ -29,6 +29,8 @@ CodeNomad-managed plugins stay outside the ordinary plugin list and its activati
 
 If a managed plugin is disabled, fails to load or has no confirmed load, **CodeNomad plugins need attention** appears above the Plugins list. Open its **i** button (**Details for** the plugin) for the available error and OpenCode log reference. Only a disabled plugin offers **Re-enable**: it appends a positive exact-ID activation rule, preserving the disabling rule. It writes in the disabling rule's **Global** or **Project** scope when writable, otherwise in **Project**. OpenCode stays running; the warning remains until native events or **Refresh plugin controls** confirm that the plugin is active.
 
+The warning and its details label configuration origins **Inherited / external** or **Virtual configuration** where applicable. A separate **Project** label identifies the re-enable destination when it differs from the disabling rule's origin.
+
 1. [Add the plugin](#plugin-sources) or declare it in OpenCode's configuration; then open **Status → Plugins**.
 2. Hover or focus its name to inspect source, runtime failure and configuration-target details.
 3. Toggle **Global** or **Project** deliberately. Wait for the write and use **Refresh plugin controls** if the state is unclear.

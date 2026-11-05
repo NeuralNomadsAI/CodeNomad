@@ -1,4 +1,6 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.scope.other": "Унаследованная / внешняя",
+  "instanceServiceStatus.plugins.scope.virtual": "Виртуальная конфигурация",
   "instanceServiceStatus.plugins.system.attention": "Плагины CodeNomad требуют внимания",
   "instanceServiceStatus.plugins.system.disabled": "{name} — Отключён: {scope}",
   "instanceServiceStatus.plugins.system.failed": "{name} — Ошибка загрузки",

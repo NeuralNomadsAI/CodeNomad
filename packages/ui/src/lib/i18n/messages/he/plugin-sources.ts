@@ -1,4 +1,6 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.scope.other": "בירושה / חיצונית",
+  "instanceServiceStatus.plugins.scope.virtual": "תצורה וירטואלית",
   "instanceServiceStatus.plugins.system.attention": "תוספי CodeNomad דורשים תשומת לב",
   "instanceServiceStatus.plugins.system.disabled": "{name} — מושבת בהיקף {scope}",
   "instanceServiceStatus.plugins.system.failed": "{name} — הטעינה נכשלה",

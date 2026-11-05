@@ -1,4 +1,6 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.scope.other": "Devralınan / harici",
+  "instanceServiceStatus.plugins.scope.virtual": "Sanal yapılandırma",
   "instanceServiceStatus.plugins.system.attention": "CodeNomad eklentileri ilgilenmenizi gerektiriyor",
   "instanceServiceStatus.plugins.system.disabled": "{name} — {scope} kapsamında devre dışı",
   "instanceServiceStatus.plugins.system.failed": "{name} — Yüklenemedi",

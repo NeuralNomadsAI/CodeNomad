@@ -96,9 +96,10 @@ export async function readManagedDesktopPlugins(options: {
       if (!source) continue
       const parsed = parseManagedDesktopPluginEntry(match[1], source.toString("utf8"), options.paths)
       if (!parsed) continue
-      const hostPlugin = await options.hostPath(parsed.plugin)
-      if (!hostPlugin) continue
-      const bundle = await readDesktopPluginFile(hostPlugin, 32 * 1024 * 1024)
+      // Translate the directory only: wslpath/realpath can dereference a final file symlink.
+      const hostStorage = await options.hostPath(options.paths.dirname(parsed.plugin))
+      if (!hostStorage) continue
+      const bundle = await readDesktopPluginFile(path.join(hostStorage, options.paths.basename(parsed.plugin)), 32 * 1024 * 1024)
       if (!bundle || createHash("sha256").update(bundle).digest("hex") !== options.paths.basename(parsed.plugin, ".mjs")) continue
       result.push({ entry: options.paths.join(directory, name), plugin: parsed.plugin, ids: desktopPluginIds(bundle) })
     } catch { /* Unproven files retain ordinary plugin visibility. */ }

@@ -29,6 +29,8 @@ CodeNomad tarafından yönetilen eklentiler, normal eklenti listesinin ve bu lis
 
 Yönetilen bir eklenti devre dışıysa, yüklenemiyorsa veya yüklenmesi doğrulanmadıysa listenin üzerinde **CodeNomad eklentileri ilgilenmenizi gerektiriyor** görünür. Mevcut hatayı ve OpenCode günlüğündeki referansını görmek için **i** düğmesini (eklentinin **ayrıntıları**) açın. Yalnızca devre dışı eklentiler **Yeniden etkinleştir** sunar: bu işlem devre dışı bırakma kuralını koruyarak tam kimlik için pozitif bir etkinleştirme kuralı ekler. Devre dışı bırakma kuralının **Genel** veya **Proje** kapsamı yazılabiliyorsa oraya, aksi hâlde **Proje** kapsamına yazar. OpenCode çalışmaya devam eder; yerel olaylar veya **Plugin denetimlerini yenile** eklentinin etkin olduğunu doğrulayana kadar uyarı kalır.
 
+Uyarı ve ayrıntıları, yapılandırma kaynağını uygun olduğunda **Devralınan / harici** veya **Sanal yapılandırma** olarak gösterir. Ayrı bir **Proje** etiketi, yeniden etkinleştirme hedefi devre dışı bırakma kuralının kaynağından farklı olduğunda bu hedefi belirtir.
+
 1. [Eklentiyi ekleyin](#plugin-sources) veya OpenCode yapılandırmasında bildirin; daha sonra **Durum → Eklentiler** öğesini açın.
 2. Kaynağı, çalışma zamanı hatasını ve yapılandırma hedefi ayrıntılarını incelemek için adının üzerine gelin veya odaklanın.
 3. **Genel** veya **Proje** öğesini bilinçli olarak değiştirin. Yazmayı bekleyin ve durum belirsizse **Plugin denetimlerini yenile** öğesini kullanın.

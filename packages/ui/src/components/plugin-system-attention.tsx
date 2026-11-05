@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js"
-import type { PluginActivationControl, PluginControlLocation, PluginControlScope, PluginControlsSnapshot, PluginRuntimeInventoryEntry } from "../../../server/src/api-types"
+import type { PluginActivationControl, PluginConfigScope, PluginControlLocation, PluginControlScope, PluginControlsSnapshot, PluginRuntimeInventoryEntry } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { pluginControlsCache } from "../stores/plugin-controls"
 import { InfoPopoverButton } from "./info-popover-button"
@@ -78,8 +78,7 @@ export function PluginSystemAttention(props: {
       if ((controlling === "global" || controlling === "project") && writable(controlling)) return controlling
       return writable("project") ? "project" : undefined
     }
-    const scopeLabel = (value: string | undefined) => value === "global" || value === "project"
-      ? t(`instanceServiceStatus.plugins.scope.${value}`) : t("instanceServiceStatus.plugins.scope.project")
+    const scopeLabel = (value: string | undefined) => t(`instanceServiceStatus.plugins.scope.${value ?? "project"}`)
     const configurations = createMemo(() => {
       const current = entry(), runtime = current?.runtime?.source
       const target = runtime?.type === "package" ? runtime.target : runtime?.type === "local" ? runtime.path : undefined
@@ -87,10 +86,10 @@ export function PluginSystemAttention(props: {
         (source.pluginId && source.pluginId === current?.name) || source.target === target || `target:${source.target}` === key
       )) ?? []
       const rule = current?.control?.controllingRule
-      const records = sources.map(source => ({ scope: source.scope, path: source.path ?? source.target }))
+      const records: Array<{ scope: PluginConfigScope; path?: string }> = sources.map(source => ({ scope: source.scope, path: source.path ?? source.target }))
       if (rule) {
         const path = rule.path ?? props.snapshot?.targets.find(target => target.scope === rule.scope)?.path
-        if (path) records.push({ scope: rule.scope, path })
+        records.push({ scope: rule.scope, path })
       }
       if (!records.length) {
         const target = props.snapshot?.targets.find(target => target.scope === "global") ?? props.snapshot?.targets[0]
@@ -119,7 +118,7 @@ export function PluginSystemAttention(props: {
       return <div ref={container} class="plugin-system-attention-details">
         <div><bdi>{entry()?.name}</bdi></div>
         <Show when={runtimeDetails()}>{value => <div>{value()}</div>}</Show>
-        <For each={configurations()}>{record => <div>{scopeLabel(record.scope)} — <bdi>{record.path}</bdi></div>}</For>
+        <For each={configurations()}>{record => <div>{scopeLabel(record.scope)}<Show when={record.path}>{path => <> — <bdi>{path()}</bdi></>}</Show></div>}</For>
         <Show when={failed()}>{failure => <>
           <div><bdi>{failure().error}</bdi></div>
           <Show when={failure().ref}>{ref => <div>{isolatedValue(t("instanceServiceStatus.plugins.sources.failureRef", { ref: VALUE_PLACEHOLDER }), ref())}</div>}</Show>

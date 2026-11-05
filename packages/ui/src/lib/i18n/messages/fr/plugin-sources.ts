@@ -1,4 +1,6 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.scope.other": "Héritée / externe",
+  "instanceServiceStatus.plugins.scope.virtual": "Configuration virtuelle",
   "instanceServiceStatus.plugins.system.attention": "Les plugins CodeNomad nécessitent votre attention",
   "instanceServiceStatus.plugins.system.disabled": "{name} — Désactivé dans {scope}",
   "instanceServiceStatus.plugins.system.failed": "{name} — Échec du chargement",

@@ -85,6 +85,13 @@ the lifecycle marker, generated `desktopPlugin` import/call shape, presence dire
 `<sha256>.mjs` payload must agree. Missions' provider/runtime artifact descriptors follow the
 installer's generated shape. Validated storage retained outside the default data path remains
 recognisable; paths use the daemon's dialect, including WSL's Linux file URLs and paths.
+WSL publication and recognition translate those paths through the selected distro for
+host filesystem IO. The reserved WSL UNC redirector may report device zero for both
+pathname and handles: independent handles must still agree on a nonzero inode and size,
+with regular single-link files, stable bounded reads and the payload's SHA-256 verified.
+Payload mapping translates its parent directory and preserves the exact basename, so file
+links remain detectable instead of being dereferenced by path translation.
+Configuration-document reads, permissions and mutations use native distro IO.
 Never classify a plugin by its display name, ID or a `codenomad` prefix alone. A third-party
 homonym retains its ordinary controls.
 
@@ -116,6 +123,9 @@ entry; a durable write alone leaves it visible. Native events and the existing R
 drive reconciliation. Never restart OpenCode automatically.
 Concurrent mutation/read reconciliation retains the newer runtime and provenance while applying
 the durable activation rules. A confirmed native failure keeps its warning and details available.
+Status and details distinguish Global, Project, inherited/external and virtual rule origins;
+the Re-enable action names its writable destination independently of that origin.
+Virtual origins remain visible in details when the native rule has no filesystem path.
 
 ## V2 contract
 
@@ -312,6 +322,9 @@ guessed paths.
   session-pruning payload descriptor against the exported plugin ID.
 - Managed provenance, descriptors, retained storage, Windows/WSL paths and link/integrity refusal:
   `desktop-plugin-managed.test.ts`; absent-runtime rules and scoped recovery: `plugin-controls.test.ts`.
+- `CODENOMAD_TEST_WSL_PLUGIN_CONTROLS=Ubuntu` enables the real Linux-filesystem/UNC
+  publication, recognition, tamper and link checks in `desktop-plugin-managed-wsl.test.ts`,
+  alongside the native document suite in `plugin-control-document-wsl.test.ts`.
 - JSONC preservation, malformed input, optimistic conflict, and atomic replace:
   `plugin-control-document.test.ts`
 - spec validation, package identity, append and exact removal (comments, CRLF,

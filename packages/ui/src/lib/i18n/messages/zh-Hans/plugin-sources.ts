@@ -1,4 +1,6 @@
 export const pluginSourceMessages = {
+  "instanceServiceStatus.plugins.scope.other": "继承 / 外部",
+  "instanceServiceStatus.plugins.scope.virtual": "虚拟配置",
   "instanceServiceStatus.plugins.system.attention": "CodeNomad 插件需要处理",
   "instanceServiceStatus.plugins.system.disabled": "{name} — 已在{scope}中禁用",
   "instanceServiceStatus.plugins.system.failed": "{name} — 加载失败",

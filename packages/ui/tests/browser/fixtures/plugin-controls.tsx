@@ -179,7 +179,9 @@ await updatePreferences({ locale: "en" })
     }
     if (["active", "disabled-active", "disabled-failed", "failed", "failed-no-id"].includes(mode)) snapshot.runtime.push(runtime)
     if (mode !== "failed-no-id" && mode !== "source-only") {
-      const rule = { selector: "*", enabled: false, scope, path: scope === "global" ? "/daemon/opencode.jsonc" : scope === "project" ? "/repo/.opencode/opencode.jsonc" : "/ancestor/opencode.jsonc", order: 0, entryIndex: 0 }
+      const rule = { selector: "*", enabled: false, scope,
+        ...(scope === "virtual" ? {} : { path: scope === "global" ? "/daemon/opencode.jsonc" : scope === "project" ? "/repo/.opencode/opencode.jsonc" : "/ancestor/opencode.jsonc" }),
+        order: 0, entryIndex: 0 }
       snapshot.controls.push({ id: "codenomad.design", managedBy: "codenomad", builtin: false,
         runtime: ["active", "disabled-active", "disabled-failed", "failed"].includes(mode) ? runtime : undefined,
         effective: mode.startsWith("disabled") ? "disabled" : "default", global: "default", project: "default",
