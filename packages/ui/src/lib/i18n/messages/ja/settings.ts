@@ -287,6 +287,7 @@ export const settingsMessages = {
   "providerUsage.windows.weekly": "週間",
   "providerUsage.windows.daily": "日次",
   "providerUsage.windows.monthly": "月間",
+  "providerUsage.windows.monthlyCode": "月間コーディング",
   "providerUsage.windows.credits": "クレジット",
   "providerUsage.windows.keyLimit": "キーの上限",
   "providerUsage.invalidBaseURL": "プロバイダーのベース URL が無効です。公開 HTTPS URL を設定してください。",

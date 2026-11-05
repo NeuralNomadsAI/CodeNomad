@@ -31,7 +31,7 @@ Desteklenen entegrasyonda birden fazla kayıtlı kimlik bilgisi varsa **Hesabı 
 | OpenCode Go | Go anahtarı veya **yalnızca Go sağlayıcısı** için kullanılan OpenCode Console girişi/anahtarı; Zen kullandıkça öde kredileri için değil. |
 | Anthropic | OpenCode'un Claude Pro/Max OAuth girişi; Claude Code girişi **değil**. |
 | GitHub Copilot | Okunabilir premium istek kotasına sahip OAuth; kurumsal uç nokta kimlik bilgileri okunabilir aday değildir. |
-| Kodlama planları | Anahtar tabanlı `zai-coding-plan`, `zhipuai-coding-plan`, `kimi-for-coding`, `minimax-coding-plan`, `minimax-cn-coding-plan`. |
+| Kodlama planları | Anahtar tabanlı `zai-coding-plan`, `zhipuai-coding-plan`, `kimi-for-coding`, `kimi`, `kimi-code-plan-cn`, `kimi-code-plan-global`, `minimax-coding-plan`, `minimax-cn-coding-plan`. |
 
 Geçişi yalnızca mevcut hesabın kotasının tamamen dolması tetikler; alternatif hesabın daha fazla kapasitesi olması yetmez. Okumalar adayları etkinleştirmeden veya yenileme belirteçlerini takas etmeden her kayıtlı kimlik bilgisini inceler. Codex, Copilot ve kodlama planlarında kullanılabilir olduğu gösterilebilen aday gerekir. Go, Console ve Claude, yakın tarihli yerel kota hatasıyla tükenmiş işaretlenmeyen, kotası bilinmeyen adayı kullanabilir. OpenCode Go kullanım uç noktası ve Console OAuth kullanımı kaynak tarafta doğrulanmamıştır; kullanılabilirlik garantisi yoktur.
 
@@ -65,6 +65,8 @@ OpenRouter **Anahtar sınırı**, anahtarın harcama sınırına göre kalan USD
 z.ai ve Zhipu için Kullanım, OpenCode'un kendi ana makinesinde çözümlediği `{env:…}` ve `{file:…}` değerleri dahil yapılandırılmış `apiKey` değerine öncelik verir; bu anahtar yoksa kayıtlı kimlik bilgisini kullanır. Anahtar ve kayıtlı kimlik bilgisi yoksa sağlayıcı yapılandırılmamış olarak gösterilir. İş mantığı hatalarında kota değerleri yerine çevrilmiş sağlayıcı hatası ve varsa sayısal kod gösterilir. Plan kredileri beş saatlik ve haftalık pencereleri kullanır; MCP araçlarının ayrı bir kotası vardır.
 
 GitHub Copilot **Kullanım**, tüketimi **kullanılan / sınır kullanıldı** biçiminde, GitHub sağladığında ise sınırsız havuzdaki tüketilen kredileri gösterir; aksi halde **Sınırsız** gösterilir. Premium istekler kendi etiketini korur. Alt bölüm tanınan planın adını içerir. Enterprise bağlantıları, kayıtlı bağlantının ana makinesinden veya HTTPS kök URL'sinden `https://api.<host>/copilot_internal/user` adresini kullanır. Kimlik bilgisi, açık port (`:443` dahil), `/` ötesinde yol, sorgu veya parça içermeyen tam bir ana makine adı kullanın; IP adresleri ve localhost, belirteç gönderilmeden reddedilir. Yönlendirmeler reddedilir. Geçersiz hedefte veya bu API'yi sunmayan sunucuda kullanım erişilemez kalır. Enterprise bağlantıları otomatik hesap seçiminin dışında kalır.
+
+Kimi, `kimi-code-plan-cn` (kimi.com), `kimi-code-plan-global` (kimi.ai), `kimi-for-coding` ve `kimi` kimliklerini destekler. **Kullanım**, konuşmanın entegrasyonundan başlayarak her entegrasyonun etkin kayıtlı anahtarını ortak bir süre sınırı içinde sırayla dener. Kullanılabilir beş saatlik, haftalık, **Aylık** ve **Aylık kodlama** sınırları kullanılan yüzdeyi gösterir. Aylık sınırlar sağlayıcının sıfırlama tarihini izler; herhangi bir aylık sınırı tükenen hesap, daha kısa bir pencerede kapasite kalsa bile otomatik seçim için kullanılamaz.
 
 ### İsteğe bağlı kullanım ortamı değişkenleri {#usage-environment}
 

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { apiKeyProviders } from "./api-key"
+import { apiKeyProviders, kimiAliases } from "./api-key"
+import { projectCredentials } from "../native-credentials"
 import { clearProviderUsageCache, getProviderUsage } from "../service"
 import type { ProviderReadContext } from "../types"
 import { readUsageProviderSettings } from "../native-settings"
@@ -10,6 +11,165 @@ const auth = { "zai-coding-plan": { type: "api", key: "test-zai-key" }, "zhipuai
 
 const CREDIT_RESET_AT = 1787849891189
 const TOKENS_RESET_AT = 1787950772998
+
+const kimi = apiKeyProviders.find(provider => provider.id === "kimi-for-coding")!
+const kimiReset = "2099-12-01T00:00:00Z"
+const kimiPayload = { usages: { limit_5h: { used_ratio: 0.3, reset_time: kimiReset } } }
+
+for (const alias of kimiAliases) test(`Kimi alias ${alias} uses its official host and bounded transport`, async t => {
+  const calls: string[] = []
+  t.mock.method(globalThis, "fetch", async (url: unknown, init: RequestInit) => {
+    calls.push(String(url))
+    assert.equal(new Headers(init.headers).get("Authorization"), "Bearer synthetic-kimi-key")
+    assert.equal(init.redirect, "error")
+    assert.equal(init.signal instanceof AbortSignal, true)
+    return respondWith(kimiPayload)
+  })
+  const response = await kimi.fetchQuota({ [alias]: { type: "api", key: "synthetic-kimi-key" } })
+  assert.equal(response.ok, true)
+  assert.deepEqual(calls, [`https://${alias === "kimi-code-plan-global" ? "api.kimi.ai" : "api.kimi.com"}/coding/v1/usages`])
+})
+
+test("Kimi tries selected credentials in session-integration order, deduplicates keys and ignores inactive accounts", async t => {
+  const calls: string[] = []
+  t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    const key = new Headers(init.headers).get("Authorization")!
+    calls.push(key)
+    return key === "Bearer synthetic-success" ? respondWith(kimiPayload) : new Response(null, { status: 401 })
+  })
+  const auth = projectCredentials([
+    { id: "global", integrationID: "kimi-code-plan-global", active: true, label: "global", value: { type: "key", key: "synthetic-failure" } },
+    { id: "legacy", integrationID: "kimi-for-coding", active: true, label: "legacy", value: { type: "key", key: "synthetic-failure" } },
+    { id: "cn", integrationID: "kimi-code-plan-cn", active: true, label: "cn", value: { type: "key", key: "synthetic-success" } },
+    { id: "inactive", integrationID: "kimi", active: false, label: "inactive", value: { type: "key", key: "synthetic-inactive" } },
+  ])
+  assert.equal((await kimi.fetchQuota(auth, { integrationID: "kimi-code-plan-global" })).ok, true)
+  assert.deepEqual(calls, ["Bearer synthetic-failure", "Bearer synthetic-success"])
+})
+
+test("Kimi uses the session provider's verified native integration and skips missing keys", async t => {
+  const directory = "D:/synthetic-project"
+  const connection = { assertCurrent() {}, client: { provider: { get: async () => ({
+    location: { directory }, data: { id: "kimi", integrationID: "kimi-code-plan-global", settings: {} },
+  }) } } } as unknown as Parameters<typeof readUsageProviderSettings>[0]
+  const { context } = await readUsageProviderSettings(connection, "kimi", directory, new AbortController().signal)
+  assert.equal(context.integrationID, "kimi-code-plan-global")
+  const requests: string[] = []
+  t.mock.method(globalThis, "fetch", async (url: unknown) => { requests.push(String(url)); return respondWith(kimiPayload) })
+  const missing = await kimi.fetchQuota({ kimi: { key: " " } }, context)
+  assert.equal(missing.configured, false)
+  assert.deepEqual(requests, [])
+  assert.equal((await kimi.fetchQuota({ kimi: "synthetic-cn", "kimi-code-plan-global": "synthetic-global" }, context)).ok, true)
+  assert.deepEqual(requests, ["https://api.kimi.ai/coding/v1/usages"])
+})
+
+test("Kimi keeps the final HTTP failure and exposes no windows when all selected keys fail", async t => {
+  let requests = 0
+  t.mock.method(globalThis, "fetch", async () => new Response("synthetic-secret", { status: ++requests === 1 ? 401 : 403 }))
+  const response = await kimi.fetchQuota({ kimi: "synthetic-first", "kimi-code-plan-cn": "synthetic-second" })
+  assert.equal(requests, 2)
+  assert.equal(response.ok, false)
+  assert.equal(response.configured, true)
+  assert.equal(response.status, 403)
+  assert.equal(response.usage, null)
+  assert.equal(JSON.stringify(response).includes("synthetic-secret"), false)
+})
+
+test("Kimi shares one sub-route deadline across attempts and stops on global timeout", async t => {
+  const timeout = AbortSignal.timeout.bind(AbortSignal)
+  const deadlines: number[] = []
+  t.mock.method(AbortSignal, "timeout", (ms: number) => { deadlines.push(ms); return timeout(30) })
+  const signals: AbortSignal[] = []
+  t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    signals.push(init.signal!)
+    if (signals.length === 1) return new Response(null, { status: 401 })
+    return await new Promise<Response>((_resolve, reject) => {
+      init.signal!.addEventListener("abort", () => reject(new Error("Synthetic timeout")), { once: true })
+    })
+  })
+  // Keep the test alive while AbortSignal.timeout's unref'ed deadline expires.
+  const keepAlive = setTimeout(() => {}, 1000)
+  try {
+    const response = await kimi.fetchQuota({ kimi: "synthetic-first", "kimi-code-plan-cn": "synthetic-second", "kimi-code-plan-global": "synthetic-third" })
+    assert.deepEqual(deadlines, [12_000])
+    assert.equal(signals.length, 2)
+    assert.equal(signals[0], signals[1])
+    assert.equal(signals[0].aborted, true)
+    assert.equal(response.ok, false)
+    assert.equal(response.usage, null)
+  } finally { clearTimeout(keepAlive) }
+})
+
+test("Kimi propagates owner cancellation and skips every later key", async t => {
+  const controller = new AbortController()
+  let calls = 0
+  t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    calls++
+    controller.abort()
+    assert.equal(init.signal!.aborted, true)
+    throw new Error("Synthetic cancellation")
+  })
+  const response = await kimi.fetchQuota({ kimi: "synthetic-first", "kimi-code-plan-cn": "synthetic-second" }, { signal: controller.signal })
+  assert.equal(response.ok, false)
+  assert.equal(response.usage, null)
+  assert.equal(calls, 1)
+  await kimi.fetchQuota({ kimi: "synthetic-first" }, { signal: controller.signal })
+  assert.equal(calls, 1, "already aborted readers send no credential")
+})
+
+test("Kimi ratios expose consumed and remaining percentages with independent calendar-month caps", async () => {
+  const { result } = await withFetchStub({ usages: {
+    limit_5h: { used_ratio: 0.3, reset_time: kimiReset },
+    limit_7d: { used_ratio: "0.3", reset_time: kimiReset },
+    limit_month_total: { used_ratio: 1, reset_time: kimiReset },
+    limit_month_code: { used_ratio: "0", reset_time: kimiReset },
+  } }, () => kimi.fetchQuota({ kimi: "synthetic-key" }))
+  assert.equal(result.ok, true)
+  const windows = result.usage!.windows
+  assert.deepEqual(Object.keys(windows), ["5h", "weekly", "monthly", "monthly-code"])
+  for (const label of ["5h", "weekly"]) {
+    assert.equal(windows[label].usedPercent, 30)
+    assert.equal(windows[label].remainingPercent, 70)
+  }
+  assert.equal(windows["5h"].windowSeconds, 18_000)
+  assert.equal(windows.weekly.windowSeconds, 604_800)
+  assert.equal(windows.monthly.usedPercent, 100)
+  assert.equal(windows.monthly.remainingPercent, 0)
+  assert.equal(windows["monthly-code"].usedPercent, 0)
+  for (const label of ["monthly", "monthly-code"]) {
+    assert.equal(windows[label].windowSeconds, null)
+    assert.equal(windows[label].resetAt, Date.parse(kimiReset))
+    assert.equal(windows[label].valueLabel, undefined, "common used-percent rendering owns the monthly value")
+  }
+})
+
+test("Kimi ignores invalid ratios instead of clamping them into available quota", async () => {
+  for (const used_ratio of [null, "", " ", "invalid", true, -0.1, 1.1, "-1", "2"]) {
+    const { result } = await withFetchStub({ usages: { limit_month_total: { used_ratio } } }, () => kimi.fetchQuota({ kimi: "synthetic-key" }))
+    assert.equal(result.ok, false, `invalid ratio ${String(used_ratio)}`)
+    assert.equal(result.usage, null)
+  }
+  const { result } = await withFetchStub({ usages: {
+    limit_5h: { used_ratio: 0.3 }, limit_7d: { used_ratio: "bad" }, limit_month_total: { used_ratio: -1 },
+  } }, () => kimi.fetchQuota({ kimi: "synthetic-key" }))
+  assert.deepEqual(Object.keys(result.usage!.windows), ["5h"])
+})
+
+test("Kimi preserves legacy usage/limits and merges overlapping ratio windows without duplicates", async () => {
+  const legacy = { usage: { limit: "100", remaining: "70", resetTime: kimiReset }, limits: [
+    { window: { duration: 5, timeUnit: "TIME_UNIT_HOUR" }, detail: { limit: 100, remaining: 80, resetTime: kimiReset } },
+    { window: { duration: 7, timeUnit: "TIME_UNIT_DAY" }, detail: { limit: 100, remaining: 60, resetTime: kimiReset } },
+  ] }
+  const { result } = await withFetchStub(legacy, () => kimi.fetchQuota({ kimi: "synthetic-key" }))
+  assert.deepEqual(Object.keys(result.usage!.windows), ["weekly", "5h"])
+  assert.equal(result.usage!.windows.weekly.usedPercent, 40)
+  assert.equal(result.usage!.windows["5h"].usedPercent, 20)
+  const merged = await withFetchStub({ ...legacy, ...kimiPayload }, () => kimi.fetchQuota({ kimi: "synthetic-key" }))
+  assert.deepEqual(Object.keys(merged.result.usage!.windows), ["weekly", "5h"])
+  assert.equal(merged.result.usage!.windows["5h"].usedPercent, 30)
+  const usageOnly = await withFetchStub({ usage: legacy.usage }, () => kimi.fetchQuota({ kimi: "synthetic-key" }))
+  assert.equal(usageOnly.result.usage!.windows.weekly.usedPercent, 30)
+})
 
 function respondWith(payload: unknown) {
   return new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } })

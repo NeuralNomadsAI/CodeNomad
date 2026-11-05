@@ -106,6 +106,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
       weekly: "weekly",
       daily: "daily",
       monthly: "monthly",
+      "monthly-code": "monthlyCode",
       credits: "credits",
       key_limit: "keyLimit",
       credits_balance: "credits",

@@ -6,6 +6,7 @@ import { fetchCodexSelectionQuota } from "../usage/native-codex"
 import { projectCredential } from "../usage/native-credentials"
 import { fetchOpenCodeGoQuota, type OpenCodeGoAuth } from "../usage/opencode-go-quota"
 import { createAnthropicClaudeUsage } from "../usage/providers/extra"
+import { kimiAliases } from "../usage/providers/api-key"
 import { openCodeGoAuth } from "../usage/providers/special"
 import { resolveUsageProvider } from "../usage/service"
 import { getString, ProviderHttpError } from "../usage/shared"
@@ -108,8 +109,8 @@ export function createSelectionAdapters(options: { codexQuota?: CodexQuota; goQu
       integrationID, methods: ["key"], reactive: false,
       // MCP tool allowances do not block model requests.
       select: usage => windows(usage, { drop: ["mcp-tools"] }) })),
-    subscription({ integrationID: "kimi-for-coding", methods: ["key"], reactive: false,
-      select: usage => windows(usage, { defaults: { weekly: 7 * DAY_SECONDS } }) }),
+    ...kimiAliases.map(integrationID => subscription({ integrationID, methods: ["key"], reactive: false,
+      select: usage => windows(usage, { defaults: { weekly: 7 * DAY_SECONDS } }) })),
     ...(["minimax-coding-plan", "minimax-cn-coding-plan"] as const).map(integrationID => subscription({
       integrationID, methods: ["key"], reactive: false,
       select: usage => windows(usage, { defaults: { "5h": 5 * 3600, weekly: 7 * DAY_SECONDS } }) })),
@@ -146,7 +147,7 @@ function digest(parts: unknown[]) {
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex")
 }
 
-/** Selection view of a display reading: every window needs a positive duration. */
+/** Preserve plan windows, including calendar quotas whose duration varies. */
 function windows(usage: ProviderUsage, options: { drop?: string[]; defaults?: Record<string, number>; fallbackSeconds?: number; dropUnmeasured?: boolean }) {
   const result: Record<string, ProviderUsageWindow> = {}
   for (const [label, window] of Object.entries(usage.windows)) {
@@ -168,6 +169,6 @@ async function readUsage(integrationID: string, auth: AuthFile, signal: AbortSig
     abort = () => reject(new Error("Quota read aborted"))
     signal.addEventListener("abort", abort, { once: true })
   })
-  try { return await Promise.race([reader.fetchQuota(auth), aborted]) }
+  try { return await Promise.race([reader.fetchQuota(auth, { signal, integrationID }), aborted]) }
   finally { signal.removeEventListener("abort", abort) }
 }

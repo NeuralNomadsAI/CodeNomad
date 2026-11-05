@@ -37,7 +37,7 @@ exchanges tokens.
 | `anthropic` (Claude Pro/Max) | OpenCode Anthropic OAuth only, never Claude Code's `claude-code` login, even as fallback | Usage tab Claude reader | accepted unless marked |
 | `github-copilot` | OAuth; automatic selection: github.com only | Usage tab Copilot reader (premium requests and consumed credits; validated Enterprise destinations for display) | rejected |
 | `zai-coding-plan`, `zhipuai-coding-plan` | plan key | Usage tab credit/token-limit reader (MCP tool allowance ignored) | rejected |
-| `kimi-for-coding` | plan key | Usage tab Kimi reader | rejected |
+| `kimi-for-coding`, `kimi`, `kimi-code-plan-cn`, `kimi-code-plan-global` | plan key | Usage tab Kimi reader, including calendar-month caps | rejected |
 | `minimax-coding-plan`, `minimax-cn-coding-plan` | plan key | Usage tab MiniMax reader | rejected |
 
 OpenAI's `chatgpt-token-sharing` grant cannot read Codex usage ([confirmed by
@@ -87,8 +87,8 @@ client-consumed internal endpoint contract.
 
 Usage-backed adapters reuse the Usage tab readers with a one-entry projection
 (`usage/native-credentials.ts` `projectCredential`) and a small selection view
-that keeps only plan windows with a positive duration. Readers use a 15-second
-display transport; Copilot, z.ai/Zhipu, Codex and Go use
+that keeps plan windows, including Kimi's calendar-month caps with unknown duration.
+Readers use a 15-second display transport; Kimi, Copilot, z.ai/Zhipu, Codex and Go use
 the bounded credential-free transport in `usage/bounded-fetch.ts` (64 KiB,
 redirects rejected, abortable). Readers keep the upstream HTTP status, and any
 definite client error (4xx except 408/429, e.g. a Zen key answering 402 or a
@@ -154,6 +154,27 @@ from `currentValue` / `usage` (falling back to `remaining`); credits are plan un
 and [usage revision](https://docs.z.ai/devpack/notice/usage-revision.md) document
 credit-based and legacy windows; the public quota endpoints return the business
 error envelope even without authentication.
+
+Kimi's [models.dev entries](https://models.dev/api.json) identify `kimi-code-plan-cn`
+at `https://api.kimi.com/coding/v1` and `kimi-code-plan-global` at
+`https://api.kimi.ai/coding/v1`; `kimi-for-coding` and `kimi` use the China host.
+The reader sends Bearer-authenticated GET `/usages` through the bounded transport.
+It tries the active projected credentials only, session integration first, with
+duplicate keys removed and one 12-second deadline combined with the caller's signal.
+Selection adapters supply only their explicit candidate. The session integration
+from native provider settings participates in display-cache identity.
+The official [managed usage parser](https://github.com/MoonshotAI/kimi-code/blob/main/packages/oauth/src/managed-usage.ts)
+and [tests](https://github.com/MoonshotAI/kimi-code/blob/main/packages/oauth/test/managed-usage.test.ts)
+define `usages.{limit_5h,limit_7d,limit_month_total,limit_month_code}` with numeric or
+numeric-string `used_ratio` and ISO `reset_time`. Ratios within `[0,1]` become
+consumed percentages; invalid entries are omitted. Five hours and seven days use
+18,000 and 604,800 seconds. Independent `monthly` and `monthly-code` caps retain
+unknown durations and the provider's reset date, with common percentage rendering
+and localized Monthly / Monthly coding labels. `quotaState` includes those calendar
+caps, so monthly exhaustion prevents availability even beside usable shorter windows.
+The [membership guide](https://www.kimi.com/code/docs/en/kimi-code/membership.html)
+confirms the shared monthly total and optional weekly quota. Historical `usage` and
+`limits[]` payloads remain supported; ratio entries take precedence on matching windows.
 
 ## Auto-select account
 

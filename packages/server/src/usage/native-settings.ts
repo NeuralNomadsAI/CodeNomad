@@ -19,7 +19,8 @@ export async function readUsageProviderSettings(connection: ServiceConnection, p
       if (/\{(?:env|file):/i.test(value)) unresolved = true
       else if (value.trim()) settings[key] = value.trim()
     }
-    return { provider: info.data, context: { signal, settings, settingsStatus: unresolved ? "unresolved" : "available" } as ProviderReadContext }
+    return { provider: info.data, context: { signal, settings, integrationID: info.data.integrationID ?? info.data.id,
+      settingsStatus: unresolved ? "unresolved" : "available" } as ProviderReadContext }
   } catch {
     signal.throwIfAborted()
     return unavailable

@@ -287,6 +287,7 @@ export const settingsMessages = {
   "providerUsage.windows.weekly": "每周",
   "providerUsage.windows.daily": "每日",
   "providerUsage.windows.monthly": "每月",
+  "providerUsage.windows.monthlyCode": "每月编程",
   "providerUsage.windows.credits": "额度",
   "providerUsage.windows.keyLimit": "密钥限额",
   "providerUsage.invalidBaseURL": "提供商基础 URL 无效。请配置公共 HTTPS URL。",

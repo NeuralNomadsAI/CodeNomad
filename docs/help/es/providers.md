@@ -31,7 +31,7 @@ Con varias credenciales guardadas en una integración compatible, **Seleccionar 
 | OpenCode Go | Clave Go o inicio de sesión/clave de OpenCode Console usados **solo para el proveedor Go**, no créditos Zen de pago por uso. |
 | Anthropic | Inicio de sesión OAuth de Claude Pro/Max de OpenCode, **no** el inicio de sesión de Claude Code. |
 | GitHub Copilot | OAuth con cuota legible de solicitudes premium; las credenciales de endpoint empresarial no son candidatas legibles. |
-| Planes de programación | Basados en claves: `zai-coding-plan`, `zhipuai-coding-plan`, `kimi-for-coding`, `minimax-coding-plan`, `minimax-cn-coding-plan`. |
+| Planes de programación | Basados en claves: `zai-coding-plan`, `zhipuai-coding-plan`, `kimi-for-coding`, `kimi`, `kimi-code-plan-cn`, `kimi-code-plan-global`, `minimax-coding-plan`, `minimax-cn-coding-plan`. |
 
 Solo una cuenta actual con la cuota agotada provoca el cambio; tener una alternativa con más capacidad no basta. Las lecturas examinan credenciales guardadas explícitas sin activar candidatas ni intercambiar tokens de actualización. Codex, Copilot y los planes de programación requieren una candidata con disponibilidad demostrable. Go, Console y Claude pueden usar una candidata con cuota desconocida salvo que un fallo nativo reciente de cuota la marque como agotada. El endpoint de uso de OpenCode Go y el uso OAuth de Console siguen sin verificarse en el proveedor original, por lo que no se garantiza la disponibilidad.
 
@@ -65,6 +65,8 @@ En OpenRouter, **Límite de la clave** muestra el importe restante en USD frente
 Para z.ai y Zhipu, Uso da prioridad al `apiKey` configurado, incluidos los valores `{env:…}` y `{file:…}` resueltos por OpenCode en su equipo, y usa la credencial guardada si esa clave no está disponible. Sin clave ni credencial guardada, el proveedor aparece como no configurado. Los errores de negocio muestran un error del proveedor traducido y su código numérico cuando está disponible, en lugar de las cuotas. Los créditos del plan usan ventanas de cinco horas y semanales; las herramientas MCP tienen una cuota independiente.
 
 El **Uso** de GitHub Copilot muestra el consumo como **usados / límite usados**, o los créditos consumidos de una cuota ilimitada cuando GitHub los proporciona; de lo contrario muestra **Ilimitado**. Las solicitudes premium conservan su etiqueta. El pie indica el nombre del plan reconocido. Las conexiones Enterprise usan `https://api.<host>/copilot_internal/user` a partir del host o la URL HTTPS raíz de la conexión guardada. Usa un nombre de host cualificado sin credenciales, puerto explícito (incluido `:443`), ruta más allá de `/`, consulta ni fragmento; las direcciones IP y localhost se rechazan antes de enviar el token. Se rechazan las redirecciones. Un destino no válido o un servidor sin esta API deja el uso no disponible. Las conexiones Enterprise siguen excluidas de la selección automática de cuentas.
+
+Kimi admite `kimi-code-plan-cn` (kimi.com), `kimi-code-plan-global` (kimi.ai), `kimi-for-coding` y `kimi`. **Uso** prueba la clave guardada activa de cada integración, empezando por la de la conversación, dentro de un plazo global compartido. Los límites disponibles de cinco horas, semanales, **Mensual** y **Programación mensual** muestran el porcentaje usado. Los límites mensuales siguen la fecha de reinicio del proveedor; una cuenta con cualquiera de ellos agotado no está disponible para la selección automática, aunque una ventana más corta aún tenga capacidad.
 
 ### Variables de entorno opcionales para Uso {#usage-environment}
 

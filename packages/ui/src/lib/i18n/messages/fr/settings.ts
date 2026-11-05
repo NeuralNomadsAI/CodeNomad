@@ -287,6 +287,7 @@ export const settingsMessages = {
   "providerUsage.windows.weekly": "Hebdomadaire",
   "providerUsage.windows.daily": "Quotidien",
   "providerUsage.windows.monthly": "Mensuel",
+  "providerUsage.windows.monthlyCode": "Code mensuel",
   "providerUsage.windows.credits": "Crédits",
   "providerUsage.windows.keyLimit": "Plafond de la clé",
   "providerUsage.invalidBaseURL": "URL de base du fournisseur invalide. Configurez une URL HTTPS publique.",

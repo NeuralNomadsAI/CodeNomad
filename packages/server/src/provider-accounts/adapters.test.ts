@@ -32,7 +32,7 @@ const signal = () => AbortSignal.timeout(2000)
 
 test("registry covers subscription integrations only, with Go restricted to its provider", () => {
   const { adapters } = harness()
-  assert.deepEqual([...adapters.keys()].sort(), ["anthropic", "github-copilot", "kimi-for-coding", "minimax-cn-coding-plan",
+  assert.deepEqual([...adapters.keys()].sort(), ["anthropic", "github-copilot", "kimi", "kimi-code-plan-cn", "kimi-code-plan-global", "kimi-for-coding", "minimax-cn-coding-plan",
     "minimax-coding-plan", "openai", "opencode", "opencode-go", "zai-coding-plan", "zhipuai-coding-plan"])
   for (const payAsYouGo of ["openrouter", "deepinfra", "zai", "minimax", "deepseek", "kilo", "zenmux", "cursor"]) {
     assert.equal(adapterForProvider(adapters, { id: payAsYouGo }), undefined)
@@ -150,7 +150,7 @@ test("default readers send the candidate's own credential to the existing Usage 
   } finally { globalThis.fetch = previous }
 })
 
-test("selection views keep only plan windows with positive durations", async () => {
+test("selection views preserve plan windows and ignore unrelated allowances", async () => {
   const h = harness()
   const read = async (integrationID: string, windows: ProviderUsage["windows"], entry: CredentialEntry) => {
     h.setReply(() => ({ providerId: integrationID, providerName: integrationID, ok: true, configured: true, fetchedAt: Date.now(), usage: { windows } }))
@@ -168,4 +168,33 @@ test("selection views keep only plan windows with positive durations", async () 
   assert.equal(minimax["5h"].windowSeconds, 18_000)
   const claude = await read("anthropic", { "5h": window(10), extra_usage: window(90, null) }, oauth("anthropic", "a", "claude"))
   assert.equal(quotaState({ windows: claude }), "available")
+})
+
+test("every Kimi adapter reads only its explicit candidate and monthly exhaustion blocks availability", async t => {
+  const calls: Array<{ url: string; key: string | null }> = []
+  let monthly = 1
+  t.mock.method(globalThis, "fetch", async (url: unknown, init: RequestInit) => {
+    calls.push({ url: String(url), key: new Headers(init.headers).get("Authorization") })
+    assert.equal(init.signal instanceof AbortSignal, true)
+    return Response.json({ usages: {
+      limit_5h: { used_ratio: 0.1 }, limit_7d: { used_ratio: 0.2 },
+      limit_month_total: { used_ratio: monthly }, limit_month_code: { used_ratio: 0.3 },
+    } })
+  })
+  const adapters = createSelectionAdapters()
+  for (const alias of ["kimi-for-coding", "kimi", "kimi-code-plan-cn", "kimi-code-plan-global"]) {
+    const candidate = adapters.get(alias)!.credential(key(alias, "candidate", `synthetic-${alias}`))!
+    monthly = 1
+    const exhausted = await candidate.read(signal())
+    assert.equal(exhausted.windows.monthly.windowSeconds, null)
+    assert.equal(quotaState(exhausted), "exhausted")
+    monthly = 0.3
+    assert.equal(quotaState(await candidate.read(signal())), "available")
+    assert.deepEqual(calls.splice(0), Array(2).fill({
+      url: `https://${alias === "kimi-code-plan-global" ? "api.kimi.ai" : "api.kimi.com"}/coding/v1/usages`,
+      key: `Bearer synthetic-${alias}`,
+    }))
+  }
+  assert.equal(quotaState({ windows: { "5h": window(10), "monthly-code": window(100, null) } }), "exhausted")
+  assert.equal(quotaState({ windows: { monthly: window(100, null) } }), "exhausted", "monthly-only plans remain decisive")
 })

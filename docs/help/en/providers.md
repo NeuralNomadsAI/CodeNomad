@@ -31,7 +31,7 @@ With multiple saved credentials on a supported integration, **Auto-select accoun
 | OpenCode Go | Go key, or OpenCode Console sign-in/key used for the **Go provider only**, not Zen pay-as-you-go credits. |
 | Anthropic | OpenCode's Claude Pro/Max OAuth login, **not** the Claude Code login. |
 | GitHub Copilot | OAuth with readable premium-request quota; enterprise-endpoint credentials are not readable candidates. |
-| Coding plans | Key-based `zai-coding-plan`, `zhipuai-coding-plan`, `kimi-for-coding`, `minimax-coding-plan`, `minimax-cn-coding-plan`. |
+| Coding plans | Key-based `zai-coding-plan`, `zhipuai-coding-plan`, `kimi-for-coding`, `kimi`, `kimi-code-plan-cn`, `kimi-code-plan-global`, `minimax-coding-plan`, `minimax-cn-coding-plan`. |
 
 Only a full current account triggers switching; merely having a fuller alternative does not. Reads examine explicit saved credentials without activating candidates or exchanging refresh tokens. Codex, Copilot and coding plans require a demonstrably available candidate. Go, Console and Claude may use an unknown-quota candidate unless a recent native quota failure marks it exhausted. OpenCode Go's usage endpoint and Console OAuth usage remain unverified upstream, so availability is not guaranteed.
 
@@ -65,6 +65,8 @@ OpenRouter **Key Limit** shows the key's remaining USD allowance against its spe
 For z.ai and Zhipu, Usage prefers the configured `apiKey`, including `{env:…}` and `{file:…}` values resolved by OpenCode on its host, then uses the saved credential if that key is unavailable. A missing key with no saved credential is shown as unconfigured. Business errors show a translated provider error and its numeric code when available, instead of quota values. Plan credits use the five-hour and weekly windows; MCP tools have a separate allowance.
 
 GitHub Copilot **Usage** shows consumed allowance as **used / limit used**, or consumed credits for an unlimited pool when GitHub supplies them; otherwise it shows **Unlimited**. Premium requests keep their own label. The footer includes the recognized plan name. Enterprise connections use `https://api.<host>/copilot_internal/user` from the saved connection's host or HTTPS root URL. Use a qualified hostname without credentials, an explicit port (even `:443`), a path beyond `/`, query or fragment; IP addresses and localhost are rejected before sending the token. Redirects are rejected. An invalid destination or a server without this API leaves usage unavailable. Enterprise connections stay outside automatic account selection.
+
+Kimi supports `kimi-code-plan-cn` (kimi.com), `kimi-code-plan-global` (kimi.ai), `kimi-for-coding` and `kimi`. **Usage** tries each integration's active saved key, starting with the conversation's integration, within one shared deadline. It shows available five-hour, weekly, **Monthly** and **Monthly coding** caps as percentages used. Monthly caps follow the provider's reset date; an account with either monthly cap exhausted is unavailable for automatic selection even when a shorter window has capacity.
 
 ### Optional usage environment variables {#usage-environment}
 

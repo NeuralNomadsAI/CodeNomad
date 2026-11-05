@@ -137,6 +137,39 @@ for (const [locale, label, invalid] of [
   } finally { await page.close() }
 })
 
+for (const [locale, monthly, monthlyCode, used] of [
+  ["en-US", "Monthly", "Monthly coding", "30% used"],
+  ["fr-FR", "Mensuel", "Code mensuel", "30 % utilisé"],
+  ["de-DE", "Monatlich", "Monatliches Coding", "30 % verwendet"],
+  ["es-ES", "Mensual", "Programación mensual", "30 % usado"],
+  ["he-IL", "חודשי", "תכנות חודשי", "30% בשימוש"],
+  ["ja-JP", "月間", "月間コーディング", "30% 使用"],
+  ["ne-NP", "मासिक", "मासिक कोडिङ", "30% प्रयोग भयो"],
+  ["ru-RU", "За месяц", "Код за месяц", "Использовано 30%"],
+  ["tr-TR", "Aylık", "Aylık kodlama", "%30 kullanıldı"],
+  ["zh-CN", "每月", "每月编程", "已使用 30%"],
+]) test(`Kimi monthly caps use localized common consumed-percentage rendering (${locale})`, async () => {
+  const page = await browser.newPage({ locale })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1)
+    await requests[0].fulfill({ json: {
+      requestedProviderId: "kimi-code-plan-cn", providerId: "kimi-for-coding", providerName: "Kimi for Coding",
+      supported: true, configured: true, ok: true, fetchedAt: Date.now(), windows: {
+        monthly: { usedPercent: 30, remainingPercent: 70, windowSeconds: null, resetAt: null },
+        "monthly-code": { usedPercent: 30, remainingPercent: 70, windowSeconds: null, resetAt: null },
+      },
+    } })
+    await page.getByText(monthly, { exact: true }).waitFor()
+    await page.getByText(monthlyCode, { exact: true }).waitFor()
+    const percent = await page.evaluate(locale => new Intl.NumberFormat(locale).format(30), locale)
+    assert.equal(await page.getByText(used.replace("30", percent), { exact: true }).count(), 2)
+    assert.deepEqual(await page.getByRole("progressbar").evaluateAll(bars => bars.map(bar => bar.getAttribute("aria-valuenow"))), ["30", "30"])
+    assert.equal(await page.getByText("monthly-code", { exact: true }).count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("free-model usage shows an estimate and estimated reset, then clears them on a provider switch", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   try {

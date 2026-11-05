@@ -287,6 +287,7 @@ export const settingsMessages = {
   "providerUsage.windows.weekly": "שבועי",
   "providerUsage.windows.daily": "יומי",
   "providerUsage.windows.monthly": "חודשי",
+  "providerUsage.windows.monthlyCode": "תכנות חודשי",
   "providerUsage.windows.credits": "זיכויים",
   "providerUsage.windows.keyLimit": "מגבלת המפתח",
   "providerUsage.invalidBaseURL": "כתובת הבסיס של הספק אינה תקינה. יש להגדיר כתובת HTTPS ציבורית.",

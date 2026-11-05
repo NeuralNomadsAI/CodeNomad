@@ -14,43 +14,73 @@ import {
   toUsageWindow,
 } from "../shared"
 
-const kimiAliases = ["kimi-for-coding", "kimi"] as const
+export const kimiAliases = ["kimi-for-coding", "kimi", "kimi-code-plan-cn", "kimi-code-plan-global"] as const
 const kimi: UsageProvider = {
   id: "kimi-for-coding",
   name: "Kimi for Coding",
   aliases: kimiAliases,
-  async fetchQuota(auth) {
-    const key = getCredential(auth, kimiAliases, ["key", "token"])
-    if (!key) return notConfigured(this.id, this.name)
-    return safeFetch(this.id, this.name, async () => {
-      const payload = await fetchJson("https://api.kimi.com/coding/v1/usages", {
-        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      })
-      const windows: Record<string, ReturnType<typeof toUsageWindow>> = {}
-      const usage = payload?.usage
-      if (usage) {
-        const limit = toNumber(usage.limit)
-        const remaining = toNumber(usage.remaining)
-        windows.weekly = toUsageWindow({
-          usedPercent: limit && remaining !== null ? 100 - (remaining / limit) * 100 : null,
-          resetAt: toTimestamp(usage.resetTime),
-        })
-      }
-      for (const item of Array.isArray(payload?.limits) ? payload.limits : []) {
-        const duration = toNumber(item?.window?.duration)
-        const unit = item?.window?.timeUnit
-        const multiplier = unit === "TIME_UNIT_MINUTE" ? 60 : unit === "TIME_UNIT_HOUR" ? 3600 : unit === "TIME_UNIT_DAY" ? 86_400 : null
-        const seconds = duration !== null && multiplier ? duration * multiplier : null
-        const limit = toNumber(item?.detail?.limit)
-        const remaining = toNumber(item?.detail?.remaining)
-        windows[resolveWindowLabel(seconds)] = toUsageWindow({
-          usedPercent: limit && remaining !== null ? 100 - (remaining / limit) * 100 : null,
-          windowSeconds: seconds,
-          resetAt: toTimestamp(item?.detail?.resetTime),
-        })
-      }
-      return { windows }
+  async fetchQuota(auth, context) {
+    const aliases = [...kimiAliases].sort((a, b) => Number(b === context?.integrationID) - Number(a === context?.integrationID))
+    const seen = new Set<string>()
+    const credentials = aliases.flatMap(alias => {
+      const key = getCredential(auth, [alias], ["key", "token"])
+      if (!key || seen.has(key)) return []
+      seen.add(key)
+      return [{ alias, key }]
     })
+    if (!credentials.length) return notConfigured(this.id, this.name)
+    // One deadline for every selected integration, also cancelled by the route/selection owner.
+    const deadline = AbortSignal.timeout(12_000)
+    const signal = context?.signal ? AbortSignal.any([context.signal, deadline]) : deadline
+    let failure = result(this.id, this.name, { ok: false, configured: true })
+    for (const { alias, key } of credentials) {
+      failure = await safeFetch(this.id, this.name, async () => {
+        const host = alias === "kimi-code-plan-global" ? "api.kimi.ai" : "api.kimi.com"
+        const payload = asObject(await fetchBoundedJson(`https://${host}/coding/v1/usages`, {
+          Authorization: `Bearer ${key}`, Accept: "application/json",
+        }, signal))
+        const windows: Record<string, ReturnType<typeof toUsageWindow>> = {}
+        const usage = payload?.usage
+        if (usage) {
+          const limit = toNumber(usage.limit)
+          const remaining = toNumber(usage.remaining)
+          windows.weekly = toUsageWindow({
+            usedPercent: limit && remaining !== null ? 100 - (remaining / limit) * 100 : null,
+            resetAt: toTimestamp(usage.resetTime),
+          })
+        }
+        for (const item of Array.isArray(payload?.limits) ? payload.limits : []) {
+          const duration = toNumber(item?.window?.duration)
+          const unit = item?.window?.timeUnit
+          const multiplier = unit === "TIME_UNIT_MINUTE" ? 60 : unit === "TIME_UNIT_HOUR" ? 3600 : unit === "TIME_UNIT_DAY" ? 86_400 : null
+          const seconds = duration !== null && multiplier ? duration * multiplier : null
+          const limit = toNumber(item?.detail?.limit)
+          const remaining = toNumber(item?.detail?.remaining)
+          windows[resolveWindowLabel(seconds)] = toUsageWindow({
+            usedPercent: limit && remaining !== null ? 100 - (remaining / limit) * 100 : null,
+            windowSeconds: seconds,
+            resetAt: toTimestamp(item?.detail?.resetTime),
+          })
+        }
+        // Managed usage ratios are fractions consumed, including the two independent monthly caps.
+        const usages = asObject(payload?.usages)
+        for (const [field, label, seconds] of [
+          ["limit_5h", "5h", 18_000], ["limit_7d", "weekly", 604_800],
+          ["limit_month_total", "monthly", null], ["limit_month_code", "monthly-code", null],
+        ] as const) {
+          const source = asObject(usages?.[field])
+          const ratio = toNumber(source?.used_ratio)
+          if (ratio === null || ratio < 0 || ratio > 1) continue
+          windows[label] = toUsageWindow({ usedPercent: ratio * 100, windowSeconds: seconds,
+            resetAt: typeof source?.reset_time === "string" ? toTimestamp(source.reset_time) : null })
+        }
+        if (!Object.values(windows).some(window => window.usedPercent !== null)) throw new Error("Quota unavailable")
+        signal.throwIfAborted()
+        return { windows }
+      })
+      if (failure.ok || signal.aborted) break
+    }
+    return failure
   },
 }
 

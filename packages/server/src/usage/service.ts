@@ -57,6 +57,7 @@ async function fetchProvider(provider: UsageProvider, auth: AuthFile, context?: 
   context?.signal?.throwIfAborted()
   const identity = createHash("sha256").update(JSON.stringify([
     provider.aliases.map(alias => auth[alias] ?? null),
+    context?.integrationID ?? null,
     context?.settingsStatus ?? null, context?.settings?.baseURL ?? null, context?.settings?.apiKey ?? null,
   ])).digest("hex")
   const cached = cache.get(provider.id)
@@ -91,7 +92,9 @@ export async function getProviderUsage(
       fetchedAt: Date.now(),
     }
   }
-  const result = await fetchProvider(provider, options.auth ?? {}, options.context)
+  const context = provider.id === "kimi-for-coding"
+    ? { ...options.context, integrationID: options.context?.integrationID ?? requestedProviderId.trim().toLowerCase() } : options.context
+  const result = await fetchProvider(provider, options.auth ?? {}, context)
   options.context?.signal?.throwIfAborted()
   const reason = !result.ok && (result.unavailableReason === "openai-token-sharing-unsupported" || result.unavailableReason === "provider-error" || result.unavailableReason === "minimax-limits-not-shared" || result.unavailableReason === "invalid-base-url")
     ? result.unavailableReason : undefined

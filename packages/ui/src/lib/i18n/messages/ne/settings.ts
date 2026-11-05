@@ -287,6 +287,7 @@ export const settingsMessages = {
   "providerUsage.windows.weekly": "साप्ताहिक",
   "providerUsage.windows.daily": "दैनिक",
   "providerUsage.windows.monthly": "मासिक",
+  "providerUsage.windows.monthlyCode": "मासिक कोडिङ",
   "providerUsage.windows.credits": "क्रेडिट",
   "providerUsage.windows.keyLimit": "कुञ्जीको सीमा",
   "providerUsage.invalidBaseURL": "प्रदायकको आधार URL अमान्य छ। सार्वजनिक HTTPS URL कन्फिगर गर्नुहोस्।",

@@ -287,6 +287,7 @@ export const settingsMessages = {
   "providerUsage.windows.weekly": "За неделю",
   "providerUsage.windows.daily": "За день",
   "providerUsage.windows.monthly": "За месяц",
+  "providerUsage.windows.monthlyCode": "Код за месяц",
   "providerUsage.windows.credits": "Кредиты",
   "providerUsage.windows.keyLimit": "Лимит ключа",
   "providerUsage.invalidBaseURL": "Недопустимый базовый URL провайдера. Укажите публичный HTTPS URL.",

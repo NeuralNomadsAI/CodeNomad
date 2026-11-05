@@ -20,6 +20,8 @@ export interface ProviderResult extends Pick<ProviderUsageResponse, "unavailable
 
 export interface ProviderReadContext {
   signal?: AbortSignal
+  /** Session provider's native integration; orders multi-alias display reads. */
+  integrationID?: string
   /** Effective native settings, server-only; unresolved substitutions are omitted. */
   settings?: { baseURL?: string; apiKey?: string }
   settingsStatus?: "available" | "unavailable" | "unresolved"

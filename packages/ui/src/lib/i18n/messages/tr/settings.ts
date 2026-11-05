@@ -280,6 +280,7 @@ export const settingsMessages = {
   "providerUsage.windows.weekly": "Haftalık",
   "providerUsage.windows.daily": "Günlük",
   "providerUsage.windows.monthly": "Aylık",
+  "providerUsage.windows.monthlyCode": "Aylık kodlama",
   "providerUsage.windows.credits": "Kredi",
   "providerUsage.windows.keyLimit": "Anahtar sınırı",
   "providerUsage.invalidBaseURL": "Sağlayıcının temel URL'si geçersiz. Herkese açık bir HTTPS URL'si yapılandırın.",

@@ -31,7 +31,7 @@
 | OpenCode Go | Go 密钥，或**仅用于 Go 提供商**的 OpenCode Console 登录/密钥，不包括 Zen 按量付费额度。 |
 | Anthropic | OpenCode 的 Claude Pro/Max OAuth 登录，**不是** Claude Code 登录。 |
 | GitHub Copilot | 可读取高级请求配额的 OAuth；企业端点凭据不是可读取候选。 |
-| 编码计划 | 基于密钥的 `zai-coding-plan`、`zhipuai-coding-plan`、`kimi-for-coding`、`minimax-coding-plan`、`minimax-cn-coding-plan`。 |
+| 编码计划 | 基于密钥的 `zai-coding-plan`、`zhipuai-coding-plan`、`kimi-for-coding`、`kimi`、`kimi-code-plan-cn`、`kimi-code-plan-global`、`minimax-coding-plan`、`minimax-cn-coding-plan`。 |
 
 仅当前账户配额耗尽才触发切换；仅有额度更充足的替代账户不会触发。读取会检查显式保存的凭据，不激活候选或交换刷新令牌。Codex、Copilot 和编码计划要求候选明确可用。Go、Console 和 Claude 可以使用配额未知的候选，除非近期原生配额失败将其标记为耗尽。OpenCode Go 用量端点和 Console OAuth 用量仍未获上游验证，因此不保证可用。
 
@@ -65,6 +65,8 @@ OpenRouter 的 **密钥限额** 显示密钥支出上限及其剩余美元金额
 对于 z.ai 和 Zhipu，用量优先使用配置的 `apiKey`，包括由 OpenCode 在其主机上解析的 `{env:…}` 和 `{file:…}` 值；该密钥不可用时使用已保存的凭据。既没有密钥也没有已保存凭据时，提供商显示为未配置。业务错误会以本地化的提供商错误及可用的数字代码代替配额值。套餐积分使用五小时和每周窗口；MCP 工具拥有单独的配额。
 
 GitHub Copilot 的**用量**以**已使用 已用量 / 上限**显示消耗；对于无限配额，若 GitHub 提供已消耗点数则显示该数值，否则显示**无限制**。高级请求保留自己的标签。底部会显示已识别的套餐名称。Enterprise 连接根据已保存连接的主机名或 HTTPS 根 URL，访问 `https://api.<host>/copilot_internal/user`。请使用不含凭据、显式端口（包括 `:443`）、`/` 以外路径、查询或片段的完整主机名；IP 地址和 localhost 会在发送令牌前被拒绝。重定向会被拒绝。目标无效或服务器不提供此 API 时，用量不可用。Enterprise 连接仍不参与自动账户选择。
+
+Kimi 支持 `kimi-code-plan-cn`（kimi.com）、`kimi-code-plan-global`（kimi.ai）、`kimi-for-coding` 和 `kimi`。**用量**会优先使用当前对话的集成，在同一个总时限内依次尝试各集成中已保存的当前有效密钥。可用的五小时、每周、**每月**和**每月编程**限额显示已使用百分比。每月限额遵循提供商给出的重置日期；任一每月限额耗尽的账户均不能作为自动选择的可用候选，即使较短时间窗口仍有余量。
 
 ### 可选用量环境变量 {#usage-environment}
 

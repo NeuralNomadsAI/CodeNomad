@@ -44,6 +44,9 @@ test("maps OpenCode provider aliases to their usage provider", () => {
   assert.equal(resolveUsageProvider("openai")?.id, "codex")
   assert.equal(resolveUsageProvider("copilot")?.id, "github-copilot")
   assert.equal(resolveUsageProvider("grok")?.id, "xai")
+  for (const alias of ["kimi", "kimi-code-plan-cn", "kimi-code-plan-global"]) {
+    assert.equal(resolveUsageProvider(alias)?.id, "kimi-for-coding")
+  }
   for (const providerId of ["google", "google.oauth", "gemini", "antigravity"]) {
     assert.equal(resolveUsageProvider(providerId), null)
   }
@@ -120,6 +123,23 @@ test("adds a matched model's scoped limits to the plan windows", () => {
   assert.deepEqual(Object.keys(selectModelWindows(result, "claude-opus-5-5")), ["5h", "7d", "7d:Opus"])
   assert.equal(selectModelWindows(result, "claude-opus-5-5")["7d:Opus"].usedPercent, 60)
   assert.deepEqual(Object.keys(selectModelWindows(result, "claude-sonnet-5-5")), ["5h", "7d"])
+})
+
+test("Kimi session integration priority participates in the display cache identity", async t => {
+  const keys: string[] = []
+  t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    keys.push(new Headers(init.headers).get("Authorization")!)
+    return Response.json({ usages: { limit_month_total: { used_ratio: keys.length / 10 } } })
+  })
+  const auth = { "kimi-code-plan-cn": "synthetic-cn", "kimi-code-plan-global": "synthetic-global" }
+  clearProviderUsageCache()
+  try {
+    assert.equal((await getProviderUsage("kimi-code-plan-cn", { auth })).windows.monthly.usedPercent, 10)
+    assert.equal((await getProviderUsage("kimi-code-plan-cn", { auth })).windows.monthly.usedPercent, 10)
+    assert.equal((await getProviderUsage(" KIMI-CODE-PLAN-GLOBAL ", { auth })).windows.monthly.usedPercent, 20)
+    assert.equal((await getProviderUsage("kimi", { auth, context: { integrationID: "kimi-code-plan-cn" } })).windows.monthly.usedPercent, 30)
+    assert.deepEqual(keys, ["Bearer synthetic-cn", "Bearer synthetic-global", "Bearer synthetic-cn"])
+  } finally { clearProviderUsageCache() }
 })
 
 test("never serves a cached snapshot across a credential switch", async () => {
