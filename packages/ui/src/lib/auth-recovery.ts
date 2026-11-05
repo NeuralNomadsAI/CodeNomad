@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import { localTransport, type BackendHttp } from "./backend-transport"
+import { localTransport, resolveBackendUrl, type BackendHttp } from "./backend-transport"
 
 /** Browser login recovery only. Never retries a failed application request or
  * interprets an upstream OpenCode 401 as proof of an expired CodeNomad login. */
@@ -10,7 +10,7 @@ export function createAuthRecovery(base: string | undefined, fetcher: typeof fet
   const restored = new Set<() => void>()
   let generation = 0
   let checking: Promise<void> | undefined
-  const url = (path: string) => base ? new URL(path, base).toString() : path
+  const url = (path: string) => resolveBackendUrl(base, path)
 
   function authenticated() {
     const wasRequired = required()

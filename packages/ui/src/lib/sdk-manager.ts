@@ -1,7 +1,7 @@
 import { OpenCode, type OpenCodeClient } from "@opencode/client"
 import { backgroundReads } from "./background-read-queue"
 import { authenticatedFetch, localHttp } from "./auth-recovery"
-import type { BackendHttp } from "./backend-transport"
+import { resolveBackendUrl, type BackendHttp } from "./backend-transport"
 import { prioritizedRead } from "./prioritized-read"
 import { SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../../../server/src/api-types"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
@@ -10,7 +10,10 @@ import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src
 export class SDKManager {
   private clients = new Map<string, OpenCodeClient>()
 
-  constructor(private readonly backend: Pick<BackendHttp, "baseUrl" | "fetch"> = localHttp) {}
+  constructor(private readonly backend: Pick<BackendHttp, "url" | "fetch"> = {
+    fetch: localHttp.fetch,
+    url: path => resolveBackendUrl(localHttp.baseUrl, path, "append-trimmed"),
+  }) {}
 
   private key(instanceId: string, proxyPath: string): string {
     return `${instanceId}:${normalizeProxyPath(proxyPath)}`
@@ -23,7 +26,7 @@ export class SDKManager {
       return existing
     }
 
-    const baseUrl = buildInstanceBaseUrl(proxyPath, this.backend.baseUrl)
+    const baseUrl = this.backend.url(`${normalizeProxyPath(proxyPath)}/`)
     const client = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl, isForeground, this.backend.fetch) })
 
     this.clients.set(key, client)
@@ -44,8 +47,7 @@ export type { OpenCodeClient }
 
 export function buildInstanceBaseUrl(proxyPath: string, apiBase = localHttp.baseUrl): string {
   const normalized = normalizeProxyPath(proxyPath)
-  const base = stripTrailingSlashes(apiBase ?? "")
-  return `${base}${normalized}/`
+  return resolveBackendUrl(apiBase, `${normalized}/`, "append-trimmed")
 }
 
 export function createInstanceFetch(baseUrl: string, isForeground: () => boolean = () => false, fetcher: typeof fetch = authenticatedFetch): typeof globalThis.fetch {
@@ -105,10 +107,6 @@ export function withDeferredMedia(input: RequestInfo | URL, init: RequestInit | 
 function normalizeProxyPath(proxyPath: string): string {
   const withLeading = proxyPath.startsWith("/") ? proxyPath : `/${proxyPath}`
   return withLeading.replace(/\/+/g, "/").replace(/\/+$/, "")
-}
-
-function stripTrailingSlashes(input: string): string {
-  return input.replace(/\/+$/, "")
 }
 
 export const sdkManager = new SDKManager()

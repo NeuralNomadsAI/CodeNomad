@@ -2,16 +2,16 @@ import type {
   ForgeWorkItemKind, ForgeWorkItemsResult, PanelExtensionManifest, PanelExtensionSummary, PanelExtensionCatalog,
 } from "../../../server/src/api-types"
 import { localHttp } from "./auth-recovery"
-import type { BackendHttp } from "./backend-transport"
+import { resolveBackendUrl, type BackendHttp } from "./backend-transport"
 import type { AssetTarget, AssetsResult, AssetReadResult } from "../../../server/src/opencode/session-pruning/assets-contract"
 import type { GenerationTarget, ImagesResult } from "../../../server/src/opencode/session-pruning/assets-gallery-contract"
 import type { PanelConversationStatus, PanelImagesStatus, PanelPreferencesSetStatus } from "../../../server/src/panel-extensions/contract"
 import type { ImagesConversationRequest, ImagesConversationResponse } from "../../../server/src/server/routes/images-conversation-contract"
 
 /** The panel extension routes of one backend. */
-export function createPanelExtensionsApi(http: Pick<BackendHttp, "baseUrl" | "fetch">) {
+export function createPanelExtensionsApi(http: Pick<BackendHttp, "url" | "fetch">) {
   async function request<T>(suffix: string, init?: RequestInit): Promise<T> {
-    const response = await http.fetch(`${http.baseUrl ?? ""}/api/panel-extensions${suffix}`, {
+    const response = await http.fetch(http.url(`/api/panel-extensions${suffix}`), {
       ...init, headers: { "Content-Type": "application/json" }, credentials: "include",
     })
     if (!response.ok) throw new Error("Panel extension request failed")
@@ -71,6 +71,9 @@ export function createPanelExtensionsApi(http: Pick<BackendHttp, "baseUrl" | "fe
   return { panelExtensionsApi4, panelExtensionsApi }
 }
 
-const localPanelExtensions = createPanelExtensionsApi(localHttp)
+const localPanelExtensions = createPanelExtensionsApi({
+  fetch: localHttp.fetch,
+  url: path => resolveBackendUrl(localHttp.baseUrl, path, "append"),
+})
 export const panelExtensionsApi4 = localPanelExtensions.panelExtensionsApi4
 export const panelExtensionsApi = localPanelExtensions.panelExtensionsApi
