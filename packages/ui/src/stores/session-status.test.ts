@@ -4,7 +4,16 @@ import { describe, it } from "node:test"
 import { getIdleSinceForStatusTransition } from "../types/session.ts"
 import { clearSessionIdleFade, getSessionIdleFadeClass, IDLE_STATUS_VISIBILITY_MS, markSessionIdleFadeStarted, shouldShowIdleStatus, shouldShowSessionStatus } from "./session-status.ts"
 import { setSessions } from "./session-state.ts"
-import { shouldSessionHoldWakeLock } from "./wake-lock-eligibility.ts"
+import { shouldAppHoldWakeLock, shouldSessionHoldWakeLock } from "./wake-lock-eligibility.ts"
+
+describe("shouldAppHoldWakeLock", () => {
+  it("keeps the computer awake for the preference or eligible session work", () => {
+    assert.equal(shouldAppHoldWakeLock(false, false), false)
+    assert.equal(shouldAppHoldWakeLock(false, true), true)
+    assert.equal(shouldAppHoldWakeLock(true, false), true)
+    assert.equal(shouldAppHoldWakeLock(true, true), true)
+  })
+})
 
 describe("shouldSessionHoldWakeLock", () => {
   it("holds wake lock only for qualifying active work", () => {

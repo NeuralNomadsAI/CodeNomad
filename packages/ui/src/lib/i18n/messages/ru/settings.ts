@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.behavior.keepComputerAwake.title": "Не переводить компьютер в спящий режим, пока работает CodeNomad",
+  "settings.behavior.keepComputerAwake.info": "Предотвращает переход системы в спящий режим, пока открыт CodeNomad; экран по-прежнему может выключаться. Если параметр отключён, CodeNomad предотвращает переход в спящий режим только во время работы сессии.",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "Предполагаемый сброс {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "Автоматически раскрывать подсессии",

@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.behavior.keepComputerAwake.title": "Mantener el ordenador activo mientras CodeNomad esté en ejecución",
+  "settings.behavior.keepComputerAwake.info": "Impide la suspensión del sistema mientras CodeNomad está abierto; la pantalla puede seguir apagándose. Si se desactiva, CodeNomad mantiene el ordenador activo solo mientras una sesión está trabajando.",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "Reinicio estimado {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "Expandir subsesiones automáticamente",

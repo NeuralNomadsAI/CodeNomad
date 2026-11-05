@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.behavior.keepComputerAwake.title": "Keep the computer awake while CodeNomad is running",
+  "settings.behavior.keepComputerAwake.info": "Prevents system sleep while CodeNomad is open; the screen can still turn off. When off, CodeNomad keeps the computer awake only while a session is working.",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "Estimated reset {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "Automatically expand subsessions",

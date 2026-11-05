@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.behavior.keepComputerAwake.title": "CodeNomad çalışırken bilgisayarı uyanık tut",
+  "settings.behavior.keepComputerAwake.info": "CodeNomad açıkken sistemin uykuya geçmesini önler; ekran yine de kapanabilir. Bu seçenek kapalıyken CodeNomad, bilgisayarı yalnızca bir oturum çalışırken uyanık tutar.",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "Tahmini sıfırlanma {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "Alt oturumları otomatik genişlet",

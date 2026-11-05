@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.behavior.keepComputerAwake.title": "CodeNomad 运行时保持电脑唤醒",
+  "settings.behavior.keepComputerAwake.info": "CodeNomad 打开时阻止系统进入睡眠；屏幕仍可关闭。禁用此选项时，CodeNomad 仅在会话工作期间保持电脑唤醒。",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "预计重置时间 {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "自动展开子会话",
