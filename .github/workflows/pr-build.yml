@@ -352,6 +352,7 @@ jobs:
           packages/ui/src/lib/height-delta.test.ts
           packages/ui/src/lib/scroll-gesture-routing.test.ts
           packages/ui/src/lib/client-identity.test.ts
+          packages/ui/src/lib/backend-identity.test.ts
           packages/ui/src/lib/backend-client.test.ts
           packages/ui/src/lib/backend-transport.test.ts
           packages/ui/src/lib/backend-route-joining.test.ts
@@ -489,6 +490,8 @@ jobs:
           packages/ui/src/stores/instance-startup-priority.test.ts
           packages/ui/src/stores/session-list-startup.test.ts
           packages/ui/src/stores/app-tabs.test.ts
+          packages/ui/src/stores/backend-instance-identity.test.ts
+          packages/ui/src/stores/backend-workspace-list-refresh.test.ts
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/preferences-favorites-mode.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
