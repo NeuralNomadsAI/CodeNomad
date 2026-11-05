@@ -1,19 +1,21 @@
 import type { ProviderUsageWindow } from "../../api-types"
 import { postBoundedJson } from "../bounded-fetch"
-import { createGoogleTokenReader, googleCredential } from "../google-credential"
+import { createGoogleTokenReader, googleCredential, googleQuotaIdentityGuard } from "../google-credential"
 import { asObject, getString, notConfigured, result, toTimestamp, toUsageWindow } from "../shared"
 import type { ProviderResult, ProviderUsage, UsageProvider } from "../types"
 import { antigravityQuota } from "./antigravity"
 
 const readToken = createGoogleTokenReader()
+// Leave time for the route's ownership recheck inside its 15-second budget.
+const QUOTA_TIMEOUT_MS = 12_000
 
 // Code Assist quota schema:
 // https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/code_assist/types.ts
 
 // Strip transport prefixes only; flash, flash-lite, pro and preview variants stay distinct.
 function modelName(value: string): string | null {
-  const name = value.replace(/^(?:google\/)?(?:models\/|gemini-cli[/-])?/, "").toLowerCase()
-  return /^gemini-\d+(?:\.\d+)?-(?:pro|flash(?:-lite)?)(?:-[a-z0-9]+)*$/.test(name) && name.length <= 128 ? name : null
+  const name = value.replace(/^(?:google\/)?(?:models\/|gemini-cli[/-])?/, "")
+  return name.length <= 64 && /^gemini-\d{1,2}(?:\.\d{1,2})?-(?:pro|flash(?:-lite)?)(?:-(?:preview|exp))?(?:-\d{2}-\d{2}|-\d{3})?$/.test(name) ? name : null
 }
 
 /** Exact Google model selection, independent of the shared readers' fuzzy matching. */
@@ -27,18 +29,22 @@ export function selectGoogleModelWindows(reading: ProviderResult, modelId?: stri
 
 export const googleUsage: UsageProvider = {
   id: "google", name: "Gemini CLI", aliases: ["google"],
-  async fetchQuota(auth, signal = AbortSignal.timeout(15_000)) {
+  async fetchQuota(auth, signal) {
     const entry = asObject(auth.google)
     if (!entry) return notConfigured("google", "Gemini CLI")
     const name = entry.methodID === "antigravity" ? "Antigravity" : "Gemini CLI"
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), QUOTA_TIMEOUT_MS)
+    signal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
     try {
       const credential = googleCredential(auth)
       if (!credential) throw new Error("Google usage unavailable")
       if (credential.methodID === "antigravity" && !credential.project) throw new Error("Google usage unavailable")
       const access = await readToken(credential, signal)
+      const safeIdentity = googleQuotaIdentityGuard(auth, access)
       if (credential.methodID === "antigravity") {
         return result("google", name, { configured: true, ok: true,
-          usage: await antigravityQuota(access, credential.project!, signal) })
+          usage: await antigravityQuota(access, credential.project!, signal, safeIdentity) })
       }
       const headers = { Authorization: `Bearer ${access}` }
       let project = credential.project
@@ -55,11 +61,13 @@ export const googleUsage: UsageProvider = {
       for (const raw of payload.buckets) {
         const bucket = asObject(raw)
         const model = typeof bucket?.modelId === "string" ? modelName(bucket.modelId) : null
-        if (!model) continue
+        if (!model || [bucket?.modelId, bucket?.bucketId, bucket?.displayName, bucket?.tokenType]
+          .some(value => typeof value === "string" && !safeIdentity(value)) || !safeIdentity(model)) continue
         const fraction = bucket?.remainingFraction
         const valid = typeof fraction === "number" && Number.isFinite(fraction) && fraction >= 0 && fraction <= 1
         const type = getString(bucket?.tokenType)
         const key = type && /^(?:REQUESTS|TOKENS|INPUT_TOKENS|OUTPUT_TOKENS)$/.test(type) ? type.toLowerCase() : "usage"
+        if (!safeIdentity(`${key}:${model}`)) continue
         const windows = (models[model] ??= { windows: {} }).windows
         // Ambiguous duplicate buckets are unavailable, never summed or overwritten.
         if (windows[key]) throw new Error("Google usage unavailable")
@@ -72,6 +80,8 @@ export const googleUsage: UsageProvider = {
     } catch {
       // Refresh/quota failures are unknown usage, never connection errors or upstream prose.
       return result("google", name, { configured: true, ok: false })
+    } finally {
+      clearTimeout(timeout)
     }
   },
 }

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { readFile } from "node:fs/promises"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page, type Route } from "playwright"
@@ -60,6 +61,8 @@ test("provider usage window keys stay aligned in all ten locales without fallbac
     const { settingsMessages } = await import(new URL(`../../src/lib/i18n/messages/${locale}/settings.ts`, import.meta.url).href)
     assert.deepEqual(windowKeys(settingsMessages), windowKeys(english), locale)
     for (const key of windowKeys(english)) assert.ok(settingsMessages[key].trim(), `${locale}: ${key}`)
+    const help = await readFile(new URL(`../../../../docs/help/${locale}/providers.md`, import.meta.url), "utf8")
+    assert.ok(help.includes(settingsMessages["providerUsage.unavailable"]), `${locale}: help uses the shown unavailable label`)
   }
 })
 
@@ -400,10 +403,10 @@ for (const [locale, labels, fiveHours, weekly, used] of [
     await page.evaluate(() => (window as any).usageFixture.event("credential.switched"))
     await waitRequests(requests, 3)
     await requests[2].fulfill({ json: { ...response, providerName: "Antigravity", windows: {
-      "5h": { ...quota, windowSeconds: 18000 }, "weekly:Claude and GPT": { ...quota, windowSeconds: 604800 },
+      "5h": { ...quota, windowSeconds: 18000 }, "weekly:Claude/GPT": { ...quota, windowSeconds: 604800 },
     } } })
     await page.getByText(fiveHours, { exact: true }).waitFor()
-    await page.getByText(`${weekly} · Claude and GPT`, { exact: true }).waitFor()
+    await page.getByText(`${weekly} · Claude/GPT`, { exact: true }).waitFor()
     assert.equal(await page.getByRole("progressbar").count(), 2)
     assert.equal(await page.getByText(used, { exact: true }).count(), 2)
     assert.deepEqual(errors, [])

@@ -50,7 +50,7 @@ Görünürlük ve sık kullanılanlar, CodeNomad'in seçicilerini düzenler; mod
 
 Etkin görüşmenin sağlayıcı planı pencereleri, sıfırlama süreleri ve desteklenen bakiyeler için sağ paneldeki **Kullanım** öğesini kullanın. Bu sağlayıcı okumaları, mesaj başına **Tokenlar** ve maliyet tahminlerinden farklıdır: abonelik kotası, görünür konuşma dökümünden hesaplanan bir fatura değildir. Eksik, eski veya bilinmeyen bir okuma, sıfır kullanım veya kalan kapasitenin kanıtı değildir. **Ayarlar → Gelişmiş** içindeki **Sağlayıcı kredi bakiyesi** ek bakiye ekranını kontrol eder.
 
-Gemini CLI üzerinden kaydedilen Google bağlantılarında **Kullanım** model başına sınırları gösterir; Antigravity bağlantılarında **5 saat** ve **Haftalık** sınırları, sağlandığında model ailelerine ait ayrı kotalarla gösterir. Kullanılamayan kota bilinmiyor olarak görünür. Bu bağlantılarda hesap seçimi manuel kalır.
+Gemini CLI üzerinden kaydedilen Google bağlantılarında **Kullanım** model başına sınırları gösterir; Antigravity bağlantılarında **5 saat** ve **Haftalık** sınırları, sağlandığında model ailelerine ait ayrı kotalarla gösterir. Kota kullanılamadığında “Kullanım bilgisi geçici olarak kullanılamıyor.” gösterilir. Bu bağlantılarda hesap seçimi manuel kalır.
 
 Google'ın [Antigravity SSS](https://antigravity.google/docs/faq/) sayfası, Antigravity girişiyle üçüncü taraf yazılım kullanmanın hizmet koşullarını ihlal ettiğini ve hesabın askıya alınmasına veya kapatılmasına yol açabileceğini belirtir.
 

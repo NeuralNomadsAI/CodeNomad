@@ -50,7 +50,7 @@ Sichtbarkeit und Favoriten ordnen CodeNomads Auswahlfelder; sie deinstallieren k
 
 Verwenden Sie **Nutzung** im rechten Panel für die Anbieter-Planfenster, Rücksetzzeiten und unterstützten Guthaben der aktiven Unterhaltung. Diese Anbieterwerte unterscheiden sich von **Tokens** und Kostenschätzungen pro Nachricht: Ein Abonnementkontingent ist keine aus dem sichtbaren Verlauf berechnete Rechnung. Ein fehlender, veralteter oder unbekannter Wert bedeutet weder Nullnutzung noch nachgewiesene Restkapazität. **Anbieterguthaben** unter **Einstellungen → Erweitert** steuert ergänzende Guthabenanzeigen.
 
-Für über Gemini CLI gespeicherte Google-Verbindungen zeigt **Nutzung** modellbezogene Limits; für Antigravity-Verbindungen die Limits **5 Stunden** und **Wöchentlich**, mit getrennten Kontingenten je Modellfamilie, sofern bereitgestellt. Nicht verfügbare Kontingente erscheinen als unbekannt. Die Kontoauswahl für diese Verbindungen bleibt manuell.
+Für über Gemini CLI gespeicherte Google-Verbindungen zeigt **Nutzung** modellbezogene Limits; für Antigravity-Verbindungen die Limits **5 Stunden** und **Wöchentlich**, mit getrennten Kontingenten je Modellfamilie, sofern bereitgestellt. Bei nicht verfügbaren Kontingenten erscheint „Nutzungsdaten sind vorübergehend nicht verfügbar.“ Die Kontoauswahl für diese Verbindungen bleibt manuell.
 
 Googles [Antigravity-FAQ](https://antigravity.google/docs/faq/) erklärt, dass die Nutzung von Drittanbietersoftware mit einer Antigravity-Anmeldung gegen die Nutzungsbedingungen verstößt und zur Sperrung oder Kündigung des Kontos führen kann.
 

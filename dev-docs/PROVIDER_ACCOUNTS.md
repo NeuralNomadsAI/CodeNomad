@@ -83,12 +83,18 @@ requires saved project context. Never onboard a project for quota display.
 `usage/google-credential.ts` uses OpenCode's access token until its actual expiry,
 then refreshes it with the matching application's public desktop client at the
 fixed `https://oauth2.googleapis.com/token` endpoint. Requests reject redirects,
-share the route's 15-second budget and cap responses at 64 KiB. The refreshed
+use a 12-second Google deadline within the route's 15-second budget and cap
+responses at 64 KiB. The refreshed
 access token and expiry stay only in a server-memory cache bounded to 32
 credential identities, with coalesced concurrent refreshes and expiry eviction.
 Never persist these tokens, send them to the browser, log them or retain a refresh
 token returned by Google. Credential changes select a distinct cache identity.
-Any refresh or quota failure yields unknown quota.
+Any refresh or quota failure yields unknown quota, shown as the localized
+“Usage is temporarily unavailable.” message. Quota identities use bounded,
+lowercase Gemini model names with explicit variant suffixes or canonical
+Antigravity family labels (`Gemini`, `Claude/GPT`). Drop identities that contain
+native/refreshed access tokens, packed refresh-token segments or client secrets
+before publishing quota windows.
 
 Gemini CLI exposes exact per-model limits; Antigravity exposes explicit 5-hour
 and weekly windows, keeping model-family pools separate. Both stay manual,

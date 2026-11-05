@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test, { beforeEach } from "node:test"
-import { googleCredential, createGoogleTokenReader } from "./google-credential"
+import { googleCredential, createGoogleTokenReader, googleQuotaIdentityGuard } from "./google-credential"
 import { googleOAuthClients } from "./google-credential"
 
 const fakeClients = {
@@ -15,6 +15,17 @@ beforeEach(t => {
 const login = (changes: Record<string, unknown> = {}) => ({ google: { type: "oauth", methodID: "gemini-cli",
   access: "fake-native-access", refresh: "fake-refresh|fake-project|fake-managed", expires: 1, ...changes } })
 const signal = () => AbortSignal.timeout(2000)
+
+test("quota identity guard rejects every token and packed context segment, including case-normalized echoes", () => {
+  const guard = googleQuotaIdentityGuard(login({ refresh: "fake-refresh|fake-project|fake-managed|fake-extra" }), "fake-refreshed-access")
+  for (const secret of ["fake-native-access", "fake-refreshed-access", "fake-refresh", "fake-project", "fake-managed", "fake-extra",
+    "fake-gemini-client-secret", "fake-antigravity-client-secret"]) {
+    assert.equal(guard(`gemini-2.5-pro-${secret}`), false)
+    assert.equal(guard(`Gemini ${secret.toUpperCase()}`), false)
+  }
+  assert.equal(guard("gemini-2.5-pro-preview-06-05"), true)
+  assert.equal(guard("weekly:Claude/GPT"), true)
+})
 
 test("Google parser selects only the declared client and separates refresh/project context", () => {
   for (const methodID of ["oauth", "unknown", undefined]) assert.equal(googleCredential(login({ methodID })), null)

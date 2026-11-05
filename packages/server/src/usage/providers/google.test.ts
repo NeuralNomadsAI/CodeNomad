@@ -52,7 +52,7 @@ test("discovers an existing project only when packed context is absent; never on
   assert.equal(selectGoogleModelWindows(reading)["usage:gemini-2.5-pro"].usedPercent, 100)
   assert.deepEqual(requests.map(request => request.url), ["https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", quota])
   assert.equal(requests[1].body, '{"project":"fake-discovered"}')
-  assert.ok(requests.every(request => request.signal === signal))
+  assert.ok(requests.every(request => request.signal === requests[0].signal && !request.signal?.aborted))
 })
 
 test("missing project, malformed quota, HTTP errors, redirects, timeout and oversized JSON are unknown", async t => {

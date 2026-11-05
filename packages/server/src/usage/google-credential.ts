@@ -50,6 +50,15 @@ export function googleCredential(auth: AuthFile): GoogleCredential | null {
   }
 }
 
+/** Reject even otherwise valid quota identities when they echo a credential or packed context. */
+export function googleQuotaIdentityGuard(auth: AuthFile, access: string) {
+  const entry = asObject(auth.google)
+  const secrets = [access, getString(entry?.access), ...(getString(entry?.refresh) ?? "").split("|"),
+    googleOAuthClients.get("gemini-cli").client_secret, googleOAuthClients.get("antigravity").client_secret].filter((value): value is string => Boolean(value))
+    .map(value => value.toLowerCase())
+  return (value: string) => !secrets.some(secret => value.toLowerCase().includes(secret))
+}
+
 /** Only access tokens and expiries survive a refresh; OpenCode remains the connection owner. */
 export function createGoogleTokenReader() {
   const cache = new Map<string, { access: string; expires: number }>()

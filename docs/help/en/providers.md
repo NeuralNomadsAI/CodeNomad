@@ -50,7 +50,7 @@ Visibility and favorites organize CodeNomad's selectors; they do not uninstall m
 
 Use **Usage** in the right panel for the active conversation's provider-plan windows, reset times and supported balances. These provider readings are different from per-message **Tokens** and cost estimates: a subscription quota is not a bill calculated from the visible transcript. A missing, stale or unknown reading is not zero usage or proof of remaining capacity. **Provider credit balance** in **Settings → Advanced** controls supplemental balance display.
 
-For Google connections saved through Gemini CLI, **Usage** shows per-model limits; for Antigravity connections, it shows **5 hours** and **Weekly** limits, with separate model-family pools where supplied. Unavailable quota appears as unknown. These connections stay under manual account selection.
+For Google connections saved through Gemini CLI, **Usage** shows per-model limits; for Antigravity connections, it shows **5 hours** and **Weekly** limits, with separate model-family pools where supplied. Unavailable quota shows “Usage is temporarily unavailable.” These connections stay under manual account selection.
 
 Google's [Antigravity FAQ](https://antigravity.google/docs/faq/) states that using third-party software with an Antigravity login violates its terms and may lead to account suspension or termination.
 

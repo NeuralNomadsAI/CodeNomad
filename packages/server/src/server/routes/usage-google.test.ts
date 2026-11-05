@@ -32,7 +32,8 @@ function harness(methodID = "gemini-cli") {
     value: { type: "oauth", methodID, access: markers[0], refresh: `${markers[2]}|${markers[6]}`,
       expires: Date.now() + 3600_000, metadata: { email: "fake-private-email@example.invalid" } } }
   const state = { credential, refreshCalls: 0, quotaCalls: 0, failRefresh: false, quotaStatus: 200, malformed: false,
-    oversized: false, transportFailure: false, unknownWindow: false, gate: undefined as (() => Promise<void>) | undefined,
+    oversized: false, transportFailure: false, unknownWindow: false, quotaPayload: undefined as unknown,
+    gate: undefined as (() => Promise<void>) | undefined,
     native: [] as Array<{ path: string; method: string }>, outbound: [] as Array<{ url: string; init?: RequestInit }> }
   const logs: string[] = []
   const app = Fastify({ logger: { stream: { write(text: string) { logs.push(text) } } } })
@@ -87,9 +88,10 @@ function harness(methodID = "gemini-cli") {
       headers: { location: `https://never-follow.invalid/${markers[0]}`, "x-upstream-private": echoed } })
     if (state.malformed) return new Response(echoed)
     if (state.oversized) return new Response(echoed + "x".repeat(65_537))
+    if (state.quotaPayload !== undefined) return Response.json(state.quotaPayload, { headers: { "x-upstream-private": echoed } })
     if (antigravity) return Response.json({ groups: [
       { displayName: "Gemini Models", description: echoed, buckets: [
-        { window: state.unknownWindow ? "unknown" : "5h", remainingFraction: 0.75, bucketId: echoed, displayName: echoed },
+        { window: state.unknownWindow ? "unknown" : "5h", remainingFraction: 0.75, bucketId: "gemini-5h", description: echoed },
         { window: state.unknownWindow ? undefined : "weekly", remainingFraction: 0.5, resetTime: "2026-11-12T00:00:00Z", bucketId: "gemini-weekly" },
       ] },
       { displayName: echoed, buckets: [{ window: "5h", remainingFraction: 0 }] },
@@ -208,6 +210,84 @@ test(`${methodID} quota failures redact echoed secrets in bodies, headers and lo
     assert.equal(h.state.outbound.length, 7, "redirect/error never triggers another endpoint")
     h.assertPrivate(responses)
   } finally { clearProviderUsageCache(); await h.app.close() }
+})
+
+test(`${methodID} quota identities cannot reflect native, refreshed, refresh-context or client secrets`, async t => {
+  const h = harness(methodID)
+  t.mock.method(globalThis, "fetch", h.fetchUpstream)
+  h.state.credential.value = { ...h.state.credential.value, expires: 1 } as typeof h.state.credential.value
+  const bucket = { window: "5h", remainingFraction: 0.5 }
+  const secrets = [0, 1, 2, 3, 6, 7].map(index => h.markers[index])
+  h.state.quotaPayload = methodID === "antigravity" ? { groups: [
+    ...h.markers.map(marker => ({ displayName: `Gemini ${marker}`, buckets: [bucket] })),
+    ...secrets.map(marker => ({ displayName: "Claude and GPT", groupId: marker, buckets: [bucket] })),
+    { displayName: "Gemini", buckets: secrets.map(bucketId => ({ ...bucket, bucketId })) },
+    { displayName: "Claude and GPT", buckets: [bucket] },
+  ] } : { buckets: [
+    ...h.markers.map(marker => ({ modelId: `gemini-2.5-pro-${marker}`, remainingFraction: 0 })),
+    ...secrets.map(bucketId => ({ modelId: "gemini-2.5-pro", bucketId, remainingFraction: 0 })),
+    ...["gemini-2.5-pro-arbitrary", "gemini-2.5-pro-preview-private", "GEMINI-2.5-PRO", `gemini-2.5-pro-${"1".repeat(65)}`]
+      .map(modelId => ({ modelId, remainingFraction: 0 })),
+    { modelId: "gemini-2.5-flash", remainingFraction: 0.5 },
+  ] }
+  try {
+    const original = JSON.stringify(h.state.credential)
+    const response = await h.app.inject(url.replace("&modelId=gemini-2.5-pro", ""))
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.json().ok, true)
+    assert.deepEqual(Object.keys(response.json().windows), [methodID === "antigravity" ? "5h:Claude/GPT" : "usage:gemini-2.5-flash"])
+    assert.equal(h.state.refreshCalls, 1)
+    assert.equal(JSON.stringify(h.state.credential), original)
+    h.assertPrivate([response])
+  } finally { clearProviderUsageCache(); await h.app.close() }
+})
+
+for (const source of [0, 1, 2, 6]) test(`${methodID} drops allowlisted identities containing credential component ${source}`, async t => {
+  const h = harness(methodID)
+  h.markers[source] = methodID === "antigravity" ? "Claude" : "gemini-2.5-pro"
+  h.state.credential.value = { ...h.state.credential.value, access: h.markers[0],
+    refresh: `${h.markers[2]}|${h.markers[6]}`, expires: 1 } as typeof h.state.credential.value
+  h.state.quotaPayload = methodID === "antigravity"
+    ? { groups: [{ displayName: "Claude and GPT", buckets: [{ window: "5h", remainingFraction: 0.5 }] }] }
+    : { buckets: [{ modelId: "models/gemini-2.5-pro", remainingFraction: 0.5 }] }
+  t.mock.method(globalThis, "fetch", h.fetchUpstream)
+  try {
+    const response = await h.app.inject(url.replace("&modelId=gemini-2.5-pro", ""))
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.json().configured, true)
+    assert.equal(response.json().ok, false)
+    assert.deepEqual(response.json().windows, {})
+    h.assertPrivate([response])
+  } finally { clearProviderUsageCache(); await h.app.close() }
+})
+
+for (const phase of ["refresh", "quota"]) test(`${methodID} hanging ${phase} returns unknown quota before the route deadline`, async t => {
+  const h = harness(methodID)
+  h.state.credential.value = { ...h.state.credential.value, expires: phase === "refresh" ? 1 : Date.now() + 3600_000 } as typeof h.state.credential.value
+  let entered!: () => void
+  const started = new Promise<void>(resolve => { entered = resolve })
+  let upstreamSignal: AbortSignal | null | undefined
+  t.mock.method(globalThis, "fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+    upstreamSignal = init?.signal
+    assert.ok(upstreamSignal)
+    entered()
+    return new Promise<Response>((_resolve, reject) => upstreamSignal!.addEventListener("abort", () => reject(new Error("fake-private-timeout")), { once: true }))
+  })
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  try {
+    const responsePromise = h.app.inject(url)
+    await started
+    t.mock.timers.tick(12_000)
+    const response = await responsePromise
+    assert.equal(upstreamSignal?.aborted, true)
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.json().configured, true)
+    assert.equal(response.json().ok, false)
+    assert.equal(response.json().error, undefined)
+    assert.deepEqual(response.json().windows, {})
+    assert.equal(response.body.includes("fake-private-timeout"), false)
+    h.assertPrivate([response])
+  } finally { t.mock.timers.reset(); clearProviderUsageCache(); await h.app.close() }
 })
 }
 

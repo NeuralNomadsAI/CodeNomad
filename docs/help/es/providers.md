@@ -50,7 +50,7 @@ La visibilidad y los favoritos organizan los selectores de CodeNomad; no desinst
 
 Usa **Uso** en el panel derecho para ver los periodos del plan del proveedor de la conversación activa, sus horas de reinicio y los saldos compatibles. Estas lecturas del proveedor difieren de los **Tokens** por mensaje y las estimaciones de coste: una cuota de suscripción no es una factura calculada a partir de la transcripción visible. Una lectura ausente, obsoleta o desconocida no equivale a uso cero ni demuestra capacidad restante. **Saldo de créditos del proveedor** en **Configuración → Avanzado** controla la visualización complementaria del saldo.
 
-Para las conexiones de Google guardadas mediante Gemini CLI, **Uso** muestra límites por modelo; para las conexiones de Antigravity, muestra los límites **5 horas** y **Semanal**, con cuotas separadas por familia de modelos cuando se proporcionan. La cuota no disponible aparece como desconocida. La selección de estas cuentas sigue siendo manual.
+Para las conexiones de Google guardadas mediante Gemini CLI, **Uso** muestra límites por modelo; para las conexiones de Antigravity, muestra los límites **5 horas** y **Semanal**, con cuotas separadas por familia de modelos cuando se proporcionan. Si la cuota no está disponible, aparece «El uso no está disponible temporalmente.». La selección de estas cuentas sigue siendo manual.
 
 Las [preguntas frecuentes de Antigravity](https://antigravity.google/docs/faq/) de Google indican que usar software de terceros con un inicio de sesión de Antigravity infringe sus condiciones y puede provocar la suspensión o cancelación de la cuenta.
 

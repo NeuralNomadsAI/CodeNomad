@@ -50,7 +50,7 @@ La visibilité et les favoris organisent les sélecteurs de CodeNomad ; ils ne d
 
 Utilisez **Utilisation** dans le panneau droit pour les fenêtres de quota du fournisseur de la conversation active, leurs réinitialisations et les soldes pris en charge. Ces lectures diffèrent des **Tokens** par message et des estimations de coût : un quota d’abonnement n’est pas une facture calculée sur la transcription visible. Une lecture manquante, périmée ou inconnue n’est ni une utilisation nulle ni une preuve de capacité restante. **Solde de crédits du fournisseur** dans **Paramètres → Avancé** contrôle l’affichage complémentaire du solde.
 
-Pour les connexions Google enregistrées via Gemini CLI, **Utilisation** affiche les limites par modèle ; pour les connexions Antigravity, les limites **5 heures** et **Hebdomadaire**, avec des quotas distincts par famille de modèles lorsqu’ils sont fournis. Un quota indisponible apparaît comme inconnu. La sélection de ces comptes reste manuelle.
+Pour les connexions Google enregistrées via Gemini CLI, **Utilisation** affiche les limites par modèle ; pour les connexions Antigravity, les limites **5 heures** et **Hebdomadaire**, avec des quotas distincts par famille de modèles lorsqu’ils sont fournis. Si le quota est indisponible, le panneau affiche « L'utilisation est temporairement indisponible. » La sélection de ces comptes reste manuelle.
 
 La [FAQ Antigravity](https://antigravity.google/docs/faq/) de Google indique que l’utilisation de logiciels tiers avec une connexion Antigravity enfreint ses conditions et peut entraîner la suspension ou la clôture du compte.
 
