@@ -83,8 +83,8 @@ If a client reports a certificate warning, stop and check the hostname, SANs, tr
 
 ## Save a remote server {#saved-servers}
 
-1. On the desktop home page or in the **Open a tab** launcher, open **Browse** and paste the server's address or a pairing link into **Server address or link**, then press Enter: the server is saved under its host name and opens. **Settings → Servers** offers the same field.
-2. Use a trusted HTTPS origin. If its certificate fails the check, the error shows under the field with **Skip TLS verification**: tick it only for a server you trust, then press Enter again; that server opens in its own window.
+1. On Home, an empty tab or the **Open a tab** launcher, open **Browse** and enter the address or pairing link in **Server address or link**. Pasting adds it immediately; Enter adds typed text. Adding only saves the server under its host name and focuses its row; the launcher stays open. Click the saved row to open it. **Settings → Servers** offers the same field.
+2. Use a trusted HTTPS origin. If its certificate fails the check, the error shows under the field with **Skip TLS verification**: tick it only for a server you trust, then press Enter again to save it. Selecting that saved server opens its own window.
 3. Sign in on that server. Rename it or change its address with **Edit server** in **Settings → Servers**.
 
 Saved servers are listed under **Browse**: choose one to open it again. **Settings → Servers** is where you open, edit (**Edit server**: name, address, certificate check) and remove (**Remove saved server**) them. Bookmarks belong to this CodeNomad configuration, not the remote server's projects. Saving a URL does not start the server or grant access. **Remove saved server** removes the bookmark, not remote conversations, the backend or its credentials.
@@ -99,7 +99,7 @@ For Remote Control, paste a fresh pairing link into **Server address or link** i
 
 In the desktop app (Electron, or Tauri on Windows), a saved server can also open one of its projects in a tab of this window, beside your local projects:
 
-1. On the home page or in the **Open a tab** launcher, open **Browse** and choose a server, or paste an address or a pairing link into **Server address or link**.
+1. On Home, an empty tab or the **Open a tab** launcher, open **Browse** and choose a saved server. To add one first, use **Server address or link**, then click its new row.
 2. Pick the folder in the tab. The tab then shows the server icon and the project name, and the project joins **Recent**: choosing it there reopens that server and folder directly.
 
 The tab shows only that project; its conversations, files, Git, settings and Missions run on the remote server. It uses the storage of the server's remote window, so an existing sign-in or paired device is reused, and remote tabs come back when CodeNomad restores your tabs. A server without this mode shows its full interface in the tab. Servers that skip TLS verification, and the Tauri build on macOS and Linux, keep opening a remote window. The page in a tab can show notifications but has no other access to this computer and stays on its server. Web clients and Remote Control devices have no remote tabs. **Remove saved server**, in **Settings → Servers**, also closes its tabs. Before a project is chosen, the tab shows the server's name. Sign in on the server's page in the tab; CodeNomad reuses that sign-in on later launches.

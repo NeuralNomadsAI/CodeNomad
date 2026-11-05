@@ -19,6 +19,9 @@ export type RemoteServerInput = {
   skipTlsVerify: boolean
 }
 
+// Pairing links wait in this renderer until the user opens the saved server.
+const pendingPairingEntries = new Map<string, string>()
+
 /** A failed probe, with the server's reason code (`tls_error` for a certificate that failed the check). */
 export class RemoteServerProbeError extends Error {
   constructor(message: string, readonly code?: string) {
@@ -62,18 +65,19 @@ export function useRemoteServerProfiles() {
       baseUrl: probe.normalizedUrl,
       skipTlsVerify,
     })
+    if (saved && saved.baseUrl !== profile.baseUrl) pendingPairingEntries.delete(profile.id)
     return { profile, entryUrl: pairing?.entryUrl }
   }
 
   const saveServer = async (input: RemoteServerInput, requestedWindow: boolean, windowOptions: RemoteWindowOpenOptions = {}) => {
-    // A Remote Control pairing code is consumed by the window that opens it, so a pairing link opens one where possible.
     const pairing = splitPairingLink(input.baseUrl)
-    const openWindow = requestedWindow || (pairing !== null && canOpenRemoteWindows())
+    const openWindow = requestedWindow
     if (openWindow && !canOpenRemoteWindows()) {
       throw new Error("Remote server windows can only be opened from a local desktop window")
     }
 
     const { profile } = await saveProfile(input)
+    if (pairing) pendingPairingEntries.set(profile.id, pairing.entryUrl)
 
     if (openWindow) {
       const proxySession =
@@ -82,7 +86,8 @@ export function useRemoteServerProfiles() {
           : undefined
 
       try {
-        await openRemoteServerWindow(profile, pairing?.entryUrl ?? proxySession?.windowUrl, proxySession?.sessionId, windowOptions)
+        await openRemoteServerWindow(profile, pendingPairingEntries.get(profile.id) ?? proxySession?.windowUrl, proxySession?.sessionId, windowOptions)
+        pendingPairingEntries.delete(profile.id)
       } catch (error) {
         if (proxySession) void serverApi.deleteRemoteProxySession(proxySession.sessionId).catch(() => {})
         throw error
@@ -113,27 +118,28 @@ export function useRemoteServerProfiles() {
 
   /** A saved server opens a project tab, or its own window when it cannot (unverified certificate, no tabs here). */
   const openServer = (profile: RemoteServerProfile, entryUrl?: string, blankId: string | null = activeBlankTabId() ?? null) => {
+    entryUrl ??= pendingPairingEntries.get(profile.id)
     if (opensRemoteProjectTab(profile)) {
       openRemoteProject(profile.id, entryUrl ? { entryUrl } : {}, blankId)
+      pendingPairingEntries.delete(profile.id)
       void markRemoteServerConnected(profile.id).catch(() => {})
     } else {
       void connectSavedServer(profile.id)
     }
   }
 
-  /**
-   * The server dialog's submit: saves the server, then opens it on Connect, or always for a pairing
-   * link, whose single-use code is consumed where the server opens (a tab, else its own window).
-   */
+  /** Saves a server; only an explicit Connect opens it. Pairing entries stay in memory until then. */
   const submitServer = async (input: RemoteServerInput, open: boolean) => {
     const blankId = activeBlankTabId() ?? null
-    if (!opensRemoteProjectTab(input)) return void await saveServer(input, open)
     const { profile, entryUrl } = await saveProfile(input)
-    if (open || entryUrl) openServer(profile, entryUrl, blankId)
+    if (entryUrl) pendingPairingEntries.set(profile.id, entryUrl)
+    if (open) openServer(profile, entryUrl, blankId)
+    return profile
   }
 
   // A removed server's project tabs close with it.
   const removeServer = (id: string) => {
+    pendingPairingEntries.delete(id)
     closeRemoteProjectTabsForServer(id)
     removeRemoteServerProfile(id)
   }

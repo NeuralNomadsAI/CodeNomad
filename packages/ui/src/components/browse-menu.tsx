@@ -31,7 +31,7 @@ export const browseEntryCount = () => 1 + (canOpenRemoteWindows() ? savedServers
  * Browse, shared by the home page (a tab) and the new-instance launcher (a
  * folded section): this computer's folders, each saved CodeNomad server, whose
  * project tab picks the folder, each configured SideCar, then the field that
- * adds a server and opens it.
+ * adds a server to the list.
  * Only host windows (never a web client, a Remote Control device or a remote
  * page) list or add servers.
  */
@@ -124,9 +124,9 @@ export default function BrowseMenu(props: BrowseMenuProps) {
               </button>
             )}
           </For>
-          {/* Adding a server opens it at once (its tab, else its window); the launcher closes then. */}
           <Show when={canOpenRemoteWindows()}>
-            <ServerAddField navAttribute="data-browse-nav" disabled={props.isLoading} onAdded={() => props.onRun?.()} />
+            <ServerAddField navAttribute="data-browse-nav" disabled={props.isLoading}
+              onAdded={(id) => queueMicrotask(() => bodyRef?.querySelector<HTMLElement>(`[data-remote-server="${CSS.escape(id)}"]`)?.focus())} />
           </Show>
         </div>
       </Show>

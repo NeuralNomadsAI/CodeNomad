@@ -9,10 +9,13 @@
   min-height: 100%;
 }
 
+.folder-home-root--blank { height: 100%; }
+
 @media (max-width: 639px) {
   .folder-home-shell {
     padding-top: 3.5rem;
   }
+  .folder-home-root--blank .folder-home-shell { padding-top: 0; }
 }
 
 .folder-home-hero {

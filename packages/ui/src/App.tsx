@@ -16,7 +16,6 @@ import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
 import { SettingsScreen } from "./components/settings-screen"
 import { NativeTitlebar, hasNativeTitlebar } from "./components/native-titlebar"
-import BlankTabView from "./components/blank-tab-view"
 import { activeBlankTabId, openBlankTab, closeBlankTab, replaceBlankTab, getInstanceAppTabId } from "./stores/app-tabs"
 import { SideCarView } from "./components/sidecar-view"
 import { RemoteProjectView } from "./components/remote-project-view"
@@ -870,7 +869,7 @@ const App: Component = () => {
                   ) : tab.kind === "blank" ? (
                     <div class="flex-1 min-h-0 overflow-auto" style={{ display: isVisible() ? "flex" : "none" }}
                       data-tab-id={tab.id} data-tab-kind="blank" data-tab-visible={isVisible() ? "true" : "false"}>
-                      <BlankTabView active={isVisible()} isLoading={isSelectingFolder()}
+                      <FolderSelectionView blank active={isVisible()} isLoading={isSelectingFolder()}
                         onSelectFolder={(path) => void handleSelectFolder(path, tab.id)} onSelectExistingInstance={handleSelectExistingInstance}
                         onNewTemporaryInstance={() => void handleNewTemporaryInstance(tab.id)} />
                     </div>

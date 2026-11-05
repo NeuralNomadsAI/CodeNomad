@@ -10,11 +10,11 @@ import "../../../src/index.css"
 
 // The page's inline script declares a native Preferences window (no project tabs) that records opened remote windows.
 const Harness = () => {
-  const { remoteServers } = useRemoteServerProfiles()
+  const { remoteServers, openServer } = useRemoteServerProfiles()
   return (
     <main style={{ width: "min(900px, 100%)" }}>
-      <ul data-testid="servers"><For each={remoteServers()}>{(server) => <li>{server.id} {server.baseUrl}</li>}</For></ul>
-      <ServerAddField open={false} />
+      <ul data-testid="servers"><For each={remoteServers()}>{(server) => <li><button onClick={() => openServer(server)}>{server.id} {server.baseUrl}</button></li>}</For></ul>
+      <ServerAddField />
     </main>
   )
 }

@@ -3,6 +3,8 @@ import { after, before, test } from "node:test"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
+import { mkdir } from "node:fs/promises"
+import { fileURLToPath } from "node:url"
 
 // The real application (src/main.tsx) in three roles: the page a remote server
 // serves inside a host tab (?codenomadEmbed=project), a web or Remote Control
@@ -118,7 +120,7 @@ async function browse(page: Page) {
   if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click()
 }
 
-// Browse's last row: the field that adds a server and opens it. Enter submits it.
+// Browse's last row: the field that saves a server. Enter submits it.
 async function addServer(page: Page, address: string) {
   await browse(page)
   const field = page.getByRole("textbox", { name: "Server address or link" })
@@ -245,7 +247,7 @@ test("a local window opens a saved server as a project tab whose view follows th
   } finally { await page.close() }
 })
 
-test("Browse's field opens a pasted pairing link in its tab and refuses an address carrying credentials, without a dialog", async () => {
+test("Browse saves a pairing link without opening it and refuses credentials; clicking the server pairs", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
   try {
     const fixture = await open(page, "", { context: "local", host: "electron" })
@@ -253,7 +255,7 @@ test("Browse's field opens a pasted pairing link in its tab and refuses an addre
     await page.getByRole("alert").getByText("Remove the user name and password from the address.").waitFor()
     assert.deepEqual(fixture.probes, [])
 
-    // A pasted link is added at once; its tab opens and consumes the code.
+    // A pasted link is saved at once; only clicking its row consumes the code.
     const tunnel = "https://desk.opentunnel.test"
     await field.fill("")
     await field.evaluate((input, link) => {
@@ -261,7 +263,12 @@ test("Browse's field opens a pasted pairing link in its tab and refuses an addre
       data.setData("text", link)
       input.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }))
     }, `${tunnel}/remote-pair#single-use-code`)
-    await page.locator(".tab-pill", { hasText: "desk.opentunnel.test" }).waitFor()
+    const row = page.getByRole("button", { name: "Open a project on desk.opentunnel.test" })
+    await row.waitFor()
+    await page.waitForFunction(() => document.activeElement?.getAttribute("data-remote-server"))
+    assert.equal((await views(page)).opened.length, 0)
+    assert.equal((await views(page)).windows.length, 0)
+    await row.click()
     await page.waitForFunction(() => (window as any).fixtureViews.opened.length === 1)
     const [opened] = (await views(page)).opened
     assert.equal(opened.url, `${tunnel}/remote-pair#single-use-code`)
@@ -272,11 +279,17 @@ test("Browse's field opens a pasted pairing link in its tab and refuses an addre
   } finally { await page.close() }
 })
 
-test("an address added in Browse opens its tab at once, named after its host; an address already saved reuses its server", async () => {
+test("an address added in Browse only joins the list and receives focus; clicking it opens its tab", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
   try {
     const fixture = await open(page, "", { context: "local", host: "electron", uiState: { remoteServers: [server("box")] } })
     await addServer(page, "https://lab.example:8443")
+    const row = page.getByRole("button", { name: "Open a project on lab.example" })
+    await row.waitFor()
+    await page.waitForFunction(() => document.activeElement?.textContent === "lab.example")
+    assert.equal((await views(page)).opened.length, 0)
+    assert.equal((await views(page)).windows.length, 0)
+    await row.click()
     await page.locator(".tab-pill", { hasText: "lab.example" }).waitFor()
     await page.waitForFunction(() => (window as any).fixtureViews.opened.length === 1)
     type Saved = { remoteServers: Array<{ id: string; name: string; baseUrl: string }> }
@@ -287,6 +300,9 @@ test("an address added in Browse opens its tab at once, named after its host; an
     // The saved server opens again without a second profile or a probe.
     await page.getByRole("button", { name: "Home", exact: true }).click()
     await addServer(page, BOX)
+    await page.waitForFunction(() => document.activeElement?.textContent === "Box")
+    assert.equal((await views(page)).opened.length, 1)
+    await page.getByRole("button", { name: "Open a project on Box" }).click()
     await page.waitForFunction(() => (window as any).fixtureViews.opened.length === 2)
     assert.equal((await views(page)).opened[1].profileId, "box")
     assert.deepEqual((fixture.state() as Saved).remoteServers.map((entry) => entry.id).sort(), [added.id, "box"].sort())
@@ -322,6 +338,10 @@ test("a certificate that fails the check offers skipping it under the field; the
     const skip = page.getByRole("checkbox", { name: "Skip TLS verification" })
     await skip.check()
     await field.press("Enter")
+    const row = page.getByRole("button", { name: "Open a project on selfsigned.example" })
+    await row.waitFor()
+    assert.equal((await views(page)).windows.length, 0, "TLS confirmation saves only")
+    await row.click()
     await page.waitForFunction(() => (window as any).fixtureViews.windows.length === 1)
     assert.equal((await views(page)).opened.length, 0, "an unverified certificate never opens a tab")
     assert.deepEqual(fixture.probes, ["https://selfsigned.example skipTls=false", "https://selfsigned.example skipTls=true"])
@@ -347,25 +367,25 @@ test("+ opens disposable blank tabs; remote and SideCar choices replace their or
     await page.locator('.new-instance-button').click()
     const blank = page.locator('[data-tab-kind="blank"][data-tab-visible="true"]')
     await blank.waitFor()
-    await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'combobox')
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Search recent projects')
     assert.equal(await page.locator('.tab-pill').count(), 2, await page.locator('.tab-strip-tabs').innerText())
     assert.equal(await blank.getByText('3 items', { exact: true }).count(), 1, 'Browse counts computer, server and SideCar')
     assert.equal(await blank.getByText('0 items', { exact: true }).count(), 1)
-    assert.equal(await page.locator('.folder-home-root').count(), 0)
+    assert.equal(await blank.locator('.folder-home-root--blank').count(), 1)
     assert.deepEqual(fixture.created, [], 'blank tabs create no backend workspace')
-    assert.deepEqual(await blank.locator('.blank-tab-actions button').allTextContents(), ['Clone Git Repo', 'New temporary tab'])
-    const columns = await blank.locator('.blank-tab-section').evaluateAll(nodes => nodes.map(node => ({ x: node.getBoundingClientRect().x, y: node.getBoundingClientRect().y })))
-    assert.equal(columns[0].y, columns[1].y)
-    assert.ok(columns[1].x > columns[0].x)
+    assert.deepEqual(await blank.locator('.folder-home-actions-column .button-primary').allTextContents(), ['Clone Git Repo', 'New temporary tab', 'New SideCar'])
+    const columns = await blank.locator('.folder-home-main > div').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().x))
+    assert.ok(columns[0] > columns[1])
     await page.setViewportSize({ width: 480, height: 800 })
-    const narrow = await blank.locator('.blank-tab-section').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().y))
-    assert.ok(narrow[1] > narrow[0])
+    const narrow = await blank.locator('.folder-home-main > div').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().x))
+    assert.equal(narrow[0], narrow[1])
     await page.setViewportSize({ width: 1200, height: 800 })
 
     // Open another blank, then fill the earlier one: its replacement keeps that earlier slot.
     const firstBlankId = await blank.getAttribute('data-tab-id')
     await page.locator('.new-instance-button').click()
     await page.locator(`[data-app-tab-id="${firstBlankId}"] [role=tab]`).click()
+    await blank.getByRole('tab', { name: 'Browse', exact: true }).click()
     await blank.getByRole('button', { name: 'Open a project on Box' }).click()
     assert.equal(await page.locator('[data-tab-kind="blank"]').count(), 1)
     assert.equal(await page.locator('.tab-pill').count(), 3)
@@ -377,6 +397,7 @@ test("+ opens disposable blank tabs; remote and SideCar choices replace their or
     assert.equal(JSON.stringify(fixture.state()).includes('blank:'), false)
 
     await page.locator('.new-instance-button').click()
+    await blank.getByRole('tab', { name: 'Browse', exact: true }).click()
     await blank.locator('[data-sidecar="docs"]').click()
     await page.locator('.tab-pill', { hasText: 'Docs' }).waitFor()
     assert.equal(await page.locator('[data-tab-kind="blank"]').count(), 0)
@@ -384,7 +405,7 @@ test("+ opens disposable blank tabs; remote and SideCar choices replace their or
   } finally { await page.close() }
 })
 
-test("a delayed server probe fills its originating blank tab, even after another blank opens", async () => {
+test("a delayed server add preserves both blank tabs; clicking its row fills the chosen blank", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
   let release!: () => void
   const held = new Promise<void>(resolve => { release = resolve })
@@ -395,6 +416,7 @@ test("a delayed server probe fills its originating blank tab, even after another
     await page.locator(".new-instance-button").click()
     const blank = page.locator('[data-tab-kind="blank"][data-tab-visible="true"]')
     const origin = await blank.getAttribute("data-tab-id")
+    await blank.getByRole('tab', { name: 'Browse', exact: true }).click()
     await page.route("**/api/remote-servers/probe", async route => { await held; await route.fallback() })
     const field = blank.getByRole("textbox", { name: "Server address or link" })
     await field.fill("https://slow.example")
@@ -405,11 +427,102 @@ test("a delayed server probe fills its originating blank tab, even after another
     const other = await blank.getAttribute("data-tab-id")
     assert.notEqual(other, origin)
     release()
-    await page.locator(".tab-pill", { hasText: "slow.example" }).waitFor()
-    assert.equal(await page.locator(`[data-tab-id="${origin}"]`).count(), 0)
+    const originView = page.locator(`[data-tab-id="${origin}"]`)
+    await originView.locator('.browse-menu-row', { hasText: 'slow.example' }).waitFor({ state: "attached" })
+    assert.equal(await page.locator(`[data-tab-id="${origin}"]`).count(), 1)
     assert.equal(await page.locator(`[data-tab-id="${other}"]`).count(), 1)
+    await page.locator(`[data-app-tab-id="${origin}"] [role=tab]`).click()
+    await originView.getByRole('tab', { name: 'Browse', exact: true }).click()
+    await originView.getByRole("button", { name: "Open a project on slow.example" }).click()
+    assert.equal(await page.locator(`[data-tab-id="${origin}"]`).count(), 0)
     assert.match((await page.locator(".tab-strip-tabs > *").nth(1).getAttribute("data-app-tab-id"))!, /^remote-project:/)
   } finally { release(); await page.close() }
+})
+
+test("blank tabs reuse Home's branding, action buttons, tab selector and recent rows, with search below the selector", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
+  const captures = fileURLToPath(new URL("../../../../.tmp/blank-polish/", import.meta.url))
+  try {
+    await mkdir(captures, { recursive: true })
+    await open(page, "", { context: "local", host: "electron", uiState: {
+      remoteServers: [server("box")],
+      recentFolders: [{ path: "/srv/local", projectName: "Local", lastAccessed: Date.now() - 60000 }],
+      remoteProjectRecents: [{ profileId: "box", folder: "/srv/remote", projectName: "Remote", lastAccessed: Date.now() - 120000 }],
+      sidecarRecents: [{ sidecarId: "docs", lastAccessed: Date.now() - 180000 }],
+    }, sidecars: [sidecar("docs", "Docs", "running")] })
+    await page.getByRole("button", { name: "Local", exact: true }).click()
+    await page.locator('.tab-strip-tabs [role=tab]', { hasText: 'Local' }).waitFor()
+    await page.getByRole("button", { name: "Home", exact: true }).click()
+    const home = page.locator(".folder-home-root")
+    await home.getByText("3 items").first().waitFor()
+    const presentation = async (root: typeof home) => root.evaluate(node => {
+      const sizes = []
+      for (const selector of ['.folder-home-logo', '.button-primary', '[role=tablist]', '.folder-home-recent-item']) {
+        const element = node.querySelector(selector)!
+        const rect = element.getBoundingClientRect(), style = getComputedStyle(element)
+        sizes.push({ width: rect.width, height: rect.height, background: style.backgroundColor, font: style.font, radius: style.borderRadius })
+      }
+      return { background: getComputedStyle(node).backgroundColor, sizes }
+    })
+    const expected = await presentation(home)
+    await page.screenshot({ path: `${captures}/home-desktop.png` })
+    await page.getByRole("button", { name: "Close", exact: true }).click()
+    await page.locator(".new-instance-button").click()
+    const blank = page.locator('[data-tab-kind="blank"][data-tab-visible="true"]')
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Search recent projects")
+    const root = blank.locator(".folder-home-root")
+    assert.deepEqual(await presentation(root), expected)
+    assert.equal(await blank.getByRole("heading", { name: "CodeNomad" }).count(), 1)
+    assert.deepEqual(await blank.getByRole('tab').allTextContents(), ['Recent3 items', 'Browse3 items'])
+    const selector = await blank.getByRole('tablist').boundingBox()
+    const search = await blank.getByRole('textbox', { name: 'Search recent projects' }).boundingBox()
+    assert.ok(search!.y >= selector!.y + selector!.height, 'search stays under the selector')
+    assert.equal(await blank.getByRole('link').count(), 0)
+    assert.equal(await blank.locator('.locale-selector, .panel-section, .version-pill, .absolute.top-4').count(), 0)
+    assert.equal(await blank.locator('.folder-home-open-instance-button').count(), 1)
+    assert.equal(await blank.getByText('Box', { exact: true }).count(), 1)
+    assert.equal(await blank.getByText('/srv/remote', { exact: true }).count(), 1)
+    await page.screenshot({ path: `${captures}/blank-desktop.png` })
+    await page.setViewportSize({ width: 480, height: 800 })
+    await page.screenshot({ path: `${captures}/blank-narrow.png` })
+    assert.equal(await root.evaluate(node => node.scrollWidth <= node.clientWidth), true)
+    await page.setViewportSize({ width: 1200, height: 800 })
+    await blank.getByRole('tab', { name: 'Browse', exact: true }).click()
+    const field = blank.getByRole('textbox', { name: 'Server address or link' })
+    await field.fill('https://added.example')
+    await field.press('Enter')
+    const added = blank.getByRole('button', { name: 'Open a project on added.example' })
+    await added.waitFor()
+    await page.waitForFunction(() => document.activeElement?.textContent === 'added.example')
+    assert.equal(await page.locator('[data-tab-kind="blank"]').count(), 1)
+    await added.click()
+    assert.equal(await page.locator('[data-tab-kind="blank"]').count(), 0)
+  } finally { await page.close() }
+})
+
+test("adding a server in the + launcher keeps it open, focuses the saved row and opens only on selection", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
+  try {
+    const fixture = await open(page, "", { context: "local", host: "electron", uiState: { remoteServers: [server('box')] } })
+    await browse(page)
+    await page.getByRole('button', { name: 'Open a project on Box' }).click()
+    await page.locator('.new-instance-button').click({ button: 'right' })
+    const launcher = page.locator('.new-instance-launcher')
+    const toggle = launcher.getByRole('button', { name: 'Browse', exact: true })
+    if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click()
+    const field = launcher.getByRole('textbox', { name: 'Server address or link' })
+    await field.fill('https://launcher.example')
+    await field.press('Enter')
+    const row = launcher.getByRole('button', { name: 'Open a project on launcher.example' })
+    await row.waitFor()
+    await page.waitForFunction(() => document.activeElement?.textContent === 'launcher.example')
+    assert.equal((await views(page)).opened.length, 1)
+    assert.equal((await views(page)).windows.length, 0)
+    assert.deepEqual(fixture.created, [])
+    await row.click()
+    await launcher.waitFor({ state: 'hidden' })
+    await page.waitForFunction(() => (window as any).fixtureViews.opened.length === 2)
+  } finally { await page.close() }
 })
 
 for (const host of ['web', 'electron', 'tauri'] as const) test(`${host}: the logo opens Home; Sponsor uses the existing help URL; a local choice replaces a blank tab`, async () => {
@@ -431,7 +544,7 @@ for (const host of ['web', 'electron', 'tauri'] as const) test(`${host}: the log
     await page.getByRole('button', { name: 'Close', exact: true }).click()
     await page.locator('.new-instance-button').click()
     const blank = page.locator('[data-tab-kind="blank"][data-tab-visible="true"]')
-    await blank.getByRole('option', { name: /Local/ }).click()
+    await blank.getByRole('button', { name: 'Local', exact: true }).click()
     await page.waitForFunction(() => !document.querySelector('[data-tab-kind="blank"]'))
     assert.deepEqual(fixture.created, ['/srv/local'])
     assert.equal(await page.locator('.tab-strip-tabs [role="tab"]').count(), 2)

@@ -6,10 +6,8 @@ import { RemoteServerProbeError, useRemoteServerProfiles } from "../lib/hooks/us
 
 interface ServerAddFieldProps {
   disabled?: boolean
-  /** Opens the server once saved (its tab, else its window); Settings only saves it. A pairing link always opens. */
-  open?: boolean
-  /** Called once the server is saved, e.g. to dismiss the launcher. */
-  onAdded?: () => void
+  /** Called with the saved row's ID, e.g. to focus it in Browse. */
+  onAdded?: (id: string) => void
   /** Marks the field as a Browse row for its arrow-key navigation. */
   navAttribute?: string
 }
@@ -18,7 +16,7 @@ const carriesCredentials = (value: string) => /^[a-z][a-z\d+.-]*:\/\/[^/?#]*@/i.
 
 /**
  * Adds a CodeNomad server from a pasted address or Remote Control pairing link,
- * inline: the server is saved under its host name and opens at once. Only a
+ * inline: the server is saved under its host name. Only a
  * certificate that fails the check offers skipping it, confirmed through the
  * same field.
  */
@@ -57,9 +55,9 @@ export default function ServerAddField(props: ServerAddFieldProps) {
     }
     setBusy(true)
     try {
-      await submitServer(input, props.open ?? true)
+      const profile = await submitServer(input, false)
       reset()
-      props.onAdded?.()
+      props.onAdded?.(profile.id)
     } catch (failure) {
       setError(failure instanceof Error && failure.message ? failure.message : t("folderSelection.servers.dialog.errorConnect"))
       const tls = failure instanceof RemoteServerProbeError && failure.code === "tls_error" && link.kind === "address"

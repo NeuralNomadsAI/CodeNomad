@@ -43,13 +43,17 @@ async function add(page: Page, address: string) {
 
 const opened = (page: Page) => page.evaluate(() => (window as unknown as { opened: Array<{ id: string; baseUrl: string; entryUrl?: string }> }).opened)
 
-test("a pairing link saves only the server and pairs in the window it opens, even where adding only saves", async () => {
+test("a pairing link saves only the server; clicking it pairs in its window", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   try {
     await page.goto(url)
     await add(page, LINK)
+    await page.getByRole("textbox", { name: "Server address or link" }).waitFor()
+    await page.waitForFunction(() => (document.querySelector('[data-server-add-field]') as HTMLInputElement)?.value === "")
+    assert.deepEqual(await opened(page), [], "adding a pairing link never opens a window")
+    await page.getByTestId("servers").getByRole("button").click()
     await page.waitForFunction(() => (window as unknown as { opened: unknown[] }).opened.length === 1)
     const [payload] = await opened(page)
     assert.equal(payload.baseUrl, TUNNEL)
@@ -71,6 +75,9 @@ test("pairing a saved server again reuses it instead of adding a duplicate", asy
     await page.goto(`${url}?scenario=saved`)
     await page.getByTestId("servers").getByText(`saved-tunnel ${TUNNEL}`).waitFor()
     await add(page, LINK)
+    await page.waitForFunction(() => (document.querySelector('[data-server-add-field]') as HTMLInputElement)?.value === "")
+    assert.deepEqual(await opened(page), [])
+    await page.getByTestId("servers").getByRole("button").click()
     await page.waitForFunction(() => (window as unknown as { opened: unknown[] }).opened.length === 1)
     assert.equal((await opened(page))[0].id, "saved-tunnel")
     assert.equal(await page.getByTestId("servers").locator("li").count(), 1)

@@ -1,4 +1,6 @@
 /* Compact new-instance launcher anchored to the tab-bar button (`new-instance-launcher.tsx`). */
+.recent-tabs-menu { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+
 .new-instance-launcher {
   background-color: var(--surface-overlay);
   color: var(--text-secondary);

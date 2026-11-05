@@ -83,8 +83,8 @@ Bir istemci bir sertifika uyarısı bildirirse, durdurun ve ana bilgisayar adın
 
 ## Uzak sunucuyu kaydedin {#saved-servers}
 
-1. Masaüstü ana sayfasında veya **Sekme aç** başlatıcısında **Gözat** bölümünü açın, sunucunun adresini veya bir eşleştirme bağlantısını **Sunucu adresi veya bağlantısı** alanına yapıştırın ve Enter'a basın: sunucu ana bilgisayar adıyla kaydedilir ve açılır. **Ayarlar → Sunucular** de aynı alanı sunar.
-2. Güvenilir bir HTTPS kaynağı kullanın. Sertifikası doğrulamayı geçemezse hata, alanın altında **TLS doğrulamasını atla** ile görünür: bunu yalnızca güvendiğiniz bir sunucu için işaretleyin ve yeniden Enter'a basın; bu sunucu kendi penceresinde açılır.
+1. Ana sayfada, boş sekmede veya **Sekme aç** başlatıcısında **Gözat** bölümünü açıp adresi ya da eşleştirme bağlantısını **Sunucu adresi veya bağlantısı** alanına girin. Yapıştırma hemen ekler; Enter yazılan metni ekler. Sunucu yalnızca ana bilgisayar adıyla kaydedilir ve satırına odaklanılır; başlatıcı açık kalır. Açmak için bu satıra tıklayın. **Ayarlar → Sunucular** aynı alanı sunar.
+2. Güvenilir bir HTTPS kaynağı kullanın. Sertifika doğrulanamazsa alanın altında **TLS doğrulamasını atla** görünür: yalnızca güvendiğiniz sunucu için işaretleyip kaydetmek üzere yeniden Enter'a basın. Kaydedilen bu sunucuyu seçmek kendi penceresini açar.
 3. O sunucuda oturum açın. Adını veya adresini **Ayarlar → Sunucular** içindeki **Sunucuyu düzenle** ile değiştirin.
 
 Kayıtlı sunucular **Gözat** altında listelenir: yeniden açmak için birini seçin. **Ayarlar → Sunucular** bölümünde sunucuları açabilir, düzenleyebilir (**Sunucuyu düzenle**: ad, adres, sertifika doğrulaması) ve kaldırabilirsiniz (**Kayıtlı sunucuyu kaldır**). Yer imleri uzak sunucunun projelerine değil, bu CodeNomad yapılandırmasına aittir. Bir URL'nin kaydedilmesi sunucuyu başlatmaz veya erişim sağlamaz. **Kayıtlı sunucuyu kaldır**, uzak konuşmaları, arka ucu veya kimlik bilgilerini değil, yer işaretini kaldırır.
@@ -99,7 +99,7 @@ Uzaktan Kontrol için bunun yerine **Sunucu adresi veya bağlantısı** öğesin
 
 Masaüstü uygulamasında (Electron veya Windows'ta Tauri), kayıtlı bir sunucu projelerinden birini yerel projelerinizin yanında bu pencerenin bir sekmesinde de açabilir:
 
-1. Ana sayfada veya **Sekme aç** başlatıcısında **Gözat** bölümünü açıp bir sunucu seçin ya da bir adresi veya eşleştirme bağlantısını **Sunucu adresi veya bağlantısı** alanına yapıştırın.
+1. Ana sayfada, boş sekmede veya **Sekme aç** başlatıcısında **Gözat** bölümünü açıp kayıtlı bir sunucu seçin. Önce eklemek için **Sunucu adresi veya bağlantısı** alanını kullanıp yeni satıra tıklayın.
 2. Klasörü sekmede seçin. Sekme ardından sunucu simgesini ve proje adını gösterir ve proje **Son kullanılanlar** listesine eklenir: oradan seçmek o sunucuyu ve klasörü doğrudan yeniden açar.
 
 Sekme yalnızca o projeyi gösterir; konuşmaları, dosyaları, Git'i, ayarları ve Missions uzak sunucuda çalışır. Sekme sunucunun uzak penceresiyle aynı depolamayı kullanır; böylece mevcut bir oturum veya eşleştirilmiş cihaz yeniden kullanılır ve CodeNomad sekmelerinizi geri yüklediğinde uzak sekmeler de geri gelir. Bu modu olmayan bir sunucu sekmede tam arayüzünü gösterir. TLS doğrulamasını atlayan sunucular ile macOS ve Linux'taki Tauri sürümü uzak pencere açmaya devam eder. Sekmedeki sayfa bildirim gösterebilir, ancak bu bilgisayara başka erişimi yoktur ve kendi sunucusunda kalır. Web istemcilerinde ve Remote Control cihazlarında uzak sekme yoktur. **Ayarlar → Sunucular** içindeki **Kayıtlı sunucuyu kaldır** sunucunun sekmelerini de kapatır. Proje seçilmeden önce sekme sunucunun adını gösterir. Sekmenin içinde sunucunun sayfasında oturum açın; CodeNomad bu oturumu sonraki açılışlarda yeniden kullanır.

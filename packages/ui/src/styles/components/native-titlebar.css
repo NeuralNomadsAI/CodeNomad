@@ -1,3 +1,6 @@
+.native-titlebar-home { -webkit-app-region: no-drag; }
+.tab-bar-home { flex: 0 0 auto; margin-inline: var(--space-xs); }
+
 .native-titlebar {
   display: flex;
   align-items: stretch;

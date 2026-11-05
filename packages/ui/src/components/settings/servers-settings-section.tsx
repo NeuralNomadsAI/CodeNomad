@@ -41,7 +41,7 @@ export const ServersSettingsSection: Component = () => {
         </div>
         <div class="settings-card-content">
           {/* Adding saves the server, like Browse's field, without opening it here. */}
-          <ServerAddField open={false} />
+          <ServerAddField />
           <Show when={remoteServers().length > 0} fallback={<div class="settings-card-message">{t("folderSelection.servers.empty.title")}</div>}>
             <For each={remoteServers()}>
               {(server) => (
