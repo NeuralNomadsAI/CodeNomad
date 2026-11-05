@@ -23,7 +23,6 @@ const providerIds = [
   "opencode-go",
   "cursor",
   "command-code",
-  "crof",
   "deepseek",
   "neuralwatt",
   "claude",
@@ -168,13 +167,27 @@ test("selects model-specific windows by normalized model id", () => {
 })
 
 test("returns a stable unsupported response without making a provider request", async () => {
-  const response = await getProviderUsage("unknown-provider", { modelId: "model" })
-  assert.equal(response.supported, false)
-  assert.equal(response.configured, false)
-  assert.equal(response.providerId, null)
-  assert.deepEqual(response.windows, {})
-  for (const providerId of ["google", "google.oauth", "gemini", "antigravity"]) {
-    assert.equal((await getProviderUsage(providerId)).supported, false)
+  const previousFetch = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = async () => {
+    calls += 1
+    throw new Error("Unexpected provider request")
+  }
+  try {
+    const auth = { "unknown-provider": { key: "synthetic-key" } }
+    assert.equal(resolveUsageProvider("unknown-provider"), null)
+    const response = await getProviderUsage("unknown-provider", { modelId: "model", auth })
+    assert.equal(response.supported, false)
+    assert.equal(response.configured, false)
+    assert.equal(response.providerId, null)
+    assert.deepEqual(response.windows, {})
+    assert.deepEqual(auth, { "unknown-provider": { key: "synthetic-key" } })
+    for (const providerId of ["google", "google.oauth", "gemini", "antigravity"]) {
+      assert.equal((await getProviderUsage(providerId)).supported, false)
+    }
+    assert.equal(calls, 0)
+  } finally {
+    globalThis.fetch = previousFetch
   }
 })
 
