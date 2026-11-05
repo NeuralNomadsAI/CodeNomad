@@ -20,7 +20,8 @@ import { SideCarPickerDialog } from "./components/sidecar-picker-dialog"
 import { SideCarView } from "./components/sidecar-view"
 import { RemoteProjectView } from "./components/remote-project-view"
 import { EmbeddedProjectPicker } from "./components/embedded-project-picker"
-import { embeddedProject, publishEmbeddedProject } from "./lib/embed-mode"
+import { embeddedProject, publishEmbeddedProject, rememberEmbeddedSession, rememberedEmbeddedSession } from "./lib/embed-mode"
+import { restoreEmbeddedSession } from "./stores/embedded-project-session"
 import { closeRemoteProjectTab } from "./stores/remote-project-tabs"
 import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
 import { showAlertDialog } from "./stores/alerts"
@@ -519,10 +520,31 @@ const App: Component = () => {
   // then publishes the project it shows for its host tab.
   if (embeddedProject) {
     const folder = embeddedProject.folder
-    if (folder) onMount(() => void waitForInitialWorkspaceLoad().catch(() => {}).then(() => handleSelectFolder(folder)))
+    // Until the remembered session is restored, the empty startup selection is not the user's choice.
+    const [sessionRestorePending, setSessionRestorePending] = createSignal(Boolean(folder))
+    if (folder) onMount(() => void (async () => {
+      try {
+        await waitForInitialWorkspaceLoad().catch(() => {})
+        if (!await handleSelectFolder(folder)) return
+        const instance = activeInstance()
+        const remembered = instance ? rememberedEmbeddedSession(instance.folder) : undefined
+        if (instance && remembered) await restoreEmbeddedSession(instance.id, instance.folder, remembered)
+      } catch (error) {
+        log.warn("Failed to restore the embedded project's session", error)
+      } finally {
+        setSessionRestorePending(false)
+      }
+    })())
     createEffect(() => {
       const instance = activeInstance()
       if (instance && !instance.temporary) publishEmbeddedProject(instance.folder, getProjectNameForFolder(instance.folder))
+    })
+    createEffect(() => {
+      const instance = activeInstance()
+      const sessionId = activeSessionIdForInstance()
+      if (instance && !instance.temporary && sessionId && sessionId !== "info" && !sessionRestorePending()) {
+        rememberEmbeddedSession(instance.folder, sessionId)
+      }
     })
   }
 

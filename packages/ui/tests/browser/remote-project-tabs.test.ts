@@ -119,13 +119,34 @@ test("the embedded page shows no tab bar or home, only a folder picker that open
   } finally { await page.close() }
 })
 
-test("an embedded entry with a folder opens that project directly", async () => {
+test("an embedded entry with a folder opens that project directly and reselects its remembered session", async () => {
   const page = await browser.newPage({ viewport: { width: 1000, height: 700 }, locale: "en-US" })
   try {
+    // The view's storage persists with the server's remote window across host restarts.
+    await page.addInitScript(() => localStorage.setItem("codenomad:embedded-session:/srv/other", "ses_saved"))
+    const sessionReads: string[] = []
+    page.on("request", request => { if (request.url().includes("ses_saved")) sessionReads.push(request.url()) })
     const fixture = await open(page, `?codenomadEmbed=project&folder=${encodeURIComponent("/srv/other")}`, { context: "remote", host: "electron" })
     await page.waitForFunction(() => document.title === "other")
     assert.deepEqual(fixture.created, ["/srv/other"])
     assert.equal(await page.locator("[data-embedded-project-picker]").count(), 0)
+    // The remembered session is read back for selection, as a restored local tab's is.
+    for (let attempt = 0; attempt < 50 && !sessionReads.length; attempt++) await page.waitForTimeout(100)
+    assert.ok(sessionReads.length > 0, "the remembered session is hydrated")
+    assert.equal(await page.evaluate(() => localStorage.getItem("codenomad:embedded-session:/srv/other")), "ses_saved",
+      "the empty startup selection does not overwrite the remembered session")
+  } finally { await page.close() }
+})
+
+test("an embedded project without a remembered session reads none", async () => {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 700 }, locale: "en-US" })
+  try {
+    const sessionReads: string[] = []
+    page.on("request", request => { if (/\/session\/ses_/.test(request.url())) sessionReads.push(request.url()) })
+    await open(page, `?codenomadEmbed=project&folder=${encodeURIComponent("/srv/fresh")}`, { context: "remote", host: "electron" })
+    await page.waitForFunction(() => document.title === "fresh")
+    await page.waitForTimeout(500)
+    assert.deepEqual(sessionReads, [])
   } finally { await page.close() }
 })
 

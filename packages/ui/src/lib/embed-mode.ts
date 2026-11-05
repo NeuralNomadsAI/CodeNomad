@@ -56,6 +56,31 @@ export function publishEmbeddedProject(folder: string, title: string): void {
   document.title = title
 }
 
+const SESSION_KEY_PREFIX = "codenomad:embedded-session:"
+const SESSION_ID = /^[A-Za-z0-9_-]{1,256}$/
+
+/**
+ * The embedded page keeps its active session per folder in its own storage,
+ * which persists with the server's remote-window storage across host restarts.
+ */
+export function rememberEmbeddedSession(folder: string, sessionId: string, storage: Storage | undefined = safeLocalStorage()): void {
+  if (!SESSION_ID.test(sessionId)) return
+  try { storage?.setItem(SESSION_KEY_PREFIX + folder, sessionId) } catch {}
+}
+
+export function rememberedEmbeddedSession(folder: string, storage: Storage | undefined = safeLocalStorage()): string | undefined {
+  try {
+    const value = storage?.getItem(SESSION_KEY_PREFIX + folder) ?? undefined
+    return value && SESSION_ID.test(value) ? value : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function safeLocalStorage(): Storage | undefined {
+  try { return typeof window === "undefined" ? undefined : window.localStorage } catch { return undefined }
+}
+
 export interface EmbeddedProjectReport {
   folder: string
   title: string
