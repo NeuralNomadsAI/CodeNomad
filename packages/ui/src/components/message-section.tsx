@@ -1,5 +1,5 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack, type JSX } from "solid-js"
-import { ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpToLine, ChevronDown, ChevronUp, Search } from "lucide-solid"
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search } from "lucide-solid"
 import { Portal } from "solid-js/web"
 import { matchesHotkey, withHotkey } from "../lib/hotkeys"
 import DismissibleWindow from "./dismissible-window"
@@ -1852,7 +1852,8 @@ export default function MessageSection(props: MessageSectionProps) {
                 aria-label={t("messageSection.scroll.toFirstAriaLabel")}
                 title={t("messageSection.scroll.toFirstAriaLabel")}
               >
-                <ArrowUpToLine class="w-4 h-4" aria-hidden="true" />
+                {/* A filled triangle against its stop: go to the start. */}
+                <svg class="session-scroll-corner-icon" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0h10v1.6H0zM5 3l5 7H0z" /></svg>
               </button>
               <button
                 type="button"
@@ -1862,7 +1863,7 @@ export default function MessageSection(props: MessageSectionProps) {
                 aria-label={t("messageSection.scroll.toLatestAriaLabel")}
                 title={t("messageSection.scroll.toLatestAriaLabel")}
               >
-                <ArrowDownToLine class="w-4 h-4" aria-hidden="true" />
+                <svg class="session-scroll-corner-icon" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 8.4h10V10H0zM5 7 0 0h10z" /></svg>
               </button>
             </Portal>
           )}

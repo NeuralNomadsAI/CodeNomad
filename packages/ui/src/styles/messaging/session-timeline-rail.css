@@ -105,8 +105,25 @@
   background: transparent;
 }
 
-.session-scroll-corner-button:hover {
+/* Each control keeps half the cell to click; the icons meet near its centre. */
+.session-scroll-corner-button:first-child {
+  justify-items: end;
+  padding-inline-end: 2px;
+}
+
+.session-scroll-corner-button:last-child {
+  justify-items: start;
+  padding-inline-start: 2px;
+}
+
+.session-scroll-corner-button:not(.session-scroll-corner-button--reached):hover {
   background-color: var(--surface-hover-overlay);
+}
+
+.session-scroll-corner-icon {
+  width: 9px;
+  height: 9px;
+  fill: currentColor;
 }
 
 .session-scroll-corner-button:focus-visible {
@@ -114,7 +131,8 @@
   outline-offset: -2px;
 }
 
+/* The end the reader is at stays in place, barely visible. */
 .session-scroll-corner-button--reached {
   color: var(--text-muted);
-  opacity: 0.5;
+  opacity: 0.25;
 }
