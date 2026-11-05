@@ -39,7 +39,7 @@ async function prepare(width = 1100, home = false) {
   return { page, errors, remoteRequests, calls: () => page.evaluate(() => [...(window as any).launcherFixture.calls]) }
 }
 // The home page's creation buttons; the launcher keeps the first two.
-const CREATE = ["Clone Git Repo", "New temporary tab", "New server", "New SideCar"]
+const CREATE = ["Clone Git Repo", "New temporary tab", "New SideCar"]
 const LAUNCHER_CREATE = CREATE.slice(0, 2)
 const plus = (page: Page) => page.locator(".new-instance-button")
 const launcher = (page: Page) => page.locator(".new-instance-launcher")
@@ -310,7 +310,7 @@ async function browseByKeyboard(page: Page, scope: ReturnType<Page["locator"]>) 
   await page.keyboard.press("ArrowDown")
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Open a project on Saved remote")
   await page.keyboard.press("ArrowDown")
-  assert.equal(await page.evaluate(() => document.activeElement?.textContent), "Add server…", "Add server comes last")
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Server address or link", "the address field comes last")
   await page.keyboard.press("ArrowDown")
   assert.equal(await page.evaluate(() => document.activeElement?.textContent), "This computer", "the rows wrap around")
   await page.keyboard.press("Escape")
@@ -349,7 +349,8 @@ test("the home page's Recent and Browse tabs match the launcher's sections, whic
     const panel = page.getByRole("tabpanel", { name: "Browse" })
     assert.equal(await panel.locator(".browse-menu-toggle").count(), 0)
     const homeRows = await panel.locator(".browse-menu-row").allTextContents()
-    assert.deepEqual(homeRows, ["This computer", "Saved remote", "Add server…"])
+    assert.deepEqual(homeRows, ["This computer", "Saved remote"])
+    await panel.getByRole("textbox", { name: "Server address or link" }).waitFor()
     await panel.getByRole("button", { name: "This computer" }).focus()
     await page.keyboard.press("ArrowDown")
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Open a project on Saved remote")

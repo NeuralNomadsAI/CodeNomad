@@ -1,13 +1,13 @@
 import { For, Show, createMemo, createSignal, createUniqueId, onMount } from "solid-js"
-import { ChevronRight, Globe, Laptop, Plus, Server } from "lucide-solid"
+import { ChevronRight, Globe, Laptop, Server } from "lucide-solid"
 import type { RemoteServerProfile, SideCar } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { serverDisplayName } from "../lib/codenomad-link"
 import { withHotkey } from "../lib/hotkeys"
 import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
-import { openRemoteServerEditor } from "../stores/remote-server-editor"
 import { openSidecar } from "../stores/sidecar-open"
+import ServerAddField from "./server-add-field"
 import { ensureSidecarsLoaded, sidecars } from "../stores/sidecars"
 
 interface BrowseMenuProps {
@@ -26,7 +26,8 @@ const [expanded, setExpanded] = createSignal(false)
 /**
  * Browse, shared by the home page (a tab) and the new-instance launcher (a
  * folded section): this computer's folders, each saved CodeNomad server, whose
- * project tab picks the folder, each configured SideCar, then Add server….
+ * project tab picks the folder, each configured SideCar, then the field that
+ * adds a server and opens it.
  * Only host windows (never a web client, a Remote Control device or a remote
  * page) list or add servers.
  */
@@ -64,10 +65,12 @@ export default function BrowseMenu(props: BrowseMenuProps) {
     const items = navItems()
     const index = items.indexOf(document.activeElement as HTMLElement)
     const move = (next: number) => { event.preventDefault(); items[(next + items.length) % items.length]?.focus() }
+    // Home and End stay with the address field's text.
+    const inField = event.target instanceof HTMLInputElement && event.target.type === "text"
     if (event.key === "ArrowDown") move(index + 1)
     else if (event.key === "ArrowUp") move(index - 1)
-    else if (event.key === "Home") move(0)
-    else if (event.key === "End") move(items.length - 1)
+    else if (event.key === "Home" && !inField) move(0)
+    else if (event.key === "End" && !inField) move(items.length - 1)
     else if (event.key === "Escape" && !props.alwaysOpen) {
       event.preventDefault()
       setExpanded(false)
@@ -117,12 +120,9 @@ export default function BrowseMenu(props: BrowseMenuProps) {
               </button>
             )}
           </For>
+          {/* Adding a server opens it at once (its tab, else its window); the launcher closes then. */}
           <Show when={canOpenRemoteWindows()}>
-            <button type="button" class="browse-menu-row" data-browse-nav disabled={props.isLoading}
-              onClick={() => run(() => openRemoteServerEditor())}>
-              <Plus class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
-              <span class="browse-menu-name">{t("folderSelection.browseMenu.addServer")}</span>
-            </button>
+            <ServerAddField navAttribute="data-browse-nav" disabled={props.isLoading} onAdded={() => props.onRun?.()} />
           </Show>
         </div>
       </Show>

@@ -109,11 +109,13 @@ async function browse(page: Page) {
   if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click()
 }
 
-async function addServer(page: Page) {
-  await page.getByRole("button", { name: "New server", exact: true }).click()
-  const dialog = page.getByRole("dialog", { name: "Connect to Server" })
-  await dialog.waitFor()
-  return dialog
+// Browse's last row: the field that adds a server and opens it. Enter submits it.
+async function addServer(page: Page, address: string) {
+  await browse(page)
+  const field = page.getByRole("textbox", { name: "Server address or link" })
+  await field.fill(address)
+  await field.press("Enter")
+  return field
 }
 
 const views = (page: Page) => page.evaluate(() => (window as any).fixtureViews as {
@@ -186,7 +188,7 @@ test("without the parameter a remote page keeps its full interface and lists no 
       await page.getByRole("button", { name: "This computer", exact: true }).waitFor()
       assert.equal(await page.locator("[data-remote-server]").count(), 0)
       assert.equal(await page.getByRole("button", { name: "New server" }).count(), 0)
-      assert.equal(await page.getByRole("button", { name: "Add server…" }).count(), 0)
+      assert.equal(await page.getByRole("textbox", { name: "Server address or link" }).count(), 0)
     } finally { await page.close() }
   }
 })
@@ -234,28 +236,53 @@ test("a local window opens a saved server as a project tab whose view follows th
   } finally { await page.close() }
 })
 
-test("Add server pairs a pasted pairing link in its new tab and refuses an address carrying credentials", async () => {
+test("Browse's field opens a pasted pairing link in its tab and refuses an address carrying credentials, without a dialog", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
   try {
     const fixture = await open(page, "", { context: "local", host: "electron" })
-    const dialog = await addServer(page)
-    await dialog.getByLabel("Server URL").fill("http://user:secret@box.example:4096")
-    await dialog.getByRole("button", { name: "Connect", exact: true }).click()
-    await dialog.getByText("Could not connect to the remote server.").waitFor()
+    const field = await addServer(page, "http://user:secret@box.example:4096")
+    await page.getByRole("alert").getByText("Remove the user name and password from the address.").waitFor()
     assert.deepEqual(fixture.probes, [])
 
-    // The name is optional; a pairing link opens even from Save, since opening consumes its code.
+    // A pasted link is added at once; its tab opens and consumes the code.
     const tunnel = "https://desk.opentunnel.test"
-    await dialog.getByLabel("Server URL").fill(`${tunnel}/remote-pair#single-use-code`)
-    await dialog.getByRole("button", { name: "Save", exact: true }).click()
+    await field.fill("")
+    await field.evaluate((input, link) => {
+      const data = new DataTransfer()
+      data.setData("text", link)
+      input.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }))
+    }, `${tunnel}/remote-pair#single-use-code`)
     await page.locator(".tab-pill", { hasText: "desk.opentunnel.test" }).waitFor()
     await page.waitForFunction(() => (window as any).fixtureViews.opened.length === 1)
     const [opened] = (await views(page)).opened
-    // The code is consumed by the view's first load and never saved with the server.
     assert.equal(opened.url, `${tunnel}/remote-pair#single-use-code`)
     assert.equal(opened.baseUrl, tunnel)
     assert.equal(JSON.stringify(fixture.state()).includes("single-use-code"), false)
     assert.deepEqual((fixture.state() as { remoteServers: Array<{ baseUrl: string }> }).remoteServers.map((entry) => entry.baseUrl), [tunnel])
+    assert.equal(await page.getByRole("dialog").count(), 0)
+  } finally { await page.close() }
+})
+
+test("an address added in Browse opens its tab at once, named after its host; an address already saved reuses its server", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
+  try {
+    const fixture = await open(page, "", { context: "local", host: "electron", uiState: { remoteServers: [server("box")] } })
+    await addServer(page, "https://lab.example:8443")
+    await page.locator(".tab-pill", { hasText: "lab.example" }).waitFor()
+    await page.waitForFunction(() => (window as any).fixtureViews.opened.length === 1)
+    type Saved = { remoteServers: Array<{ id: string; name: string; baseUrl: string }> }
+    const added = (fixture.state() as Saved).remoteServers.find((entry) => entry.baseUrl === "https://lab.example:8443")!
+    assert.equal(added.name, "lab.example:8443", "saved under its host, shown as its host name")
+    assert.deepEqual(fixture.probes, ["https://lab.example:8443 skipTls=false"])
+
+    // The saved server opens again without a second profile or a probe.
+    await page.locator(".new-instance-button").click()
+    await addServer(page, BOX)
+    await page.waitForFunction(() => (window as any).fixtureViews.opened.length === 2)
+    assert.equal((await views(page)).opened[1].profileId, "box")
+    assert.deepEqual((fixture.state() as Saved).remoteServers.map((entry) => entry.id).sort(), [added.id, "box"].sort())
+    assert.equal(fixture.probes.length, 1)
+    assert.equal(await page.getByRole("dialog").count(), 0)
   } finally { await page.close() }
 })
 
@@ -267,7 +294,7 @@ test("Browse lists saved servers by name and a server's tab shows that name befo
     await open(page, "", { context: "local", host: "electron", uiState: { remoteServers: [server("box"), pasted] } })
     await page.locator(".folder-home-root").waitFor()
     await browse(page)
-    assert.deepEqual(await page.locator(".browse-menu-row").allTextContents(), ["This computer", "Box", "127.0.0.1", "Add server…"])
+    assert.deepEqual(await page.locator(".browse-menu-row").allTextContents(), ["This computer", "Box", "127.0.0.1"])
     // Servers are managed in Settings, not from Browse.
     await page.getByRole("button", { name: "Open a project on Box" }).click({ button: "right" })
     assert.equal(await page.getByRole("menuitem").count(), 0)
@@ -277,21 +304,21 @@ test("Browse lists saved servers by name and a server's tab shows that name befo
   } finally { await page.close() }
 })
 
-test("an added address whose certificate fails the check can skip it and keeps its own window", async () => {
+test("a certificate that fails the check offers skipping it under the field; the server then opens in its own window", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
   try {
     const fixture = await open(page, "", { context: "local", host: "electron" })
-    const dialog = await addServer(page)
-    await dialog.getByLabel("Server URL").fill("https://selfsigned.example")
-    await dialog.getByRole("button", { name: "Connect", exact: true }).click()
-    await dialog.getByText("Certificate check failed while connecting to the remote server.").waitFor()
-    await dialog.getByRole("checkbox").check()
-    await dialog.getByRole("button", { name: "Connect", exact: true }).click()
+    const field = await addServer(page, "https://selfsigned.example")
+    await page.getByRole("alert").getByText("Certificate check failed while connecting to the remote server.").waitFor()
+    const skip = page.getByRole("checkbox", { name: "Skip TLS verification" })
+    await skip.check()
+    await field.press("Enter")
     await page.waitForFunction(() => (window as any).fixtureViews.windows.length === 1)
     assert.equal((await views(page)).opened.length, 0, "an unverified certificate never opens a tab")
     assert.deepEqual(fixture.probes, ["https://selfsigned.example skipTls=false", "https://selfsigned.example skipTls=true"])
     const saved = (fixture.state() as { remoteServers: Array<{ baseUrl: string; skipTlsVerify: boolean }> }).remoteServers
     assert.deepEqual(saved.map((entry) => [entry.baseUrl, entry.skipTlsVerify]), [["https://selfsigned.example", true]])
+    assert.equal(await page.getByRole("dialog").count(), 0)
   } finally { await page.close() }
 })
 
@@ -315,7 +342,7 @@ test("Browse opens a running SideCar, which then joins the recent tabs of the ho
     await browse(page)
     const rows = page.locator(".browse-menu-row")
     await page.locator('[data-sidecar="docs"]').waitFor()
-    assert.deepEqual(await rows.allTextContents(), ["This computer", "Box", "DocsRunning", "WikiStopped", "Add server…"])
+    assert.deepEqual(await rows.allTextContents(), ["This computer", "Box", "DocsRunning", "WikiStopped"])
     // A stopped SideCar shows its state and cannot open.
     assert.equal(await page.locator('[data-sidecar="wiki"]').isDisabled(), true)
     await page.locator('[data-sidecar="docs"]').click()
@@ -341,7 +368,7 @@ test("Browse opens a running SideCar, which then joins the recent tabs of the ho
     const launcher = page.locator(".new-instance-launcher")
     await launcher.getByRole("option", { name: /Docs/ }).waitFor()
     await launcher.getByRole("button", { name: "Browse", exact: true }).click()
-    assert.deepEqual(await launcher.locator(".browse-menu-row").allTextContents(), ["This computer", "Box", "DocsRunning", "WikiStopped", "Add server…"])
+    assert.deepEqual(await launcher.locator(".browse-menu-row").allTextContents(), ["This computer", "Box", "DocsRunning", "WikiStopped"])
   } finally { await page.close() }
 })
 

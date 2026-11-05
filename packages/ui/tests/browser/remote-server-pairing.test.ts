@@ -10,8 +10,8 @@ import solid from "vite-plugin-solid"
 
 const TUNNEL = "https://codenomad-fixture.device.opentunnel.test"
 const LINK = `${TUNNEL}/remote-pair#single-use-code`
-// A local Electron window: remote windows are opened through the native bridge, recorded here.
-const HOST = `<script>window.__CODENOMAD_WINDOW_CONTEXT__ = "local"; window.__CODENOMAD_RUNTIME_HOST__ = "electron";
+// A native Preferences window (no project tabs): remote windows are opened through the native bridge, recorded here.
+const HOST = `<script>window.__CODENOMAD_WINDOW_CONTEXT__ = "preferences"; window.__CODENOMAD_RUNTIME_HOST__ = "electron";
 window.opened = []; window.electronAPI = { openRemoteWindow: async (payload) => { window.opened.push(payload) } }</script>`
 
 let server: ViteDevServer, browser: Browser, url: string
@@ -34,34 +34,33 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close() })
 
-async function submit(page: Page, address: string, button: "Save" | "Connect") {
-  await page.getByLabel("Name").fill("Desk")
-  await page.getByLabel("Server URL").fill(address)
-  await page.getByRole("button", { name: button, exact: true }).click()
+// Settings → Servers' inline field: Enter adds the address or link.
+async function add(page: Page, address: string) {
+  const field = page.getByRole("textbox", { name: "Server address or link" })
+  await field.fill(address)
+  await field.press("Enter")
 }
 
 const opened = (page: Page) => page.evaluate(() => (window as unknown as { opened: Array<{ id: string; baseUrl: string; entryUrl?: string }> }).opened)
 
-test("a pasted pairing link saves only the server and pairs in the window it opens", async () => {
+test("a pairing link saves only the server and pairs in the window it opens, even where adding only saves", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   try {
     await page.goto(url)
-    await page.getByText("A server address, or a Remote Control pairing link created on that computer.", { exact: true }).waitFor()
-    // Skipping TLS checks would later route Tauri through the incognito proxy store and lose the pairing.
-    await page.getByLabel("Skip TLS verification for self-signed certificates.").check()
-    // Save, not Connect: the single-use code would otherwise be lost.
-    await submit(page, LINK, "Save")
+    await add(page, LINK)
     await page.waitForFunction(() => (window as unknown as { opened: unknown[] }).opened.length === 1)
     const [payload] = await opened(page)
     assert.equal(payload.baseUrl, TUNNEL)
     assert.equal(payload.entryUrl, LINK)
+    // Skipping TLS checks would later route Tauri through the incognito proxy store and lose the pairing.
     assert.equal((payload as { skipTlsVerify?: boolean }).skipTlsVerify, false)
     assert.deepEqual(await page.evaluate(() => (window as unknown as { probes: string[] }).probes), [`${TUNNEL} skipTls=false`])
     const state = JSON.parse(await page.evaluate(() => (window as unknown as { uiState: () => string }).uiState()))
     assert.equal(JSON.stringify(state).includes("single-use-code"), false)
-    assert.deepEqual(state.remoteServers.map((server: { baseUrl: string; skipTlsVerify: boolean }) => [server.baseUrl, server.skipTlsVerify]), [[TUNNEL, false]])
+    assert.deepEqual(state.remoteServers.map((server: { baseUrl: string; skipTlsVerify: boolean; name: string }) => [server.baseUrl, server.skipTlsVerify]), [[TUNNEL, false]])
+    assert.equal(await page.getByRole("textbox", { name: "Server address or link" }).inputValue(), "", "the field clears once added")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -71,18 +70,18 @@ test("pairing a saved server again reuses it instead of adding a duplicate", asy
   try {
     await page.goto(`${url}?scenario=saved`)
     await page.getByTestId("servers").getByText(`saved-tunnel ${TUNNEL}`).waitFor()
-    await submit(page, LINK, "Connect")
+    await add(page, LINK)
     await page.waitForFunction(() => (window as unknown as { opened: unknown[] }).opened.length === 1)
     assert.equal((await opened(page))[0].id, "saved-tunnel")
     assert.equal(await page.getByTestId("servers").locator("li").count(), 1)
   } finally { await page.close() }
 })
 
-test("an ordinary address saved without Connect opens no window", async () => {
+test("an ordinary address added in Settings is saved without opening a window", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
   try {
     await page.goto(url)
-    await submit(page, "https://server.example.com", "Save")
+    await add(page, "https://server.example.com")
     await page.getByTestId("servers").getByText("https://server.example.com").waitFor()
     assert.deepEqual(await opened(page), [])
   } finally { await page.close() }

@@ -1,4 +1,4 @@
-import { ExternalLink, Loader2, Pencil, Plus, Server, Trash2 } from "lucide-solid"
+import { ExternalLink, Loader2, Pencil, Server, Trash2 } from "lucide-solid"
 import { createSignal, For, Show, type Component } from "solid-js"
 import type { RemoteServerProfile } from "../../../../server/src/api-types"
 import { useI18n } from "../../lib/i18n"
@@ -6,17 +6,19 @@ import { serverDisplayName } from "../../lib/codenomad-link"
 import { useRemoteServerProfiles, type RemoteServerInput } from "../../lib/hooks/use-remote-server-profiles"
 import { showConfirmDialog } from "../../stores/alerts"
 import { RemoteServerDialog } from "../remote-server-dialog"
+import ServerAddField from "../server-add-field"
 
 /**
- * Settings → Servers, the one place that manages saved CodeNomad servers: open,
- * edit, remove, add. Opening shows a project tab where this window has tabs,
- * else the server's own window (Preferences, unverified certificates).
+ * Settings → Servers, the one place that manages saved CodeNomad servers: add
+ * (the inline address field), open, edit (the server dialog) and remove.
+ * Opening shows a project tab where this window has tabs, else the server's
+ * own window (Preferences, unverified certificates).
  */
 export const ServersSettingsSection: Component = () => {
   const { t } = useI18n()
   const { remoteServers, connectingServerId, submitServer, openServer, removeRemoteServerProfile } = useRemoteServerProfiles()
-  // The dialog's request: a saved server to edit, or none to add one.
-  const [dialog, setDialog] = createSignal<{ initial?: RemoteServerInput } | null>(null)
+  // The saved server being edited.
+  const [dialog, setDialog] = createSignal<{ initial: RemoteServerInput } | null>(null)
   const displayName = (server: RemoteServerProfile) => serverDisplayName(server, remoteServers())
 
   async function remove(server: RemoteServerProfile) {
@@ -36,12 +38,10 @@ export const ServersSettingsSection: Component = () => {
             <Server class="settings-card-heading-icon" />
             <h3 class="settings-card-title">{t("folderSelection.servers.title")}</h3>
           </div>
-          <button type="button" class="selector-button selector-button-secondary w-auto" onClick={() => setDialog({})}>
-            <Plus class="w-4 h-4" />
-            <span>{t("folderSelection.browseMenu.addServer")}</span>
-          </button>
         </div>
         <div class="settings-card-content">
+          {/* Adding saves the server, like Browse's field, without opening it here. */}
+          <ServerAddField open={false} />
           <Show when={remoteServers().length > 0} fallback={<div class="settings-card-message">{t("folderSelection.servers.empty.title")}</div>}>
             <For each={remoteServers()}>
               {(server) => (

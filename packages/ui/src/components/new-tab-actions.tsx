@@ -1,8 +1,6 @@
 import { Show } from "solid-js"
-import { GitBranch, Globe, Hourglass, Server } from "lucide-solid"
+import { GitBranch, Globe, Hourglass } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-import { canOpenRemoteWindows } from "../lib/runtime-env"
-import { openRemoteServerEditor } from "../stores/remote-server-editor"
 import { openSettingsRow } from "../stores/settings-screen"
 
 interface NewTabActionsProps {
@@ -17,9 +15,8 @@ interface NewTabActionsProps {
 
 /**
  * The creation buttons shared by the home page and the launcher: clone a
- * repository and a temporary tab; the home page adds a CodeNomad server (host
- * windows only, through the server dialog) and a SideCar (its form in
- * Settings → SideCars).
+ * repository and a temporary tab; the home page adds a SideCar (its form in
+ * Settings → SideCars). Servers are added in Browse.
  */
 export default function NewTabActions(props: NewTabActionsProps) {
   const { t } = useI18n()
@@ -50,11 +47,8 @@ export default function NewTabActions(props: NewTabActionsProps) {
             onClick={() => onNewTemporary()()} />
         )}
       </Show>
-      {/* The launcher keeps only the project creations; servers and SideCars are added from the home page. */}
+      {/* The launcher keeps only the project creations. */}
       <Show when={props.variant === "home"}>
-        <Show when={canOpenRemoteWindows()}>
-          <Action label={t("folderSelection.newServer")} icon={Server} onClick={() => openRemoteServerEditor()} />
-        </Show>
         <Action label={t("folderSelection.newSidecar")} icon={Globe} onClick={() => void openSettingsRow("sidecars", "sidecar-add")} />
       </Show>
     </>

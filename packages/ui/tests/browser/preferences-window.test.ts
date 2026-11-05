@@ -213,9 +213,10 @@ test("Settings → Servers is the one place that opens, edits, adds and removes 
     const nav = await page.locator(".settings-nav-button").allTextContents()
     assert.equal(nav[nav.indexOf("Remote Access") + 1], "Servers")
     // Remote Access only lets other devices drive this computer.
-    for (const gone of ["Saved Servers", "Connect CodeNomad Server", "Add server…", "Box"]) {
+    for (const gone of ["Saved Servers", "Connect CodeNomad Server", "Box"]) {
       assert.equal(await page.locator(".settings-screen-scroll").getByText(gone, { exact: true }).count(), 0, gone)
     }
+    assert.equal(await page.getByRole("textbox", { name: "Server address or link" }).count(), 0)
 
     await page.getByRole("button", { name: "Servers", exact: true }).click()
     const row = page.locator('[data-remote-server="box"]')
@@ -232,14 +233,14 @@ test("Settings → Servers is the one place that opens, edits, adds and removes 
     assert.deepEqual(servers(), [["box", "Office", "https://box.example"]])
     assert.deepEqual(probes, [])
 
-    // Adding: the name is optional, the server then reads as its host name.
-    await page.getByRole("button", { name: "Add server…", exact: true }).click()
-    const add = page.getByRole("dialog", { name: "Connect to Server", exact: true })
-    await add.getByLabel("Server URL").fill("https://lab.example")
-    await add.getByRole("button", { name: "Save", exact: true }).click()
-    await add.waitFor({ state: "detached" })
+    // Adding goes through the same inline field as Browse, without a dialog; here it only saves.
+    const field = page.getByRole("textbox", { name: "Server address or link" })
+    await field.fill("https://lab.example")
+    await field.press("Enter")
     await page.getByRole("button", { name: "Edit server: lab.example", exact: true }).waitFor()
     assert.deepEqual(probes, ["https://lab.example"])
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    assert.deepEqual(await page.evaluate(() => (window as any).windows), [])
 
     // Preferences has no tabs: a server opens in its own window.
     await page.getByRole("button", { name: "Open: Office", exact: true }).click()
