@@ -1065,6 +1065,57 @@ test("first/latest controls stay in the composer corner and dim the reached end"
   })
 })
 
+// The footer and the corner share one width: Send is never covered, with or
+// without the rail, and a touch layout gives each control a compact touch target.
+for (const hasTouch of [false, true]) for (const timeline of [true, false]) {
+  test(`the composer corner never covers Send (${hasTouch ? "touch" : "mouse"}, timeline ${timeline ? "on" : "off"})`, async () => {
+    await open(async page => {
+      if (!timeline) {
+        await page.evaluate(`(async () => { const { applyUiSettings } = await import('/tests/browser/fixtures/ui-settings.ts'); await applyUiSettings({ showMessageTimeline: false, locale: 'en' }) })()`)
+        await frames(page)
+      }
+      const layout = await page.evaluate(() => {
+        const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect()
+        const corner = box(".session-scroll-corner"), footer = box(".prompt-input-footer"), send = box(".prompt-input-footer .send-button")
+        const hit = (x: number, y: number) => document.elementFromPoint(x, y)?.closest("button")
+        const middle = corner.top + corner.height / 2
+        return {
+          coarse: matchMedia("(pointer: coarse)").matches,
+          rail: Boolean(document.querySelector(".message-timeline-sidebar")),
+          gap: Math.round(corner.left - footer.right),
+          widths: [...document.querySelectorAll(".session-scroll-corner-button")].map(button => button.getBoundingClientRect().width),
+          send: Boolean(hit(send.right - 1, send.top + send.height / 2)?.classList.contains("send-button")),
+          first: hit(corner.left + corner.width / 4, middle)?.getAttribute("aria-label"),
+          latest: hit(corner.right - corner.width / 4, middle)?.getAttribute("aria-label"),
+        }
+      })
+      assert.deepEqual(layout, {
+        coarse: hasTouch, rail: timeline, gap: 0, widths: hasTouch ? [32, 32] : [19.5, 19.5], send: true,
+        first: "Scroll to first message", latest: "Scroll to latest message",
+      }, JSON.stringify(layout))
+    }, { hasTouch })
+  })
+}
+
+// Only a view showing the corner reserves it: not while a Mission is read, nor
+// in a view without the corner mount (the no-session draft).
+test("the footer reserves the corner only where the view shows one", async () => {
+  await open(async page => {
+    const reserved = () => page.evaluate(() => {
+      const view = document.querySelector(".session-view")!, footer = document.querySelector(".prompt-input-footer")!
+      return Math.round(view.getBoundingClientRect().right - footer.getBoundingClientRect().right)
+    })
+    await page.evaluate(`(async () => { const { applyUiSettings } = await import('/tests/browser/fixtures/ui-settings.ts'); await applyUiSettings({ showMessageTimeline: false, locale: 'en' }) })()`)
+    await frames(page)
+    assert.equal(await reserved(), 40)
+    await page.locator(".session-view").evaluate(view => view.classList.add("mission-reading"))
+    assert.equal(await reserved(), 0)
+    assert.equal(await page.locator(".session-scroll-corner").isVisible(), false)
+    await page.locator(".session-view").evaluate(view => { view.classList.remove("mission-reading"); view.querySelector(":scope > .session-scroll-corner")!.remove() })
+    assert.equal(await reserved(), 0)
+  })
+})
+
 // A following list hidden by display:none (still mounted), whose streaming
 // tail grows while hidden, paints its first frame shown again at the bottom.
 test("a following list shown again after display:none paints its first frame at the bottom", async () => {
