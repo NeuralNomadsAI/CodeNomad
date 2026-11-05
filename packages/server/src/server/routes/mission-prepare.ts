@@ -11,12 +11,15 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { prepareMissionCreation, type MissionCreationPipelineManager } from "./mission-creation-pipeline"
 import { MissionCreationHoldError } from "./mission-creation-holds"
+import { parseMissionCreationDefaults } from "../../missions/creation-defaults"
+import { missionRecoveryRejection } from "../../missions/recovery-error"
 
 const commandSchema = z.object({ kind: z.literal("prepare"), input: z.object({
   missionID: z.string().min(1).max(100), requestID: z.string().min(1).max(128),
   objective: z.string().min(1).max(20_000), title: z.string().min(1).max(MISSION_TITLE_MAX).optional(),
   notes: z.string().max(20_000).optional(), template: z.enum(["custom", "wayfinder", "debug", "delivery", "compare"]),
   profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.optional(),
+  creationDefaults: z.unknown().optional(),
 }).strict() }).strict()
 
 type Manager = MissionCreationPipelineManager & Pick<WorkspaceManager, "list">
@@ -47,13 +50,15 @@ export async function prepareCoordinatorMission(manager: Manager, fence: Worktre
   try {
     creation = await prepareMissionCreation({ manager, fence, workspaceID: workspace.id, signal,
       expectedProjectID: coordinator.projectID, preparedBy: { missionID: source.id, coordinatorSessionID: coordinatorID },
+      ...(input.creationDefaults === undefined ? {} : { creationDefaults: parseMissionCreationDefaults(input.template, input.creationDefaults) }),
       request: { requestId: input.requestID, objective: input.objective, template: input.template, directory: coordinator.location.directory,
         ...(input.title === undefined ? {} : { title: input.title }), ...(input.notes === undefined ? {} : { notes: input.notes }),
         ...(input.profiles === undefined ? {} : { profiles: input.profiles }), ...(input.taskMode === undefined ? {} : { taskMode: input.taskMode }) } })
     return await creation.execute()
   } catch (error) {
+    if (missionRecoveryRejection(error)) throw error
     if (!creation?.dispatched && error instanceof Error && error.message.startsWith("compare-models-"))
-      throw new MissionControlError(error.message, "prepare-refused")
+      throw new MissionControlError(error.message, error.message)
     // An earlier uncertain attempt with this identity stays held: never claim nothing exists.
     if (error instanceof MissionCreationHoldError) {
       if (error.code === "creation-conflict") throw new MissionControlError("This requestID already prepared a different mission", "prepare-conflict")

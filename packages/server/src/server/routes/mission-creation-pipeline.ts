@@ -13,12 +13,13 @@ import { locationRequestOptions, sameLocation } from "../../opencode/compatibili
 import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchronous"
 import { admitMissionCreationLocations } from "./mission-creation-admission"
 import { MissionCreationHoldError, missionCreationDigest } from "./mission-creation-holds"
+import type { MissionCreationDefaults } from "../../missions/creation-defaults"
 
 export const missionCreationRequestSchema = z.object({
   objective: z.string().trim().min(1).max(20_000), title: z.string().trim().min(1).max(MISSION_TITLE_MAX).regex(MISSION_TITLE_PATTERN).optional(), notes: z.string().max(20_000).optional(),
   template: z.enum(["custom", "wayfinder", "debug", "delivery", "compare"]), coordinatorSessionId: z.string().trim().min(1).max(240).optional(),
   directory: z.string().trim().min(1).max(4_096).optional(), requestId: z.string().trim().min(1).max(128),
-  profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.default("native"),
+  profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.optional(),
 }).strict()
 
 export type MissionCreationPipelineManager = Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceConnection"
@@ -39,6 +40,7 @@ export async function prepareMissionCreation(input: {
   expectedProjectID?: string
   /** Trusted coordinator hand-off from the authenticated plugin bridge, never HTTP input. */
   preparedBy?: { missionID: string; coordinatorSessionID: string }
+  creationDefaults?: MissionCreationDefaults
 }) {
   const { manager, workspaceID, signal } = input
   const wait = input.wait ?? (<T>(operation: Promise<T>) => operation)
@@ -48,7 +50,7 @@ export async function prepareMissionCreation(input: {
   const request = parsed.data
   const compareError = request.template === "compare" && compareModelError(request.profiles)
   if (compareError) throw new MissionCreationPreparationError(400, compareError)
-  request.profiles = freezeCompareProfiles(request.template, request.profiles)
+  if (!input.creationDefaults) request.profiles = freezeCompareProfiles(request.template, request.profiles)
   try { validateMissionProfiles(request.template, request.profiles) }
   catch { throw new MissionCreationPreparationError(400, "Invalid mission creation request") }
   if (!input.fence) throw new MissionCreationPreparationError(503, "Mission creation unavailable")
@@ -102,8 +104,9 @@ export async function prepareMissionCreation(input: {
   const nativeInput = {
     prepared: true, requestID: request.requestId, objective: request.objective,
     ...(request.title === undefined ? {} : { title: request.title }),
-    ...(request.notes === undefined ? {} : { notes: request.notes }), template: request.template, taskMode: request.taskMode,
+    ...(request.notes === undefined ? {} : { notes: request.notes }), template: request.template, taskMode: request.taskMode ?? "native",
     ...(request.profiles === undefined ? {} : { profiles: request.profiles }),
+    ...(input.creationDefaults === undefined ? {} : { creationDefaults: input.creationDefaults }),
     ...(request.coordinatorSessionId ? { coordinatorSessionID: request.coordinatorSessionId } : {}),
     expectedCoordinatorLocation: locations.at(-1)!,
     ...(input.preparedBy === undefined ? {} : { preparedBy: { ...input.preparedBy } }),

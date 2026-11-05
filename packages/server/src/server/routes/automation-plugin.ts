@@ -10,6 +10,7 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { admitMissionInput } from "./mission-input"
 import { createManagedMissionRoot } from "./mission-root-creation"
 import { prepareCoordinatorMission } from "./mission-prepare"
+import { readMissionProfileDefaults } from "./mission-profile-defaults"
 import { interruptMissionTask, observeMissionTask } from "./mission-task-native"
 import { requestAdmission } from "../request-admission"
 import { MissionCreationHoldError } from "./mission-creation-holds"
@@ -28,7 +29,7 @@ interface AutomationPluginRouteDeps {
   workspaceManager: WorkspaceManager
   developerCdp: DeveloperCdp
   worktreeDeletionFence?: WorktreeDeletionFence
-  settings?: Pick<SettingsService, "getProfileScope">
+  settings?: Pick<SettingsService, "getProfileScope"> & Partial<Pick<SettingsService, "getRawConfigOwner">>
   remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">
 }
 
@@ -107,8 +108,9 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     if (!owned) return reply.code(404).send({ error: "Session is not owned by this CodeNomad instance" })
 
     if (body.mode === "mission-input") {
-      if (!deps.worktreeDeletionFence) return reply.code(503).send({ error: "Mission dispatch unavailable" })
       try {
+        if (commandKind === "profile-defaults") return reply.send({ result: readMissionProfileDefaults(deps.settings, body.command) })
+        if (!deps.worktreeDeletionFence) return reply.code(503).send({ error: "Mission dispatch unavailable" })
         // Journal-keyed creation capability of the owning backend. Durable
         // admission does not use this bridge or gain a new native API fallback.
         const fence = deps.worktreeDeletionFence

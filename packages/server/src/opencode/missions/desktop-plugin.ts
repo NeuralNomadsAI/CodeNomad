@@ -42,6 +42,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
           synthetic: (coordinatorID, input) => sendMissionInput(coordinatorID, "synthetic", input),
           lifecycle: (coordinatorID, input) => sendMissionInput(coordinatorID, "lifecycle", input),
           prepare: (coordinatorID, input) => sendMissionInput(coordinatorID, "prepare", input),
+          resolveCreationDefaults: (sessionID, input) => sendMissionInput(sessionID, "profile-defaults", input),
           observeTask: (coordinatorID, input) => sendMissionInput(coordinatorID, "task-sessions", input),
           interruptTask: (coordinatorID, input) => sendMissionInput(coordinatorID, "interrupt", input),
           cleanup: async (coordinatorID, input) => {

@@ -178,6 +178,7 @@ export interface MissionPlanChange {
 }
 
 export interface MissionMap {
+  creationDefaults?: import("./creation-defaults").MissionCreationDefaults
   document?: import("./mission-document-one-time").MissionDocumentSummary
   version: typeof MISSION_SCHEMA_VERSION
   id: string
@@ -306,6 +307,7 @@ interface MissionEventBase {
 }
 
 export interface MissionCreatedEvent extends MissionEventBase {
+  creationDefaults?: import("./creation-defaults").MissionCreationDefaults
   type: "mission.created"
   projectCanonical: string
   title?: string
@@ -949,6 +951,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     template: created.template,
     taskMode: created.taskMode ?? "native",
     ...(created.profiles === undefined ? {} : { profiles: structuredClone(created.profiles) }),
+    ...(created.creationDefaults === undefined ? {} : { creationDefaults: structuredClone(created.creationDefaults) }),
     status,
     ...lifecycle,
     ...(hasInvalidReportNotificationHistory(events) ? { notificationUnavailable: true } : {}),

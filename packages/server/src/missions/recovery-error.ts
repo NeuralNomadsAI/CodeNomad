@@ -12,6 +12,10 @@ const errors = {
   "prepare-refused": { status: 409, message: "The mission could not be prepared; nothing was created" },
   "prepare-conflict": { status: 409, message: "This requestID already prepared a different mission" },
   "prepare-uncertain": { status: 409, message: "The prepared mission's outcome is uncertain; retry with the same requestID" },
+  "mission-preferences-invalid": { status: 409, message: "Correct the Missions preferences before creating a mission" },
+  "mission-preferences-unavailable": { status: 503, message: "Reload or correct the Missions preferences before creating a mission" },
+  "compare-models-required": { status: 409, message: "Choose model-a and model-b profiles with explicit models before creating a Compare mission" },
+  "compare-models-identical": { status: 409, message: "Choose different models for the model-a and model-b profiles before creating a Compare mission" },
 } as const
 
 export function missionRecoveryError(code: unknown): { code: string; status: number; message: string } | undefined {

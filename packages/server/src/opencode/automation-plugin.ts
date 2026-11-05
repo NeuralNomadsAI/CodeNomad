@@ -545,17 +545,25 @@ async function probeBrowserBridges(
 }
 
 export async function sendMissionInput(sessionID: string,
-  kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root" | "prepare" | "task-sessions" | "interrupt", input: unknown): Promise<unknown> {
-  // `purpose` lets a backend without native browsers claim the session for dispatch only.
-  const targets = await probeBrowserBridges(await registrations(), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS, "mission")
-  if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
-  const response = await callBridge(targets[0], { mode: "mission-input", sessionID, command: { kind, input } }, REQUEST_TIMEOUT_MS)
-  if (response.status !== 200) {
-    const recovery = missionRecoveryError(response.body.code)
-    if (recovery && recovery.status === response.status) throw new MissionControlError(recovery.message, recovery.code)
-    throw new Error("CodeNomad could not admit the mission input; inspect ownership/environment and retry the same task")
+  kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root" | "prepare" | "task-sessions" | "interrupt" | "profile-defaults", input: unknown): Promise<unknown> {
+  try {
+    // `purpose` lets a backend without native browsers claim the session for dispatch only.
+    const targets = await probeBrowserBridges(await registrations(), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS, "mission")
+    if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
+    const response = await callBridge(targets[0], { mode: "mission-input", sessionID, command: { kind, input } }, REQUEST_TIMEOUT_MS)
+    if (response.status !== 200) {
+      const recovery = missionRecoveryError(response.body.code)
+      if (recovery && recovery.status === response.status) throw new MissionControlError(recovery.message, recovery.code)
+      throw new Error("CodeNomad could not admit the mission input; inspect ownership/environment and retry the same task")
+    }
+    return response.body.result
+  } catch (error) {
+    if (kind === "profile-defaults" && !(error instanceof MissionControlError && missionRecoveryError(error.code))) {
+      const unavailable = missionRecoveryError("mission-preferences-unavailable")!
+      throw new MissionControlError(unavailable.message, unavailable.code)
+    }
+    throw error
   }
-  return response.body.result
 }
 
 export async function executeBrowserTool(sessionID: string, input: unknown) {

@@ -18,6 +18,7 @@ import type {
 } from "../missions/control-types"
 import { MISSION_SCHEMA_VERSION, type MissionEvent, type MissionJsonValue, type MissionMap, type MissionTemplateId } from "../missions/model"
 import { parseMissionEvent } from "../missions/journal"
+import { parseMissionCreationDefaults, missionCreationSelection } from "../missions/creation-defaults"
 import { missionPausedInstruction } from "../missions/lifecycle-model"
 import { CODENOMAD_MISSIONS_RPC } from "../missions/rpc"
 import { executionSchema, parseExecution } from "../missions/execution"
@@ -380,7 +381,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "inspect",
-        description: "Inspect the caller's durable mission map and optional native catalog, or prepare a paused custom, debugging, Wayfinder, product delivery, or two-model comparison mission. The user presses Play in CodeNomad before Mission work begins; creation never sends a coordinator prompt. Compare requires different model-a/model-b profiles and always a blind judge. Pass taskKey to read only that task with its revision, frontier, contract, exact current assignmentPrompt, observed native conversations and any qualifying human answers instead of the full map. A map too large for one result lists its tasks in pages: follow taskPage.nextTaskOffset with taskOffset. Any value too large for one result is replaced by { omittedCharacters, read }: pass read as the whole input to read that value in slices, following each slice's next. Pass list: true to find your missions and prepared hand-offs; missionID also reads a hand-off you prepared.",
+        description: "Inspect the caller's durable mission map and optional native catalog, or prepare a paused custom, debugging, Wayfinder, product delivery, or two-model comparison mission. Creation fills omitted profile slots and taskMode from the user's Missions preferences (type exception, then global); explicit slots win whole, including {}. It returns selection with saved profiles, taskMode and origins (explicit, preference, opencode-default), and refuses unreadable/invalid preferences. The existing coordinator must match the resolved profile. The user presses Play in CodeNomad before Mission work begins; creation never sends a coordinator prompt. Compare requires different model-a/model-b profiles and always a blind judge. Pass taskKey to read only that task with its revision, frontier, contract, exact current assignmentPrompt, observed native conversations and any qualifying human answers instead of the full map. A map too large for one result lists its tasks in pages: follow taskPage.nextTaskOffset with taskOffset. Any value too large for one result is replaced by { omittedCharacters, read }: pass read as the whole input to read that value in slices, following each slice's next. Pass list: true to find your missions and prepared hand-offs; missionID also reads a hand-off you prepared.",
         input: inspectSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -506,7 +507,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "prepare",
-        description: "Coordinator only: prepare a separate paused one-time mission, such as a pilot hand-off, from an objective, optional title and notes, a template, profiles and task mode: what the Mission editor creates. It never starts; the user presses Play. Reuse the same requestID to retry. Find it later with mission.inspect({ list: true }) and read it with mission.inspect({ missionID }); you cannot control it.",
+        description: "Coordinator only: prepare a separate paused one-time mission, such as a pilot hand-off, from an objective, optional title and notes, a template, profiles and task mode: what the Mission editor creates. Omitted profile slots and taskMode inherit the user's Missions preferences (type exception, then global); explicit slots win whole, including {}. Returns selection with saved profiles, taskMode and origins (explicit, preference, opencode-default); unreadable/invalid preferences refuse creation. It never starts; the user presses Play. Reuse the same requestID and original inputs to retry: saved choices stay frozen even if preferences change. Outside an active mission use the Missions editor. Find it later with mission.inspect({ list: true }) and read it with mission.inspect({ missionID }); you cannot control it.",
         input: prepareSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -516,7 +517,8 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           selected.current()
           const { mission } = await executeMissionBusiness(selected, control => control.prepare(tool.sessionID, parsePrepareInput(input)))
           return textResult({ disposition: "prepared", missionID: mission.id, ...(mission.title === undefined ? {} : { title: mission.title }),
-            status: mission.status, ...(mission.runState === undefined ? {} : { runState: mission.runState }), revision: mission.revision })
+            status: mission.status, ...(mission.runState === undefined ? {} : { runState: mission.runState }), revision: mission.revision,
+            ...(mission.creationDefaults ? { selection: missionCreationSelection(mission) } : {}) })
         },
       })
     })
@@ -629,8 +631,8 @@ const prepareSchema = {
     title: { type: "string", minLength: 1, maxLength: MISSION_TITLE_MAX },
     notes: { type: "string", maxLength: 20_000 },
     template: { type: "string", enum: ["custom", "debug", "wayfinder", "delivery", "compare"] },
-    profiles: missionProfilesSchema,
-    taskMode: missionTaskModeSchema,
+    profiles: { ...missionProfilesSchema, description: "Omitted coordinator/role slots inherit Missions preferences: type exception, then global (specialist for task roles). Each explicit slot replaces the preference whole; {} selects OpenCode defaults for that slot. profiles: {} inherits all slots. Invalid preferences refuse creation." },
+    taskMode: { ...missionTaskModeSchema, description: "Explicit policy wins; omission inherits Missions preferences (type exception, then global), then native." },
   },
   required: ["requestID", "objective", "template"],
   additionalProperties: false,
@@ -651,7 +653,7 @@ export function parsePrepareInput(input: unknown): MissionPrepareRequest {
     ...(value.title === undefined ? {} : { title: missionTitle(value.title) }),
     ...(value.notes === undefined ? {} : { notes: optionalBodyText(value.notes, "notes", 20_000) }),
     template,
-    taskMode: parseMissionTaskMode(value.taskMode),
+    ...(value.taskMode === undefined ? {} : { taskMode: parseMissionTaskMode(value.taskMode) }),
     ...(value.profiles === undefined ? {} : { profiles: parseMissionProfiles(value.profiles) }),
   }
 }
@@ -687,8 +689,8 @@ const inspectSchema = {
         objective: { type: "string", minLength: 1, maxLength: 20_000 },
         template: { type: "string", enum: ["custom", "debug", "wayfinder", "delivery", "compare"] },
         notes: { type: "string", maxLength: 20_000 },
-        profiles: missionProfilesSchema,
-        taskMode: { ...missionTaskModeSchema, description: "Declared task policy for this new mission only; omitted defaults to native. Independent requires explicit reasoned independent declarations, not a native-helper ban or new-root authorization." },
+        profiles: { ...missionProfilesSchema, description: "Omitted coordinator/role slots inherit Missions preferences: type exception, then global (specialist for task roles). Explicit slots replace whole, including {} or agent-only. profiles: {} inherits all slots. Invalid preferences refuse creation." },
+        taskMode: { ...missionTaskModeSchema, description: "Declared task policy for this new mission only; omission inherits Missions preferences (type exception, then global), then native. Independent requires explicit reasoned independent declarations, not a native-helper ban or new-root authorization." },
       },
       required: ["objective", "template"],
       additionalProperties: false,
@@ -771,7 +773,7 @@ export function parseInspectInput(input: unknown): MissionInspectInput & {
     start: {
       objective: requiredText(start.objective, "start.objective", 20_000),
       template,
-      taskMode: parseMissionTaskMode(start.taskMode),
+      ...(start.taskMode === undefined ? {} : { taskMode: parseMissionTaskMode(start.taskMode) }),
       notes: optionalText(start.notes, "start.notes", 20_000),
       ...(start.profiles === undefined ? {} : { profiles: parseMissionProfiles(start.profiles) }),
     },
@@ -860,6 +862,7 @@ function parseCreateMissionInput(input: unknown): MissionCreateInput {
     notes: optionalBodyText(value.notes, "notes", 20_000),
     template,
     taskMode: parseMissionTaskMode(value.taskMode),
+    ...(value.creationDefaults === undefined ? {} : { creationDefaults: parseMissionCreationDefaults(template, value.creationDefaults) }),
     ...(value.profiles === undefined ? {} : { profiles: parseMissionProfiles(value.profiles) }),
     coordinatorSessionID: optionalText(value.coordinatorSessionID, "coordinatorSessionID", 240),
     ...(value.expectedCoordinatorLocation === undefined ? {} : { expectedCoordinatorLocation: readLocationRef(value.expectedCoordinatorLocation) }),

@@ -5,7 +5,8 @@ import { parseDelegateInput, parseInspectInput, parseReportInput, parseReviseInp
 import { buildAssignmentPrompt } from "../missions/recipes"
 import type { MissionJsonValue, MissionMap } from "../missions/model"
 import type { MissionsPluginContext } from "./missions-plugin"
-import type { NativeMissionSession } from "../missions/control-types"
+import type { MissionInputTransport, NativeMissionSession } from "../missions/control-types"
+import { resolveMissionCreationDefaults } from "../missions/profile-defaults"
 import { NativeMissionDocumentStore, type MissionDocumentStorage } from "../missions/mission-document-store"
 import { canonicalAuthority } from "../missions/authority-protocol"
 
@@ -14,7 +15,7 @@ test("validates the compact mission tool contracts", () => {
     assert.equal(parseInspectInput({ start: { objective: "Bounded comparison", template } }).start!.template, template)
   }
   assert.deepEqual(parseInspectInput({ start: { objective: "Fix it", template: "debug" } }), {
-    start: { objective: "Fix it", template: "debug", notes: undefined, taskMode: "native" },
+    start: { objective: "Fix it", template: "debug", notes: undefined },
     missionID: undefined,
   })
   assert.deepEqual(parseDelegateInput({ taskKey: "review-spec", title: "Review", brief: "Check spec", role: "review-spec" }), {
@@ -110,9 +111,10 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   const inspect = tools.find((tool) => tool.name === "inspect")!
   assert.deepEqual((inspect as any).input.properties.start.properties.template.enum, ["custom", "debug", "wayfinder", "delivery", "compare"])
   assert.match((tools.find(tool => tool.name === "report") as any).input.properties.artifact.description, /Compare comparator.*version 1 comparison/)
-  await inspect.execute({ start: { objective: "Coordinate", template: "custom" } }, {
+  const started = JSON.parse((await inspect.execute({ start: { objective: "Coordinate", template: "custom" } }, {
     sessionID: "ses_coordinator", messageID: "msg_1", id: "call_1", progress: async () => {},
-  })
+  })).content)
+  assert.equal("selection" in started, false, "historical creation without a resolver invents no origins")
   const snapshot = await snapshotHandler!() as { missions: Array<Record<string, unknown>> }
   assert.equal(snapshot.missions.length, 1)
   assert.equal("notes" in snapshot.missions[0], false)
@@ -240,6 +242,63 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   await assert.rejects(inspect.execute({}, {
     sessionID: "ses_coordinator", id: "stale-tool", progress: async () => {},
   }), /no longer available/)
+})
+
+test("inspect start and prepare return frozen profiles, task mode and origins without rereading defaults", async () => {
+  const values = new Map<string, unknown>(), sessions = new Map<string, NativeMissionSession>([["ses_coordinator", {
+    id: "ses_coordinator", projectID: "project-1", location: { directory: "/repo" },
+  }]])
+  const tools = new Map<string, { execute(input: unknown, context: any): Promise<{ content: string }> }>()
+  let handlers: any, reads = 0, preparations = 0
+  let preferences: unknown = [{ template: "all", profiles: { coordinator: { agent: "lead" }, roles: { specialist: { agent: "worker" } } }, taskMode: "independent" }]
+  const transport: MissionInputTransport = {
+    prompt: async () => assert.fail("Creation never prompts"), synthetic: async () => assert.fail("Creation never resumes"),
+    resolveCreationDefaults: async (_sessionID, input) => { reads++; return resolveMissionCreationDefaults({ ...input, preferences }) },
+    prepare: async (sessionID, input) => {
+      preparations++
+      return handlers.create({ ...input, prepared: true, preparedBy: { missionID: input.missionID, coordinatorSessionID: sessionID } })
+    },
+  }
+  const cleanup = await setupMissionsPlugin({
+    location: { directory: "/repo", project: { id: "project-1", canonical: "/repo" } },
+    storage: {
+      get: async (key: string) => values.get(key),
+      set: async (key: string, value: unknown) => { values.set(key, structuredClone(value)) },
+      scan: async ({ prefix }: { prefix: string }) => ({ entries: [...values].filter(([key]) => key.startsWith(prefix)).map(([key, value]) => ({ key, value })) }),
+    },
+    session: {
+      get: async ({ sessionID }: { sessionID: string }) => { const session = sessions.get(sessionID); if (!session) throw new Error("Absent"); return session },
+      create: async (input: any) => { const session = { ...input, projectID: "project-1" }; sessions.set(session.id, session); return session },
+      prompt: async () => assert.fail("Creation never prompts"), synthetic: async () => assert.fail("Creation never resumes"),
+      hook: async () => ({ dispose: async () => {} }),
+    },
+    agent: { list: async () => ({ data: ["lead", "worker"].map(id => ({ id, mode: "all" })) }) },
+    model: { list: async () => ({ data: [] }) },
+    tool: { transform: async (callback: any) => { callback({ namespace() {}, add(tool: any) { tools.set(tool.name, tool) } }); return { dispose: async () => {} } } },
+    rpc: { register: async (_definition: unknown, value: unknown) => { handlers = value; return { dispose: async () => {}, events: { emit: async () => {} } } } },
+  } as never, transport)
+  const call = async (name: string, input: unknown, id = name) => JSON.parse((await tools.get(name)!.execute(input, {
+    sessionID: "ses_coordinator", messageID: `msg_${id}`, id: `call_${id}`, progress: async () => {},
+  })).content)
+  try {
+    const start = { objective: "Coordinate", template: "custom" as const, profiles: { coordinator: {} } }
+    const started = await call("inspect", { start }, "start")
+    assert.deepEqual(started.selection, resolveMissionCreationDefaults({ ...start, preferences }))
+    assert.deepEqual(started.selection.origins, { coordinator: "explicit", roles: { specialist: "preference" }, taskMode: "preference" })
+    const request = { requestID: "pilot", objective: "Pilot", template: "custom" as const }
+    const prepared = await call("prepare", request)
+    assert.deepEqual(prepared.selection, resolveMissionCreationDefaults({ ...request, preferences }))
+    assert.deepEqual([prepared.disposition, prepared.runState, prepared.selection.profiles.coordinator], ["prepared", "prepared", { agent: "lead" }])
+    const bytes = structuredClone([...values])
+    preferences = { invalid: true }
+    assert.deepEqual(await call("inspect", { start }, "start"), started)
+    assert.deepEqual(await call("prepare", request), prepared)
+    assert.equal(reads, 2)
+    assert.equal(preparations, 1)
+    assert.deepEqual([...values], bytes)
+    assert.deepEqual((await call("inspect", { missionID: prepared.missionID })).selection, prepared.selection)
+    assert.equal(reads, 2, "ordinary reads retain stored provenance")
+  } finally { await cleanup() }
 })
 
 for (const workspaceID of [undefined, "workspace-1"]) {
