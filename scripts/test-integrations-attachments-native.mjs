@@ -130,6 +130,7 @@ try {
     } } } }
     let subscriptionCount = 0
     const manager = {
+      requireWorkspaceCapability: () => new AbortController().signal,
       get: id => records.find(record => record.id === id), list: () => records,
       getSharedServiceConnection: async () => recorded, getSharedServiceClient: async () => client,
       getServiceDirectoryForPath: async (id, directory) => id === "fixture" && owned(directory) ? directory : undefined,

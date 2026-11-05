@@ -47,6 +47,7 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
   const runtimeFetch = connection?.fetch ?? createRuntimeFetch(endpoint)
   const owns = candidate => path.resolve(candidate) === path.resolve(location.directory)
   const workspaceManager = {
+    requireWorkspaceCapability: () => new AbortController().signal,
     get: () => ({ id: "pruning-ui", path: location.directory }),
     getSharedServiceEndpoint: async () => endpoint,
     ...(connection ? { getSharedServiceConnection: async () => connection } : {}),

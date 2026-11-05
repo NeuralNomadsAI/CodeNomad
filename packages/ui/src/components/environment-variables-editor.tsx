@@ -1,4 +1,4 @@
-import { Component, createSignal, For, Show } from "solid-js"
+import { Component, createSignal, For, onCleanup, Show } from "solid-js"
 import { Plus, Trash2, Key, Globe, Shield, ShieldOff } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
 import { useI18n } from "../lib/i18n"
@@ -23,10 +23,14 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
   const [newKey, setNewKey] = createSignal("")
   const [newValue, setNewValue] = createSignal("")
   const [newVarSecure, setNewVarSecure] = createSignal(true)
+  let disposed = false
+  onCleanup(() => { disposed = true })
+  const disabled = () => disposed || props.disabled
 
   const entries = () => Object.entries(envVars())
 
   function handleAddVariable() {
+    if (disabled()) return
     const key = newKey().trim()
     const value = newValue().trim()
 
@@ -40,18 +44,21 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
   }
 
   function handleRemoveVariable(key: string) {
+    if (disabled()) return
     removeEnvironmentVariable(key)
     const { [key]: removed, ...rest } = envVars()
     setEnvVars(rest)
   }
 
   function handleUpdateVariable(key: string, value: string) {
+    if (disabled()) return
     const updated = { ...envVars(), [key]: value }
     setEnvVars(updated)
     updateEnvironmentVariables(updated)
   }
 
   function handleSecureToggle(key: string) {
+    if (disabled()) return
     toggleSecureEnvVar(key)
   }
 

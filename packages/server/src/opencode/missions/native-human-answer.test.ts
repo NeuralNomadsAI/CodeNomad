@@ -113,6 +113,7 @@ async function fixture(asker: "ses_child" | "ses_root" = "ses_child", questions:
     }, profile: async () => "modern", invalidate: () => {} }
   const workspace = { id: "workspace", path: directory }
   const manager = { get: () => workspace, getSharedServiceConnection: async () => connection,
+    requireWorkspaceCapability: () => new AbortController().signal,
     ownsLocation: async () => true, getServiceWslDistro: () => undefined,
     getSharedServiceEndpoint: async () => connection.endpoint, getSharedServiceClient: async () => connection.client,
     getServiceDirectory: () => directory, getInstanceAuthorizationHeader: () => "Basic fixture",

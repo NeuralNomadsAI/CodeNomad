@@ -17,6 +17,7 @@ async function fixture(t: test.TestContext) {
     } }) }
   const connection = { client, assertCurrent: () => { if (!state.active) throw new Error("Connection retired") } }
   const manager = { get: () => workspace, getServiceLocation: () => ({ directory: "/project" }), getSharedServiceConnection: async () => connection,
+    requireWorkspaceCapability: () => new AbortController().signal,
     ownsLocation: async () => state.owned, getServiceDirectoryForPath: async (_id: string, directory: string) => directory,
     getWorktreeIdentityForPath: async () => "/project" }
   app.addHook("preHandler", async request => { state.abort = () => request.raw.emit("aborted") })

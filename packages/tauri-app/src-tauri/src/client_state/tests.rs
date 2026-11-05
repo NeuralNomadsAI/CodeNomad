@@ -43,6 +43,7 @@ fn preferences_restoration_survives_final_window_removal_and_clears_explicitly()
     let directory = tempfile::tempdir().unwrap();
     let state = ClientState::initialize_at(directory.path()).unwrap();
     let request = crate::preferences_window::PreferencesRequest {
+        server_id: None,
         scroll_top: Some(420),
         section: "providers".into(),
         instance_id: Some("instance-1".into()),
@@ -92,6 +93,25 @@ fn preferences_restoration_survives_final_window_removal_and_clears_explicitly()
     assert_eq!(reopened.state.lock().unwrap().preferences_window, Some(NativeWindowState {
         bounds, maximized: true, fullscreen: false, zoom_factor: 1.25,
     }));
+}
+
+#[test]
+fn preferences_server_identity_roundtrips_through_the_window_envelope() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = ClientState::initialize_at(directory.path()).unwrap();
+    let value = json!({ "section": "providers", "serverId": "unknown-A", "instanceId": "same",
+        "workspacePath": "C:\\App/", "location": { "directory": "/App//" }, "scrollTop": 123 });
+    let request = crate::preferences_window::validate_request(serde_json::from_value(value.clone()).unwrap()).unwrap();
+    state.set_preferences(Some(request.clone())).unwrap();
+    let bytes = fs::read(directory.path().join(CLIENT_STATE_FILENAME)).unwrap();
+    let persisted: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(persisted["preferences"], value);
+    assert_eq!(parse_client_state(&bytes).preferences, Some(request));
+    for server_id in [json!(null), json!(""), json!("a/b"), json!(42)] {
+        let mut invalid = persisted.clone();
+        invalid["preferences"]["serverId"] = server_id;
+        assert!(parse_client_state(&serde_json::to_vec(&invalid).unwrap()).unsupported_future_envelope);
+    }
 }
 use std::time::Duration;
 use tempfile::TempDir;
@@ -538,6 +558,10 @@ fn electron_and_tauri_share_the_complete_envelope_across_handoffs() {
         Some(&electron_snapshot),
     );
     assert_eq!(node["acquired"], true);
+    let preferences_a = json!({ "section": "providers", "serverId": "unknown-A", "instanceId": "same",
+        "workspacePath": "C:\\App/", "location": { "directory": "/App//" }, "scrollTop": 123 });
+    let node = run_node_state_host(&election, &electron, &tauri, "save-preferences", Some(&preferences_a));
+    assert_eq!(node["acquired"], true);
     let rust = ClientState::initialize_at_with_writer_and_election(
         &tauri,
         &election,
@@ -548,6 +572,10 @@ fn electron_and_tauri_share_the_complete_envelope_across_handoffs() {
     )
     .unwrap();
     assert_eq!(rust.load().unwrap().snapshot, electron_snapshot);
+    assert_eq!(serde_json::to_value(rust.preferences()).unwrap(), preferences_a);
+    let mut preferences_b = preferences_a;
+    preferences_b["serverId"] = json!("unknown-B");
+    rust.set_preferences(Some(crate::preferences_window::validate_request(serde_json::from_value(preferences_b.clone()).unwrap()).unwrap())).unwrap();
     let tauri_snapshot = json!({ "savedAt": 20, "from": "tauri" });
     assert!(rust.save_snapshot(tauri_snapshot.clone()).unwrap());
     rust.release_locks();
@@ -556,6 +584,7 @@ fn electron_and_tauri_share_the_complete_envelope_across_handoffs() {
     let node = run_node_state_host(&election, &electron, &tauri, "load", None);
     assert_eq!(node["acquired"], true);
     assert_eq!(node["state"]["snapshot"], tauri_snapshot);
+    assert_eq!(node["preferences"], preferences_b);
 }
 #[test]
 fn normalizes_window_bounds_against_displays() {

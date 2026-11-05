@@ -1,10 +1,16 @@
 # Conversations
 
+Le chat des serveurs explicites affiche les images intégrées prises en charge ou les médias natifs qualifiés de la même conversation. Les autres sources affichent une indication d’indisponibilité. Les chemins locaux retrouvent uniquement des images déjà détenues par cette conversation ; `/btw` accepte uniquement les images intégrées. Les fichiers intégrés valides proposent un téléchargement explicite.
+
 CodeNomad présente les sessions natives OpenCode comme des conversations, avec une hiérarchie pour le travail délégué et des commandes distinctes pour votre prochain envoi.
 
 Les messages affichent du Markdown, du code, des diffs et les images de résultats d’outils prises en charge. La copie de texte, la recherche dans l’historique complet et la voix utilisent des projections textuelles, pas les octets des images intégrées. **Contenu des messages** change la visibilité sans supprimer les parties enregistrées ; [Historique](history.md#operation-reference) distingue les commandes d’affichage du nettoyage.
 
 Les en-têtes de raisonnement et d’outils indiquent la durée de chaque étape, comptée en direct pendant son exécution ; les durées inférieures à une seconde ne sont pas affichées. Lorsque **Tokens** est affiché dans **Contenu des messages** (le préréglage **Tout** l’affiche), chaque message d’agent se termine par une seule ligne de tokens et de coût après son texte final. Cette ligne additionne le message et les messages contenant les outils et raisonnements que couvre son action **Supprimer les outils et raisonnements de cette réponse**, dans la transcription chargée ; dépliez-la pour les comptes de raisonnement et de cache. Les étapes qui n’ont exécuté que des outils n’ont pas de ligne propre.
+
+Dans le chat interne sur serveur explicite, `@` propose les agents et compétences de ce serveur et explique l’indisponibilité des références aux fichiers du projet. Un changement de connexion pendant une action arrête ses étapes restantes. Vérifiez la conversation avant de renvoyer une action incertaine : elle peut déjà avoir atteint OpenCode.
+
+Une action interrompue ou incertaine laisse un avis non modal dans sa conversation source et conserve votre focus actuel. Si la modification d’un message en attente est interrompue, son contenu connu reste récupérable dans la conversation source ouverte : vérifiez la file, videz le brouillon et les pièces jointes, puis choisissez **Restaurer le message conservé**. Cela restaure un brouillon modifiable ; l’envoi reste une action distincte. Une question `/btw` périmée permet une nouvelle demande explicite lorsque l’ancienne requête se termine.
 
 ## Trouver des conversations et naviguer {#navigate-conversations}
 

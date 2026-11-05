@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { localMissionWorkspaces } from "../../missions/workspace-capability"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import type { MissionMap, MissionSnapshot } from "../../missions/model"
 import { MissionControlError } from "../../missions/control-error"
@@ -26,7 +27,7 @@ type Manager = MissionCreationPipelineManager & Pick<WorkspaceManager, "list">
 export async function prepareCoordinatorMission(manager: Manager, fence: WorktreeDeletionFence, coordinatorID: string, command: unknown,
   signal: AbortSignal): Promise<{ mission: MissionMap }> {
   const { input } = commandSchema.parse(command)
-  const owner = await Promise.any(manager.list().map(async workspace => {
+  const owner = await Promise.any(localMissionWorkspaces(manager).map(async workspace => {
     const connection = await manager.getSharedServiceConnection(workspace.id)
     if (!connection) throw new Error("Workspace unavailable")
     const coordinator = await connection.client.session.get({ sessionID: coordinatorID }, { signal })

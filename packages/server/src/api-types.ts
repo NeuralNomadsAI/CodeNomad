@@ -7,6 +7,8 @@ import type {
   RecentFolder,
 } from "./config/schema"
 import type { FormInfo, OpenCodeEvent, PermissionRequest } from "@opencode/client"
+import type { ProjectExecutionBinding } from "./opencode/servers/types"
+import type { ServerCapabilities } from "./opencode/servers/capabilities"
 export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionContext, PanelExtensionCatalog, PanelExtensionCatalogEntry } from "./panel-extensions/contract"
 export type { ForgeRepository, ForgeWorkItem, ForgeWorkItemKind, ForgeWorkItemsResult } from "./panel-extensions/contract"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
@@ -119,8 +121,10 @@ export interface WorkspaceDescriptor {
   id: string
   /** Correlates creation events with the client request that initiated them. */
   requestId?: string
-  /** Absolute path on the server host. */
+  /** Directory in the bound OpenCode server's namespace. */
   path: string
+  binding?: Readonly<ProjectExecutionBinding>
+  capabilities?: ServerCapabilities
   name?: string
   status: WorkspaceStatus
   /** PID/port are populated when the workspace is running. */
@@ -129,8 +133,8 @@ export interface WorkspaceDescriptor {
   /** Canonical proxy path the CLI exposes for this instance. */
   proxyPath: string
   /** Identifier of the binary resolved from config. */
-  binaryId: string
-  binaryLabel: string
+  binaryId?: string
+  binaryLabel?: string
   binaryVersion?: string
   createdAt: string
   updatedAt: string
@@ -142,6 +146,7 @@ export interface WorkspaceDescriptor {
 
 export interface WorkspaceCreateRequest {
   path: string
+  serverId?: string
   name?: string
   requestId?: string
 }
@@ -606,6 +611,16 @@ export type InstanceStreamStatus = "connecting" | "connected" | "error" | "disco
 
 export type InstanceStreamEvent = OpenCodeEvent
 
+export interface InstanceEventSource {
+  serverId: string
+  /** Monotonic relay attempt; independent of connection and daemon identity. */
+  generation: number
+  /** Native connection captured by the relay; independent of its attempt. */
+  connectionGeneration?: number
+}
+
+export type InstanceEventGap = "eof" | "transport" | "overflow" | "deadline" | "ownership" | "revoked"
+
 export type SideCarKind = "port"
 
 export type SideCarPrefixMode = "strip" | "preserve"
@@ -665,6 +680,7 @@ export interface BinaryUpdateRequest {
 
 export const OPENCODE_V2_REQUIRED_ERROR_CODE = "opencode_v2_required" as const
 export const SESSION_ENVIRONMENT_FAILED_ERROR_CODE = "session_environment_failed" as const
+export const EXPLICIT_REQUEST_UNCERTAIN_ERROR_CODE = "explicit_request_uncertain" as const
 export const PENDING_RECONCILIATION_HEADER = "x-codenomad-pending-reconciliation" as const
 export const PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS = 30_000
 
@@ -877,8 +893,8 @@ export type WorkspaceEventPayload =
   | { type: "storage.configChanged"; owner: SettingsOwner; value: SettingsBucket }
   | { type: "storage.stateChanged"; owner: SettingsOwner; value: SettingsBucket }
   | { type: "instance.dataChanged"; instanceId: string; data: InstanceData }
-  | { type: "instance.event"; instanceId: string; event: InstanceStreamEvent }
-  | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; generation: number; reason?: string }
+  | { type: "instance.event"; instanceId: string; event: InstanceStreamEvent; source?: InstanceEventSource; liveGeneration?: number }
+  | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; generation: number; reason?: string; source?: InstanceEventSource; gap?: InstanceEventGap; liveGeneration?: number }
   | { type: "yolo.stateChanged"; instanceId: string; sessionId: string; enabled: boolean }
   | { type: "yolo.autoAccepted"; instanceId: string; sessionId: string; permissionId: string }
   | { type: "permission.receiptsChanged"; instanceId: string; sessionId: string; messageId?: string }
@@ -970,3 +986,6 @@ export interface ServiceUsageSnapshot {
 export type LoginStartState = "on" | "off" | "unavailable"
 export interface LoginStartResponse { state: LoginStartState }
 export interface LoginStartControl { enabled: boolean }
+
+export type { OpenCodeServerId, OpenCodeServerProfile, OpenCodeServerSummary, ProjectExecutionBinding } from "./opencode/servers/types"
+export type { ServerCapabilities, ServerCapability, ServerCapabilityStatus } from "./opencode/servers/capabilities"

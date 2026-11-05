@@ -3,6 +3,7 @@ import { navigationTargetSchema, type NavigationTarget } from "../../../server/s
 import { serverApi } from "../lib/api-client"
 import { tGlobal } from "../lib/i18n"
 import type { MessageWindowState } from "./message-v2/message-window"
+import { requireHistoryEnrichment } from "./session-history-capability"
 
 // CodeNomad cursors are explicitly namespaced and never sent to native APIs.
 // Persist the stable target rather than a traversed path of page cursors.
@@ -19,6 +20,7 @@ export function historyWindowTarget(cursor: string | undefined): NavigationTarge
 }
 
 export async function readHistoryWindow(instanceId: string, sessionId: string, target: NavigationTarget, signal?: AbortSignal): Promise<{ response: SessionMessagesResponse; window: MessageWindowState }> {
+  requireHistoryEnrichment(instanceId)
   const result = await serverApi.fetchHistoryWindow(instanceId, sessionId, target, signal)
   signal?.throwIfAborted()
   if (result.status !== "window") {

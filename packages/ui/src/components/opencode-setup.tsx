@@ -10,17 +10,18 @@ import { OpenCodeExecutableCard } from "./settings/opencode-executable-card"
 import { invalidateOpenCodeSetup, needsOpenCodeSetup, openCodeSetupBusy, openCodeSetupOpen, openCodeSetupStatus,
   openOpenCodeSetup, refreshOpenCodeSetup, setOpenCodeSetupOpen } from "../stores/opencode-setup"
 
-export default function OpenCodeSetup(props: { automatic?: boolean } = {}) {
+export default function OpenCodeSetup(props: { automatic?: boolean; enabled?: boolean } = {}) {
   const { t } = useI18n()
   const { serverSettings } = useConfig()
-  createEffect(() => { serverSettings().opencodeBinary; untrack(invalidateOpenCodeSetup) })
+  createEffect(() => { if (props.enabled === false) return; serverSettings().opencodeBinary; untrack(invalidateOpenCodeSetup) })
   createEffect(() => {
+    if (props.enabled === false) return
     sseManager.getStatuses()
     untrack(() => { if (!document.hidden) void refreshOpenCodeSetup() })
   })
   let announced = ""
   createEffect(() => {
-    if (props.automatic === false) return
+    if (props.enabled === false || props.automatic === false) return
     const status = openCodeSetupStatus()
     if (!status || !needsOpenCodeSetup(status)) { announced = ""; return }
     const key = `${status.binaryPath}:${status.state}:${status.daemonVersion ?? ""}`
@@ -29,7 +30,7 @@ export default function OpenCodeSetup(props: { automatic?: boolean } = {}) {
     setOpenCodeSetupOpen(true)
   })
   onMount(() => {
-    const refresh = () => { if (!document.hidden) void refreshOpenCodeSetup() }
+    const refresh = () => { if (props.enabled !== false && !document.hidden) void refreshOpenCodeSetup() }
     window.addEventListener("focus", refresh)
     document.addEventListener("visibilitychange", refresh)
     onCleanup(() => {
@@ -44,7 +45,7 @@ export default function OpenCodeSetup(props: { automatic?: boolean } = {}) {
         <button class="selector-button" onClick={() => openOpenCodeSetup()}>{t("settings.opencode.setup.required")}</button>
       </div></Portal>
     </Show>
-    <Dialog open={openCodeSetupOpen()} onOpenChange={setOpenCodeSetupOpen}>
+    <Dialog open={props.enabled !== false && openCodeSetupOpen()} onOpenChange={setOpenCodeSetupOpen}>
       <Dialog.Portal><Dialog.Overlay class="modal-overlay" />
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
           <Dialog.Content class="modal-surface w-full max-w-2xl max-h-[85vh] overflow-auto">

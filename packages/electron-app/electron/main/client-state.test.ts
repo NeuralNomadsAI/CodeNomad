@@ -37,6 +37,7 @@ test("Preferences restoration survives final local-window shutdown and clears on
   const manager = h.create()
   const request = {
     section: "providers" as const,
+    serverId: "unknown-A",
     scrollTop: 420,
     instanceId: "instance-1",
     workspacePath: "C:\\repo",

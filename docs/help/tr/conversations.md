@@ -1,10 +1,16 @@
 # Konuşmalar
 
+Açıkça yapılandırılmış sunucuların sohbeti, desteklenen gömülü resimleri veya aynı konuşmanın doğrulanmış yerel medyasını gösterir. Diğer kaynaklar kullanılamıyor etiketi gösterir. Yerel yollar yalnızca bu konuşmada zaten tutulan resimleri bulur; `/btw` yalnızca gömülü resimleri kabul eder. Geçerli gömülü dosyalar açık bir indirme işlemi sunar.
+
 CodeNomad, yerel OpenCode oturumlarını, devredilen işler için bir hiyerarşi ve bir sonraki göndereceğiniz şey için ayrı kontrollerle konuşmalar olarak sunar.
 
 Mesajlar Markdown, kod, farklar ve desteklenen araç sonucu görüntülerini işler. Metin kopyalama, tam geçmiş araması ve seslendirme gömülü görüntü baytlarını değil, metin izdüşümünü kullanır. **Mesaj içeriği** saklanan parçaları silmeden görünürlüğü değiştirir; [Geçmiş](history.md#operation-reference) görünüm kontrolleriyle temizliği ayırır.
 
 Akıl yürütme ve araç başlıkları her adımın ne kadar sürdüğünü gösterir; süre, adım çalışırken canlı olarak sayılır ve bir saniyenin altındaki süreler gösterilmez. **Mesaj içeriği** içinde **Tokenlar** gösterildiğinde (**Her şey** hazır ayarı bunu gösterir), her ajan mesajı son metninden sonra tek bir token ve maliyet satırıyla biter. Bu satır, yüklenmiş konuşma dökümü içinde mesajı ve **Bu yanıttan araçları ve akıl yürütmeyi kaldır** eyleminin kapsadığı araçları ve akıl yürütmeyi içeren mesajları toplar; akıl yürütme ve önbellek sayıları için satırı genişletin. Yalnızca araç çalıştıran adımların kendi satırı yoktur.
+
+Açık sunucunun dahili sohbetinde `@`, o sunucunun aracılarını ve becerilerini sunar ve proje dosyası başvurularının kullanılamadığını açıklar. Bir işlem sırasında bağlantı değişirse kalan adımlar durur. Sonucu belirsiz bir işlemi yeniden göndermeden önce konuşmayı kontrol edin: işlem OpenCode’a ulaşmış olabilir.
+
+Kesilen veya sonucu belirsiz bir işlem, kaynak konuşmada modal olmayan bir bildirim bırakır ve mevcut odağı korur. Kuyruktaki mesajın düzenlenmesi kesilirse, bilinen içerik açık kaynak konuşmada geri yüklenebilir: kuyruğu kontrol edin, taslağı ve ekleri temizleyip **Kaydedilen mesajı geri yükle** seçeneğini kullanın. Düzenlenebilir bir taslak geri gelir; göndermek ayrı bir işlemdir. Eski `/btw` isteği tamamlandığında açıkça yeni bir soru gönderilebilir.
 
 ## Konuşmaları bulma ve gezinme {#navigate-conversations}
 

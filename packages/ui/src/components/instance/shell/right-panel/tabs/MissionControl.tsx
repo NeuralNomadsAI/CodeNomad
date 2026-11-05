@@ -36,6 +36,7 @@ import { sessionListRestored } from "../../../../../stores/session-list-restorat
 import { createMissionScheduleList } from "../../../../mission-schedule-list"
 import { MissionPanelScope } from "../../../../mission-panel-scope"
 import { MissionPanelPaging } from "../../../../mission-panel-paging"
+import { ProjectCapabilityBoundary } from "../../../../project-capability-gate"
 
 interface MissionControlProps {
   instanceId: string
@@ -55,6 +56,12 @@ const UNAVAILABLE_DETAIL: Record<MissionUnavailableReason, string> = {
 }
 
 const MissionControl: Component<MissionControlProps> = (props) => {
+  return <ProjectCapabilityBoundary instanceId={props.instanceId} feature="missions">
+    <LocalMissionControl {...props} />
+  </ProjectCapabilityBoundary>
+}
+
+const LocalMissionControl: Component<MissionControlProps> = (props) => {
   const { locale } = useI18n()
   const scope = () => instances().get(props.instanceId)?.folder ?? props.instanceId
   const selectedMissionId = () => missionProjectView(scope()).selected

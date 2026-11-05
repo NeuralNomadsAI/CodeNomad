@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { localMissionWorkspaces } from "../../missions/workspace-capability"
 import { isSessionNotFoundError } from "@opencode/client"
 import { isDeepStrictEqual } from "node:util"
 import type { WorkspaceManager } from "../../workspaces/manager"
@@ -24,7 +25,7 @@ export async function createManagedMissionRoot(manager: Manager, fence: Worktree
   coordinatorID: string, command: unknown, signal: AbortSignal) {
   const { input } = schema.parse(command)
   signal.throwIfAborted()
-  const owner = await Promise.any(manager.list().map(async workspace => {
+  const owner = await Promise.any(localMissionWorkspaces(manager).map(async workspace => {
     const connection = await manager.getSharedServiceConnection(workspace.id)
     signal.throwIfAborted()
     if (!connection) throw new Error("Workspace unavailable")

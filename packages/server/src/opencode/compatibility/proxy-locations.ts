@@ -81,6 +81,19 @@ export interface SessionListScope {
   subpath?: string
 }
 
+/** Qualified native message-page token; authority remains the owned route session. */
+export function decodeMessageListCursor(cursor: string): { id: string; order: "asc" | "desc"; direction: "previous" | "next" } | null {
+  if (!cursor || cursor.length > 65_536 || !/^[A-Za-z0-9_-]+$/.test(cursor)) return null
+  try {
+    const value: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"))
+    if (!object(value) || Object.keys(value).some(key => !["id", "order", "direction"].includes(key))
+      || typeof value.id !== "string" || !value.id
+      || (value.order !== "asc" && value.order !== "desc")
+      || (value.direction !== "previous" && value.direction !== "next")) return null
+    return { id: value.id, order: value.order, direction: value.direction }
+  } catch { return null }
+}
+
 export function decodeSessionListScope(cursor: string): SessionListScope | null {
   if (!cursor || cursor.length > 65_536 || !/^[A-Za-z0-9_-]+$/.test(cursor)) return null
   try {

@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify"
 import { z } from "zod"
 import type { IntegrationsReader } from "../../opencode/integrations/integrations"
 import { PluginControlsError } from "../../opencode/plugin-controls"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 
 export interface IntegrationRouteDeps {
   integrations: Pick<IntegrationsReader, "read">
@@ -25,6 +26,7 @@ export function registerIntegrationRoutes(app: FastifyInstance, deps: Integratio
     try {
       return await deps.integrations.read(request.params.id, parsed.data, controller.signal)
     } catch (error) {
+      if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
       if (error instanceof PluginControlsError) {
         const status = error.kind === "not-found" ? 404 : error.kind === "forbidden" ? 403 : error.kind === "invalid" ? 422 : error.kind === "conflict" ? 409 : 503
         if (status >= 500) request.log.warn({ status }, "OpenCode integrations unavailable")

@@ -81,6 +81,68 @@ reply the goal reviewer rejects, pausing the goal) runs in the minimum/latest CI
 
 ### Contract notes
 
+- Internal explicit transcript navigation consumes `message.list` through the
+  existing session-owned proxy: initial `order: asc|desc`, `limit <= 200`, then
+  opaque cursor-only continuation options. Both cursor directions preserve their
+  originating order. Backend admission validates the qualified native
+  `{ id, order, direction }` shape and rejects unknown formats or mixed
+  cursor/order input. `scripts/test-opencode-message-pages-native.mjs` checks native
+  import/replay and message continuations using an owned runtime and synthetic
+  messages with zero provider requests. Enriched CodeNomad windows/outline/query
+  readers retain their shared-local capability gate. Runtime version is evidence
+  recorded by the check; feature admission follows the consumed API contract.
+
+- Explicit endpoints have one controlled dispatch seam in
+  `opencode/servers/transport.ts`; connection admission and probes supply its
+  fetch instead of issuing an independent network request. Registered and ephemeral
+  administrative probes share one read-only connection-owner lane, negotiating the
+  consumed E1 OpenAPI contract and reading canonical `server.info()`. One five-second
+  monotone operation deadline covers all phases. The shared bounded-response wrapper
+  buffers at most eight MiB of decoded bytes for every success/error envelope before
+  SDK parsing. The wrapper owns each Response at receipt, covering cancellation
+  before and during the header-to-reader admission wait. Body/reader cancellation
+  occurs once; late responses, held cleanup and cleanup rejection retain independent
+  retirement. The Form (four MiB) and media (sixteen MiB) consumers share that same
+  ownership boundary and keep their operation-specific deadlines. Cancellation and
+  cleanup release the probe lane independently. The result
+  projects negotiated feature policy, a validated numeric release or unavailable,
+  check time and fixed diagnostic categories/phases. Regular fetch preserves
+  streaming and native wire requests; the compatibility adapter continues to own
+  location-context serialization and feature-contract recognition. Explicit E1
+  admission always negotiates canonical sessions/chat, replay (`native` and
+  compaction metadata), live Forms/permissions, catalogs and event routes. Agent/model
+  selection POSTs require their consumed request fields; MCP/skill catalogue GETs
+  require location selectors and the consumed response envelopes/entry fields.
+  Optional catalogue descriptions and error display details stay optional. Missing
+  required schemas/routes produce `missing_contract`; runtime release labels are
+  admitted by consumed API contracts. Session environment, bundled plugins and integrated
+  image enrichment retain separate capability policy. Local admission retains its
+  consumed runtime requirements. Connection generations revoke captured clients,
+  fetches, admissions, pending request-body readers and streaming responses on rotation/forget/disconnect/removal/shutdown;
+  origin changes clear memory credentials before metadata publication. Endpoint/transport regressions exercise isolated HTTP/TLS
+  servers, pinned DNS, trust and hostname verification, header isolation, redirect
+  refusal, probe limits and streaming cancellation.
+  `connections.test.ts` exercises independent targets, coalesced/fenced acquisition,
+  the four-target budget, project leases, probe isolation and retained old wrappers.
+
+- The internal event relay subscribes once per admitted explicit target and once
+  through the local adapter. Native `/api/event` covers all Locations on its
+  server; its connected marker confirms only the current attempt. The installed
+  client's lazy shared subscriber has a 4,096-event count bound; the relay applies
+  its own job, byte and ingestion-to-delivery deadlines. Captured source clients,
+  exact native Locations and occurrence epochs fence routing. Global notifications
+  reach only that source's occurrences; unknown deletions produce targeted gaps.
+  Backend receipt/automatic-reply/quota enrichment admits its local capability
+  before any deferred explicit work can reach local credentials or storage.
+  UI dispatch validates binding/source and the status-established relay generation
+  before wildcard and typed subscribers. A status arriving before occurrence
+  hydration waits in a bounded cache for its exact binding; only the status replays.
+  Legacy sourceless frames are local-only. Explicit daemon continuity tokens are
+  attempt-local; URL trust permits ordinary reconnection without a provenance gate.
+  Physical browser SSE health stays separate from target-native confirmation.
+  Explicit reconnect skips unavailable worktree reads and live-only pending
+  snapshots; the dock's source disclosure presents live-only coverage.
+
 - Generated client URLs keep their `baseUrl` prefix and pass through unchanged;
   scheduling classifies API paths relative to the proxy prefix.
 - The generated `experimental.session` methods and their `session` aliases use
@@ -99,6 +161,32 @@ reply the goal reviewer rejects, pausing the goal) runs in the minimum/latest CI
   Location map canonicalizes path flavor and trailing separators; pending
   recovery retains its existing-only leases and identity checks. Plugin setup
   remains activation-scoped; native services are acquired in the request graph.
+- Internal explicit workspaces use the separate method/operation allowlist in
+  `server/explicit-proxy.ts`. Sessions, chat, catalogs and manual native interruption
+  replies share their captured endpoint/client/fetch and exact directory authority.
+  Directory cursors stay directory-scoped; project IDs and ancestry grant no extra
+  authority. Private workspace policy is checked before acquisition; workspace
+  lifetime, connection generation and native session placement fence asynchronous
+  work and response publication. Ordinary finite proxy responses are buffered up to 64 MiB
+  before publication. Cookies, redirects, authentication challenges and incoming
+  forwarding/auth/internal headers stay at the proxy boundary. Renderer chat actions send their captured explicit
+  connection generation in `x-codenomad-connection-generation`; the proxy validates
+  its single positive-integer value against current workspace capabilities before
+  acquisition and throughout dispatch. A stale value returns `409 explicit_action_superseded`,
+  localized by the renderer. The private header stays inside CodeNomad, allowing
+  multi-request instructions/profile/send actions to retain their starting
+  generation while renderer metadata updates are still in flight. Shared-local proxy
+  sanitization also strips this private header while keeping local admission semantics.
+  Uncertain mutations
+  are never retried. Native file/working-diff reads, scoped background Shell reads
+  and stops, and configured MCP connect/disconnect use the qualified explicit
+  allowlist. Moves, PTYs, administrative operations, generic RPC, pending recovery
+  and enriched receipts stay capability-gated. Session-media reads use the workspace
+  capture, native message ID, current Location, undo boundary and digest, with no
+  disk fallback. Public project opening selects a registered explicit server and
+  validates its native directory before publication.
+- Explicit renderer media admission uses passive raster MIME qualification and canonical same-session native references correlated with held message positions and digest. The shared `embedded-asset.ts` validator checks complete data-URI length, MIME/prefix, base64 alphabet/padding and unused bits before decoding. The 8 MiB URI ceiling is distinct from the 32 KiB transcript deferral threshold. Backend finite-response transport and media-reader bounds retain their separate contracts.
+- The media route's request-local `OpenCode.make({ baseUrl, fetch })` wraps only its captured connection fetch, retaining authentication, directory encoding and transport revocation. The lightweight `session-media-contract.ts` supplies `MESSAGE_LIMIT` (16 MiB) to this reader and the stored-asset reader. HTTP applies it to the whole decompressed response, success or error, before the official client's text/JSON parser. Native/Undici fetch supplies decoded gzip/deflate/br bytes; reconstructed SDK responses preserve status/statusText/content type and remove stale encoding/length headers. Local reads use the same bound with their existing connection policy. Overflow and cancellation release the upstream reader under the route's 30-second, workspace and socket lifetime. Request observers also bound their acquisition wait without cancelling shared connection work.
 - The proxy allowlist stays closed to pairing (`/api/pair`, `/auth/connect/*`),
   credential export/creation (`/api/credential`) and experimental voice
   (`/api/experimental/voice/session`); a runtime update never widens it or
@@ -149,6 +237,49 @@ packed pruning plugin declares every bare import, including `@opencode/schema`
 (`package.test.ts`).
 
 ### Capability-checked loaded-only pending recovery
+
+Explicit E1 manual interruptions retain request-local client, binding, native and
+connection generations, metadata and native Location through dispatch and
+acknowledgement. Global Forms use the once-encoded native directory on the captured
+official client. Their human-answer hint remains local-service-only. Disconnect
+and backend restoration retire admissions, retain editors and expose unknown
+coverage in the dock's source details. Current live events admit only their exact
+request. Explicit mutation failures and view activation schedule zero pending
+recovery reads. A known explicit-server Form has an individually bounded native
+GET through `explicit-form-verification.ts`: at most two Session GETs and one Form
+GET, or one global Form GET. Its request-local official client wraps the captured
+fetch with the shared `bounded-response-fetch.ts` seam. Every response, including
+errors and Session placement reads, is limited to four MiB of decoded HTTP bytes
+before SDK text/JSON parsing. One ten-second operation budget includes acquisition,
+profile and pre/post placement checks. Non-200 status and invalid wire values remain
+indeterminate. The consumed Form schema validates native special-number strings,
+field conditions/options, state and complete answer before discarding answer and
+cancellation message from the renderer projection. Permission GET remains closed;
+stale permissions await their current live event.
+The renderer revalidates at the deferred SDK callback's actual dispatch boundary.
+Session placement tokens advance at accepted publication rather than at predicate
+evaluation, keeping an old verification and its granted reply retired across
+placement ABA. Equal placement refreshes preserve current owners. The source Form
+editor keeps one composed polite result and a stable, guarded keyboard check control.
+Receipt routes return structured `historyEnrichment` refusals before local/native
+acquisition; local loaded-only recovery keeps its existing contract below.
+
+Explicit CodeNomad event envelopes carry the captured connection-owner generation
+in `source.connectionGeneration`, independently of the relay-attempt `generation`.
+`liveGeneration` identifies each occurrence's status boundary, including a
+same-attempt routing gap. The relay retains that boundary from recipient ingestion
+through ownership waits and charges it in the queued envelope. Status replay keeps
+its original boundary. Explicit missing/invalid correlation fails closed; local
+sourceless and legacy status compatibility keep their existing admission.
+
+The renderer captures source and transport-lifetime authority at dispatch. A
+current creation can wait for matching server/capability metadata in either order,
+without rereading or replaying its event. Matching metadata qualifies only its
+captured current candidate. Gaps, stale statuses, incompatible metadata, client,
+native-data, binding and Location changes retain their independent retirement
+fences. Common prompt/inventory/media request owners retain their strict generation
+contract. Form verification grants only the captured known identity; project coverage
+retains the live-only policy.
 
 Rules: [NATIVE_INTERRUPTION_UX.md](NATIVE_INTERRUPTION_UX.md). Pruning/history
 methods have their own support and write checks.

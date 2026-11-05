@@ -58,9 +58,14 @@ function decidingProject(winner: Entry | undefined, documents: ConfigDocuments) 
  * when the selected Location's own project block decides it, `media_blob` is also written there. */
 export class ImageSettings {
   constructor(private readonly configuration: Pick<PluginControls, "readConfigDocuments" | "editConfigDocument">,
-    private readonly manager: Pick<WorkspaceManager, "getSharedServiceConnection">) {}
+    private readonly manager: Pick<WorkspaceManager, "getSharedServiceConnection" | "requireWorkspaceCapability">) {}
 
   private async context(workspaceId: string, location: PluginControlLocation, signal?: AbortSignal) {
+    try { this.manager.requireWorkspaceCapability(workspaceId, "executionSettings") }
+    catch (error) {
+      if (error instanceof Error && "statusCode" in error && error.statusCode === 404) throw new PluginControlsError("Workspace not found", "not-found")
+      throw error
+    }
     const connection = await this.manager.getSharedServiceConnection(workspaceId)
     if (!connection) throw new PluginControlsError("OpenCode is unavailable", "unavailable")
     // Document acquisition proves directory ownership before any native request.

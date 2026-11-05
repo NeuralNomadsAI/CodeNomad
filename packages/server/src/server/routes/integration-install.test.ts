@@ -20,6 +20,18 @@ const API = "@neuralnomads/opencode-mail@^0.1"
 const GIT = "github:NeuralNomadsAI/opencode-integrations#"
 const catalog = catalogOf(catalogEntry("fixture", { sources: { git: [GIT] } }), catalogEntry("mail", { family: "api" }))
 
+it("explicit projects refuse installation before connection, catalog or config access", async () => {
+  let reads = 0
+  const unexpected = async () => { reads++; throw new Error("Unexpected host work") }
+  const installer = new IntegrationInstaller({
+    workspaceManager: { requireWorkspaceCapability: () => { throw new Error("Explicit host controls unavailable") },
+      getSharedServiceConnection: unexpected, ownsLocation: unexpected },
+    controls: { read: unexpected }, catalog: { read: unexpected }, sources: { add: unexpected },
+  })
+  await assert.rejects(installer.install("remote", "fixture", { directory: "/repo" }, "global"), { code: "forbidden" })
+  assert.equal(reads, 0)
+})
+
 /** Real route, installer, plugin sources and configuration documents on disk, with a fake native connection. */
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "integration-install-"))
@@ -44,6 +56,7 @@ async function fixture() {
     },
   }
   const manager = {
+    requireWorkspaceCapability: () => new AbortController().signal,
     get: (id: string) => id === "w" ? {} : undefined,
     getSharedServiceConnection: async () => connection,
     getServiceDirectoryForPath: async (_id: string, directory: string) => directory === project ? directory : undefined,

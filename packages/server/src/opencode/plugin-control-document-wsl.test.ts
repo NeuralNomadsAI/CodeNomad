@@ -213,6 +213,7 @@ describe("WSL plugin control documents", () => {
         plugin: { list: async () => ({ data: [] }) },
       } }
       const controls = new PluginControls({ workspaceManager: {
+        requireWorkspaceCapability: () => new AbortController().signal,
         get: () => ({}), getSharedServiceConnection: async () => connection,
         getServiceDirectoryForPath: async (_id: string, directory: string) => directory === project ? project : undefined,
         ownsLocation: async () => true, getWorktreeIdentityForPath: async () => "fixture",

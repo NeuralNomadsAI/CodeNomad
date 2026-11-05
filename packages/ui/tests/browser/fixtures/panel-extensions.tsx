@@ -6,9 +6,13 @@ import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider, useTheme } from "../../../src/lib/theme"
 import { serverEvents } from "../../../src/lib/server-events"
+import { addInstance } from "../../../src/stores/instances"
 import "../../../src/index.css"
 
 ;(window as any).__headerFixtureBoot?.mark("modules-evaluated")
+for (const id of ["first", "second"]) {
+  addInstance({ id, folder: `/${id}`, status: "ready", client: null, port: 0, pid: 0, proxyPath: "/fixture" })
+}
 
 function Fixture() {
   const { t } = useI18n()

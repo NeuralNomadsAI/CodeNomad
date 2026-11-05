@@ -20,9 +20,14 @@ import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
 import { sdkManager } from "../lib/sdk-manager"
 import { observeDesktopUpdates } from "../stores/desktop-updates"
 import { createPreferencesProjectContext } from "./settings/preferences-project-context"
+import { LOCAL_SERVER_ID } from "../lib/project-identity"
+import { serverEvents } from "../lib/server-events"
 
 export const PreferencesWindow: Component = () => {
   const [request, setRequest] = createSignal<NativePreferencesRequest>({ section: "general" })
+  // This renderer has no hydrated instance store. Native status provenance follows
+  // its accepted request, including while the corresponding project is inactive.
+  serverEvents.setBindingReader(instanceId => instanceId === request().instanceId ? request().serverId ?? LOCAL_SERVER_ID : undefined)
   const subscriptions: Array<() => void> = []
   let requestQueue = Promise.resolve()
   let closePromise: Promise<void> | undefined
@@ -43,8 +48,8 @@ export const PreferencesWindow: Component = () => {
     await flushScroll(generation)
   }
 
-  const projectDemand = createMemo(() => ["providers", "missions", "usage"].includes(activeSettingsSection()))
-  const project = createPreferencesProjectContext(request, projectDemand, (context, current) => {
+  const projectDemand = createMemo(() => ["providers", "missions", "usage", "config-files", "advanced", "opencode", "info"].includes(activeSettingsSection()))
+  const resolvedProject = createPreferencesProjectContext(request, projectDemand, (context, current) => {
     // Share the native request queue: an explicit newer opener always wins over a late restore read.
     requestQueue = requestQueue.catch(() => undefined).then(async () => {
       if (!current()) return
@@ -55,6 +60,12 @@ export const PreferencesWindow: Component = () => {
       setRequest({ ...next, scrollTop })
     }).catch(() => undefined)
   })
+  // A rebound occurrence becomes execution context only after the native request queue accepts it.
+  const project = createMemo(() => {
+    const value = resolvedProject(), accepted = request()
+    return value?.instanceId === accepted.instanceId && value?.binding.serverId === (accepted.serverId ?? LOCAL_SERVER_ID) ? value : undefined
+  })
+  createEffect(() => { const instanceId = request().instanceId; if (instanceId) serverEvents.syncInstanceBinding(instanceId) })
   createEffect(() => {
     const instanceId = project()?.instanceId
     if (instanceId) onCleanup(() => sdkManager.destroyClientsForInstance(instanceId))
@@ -163,7 +174,8 @@ export const PreferencesWindow: Component = () => {
     <>
       <SettingsScreen
         standalone
-        providerContext={{ instanceId: project()?.instanceId ?? "", location: project()?.location }}
+        executionRequest={request()}
+        projectContext={project()}
         scrollPosition={request()}
         onScrollPositionChange={(top) => {
           scrollTop = top
@@ -183,7 +195,7 @@ export const PreferencesWindow: Component = () => {
         onClose={() => close(false)}
       />
       <AlertDialog />
-      <OpenCodeSetup automatic={false} />
+      <OpenCodeSetup automatic={false} enabled={(request().serverId ?? LOCAL_SERVER_ID) === LOCAL_SERVER_ID && Boolean(project())} />
       <Toaster
         position="top-right"
         gutter={16}

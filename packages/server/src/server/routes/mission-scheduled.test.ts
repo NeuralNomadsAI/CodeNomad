@@ -10,6 +10,51 @@ import { signNativeRecurrenceControl } from "../../missions/recurrence-control-p
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { registerMissionScheduled } from "./mission-scheduled"
 import { scheduledMissionHold } from "./mission-scheduled-holds"
+import { registerMissionScheduleList } from "./mission-schedule-list"
+import { registerMissionScheduleActivation } from "./mission-schedule-activation"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
+
+test("scheduled Mission reads, controls and resumed requests deny before settings, holds or native work", async t => {
+  const app = Fastify(), denied = new WorkspaceCapabilityError("missions", { code: "deferred" })
+  const unexpected = () => { throw new Error("Host/native work before capability admission") }
+  let admissions = 0
+  const workspace = {}, manager = { get: () => workspace, getServiceLocation: () => ({ directory: "/repo" }),
+    requireWorkspaceCapability: () => { admissions++; throw denied }, getSharedServiceConnection: unexpected,
+    getServiceWslDistro: unexpected, getWorktreeIdentityForPath: unexpected, ownsLocation: unexpected }
+  const deps = { workspaceManager: manager, settings: { getProfileScope: unexpected, configYamlPathForAuthority: unexpected } } as never
+  t.after(() => app.close())
+  registerMissionScheduled(app, deps)
+  registerMissionScheduleList(app, deps)
+  registerMissionScheduleActivation(app, deps)
+  for (const request of [
+    { method: "GET", url: "/api/workspaces/explicit/missions/scheduled" },
+    { method: "GET", url: "/api/workspaces/explicit/missions/scheduled/capabilities" },
+    { method: "GET", url: "/api/workspaces/explicit/missions/scheduled/requests/create_request" },
+    { method: "GET", url: "/api/workspaces/explicit/missions/msn_same/schedule?requestID=original_request" },
+    { method: "POST", url: "/api/workspaces/explicit/missions/msn_same/schedule", payload: { requestID: "original_request", expectedRevision: 1, action: "play", retry: true } },
+    { method: "GET", url: "/api/workspaces/explicit/missions/msn_same/schedule-settings?requestID=original_request&expectedDocumentRevision=1" },
+    { method: "POST", url: "/api/workspaces/explicit/missions/msn_same/schedule-settings", payload: { requestID: "original_request", expectedDocumentRevision: 1 } },
+  ]) {
+    const response = await app.inject(request as never)
+    assert.equal(response.statusCode, 403, `${request.url}: ${response.body}`)
+    assert.equal(response.json().capability, "missions")
+  }
+  assert.equal(admissions, 7)
+})
+
+test("missing or unpublished workspace keeps its early admission 404", async t => {
+  const app = Fastify()
+  t.after(() => app.close())
+  registerMissionScheduled(app, { workspaceManager: {
+    requireWorkspaceCapability: () => { throw Object.assign(new Error("Workspace not found"), { statusCode: 404 }) },
+    getSharedServiceConnection: () => { assert.fail("Missing workspace must never acquire a connection") },
+  } } as never)
+  for (const method of ["GET", "POST"] as const) {
+    const response = await app.inject({ method, url: "/api/workspaces/missing/missions/msn_owned/schedule",
+      ...(method === "POST" ? { payload: { requestID: "original_request", expectedRevision: 0, action: "play" } } : {}) })
+    assert.equal(response.statusCode, 404, response.body)
+  }
+})
 
 const control = { requestID: "original_request", expectedRevision: 0, action: "play" as const }
 const config = { title: "Review", objective: "Review bounded sources", template: "custom", taskMode: "native", watchedConversationIDs: [],
@@ -56,6 +101,7 @@ async function fixture(t: test.TestContext) {
   const original = connection()
   let selected = original
   const manager = { get: () => state.workspace, getServiceLocation: () => ({ directory: root }), getSharedServiceConnection: async () => selected,
+    requireWorkspaceCapability: () => new AbortController().signal,
     ownsLocation: async (_id: string, location: { directory: string }) => state.owned && location.directory === root,
     getServiceDirectoryForPath: async (_id: string, directory: string) => directory === root ? root : undefined,
     getWorktreeIdentityForPath: async () => state.checkout, getServiceWslDistro: () => undefined,

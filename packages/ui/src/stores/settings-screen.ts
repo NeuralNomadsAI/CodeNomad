@@ -3,6 +3,7 @@ import { runtimeEnv } from "../lib/runtime-env"
 import { openNativePreferences, type NativePreferencesRequest } from "../lib/native/preferences-window"
 import { getLogger } from "../lib/logger"
 import { confirmSettingsDiscard } from "./settings-dirty-guard"
+import { LOCAL_SERVER_ID } from "../lib/project-identity"
 
 export type SettingsSectionId =
   | "general"
@@ -41,6 +42,7 @@ export async function openSettings(section?: SettingsSectionId, toggle = false) 
       const instanceId = activeInstanceId() ?? undefined
       const request: NativePreferencesRequest = { section: section ?? "general", instanceId }
       if (instanceId) {
+        request.serverId = instances().get(instanceId)?.binding?.serverId ?? LOCAL_SERVER_ID
         request.workspacePath = instances().get(instanceId)?.folder
         const { getActiveCatalogLocation } = await import("./sessions")
         request.location = getActiveCatalogLocation(instanceId)

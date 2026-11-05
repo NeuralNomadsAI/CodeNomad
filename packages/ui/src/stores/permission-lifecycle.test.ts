@@ -52,7 +52,7 @@ afterEach(() => {
   sdkManager.createClient = originalCreateClient
 })
 
-test("permission replies use the queued request session", async () => {
+test("permission replies reject a mismatched session before dispatch and retain the exact queued owner", async () => {
   let input: PermissionReplyInput | undefined
   const client = {
     permission: {
@@ -68,7 +68,10 @@ test("permission replies use the queued request session", async () => {
     resources: ["C:/work"],
   })
 
-  await sendPermissionResponse("permission-reply", "stale-session", "permission", "always", "trusted")
+  await assert.rejects(sendPermissionResponse("permission-reply", "stale-session", "permission", "always", "trusted"))
+  assert.equal(input, undefined)
+  assert.equal(getPermissionQueue("permission-reply").length, 1)
+  await sendPermissionResponse("permission-reply", "queued-session", "permission", "always", "trusted")
 
   assert.deepEqual(input, {
     sessionID: "queued-session",
@@ -93,7 +96,7 @@ test("the native client sends rejection feedback in the HTTP body", async () => 
   addTestInstance("reject-feedback", client)
   addPermissionToQueue("reject-feedback", { id: "permission", sessionID: "owner", action: "shell", resources: ["fixture"] })
   const message = "Ne supprime pas les fichiers.\nLis-les seulement."
-  await sendPermissionResponse("reject-feedback", "stale-session", "permission", "reject", message)
+  await sendPermissionResponse("reject-feedback", "owner", "permission", "reject", message)
   assert.deepEqual(requests, [{
     url: "http://permission-fixture.invalid/api/session/owner/permission/permission/reply",
     body: { decision: "reject", message },

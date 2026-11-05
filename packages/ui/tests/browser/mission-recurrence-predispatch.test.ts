@@ -82,6 +82,7 @@ async function fixture() {
   const health = { available: true, owned: true, ownedCalls: Infinity }
   const fence = new WorktreeDeletionFence()
   const manager = { get: () => workspace, getServiceLocation: () => location, getServiceDirectoryForPath: async () => directory,
+    requireWorkspaceCapability: () => new AbortController().signal,
     getSharedServiceConnection: async () => health.available ? connection : undefined,
     ownsLocation: async () => health.owned && health.ownedCalls-- > 0,
     getServiceWslDistro: () => undefined, getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",

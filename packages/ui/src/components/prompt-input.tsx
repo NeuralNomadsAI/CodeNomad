@@ -1,6 +1,6 @@
-import { Suspense, createEffect, createMemo, createSignal, createUniqueId, lazy, on, onCleanup, Show } from "solid-js"
+import { Suspense, createEffect, createMemo, createSignal, createUniqueId, lazy, on, onCleanup, Show, untrack } from "solid-js"
 import { ListEnd, Loader2, Mic, Paperclip, SendHorizontal, Volume2, X } from "lucide-solid"
-import { addAttachment, clearAttachments, removeAttachment } from "../stores/attachments"
+import { addAttachment, captureAttachmentState, clearAttachments, getAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
 import { preparePromptSubmission, resolvePromptDelivery } from "./prompt-input/submitPrompt"
 import { findConversationStream, focusConversationStream } from "./focus-conversation"
@@ -8,8 +8,13 @@ import { shouldTypeIntoComposer } from "./prompt-input/type-to-focus"
 import { hotkeyLabel, withHotkey } from "../lib/hotkeys"
 import { keyboardRegistry } from "../lib/keyboard-registry"
 import { PROMPT_CLEAR_EVENT } from "../lib/session-sidebar-events"
-import { getActiveInstance } from "../stores/instances"
-import { agents, executeCustomCommand } from "../stores/sessions"
+import { instances } from "../stores/instances"
+import { agents, executeCustomCommand, getSessionDraftPrompt, setSessionDraftPrompt } from "../stores/sessions"
+import { onInstanceLifecycleAuthority } from "../stores/instance-lifecycle-authority"
+import { captureInstanceRequestAuthority } from "../stores/session-api"
+import { isSessionActionInterrupted } from "../stores/session-action-queue"
+import { usePromptRecovery } from "./prompt-input/usePromptRecovery"
+import PromptRecoveryNotice from "./prompt-input/PromptRecoveryNotice"
 import { getCommands } from "../stores/commands"
 import { showAlertDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
@@ -17,6 +22,7 @@ import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { createAttachmentPlaceholderRegex, getAttachmentPlaceholder } from "../lib/attachment-placeholders"
 import { preferences } from "../stores/preferences"
+import { LOCAL_SERVER_ID } from "../lib/project-identity"
 import type { PromptDelivery, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
 import type { Attachment } from "../types/attachment"
 import { usePromptState } from "./prompt-input/usePromptState"
@@ -83,7 +89,10 @@ function getConsumedPastedTextAttachmentIds(text: string, attachments: Attachmen
 }
 
 export default function PromptInput(props: PromptInputProps) {
+  let disposed = false
+  onCleanup(() => { disposed = true })
   const { t } = useI18n()
+  const recovery = usePromptRecovery(() => props.instanceId, () => props.sessionId)
   const asideId = createUniqueId()
   const helpId = createUniqueId()
   const aside = usePromptAside({
@@ -111,7 +120,7 @@ export default function PromptInput(props: PromptInputProps) {
   let fieldContainerRef: HTMLDivElement | undefined
   const viewport = usePromptViewport(() => wrapperRef)
   let resizeDragState: ResizeDragState | undefined
-  let submissionsInFlight = 0
+  const [submissionsInFlight, setSubmissionsInFlight] = createSignal(0)
   let restoredQueuedPayload: Parameters<PromptInputApi["restoreQueuedPrompt"]>[1] | undefined
 
   const getPlaceholder = () => {
@@ -208,6 +217,10 @@ export default function PromptInput(props: PromptInputProps) {
     instanceId: () => props.instanceId,
     sessionId: () => props.sessionId,
     instanceFolder: () => props.instanceFolder,
+    source: () => {
+      const source = instances().get(props.instanceId)
+      return source ? [source.binding?.serverId ?? LOCAL_SERVER_ID, source.binding?.directory ?? source.folder] : null
+    },
     prompt,
     setPrompt,
     getTextarea: () => textareaRef ?? null,
@@ -215,9 +228,20 @@ export default function PromptInput(props: PromptInputProps) {
     active: () => props.isActive !== false,
   })
 
-  createEffect(() => {
+  const apiSource = createMemo(() => `${props.instanceId}:${props.sessionId}`)
+  createEffect(on(apiSource, () => {
     if (!props.registerPromptInputApi) return
+    const instanceId = props.instanceId, sessionId = props.sessionId
+    const owner = untrack(recovery.capture)
     const api: PromptInputApi = {
+      captureDraft: () => {
+        const revision = promptState.draftRevision()
+        const attachmentsCurrent = captureAttachmentState(instanceId, sessionId)
+        return () => owner.current() && props.instanceId === instanceId && props.sessionId === sessionId
+          && revision === promptState.draftRevision() && attachmentsCurrent()
+      },
+      recoverQueuedPrompt: owner.recoverQueuedPrompt,
+      showActionFeedback: owner.showFeedback,
       insertSelection: (text: string, mode: PromptInsertMode) => {
         if (mode === "code") {
           insertCodeSelection(text)
@@ -261,8 +285,8 @@ export default function PromptInput(props: PromptInputProps) {
           }, 0)
         }
       },
-      restoreQueuedPrompt: (text, payload) => {
-        api.setPromptText(text, { focus: true })
+      restoreQueuedPrompt: (text, payload, opts) => {
+        api.setPromptText(text, opts)
         restoredQueuedPayload = payload
       },
       getPromptText: prompt,
@@ -277,13 +301,13 @@ export default function PromptInput(props: PromptInputProps) {
         }
       },
     }
-    const cleanup = props.registerPromptInputApi(api)
+    const cleanup = untrack(() => props.registerPromptInputApi?.(api))
     onCleanup(() => {
       if (typeof cleanup === "function") {
         cleanup()
       }
     })
-  })
+  }))
 
   const instanceAgents = () => agents().get(props.instanceId) || []
 
@@ -457,16 +481,26 @@ export default function PromptInput(props: PromptInputProps) {
   })
 
   const promptDelivery = (alternate = false) => resolvePromptDelivery(
-    Boolean(props.isSessionBusy || submissionsInFlight > 0),
+    Boolean(props.isSessionBusy || submissionsInFlight() > 0),
     preferences().followUpBehavior,
     alternate,
   )
 
   async function handleSend(delivery?: PromptDelivery) {
+    const instanceId = props.instanceId, sessionId = props.sessionId
+    const source = instances().get(instanceId)
+    const binding = source?.binding
+    const authority = captureInstanceRequestAuthority(instanceId)
+    const feedback = recovery.capture()
+    let sourceRetired = false
+    const ownsDraft = () => !sourceRetired && !disposed && props.instanceId === instanceId && props.sessionId === sessionId
+      && instances().has(instanceId)
+      && instances().get(instanceId)?.binding === binding
     const draftText = prompt()
     const text = draftText.trim()
     const currentAttachments = attachments()
-    if (props.disabled || props.sendBlocked || isReadingFiles() || submissionsInFlight > 0 || (!text && currentAttachments.length === 0)) return
+    if (props.disabled || props.sendBlocked || isReadingFiles() || submissionsInFlight() > 0 || (!text && currentAttachments.length === 0)) return
+    recovery.clearFeedback()
     const resolvedDelivery = delivery ?? promptDelivery()
     const restoredPayload = restoredQueuedPayload
 
@@ -545,13 +579,19 @@ export default function PromptInput(props: PromptInputProps) {
 
     // Keep attempted prompts recoverable even when execution fails.
     const retainedDraft = prompt()
+    const retainedRevision = promptState.draftRevision()
+    const attachmentsUnchanged = captureAttachmentState(instanceId, sessionId)
+    const retainedSourceDraft = getSessionDraftPrompt(instanceId, sessionId)
     void refreshHistory()
 
     if (!isTouchOnlyPointer()) {
       focusConversationStream(wrapperRef?.closest(".session-view"))
     }
 
-    submissionsInFlight += 1
+    setSubmissionsInFlight(count => count + 1)
+    const stopTrackingSource = onInstanceLifecycleAuthority(event => {
+      if (event.instanceId === instanceId && event.type !== "opened") sourceRetired = true
+    })
     try {
       if (isShellMode) {
         if (props.onRunShell) {
@@ -568,11 +608,24 @@ export default function PromptInput(props: PromptInputProps) {
       } else {
         await props.onSend(submitPrompt, currentAttachments, resolvedDelivery, restoredPayload)
       }
-      restoredQueuedPayload = undefined
+      if (ownsDraft() && promptState.draftRevision() === retainedRevision) restoredQueuedPayload = undefined
     } catch (error) {
       log.error("Failed to send message:", error)
+      const interrupted = !authority() || isSessionActionInterrupted(error)
+      if (interrupted) feedback.showFeedback()
+      if (!ownsDraft()) {
+        const live = instances().get(instanceId)
+        if (!sourceRetired && source && live && live.folder === source.folder
+          && live.binding?.serverId === binding?.serverId && live.binding?.directory === binding?.directory
+          && getSessionDraftPrompt(instanceId, sessionId) === retainedSourceDraft) {
+          setSessionDraftPrompt(instanceId, sessionId, draftText)
+          const existing = new Set(getAttachments(instanceId, sessionId).map(attachment => attachment.id))
+          for (const attachment of currentAttachments) if (!existing.has(attachment.id)) addAttachment(instanceId, sessionId, attachment)
+        }
+        return
+      }
       if (inputHeight() === null) persistInputHeight(previousInputHeight)
-      if (prompt() === retainedDraft) {
+      if (prompt() === retainedDraft && promptState.draftRevision() === retainedRevision && attachmentsUnchanged()) {
         setPrompt(draftText)
         restoredQueuedPayload = restoredPayload
         const existingIds = new Set(attachments().map(attachment => attachment.id))
@@ -580,17 +633,16 @@ export default function PromptInput(props: PromptInputProps) {
           if (!existingIds.has(attachment.id)) addAttachment(props.instanceId, props.sessionId, attachment)
         }
       }
+      if (interrupted || props.isActive === false) return
       showAlertDialog(t("promptInput.send.errorFallback"), {
         title: t("promptInput.send.errorTitle"),
         detail: getOpencodeErrorMessage(error, t("promptInput.send.errorFallback")),
         variant: "error",
       })
-      if (!isTouchOnlyPointer()) {
-        textareaRef?.focus()
-      }
       return
     } finally {
-      submissionsInFlight -= 1
+      stopTrackingSource()
+      setSubmissionsInFlight(count => count - 1)
     }
   }
 
@@ -769,7 +821,7 @@ export default function PromptInput(props: PromptInputProps) {
       ? t("promptInput.conversationMode.disable.title")
       : t("promptInput.conversationMode.enable.title")
 
-  const instance = () => getActiveInstance()
+  const instance = () => instances().get(props.instanceId)
 
   let voiceButtonPressed = false
 
@@ -878,9 +930,19 @@ export default function PromptInput(props: PromptInputProps) {
   // Memoized so composer-state updates (voice transcription ticks, drafts) do
   // not rebuild the item array and its icon DOM on every re-render.
   const promptActionMenuItems = createMemo(() => buildPromptActionMenuItems())
+  const canRestoreQueuedPrompt = () => !prompt() && attachments().length === 0 && mode() === "normal" && submissionsInFlight() === 0
 
   return (
     <div class="prompt-input-container">
+      <PromptRecoveryNotice interrupted={recovery.feedback()} queued={recovery.queued()} canRestore={canRestoreQueuedPrompt()}
+        onRestore={draft => {
+          if (!canRestoreQueuedPrompt()) return
+          for (const attachment of draft.attachments) addAttachment(props.instanceId, props.sessionId, attachment)
+          setPrompt(draft.text)
+          restoredQueuedPayload = draft.payload
+          recovery.forgetQueued(draft.id)
+          textareaRef?.focus()
+        }} />
       <div
         ref={wrapperRef}
         class={`prompt-input-wrapper relative ${isDragging() ? "border-2" : ""}`}
@@ -1036,7 +1098,7 @@ export default function PromptInput(props: PromptInputProps) {
         </div>
       </div>
 
-      <PromptAsideWindow id={asideId} controller={aside} returnFocus={() => textareaRef} />
+      <PromptAsideWindow id={asideId} controller={aside} instanceId={props.instanceId} returnFocus={() => textareaRef} />
     </div>
   )
 }

@@ -12,14 +12,15 @@ interface CompactionEndIdentity {
 /**
  * A compaction's end reaches a window once per project tab open on its folder,
  * and again when the event stream replays it. Its durable position (or event
- * ID) identifies it: only the first delivery may notify.
+ * ID) within its execution server identifies it: only the first delivery may notify.
  */
 export function createCompactionNoticeClaims(limit = REMEMBERED_COMPACTIONS) {
   const claimed = new Set<string>()
-  return (event: CompactionEndIdentity): boolean => {
-    const key = event.durable
+  return (event: CompactionEndIdentity, serverId: string): boolean => {
+    const identity = event.durable
       ? `${event.durable.aggregateID}\0${event.durable.seq}`
       : `${event.data.sessionID}\0${event.id}`
+    const key = `${serverId}\0${identity}`
     if (claimed.has(key)) return false
     claimed.add(key)
     if (claimed.size > limit) claimed.delete(claimed.values().next().value!)
@@ -28,20 +29,21 @@ export function createCompactionNoticeClaims(limit = REMEMBERED_COMPACTIONS) {
 }
 
 /**
- * One bubble per session: a later notice replaces the one still shown. Each is
+ * One bubble per server/session: a later notice replaces the one still shown. Each is
  * forgotten when it expires, unless a newer one replaced it; a notice routed
  * away from the screen leaves nothing to replace.
  */
 export function createSessionBubbles(schedule: (expire: () => void, ms: number) => void = (expire, ms) => { setTimeout(expire, ms) }) {
   const shown = new Map<string, ToastHandle>()
   return {
-    show(sessionID: string, durationMs: number, notify: () => ToastHandle) {
-      shown.get(sessionID)?.dismiss()
-      shown.delete(sessionID)
+    show(serverId: string, sessionID: string, durationMs: number, notify: () => ToastHandle) {
+      const key = `${serverId}\0${sessionID}`
+      shown.get(key)?.dismiss()
+      shown.delete(key)
       const handle = notify()
       if (!handle.id) return
-      shown.set(sessionID, handle)
-      schedule(() => { if (shown.get(sessionID) === handle) shown.delete(sessionID) }, durationMs)
+      shown.set(key, handle)
+      schedule(() => { if (shown.get(key) === handle) shown.delete(key) }, durationMs)
     },
     get size() { return shown.size },
   }

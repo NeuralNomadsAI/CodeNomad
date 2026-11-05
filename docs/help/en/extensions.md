@@ -43,6 +43,8 @@ Every replacement revokes activation across all projects, even if the permission
 
 ## Context, asset consent and sandbox limits {#permissions-sandbox}
 
+API 3 repository work items are available only for projects using the shared local OpenCode service. They are unavailable for every explicitly configured OpenCode server, including loopback servers and disconnected targets, regardless of native Git support; the refusal happens before host Git, forge sign-ins or network access.
+
 | Contract | What activation permits |
 | --- | --- |
 | API 1 / `session.context` | Current session identifier (or none), interface language and appearance. No transcript text or filesystem access. |

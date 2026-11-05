@@ -1,5 +1,11 @@
 # Sorular ve izinler
 
+Açık sunucunun bağlamında ad ve kalıcı kimlik bulunur; aynı adlar ayırt edilebilir. Belirsiz veya geçerliliğini yitirmiş yanıtlar istek düzenleyicisinde nazik, modal olmayan bir bildirimle gösterilir; normal hatalar hata gösterimini korur.
+
+**Açıkça yapılandırılmış OpenCode sunucuları:** sorular ve izinler yalnızca canlı gelir. Taslaklar düzenlenebilir. Eski izinler güncel canlı isteği bekler; bilinen Formlar aşağıdaki açık denetimi sunar. Panelin açılabilir ayrıntıları sınırı açıklar. Konuşmayı açmak eksik istekleri otomatik kurtarmaz. Yolo modu bu sunucularda çalışır: yeniden bağlandıktan sonra CodeNomad yalnızca Yolo görüşmelerinin bekleyen izinlerini yeniden okur ve bunları bir kez onaylar. Aşağıdaki kurtarma ve karar kaydı akışları paylaşılan yerel hizmet içindir.
+
+Bilinen Formun kaynak düzenleyicisinde **Bu formun durumunu denetle** seçin. Beklediği doğrulanan Form yalnız kendi yanıt/iptal işlemlerini açar; taslağı inceleyip ayrı bir açık hareketle karar verin. Yanıtlanmış veya iptal edilmiş Form taslağı başvuru için korur; başka istemcinin yanıtı, yazarı veya önceki denemenizin sonucu uydurulmaz. Belirsiz denetimde düzenleme açık, yanıt kapalı kalır; açıkça yeniden denetleyebilirsiniz. Her denetim toplam 10 saniye ve yanıt başına 4 MiB ile sınırlıdır; değişen alan şeması da belirsiz kalır. Otomatik denetim veya yeniden gönderim yapılmaz. Genel kapsam bilinmez; eksik Formlar veya izinler bulunmaz.
+
 OpenCode soruları, Formları ve izin istekleri, konuşma dökümündeki bekleyen araç kartlarında değil, ileti düzenleyicisinin hemen üstündeki istek panelinde yanıtlanır.
 
 ## İsteği bulun ve kaynağını kontrol edin {#request-dock}

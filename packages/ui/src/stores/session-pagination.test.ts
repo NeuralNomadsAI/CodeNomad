@@ -6,8 +6,18 @@ import {
   PROJECT_SESSION_LIST_LIMIT,
   buildProjectSessionListOptions,
 } from "./session-list-options.ts"
+import { explicitSessionDirectory, sessionMatchesInventory } from "./session-inventory-scope.ts"
+import type { Instance } from "../types/instance.ts"
 
 describe("project session list loading", () => {
+  it("keeps explicit Location spelling opaque and local scope unchanged", () => {
+    const instance = { binding: { serverId: "A", directory: "C:\\Work\\" }, folder: "ignored" } as Instance
+    assert.equal(explicitSessionDirectory(instance), "C:\\Work\\")
+    assert.equal(sessionMatchesInventory(instance, { location: { directory: "C:\\Work\\" } }), true)
+    assert.equal(sessionMatchesInventory(instance, { location: { directory: "c:/work" } }), false)
+    assert.equal(sessionMatchesInventory(instance, { location: { directory: "C:\\Work\\", workspaceID: "legacy" } }), false)
+    assert.equal(sessionMatchesInventory({ ...instance, binding: { serverId: "local-shared", directory: "C:\\Work\\" } }, { location: { directory: "elsewhere" } }), true)
+  })
   it("builds a native directory request without fake scope params", () => {
     const options = buildProjectSessionListOptions({ directory: "/tmp/project", search: "worktree" })
 

@@ -1,5 +1,9 @@
 # Sorun giderme
 
+Aynı adlı yürütme sunucularını istek ayrıntıları ve proje bildirimlerinde adın yanındaki kalıcı kimlikle ayırt edin. Belirsiz yanıt özgün düzenleyicide kalır; odağı değiştirmez ve otomatik yeniden gönderilmez.
+
+**Açıkça yapılandırılmış OpenCode sunucuları:** bağlantı kesilmesi veya arka uç yeniden başlatılması sonrasında panel boş olsa da bekleyen isteklerin kapsamı bilinmez. Taslakları koruyun; eski izinler güncel canlı isteği bekler. Bilinen Formun kaynak düzenleyicisinde **Bu formun durumunu denetle** kullanın; belirsiz sonuç yanıtı engeller ve yeni bir açık denetime izin verir. Sınır toplam 10 saniye ve yanıt başına 4 MiB'dir; kapsam bilinmez. Konuşmayı açmak eksik istekleri otomatik bulmaz. Önceki yanıt başarılı olmuş olabilir; otomatik tekrar gönderilmez. Aşağıdaki otomatik kurtarma paylaşılan yerel hizmet içindir. [Sorular ve izinler](permissions.md) bölümüne bakın.
+
 Önce başarısız işlemin sahibini kontrol ederek kurtarın: tarayıcı, CodeNomad arka ucu, OpenCode hizmeti veya sağlayıcısı. Kayıp bir yanıt, değişiklik işleminin başarısız olduğunu kanıtlamaz; tekrarlamadan önce mevcut durumu yeniden okuyun.
 
 ## Masaüstü başlatma sorunları {#desktop-launch}

@@ -6,6 +6,8 @@ import { useI18n } from "../../lib/i18n"
 import { useConfig } from "../../stores/preferences"
 import { serverEvents } from "../../lib/server-events"
 import { createProviderUsageState, providerUsageKey, shouldShowProviderUsageWindow, type ProviderUsageSource } from "./provider-usage-state"
+import { getProjectAvailability, requireProjectAvailability } from "../../stores/project-capability"
+import { captureInstanceRequestAuthority } from "../../stores/session-api"
 
 interface ProviderUsagePanelProps {
   instanceId: string
@@ -22,16 +24,21 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   const { t } = useI18n()
   const { preferences } = useConfig()
   const source = createMemo<ProviderUsageSource | null>(() => {
-    if (!props.active) return null
+    if (!props.active || !getProjectAvailability(props.instanceId, "providerUsage").allowed) return null
     const providerId = props.providerId.trim()
     if (!providerId) return null
     const modelId = props.modelId.trim()
     return { instanceId: props.instanceId, sessionId: props.sessionId, directory: props.directory, providerId, modelId }
   }, null, { equals: (a, b) => a === b || Boolean(a && b && providerUsageKey(a) === providerUsageKey(b)) })
   const [usage, setUsage] = createSignal<ProviderUsageResponse | null | undefined>()
-  const state = createProviderUsageState(current => serverApi.fetchProviderUsage(
-    current.instanceId, current.sessionId, current.providerId, current.modelId,
-  ), value => setUsage(value))
+  const state = createProviderUsageState(async source => {
+    requireProjectAvailability(source.instanceId, "providerUsage")
+    const current = captureInstanceRequestAuthority(source.instanceId)
+    const result = await serverApi.fetchProviderUsage(source.instanceId, source.sessionId, source.providerId, source.modelId)
+    if (!current()) throw new DOMException("", "AbortError")
+    requireProjectAvailability(source.instanceId, "providerUsage")
+    return result
+  }, value => setUsage(value))
 
   createEffect(() => {
     state.select(source())

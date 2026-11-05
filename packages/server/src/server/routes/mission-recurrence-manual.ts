@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 import { z } from "zod"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { recurrenceManualRequestSchema, recurrenceManualResultSchema } from "../../missions/recurrence-manual-rpc"
@@ -24,6 +25,7 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
     const lifetime = requestAdmission(request, reply), workspace = deps.manager.get(request.params.id), base = deps.manager.getServiceLocation(request.params.id)
     if (!workspace || !base) { lifetime.dispose(); return reply.code(404).send({ error: "Workspace unavailable" }) }
     try {
+      deps.manager.requireWorkspaceCapability(request.params.id, "missions")
       const directory = query.data.directory ? await lifetime.wait(deps.manager.getServiceDirectoryForPath(request.params.id, query.data.directory)) : base.directory
       const connection = await lifetime.wait(deps.manager.getSharedServiceConnection(request.params.id))
       if (!directory || !connection) throw new Error("Manual status unavailable")
@@ -57,7 +59,10 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
           : { version: 1, ...input.data, revision: input.data.expectedRevision + 1, outcome: "committed", controlsComplete: true }, connection, owner)
       }
       return result
-    } catch { return reply.code(503).send({ error: "Manual status unavailable" }) }
+    } catch (error) {
+      if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
+      return reply.code(503).send({ error: "Manual status unavailable" })
+    }
     finally { lifetime.dispose() }
   })
   app.post<{ Params: { id: string; scheduleID: string } }>("/api/workspaces/:id/missions/recurrence/:scheduleID/run-now", async (request, reply) => {
@@ -92,6 +97,7 @@ export function registerMissionRecurrenceManual(app: FastifyInstance, deps: Para
       }
       return reply.code(result.outcome === "unknown" ? 503 : 200).send(result)
     } catch (error) {
+      if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
       if (!dispatched) prepared?.dispose()
       const refused = dispatched ? undefined : recurrenceNotDispatchedReply(error, { fence: deps.fence,
         workspaceID: request.params.id, request: { ...input.data, scheduleID: request.params.scheduleID, action: "run-now" } })

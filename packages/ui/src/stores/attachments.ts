@@ -24,6 +24,12 @@ function getAttachments(instanceId: string, sessionId: string): Attachment[] {
   return attachments().get(getSessionKey(instanceId, sessionId))?.values ?? []
 }
 
+function captureAttachmentState(instanceId: string, sessionId: string): () => boolean {
+  const key = getSessionKey(instanceId, sessionId)
+  const state = attachments().get(key)
+  return () => attachments().get(key) === state
+}
+
 function getInstanceEntries(instanceId: string) {
   const prefix = `${instanceId}:`
   return [...attachments()].filter(([key]) => key.startsWith(prefix))
@@ -96,6 +102,7 @@ function clearInstanceAttachmentValues(instanceId: string) {
 }
 
 export {
+  captureAttachmentState,
   getAttachments,
   getSessionAttachmentsForInstance,
   getAuthoritativeAttachmentSessionIdsForInstance,

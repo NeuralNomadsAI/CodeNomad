@@ -1,11 +1,13 @@
 import { Popover } from "@kobalte/core/popover"
 import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js"
-import { Folder, FolderPlus, GitBranch, Hourglass, Search } from "lucide-solid"
+import { Folder, FolderPlus, GitBranch, Hourglass, Search, Server } from "lucide-solid"
 import { createNewInstanceDialogs } from "./new-instance-dialogs"
+import RemoteProjectMenu from "./remote-project-menu"
 import { useI18n } from "../lib/i18n"
+import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { formatRelativeTime, getDisplayPath, getProjectDisplayName } from "../lib/recent-folder-display"
 import { getExistingInstanceForFolder } from "../stores/instances"
-import { useConfig } from "../stores/preferences"
+import { getExplicitOpenCodeServers, getLaunchableRecentFolders, useConfig } from "../stores/preferences"
 
 interface NewInstanceLauncherProps {
   open: boolean
@@ -13,7 +15,8 @@ interface NewInstanceLauncherProps {
   anchor?: HTMLElement
   isLoading: boolean
   onOpenChange: (open: boolean) => void
-  onSelectFolder: (path: string) => void
+  /** `serverId` reopens a recent project on its explicit OpenCode server (prototype-1236). */
+  onSelectFolder: (path: string, serverId?: string) => void
   onSelectExistingInstance: (instanceId: string, recentPath: string) => void
   onNewTemporaryInstance: () => void
 }
@@ -39,7 +42,8 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
 
   const matches = createMemo(() => {
     const needle = query().trim().toLowerCase()
-    const folders = recentFolders()
+    // prototype-1236 (R12): the same mixed recent list as the home page.
+    const folders = getLaunchableRecentFolders()
     if (!needle) return folders
     return folders.filter((folder) =>
       getProjectDisplayName(folder.path, folder.projectName).toLowerCase().includes(needle)
@@ -72,10 +76,11 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
     action()
   }
 
-  function openRecent(path: string) {
-    const existing = getExistingInstanceForFolder(path)
-    run(() => existing ? props.onSelectExistingInstance(existing.id, path) : props.onSelectFolder(path))
+  function openRecent(path: string, serverId?: string) {
+    const existing = getExistingInstanceForFolder(path, serverId ?? "local-shared")
+    run(() => existing ? props.onSelectExistingInstance(existing.id, path) : props.onSelectFolder(path, serverId))
   }
+  const serverName = (serverId: string) => getExplicitOpenCodeServers().find((server) => server.id === serverId)?.label ?? serverId
 
   function moveActive(delta: number) {
     const count = matches().length
@@ -88,7 +93,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
     else if (event.key === "ArrowUp") { event.preventDefault(); moveActive(-1) }
     else if (event.key === "Enter") {
       const folder = matches()[activeIndex()]
-      if (folder) { event.preventDefault(); openRecent(folder.path) }
+      if (folder) { event.preventDefault(); openRecent(folder.path, folder.serverId) }
     }
   }
 
@@ -106,7 +111,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
         <Popover.Portal>
           <Popover.Content class="window-shell new-instance-launcher" aria-busy={props.isLoading}
             ref={contentRef}
-            onEscapeKeyDown={() => { returnFocus = true }}
+            onEscapeKeyDown={(event) => { if (!event.defaultPrevented) returnFocus = true }}
             onCloseAutoFocus={(event) => {
               // The popup has an anchor, not a Kobalte trigger: restore focus ourselves,
               // unless another surface has taken it meanwhile.
@@ -155,7 +160,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
                 </p>}
               >
                 {(folder, index) => {
-                  const existing = () => getExistingInstanceForFolder(folder.path)
+                  const existing = () => getExistingInstanceForFolder(folder.path, folder.serverId ?? "local-shared")
                   return (
                     <div
                       id={optionId(index())}
@@ -167,11 +172,13 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
                       data-open={existing() ? "true" : undefined}
                       title={folder.path}
                       onMouseMove={() => setActiveIndex(index())}
-                      onClick={() => openRecent(folder.path)}
+                      onClick={() => openRecent(folder.path, folder.serverId)}
                     >
-                      <Folder class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
+                      <Show when={folder.serverId} fallback={<Folder class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />}>
+                        <Server class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
+                      </Show>
                       <span class="new-instance-launcher-recent-name">{getProjectDisplayName(folder.path, folder.projectName)}</span>
-                      <span class="new-instance-launcher-recent-path" dir="ltr">{getDisplayPath(folder.path)}</span>
+                      <span class="new-instance-launcher-recent-path" dir="ltr">{folder.serverId ? `${serverName(folder.serverId)} · ${getDisplayPath(folder.path)}` : getDisplayPath(folder.path)}</span>
                       <Show
                         when={existing()}
                         fallback={<span class="new-instance-launcher-recent-meta">{formatRelativeTime(t, folder.lastAccessed)}</span>}
@@ -201,6 +208,9 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
                 <span>{t("newInstanceLauncher.clone")}</span>
               </button>
             </div>
+            {/* prototype-1236 (R27): remote OpenCode servers and their folders, inline. */}
+            <RemoteProjectMenu isLoading={props.isLoading} canManage={canOpenRemoteWindows()}
+              onOpenFolder={(path, serverId) => run(() => props.onSelectFolder(path, serverId))} />
           </Popover.Content>
         </Popover.Portal>
       </Popover>

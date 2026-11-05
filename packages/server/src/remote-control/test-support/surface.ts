@@ -4,16 +4,19 @@ import path from "node:path"
 import type { TestContext } from "node:test"
 import type { OpenRemoteTunnelOptions, RemoteTunnel } from "@codenomad/remote-tunnel"
 import { AuthManager } from "../../auth/manager"
-import { createLogger } from "../../logger"
+import { createLogger, type Logger } from "../../logger"
 import { PreviewManager } from "../../previews/manager"
 import { createHttpServer } from "../../server/http-server"
 import type { PanelExtensionStore } from "../../panel-extensions/store"
 import { RemoteDeviceRegistry } from "../devices"
 import { RemoteControlManager } from "../manager"
+import type { SettingsService } from "../../settings/service"
+import type { EventBus } from "../../events/bus"
+import type { ClientConnectionManager } from "../../clients/connection-manager"
 
 export const FAKE_TUNNEL_HOST = "codenomad-test.device.tunnel.test"
 // Each logger pipes to stdout, so fixtures share one.
-const logger = createLogger({ level: "silent" } as never)
+const sharedLogger = createLogger({ level: "silent" } as never)
 
 /**
  * The real CodeNomad HTTP application behind a Remote Control manager, with
@@ -22,10 +25,15 @@ const logger = createLogger({ level: "silent" } as never)
  */
 export async function startRemoteSurface(t: TestContext, options: {
   skipAuth?: boolean
+  settings?: SettingsService
+  workspaceManager?: unknown
+  logger?: Logger
   openTunnel?: (options: OpenRemoteTunnelOptions) => Promise<RemoteTunnel>
   /** Real panel extension routes over this store, with `workspaceManager` in place of the stub. */
   panelExtensions?: { store: PanelExtensionStore; workspaceManager: unknown }
+  events?: { eventBus: EventBus; connections: ClientConnectionManager }
 } = {}) {
+  const logger = options.logger ?? sharedLogger
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-remote-surface-"))
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
   const uiDir = path.join(directory, "ui")
@@ -73,11 +81,11 @@ export async function startRemoteSurface(t: TestContext, options: {
     bindPort: 0,
     defaultPort: 0,
     protocol: "http",
-    workspaceManager: (options.panelExtensions?.workspaceManager ?? stub) as never,
+    workspaceManager: (options.workspaceManager ?? options.panelExtensions?.workspaceManager ?? stub) as never,
     panelExtensions: options.panelExtensions?.store,
-    settings: stub,
+    settings: options.settings ?? stub,
     fileSystemBrowser: stub,
-    eventBus: stub,
+    eventBus: options.events?.eventBus ?? stub,
     serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", host: "127.0.0.1", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
     instanceStore: stub,
     speechService: stub,
@@ -85,7 +93,7 @@ export async function startRemoteSurface(t: TestContext, options: {
     previewManager,
     remoteControlManager: manager,
     authManager,
-    clientConnectionManager: stub,
+    clientConnectionManager: options.events?.connections ?? stub,
     remoteProxySessionManager: stub,
     yoloManager: stub,
     uiStaticDir: uiDir,
@@ -113,6 +121,8 @@ export async function startRemoteSurface(t: TestContext, options: {
   })
   const { pairing } = await manager.start()
   return {
+    app,
+    authManager,
     manager,
     previewManager,
     pairing,

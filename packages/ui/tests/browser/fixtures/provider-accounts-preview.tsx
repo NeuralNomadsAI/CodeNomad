@@ -94,7 +94,8 @@ function Simulation() {
   </>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><div class="accounts-preview-root">
-  <SettingsScreen standalone providerContext={{ instanceId: "preview", location: { directory: "/preview" } }} />
+  <SettingsScreen standalone executionRequest={{ section: "providers", instanceId: "preview", workspacePath: "/preview" }}
+    projectContext={{ instanceId: "preview", workspacePath: "/preview", location: { directory: "/preview" }, binding: { serverId: "local-shared", directory: "/preview" }, capabilities: undefined }} />
   <Simulation />
 </div></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).accountsPreview = { rows, used, automatic, policyWrites, failPolicy: () => { failPolicy = true },

@@ -47,10 +47,13 @@ export function observeProviderQuotaFailures(bus: EventBus, accounts: Pick<Provi
     return true
   }
   const handler = (payload: InstanceEvent) => {
+    if (payload.source && payload.source.serverId !== "local-shared") return
     const event = payload.event as { id?: unknown; type?: unknown; created?: unknown; data?: any }
     if (event?.type !== "credential.switched" && event?.type !== "session.step.started"
       && event?.type !== "session.step.failed" && event?.type !== "session.execution.failed") return
     const connection = nativeEventConnections.get(payload.event)
+    const serverId = (connection as { serverId?: string } | undefined)?.serverId
+    if (serverId && serverId !== "local-shared") return
     // Every owned workspace receives the same native event object.
     if (!connection || !once(event.id)) return
     const created = typeof event.created === "number" && Number.isFinite(event.created) ? event.created : Date.now()

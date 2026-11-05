@@ -19,6 +19,10 @@ Les dossiers développés le restent lors des changements de mode. Les listes/st
 
 Les actions de ligne incluent **Copier le chemin** et, lorsque le client peut ouvrir les chemins du backend, des actions de gestionnaire de fichiers/éditeur/terminal comme **Ouvrir avec l'application par défaut**, **Afficher dans le dossier**, **Ouvrir dans le gestionnaire de fichiers** et **Ouvrir un terminal ici**. Les actions peuvent passer dans **Plus d'actions pour {name}** si l’espace manque ; le nom du fichier ou dossier remplace `{name}`. Un navigateur distant ne peut pas supposer qu’un chemin serveur est local à l’appareil ; voir [Contrôle à distance](remote-control.md).
 
+### Projets sur un serveur OpenCode {#opencode-server-files}
+
+Pour un projet ouvert sur un serveur OpenCode configuré, **Fichiers** lit ce serveur via son API OpenCode, jamais le disque ni le Git de cet ordinateur. **Workspace** liste et prévisualise le dossier ouvert en lecture seule (sans **Enregistrer** ; les aperçus s’arrêtent à 5 MiB). **Changements** affiche les changements de la copie de travail du dossier ouvert et de sa branche, dans une seule liste **Changements**, sans indexation, commit, **Commits** ni **Initialiser Git**. Lorsque le serveur ne peut pas fournir un état complet et sans ambiguïté, le panneau affiche **Contenu indisponible ou incomplet.** au lieu d’une liste vide. Utilisez **Actualiser** après que l’agent a modifié des fichiers ; le panneau s’actualise aussi lorsque le serveur signale des changements de fichiers ou de branche. Les actions d’ouverture sur cet ordinateur restent indisponibles.
+
 ## Modifier le source et enregistrer sans risque {#edit-save}
 
 1. Ouvrez un fichier texte du Workspace avec son œil.

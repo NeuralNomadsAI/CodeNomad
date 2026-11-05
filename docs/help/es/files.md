@@ -19,6 +19,10 @@ Las carpetas expandidas sobreviven a los cambios de modo. Las listas/el estado/e
 
 Las acciones de fila incluyen **Copiar ruta** y, cuando el cliente permite abrir rutas del backend, acciones de administrador de archivos/editor/terminal como **Abrir con la aplicación predeterminada**, **Mostrar en la carpeta**, **Abrir en el explorador de archivos** y **Abrir terminal aquí**. Las acciones pueden trasladarse a **Más acciones para {name}** cuando el espacio es limitado; el nombre del archivo o carpeta reemplaza `{name}`. Un navegador remoto no puede suponer que una ruta del servidor es local al dispositivo; consulta [Control remoto](remote-control.md).
 
+### Proyectos en un servidor OpenCode {#opencode-server-files}
+
+En un proyecto abierto en un servidor OpenCode configurado, **Archivos** lee ese servidor a través de su API de OpenCode, nunca el disco ni el Git de este equipo. **Espacio de trabajo** lista y previsualiza la carpeta abierta en solo lectura (sin **Guardar**; las vistas previas se detienen en 5 MiB). **Cambios** muestra los cambios de la copia de trabajo de la carpeta abierta y su rama, en una única lista **Cambios**, sin preparación, commit, **Commits** ni **Inicializar Git**. Cuando el servidor no puede informar de un estado completo e inequívoco, el panel muestra **Contenido no disponible o incompleto.** en lugar de una lista vacía. Usa **Actualizar** después de que el agente modifique archivos; el panel también se actualiza cuando el servidor informa de cambios en archivos o ramas. Las acciones para abrir en este equipo siguen sin estar disponibles.
+
 ## Editar código fuente y guardar con seguridad {#edit-save}
 
 1. Abre un archivo de texto de Espacio de trabajo con su acción del ojo.

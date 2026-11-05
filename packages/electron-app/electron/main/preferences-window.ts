@@ -12,6 +12,7 @@ export interface PreferencesRequest {
   section: PreferencesSection
   scrollTop?: number
   instanceId?: string
+  serverId?: string
   workspacePath?: string
   location?: { directory: string; workspaceID?: string }
 }
@@ -34,10 +35,15 @@ export function requirePreferencesRequest(section: unknown, context: unknown): P
   if (context === undefined || context === null) return request
   if (typeof context !== "object") throw new Error("Invalid Preferences context")
   const candidate = context as Record<string, unknown>
+  if (Array.isArray(context) || Object.keys(candidate).some(key => !["section", "scrollTop", "instanceId", "serverId", "workspacePath", "location"].includes(key))) throw new Error("Invalid Preferences context")
+  if (Object.prototype.hasOwnProperty.call(candidate, "serverId")) {
+    if (typeof candidate.serverId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(candidate.serverId)) throw new Error("Invalid Preferences server ID")
+    request.serverId = candidate.serverId
+  }
   const instanceId = optionalString(candidate.instanceId, "instance ID", 512)
   if (instanceId) request.instanceId = instanceId
   const workspacePath = optionalString(candidate.workspacePath, "workspace path", 32768)
-  if (workspacePath?.includes("\0")) throw new Error("Invalid Preferences workspace path")
+  if (candidate.workspacePath === "" || workspacePath?.includes("\0")) throw new Error("Invalid Preferences workspace path")
   if (workspacePath) request.workspacePath = workspacePath
   if (candidate.scrollTop !== undefined) {
     if (!Number.isSafeInteger(candidate.scrollTop) || (candidate.scrollTop as number) < 0 || (candidate.scrollTop as number) > 10_000_000) throw new Error("Invalid Preferences scroll position")
@@ -46,8 +52,9 @@ export function requirePreferencesRequest(section: unknown, context: unknown): P
   if (candidate.location !== undefined && candidate.location !== null) {
     if (typeof candidate.location !== "object") throw new Error("Invalid Preferences location")
     const location = candidate.location as Record<string, unknown>
+    if (Array.isArray(location) || Object.keys(location).some(key => !["directory", "workspaceID"].includes(key))) throw new Error("Invalid Preferences location")
     const directory = optionalString(location.directory, "directory", 32768)
-    if (!directory) throw new Error("Invalid Preferences directory")
+    if (!directory || directory.includes("\0")) throw new Error("Invalid Preferences directory")
     request.location = {
       directory,
       ...(optionalString(location.workspaceID, "workspace ID", 512) ? { workspaceID: location.workspaceID as string } : {}),

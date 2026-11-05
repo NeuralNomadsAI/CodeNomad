@@ -245,7 +245,7 @@ describe("InstanceEventBridge", () => {
       },
     } as unknown as WorkspaceManager
     const bus = new EventBus()
-    const statuses: Array<{ status: string; reason?: string }> = []
+    const statuses: Array<{ status: string; reason?: string; gap?: string }> = []
     const received: OpenCodeEvent[] = []
     bus.on("instance.eventStatus", (event) => statuses.push(event))
     bus.on("instance.event", (event) => received.push(event.event))
@@ -253,7 +253,7 @@ describe("InstanceEventBridge", () => {
     try {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
       await waitFor(() => statuses.some((event) => event.status === "error"))
-      assert.match(statuses.find((event) => event.status === "error")?.reason ?? "", /expected server\.connected/)
+      assert.equal(statuses.find((event) => event.status === "error")?.gap, "transport")
       assert.deepEqual(received, [])
       await waitFor(() => statuses.some((event) => event.status === "connected"))
       assert.equal(subscriptions, 2)
@@ -711,13 +711,15 @@ describe("InstanceEventBridge", () => {
     }
   })
 
-  it("broadcasts an unresolvable locationless deletion", async () => {
+  it("requests targeted recovery instead of broadcasting an unresolvable deletion", async () => {
     const events = [{ type: "session.deleted", data: { sessionID: "deleted" } }] as OpenCodeEvent[]
     const workspaces = [{ id: "a", path: "/repo-a" }, { id: "b", path: "/repo-b" }]
     const notFound = Object.assign(new Error("not found"), { _tag: "SessionNotFoundError" })
     const { manager, sessionGets } = locationlessManager(events, { deleted: notFound }, workspaces)
     const bus = new EventBus()
     const received: any[] = []
+    const gaps: any[] = []
+    bus.on("instance.eventStatus", event => { if (event.gap === "ownership") gaps.push(event) })
     bus.on("instance.event", (event) => {
       if (event.event.type !== "server.connected") received.push(event)
     })
@@ -725,10 +727,10 @@ describe("InstanceEventBridge", () => {
 
     try {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
-      await waitFor(() => received.length === 2)
+      await waitFor(() => gaps.length === 2)
       assert.equal(sessionGets(), 1)
-      assert.deepEqual(received.map((event) => event.instanceId), ["a", "b"])
-      assert.deepEqual(received.map((event) => event.event.data.sessionID), ["deleted", "deleted"])
+      assert.deepEqual(gaps.map((event) => event.instanceId), ["a", "b"])
+      assert.equal(received.length, 0)
     } finally {
       bridge.shutdown()
     }
@@ -847,6 +849,7 @@ describe("InstanceEventBridge", () => {
   it("relays server.connected with a stable daemon identity digest per connection", async () => {
     const runtimeKey = Symbol.for("codenomad.opencode.runtime")
     const connectionFor = (pid: number) => ({
+      assertCurrent() {},
       endpoint: Object.assign(
         { url: "http://127.0.0.1:4010", auth: { username: "u", password: "p" } },
         { [runtimeKey]: Object.freeze({ version: "2.2.3", pid, contract: {} }) },
@@ -902,6 +905,7 @@ describe("InstanceEventBridge", () => {
   it("keeps one daemon token across stream resubscriptions of the same source", async () => {
     const runtimeKey = Symbol.for("codenomad.opencode.runtime")
     const connection = {
+      assertCurrent() {},
       endpoint: Object.assign(
         { url: "http://127.0.0.1:4011" },
         { [runtimeKey]: Object.freeze({ version: "2.2.3", pid: 4242, contract: {} }) },
@@ -942,6 +946,7 @@ describe("InstanceEventBridge", () => {
   it("drops a superseded source's token and never revives it", async () => {
     const runtimeKey = Symbol.for("codenomad.opencode.runtime")
     const connectionFor = (pid: number) => ({
+      assertCurrent() {},
       endpoint: Object.assign(
         { url: "http://127.0.0.1:4012" },
         { [runtimeKey]: Object.freeze({ version: "2.2.3", pid, contract: {} }) },
@@ -980,6 +985,7 @@ describe("InstanceEventBridge", () => {
   it("a disposed relay's tokens are not reused by a new relay", async () => {
     const runtimeKey = Symbol.for("codenomad.opencode.runtime")
     const connection = {
+      assertCurrent() {},
       endpoint: Object.assign(
         { url: "http://127.0.0.1:4013" },
         { [runtimeKey]: Object.freeze({ version: "2.2.3", pid: 3333, contract: {} }) },

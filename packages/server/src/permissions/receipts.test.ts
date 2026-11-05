@@ -18,8 +18,27 @@ import { registerPermissionReceiptRoutes } from "../server/routes/permission-rec
 import { registerInstanceProxyRoutes } from "../server/http-server"
 import { WorktreeDeletionFence } from "../workspaces/worktree-session-evacuation"
 import { CODENOMAD_MISSIONS_RPC } from "../missions/rpc"
+import { WorkspaceCapabilityError } from "../opencode/servers/capabilities"
 
 const logger = { error() {}, warn() {}, debug() {}, trace() {}, isLevelEnabled: () => false } as unknown as Logger
+
+test("explicit reconnect receipt recovery does not enumerate or acquire while manual/live admission stays separate", async t => {
+  const bus = new EventBus(), effects: string[] = []
+  const forbidden = () => { effects.push("local/native"); throw new Error("Forbidden") }
+  const manager = {
+    get: (id: string) => ({ id, path: "/same", binding: { serverId: id, directory: "/same" } }),
+    requireWorkspaceCapability: (_id: string, capability: string) => {
+      assert.equal(capability, "pendingRecovery")
+      throw new WorkspaceCapabilityError("pendingRecovery", { code: "liveOnly" })
+    },
+    getSharedServiceConnection: forbidden, getServiceWslDistro: forbidden, getServicePathStyle: forbidden, ownsLocation: forbidden,
+  } as unknown as WorkspaceManager
+  const receipts = new PermissionReceipts({ capture: forbidden } as never, manager, bus, logger)
+  receipts.start(); t.after(() => receipts.stop())
+  for (const instanceId of ["A", "B"]) bus.publish({ type: "instance.eventStatus", instanceId, status: "connected", generation: 1 })
+  await receipts.stop()
+  assert.deepEqual(effects, [])
+})
 const pending = (id = "p", source = true) => ({ id, sessionID: "s", action: "shell", resources: ["git status"],
   message: "Inspect repository", metadata: { secret: "never-persist", diff: "FULL DIFF" },
   ...(source ? { source: { type: "tool", messageID: "m", id: "call" } } : {}) })
@@ -52,6 +71,7 @@ async function fixture() {
     assertCurrent: () => { if (!state.current) throw new Error("stale connection") },
   } as unknown as ServiceConnection
   const manager = {
+    requireWorkspaceCapability: () => new AbortController().signal,
     get: () => workspace,
     getSharedServiceConnection: async () => connection,
     getServiceWslDistro: () => state.distro,
@@ -311,7 +331,7 @@ test("authenticated native channels and WSL hosts isolate identical session/requ
     await (await f.receipts.prepare("w", f.connection, "s", "p", "once", "codenomad"))()
     const otherConnection = { ...f.connection, endpoint: { ...f.connection.endpoint,
       auth: { type: "basic" as const, username: "opencode", password: "other-native-channel" } } }
-    const manager = { get: f.manager.get, ownsLocation: f.manager.ownsLocation,
+    const manager = { get: f.manager.get, ownsLocation: f.manager.ownsLocation, requireWorkspaceCapability: f.manager.requireWorkspaceCapability,
       getServiceWslDistro: f.manager.getServiceWslDistro, getServicePathStyle: f.manager.getServicePathStyle,
       getSharedServiceConnection: f.manager.getSharedServiceConnection }
     const otherManager = { ...manager, getSharedServiceConnection: async () => otherConnection }

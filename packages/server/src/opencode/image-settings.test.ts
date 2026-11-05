@@ -65,6 +65,7 @@ test("global image settings edit JSONC in place and report project overrides", a
       plugin: { list: async () => ({ data: [] }) } },
     }
     const manager: any = {
+      requireWorkspaceCapability: () => new AbortController().signal,
       get: () => ({}), getSharedServiceConnection: async () => connection,
       getServiceDirectoryForPath: async (_id: string, directory: string) => directory === project ? directory : undefined,
       ownsLocation: async () => true, getWorktreeIdentityForPath: async () => "owned",
@@ -242,6 +243,7 @@ test("a caller's signal cancels the native configuration reads behind image sett
         plugin: { list: (_input: unknown, options?: { signal?: AbortSignal }) => held(options) } } }
     const manager: any = {
       get: () => ({}), getSharedServiceConnection: async () => connection,
+      requireWorkspaceCapability: () => new AbortController().signal,
       getServiceDirectoryForPath: async (_id: string, directory: string) => directory,
       ownsLocation: async () => true, getWorktreeIdentityForPath: async () => "owned",
       getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",

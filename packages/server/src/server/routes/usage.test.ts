@@ -57,6 +57,7 @@ function harness() {
   } })
   const connection = { client, assertCurrent: () => { if (state.stale) throw new Error("stale connection") } } as ServiceConnection
   const manager: UsageRouteDeps["workspaceManager"] = {
+    requireWorkspaceCapability: () => new AbortController().signal,
     get: id => id === "instance" ? workspace : undefined,
     getSharedServiceConnection: async () => connection,
     ownsLocation: async (_id, location) => location.directory === "/wsl/repo",

@@ -43,6 +43,7 @@ test("recurring controls admit a local login and a live paired device; an unqual
     const settings = { configYamlPathForAuthority: () => yaml, getProfileScope: () => selected }
     const manager = { get: () => workspace, getServiceLocation: () => location, getServiceDirectoryForPath: async () => directory,
       getSharedServiceConnection: async () => connection, ownsLocation: async () => true,
+      requireWorkspaceCapability: () => new AbortController().signal,
       getServiceWslDistro: () => undefined, getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",
       getWorktreeIdentityForPath: async () => canonicalWorktreeIdentity(directory), getHostPathForServicePath: async () => directory }
     // The native plugin verifies through the private bridge callback before any store write.
@@ -106,6 +107,7 @@ test("recurring Create refuses an unqualified device before any native read and 
   const app = Fastify({ logger: false })
   remoteIngress(app, "device-1")
   const manager = { get: () => undefined, getServiceLocation: () => undefined,
+    requireWorkspaceCapability: () => new AbortController().signal,
     getSharedServiceConnection: async () => { connections++; return undefined } }
   const auth = { isAuthEnabled: () => true, getSessionFromRequest: () => ({ username: "human", sessionId: "remote-device:device-1" }) }
   registerMissionRecurrenceCreate(app, { workspaceManager: manager as never, auth, bridgeToken: "token",
@@ -136,6 +138,7 @@ test("the bridge verifier keeps device and cookie principals apart and follows l
       getSessionFromHeaders: () => ({ username: "human", sessionId: "remote-device:device-1" }) },
     ...(devices ? { remoteDevices: { isDeviceAuthorized: (id: string) => id === "device-1" && authorized } } : {}),
     manager: { getServiceWslDistro: () => undefined, get: () => workspace, ownsLocation: async () => true,
+      requireWorkspaceCapability: () => new AbortController().signal,
       getSharedServiceConnection: async () => ({ assertCurrent: () => {}, client: { location: { get: async () => ({ directory: "/owned" }) } } }) } })
   const verify = (value = identity, devices = true) => verifyHumanRecurrenceRequest(sign(value), deps(devices) as never, new AbortController().signal)
   assert.deepEqual(await verify(), { admitted: true })

@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openWorkspace.localOnly": "Les actions natives de fichiers, d’éditeur et de terminal nécessitent un projet sur le service OpenCode local partagé.",
   "commands.openHelp.failed": "Impossible d’ouvrir l’aide dans votre navigateur. Ouvrez https://neuralnomadsai.github.io/CodeNomad/ manuellement.",
   "commands.openSponsor.failed": "Impossible d’ouvrir la page Soutenir CodeNomad dans votre navigateur. Ouvrez {url} manuellement.",
   "commandPalette.title": "Palette de commandes",

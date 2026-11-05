@@ -89,6 +89,11 @@ preview replaces the file reader; opening a file returns the browser to chat mod
 Cancelling or hiding a view fences pending reads. Workspace/local-diff readers
 refresh on filesystem invalidation, while commit contents remain immutable.
 
+Project Markdown callers pass their owning `instanceId` to the shared `Markdown`
+surface, including resident content and replies from an already-started local read.
+An actual transcript owner additionally supplies its native `sessionId`; file
+preview selections keep their independent reader scope.
+
 ### Hide whitespace-only changes
 
 Stored with the UI settings; the rules are in Agent conventions. Beyond them:
@@ -137,6 +142,15 @@ insertion into the composer remain available.
 
 ## Backend boundaries
 
+The renderer admits Files before constructing tree, history, changes or initialization hooks, and admits central previews before either file reader exists. Worktree inventory and mutations share the source policy; retained local handlers and queued responses keep their originating authority through dependent reads. Host filesystem, Git and desktop bridge admission uses the owner-held project policy. Local reader lifetimes survive ordinary metadata refreshes and mode/tab changes; source retirement fences their queued work and late publication.
+
+Workspace Files and Git operations require their workspace's `files` or `git`
+capability before host filesystem or Git access. Worktree inventory, creation, moves and removal
+require `worktrees` before native discovery, path identity reads or local Git;
+direct manager callers share these gates. Refusals carry
+`explicit_capability_unavailable`, the capability and its structured reason.
+Git initialization checks this policy before resolving the submitted path.
+
 Listings register their watch before reading the directory, because native
 filesystem events miss some browsed folders; this path needs no initialized
 OpenCode client. Each `workspace.filesChanged` batch carries the workspace ID and
@@ -164,6 +178,35 @@ opaque device/inode identity distinct from mtime.
   authoritative change list. Git commands run in the shared Git worker with a
   timeout and output bound. Renames use their original path; gitlinks show their
   object IDs rather than reading another repository. Binary diffs use a fallback.
+
+### Projects on an explicit OpenCode server
+
+A validated explicit connection makes `files` and `git` available for native
+reads only; `opencode/servers/remote-workspace.ts` serves them through the
+project's single server connection, never the host disk, Git or file watches.
+
+- Files list, search, preview and content (`/files`, `/files/search`,
+  `/files/preview`, `GET /files/content`) accept only paths relative to the
+  opened folder (no absolute, drive or `..` segment) and only that folder as
+  `directory`. Native entries outside it (absolute, `..`, non-direct children)
+  are dropped: `fs.list` can name entries reached through links, so the filter is
+  an exactness rule, not a security boundary. Reads stream with a 5 MiB cap
+  (`too_large`, 413) and JSON answers with a 32 MiB cap; every answer must name
+  the exact folder.
+- Git status and diff (`/worktrees/root/git-status`, `git-diff` with scope
+  `unstaged`) read `GET /api/vcs`, `/api/location` and `/api/vcs/diff?mode=working`.
+  Native paths are relative to the Git worktree root (`project.directory`), so
+  they are brought back to the opened folder and rows outside it are dropped.
+  No provider is `not_repository`; an unknown root or an untraversed ancestor
+  folder (`more`) is `ambiguous` (409): an incomplete state is never an empty
+  list. A diff requests whole-file context and rebuilds both sides from one
+  hunk; an empty, partial or mode-only patch is `ambiguous`, never unchanged.
+- Writes, history, staging, commit, initialization, other worktrees and host
+  Git (including forge work items) return `explicit_capability_unavailable`
+  before host IO. The UI shows one Changes section, no Commits, Save or
+  Initialize Git (`hostGit`, `fileWrite`), the branch from native `vcs.get`, and
+  maps the fixed codes to `filesPanel.contentUnavailable` or the not-repository
+  text (`lib/remote-read-error.ts`).
 
 ## Validation
 

@@ -43,11 +43,12 @@ const proofSchema = z.object({ sessionID: z.string().min(1).max(256), workspaceI
  * paired devices in the live Remote Control registry. */
 export async function verifyHumanRecurrenceRequest(input: unknown, deps: {
   auth: Pick<AuthManager, "isAuthEnabled" | "getSessionFromHeaders" | "getCookieName">
-  manager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "ownsLocation" | "getServiceWslDistro">
+  manager: Pick<WorkspaceManager, "requireWorkspaceCapability" | "get" | "getSharedServiceConnection" | "ownsLocation" | "getServiceWslDistro">
   settings?: Pick<SettingsService, "getProfileScope">
   remoteDevices?: HumanDeps["remoteDevices"]
 }, signal: AbortSignal, now: () => number = Date.now): Promise<{ admitted: true }> {
   const body = proofSchema.parse(input), { digest, ...identity } = body
+  deps.manager.requireWorkspaceCapability(body.workspaceID, "missions")
   signal.throwIfAborted()
   assertRecurrenceProofFresh(body.issuedAt, now())
   if (!deps.auth.isAuthEnabled() || body.sessionID === "auth-disabled" || recurrenceControlRequestDigest(identity) !== digest) throw new Error("Recurrence human request unavailable")

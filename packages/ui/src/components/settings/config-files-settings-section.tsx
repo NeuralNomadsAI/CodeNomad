@@ -12,7 +12,7 @@ const LazyMonacoFileViewer = lazy(() =>
   import("../file-viewer/monaco-file-viewer").then((module) => ({ default: module.MonacoFileViewer })),
 )
 
-export const ConfigFilesSettingsSection: Component = () => {
+export const ConfigFilesSettingsSection: Component<{ active?: () => boolean }> = (props) => {
   const { t } = useI18n()
   const [files, setFiles] = createSignal<ConfigFileDescriptor[]>([])
   const [selectedFileId, setSelectedFileId] = createSignal<string | null>(null)
@@ -24,17 +24,21 @@ export const ConfigFilesSettingsSection: Component = () => {
   const [saving, setSaving] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
   let loadVersion = 0
+  let mounted = true
+  const active = () => mounted && props.active?.() !== false
+  onCleanup(() => { mounted = false; loadVersion++ })
 
   const selectedFile = createMemo(() => files().find((file) => file.id === selectedFileId()) ?? null)
   const dirty = createMemo(() => content() !== originalContent())
 
   const loadContent = async (file: ConfigFileDescriptor) => {
+    if (!active()) return
     const version = ++loadVersion
     setLoadingContent(true)
     setError(null)
     try {
       const response = await serverApi.readConfigFile(file.id)
-      if (version !== loadVersion) return
+      if (!active() || version !== loadVersion) return
       setSelectedFileId(file.id)
       setContent(response.contents)
       setOriginalContent(response.contents)
@@ -61,10 +65,12 @@ export const ConfigFilesSettingsSection: Component = () => {
   }
 
   const loadFiles = async () => {
+    if (!active()) return
     setLoadingList(true)
     setError(null)
     try {
       const response = await serverApi.listConfigFiles()
+      if (!active()) return
       setFiles(response)
       const first = response[0]
       if (first) {
@@ -78,21 +84,24 @@ export const ConfigFilesSettingsSection: Component = () => {
   }
 
   const handleFileChange = async (file: ConfigFileDescriptor | null) => {
+    if (!active()) return
     if (!file || file.id === selectedFileId()) return
     const confirmed = await confirmDiscardIfDirty()
-    if (!confirmed) return
+    if (!confirmed || !active()) return
     await loadContent(file)
   }
 
   const handleReload = async () => {
+    if (!active()) return
     const file = selectedFile()
     if (!file) return
     const confirmed = await confirmDiscardIfDirty()
-    if (!confirmed) return
+    if (!confirmed || !active()) return
     await loadContent(file)
   }
 
   const handleSave = async () => {
+    if (!active()) return
     const file = selectedFile()
     if (!file) return
     const payload = content()
@@ -100,6 +109,7 @@ export const ConfigFilesSettingsSection: Component = () => {
     setError(null)
     try {
       await serverApi.writeConfigFile(file.id, payload)
+      if (!active()) return
       if (content() === payload) {
         setOriginalContent(payload)
       }

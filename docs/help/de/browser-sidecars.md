@@ -1,5 +1,7 @@
 # Browser-Vorschauen und SideCars
 
+Links im internen Chat expliziter Server bleiben externe Links, die Sie selbst öffnen, einschließlich Loopback-URLs. Sie behalten die angegebene Adresse und nutzen den Netzwerkkontext Ihres Browsers. Host-Vorschauen bleiben in diesem Chat unverfügbar; ein Tunnel zum Ausführungsserver wird nicht bereitgestellt.
+
 ## Sitzungsbrowser öffnen {#session-browser}
 
 1. Wählen Sie in der Symbolleiste einer Unterhaltung **Web-Vorschau öffnen**.

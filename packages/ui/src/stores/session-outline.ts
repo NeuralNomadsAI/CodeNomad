@@ -4,6 +4,7 @@ import { serverApi } from "../lib/api-client"
 import { tGlobal } from "../lib/i18n"
 import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision } from "./opencode-data"
 import { sessions } from "./session-state"
+import { isExplicitHistory } from "./session-history-capability"
 import { hasCompleteOutlineMetadata, normalizePersistedOutline, type PersistedOutline } from "./session-outline-persistence"
 
 interface OutlineScan {
@@ -68,6 +69,7 @@ function trimSnapshots() {
 // Metadata has its own lifetime: changing the resident window never evicts it.
 // Hiding pauses a scan at its last accepted cursor, rather than starting over.
 export function createSessionOutline(props: { instanceId: Accessor<string>; sessionId: Accessor<string>; active: Accessor<boolean> }) {
+  const explicit = createMemo(() => isExplicitHistory(props.instanceId()))
   const [entries, setEntries] = createSignal<OutlineEntry[]>([])
   const [pending, setPending] = createSignal(false)
   const [error, setError] = createSignal("")
@@ -81,6 +83,7 @@ export function createSessionOutline(props: { instanceId: Accessor<string>; sess
   let snapshot: OutlineSnapshot
   createEffect(() => {
     const instanceId = props.instanceId(), sessionID = props.sessionId()
+    if (explicit()) { setEntries([]); setPending(false); setError(""); return }
     const generation = getOpenCodeInstanceGeneration(instanceId)
     const [, revert, directory, projectID] = JSON.parse(sessionState()) as [string, string | null, string | null, string | null]
     const revision = getOpenCodeMutationRevision(instanceId, sessionID)

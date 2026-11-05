@@ -1,10 +1,16 @@
 # Conversations
 
+Explicit-server chat displays supported embedded images or qualified native media belonging to the same conversation. Other sources show an unavailable label. Local image paths resolve only to images already held in that conversation; `/btw` accepts embedded images only. Valid embedded files offer an explicit download.
+
 CodeNomad presents native OpenCode sessions as conversations, with a hierarchy for delegated work and separate controls for what you send next.
 
 Messages render Markdown, code, diffs and supported tool-result images. Text copy, full-history search and speech use text projections, not embedded image bytes. **Message content** changes visibility without deleting stored parts; [History](history.md#operation-reference) distinguishes display controls from cleanup.
 
 Reasoning and tool headers show how long each step took, counting live while it runs; durations under one second are not shown. When **Tokens** is shown in **Message content** (the **Everything** preset shows it), each agent message ends with one token and cost line after its final text. That line adds up the message and the messages holding the tools and reasoning that its **Remove tools and reasoning from this response** action covers, within the loaded transcript; expand it for reasoning and cache counts. Steps that only ran tools have no line of their own.
+
+In the internal explicit-server chat, `@` offers that server's agents and skills and explains unavailable project file references. A connection change during an action stops its remaining steps. Check the conversation before resending an uncertain action; it may already have reached OpenCode.
+
+An interrupted or uncertain action leaves a non-modal notice in its source conversation and preserves your current focus. If a queued edit is interrupted, its known content remains recoverable in the open source conversation: check the queue, clear the draft and attachments, then choose **Restore saved prompt**. This restores an editable draft; sending is a separate action. A retired `/btw` question permits an explicit new request once its old request settles.
 
 ## Find and navigate conversations {#navigate-conversations}
 

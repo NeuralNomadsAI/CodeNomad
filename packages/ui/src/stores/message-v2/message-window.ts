@@ -7,6 +7,9 @@ export type NewerCursor = string | null
 
 export interface MessageWindowState {
   kind: MessageWindowKind
+  /** In-memory originating order of opaque native message cursors. */
+  nativeOrder?: "asc" | "desc"
+  nativeCurrent?: () => boolean
   resumeCursor?: string
   olderCursor?: string
   newerCursors: NewerCursor[]

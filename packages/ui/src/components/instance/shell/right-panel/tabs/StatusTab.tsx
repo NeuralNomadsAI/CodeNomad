@@ -29,6 +29,10 @@ import { shellStore } from "../../../../../stores/shells"
 import { showConfirmDialog } from "../../../../../stores/alerts"
 import { showToastNotification } from "../../../../../lib/notifications"
 import { ShellOutputDialog } from "../../../../shell-output-dialog"
+import { ProjectCapabilityBoundary } from "../../../../project-capability-gate"
+import { getProjectAvailability } from "../../../../../stores/project-capability"
+import { captureInstanceRequestAuthority } from "../../../../../stores/session-api"
+import { statusSectionAvailable } from "./status-sections"
 
 interface StatusTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -105,10 +109,13 @@ const StatusTab: Component<StatusTabProps> = (props) => {
   const shellState = createMemo(() => shellStore.getState(props.instanceId, shellLocation().directory, shellLocation().workspaceID))
   const [outputShell, setOutputShell] = createSignal<{ shell: ShellInfo; location: LocationRef; instanceId: string } | null>(null)
 
-  createEffect(on(
-    () => [props.instanceId, shellLocation().directory, shellLocation().workspaceID] as const,
-    ([instanceId, directory, workspaceID]) => void shellStore.load(instanceId, directory, workspaceID),
-  ))
+  const ShellDemand = () => {
+    createEffect(on(
+      () => [props.instanceId, shellLocation().directory, shellLocation().workspaceID] as const,
+      ([instanceId, directory, workspaceID]) => void shellStore.load(instanceId, directory, workspaceID),
+    ))
+    return renderBackgroundProcesses()
+  }
 
   const renderYoloModeSection = () => {
     const session = props.activeSession()
@@ -133,7 +140,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
               "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": { backgroundColor: "var(--session-yolo-accent)" },
             }}
             inputProps={{ "aria-label": props.t("instanceShell.yoloMode.title") }}
-            onChange={() => togglePermissionAutoAcceptForSession(props.instanceId, session.id)}
+            onChange={() => { if (getProjectAvailability(props.instanceId, "yolo").allowed) togglePermissionAutoAcceptForSession(props.instanceId, session.id) }}
           />
         </div>
       </div>
@@ -141,7 +148,9 @@ const StatusTab: Component<StatusTabProps> = (props) => {
   }
 
   const removeShell = async (shellId: string, command: string, running: boolean) => {
+    if (!getProjectAvailability(props.instanceId, "backgroundShells").allowed) return
     const instanceId = props.instanceId
+    const current = captureInstanceRequestAuthority(instanceId)
     const location = { ...shellLocation() }
     const confirmed = await showConfirmDialog(
       props.t("instanceShell.backgroundProcesses.remove.message", { title: command }),
@@ -152,7 +161,9 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           : "instanceShell.backgroundProcesses.actions.remove"),
       },
     )
-    if (confirmed && !await shellStore.remove(instanceId, location.directory, shellId, location.workspaceID)) {
+    if (!confirmed || !current() || !getProjectAvailability(instanceId, "backgroundShells").allowed) return
+    const removed = await shellStore.remove(instanceId, location.directory, shellId, location.workspaceID)
+    if (current() && getProjectAvailability(instanceId, "backgroundShells").allowed && !removed) {
       showToastNotification({ category: "sessions", message: props.t("instanceShell.backgroundProcesses.error"), variant: "error" })
     }
   }
@@ -196,7 +207,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
                       <button
                         type="button"
                         class="button-tertiary inline-flex w-full items-center justify-center gap-1 p-1"
-                        onClick={() => setOutputShell({ shell, location: { ...shellLocation() }, instanceId: props.instanceId })}
+                         onClick={() => { if (getProjectAvailability(props.instanceId, "backgroundShells").allowed) setOutputShell({ shell, location: { ...shellLocation() }, instanceId: props.instanceId }) }}
                       >
                         <TerminalSquare class="h-3.5 w-3.5" aria-hidden="true" />
                         {props.t("instanceShell.backgroundProcesses.actions.output")}
@@ -249,11 +260,14 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           <ContextUsagePanel instanceId={props.instanceId} sessionId={props.activeSession()!.id} summary />
         </Show>
       ),
-      renderYoloModeSection,
-      renderProviderUsage,
-      renderBackgroundProcesses,
-      renderMcpStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />,
+      renderYoloModeSection: () => <ProjectCapabilityBoundary instanceId={props.instanceId} feature="yolo">{renderYoloModeSection()}</ProjectCapabilityBoundary>,
+      renderProviderUsage: () => <ProjectCapabilityBoundary instanceId={props.instanceId} feature="providerUsage">{renderProviderUsage()}</ProjectCapabilityBoundary>,
+      renderBackgroundProcesses: () => <ProjectCapabilityBoundary instanceId={props.instanceId} feature="backgroundShells"><ShellDemand /></ProjectCapabilityBoundary>,
+      renderMcpStatus: () => <ProjectCapabilityBoundary instanceId={props.instanceId} feature="chat">
+        <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />
+      </ProjectCapabilityBoundary>,
       renderPluginStatus: () => (
+        <ProjectCapabilityBoundary instanceId={props.instanceId} feature="plugins">
         <InstanceServiceStatus
           initialInstance={props.instance}
           sections={["plugins"]}
@@ -261,12 +275,13 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           pluginsActive={props.isActive() && isSectionExpanded("plugins")}
           class="space-y-2"
         />
+        </ProjectCapabilityBoundary>
       ),
     }).statusSections ?? [])
   const allStatusSections = createMemo<RightPanelSectionModule[]>(() => [...coreSections, ...(props.extraSections ?? [])])
   const statusSections = createMemo<RightPanelSectionModule[]>(() =>
     applyRightPanelItemCustomization(
-      allStatusSections(),
+      allStatusSections().filter(section => statusSectionAvailable(props.instanceId, section.id)),
       props.customization().statusSectionOrder,
       props.customization().hiddenStatusSectionIds,
     ),
@@ -307,7 +322,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
 
   return (
     <div class="status-tab-container">
-      <Show when={props.activeSession()?.id}>
+      <Show when={getProjectAvailability(props.instanceId, "executionSettings").allowed && props.activeSession()?.id}>
         {(sessionId) => <SessionGoalLine instanceId={props.instanceId} sessionId={sessionId()} active={props.isActive()} />}
       </Show>
       <Accordion.Root
@@ -334,14 +349,14 @@ const StatusTab: Component<StatusTabProps> = (props) => {
         </DragDropProvider>
       </Accordion.Root>
       <For each={props.extraContent ?? []}>{(render) => render()}</For>
-      <ShellOutputDialog
+      <Show when={getProjectAvailability(props.instanceId, "backgroundShells").allowed}><ShellOutputDialog
         open={Boolean(outputShell())}
         instanceId={outputShell()?.instanceId ?? props.instanceId}
         directory={outputShell()?.location.directory ?? shellLocation().directory}
         workspaceID={outputShell()?.location.workspaceID}
         shell={outputShell()?.shell ?? null}
         onClose={() => setOutputShell(null)}
-      />
+      /></Show>
     </div>
   )
 }

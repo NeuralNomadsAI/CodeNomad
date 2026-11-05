@@ -7,6 +7,10 @@ import { getLogger } from "../lib/logger"
 import { serverEvents } from "../lib/server-events"
 import { getRootClient } from "../stores/opencode-client"
 import { splitDisplayPath } from "./unified-picker-path"
+import { instances } from "../stores/instances"
+import { explicitSessionDirectory, sessionMatchesInventory } from "../stores/session-inventory-scope"
+import { captureInstanceRequestAuthority } from "../stores/session-api"
+import { requestConnectionOptions } from "../stores/request-locations"
 const log = getLogger("actions")
 
 
@@ -95,6 +99,7 @@ interface UnifiedPickerProps {
 const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
   const { t } = useI18n()
   const mode = () => props.mode ?? "mention"
+  const filesAvailable = () => explicitSessionDirectory(instances().get(props.workspaceId)) === undefined
 
   const [files, setFiles] = createSignal<FileItem[]>([])
   const [filteredAgents, setFilteredAgents] = createSignal<Agent[]>([])
@@ -133,20 +138,24 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
   }
  
   async function fetchWorkspaceSnapshot(workspaceId: string): Promise<FileItem[]> {
+    if (!filesAvailable()) return []
     if (inflightWorkspaceId === workspaceId && inflightSnapshotPromise) {
       return inflightSnapshotPromise
     }
  
+    const current = captureInstanceRequestAuthority(workspaceId)
     inflightWorkspaceId = workspaceId
     inflightSnapshotPromise = serverApi
       .listWorkspaceFiles(workspaceId, ".", props.directory)
       .then((entries) => mapEntriesToFileItems(entries))
       .then((snapshot) => {
+        if (!current() || !filesAvailable()) return []
         setAllFiles(snapshot)
         setCachedWorkspaceId(workspaceId)
         return snapshot
       })
       .catch((error) => {
+        if (!current() || !filesAvailable()) return []
         log.error(`[UnifiedPicker] Failed to load workspace files:`, error)
         setAllFiles([])
         setCachedWorkspaceId(null)
@@ -173,6 +182,8 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
   let searchController: AbortController | undefined
 
   async function loadFilesForQuery(rawQuery: string, workspaceId: string) {
+    if (!filesAvailable()) return
+    const current = captureInstanceRequestAuthority(workspaceId)
     searchController?.abort()
     const controller = new AbortController()
     searchController = controller
@@ -190,7 +201,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     try {
       if (!normalizedQuery) {
         const snapshot = await ensureWorkspaceSnapshot(workspaceId)
-        if (!shouldApplyResults(requestId, workspaceId)) {
+        if (!current() || !shouldApplyResults(requestId, workspaceId)) {
           return
         }
         applyFileResults(snapshot)
@@ -202,7 +213,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
         signal: controller.signal,
         directory: props.directory,
       })
-      if (!shouldApplyResults(requestId, workspaceId)) {
+      if (!current() || !shouldApplyResults(requestId, workspaceId)) {
         return
       }
       applyFileResults(mapEntriesToFileItems(results))
@@ -245,7 +256,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
   }
 
   function shouldApplyResults(requestId: number, workspaceId: string) {
-    return props.open && workspaceId === props.workspaceId && requestId === activeRequestId
+    return filesAvailable() && props.open && workspaceId === props.workspaceId && requestId === activeRequestId
   }
 
  
@@ -290,18 +301,27 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
 
     const workspaceChanged = lastWorkspaceId !== props.workspaceId
     const queryChanged = lastQuery !== props.searchQuery
-
-    if (queryChanged) {
-      // Reset selectedIndex to 0 when query changes to avoid ghost state
-      // This ensures proper highlighting when navigating back to root or changing queries
+    if (workspaceChanged || queryChanged) {
       setSelectedIndex(0)
       resetScrollPosition()
+    }
+    lastWorkspaceId = props.workspaceId
+    lastQuery = props.searchQuery
+
+    if (!filesAvailable()) {
+      searchController?.abort()
+      clearQueryDebounce()
+      setFiles([])
+      setAllFiles([])
+      setCachedWorkspaceId(null)
+      setIsInitialized(false)
+      setLoadingState("idle")
+      activeRequestId += 1
+      return
     }
 
     if (!isInitialized() || workspaceChanged || queryChanged) {
       setIsInitialized(true)
-      lastWorkspaceId = props.workspaceId
-      lastQuery = props.searchQuery
       const shouldSkipDebounce = workspaceChanged || normalizeQuery(props.searchQuery).length === 0
       scheduleLoadFilesForQuery(props.searchQuery, props.workspaceId, shouldSkipDebounce)
     }
@@ -315,18 +335,22 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     const workspaceId = props.workspaceId
     const directory = props.directory ?? ""
     if (!workspaceId || !directory) return
+    if (!sessionMatchesInventory(instances().get(workspaceId), { location: { directory } })) return
+    const client = getRootClient(workspaceId)
+    const current = captureInstanceRequestAuthority(workspaceId)
+    const requestOptions = requestConnectionOptions(instances().get(workspaceId))
     let disposed = false, inFlight = false, trailing = false
     setSkills([])
     setSkillsError(false)
     setSkillsLoading(true)
     const load = () => {
-      if (disposed) return
+      if (disposed || !current()) return
       if (inFlight) { trailing = true; return }
       inFlight = true
       setSkillsLoading(true)
-      void getRootClient(workspaceId).skill.list({ location: { directory } }).then(
+      void client.skill.list({ location: { directory } }, requestOptions).then(
         (response) => {
-          if (disposed) return
+          if (disposed || !current()) return
           if (trailing) { inFlight = false; trailing = false; load(); return }
           setSkills((response.data ?? []).map(({ id, name, description }) => ({ id, name, description })))
           setSkillsError(false)
@@ -334,7 +358,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
           setSkillsLoading(false)
         },
         (error) => {
-          if (disposed) return
+          if (disposed || !current()) return
           if (trailing) { inFlight = false; trailing = false; load(); return }
           log.error(`[UnifiedPicker] Failed to load skills:`, error)
           setSkillsError(true)
@@ -434,7 +458,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
 
     // Add root directory as first item only when query is EXACTLY "." or "./" (not "./docs/")
     const isExactRootQuery = props.searchQuery === "." || props.searchQuery === "./"
-    if (mode() === "mention" && isExactRootQuery) {
+    if (mode() === "mention" && filesAvailable() && isExactRootQuery) {
       const rootFile: FileItem = {
         path: ".",
         relativePath: ".",
@@ -445,7 +469,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     }
 
     // Match the placeholder and the rendered groups: files, agents, then skills.
-    files().forEach((file) => items.push({ type: "file", file }))
+    if (filesAvailable()) files().forEach((file) => items.push({ type: "file", file }))
     // Don't show agents or skills for exact root path queries
     if (!isExactRootQuery) {
       filteredAgents().forEach((agent) => items.push({ type: "agent", agent }))
@@ -453,6 +477,14 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     }
     return items
   }
+
+  createEffect(() => {
+    if (!props.open) return
+    const count = allItems().length
+    const index = selectedIndex()
+    const next = count ? Math.min(Math.max(index, 0), count - 1) : 0
+    if (next !== index) setSelectedIndex(next)
+  })
 
   function scrollToSelected() {
     setTimeout(() => {
@@ -584,7 +616,10 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
             </For>
           </Show>
 
-          <Show when={mode() === "mention" && (fileCount() > 0 || props.searchQuery === "." || props.searchQuery === "./")}>
+          <Show when={mode() === "mention" && !filesAvailable()}>
+            <div class="dropdown-section-header" role="status">{t("unifiedPicker.filesUnavailable")}</div>
+          </Show>
+          <Show when={mode() === "mention" && filesAvailable() && (fileCount() > 0 || props.searchQuery === "." || props.searchQuery === "./")}>
             <div class="dropdown-section-header">
               {t("unifiedPicker.sections.files")}
             </div>

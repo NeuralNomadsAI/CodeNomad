@@ -48,7 +48,9 @@ export class ServerStorage {
   private stateOwnerListeners = new Map<string, Set<(value: OwnerBucket) => void>>()
   private instanceDataCache = new Map<string, InstanceData>()
   private instanceDataListeners = new Map<string, Set<(data: InstanceData) => void>>()
-  private instanceLoadPromises = new Map<string, Promise<InstanceData>>()
+  private instanceLoadPromises = new Map<string, { promise: Promise<InstanceData>; current: () => boolean }>()
+  private instanceDataEpochs = new Map<string, number>()
+  private instanceMutationOwners = new Map<string, object>()
   private pendingWrites = new Set<Promise<unknown>>()
 
   constructor() {
@@ -170,40 +172,79 @@ export class ServerStorage {
     }))
   }
 
-  async loadInstanceData(instanceId: string): Promise<InstanceData> {
+  async loadInstanceData(instanceId: string, isCurrent: () => boolean = () => true): Promise<InstanceData> {
     const cached = this.instanceDataCache.get(instanceId)
     if (cached) {
       return cached
     }
 
-    if (!this.instanceLoadPromises.has(instanceId)) {
+    const previous = this.instanceLoadPromises.get(instanceId)
+    if (!previous?.current()) {
+      const epoch = this.instanceDataEpochs.get(instanceId) ?? 0
+      const state = { promise: Promise.resolve(DEFAULT_INSTANCE_DATA), current: () => isCurrent()
+        && epoch === (this.instanceDataEpochs.get(instanceId) ?? 0) && this.instanceLoadPromises.get(instanceId) === state }
       const promise = serverApi
         .readInstanceData(instanceId)
         .then((data) => {
           const normalized = this.normalizeInstanceData(data)
-          this.setInstanceDataCache(instanceId, normalized)
-          return normalized
+          if (state.current()) {
+            this.setInstanceDataCache(instanceId, normalized)
+            return normalized
+          }
+          return this.instanceDataCache.get(instanceId) ?? normalized
         })
         .finally(() => {
-          this.instanceLoadPromises.delete(instanceId)
+          if (this.instanceLoadPromises.get(instanceId) === state) this.instanceLoadPromises.delete(instanceId)
         })
 
-      this.instanceLoadPromises.set(instanceId, promise)
+      state.promise = promise
+      this.instanceLoadPromises.set(instanceId, state)
     }
 
-    return this.instanceLoadPromises.get(instanceId)!
+    return this.instanceLoadPromises.get(instanceId)!.promise
   }
 
-  saveInstanceData(instanceId: string, data: InstanceData): Promise<void> {
+  saveInstanceData(instanceId: string, data: InstanceData, isCurrent: () => boolean = () => true): Promise<void> {
     const normalized = this.normalizeInstanceData(data)
-    return this.trackWrite(serverApi.writeInstanceData(instanceId, normalized).then(() => {
-      this.setInstanceDataCache(instanceId, normalized)
-    }))
+    return this.writeInstanceData(instanceId, normalized, () => serverApi.writeInstanceData(instanceId, normalized), isCurrent)
   }
 
   deleteInstanceData(instanceId: string): Promise<void> {
-    return this.trackWrite(serverApi.deleteInstanceData(instanceId).then(() => {
-      this.setInstanceDataCache(instanceId, DEFAULT_INSTANCE_DATA)
+    return this.writeInstanceData(instanceId, DEFAULT_INSTANCE_DATA, () => serverApi.deleteInstanceData(instanceId), () => true)
+  }
+
+  forgetInstanceData(instanceId: string): void {
+    this.instanceDataEpochs.set(instanceId, (this.instanceDataEpochs.get(instanceId) ?? 0) + 1)
+    this.instanceLoadPromises.delete(instanceId)
+    this.instanceMutationOwners.delete(instanceId)
+    this.instanceDataCache.delete(instanceId)
+  }
+
+  private writeInstanceData(instanceId: string, data: InstanceData, write: () => Promise<void>, isCurrent: () => boolean): Promise<void> {
+    const owner = {}
+    const epoch = (this.instanceDataEpochs.get(instanceId) ?? 0) + 1
+    this.instanceDataEpochs.set(instanceId, epoch)
+    this.instanceMutationOwners.set(instanceId, owner)
+    const current = () => isCurrent() && this.instanceMutationOwners.get(instanceId) === owner
+    return this.trackWrite(write().then(async () => {
+      if (!current()) return
+      if (epoch === this.instanceDataEpochs.get(instanceId)) {
+        this.setInstanceDataCache(instanceId, data)
+        return
+      }
+      // An event and a 204 ACK have no shared wire revision. Resolve their order
+      // with a bounded authoritative read, never by replaying the write.
+      for (let attempt = 0; attempt < 3 && current(); attempt++) {
+        const before = this.instanceDataEpochs.get(instanceId)
+        const fresh = await serverApi.readInstanceData(instanceId, AbortSignal.timeout(10_000))
+        if (!current()) return
+        if (before !== this.instanceDataEpochs.get(instanceId)) continue
+        this.setInstanceDataCache(instanceId, fresh)
+        return
+      }
+      if (current()) throw new Error("Saved instance data requires explicit reconciliation")
+    }).finally(() => {
+      if (this.instanceMutationOwners.get(instanceId) === owner) this.instanceMutationOwners.delete(instanceId)
     }))
   }
 
@@ -261,7 +302,7 @@ export class ServerStorage {
     }
     return () => {
       bucket.delete(listener)
-      if (bucket.size === 0) {
+      if (bucket.size === 0 && this.instanceDataListeners.get(instanceId) === bucket) {
         this.instanceDataListeners.delete(instanceId)
       }
     }
@@ -315,6 +356,7 @@ export class ServerStorage {
   }
 
   private setInstanceDataCache(instanceId: string, data: InstanceData) {
+    this.instanceDataEpochs.set(instanceId, (this.instanceDataEpochs.get(instanceId) ?? 0) + 1)
     const normalized = this.normalizeInstanceData(data)
     const previous = this.instanceDataCache.get(instanceId)
     if (previous && isDeepEqual(previous, normalized)) {

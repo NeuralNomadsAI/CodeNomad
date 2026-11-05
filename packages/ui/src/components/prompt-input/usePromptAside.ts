@@ -2,6 +2,10 @@ import { createEffect, createSignal, on, onCleanup, type Accessor } from "solid-
 import { useI18n } from "../../lib/i18n"
 import { getOpencodeErrorMessage } from "../../lib/opencode-api"
 import { getRootClient } from "../../stores/opencode-client"
+import { captureInstanceRequestAuthority } from "../../stores/session-api"
+import { instances } from "../../stores/instances"
+import { requestConnectionOptions } from "../../stores/request-locations"
+import { isSessionActionInterrupted } from "../../stores/session-action-queue"
 
 // Match OpenCode's native /btw instructions. session.generate performs a single
 // generation with session context; it does not run a tool loop or append messages.
@@ -22,6 +26,7 @@ export function usePromptAside(options: {
   const [answer, setAnswer] = createSignal("")
   const [error, setError] = createSignal("")
   const [pending, setPending] = createSignal(false)
+  const [interrupted, setInterrupted] = createSignal(false)
   let request: AbortController | undefined
 
   function cancel() {
@@ -43,6 +48,7 @@ export function usePromptAside(options: {
       setQuestion("")
       setAnswer("")
       setError("")
+      setInterrupted(false)
     },
   ))
   onCleanup(cancel)
@@ -53,25 +59,35 @@ export function usePromptAside(options: {
     const controller = new AbortController()
     const instanceId = options.instanceId()
     const sessionId = options.sessionId()
+    const authority = captureInstanceRequestAuthority(instanceId)
+    const client = getRootClient(instanceId)
+    const requestOptions = requestConnectionOptions(instances().get(instanceId))
     request = controller
-    const current = () => request === controller && !controller.signal.aborted
+    const ownsRequest = () => request === controller
+    const current = () => authority() && ownsRequest() && !controller.signal.aborted
       && options.active() && options.instanceId() === instanceId && options.sessionId() === sessionId
     setPending(true)
     setAnswer("")
     setError("")
+    setInterrupted(false)
     try {
-      const result = await getRootClient(instanceId).session.generate({
+      if (!current()) return
+      const result = await client.session.generate({
         sessionID: sessionId,
         prompt: `${instructions}\n\n${text}`,
-      }, { signal: controller.signal })
+      }, { ...requestOptions, signal: controller.signal })
       if (!current()) return
       const textAnswer = result.text.trim()
       if (!textAnswer) setError(t("promptInput.btw.empty"))
       else setAnswer(textAnswer)
     } catch (cause) {
-      if (current()) setError(getOpencodeErrorMessage(cause, t("promptInput.btw.failed")))
-    } finally {
       if (current()) {
+        if (isSessionActionInterrupted(cause)) setInterrupted(true)
+        else setError(getOpencodeErrorMessage(cause, t("promptInput.btw.failed")))
+      }
+    } finally {
+      if (ownsRequest()) {
+        if (!current()) setInterrupted(true)
         request = undefined
         setPending(false)
       }
@@ -90,7 +106,7 @@ export function usePromptAside(options: {
     return true
   }
 
-  return { open, question, setQuestion, answer, error, pending, launch, ask, cancel, close }
+  return { open, question, setQuestion, answer, error, pending, interrupted, launch, ask, cancel, close }
 }
 
 export type PromptAsideController = ReturnType<typeof usePromptAside>

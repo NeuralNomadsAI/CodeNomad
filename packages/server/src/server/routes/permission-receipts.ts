@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify"
 import { z } from "zod"
 import type { PermissionReceipts } from "../../permissions/receipts"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 
 const querySchema = z.object({
   messageId: z.string().min(1).max(512).optional(),
@@ -16,6 +17,11 @@ export function registerPermissionReceiptRoutes(app: FastifyInstance, receipts: 
     if (!query.success || !request.params.sessionId.startsWith("ses") || request.params.sessionId.length > 512) {
       return reply.code(400).send({ error: "Invalid permission receipt query" })
     }
-    return receipts.list(request.params.id, request.params.sessionId, { ...query.data, unanchored: query.data.unanchored === "true" })
+    try {
+      return await receipts.list(request.params.id, request.params.sessionId, { ...query.data, unanchored: query.data.unanchored === "true" })
+    } catch (error) {
+      if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.message, code: error.code, capability: error.capability, reason: error.reason })
+      throw error
+    }
   })
 }

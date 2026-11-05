@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { localMissionWorkspaces } from "../../missions/workspace-capability"
 import type { OpenCodeClient, SessionInfo } from "@opencode/client"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import type { MissionMap, MissionSnapshot, MissionTask } from "../../missions/model"
@@ -39,7 +40,7 @@ export interface MissionTaskInterruption {
 
 async function ownedTask(manager: Manager, coordinatorID: string, command: unknown, kind: "task-sessions" | "interrupt", signal: AbortSignal) {
   const { input } = taskCommand(kind).parse(command)
-  const owner = await Promise.any(manager.list().map(async workspace => {
+  const owner = await Promise.any(localMissionWorkspaces(manager).map(async workspace => {
     const connection = await manager.getSharedServiceConnection(workspace.id)
     if (!connection) throw new Error("Workspace unavailable")
     const coordinator = await connection.client.session.get({ sessionID: coordinatorID }, { signal })

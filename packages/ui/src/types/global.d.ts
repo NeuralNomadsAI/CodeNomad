@@ -96,7 +96,7 @@ declare global {
       skipTlsVerify: boolean
       requireLoad?: boolean
     }) => Promise<{ ok: boolean }>
-    openPreferences?: (section: SettingsSectionId, context?: { instanceId?: string; workspacePath?: string; location?: LocationRef }, toggle?: boolean, resume?: boolean) => Promise<unknown>
+    openPreferences?: (section: SettingsSectionId, context?: { serverId?: string; instanceId?: string; workspacePath?: string; location?: LocationRef }, toggle?: boolean, resume?: boolean) => Promise<unknown>
     getPreferencesRequest?: () => Promise<unknown>
     getPreferencesSection?: () => Promise<unknown>
     preferencesReady?: () => Promise<unknown>

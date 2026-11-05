@@ -9,6 +9,23 @@ const shell = (id: string, cwd = "/repo"): ShellInfo => ({
 })
 
 describe("shell store", () => {
+  it("replacement demand bypasses a retired read and fences its late publication", async () => {
+    let generation = 0, calls = 0, release!: () => void, started!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const reading = new Promise<void>(resolve => { started = resolve })
+    const store = createShellStore(() => ({
+      list: async () => { const old = ++calls === 1; if (old) { started(); await gate }; return [shell(old ? "retired" : "current")] },
+      remove: async () => {}, output: async () => ({ output: "", cursor: 0, size: 0, truncated: false }),
+    }), () => { const captured = generation; return () => captured === generation })
+    const old = store.load("source", "/same")
+    await reading
+    generation++
+    await store.load("source", "/same")
+    assert.equal(calls, 2)
+    assert.equal(store.getState("source", "/same").items[0]?.id, "current")
+    release(); await old
+    assert.equal(store.getState("source", "/same").items[0]?.id, "current")
+  })
   it("bounds retained shell output to its newest four MiB", () => {
     const result = appendShellOutput("a".repeat(4 * 1024 * 1024), "tail")
     assert.equal(result.output.length, 4 * 1024 * 1024)

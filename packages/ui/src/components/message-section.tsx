@@ -32,6 +32,7 @@ import HistoryMessagePreview from "./history-message-preview"
 import HistorySearchResults from "./history-search-results"
 import { createSessionOutline } from "../stores/session-outline"
 import { MissingHistoryAnchorError } from "../stores/history-window"
+import { isExplicitHistory, UnavailableHistoryAnchorError } from "../stores/session-history-capability"
 import { sessions } from "../stores/session-state"
 import { createSessionOutlineProjection } from "./session-outline-projection"
 import { findTimelineSegmentBlock, readingLineSegment } from "./timeline-transcript-blocks"
@@ -43,7 +44,7 @@ import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-c
 import { isLatestWindow, preserveMessageWindowCursor, toWindowSnapshot } from "../stores/message-v2/message-window"
 import { createSearchLocatorAuthority, getMessageWindowPageKey, hasMessageSearchAuthority, loadPagesUntilAnchor } from "./message-history-pagination"
 import { getLogger } from "../lib/logger"
-import { beginMessageHistoryTraversal, invalidateMessageHistoryTraversal } from "../stores/session-api"
+import { beginMessageHistoryTraversal, captureInstanceRequestAuthority, invalidateMessageHistoryTraversal } from "../stores/session-api"
 import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../stores/opencode-data"
 import type { SessionInboxUser } from "@opencode/client"
 import { getFormQueue } from "../stores/forms"
@@ -300,7 +301,7 @@ export default function MessageSection(props: MessageSectionProps) {
 
   // Workspace metadata updates can re-evaluate the identity accessors without
   // changing search visibility. Only a real close may cancel history reads.
-  const isSearchOpen = createMemo(() => isSessionSearchOpen(props.instanceId, props.sessionId))
+  const isSearchOpen = createMemo(() => getProjectAvailability(props.instanceId, "historyEnrichment").allowed && isSessionSearchOpen(props.instanceId, props.sessionId))
   const setIsSearchOpen = (open: boolean) => setSessionSearchOpen(props.instanceId, props.sessionId, open)
   const [searchQuery, setSearchQuery] = createSignal("")
   const [debouncedSearchQuery, setDebouncedSearchQuery] = createSignal("")
@@ -395,6 +396,9 @@ export default function MessageSection(props: MessageSectionProps) {
   })
   // Jumping between user messages needs the same structural index, timeline shown or not.
   const [outlineDemanded, setOutlineDemanded] = createSignal(false)
+  const explicitHistory = createMemo(() => isExplicitHistory(props.instanceId))
+  const [unavailableAnchor, setUnavailableAnchor] = createSignal(false)
+  createEffect(on(() => [props.instanceId, props.sessionId], () => setUnavailableAnchor(false)))
   const outline = createSessionOutline({ instanceId: () => props.instanceId, sessionId: () => props.sessionId,
     active: () => props.isActive !== false && Boolean(props.onLoadMessageAnchor) && (showMessageTimelinePreference() || outlineDemanded()) })
   const projectSessionOutline = createSessionOutlineProjection()
@@ -474,8 +478,16 @@ export default function MessageSection(props: MessageSectionProps) {
     const nav = navigation()
     return nav.kind === "paging" && nav.around
   }
-  let retryAnchorRestore: (() => void) | null = null
+  let retryAnchorRestore: ((focusOwner?: HTMLElement) => Promise<void> | void) | null = null
   const [olderMessageLoadFailed, setOlderMessageLoadFailed] = createSignal(false)
+  const nativePending = () => {
+    const nav = navigation()
+    return Boolean(props.loading) || nav.kind === "paging"
+      || nav.kind === "restoring" && !olderMessageLoadFailed() && Boolean(nav.loading)
+  }
+  const nativeAnchorUnavailable = () => unavailableAnchor() || props.loadError === t("history.explicit.anchorUnavailable")
+  const nativeError = () => props.loadError || (nativeAnchorUnavailable() ? t("history.explicit.anchorUnavailable")
+    : olderMessageLoadFailed() ? t("messageSection.loadError.detail") : "")
   // The list cannot raise a message near the end to its top, so the last jump's
   // target, while loading or shown, stays the reference for the next jump.
   let userMessageJumpTarget: string | null = null
@@ -608,6 +620,7 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   function persistMessageScrollSnapshot(options?: { sessionId?: string; allowCapture?: boolean; requireActive?: boolean; snapshot?: VirtualFollowScrollSnapshot }) {
+    if (unavailableAnchor() || explicitHistory() && props.loadError) return
     if (navigation().kind !== "idle") return
 
     const sessionId = options?.sessionId ?? props.sessionId
@@ -783,7 +796,8 @@ export default function MessageSection(props: MessageSectionProps) {
           })
         } catch (error) {
           if (!isCurrentRestore()) return
-          retryAnchorRestore = () => void restore()
+          if (error instanceof UnavailableHistoryAnchorError) setUnavailableAnchor(true)
+          retryAnchorRestore = () => restore()
           setOlderMessageLoadFailed(true)
           log.error("Failed to load older messages while restoring scroll", { instanceId: props.instanceId, sessionId: restoreSessionId, error })
           return
@@ -811,6 +825,7 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   function openSearch() {
+    if (!getProjectAvailability(props.instanceId, "historyEnrichment").allowed) return
     setIsSearchOpen(true)
     requestAnimationFrame(() => { if (isSearchOpen()) searchInputRef?.focus() })
   }
@@ -960,7 +975,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const target = findUserMessageJumpTarget({ markers: segments, resident: visibleMessageIds(), current, direction })
     if (!target) {
       if (current !== pending) userMessageJumpTarget = null
-      deferredUserMessageJump = props.onLoadMessageAnchor && outline.entries().length === 0 ? direction : null
+      deferredUserMessageJump = !explicitHistory() && props.onLoadMessageAnchor && outline.entries().length === 0 ? direction : null
       return
     }
     const segment = segments.find(segment => segment.messageId === target && segment.type === "user")
@@ -1086,6 +1101,7 @@ export default function MessageSection(props: MessageSectionProps) {
     direction: "older" | "newer" | "latest" | "oldest" | "around",
     after: (api: VirtualFollowListApi) => void,
     anchorMessageId?: string,
+    focusOwner?: HTMLElement,
   ) {
     const api = listApi()
     if (!api || !isActive()) return
@@ -1122,7 +1138,13 @@ export default function MessageSection(props: MessageSectionProps) {
       return
     }
     const sessionId = props.sessionId
+    const authority = captureInstanceRequestAuthority(props.instanceId)
     const controller = new AbortController()
+    let retainsFocus = Boolean(focusOwner && document.activeElement === focusOwner)
+    const movedFocus = (event: FocusEvent) => { if (event.target !== focusOwner) retainsFocus = false }
+    const releaseFocus = () => { document.removeEventListener("focusin", movedFocus); retainsFocus = false }
+    if (retainsFocus) document.addEventListener("focusin", movedFocus)
+    controller.signal.addEventListener("abort", releaseFocus, { once: true })
     const paging: PagingNavigation = {
       kind: "paging",
       sessionId,
@@ -1137,6 +1159,7 @@ export default function MessageSection(props: MessageSectionProps) {
     // A jump keeps its selected marker; other pages show the reading line's.
     if (direction !== "around") readerOwnsActiveSegment = true
     const isCurrent = () => navigation() === paging && isActive() && api === listApi()
+      && (!explicitHistory() || authority())
     if (direction !== "latest") api.setAutoScroll(false)
     setOlderMessageLoadFailed(false)
     retryAnchorRestore = null
@@ -1145,6 +1168,7 @@ export default function MessageSection(props: MessageSectionProps) {
       const previousPosition = direction === "older" || direction === "newer" ? api.captureScrollSnapshot() : undefined
       const committed = await load(controller.signal)
       if (committed === false || !isCurrent()) return
+      if (direction === "latest") setUnavailableAnchor(false)
       // An empty boundary probe retires the older cursor without changing the
       // resident page. Do not jump from its top back to its bottom in that case.
       if (direction === "older" && messageWindowPageKey() === previousPage) return
@@ -1167,13 +1191,19 @@ export default function MessageSection(props: MessageSectionProps) {
       await waitTwoFrames()
       if (!isCurrent()) return
       if (direction === "latest" || direction === "oldest") setRevealActiveToken(value => value + 1)
+      if (retainsFocus && focusOwner && !focusOwner.isConnected && document.activeElement === document.body) {
+        streamElement()?.focus({ preventScroll: true })
+      }
     } catch (error) {
       if (isCurrent()) {
-        retryAnchorRestore = () => { void pageWindow(direction, after, anchorMessageId) }
+        if (error instanceof UnavailableHistoryAnchorError) setUnavailableAnchor(true)
+        retryAnchorRestore = (owner) => pageWindow(direction, after, anchorMessageId, owner)
         setOlderMessageLoadFailed(true)
         log.error("Failed to page message window", { instanceId: props.instanceId, sessionId, direction, error })
       }
     } finally {
+      releaseFocus()
+      controller.signal.removeEventListener("abort", releaseFocus)
       if (navigation() === paging) settlePaging(paging)
     }
   }
@@ -1215,7 +1245,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const mutationRevision = getOpenCodeMutationRevision(props.instanceId, props.sessionId)
     const instanceGeneration = getOpenCodeInstanceGeneration(props.instanceId)
     searchRetryGeneration()
-    if (!isActive() || !isSearchOpen() || query.trim().length < SEARCH_MIN_CHARS) {
+    if (explicitHistory() || !isActive() || !isSearchOpen() || query.trim().length < SEARCH_MIN_CHARS) {
       setSearchRestartRequired(false)
       setSearchPageCursor(undefined)
       setNextSearchCursor(null)
@@ -1448,7 +1478,23 @@ export default function MessageSection(props: MessageSectionProps) {
       data-stream-active={isActive() ? "true" : "false"}
     >
       <SessionCleanupProgress instanceId={props.instanceId} sessionId={props.sessionId} />
-      <Show when={navigationPending()}>
+      <Show when={explicitHistory()}>
+        <div class="history-native-context">
+          <Show when={nativePending() || nativeError()}>
+            <div class="history-native-feedback window-toolbar" role="status" aria-live="polite" aria-atomic="true">
+              <span>{nativePending() ? t("history.navigation.loading") : nativeError()}</span>
+              <Show when={!nativePending()}>
+                <button type="button" class="button-tertiary" onClick={event => {
+                  if (nativeAnchorUnavailable() || !retryAnchorRestore) {
+                    void pageWindow("latest", api => api.scrollToBottom({ immediate: true }), undefined, event.currentTarget)
+                  } else void retryAnchorRestore(event.currentTarget)
+                }}>{t(nativeAnchorUnavailable() ? "messageSection.scroll.toLatestAriaLabel" : "messageSection.loadError.reload")}</button>
+              </Show>
+            </div>
+          </Show>
+        </div>
+      </Show>
+      <Show when={!explicitHistory() && navigationPending()}>
         <div class="history-navigation-status window-toolbar" role="status">
           <span>{t("history.navigation.loading")}</span>
           <button type="button" class="button-tertiary" onClick={() => cancelWindowNavigation()}>{t("alertDialog.actions.cancel")}</button>
@@ -1546,8 +1592,8 @@ export default function MessageSection(props: MessageSectionProps) {
           )}
           renderBeforeItems={() => (
             <>
-              <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} active={isActive()} />
-              <Show when={olderMessageLoadFailed()}>
+              <Show when={!explicitHistory()}><PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} active={isActive()} /></Show>
+              <Show when={!explicitHistory() && olderMessageLoadFailed()}>
                 <div class="flex justify-center py-2">
                   <button
                     type="button"
@@ -1601,14 +1647,14 @@ export default function MessageSection(props: MessageSectionProps) {
                 </Show>
               </Show>
 
-              <Show when={Boolean(props.loading) && messageIds().length === 0}>
+              <Show when={!explicitHistory() && Boolean(props.loading) && messageIds().length === 0}>
                 <div class="loading-state">
                   <div class="spinner" />
                   <p>{t("messageSection.loading.messages")}</p>
                 </div>
               </Show>
 
-              <Show when={!props.loading && Boolean(props.loadError)}>
+              <Show when={!explicitHistory() && !props.loading && Boolean(props.loadError)}>
                 <LoadErrorState
                   title={t("messageSection.loadError.title")}
                   error={props.loadError!}
@@ -1654,7 +1700,7 @@ export default function MessageSection(props: MessageSectionProps) {
               setTechnicalGroupExpanded={setTechnicalGroupExpanded}
               alignInTranscript={(target, viewportOffset) => listApi()?.alignElement(target, viewportOffset)}
             />
-            <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} messageId={messageId} active={isActive()} />
+            <Show when={getProjectAvailability(props.instanceId, "historyEnrichment").allowed}><PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} messageId={messageId} active={isActive()} /></Show>
             </>
           )}
           renderOverlay={() => (
@@ -1670,6 +1716,12 @@ export default function MessageSection(props: MessageSectionProps) {
               initialFocus={() => searchInputRef}
               >
                 <div role="search" aria-label={t("messageSection.search.ariaLabel")}>
+                  <Show when={!explicitHistory()} fallback={<>
+                    <div class="window-toolbar history-search-toolbar" data-window-drag-handle>
+                      <span class="min-w-0 flex-1 break-words" role="status">{t("history.explicit.enrichmentUnavailable")}</span>
+                      <WindowCloseButton onClose={closeSearch} label={t("messageSection.search.closeAriaLabel")} />
+                    </div>
+                  </>}>
                   <div class="window-toolbar history-search-toolbar" data-window-drag-handle>
                     <div class="history-search-options">
                     <select class="selector-input history-search-scope" aria-label={t("history.scope")} value={searchWorkspace() ? "workspace" : "session"}
@@ -1794,6 +1846,7 @@ export default function MessageSection(props: MessageSectionProps) {
                   <Show when={isSearchSettled() && !rankedUnsupported() && !searchRestartRequired() && currentSearchMatches().length === 0}>
                     <div class="modal-empty-state message-search-empty">{t("messageSection.search.noVisibleMatches")}</div>
                   </Show>
+                  </Show>
                 </div>
               </DismissibleWindow>
 
@@ -1838,3 +1891,4 @@ export default function MessageSection(props: MessageSectionProps) {
     </div>
   )
 }
+import { getProjectAvailability } from "../stores/project-capability"

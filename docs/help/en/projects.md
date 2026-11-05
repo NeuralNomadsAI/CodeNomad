@@ -21,6 +21,16 @@ Recent entries are shortcuts. **Rename workspace** changes its displayed name; *
 
 A normal click still opens the full home page. The launcher is a shortcut, not the management surface: rename/remove recent projects and manage server bookmarks on the home page. Escape dismisses the launcher and returns focus to `+`.
 
+## Open a project on an OpenCode server {#remote-project}
+
+1. On the home page or in the launcher, expand **REMOTES** and choose **+ Project** on a server. Its name stays visible beside the folder path.
+2. Choose a server, browse its folders and choose **Open**. **Backspace** goes to the parent folder; **Escape** returns to the servers.
+3. To add a server, paste its `opencode pair` link, or `https://opencode:<password>@host:port`, into **Pairing link or address**. Right-click a server (or **Shift+F10**) for **Remove saved server**.
+
+The tab shows a server icon and the folder joins the recent projects. **Browse Folders**, **Clone Git Repo** and temporary instances stay on this computer.
+
+The host backend keeps pairing tokens and manual passwords across launches in its private `opencode-server-pairings.json` (0600), beside `config.yaml`. Expiry, HTTP 401, origin replacement or server removal erases the secret. Registered projects restore on their own server; adding and removing servers is host-only.
+
 ## Close a project tab {#close-stop}
 
 1. Use the tab's close button or **Close Tab** in the command palette (`Ctrl/Cmd+W` in the renderer).

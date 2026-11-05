@@ -13,6 +13,7 @@ import { preferences } from "../../../../stores/preferences"
 import { createDebouncedRefresh, filesystemInvalidationVersion, invalidateFilesystemCaches } from "../../../../lib/filesystem-events"
 import { backgroundReads } from "../../../../lib/background-read-queue"
 import { closeFilePreview, getFilePreview, openFilePreview } from "../../../../stores/files-preview"
+import { getProjectAvailability } from "../../../../stores/project-capability"
 
 type UseGitChangesOptions = {
   isActive: Accessor<boolean>
@@ -90,7 +91,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
   onCleanup(() => { disposed = true; cancelGitReads() })
   const captureGitContext = () => {
     const generation = lifecycle, slug = options.worktreeSlug()
-    return { slug, current: () => !disposed && gitActive() && generation === lifecycle && slug === options.worktreeSlug() }
+    const sourceCurrent = captureInstanceRequestAuthority(options.instanceId)
+    return { slug, sourceCurrent, current: () => sourceCurrent() && !disposed && gitActive() && generation === lifecycle && slug === options.worktreeSlug() }
   }
 
   const gitLocation = (slug: string) => {
@@ -265,7 +267,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
     setGitStatusError(null)
     try {
       const location = gitLocation(slug)
-      const sdkStatusPromise = backgroundReads.run(sdkController.signal, async () => {
+      // prototype-1236: an explicit server's status already comes from its native VCS read.
+      const sdkStatusPromise = !getProjectAvailability(options.instanceId, "hostGit").allowed ? Promise.resolve(null) : backgroundReads.run(sdkController.signal, async () => {
         const timeout = setTimeout(abortSdk, 1500)
         try { return (await client.vcs.status({ location }, { signal: sdkController.signal })).data }
         finally { clearTimeout(timeout) }
@@ -404,6 +407,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
         await serverApi.unstageWorktreeGitPaths(options.instanceId, context.slug, { paths: targetPaths })
       }
 
+      if (!context.sourceCurrent()) return
       invalidateFilesystemCaches(options.instanceId)
       if (!context.current()) return
       if (!await loadGitStatus(true) || !context.current()) return
@@ -450,6 +454,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     const previous = captureGitSelection()
     try {
       await serverApi.commitWorktreeGitChanges(options.instanceId, context.slug, { message })
+      if (!context.sourceCurrent()) return
       invalidateFilesystemCaches(options.instanceId)
       if (!context.current()) return
       if (gitCommitMessage() === draft) setGitCommitMessage("")
@@ -578,3 +583,4 @@ export function useGitChanges(options: UseGitChangesOptions) {
     unstageGitFile: (item: GitChangeListItem) => void mutateGitFile(item, "unstage"),
   }
 }
+import { captureInstanceRequestAuthority } from "../../../../stores/session-api"

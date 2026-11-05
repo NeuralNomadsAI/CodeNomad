@@ -14,6 +14,7 @@ for (const action of ["play", "configure", "delete"] as const) test(`${action} p
     auth: { isAuthEnabled: () => authEnabled, getCookieName: () => "cookie",
     getSessionFromHeaders: () => sessionCurrent ? { username: "human", sessionId: "real-cookie" } : null },
     manager: { getServiceWslDistro: () => undefined, get: () => workspace, ownsLocation: async () => owned,
+      requireWorkspaceCapability: () => new AbortController().signal,
       getSharedServiceConnection: async () => ({ assertCurrent: () => {}, client: {
         location: { get: async () => ({ directory: "/owned" }) },
       } }) } }
@@ -41,6 +42,7 @@ test("ownership finishing after the original proof deadline never acknowledges h
     auth: { isAuthEnabled: () => true, getCookieName: () => "cookie",
       getSessionFromHeaders: () => ({ username: "human", sessionId: "real-cookie" }) },
     manager: { getServiceWslDistro: () => undefined, get: () => workspace, ownsLocation: async () => { now += 200; return true },
+      requireWorkspaceCapability: () => new AbortController().signal,
       getSharedServiceConnection: async () => ({ assertCurrent: () => {}, client: { location: { get: async () => ({ directory: "/owned" }) } } }) } }
   await assert.rejects(verifyHumanRecurrenceRequest({ ...identity, digest: recurrenceControlRequestDigest(identity) },
     deps as never, new AbortController().signal, () => now), /proof expired/)

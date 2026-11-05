@@ -2,8 +2,9 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { createRuntimeFetch } from "./transport"
 import { rememberRuntime } from "./runtime"
-import { legacyContractFixture, modernContractFixture } from "./contract-fixture"
+import { explicitContractFixture, legacyContractFixture, modernContractFixture } from "./contract-fixture"
 import { UnsupportedOpenCodeError } from "../runtime-support"
+import { negotiateRuntime } from "./negotiate"
 
 test("unknown contracts perform authenticated bounded read negotiation before any mutation", async () => {
   for (const kind of ["unauthorized", "unrecognized", "oversized"] as const) {
@@ -79,4 +80,50 @@ test("shared negotiation has independent subscriber cancellation and never retri
   complete(Response.json(modernContractFixture))
   assert.equal((await b).status, 204)
   assert.deepEqual(calls, ["/openapi.json", "/api/session/s"])
+})
+
+const session = "/api/session/{sessionID}"
+const response = (schema: any, route: string) => schema.paths[route].get.responses["200"].content["application/json"].schema.properties
+const request = (schema: any, route: string) => schema.paths[route].post.requestBody.content["application/json"].schema.properties
+const missingFields: [string, (schema: any) => void][] = [
+  ["agent request.agent", schema => { delete request(schema, `${session}/agent`).agent }],
+  ["agent string", schema => { request(schema, `${session}/agent`).agent.type = "number" }],
+  ["model request.model", schema => { delete request(schema, `${session}/model`).model }],
+  ...["id", "providerID", "variant"].map(field => [`model ${field}`, (schema: any) => { delete schema.components.schemas["Model.Ref"].properties[field] }] as [string, (schema: any) => void]),
+  ["model providerID string", schema => { schema.components.schemas["Model.Ref"].properties.providerID.type = "number" }],
+  ...["mcp", "skill"].flatMap(route => [
+    [`${route} query location`, (schema: any) => { delete schema.paths[`/api/${route}`].get.parameters }],
+    [`${route} query directory`, (schema: any) => { delete schema.paths[`/api/${route}`].get.parameters[0].schema.anyOf[0].properties.directory }],
+    [`${route} query directory string`, (schema: any) => { schema.paths[`/api/${route}`].get.parameters[0].schema.anyOf[0].properties.directory = { type: "number" } }],
+    [`${route} response data`, (schema: any) => { delete response(schema, `/api/${route}`).data }],
+    [`${route} response array`, (schema: any) => { response(schema, `/api/${route}`).data.type = "object" }],
+    [`${route} response items`, (schema: any) => { delete response(schema, `/api/${route}`).data.items }],
+  ] as [string, (schema: any) => void][]),
+  ["mcp response location", schema => { delete response(schema, "/api/mcp").location }],
+  ["response location.directory", schema => { delete schema.components.schemas["Location.PublicRef"].properties.directory }],
+  ["response location.directory string", schema => { schema.components.schemas["Location.PublicRef"].properties.directory.type = "number" }],
+  ...["id", "name"].map(field => [`skill ${field}`, (schema: any) => { delete schema.components.schemas["Skill.Info"].properties[field] }] as [string, (schema: any) => void]),
+  ...["name", "status"].map(field => [`mcp ${field}`, (schema: any) => { delete schema.components.schemas["Mcp.Server"].properties[field] }] as [string, (schema: any) => void]),
+  ["mcp nested status", schema => { delete schema.components.schemas["Mcp.Server"].properties.status.anyOf[0].properties.status }],
+]
+for (const [route, method] of [[`${session}/agent`, "post"], [`${session}/model`, "post"], ["/api/mcp", "get"], ["/api/skill", "get"]]) {
+  missingFields.push([`${method} ${route}`, schema => { delete schema.paths[route!][method!] }])
+}
+for (const [name, remove] of missingFields) test(`explicit E1 refuses missing consumed contract: ${name}`, async () => {
+  const schema = explicitContractFixture(); remove(schema)
+  const calls: string[] = []
+  await assert.rejects(negotiateRuntime({ url: "http://127.0.0.1:4321" }, async input => {
+    calls.push(new URL(String(input)).pathname)
+    return Response.json(schema)
+  }, new AbortController().signal, "explicit-e1"), { code: "missing_contract", reason: "canonical_api" })
+  assert.deepEqual(calls, ["/openapi.json"])
+})
+
+test("explicit E1 admits compatible future schemas without optional enrichment or optional catalogue display fields", async () => {
+  const schema = explicitContractFixture()
+  delete schema.components.schemas["Skill.Info"].properties.description
+  delete response(schema, "/api/skill").location
+  delete schema.components.schemas["Mcp.Server"].properties.status.anyOf[1].properties.error
+  assert.equal(await negotiateRuntime({ url: "http://127.0.0.1:4321" }, async () => Response.json(schema),
+    new AbortController().signal, "explicit-e1"), "modern")
 })

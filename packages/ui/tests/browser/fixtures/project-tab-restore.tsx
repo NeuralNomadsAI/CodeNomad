@@ -1,6 +1,6 @@
 import { createEffect, For, Show } from "solid-js"
 import { render } from "solid-js/web"
-import { initializeClientState } from "../../../src/stores/client-state"
+import { initializeClientState, writeClientLayoutValue, flushClientState } from "../../../src/stores/client-state"
 import { decodeClientSnapshotV2 } from "../../../src/stores/client-state-partitions"
 import { useAppSessionRestore } from "../../../src/lib/hooks/use-app-session-restore"
 import { activeAppTabId, appTabs, ensureActiveAppTab, selectAppTab } from "../../../src/stores/app-tabs"
@@ -59,6 +59,10 @@ if (location.search.includes("inventory")) {
 }
 
 await initializeClientState()
+;(window as any).flushFixtureLayout = async (value: string) => {
+  writeClientLayoutValue("restore-fixture", value)
+  await flushClientState()
+}
 function Fixture() {
   useAppSessionRestore()
   createEffect(() => {

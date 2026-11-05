@@ -21,6 +21,16 @@ Les entrées récentes sont des raccourcis. **Renommer l'espace de travail** cha
 
 Un clic normal ouvre toujours l’accueil complet. Le lanceur est un raccourci, pas l’interface de gestion : renommez/retirez les projets récents et gérez les serveurs enregistrés depuis l’accueil. Échap ferme le lanceur et rend le focus à `+`.
 
+## Ouvrir un projet sur un serveur OpenCode {#remote-project}
+
+1. Sur l'accueil ou dans le lanceur, dépliez **DISTANTS** puis choisissez **+ Projet** sur un serveur. Son nom reste visible à côté du chemin du dossier.
+2. Choisissez un serveur, parcourez ses dossiers et choisissez **Ouvrir**. **Retour arrière** remonte au dossier parent ; **Échap** revient aux serveurs.
+3. Pour ajouter un serveur, collez son lien `opencode pair`, ou `https://opencode:<mot de passe>@hôte:port`, dans **Lien d'appairage ou adresse**. Clic droit sur un serveur (ou **Maj+F10**) pour **Supprimer le serveur enregistré**.
+
+L'onglet porte une icône de serveur et le dossier rejoint les projets récents. **Parcourir les dossiers**, **Cloner un depot Git** et les instances temporaires restent sur cet ordinateur.
+
+Le backend hôte conserve jetons d’appairage et mots de passe manuels entre les lancements dans son fichier privé `opencode-server-pairings.json` (0600), à côté de `config.yaml`. Expiration, HTTP 401, changement d’origine ou retrait du serveur effacent le secret. Les projets enregistrés se restaurent sur leur serveur ; ajout et retrait des serveurs sont réservés à l’hôte.
+
 ## Fermer un onglet de projet {#close-stop}
 
 1. Utilisez le bouton de fermeture de l’onglet ou **Fermer l'onglet** dans la palette de commandes (`Ctrl/Cmd+W` dans le moteur de rendu).

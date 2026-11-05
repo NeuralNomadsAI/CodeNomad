@@ -13,6 +13,7 @@ import { createRequestLocation, requestLocationOptions, toRequestLocation } from
 import { knownModelName, preferredModelList, rememberModelNames } from "../stores/model-picker"
 import { buildProviderCatalog, catalogModelKey, catalogModels } from "../lib/model-catalog"
 import { RotateCcw } from "lucide-solid"
+import type { LocationRef } from "@opencode/client"
 import { changeMissionProfile, changeProfileModel, legalProfileAgents, missionProfileRoles, modelSelectionKey, profileModelGroups, profileModelKey, setMissionProfileRole, type ProfileAgent, type ProfileModel } from "./mission-profile-controls-data"
 
 /** One Agent / Model / Reasoning row per role (coordinator, then the type's roles), the same
@@ -21,6 +22,8 @@ export function MissionProfileControls(props: {
   instanceId: string; directory?: string; template: MissionTemplateId
   profiles?: MissionProfiles; disabled: boolean; active: () => boolean
   taskMode?: MissionTaskMode
+  authority?: string
+  location?: LocationRef
   roles?: readonly string[]
   /** Settings, mission type scope: the global choices each role inherits until it is customized. */
   inherited?: MissionProfiles
@@ -30,14 +33,16 @@ export function MissionProfileControls(props: {
   onRoleChange?: (role: string, execution: MissionExecution | undefined) => void
 }) {
   const { t } = useI18n()
+  let mounted = true
+  onCleanup(() => { mounted = false })
   const [catalog, setCatalog] = createSignal<{ key: string; agents: ProfileAgent[]; models: ProfileModel[] }>()
   const [failed, setFailed] = createSignal(false), [loading, setLoading] = createSignal(false)
   const [refresh, setRefresh] = createSignal(0)
   // Technical cause for the failure notice's tooltip; the notice itself stays plain.
   const [failure, setFailure] = createSignal("")
   const instanceClient = createMemo(() => instances().get(props.instanceId)?.client)
-  const identity = () => JSON.stringify([props.instanceId, props.directory])
-  const demanded = () => props.active() && !props.disabled
+  const identity = () => JSON.stringify([props.instanceId, props.directory, props.location, props.authority])
+  const demanded = () => mounted && props.active() && !props.disabled
   const invalidate = () => { if (demanded()) setRefresh(value => value + 1) }
   const events = serverEvents.on("instance.event", event => {
     if (event.type === "instance.event" && event.instanceId === props.instanceId
@@ -54,7 +59,7 @@ export function MissionProfileControls(props: {
     // The separate Preferences window has no instance store; it reads through
     // the same root proxy as its Providers section.
     if (!demanded() || !instanceId || (!client && runtimeEnv.windowContext !== "preferences")) return
-    const location = createRequestLocation(directory), controller = new AbortController()
+    const location = props.location ?? createRequestLocation(directory), controller = new AbortController()
     let alive = true
     const current = () => alive && demanded() && identity() === key && instances().get(instanceId)?.client === client
       && getOpenCodeInstanceGeneration(instanceId) === generation
@@ -93,7 +98,7 @@ export function MissionProfileControls(props: {
   const choice = (profiles: MissionProfiles | undefined, role: string) => role === "coordinator" ? profiles?.coordinator : profiles?.roles?.[role]
   /** Without an inherited layer an empty choice is simply omitted (native default). */
   const update = (role: string, execution: MissionExecution | undefined) => {
-    if (props.disabled || !props.active()) return
+    if (!mounted || props.disabled || !props.active()) return
     if (props.onRoleChange) return props.onRoleChange(role, execution)
     props.onChange?.(props.inherited ? setMissionProfileRole(props.profiles, role, execution) : changeMissionProfile(props.profiles, role, execution ?? {}))
   }

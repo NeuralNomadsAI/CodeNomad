@@ -1,4 +1,13 @@
 import type { RightPanelItem } from "../registry"
+import { getProjectAvailability } from "../../../../../stores/project-capability"
+import type { ProjectFeature } from "../../../../../lib/project-capability"
+
+const sectionFeatures: Record<string, ProjectFeature> = { "yolo-mode": "yolo", "provider-usage": "providerUsage",
+  "background-processes": "backgroundShells", plugins: "plugins", mcp: "chat" }
+
+export function statusSectionAvailable(instanceId: string, id: string): boolean {
+  return !sectionFeatures[id] || getProjectAvailability(instanceId, sectionFeatures[id]).allowed
+}
 
 export const CORE_STATUS_SECTION_ITEMS: readonly (RightPanelItem & { tooltipKey: string; defaultExpanded?: boolean })[] = [
   {

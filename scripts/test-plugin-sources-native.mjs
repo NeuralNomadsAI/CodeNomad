@@ -35,6 +35,7 @@ try {
     const location = { directory: root }
     await client.location.get({ location })
     const controls = new PluginControls({ workspaceManager: {
+      requireWorkspaceCapability: () => new AbortController().signal,
       get: () => ({}), getSharedServiceConnection: async () => connection,
       getServiceDirectoryForPath: async (_id, directory) => directory === root ? root : undefined,
       ownsLocation: async (_id, candidate) => candidate.directory === root,

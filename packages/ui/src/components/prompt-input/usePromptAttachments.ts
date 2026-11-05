@@ -17,6 +17,7 @@ type PromptAttachmentsOptions = {
   instanceId: Accessor<string>
   sessionId: Accessor<string>
   instanceFolder: Accessor<string>
+  source?: Accessor<unknown>
   prompt: Accessor<string>
   setPrompt: (value: string) => void
   getTextarea: () => HTMLTextAreaElement | null

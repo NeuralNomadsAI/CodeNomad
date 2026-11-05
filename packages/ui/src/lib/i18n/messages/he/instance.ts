@@ -155,6 +155,7 @@ export const instanceMessages = {
   "filesPanel.viewer": "תצוגה מקדימה של קובץ",
   "filesPanel.readOnly": "לקריאה בלבד",
   "filesPanel.binary": "אין תצוגה מקדימה לקובץ בינארי זה.",
+  "filesPanel.contentUnavailable": "התוכן אינו זמין או חלקי.",
   "filesPanel.image.before": "לפני",
   "filesPanel.image.after": "אחרי",
   "gitPanel.changes": "שינויים",

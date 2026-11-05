@@ -57,6 +57,7 @@ before(async () => {
   registerPanelExtensionApi4Routes(app, { store, worktreeDeletionFence: new WorktreeDeletionFence(), excludeDesignFolder: async () => "excluded",
     imageSettings: { read: async () => ({ location: { directory: "/fixture" }, mediaStorage: null, generation: { global: false, effective: false, models: [] } }) },
     workspaceManager: { get: (id: string) => id === instanceId ? { id, path: "/fixture" } as any : undefined,
+      requireWorkspaceCapability: (id: string) => { assert.equal(id, instanceId); return new AbortController().signal },
       getSharedServiceConnection: async () => ({ client, assertCurrent() {} }) as any, getSharedServiceClient: async () => client,
       ownsLocation: async (id: string, location: { directory: string }) => id === instanceId && location.directory === "/fixture",
       desktopPluginsReady: async () => {}, getWorktreeIdentityForPath: async () => "/fixture", getServiceWslDistro: () => undefined,

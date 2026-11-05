@@ -941,7 +941,7 @@ describe("native prompt serialization", () => {
     assert.deepEqual(prompts, ["first", "second"])
   })
 
-  it("uses the current client when a queued prompt starts after reconnect", async () => {
+  it("rejects queued prompts after reconnect without replaying them on the replacement client", async () => {
     const oldPrompts: string[] = []
     const newPrompts: string[] = []
     let releaseFirst!: () => void
@@ -960,6 +960,7 @@ describe("native prompt serialization", () => {
 
     const first = sendMessage(instanceId, sessionId, "first")
     const second = sendMessage(instanceId, sessionId, "second")
+    const rejected = [assert.rejects(first, /superseded/), assert.rejects(second, /superseded/)]
     await new Promise((resolve) => setImmediate(resolve))
 
     const newClient = { session: {
@@ -972,9 +973,9 @@ describe("native prompt serialization", () => {
     updateInstance(instanceId, { client: newClient as any })
     releaseFirst()
 
-    await Promise.all([first, second])
+    await Promise.all(rejected)
     assert.deepEqual(oldPrompts, ["first"])
-    assert.deepEqual(newPrompts, ["second"])
+    assert.deepEqual(newPrompts, [])
   })
 
   it("sends agent attachments with mention offsets and the selected model variant", async () => {

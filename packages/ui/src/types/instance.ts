@@ -1,4 +1,5 @@
 import type { LocationPublicInfo, McpListOutput, OpenCodeClient, Project } from "@opencode/client"
+import type { WorkspaceDescriptor } from "../../../server/src/api-types"
 
 export interface LogEntry {
   timestamp: number
@@ -23,7 +24,11 @@ export interface InstanceMetadata {
 
 
 export interface Instance {
+  /** In-memory occurrence origin for retained renderer content; installed by the instance owner. */
+  readonly renderBinding?: Readonly<{ serverId: string; directory: string; folder: string }>
   id: string
+  binding?: WorkspaceDescriptor["binding"]
+  capabilities?: WorkspaceDescriptor["capabilities"]
   folder: string
   projectName?: string
   port: number

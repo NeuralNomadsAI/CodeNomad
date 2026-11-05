@@ -40,6 +40,7 @@ try {
       return connection.client.rpc.call(request, options)
     } } } }
     const workspaceManager = {
+      requireWorkspaceCapability: () => new AbortController().signal,
       get: () => ({}), getSharedServiceConnection: async () => recorded,
       getServiceDirectoryForPath: async (_id, value) => value === root ? root : undefined,
       ownsLocation: async (_id, candidate) => candidate.directory === root,

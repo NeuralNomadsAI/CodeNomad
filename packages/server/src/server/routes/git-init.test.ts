@@ -23,6 +23,7 @@ describe("Git initialization route", () => {
     const fence = new WorktreeDeletionFence()
     const calls: string[] = []
     const workspaceManager = {
+      requireWorkspaceCapability: () => new AbortController().signal,
       get: (id: string) => id === "test" ? { id, path: folder } : undefined,
       getWorktreeIdentityForPath: async (_id: string, directory: string) => { calls.push(`identity:${directory}`); return "identity" in overrides ? overrides.identity : directory },
       initializeGit: async (id: string) => {

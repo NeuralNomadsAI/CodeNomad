@@ -2,7 +2,7 @@ import { ContextMenu } from "@kobalte/core/context-menu"
 import { Component, Show, createMemo, createSignal, onCleanup } from "solid-js"
 import type { Instance } from "../types/instance"
 import { getInstanceIdleFadeClass, getInstanceSessionIndicatorStatus } from "../stores/session-status"
-import { FolderCheck, FolderOpen, Hourglass, Pencil, ShieldAlert, X } from "lucide-solid"
+import { FolderCheck, FolderOpen, Hourglass, Pencil, Server, ShieldAlert, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { useConfig } from "../stores/preferences"
 import { keepTemporaryInstance } from "../stores/temporary-instances"
@@ -80,7 +80,12 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
           role="tab"
           aria-selected={props.active}
         >
-          <Show when={props.instance.temporary} fallback={<FolderOpen class="w-4 h-4 flex-shrink-0" />}>
+          <Show when={props.instance.temporary} fallback={
+            // prototype-1236: a project on an explicit OpenCode server differs only by its icon.
+            <Show when={props.instance.binding && props.instance.binding.serverId !== "local-shared"} fallback={<FolderOpen class="w-4 h-4 flex-shrink-0" />}>
+              <Server class="w-4 h-4 flex-shrink-0" />
+            </Show>
+          }>
             <Hourglass class="w-4 h-4 flex-shrink-0" aria-label={t("instanceTab.temporary.ariaLabel")} />
           </Show>
           <span class="tab-label">

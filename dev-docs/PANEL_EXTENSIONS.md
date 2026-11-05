@@ -21,7 +21,7 @@ bounded tool-result asset metadata and demand-only embedded bytes from the
 currently displayed session, never prompts, transcript text, arbitrary URLs,
 local files, credentials or a generic RPC proxy. API 3 adds the explicit
 `repository.workItems.read` permission: bounded issue and pull request pages of
-the project's GitHub, GitLab or Gitea/Forgejo repository, read by the host, and
+the shared-local project's GitHub, GitLab or Gitea/Forgejo repository, read by the host, and
 opening one item's page in the browser. API 4 carries `session.context` plus any
 non-empty subset of a finite permission set used by the independent **Design**
 image companion ([API 4](#api-4)): read-back images of the displayed conversation, their prompts,
@@ -178,6 +178,16 @@ their metadata and demand-only full preview remain available to the addon.
 
 Use `apiVersion: 3` and its two permissions. Inspection shows the repository
 permission before the trust checkbox; the context also carries `colors` (API 2).
+
+Both work-item routes require a project using the shared local OpenCode service.
+After consent and workspace lookup, the current `WorkspaceManager` binding gates
+access before `ForgeWorkItems.list` or `itemUrl`, including their caches, repository
+discovery, CLI sign-ins and network. Every explicit binding, including loopback
+and disconnected targets, returns HTTP 403 with `explicit_capability_unavailable`,
+capability `git` and reason `{ code: "localOnly" }`. This host integration boundary
+holds independently of the target's native Git capability. Unknown workspaces
+retain HTTP 404; an omitted instance retains HTTP 400. Profile-wide installation,
+activation, metadata, API 1 context and API 4 preferences keep their own authority.
 
 ```js
 const page = await codenomad.workItems.list({ kind: "pullRequest", query: "", page: 1 })
@@ -408,6 +418,7 @@ node scripts/test-panel-extension-native.mjs --api3
 node scripts/test-panel-extension-native.mjs --api4
 node scripts/test-panel-extension-electron.mjs # real preload, createWindow webPreferences; Linux may add --no-sandbox
 node --import tsx --test packages/server/src/forge/forge.test.ts packages/server/src/server/routes/panel-extension-work-items.test.ts
+node --import tsx --test packages/server/src/server/routes/panel-extension-work-items-boundary.test.ts
 node --conditions=browser --import tsx --test packages/ui/src/components/panel-extensions/work-items-channel.test.ts
 node --import tsx --test packages/ui/src/components/panel-extensions/image-bounds.test.ts
 node --import tsx --test packages/server/src/panel-extensions/api4.test.ts packages/server/src/server/routes/panel-extension-api4.test.ts packages/server/src/remote-control/panel-extension-remote.test.ts
@@ -459,8 +470,10 @@ host, OS version and each summary's `real` line in the review.
 
 ## Agent conventions
 
+- Project admission checks extension methods before constructing a channel or fetching a panel document. API 1 context and API 4 preference-only panels retain profile authority; API 2 assets, API 3 Git integration and API 4 Design/Images methods require their execution feature's admission. API 3 retains its independent local host guard in the backend. Native server-provided Design agents keep their ordinary chat catalogue authority.
+
 - Right-panel customization keeps Extensions below a separator in a native disclosure, collapsed on each popup opening. Expanding mounts one compact searchable list combining installed and online addons, deduplicated by ID; collapse, dismissal and inactive/instance changes dispose its requests and confirmations; never add separate list modes or a floating extension window. The per-addon checkbox above the disclosure is the sole activation control, including for disabled installed addons; never add a manager switch or a per-window visibility gate. Reset changes built-in layout only, never addon consent. Keep metadata on hover/focus and technical consent details folded; retain explicit trust and digest-bound replacement/removal. Installation and activation are profile-wide. Legacy folder grants never become general consent.
 - External panel extensions use `components/panel-extensions/` and `styles/panels/panel-extensions.css`. The official online catalogue is in `NeuralNomadsAI/CodeNomad-Extensions`; metadata discovery never downloads author code. Inspect/install revalidate the exact index/manifest/digest and use bounded credential-free HTTPS GitHub release downloads, never client-provided URLs. Never import author JavaScript into the main renderer or expose native/OpenCode bridges. ZIPs contain only a manifest and a self-contained HTML panel; install/replacement revokes activation. API versions cover only the public `window.codenomad` contract; never make internal Solid modules or import paths part of it.
-- Extension API 3 requires explicit `repository.workItems.read` consent. `work-items-channel.ts` takes only kind/query/page/number from addons; the project folder, remote, provider and credentials stay host-side in `server/src/forge/` (CLI sign-ins or anonymous REST on the public forges only, never stored tokens, never `--paginate`, never addon text inside forge query syntax, never anonymous requests to other hosts). Opening uses the server-built forge page through `openExternalUrl`, rate-limited; never open addon-supplied URLs. Each API version carries exactly its own capability.
+- Extension API 3 requires explicit `repository.workItems.read` consent and the current owner-held workspace binding to the shared local service, before any forge/cache entry. Reject every explicit target with `git` / `localOnly`, independently of native Git capabilities. `work-items-channel.ts` takes only kind/query/page/number from addons; the project folder, remote, provider and credentials stay host-side in `server/src/forge/` (CLI sign-ins or anonymous REST on the public forges only, never stored tokens, never `--paginate`, never addon text inside forge query syntax, never anonymous requests to other hosts). Opening uses the server-built forge page through `openExternalUrl`, rate-limited; never open addon-supplied URLs. Each API version carries exactly its own capability.
 - Extension API 4 is a finite permission set (`PANEL_EXTENSION_API4_PERMISSIONS` in `panel-extensions/contract.ts`): one permission = one capability, fixed methods, one install sentence in every locale and its own server-side check. Adding a permission means a new contract entry, schema case, bridge object, route and sentence together; never a registry, a pass-through method or an author-chosen session/Location. `api4-channel.ts` owns the 19.5 s deadline, four-request cap and mount/session fencing for every API 4 method; keep APIs 1 to 3 on their exact tuples and channels.
 - Extension API 1 stays context-only; API 2 requires explicit `session.assets.read` consent. `assets-channel.ts` derives session authority from the current mounted host, never author selectors, and exposes only bounded asset pages/exact digest-bound embedded reads. Use the presence-owned history bundle's fixed `assets`/`assetRead` methods, never transcript stores, generic RPC, remote downloads or filesystem fallbacks. Recheck consent and Location ownership after IO; revoke old-port/session/reconnect results. Gallery HTML belongs in the independent catalogue repository; never add it to the application renderer.

@@ -43,6 +43,8 @@ Paketin her değiştirilmesi, izin listesi değişmese bile tüm projelerde etki
 
 ## Bağlam, varlık izni ve korumalı alan sınırları {#permissions-sandbox}
 
+API 3 depo öğeleri yalnızca paylaşılan yerel OpenCode hizmetini kullanan projelerde kullanılabilir. Yerel geri döngü sunucuları ve bağlantısı kesilmiş hedefler dahil, açıkça yapılandırılmış tüm OpenCode sunucularında yerel Git desteğinden bağımsız olarak kullanılamaz; istek, ana makinenin Git'ine, kod barındırma platformu oturumlarına veya ağa erişilmeden reddedilir.
+
 | Sözleşme | Etkinleştirmeye izin verilenler |
 | --- | --- |
 | API 1 / `session.context` | Geçerli oturum tanımlayıcısı (veya hiçbiri), arayüz dili ve görünümü. Konuşma dökümü metni veya dosya sistemi erişimi yok. |

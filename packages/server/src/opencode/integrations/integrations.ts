@@ -11,7 +11,7 @@ import { readIntegrationStatuses, type IntegrationStatusRead } from "./status"
 
 export interface IntegrationsReaderDeps {
   controls: Pick<PluginControls, "read">
-  workspaceManager: Pick<WorkspaceManager, "getSharedServiceConnection" | "ownsLocation">
+  workspaceManager: Pick<WorkspaceManager, "getSharedServiceConnection" | "ownsLocation" | "requireWorkspaceCapability">
   catalog: Pick<IntegrationCatalogSource, "read">
   timeoutMs?: number
 }
@@ -25,6 +25,12 @@ export class IntegrationsReader {
   constructor(private readonly deps: IntegrationsReaderDeps) {}
 
   async read(workspaceId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<IntegrationsResponse> {
+    // prototype-1236: a read of the plugin inventory and the integrations' own status RPC, explicit servers included.
+    try { this.deps.workspaceManager.requireWorkspaceCapability(workspaceId, "plugins") }
+    catch (error) {
+      if (error instanceof Error && "statusCode" in error && error.statusCode === 404) throw new PluginControlsError("Workspace not found", "not-found")
+      throw error
+    }
     const connection = await this.deps.workspaceManager.getSharedServiceConnection(workspaceId)
     if (!connection) throw new PluginControlsError("OpenCode service is unavailable", "unavailable")
     const [snapshot, catalog] = await Promise.all([this.deps.controls.read(workspaceId, location, signal), this.deps.catalog.read()])

@@ -2,6 +2,8 @@
 
 L’historique enregistré, ce que la transcription affiche actuellement et le contexte compacté du modèle sont distincts. Préférez la navigation ou le filtrage avant toute suppression.
 
+Ces parcours d’historique enrichi concernent le service OpenCode local partagé. Les projets sur serveur explicite utilisent des pages natives et une chronologie des messages chargés, préservent la position de lecture lorsqu’un passage est indisponible et proposent un retour explicite à la dernière page. La recherche dans le texte, les aperçus des messages non chargés et le nettoyage technique y restent indisponibles ; les aperçus du texte déjà chargé restent disponibles.
+
 ## Rechercher dans tout l’historique {#full-history-search}
 
 1. Ouvrez **Rechercher dans l'historique du chat** dans l’en-tête de conversation, ou utilisez son raccourci configuré (**Ctrl/Cmd+F** par défaut).

@@ -1,13 +1,18 @@
-import { For, Show, createMemo, createSignal, onCleanup, type Component } from "solid-js"
+import { For, Show, createMemo, createSignal, createUniqueId, onCleanup, type Component, type JSX } from "solid-js"
 import type { FormAnswer, FormField, FormInfo, FormValue } from "@opencode/client"
 import { useI18n } from "../lib/i18n"
 import { getFormAnswer, isFormFieldVisible, isHttpFormUrl } from "../lib/form-schema"
 import { isWebSearchProviderForm } from "../lib/websearch-form"
 import { createFormAnswerInteraction, type FormAnswerInteraction } from "../lib/form-answer-interaction"
 import { toggleSweepGroup } from "../lib/toggle-sweep"
+import { isSessionActionInterrupted } from "../stores/session-action-queue"
 
 interface FormRequestProps {
   form: FormInfo
+  replyBlocked?: boolean
+  replyDescriptionId?: string
+  replyNotice?: JSX.Element
+  replyStatus?: string
   onReply: (answer: FormAnswer, interaction?: FormAnswerInteraction) => Promise<void>
   onCancel: () => Promise<void>
 }
@@ -51,6 +56,7 @@ export function shouldRenderFormOptionsAsSelect(options: readonly unknown[] | un
 
 const FormRequest: Component<FormRequestProps> = (props) => {
   const { t } = useI18n()
+  const domId = createUniqueId()
   const webSearchProvider = () => isWebSearchProviderForm(props.form)
   const title = () => webSearchProvider() ? t("toolCall.websearch.provider") : props.form.title
   const [values, setValues] = createSignal<Record<string, FormValue | undefined>>(
@@ -58,8 +64,10 @@ const FormRequest: Component<FormRequestProps> = (props) => {
   )
   const [submitting, setSubmitting] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
+  const [politeError, setPoliteError] = createSignal(false)
 
-  const visibleFields = createMemo(() => props.form.fields.filter((field) => isFormFieldVisible(field, values())))
+  const visibleFields = createMemo<FormField[]>((previous) => props.form.fields.filter((field) => isFormFieldVisible(field, values()))
+    .map(field => previous?.find(old => old.key === field.key && JSON.stringify(old) === JSON.stringify(field)) ?? field))
 
   const update = (key: string, value: FormValue | undefined) => {
     setValues((current) => ({ ...current, [key]: value }))
@@ -69,7 +77,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
   const submit = async (event: SubmitEvent) => {
     event.preventDefault()
     const originatingInput = interaction.take()
-    if (submitting()) return
+    if (submitting() || props.replyBlocked) return
     const form = event.currentTarget as HTMLFormElement
     if (!form.reportValidity()) return
     const invalidCollection = visibleFields().find((field) => {
@@ -82,6 +90,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
       return (field.required && count === 0) || count < (field.minItems ?? 0) || count > (field.maxItems ?? Infinity)
     })
     if (invalidCollection) {
+      setPoliteError(false)
       setError(t("formRequest.errors.validation"))
       return
     }
@@ -90,6 +99,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
     try {
       await props.onReply(getFormAnswer(props.form.fields, values()), originatingInput)
     } catch (cause) {
+      setPoliteError(isSessionActionInterrupted(cause))
       setError(cause instanceof Error ? cause.message : t("formRequest.errors.reply"))
     } finally {
       setSubmitting(false)
@@ -97,12 +107,13 @@ const FormRequest: Component<FormRequestProps> = (props) => {
   }
 
   const cancel = async () => {
-    if (submitting()) return
+    if (submitting() || props.replyBlocked) return
     setSubmitting(true)
     setError(null)
     try {
       await props.onCancel()
     } catch (cause) {
+      setPoliteError(isSessionActionInterrupted(cause))
       setError(cause instanceof Error ? cause.message : t("formRequest.errors.cancel"))
       setSubmitting(false)
     }
@@ -110,7 +121,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
 
   return (
     <form class="form-request" onSubmit={submit} ref={element => onCleanup(interaction.attach(element))}
-      aria-label={title()} data-websearch-provider={webSearchProvider() || undefined}>
+      aria-label={title()} aria-describedby={props.replyDescriptionId} data-websearch-provider={webSearchProvider() || undefined}>
       <fieldset class="form-request-fields" disabled={submitting()} onFocusIn={event => {
         const scroller = event.currentTarget
         const control = event.target
@@ -124,10 +135,18 @@ const FormRequest: Component<FormRequestProps> = (props) => {
         })
       }}>
       <legend class="sr-only">{title()}</legend>
+      <Show when={props.replyStatus || (politeError() && error())}>
+        <p id={props.replyDescriptionId} class="form-request-description" classList={{ "form-request-error": Boolean(politeError() && error()) }} role="status" aria-live="polite">
+          {props.replyStatus}
+          <Show when={props.replyStatus && politeError() && error()}><br /></Show>
+          <Show when={politeError()}>{error()}</Show>
+        </p>
+      </Show>
+      {props.replyNotice}
       <h3 class="form-request-title">{title()}</h3>
       <For each={visibleFields()}>
         {(field) => {
-          const descriptionId = `form-${props.form.id}-${field.key}-description`
+          const descriptionId = `form-${domId}-${field.key}-description`
           const label = () => field.title || (webSearchProvider() ? title() : field.key)
           const stringField = field as Extract<FormField, { type: "string" }>
           const numberField = field as Extract<FormField, { type: "number" | "integer" }>
@@ -141,7 +160,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
                 || field.type === "multiselect"
                 || (field.type === "string" && shouldRenderFormOptionsInline(stringField.options))
               } fallback={
-                <label class="form-request-label" for={`form-${props.form.id}-${field.key}`}>
+                <label class="form-request-label" for={`form-${domId}-${field.key}`}>
                   {label()}
                   <Show when={"required" in field && field.required}> <span class="form-request-required" aria-hidden="true">*</span></Show>
                 </label>
@@ -159,7 +178,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
                   <>
                     <Show when={shouldRenderFormOptionsAsSelect(stringField.options)} fallback={
                       <input
-                        id={`form-${props.form.id}-${field.key}`}
+                        id={`form-${domId}-${field.key}`}
                         class="form-request-input"
                         type={getFormStringInputType(stringField.format)}
                         value={formatFormStringInputValue(stringField.format, String(values()[field.key] ?? ""))}
@@ -168,13 +187,13 @@ const FormRequest: Component<FormRequestProps> = (props) => {
                         maxLength={stringField.maxLength}
                         pattern={stringField.pattern}
                         placeholder={stringField.placeholder}
-                        list={stringField.options?.length ? `form-${props.form.id}-${field.key}-options` : undefined}
+                        list={stringField.options?.length ? `form-${domId}-${field.key}-options` : undefined}
                         aria-describedby={field.description ? descriptionId : undefined}
                         onInput={(event) => update(field.key, normalizeFormStringValue(stringField.format, event.currentTarget.value))}
                       />
                     }>
                       <select
-                        id={`form-${props.form.id}-${field.key}`}
+                        id={`form-${domId}-${field.key}`}
                         class="form-request-input"
                         required={stringField.required && !customString()}
                         value={String(values()[field.key] ?? "")}
@@ -206,7 +225,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
                           <input
                             class="form-request-choice-control"
                             type="radio"
-                            name={`form-${props.form.id}-${field.key}`}
+                            name={`form-${domId}-${field.key}`}
                             checked={checked()}
                             onChange={() => update(field.key, option.value)}
                           />
@@ -222,7 +241,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
                   </fieldset>
                   <Show when={stringField.custom}>
                     <input
-                      id={`form-${props.form.id}-${field.key}`}
+                      id={`form-${domId}-${field.key}`}
                       class="form-request-input"
                       type="text"
                       value={customString()}
@@ -235,7 +254,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
               </Show>
               <Show when={field.type === "number" || field.type === "integer"}>
                 <input
-                  id={`form-${props.form.id}-${field.key}`}
+                  id={`form-${domId}-${field.key}`}
                   class="form-request-input"
                   type="number"
                   step={field.type === "integer" ? 1 : "any"}
@@ -249,7 +268,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
               </Show>
               <Show when={field.type === "boolean"}>
                 <input
-                  id={`form-${props.form.id}-${field.key}`}
+                  id={`form-${domId}-${field.key}`}
                   class="form-request-checkbox"
                   type="checkbox"
                   checked={values()[field.key] === true}
@@ -269,7 +288,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
                         type="checkbox"
                         class="form-request-choice-control"
                         checked={Array.isArray(values()[field.key]) && (values()[field.key] as string[]).includes(option.value)}
-                        data-toggle-sweep={toggleSweepGroup(`form-${props.form.id}-${field.key}`)}
+                        data-toggle-sweep={toggleSweepGroup(`form-${domId}-${field.key}`)}
                         onChange={(event) => {
                           const current = Array.isArray(values()[field.key]) ? values()[field.key] as string[] : []
                           update(field.key, event.currentTarget.checked
@@ -310,12 +329,12 @@ const FormRequest: Component<FormRequestProps> = (props) => {
         }}
       </For>
       </fieldset>
-      <Show when={error()}>{(message) => <p class="form-request-error" role="alert">{message()}</p>}</Show>
+      <Show when={!politeError() && error()}>{(message) => <p class="form-request-error" role="alert">{message()}</p>}</Show>
       <div class="form-request-actions window-footer">
-        <button type="button" class="selector-button selector-button-secondary" disabled={submitting()} onClick={() => void cancel()}>
+        <button type="button" class="selector-button selector-button-secondary" disabled={submitting() || props.replyBlocked} aria-describedby={props.replyDescriptionId} onClick={() => void cancel()}>
           {t("formRequest.cancel")}
         </button>
-        <button type="submit" class="selector-button selector-button-primary" disabled={submitting()}>
+        <button type="submit" class="selector-button selector-button-primary" disabled={submitting() || props.replyBlocked} aria-describedby={props.replyDescriptionId}>
           {submitting() ? t("formRequest.submitting") : t("formRequest.submit")}
         </button>
       </div>

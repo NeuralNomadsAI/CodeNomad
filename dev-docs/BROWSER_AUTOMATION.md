@@ -17,6 +17,10 @@ Browser previews are an ordinary desktop feature and must work in user projects 
 - `browser-execute` validates the browser action and forwards `browser.probe` or `browser.execute` over the fenced native-parent request channel.
 
 The bridge is loopback-only, token-authenticated, bounded, and session-location gated.
+Owner discovery considers local-shared workspaces before accessing the local
+service client. Explicit OpenCode bindings, including loopback profiles and
+homonymous session IDs or directories, have the deferred `automation` capability;
+host window and preview access requires a local-shared owner.
 
 ## Desktop instrumentation
 
@@ -94,6 +98,8 @@ The UI routes an autonomous open request to the one loaded instance containing t
 - Shared site state: the same suite tests real Electron HttpOnly-cookie/localStorage sharing, independent documents/history, app-profile isolation and shared logout; Rust regressions verify Tauri's common persistent browser directory.
 
 ## Agent conventions
+
+- Configured execution projects keep CodeNomad previews and automation closed in E1. The source shell guards preview actions and central guest mounting; autonomous UI routing considers admitted local owners only and retains that captured owner across native claims. Native chat shell execution and server-provided agent catalogues keep their independent chat scope.
 
 - Native session previews behave as tabs in one browser: share the persistent preview profile's cookies/site storage across sessions and projects within a CodeNomad data profile/config pair, but never with the trusted app renderer, remote-window profiles or the other desktop engine. Keep documents, navigation stacks, history cursors and automation attachments session-owned. Electron uses `persist:codenomad-browser-shared-v1`; Windows Tauri uses `browser/shared-v1`. Leave per-session preview profiles found on disk in place and never merge them into the shared profile: they can hold conflicting accounts. Iframe fallbacks keep their sandbox; never grant guests native capabilities.
 - Browser preview state is keyed by project folder and session ID. Keep explicitly opened guests mounted in stable DOM order across chat/session/Info/project visibility changes; the preview's X also hides it and returns to chat without discarding history. Only their lightweight session shells remain: inactive transcripts and composers still unmount and the transcript memory budget stays independent. Hidden guests must stop being automation targets (Electron unregisters, Tauri hides). Saved project-wide URLs migrate once to the first restoring session. Across renderer restart, restore URL history/cursor only on explicit browser opening; never eagerly visit saved pages or persist native pageState/forms/POST bodies. Reuse owned CDP history IDs for live traversal and load just the selected saved URL when its native entry no longer exists. History is bounded to 32 credential-free HTTP(S) URLs/session within the 4 KB aggregate layout budget; trim history before evicting saved previews.

@@ -1375,6 +1375,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     // Window state is authoritative, not a partial patch. Solid's default
     // object merge otherwise retains a history resumeCursor on latest pages.
     const next: MessageWindowState = { kind: window.kind, newerCursors: [...window.newerCursors] }
+    if (window.nativeOrder !== undefined) next.nativeOrder = window.nativeOrder
+    if (window.nativeCurrent !== undefined) next.nativeCurrent = window.nativeCurrent
     if (window.resumeCursor !== undefined) next.resumeCursor = window.resumeCursor
     if (window.olderCursor !== undefined) next.olderCursor = window.olderCursor
     setState("sessions", sessionId, produce((session) => { session.messageWindow = next }))

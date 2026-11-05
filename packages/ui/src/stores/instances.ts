@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js"
+import { batch, createSignal } from "solid-js"
 import type { Instance, LogEntry } from "../types/instance"
 import type { PermissionReply, PermissionRequest } from "../types/permission"
 import { getPermissionSessionId, mergePermissionRequest } from "../types/permission"
@@ -6,7 +6,7 @@ import { sdkManager } from "../lib/sdk-manager"
 import { consumeFormAnswerInteraction, type FormAnswerInteraction } from "../lib/form-answer-interaction"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
-import { serverEvents } from "../lib/server-events"
+import { serverEvents, type InstanceEventContext } from "../lib/server-events"
 import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry } from "../../../server/src/api-types"
 import { PENDING_RECONCILIATION_HEADER, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS } from "../../../server/src/api-types"
 import { ensureInstanceConfigLoaded } from "./instance-config"
@@ -37,11 +37,12 @@ import { refreshSessionRuntimeStatus } from "./session-api"
 import { buildV2RequestLocations, locationAuthorityKey, locationWorkspaceID, requestLocationOptions, toRequestLocation, type RequestLocation } from "./request-locations"
 import { backgroundReads } from "../lib/background-read-queue"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
+import { projectIdentity } from "../lib/project-identity"
 import { claimPendingRecoveryNotice, pendingRecoveryNoticeKey, releasePendingRecoveryNotices } from "./pending-recovery-notices"
 import { fetchCommands, clearCommands } from "./commands"
 import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
 import { ConnectionResyncGate } from "./connection-resync-gate"
-import { serverSettings } from "./preferences"
+import { serverSettings, getExecutionServerLabel } from "./preferences"
 import {
   reconcileSessionPendingState,
   activeSessionId,
@@ -50,6 +51,7 @@ import {
   setSessionPendingForm,
   setSessionPendingPermission,
   invalidateSessionMessageLoad,
+  retireSessionPlacementAuthority,
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
@@ -118,6 +120,11 @@ import {
 } from "./restore-workspace-commit-gates"
 import { WorkspaceListReconciliationFence } from "./workspace-list-reconciliation-fence"
 import { usesClientState } from "../lib/runtime-env"
+import { captureInstanceRequestAuthority, captureSessionRequestAuthority } from "./session-api"
+import { projectAvailability } from "../lib/project-capability"
+import { sessionActionSuperseded } from "./session-action-queue"
+import { requestConnectionOptions } from "./request-locations"
+import { admitInterruption, captureInterruptionAuthority, isLiveOnlyInterruption, retireInterruptionAuthority, retireIncompatibleInterruptionAuthority } from "./interruption-authority"
 
 const log = getLogger("api")
 
@@ -153,6 +160,7 @@ serverEvents.on("yolo.autoAccepted", (event) => {
 })
 
 const [instances, setInstances] = createSignal<Map<string, Instance>>(new Map())
+serverEvents.setBindingReader(id => instances().get(id)?.binding?.serverId)
 
 const [activeInstanceId, setActiveInstanceId] = createSignal<string | null>(null)
 const [instanceLogs, setInstanceLogs] = createSignal<Map<string, LogEntry[]>>(new Map())
@@ -161,25 +169,45 @@ const [logStreamingState, setLogStreamingState] = createSignal<Map<string, boole
 // Interruption queues per instance
 const [permissionQueues, setPermissionQueues] = createSignal<Map<string, PermissionRequest[]>>(new Map())
 const [activePermissionId, setActivePermissionId] = createSignal<Map<string, string | null>>(new Map())
-type RequestLocationRegistry = Map<string, Map<string, { key: string; location: RequestLocation }>>
+type RequestLocationRegistry = Map<string, Map<string, { key: string; location: RequestLocation; serverId: string }>>
 const permissionRequestLocations: RequestLocationRegistry = new Map()
 const formRequestLocations: RequestLocationRegistry = new Map()
+type PendingLiveConnection = { sourceGeneration: number; connectionGeneration: number; liveGeneration: number; current: () => boolean }
+const pendingLiveConnections = new Map<string, PendingLiveConnection>()
+const capabilityMetadataOwners = new WeakMap<NonNullable<Instance["capabilities"]>, () => boolean>()
+function ownWorkspaceSnapshot<T extends { capabilities?: Instance["capabilities"] }>(snapshot: T, owner: () => boolean): T {
+  if (!snapshot.capabilities) return snapshot
+  // Each ingress owns a distinct snapshot; display/deferred clones retain that reference.
+  const capabilities = { ...snapshot.capabilities }
+  capabilityMetadataOwners.set(capabilities, owner)
+  return { ...snapshot, capabilities }
+}
+export function isPendingCapabilityMetadataCurrent(instanceId: string): boolean {
+  const capabilities = instances().get(instanceId)?.capabilities
+  return Boolean(capabilities && capabilityMetadataOwners.get(capabilities)?.())
+}
+export function capturePendingLiveConnection(instanceId: string, context?: InstanceEventContext): () => boolean {
+  const captured = pendingLiveConnections.get(instanceId)
+  return () => Boolean(captured && pendingLiveConnections.get(instanceId) === captured && captured.current()
+    && (!context || (context.current() && context.source?.generation === captured.sourceGeneration
+      && context.source?.connectionGeneration === captured.connectionGeneration && context.liveGeneration === captured.liveGeneration)))
+}
 
 type RequestAuthorityLocation = RequestLocation | { directory: string }
 
-function requestLocationKey(location?: RequestAuthorityLocation | string): string | undefined {
+function requestLocationKey(location?: RequestAuthorityLocation | string, opaque = false): string | undefined {
   if (!location) return undefined
-  if (typeof location === "string") return locationAuthorityKey({ directory: normalizeWorkspacePath(location) })
+  if (typeof location === "string") return locationAuthorityKey({ directory: opaque ? location : normalizeWorkspacePath(location) })
   if (!location.directory) return undefined
-  return locationAuthorityKey({ ...location, directory: normalizeWorkspacePath(location.directory) })
+  return locationAuthorityKey({ ...location, directory: opaque ? location.directory : normalizeWorkspacePath(location.directory) })
 }
 
 function rememberRequestLocation(registry: RequestLocationRegistry, instanceId: string, requestId: string, location?: RequestAuthorityLocation | string): void {
-  const key = requestLocationKey(location)
+  const key = requestLocationKey(location, isLiveOnlyInterruption(instanceId))
   if (!key) return
-  const entries = registry.get(instanceId) ?? new Map<string, { key: string; location: RequestLocation }>()
+  const entries = registry.get(instanceId) ?? new Map<string, { key: string; location: RequestLocation; serverId: string }>()
   // Comparison keys are normalized, but dispatch must retain native spelling.
-  entries.set(requestId, { key, location: typeof location === "string" ? { directory: location } : { ...location } })
+  entries.set(requestId, { key, location: typeof location === "string" ? { directory: location } : { ...location }, serverId: instances().get(instanceId)?.binding?.serverId ?? "local-shared" })
   registry.set(instanceId, entries)
 }
 
@@ -198,20 +226,21 @@ class InterruptionRegistry<T extends { id: string }> {
   private readonly enqueuedAt = new Map<string, number>()
   private readonly sessionCounts = new Map<string, Map<string, number>>()
 
-  ensureEnqueuedAt(request: T): number {
-    const existing = this.enqueuedAt.get(request.id)
+  ensureEnqueuedAt(instanceId: string, request: T): number {
+    const key = JSON.stringify([instanceId, request.id])
+    const existing = this.enqueuedAt.get(key)
     if (existing) return existing
     const now = Date.now()
-    this.enqueuedAt.set(request.id, now)
+    this.enqueuedAt.set(key, now)
     return now
   }
 
-  enqueuedAtFor(requestId: string): number {
-    return this.enqueuedAt.get(requestId) ?? Date.now()
+  enqueuedAtFor(instanceId: string, requestId: string): number {
+    return this.enqueuedAt.get(JSON.stringify([instanceId, requestId])) ?? Date.now()
   }
 
-  remove(_instanceId: string, requestId: string): void {
-    this.enqueuedAt.delete(requestId)
+  remove(instanceId: string, requestId: string): void {
+    this.enqueuedAt.delete(JSON.stringify([instanceId, requestId]))
   }
 
   increment(instanceId: string, sessionId: string): void {
@@ -234,7 +263,7 @@ class InterruptionRegistry<T extends { id: string }> {
   }
 
   clear(instanceId: string, requests: readonly T[], clearPending: (sessionId: string) => void): void {
-    requests.forEach(({ id }) => this.enqueuedAt.delete(id))
+    requests.forEach(({ id }) => this.remove(instanceId, id))
     for (const sessionId of this.sessionCounts.get(instanceId)?.keys() ?? []) clearPending(sessionId)
     this.sessionCounts.delete(instanceId)
   }
@@ -306,8 +335,28 @@ function notifyPendingRecovery(instanceId: string, cause: PendingRecoveryCause):
 }
 
 function pendingRecoveryProject(instanceId: string): string {
-  const folder = instances().get(instanceId)?.folder
-  return folder ? normalizeWorkspacePath(folder) : instanceId
+  const instance = instances().get(instanceId)
+  return instance ? projectIdentity(isLiveOnlyInterruption(instanceId) ? instance.binding!.directory : instance.folder, instance.binding?.serverId) : instanceId
+}
+
+export function getInterruptionContext(instanceId: string, request?: QueuedRequest): { server: string; directory: string } {
+  const instance = instances().get(instanceId)
+  const serverId = request ? getPendingRequestServerId(instanceId, request) : instance?.binding?.serverId ?? "local-shared"
+  const text = (value: string) => value.replace(/[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]/g, "")
+  const label = getExecutionServerLabel(serverId)
+  return { server: text(label && label !== serverId ? `${label} (${serverId})` : serverId), directory: text((request && getPendingRequestDirectory(instanceId, request)) || instance?.binding?.directory || instance?.folder || "") }
+}
+
+function markLiveOnlyCoverageUnknown(instanceId: string, cause: "restored" | "disconnected", options: { connection?: boolean; requests?: boolean } = {}): void {
+  if (options.requests !== false) retireInterruptionAuthority(instanceId)
+  if (options.connection !== false) {
+    const previous = pendingLiveConnections.get(instanceId)
+    if (previous) pendingLiveConnections.set(instanceId, { ...previous, current: () => false })
+  }
+  if (!isLiveOnlyInterruption(instanceId)) return
+  markPendingRecovery(instanceId, true)
+  // prototype-1236: the guard stays (requests retired, replies refused) without any toast.
+  void cause
 }
 
 // A cause marks an attempt that counts toward the warning; without one, the state only changes.
@@ -343,8 +392,8 @@ let pendingDiscoveryResume: Promise<void> | undefined
 let nextPendingRequestSyncGeneration = 0
 
 function isPendingDiscoveryCompacting(): boolean {
-  // ponytail: one daemon per backend; only observed compactions are known here.
   for (const instance of instances().values()) {
+    if (instance.binding && instance.binding.serverId !== "local-shared") continue
     const tracked = pendingCompactions.get(instance.id)
     if (Array.from(tracked?.values() ?? []).some((entry) => entry.active)) return true
     if (!instance.client || instance.status !== "ready") continue
@@ -381,6 +430,8 @@ function resumePendingDiscovery(): void {
 }
 
 function observePendingCompaction(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
+  const instance = instances().get(instanceId)
+  if (instance?.binding && instance.binding.serverId !== "local-shared") return
   const starting = event.type === "session.compaction.started" || event.type === "session.compaction.delta"
   if (!starting && event.type !== "session.compaction.ended" && event.type !== "session.compaction.failed") return
   const client = instances().get(instanceId)?.client
@@ -566,6 +617,20 @@ function refreshVolatileInstanceState(
 
 serverEvents.on("instance.eventStatus", (event) => {
   if (event.type !== "instance.eventStatus") return
+  if (event.status !== "connected") markLiveOnlyCoverageUnknown(event.instanceId, "disconnected")
+  else if (isLiveOnlyInterruption(event.instanceId) && event.source) {
+    const captured = pendingLiveConnections.get(event.instanceId)
+    if (event.source.connectionGeneration !== undefined && event.liveGeneration !== undefined && (!captured
+      || event.source.generation > captured.sourceGeneration || event.liveGeneration > captured.liveGeneration)) {
+      retireInterruptionAuthority(event.instanceId)
+      const context = serverEvents.captureEventContext(event)
+      const metadata = instances().get(event.instanceId)?.capabilities
+      const superseded = isPendingCapabilityMetadataCurrent(event.instanceId) && metadata?.serverId === event.source.serverId && metadata.generation !== undefined
+        && metadata.generation > event.source.connectionGeneration
+      pendingLiveConnections.set(event.instanceId, { sourceGeneration: event.source.generation,
+        connectionGeneration: event.source.connectionGeneration, liveGeneration: event.liveGeneration, current: superseded ? () => false : context.current })
+    }
+  }
   const shouldResync = connectionResyncGate.observe(event.instanceId, event.status, event.reason)
   if (event.status !== "connected") return
   if (disconnectedInstance()?.id === event.instanceId) {
@@ -615,6 +680,8 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectN
   return {
     id: descriptor.id,
     folder: descriptor.path,
+    binding: descriptor.binding ?? existing?.binding,
+    capabilities: descriptor.capabilities ?? existing?.capabilities,
     projectName: projectName ?? existing?.projectName ?? descriptor.name,
     port: descriptor.port ?? existing?.port ?? 0,
     pid: descriptor.pid ?? existing?.pid ?? 0,
@@ -1082,11 +1149,17 @@ async function runPendingRequestSync(
   }
 }
 
+function canRecoverPending(instanceId: string): boolean {
+  const instance = instances().get(instanceId)
+  return !instance?.binding || instance.binding.serverId === "local-shared"
+}
+
 function syncPendingRequests(
   instanceId: string,
   registerInvalidation?: (invalidate: () => void) => void,
   targetLocations?: RequestLocation[],
 ): Promise<void> {
+  if (!canRecoverPending(instanceId)) return Promise.resolve()
   const generation = pendingRequestSyncGenerations.get(instanceId)
   if (generation === undefined) return Promise.resolve()
   if (!targetLocations && deferPendingDiscovery(instanceId)) return Promise.resolve()
@@ -1119,6 +1192,7 @@ function syncPendingRequests(
 }
 
 function schedulePendingRequestReconciliation(instanceId: string, location?: RequestLocation): void {
+  if (isLiveOnlyInterruption(instanceId)) return
   const current = pendingRequestSyncs.get(instanceId)
   if (current) current.token.cancelled = true
   abortPendingRequestWork(instanceId)
@@ -1243,11 +1317,13 @@ async function refreshWorkspaceList(): Promise<void> {
   if (!usesClientState()) return
   const requestFence = workspaceListReconciliationFence.begin()
   const removalCandidates = new Set(instances().keys())
+  const metadataOwner = serverEvents.captureTransportAuthority()
   try {
     const workspaces = await serverApi.fetchWorkspaces()
     if (!workspaceListReconciliationFence.isCurrent(requestFence)) return
     const remoteIds = new Set(workspaces.map(({ id }) => id))
-    for (const workspace of workspaces) {
+    for (const descriptor of workspaces) {
+      const workspace = ownWorkspaceSnapshot(descriptor, metadataOwner)
       if (!workspaceListReconciliationFence.allows(requestFence, workspace.id)) continue
       restoreCreatedWorkspaceCleanup.trackPendingRequest(workspace)
       if (restoreCreationCommitGates.deferRefreshWorkspace(workspace)) continue
@@ -1306,6 +1382,10 @@ function waitForWorkspaceLoadChange(
 }
 
 serverEvents.onOpen(() => {
+  for (const id of instances().keys()) {
+    pendingLiveConnections.delete(id)
+    markLiveOnlyCoverageUnknown(id, "restored")
+  }
   publishLatestWorkspaceLoad(refreshWorkspaceList().then(
     () => ({}),
     (error) => {
@@ -1313,6 +1393,10 @@ serverEvents.onOpen(() => {
       return { error }
     },
   ))
+})
+
+serverEvents.onTransportStatus(status => {
+  if (status !== "connected") for (const id of instances().keys()) markLiveOnlyCoverageUnknown(id, "disconnected")
 })
 
 async function waitForInitialWorkspaceLoad(signal?: AbortSignal): Promise<void> {
@@ -1340,6 +1424,7 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
     workspaceListReconciliationFence.markMutation(workspaceId)
   }
   if ("workspace" in event) {
+    event = { ...event, workspace: ownWorkspaceSnapshot(event.workspace, serverEvents.captureTransportAuthority()) }
     restoreCreatedWorkspaceCleanup.trackPendingRequest(event.workspace)
     if (restoreCreationCommitGates.deferWorkspace(event.workspace)) return
   }
@@ -1467,9 +1552,15 @@ function setInstanceLogStreaming(instanceId: string, enabled: boolean) {
   }
 }
 
-function addInstance(instance: Instance) {
+function addInstance(instance: Instance, metadataOwner?: () => boolean) {
+  if (metadataOwner) instance = ownWorkspaceSnapshot(instance, metadataOwner)
+  pendingLiveConnections.delete(instance.id)
+  retireInterruptionAuthority(instance.id)
+  Object.defineProperty(instance, "renderBinding", { configurable: true, enumerable: false, writable: false, value: instances().get(instance.id)?.renderBinding ?? Object.freeze({
+    serverId: instance.binding?.serverId ?? "local-shared", directory: instance.binding?.directory ?? instance.folder, folder: instance.folder,
+  }) })
   const occurrence = Array.from(instances().values())
-    .filter((existing) => normalizeInstanceFolderPath(existing.folder) === normalizeInstanceFolderPath(instance.folder))
+    .filter((existing) => projectIdentity(existing.folder, existing.binding?.serverId) === projectIdentity(instance.folder, instance.binding?.serverId))
     .length
   pendingRequestSyncGenerations.set(instance.id, ++nextPendingRequestSyncGeneration)
   setInstances((prev) => {
@@ -1483,13 +1574,41 @@ function addInstance(instance: Instance) {
     type: "opened",
     instanceId: instance.id,
     folder: instance.folder,
+    serverId: instance.binding?.serverId,
     occurrence,
   })
   syncHasInstancesFlag()
+  markLiveOnlyCoverageUnknown(instance.id, "restored")
+  serverEvents.syncInstanceBinding(instance.id)
 }
 
-function updateInstance(id: string, updates: Partial<Instance>) {
+function updateInstance(id: string, updates: Partial<Instance>, metadataOwner?: () => boolean) {
+  if (metadataOwner) updates = ownWorkspaceSnapshot(updates, metadataOwner)
   const existing = instances().get(id)
+  const changedBinding = existing && updates.binding && (updates.binding.serverId !== existing.binding?.serverId || updates.binding.directory !== existing.binding?.directory)
+  if (changedBinding) {
+    pendingLiveConnections.delete(id)
+    clearRepliedPermissions(id)
+    clearSettledForms(id)
+  }
+  const changedConnection = existing && (changedBinding || (updates.folder !== undefined && updates.folder !== existing.folder)
+    || (updates.capabilities !== undefined && updates.capabilities.generation !== existing.capabilities?.generation))
+  const metadataOnly = existing && !changedBinding && (updates.folder === undefined || updates.folder === existing.folder)
+    && (updates.client === undefined || updates.client === existing.client) && (updates.status === undefined || updates.status === "ready")
+  const changedAuthority = existing && (changedConnection || (updates.client !== undefined && updates.client !== existing.client)
+    || (updates.status !== undefined && updates.status !== "ready"))
+  if (changedAuthority) {
+    if (metadataOnly && isLiveOnlyInterruption(id)) {
+      const generation = updates.capabilities?.generation, connection = pendingLiveConnections.get(id)
+      const currentMetadata = updates.capabilities && capabilityMetadataOwners.get(updates.capabilities)?.()
+      // Only the native connection counter is comparable to capability metadata.
+      if (currentMetadata && connection && updates.capabilities?.serverId === existing?.binding?.serverId && generation !== undefined && generation > connection.connectionGeneration) {
+        pendingLiveConnections.set(id, { ...connection, current: () => false })
+      }
+      if (currentMetadata) retireIncompatibleInterruptionAuthority(id, generation)
+    }
+    else retireInterruptionAuthority(id)
+  }
   if (updates.client !== undefined && existing?.client && updates.client !== existing.client) {
     deferredPendingDiscovery.delete(id)
     clearSessionListRequestState(id)
@@ -1505,14 +1624,19 @@ function updateInstance(id: string, updates: Partial<Instance>) {
     const next = new Map(prev)
     const instance = next.get(id)
     if (instance) {
-      next.set(id, { ...instance, ...updates })
+      next.set(id, Object.defineProperty({ ...instance, ...updates }, "renderBinding", { configurable: true, enumerable: false, writable: false, value: instance.renderBinding }))
     }
     return next
   })
   syncHasInstancesFlag()
+  if (changedAuthority) markLiveOnlyCoverageUnknown(id, "restored", { connection: Boolean(changedConnection && !metadataOnly), requests: false })
+  serverEvents.syncInstanceBinding(id)
 }
 
 function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
+  retireSessionPlacementAuthority(id)
+  serverEvents.retireInstance(id)
+  pendingLiveConnections.delete(id)
   locallyRequestedWorkspaceCloses.delete(id)
   deferredPendingDiscovery.delete(id)
   pendingCompactions.delete(id)
@@ -1520,7 +1644,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   const removedInstance = instances().get(id)
   const removedOccurrence = removedInstance
     ? Array.from(instances().values())
-        .filter((instance) => normalizeInstanceFolderPath(instance.folder) === normalizeInstanceFolderPath(removedInstance.folder))
+        .filter((instance) => projectIdentity(instance.folder, instance.binding?.serverId) === projectIdentity(removedInstance.folder, removedInstance.binding?.serverId))
         .findIndex((instance) => instance.id === id)
     : -1
   if (removedInstance && removedOccurrence >= 0 && options.authoritative === false) {
@@ -1528,6 +1652,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
       type: "unavailable",
       instanceId: id,
       folder: removedInstance.folder,
+      serverId: removedInstance.binding?.serverId,
       occurrence: removedOccurrence,
     })
   }
@@ -1602,6 +1727,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
       type: "removed",
       instanceId: id,
       folder: removedInstance.folder,
+      serverId: removedInstance.binding?.serverId,
       occurrence: removedOccurrence,
     })
   }
@@ -1672,6 +1798,8 @@ async function createInstance(
     onBeforeCreateCommit?: (instanceId: string) => void
     onCreateCommit?: (instanceId: string) => void
     waitForCreateCommit?: () => Promise<void>
+    /** prototype-1236: open on an explicit OpenCode server instead of the shared local one. */
+    serverId?: string
   },
 ): Promise<{ instanceId: string; reused: boolean; requestId?: string }> {
   const restoreRequestId = options?.signal ? createRestoreCreationRequestId() : undefined
@@ -1697,11 +1825,13 @@ async function createInstance(
 
   try {
     if (options?.signal?.aborted) throw getAbortReason(options.signal)
-    const workspace = await serverApi.createWorkspace({
+    const metadataOwner = serverEvents.captureTransportAuthority()
+    const workspace = ownWorkspaceSnapshot(await serverApi.createWorkspace({
       path: folder,
       name: projectName,
       requestId: restoreRequestId,
-    }, { signal: options?.signal })
+      ...(options?.serverId ? { serverId: options.serverId } : {}),
+    }, { signal: options?.signal }), metadataOwner)
     requestResolved = true
     const reused = workspace.reused === true
     if (restoreRequestId) restoreCreationCommitGates.bindResponse(restoreRequestId, workspace.id)
@@ -1778,22 +1908,12 @@ async function createInstance(
   }
 }
 
-function normalizeInstanceFolderPath(folder: string): string {
-  const trimmed = folder.replace(/[\\/]+$/, "")
-  const windowsLike = /^(?:[A-Za-z]:[\\/]|[\\/]{2})/.test(trimmed)
-  if (!windowsLike) {
-    return trimmed
-  }
-
-  return trimmed.replace(/\\/g, "/").toLowerCase()
-}
-
-function getExistingInstanceForFolder(folder: string): Instance | null {
+function getExistingInstanceForFolder(folder: string, serverId = "local-shared"): Instance | null {
   if (!folder) return null
-  const target = normalizeInstanceFolderPath(folder)
+  const target = projectIdentity(folder, serverId)
   const matches = Array.from(instances().values()).filter((instance) => {
     if (instance.status === "stopped") return false
-    return normalizeInstanceFolderPath(instance.folder) === target
+    return projectIdentity(instance.folder, instance.binding?.serverId) === target
   })
 
   if (matches.length === 0) return null
@@ -1802,13 +1922,13 @@ function getExistingInstanceForFolder(folder: string): Instance | null {
   return matches.find((instance) => instance.id === activeId) ?? matches.find((instance) => instance.status === "ready") ?? matches[0] ?? null
 }
 
-function updateProjectNameForFolder(folder: string, projectName: string): void {
+function updateProjectNameForFolder(folder: string, projectName: string, serverId = "local-shared"): void {
   const name = projectName.trim()
   if (!folder || !name) return
-  const target = normalizeInstanceFolderPath(folder)
+  const target = projectIdentity(folder, serverId)
   for (const instance of instances().values()) {
     if (instance.status === "stopped") continue
-    if (normalizeInstanceFolderPath(instance.folder) === target) {
+    if (projectIdentity(instance.folder, instance.binding?.serverId) === target) {
       updateInstance(instance.id, { projectName: name })
     }
   }
@@ -1816,6 +1936,7 @@ function updateProjectNameForFolder(folder: string, projectName: string): void {
 
 const workspaceCloseRequests = new Map<string, Promise<void>>()
 const locallyRequestedWorkspaceCloses = new Set<string>()
+export function isWorkspaceClosing(id: string): boolean { return locallyRequestedWorkspaceCloses.has(id) }
 
 /** Origin outlives the HTTP request: cleanup and its stop event may arrive later. */
 function trackWorkspaceClose(id: string, operation: () => Promise<void>): Promise<void> {
@@ -1823,9 +1944,11 @@ function trackWorkspaceClose(id: string, operation: () => Promise<void>): Promis
   if (pending) return pending
   const hadOrigin = locallyRequestedWorkspaceCloses.has(id)
   locallyRequestedWorkspaceCloses.add(id)
+  const restoreReplies = retireInterruptionAuthority(id, undefined, undefined, true)
   const request = Promise.resolve().then(operation).catch((error) => {
     if (!hadOrigin && error instanceof HttpResponseError && error.status >= 400 && error.status < 500) {
       locallyRequestedWorkspaceCloses.delete(id)
+      restoreReplies()
     }
     throw error
   }).finally(() => workspaceCloseRequests.delete(id))
@@ -1896,13 +2019,23 @@ function getPermissionQueueLength(instanceId: string): number {
   return getPermissionQueue(instanceId).length
 }
 
+type QueuedRequest = { kind: "permission"; payload: PermissionRequest } | { kind: "form"; payload: FormWithLocation }
+export function getPendingRequestServerId(instanceId: string, request: QueuedRequest): string {
+  const registry = request.kind === "permission" ? permissionRequestLocations : formRequestLocations
+  return registry.get(instanceId)?.get(request.payload.id)?.serverId ?? instances().get(instanceId)?.binding?.serverId ?? "local-shared"
+}
+
 /** The directory a queued request runs in: its admitted location, else its own or its session's. */
-function getPendingRequestDirectory(instanceId: string, request: { kind: "permission"; payload: PermissionRequest } | { kind: "form"; payload: FormWithLocation }): string | undefined {
+function getPendingRequestDirectory(instanceId: string, request: QueuedRequest): string | undefined {
+  return getPendingRequestLocation(instanceId, request)?.directory
+}
+
+function getPendingRequestLocation(instanceId: string, request: QueuedRequest): RequestLocation | undefined {
   const remembered = rememberedRequestLocation(request.kind === "permission" ? permissionRequestLocations : formRequestLocations,
     instanceId, request.payload.id)
   const sessionId = request.kind === "permission" ? getPermissionSessionId(request.payload) : request.payload.sessionID
-  return (remembered ?? (request.kind === "form" ? request.payload.location : undefined)
-    ?? sessions().get(instanceId)?.get(sessionId ?? "")?.location)?.directory
+  return remembered ?? (request.kind === "form" ? request.payload.location : undefined)
+    ?? sessions().get(instanceId)?.get(sessionId ?? "")?.location
 }
 
 function hasPendingPermission(instanceId: string, permissionId: string): boolean {
@@ -1913,9 +2046,9 @@ function getPermissionEnqueuedAtForInstance(instanceId: string, permissionId: st
   const queue = getPermissionQueue(instanceId)
   const match = queue.find((permission) => permission.id === permissionId)
   if (match) {
-    return permissionRegistry.ensureEnqueuedAt(match)
+    return permissionRegistry.ensureEnqueuedAt(instanceId, match)
   }
-  return permissionRegistry.enqueuedAtFor(permissionId)
+  return permissionRegistry.enqueuedAtFor(instanceId, permissionId)
 }
 
 function computeActiveInterruption(instanceId: string): ActiveInterruption {
@@ -1925,12 +2058,12 @@ function computeActiveInterruption(instanceId: string): ActiveInterruption {
   if (permissions[0]) candidates.push({
     kind: "permission",
     id: permissions[0].id,
-    enqueuedAt: permissionRegistry.ensureEnqueuedAt(permissions[0]),
+    enqueuedAt: permissionRegistry.ensureEnqueuedAt(instanceId, permissions[0]),
   })
   if (forms[0]) candidates.push({
     kind: "form",
     id: forms[0].id,
-    enqueuedAt: formRegistry.ensureEnqueuedAt(forms[0]),
+    enqueuedAt: formRegistry.ensureEnqueuedAt(instanceId, forms[0]),
   })
   candidates.sort((left, right) => left.enqueuedAt - right.enqueuedAt)
   const first = candidates[0]
@@ -1966,6 +2099,7 @@ function recomputeActiveInterruption(instanceId: string): void {
 
 function addPermissionToQueue(instanceId: string, permission: PermissionRequest, location?: RequestAuthorityLocation | string): PermissionRequest | undefined {
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
+  const previousSource = permissionRequestLocations.get(instanceId)?.get(permission.id)
   rememberRequestLocation(permissionRequestLocations, instanceId, permission.id, location)
   let inserted = false
   let updated = false
@@ -1978,16 +2112,18 @@ function addPermissionToQueue(instanceId: string, permission: PermissionRequest,
 
     if (existingIndex !== -1) {
       previousPermission = queue[existingIndex]
-      queuedPermission = mergePermissionRequest(previousPermission, permission)
+      const source = permissionRequestLocations.get(instanceId)?.get(permission.id)
+      queuedPermission = previousPermission.sessionID === permission.sessionID && previousSource?.serverId === source?.serverId && previousSource?.key === source?.key
+        ? mergePermissionRequest(previousPermission, permission) : permission
       const updatedQueue = queue.slice()
       updatedQueue[existingIndex] = queuedPermission
-      next.set(instanceId, updatedQueue.sort((a, b) => permissionRegistry.ensureEnqueuedAt(a) - permissionRegistry.ensureEnqueuedAt(b)))
+      next.set(instanceId, updatedQueue.sort((a, b) => permissionRegistry.ensureEnqueuedAt(instanceId, a) - permissionRegistry.ensureEnqueuedAt(instanceId, b)))
       updated = true
       return next
     }
 
-    permissionRegistry.ensureEnqueuedAt(queuedPermission)
-    const updatedQueue = [...queue, queuedPermission].sort((a, b) => permissionRegistry.ensureEnqueuedAt(a) - permissionRegistry.ensureEnqueuedAt(b))
+    permissionRegistry.ensureEnqueuedAt(instanceId, queuedPermission)
+    const updatedQueue = [...queue, queuedPermission].sort((a, b) => permissionRegistry.ensureEnqueuedAt(instanceId, a) - permissionRegistry.ensureEnqueuedAt(instanceId, b))
     next.set(instanceId, updatedQueue)
     inserted = true
     return next
@@ -2014,10 +2150,12 @@ function addPermissionToQueue(instanceId: string, permission: PermissionRequest,
 
   }
 
+  admitInterruption(instanceId, "permission", queuedPermission, rememberedRequestLocation(permissionRequestLocations, instanceId, permission.id))
   return queuedPermission
 }
 
 function removePermissionFromQueue(instanceId: string, permissionId: string): void {
+  retireInterruptionAuthority(instanceId, "permission", permissionId)
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
   forgetRequestLocation(permissionRequestLocations, instanceId, permissionId)
   let removedPermission: PermissionRequest | null = null
@@ -2057,14 +2195,18 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
 }
 
 function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: string): void {
+  if (!projectAvailability(instances().get(instanceId), "yolo", isPendingCapabilityMetadataCurrent(instanceId)).allowed) return
+  const current = captureInstanceRequestAuthority(instanceId)
   const wasEnabled = isPermissionAutoAcceptEnabled(instanceId, sessionId)
   togglePermissionAutoAccept(instanceId, sessionId)
   void serverApi
     .toggleYolo(instanceId, sessionId)
     .then((state) => {
+      if (!current()) return
       setPermissionAutoAcceptEnabled(instanceId, sessionId, state.enabled)
     })
     .catch((error) => {
+      if (!current()) return
       log.warn("Failed to toggle Yolo on server", { instanceId, sessionId, error })
       // revert to the pre-toggle state (not a naive flip, which can be wrong
       // if an SSE yolo.stateChanged arrived between toggle and catch)
@@ -2082,6 +2224,8 @@ function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: str
 const syncedYoloSessions = new Set<string>()
 
 export function ensureYoloStateSynced(instanceId: string, sessionId: string): void {
+  if (!projectAvailability(instances().get(instanceId), "yolo", isPendingCapabilityMetadataCurrent(instanceId)).allowed) return
+  const current = captureInstanceRequestAuthority(instanceId)
   if (!instanceId || !sessionId || sessionId === "info") return
   const key = `${instanceId}:${sessionId}`
   if (syncedYoloSessions.has(key)) return
@@ -2089,6 +2233,7 @@ export function ensureYoloStateSynced(instanceId: string, sessionId: string): vo
   void serverApi
     .getYoloState(instanceId, sessionId)
     .then((state) => {
+      if (!current()) return
       setPermissionAutoAcceptEnabled(instanceId, sessionId, state.enabled)
     })
     .catch((error) => {
@@ -2112,6 +2257,7 @@ function clearSyncedYoloSessionsForInstance(instanceId: string): void {
 }
 
 function clearPermissionQueue(instanceId: string): void {
+  retireInterruptionAuthority(instanceId, "permission")
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
   permissionRequestLocations.delete(instanceId)
   permissionRegistry.clear(instanceId, getPermissionQueue(instanceId), (sessionId) => {
@@ -2134,58 +2280,100 @@ function setActivePermissionIdForInstance(instanceId: string, permissionId: stri
   setActiveInterruptionForInstance(instanceId, { kind: "permission", id: permissionId })
 }
 
+const pendingReplyAttempts = new WeakSet<object>()
+/** A held source Form, never an ID lookup granting authority to a guessed request. */
+export function captureKnownFormVerification(instanceId: string, form: FormWithLocation) {
+  const instance = instances().get(instanceId), binding = instance?.binding
+  const source = formRequestLocations.get(instanceId)?.get(form.id)
+  const location = source && { ...source.location }
+  const owner = captureInstanceRequestAuthority(instanceId), live = capturePendingLiveConnection(instanceId)
+  const transport = serverEvents.captureTransportAuthority()
+  const session = form.sessionID === "global" ? () => true : captureSessionRequestAuthority(instanceId, form.sessionID)
+  const current = () => Boolean(instance?.client && binding && isLiveOnlyInterruption(instanceId) && source && location
+    && source.serverId === binding.serverId && location.directory === binding.directory && location.workspaceID === undefined
+    && instances().get(instanceId)?.binding === binding && formRequestLocations.get(instanceId)?.get(form.id) === source
+    && getFormQueue(instanceId).find(item => item.id === form.id) === form
+    && owner() && live() && transport() && session() && !isWorkspaceClosing(instanceId)
+    && instances().get(instanceId)?.status === "ready" && isPendingCapabilityMetadataCurrent(instanceId)
+    && instances().get(instanceId)?.capabilities?.features.questions.state === "available")
+  return { client: instance?.client, location, current, busy: () => pendingReplyAttempts.has(form), options: {
+    headers: { ...formRequestOptions(form)?.headers, ...requestConnectionOptions(instance)?.headers },
+  } }
+}
+
+function capturePendingReply(instanceId: string, kind: InterruptionKind, request: PermissionRequest | FormWithLocation) {
+  const authority = captureInterruptionAuthority(instanceId, kind, request)
+  const instanceCurrent = captureInstanceRequestAuthority(instanceId)
+  const client = getRootClient(instanceId)
+  const options = requestConnectionOptions(instances().get(instanceId))
+  const current = () => authority.current() && instanceCurrent()
+    && (kind === "permission" ? getPermissionQueue(instanceId) : getFormQueue(instanceId)).find(item => item.id === request.id) === request
+  const assertCurrent = (dispatched = false) => {
+    if (dispatched && instanceCurrent() && !(kind === "permission" ? getPermissionQueue(instanceId) : getFormQueue(instanceId)).some(item => item.id === request.id)) return false
+    if (!current()) throw sessionActionSuperseded(tGlobal(dispatched ? "opencodeServers.pending.uncertainReply" : "opencodeServers.pending.staleReply"))
+    return true
+  }
+  assertCurrent()
+  if (pendingReplyAttempts.has(request)) throw sessionActionSuperseded(tGlobal("opencodeServers.pending.staleReply"))
+  pendingReplyAttempts.add(request)
+  return { client, options, location: authority.location, assertCurrent, finish: () => pendingReplyAttempts.delete(request), failed: (error: unknown) => {
+    // A dispatched mutation can have succeeded. Retain the editor, never replay it.
+    if (!current()) return sessionActionSuperseded(tGlobal("opencodeServers.pending.uncertainReply"))
+    if (isLiveOnlyInterruption(instanceId)) retireInterruptionAuthority(instanceId, kind, request.id)
+    else schedulePendingRequestReconciliation(instanceId, authority.location)
+    return error && typeof error === "object" && "reason" in error && (error.reason === "Transport" || error.reason === "MalformedResponse")
+      ? sessionActionSuperseded(tGlobal("opencodeServers.pending.uncertainReply")) : error
+  } }
+}
+
 async function sendPermissionResponse(
   instanceId: string,
-  _sessionId: string,
+  sessionId: string,
   requestId: string,
   reply: PermissionReply,
   message?: string,
 ): Promise<void> {
-  const instance = instances().get(instanceId)
-  if (!instance?.client) {
-    throw new Error("Instance not ready")
-  }
-
   const permission = getPermissionQueue(instanceId).find((entry) => entry.id === requestId)
+  if (!permission || permission.sessionID !== sessionId) throw sessionActionSuperseded(tGlobal("opencodeServers.pending.staleReply"))
+  const captured = capturePendingReply(instanceId, "permission", permission)
   try {
-    if (!permission) throw new Error(`Permission request not found: ${requestId}`)
-    await getRootClient(instanceId).permission.reply({
+    captured.assertCurrent()
+    await captured.client.permission.reply({
       sessionID: permission.sessionID,
       requestID: requestId,
       decision: reply,
       ...(message ? { message } : {}),
+    }, captured.options)
+    if (!captured.assertCurrent(true)) return
+    batch(() => {
+      markPermissionReplied(instanceId, requestId)
+      // The SSE reply remains accepted; the UI also settles after its exact ACK.
+      removePermissionFromQueue(instanceId, requestId)
+      removePermissionV2(instanceId, requestId)
     })
-
-    markPermissionReplied(instanceId, requestId)
-    // Remove from both local queues after successful response; the SSE replied event
-    // is still accepted, but the UI no longer depends on receiving it.
-    removePermissionFromQueue(instanceId, requestId)
-    removePermissionV2(instanceId, requestId)
   } catch (error) {
-    log.error("Failed to send permission response", error)
-    schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(permissionRequestLocations, instanceId, requestId)
-      ?? sessions().get(instanceId)?.get(permission?.sessionID ?? "")?.location)
-    throw error
-  }
+    throw captured.failed(error)
+  } finally { captured.finish() }
 }
 
 async function sendFormReply(instanceId: string, formId: string, answer: FormAnswer, interaction?: FormAnswerInteraction): Promise<void> {
   const form = getFormQueue(instanceId).find((item) => item.id === formId)
-  if (!form) throw new Error(`Form request not found: ${formId}`)
-  const humanSubmit = form.metadata?.kind === "question" && consumeFormAnswerInteraction(interaction, form, answer)
-  const options = formRequestOptions(form)
+  if (!form) throw sessionActionSuperseded(tGlobal("opencodeServers.pending.staleReply"))
+  const captured = capturePendingReply(instanceId, "form", form)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
   try {
-    await getRootClient(instanceId).session.form.reply(
+    const humanSubmit = !isLiveOnlyInterruption(instanceId) && form.metadata?.kind === "question" && consumeFormAnswerInteraction(interaction, form, answer)
+    const options = { headers: { ...formRequestOptions({ ...form, location: captured.location?.directory ? { ...captured.location, directory: captured.location.directory } : form.location })?.headers, ...captured.options?.headers } }
+    captured.assertCurrent()
+    await captured.client.session.form.reply(
       { sessionID: form.sessionID, formID: form.id, answer },
       humanSubmit ? { ...options, headers: { ...options?.headers, "x-codenomad-human-answer": "1" } } : options,
     )
-    markFormSettled(instanceId, form.id)
-    removePendingForm(instanceId, form.id)
+    if (!captured.assertCurrent(true)) return
+    batch(() => { markFormSettled(instanceId, form.id); removePendingForm(instanceId, form.id) })
   } catch (error) {
-    schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(formRequestLocations, instanceId, form.id) ?? form.location)
-    throw error
-  }
+    throw captured.failed(error)
+  } finally { captured.finish() }
 }
 
 let pendingFormAddedHandler: ((instanceId: string, form: FormWithLocation) => void) | undefined
@@ -2199,7 +2387,8 @@ function addPendingForm(instanceId: string, form: FormWithLocation, location?: R
   rememberRequestLocation(formRequestLocations, instanceId, form.id, location ?? form.location)
   const previous = getFormQueue(instanceId).find((item) => item.id === form.id)
   addFormToQueue(instanceId, form)
-  formRegistry.ensureEnqueuedAt(form)
+  admitInterruption(instanceId, "form", getFormQueue(instanceId).find(item => item.id === form.id)!, rememberedRequestLocation(formRequestLocations, instanceId, form.id))
+  formRegistry.ensureEnqueuedAt(instanceId, form)
   if (previous?.sessionID && previous.sessionID !== form.sessionID) {
     const remaining = formRegistry.decrement(instanceId, previous.sessionID)
     setSessionPendingForm(instanceId, previous.sessionID, remaining > 0)
@@ -2212,6 +2401,7 @@ function addPendingForm(instanceId: string, form: FormWithLocation, location?: R
 }
 
 function removePendingForm(instanceId: string, formId: string): void {
+  retireInterruptionAuthority(instanceId, "form", formId)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
   forgetRequestLocation(formRequestLocations, instanceId, formId)
   const form = getFormQueue(instanceId).find((item) => item.id === formId)
@@ -2225,6 +2415,7 @@ function removePendingForm(instanceId: string, formId: string): void {
 }
 
 function clearPendingFormQueue(instanceId: string): void {
+  retireInterruptionAuthority(instanceId, "form")
   bumpEpoch(pendingFormMutationEpochs, instanceId)
   formRequestLocations.delete(instanceId)
   formRegistry.clear(instanceId, getFormQueue(instanceId), (sessionId) => {
@@ -2236,19 +2427,21 @@ function clearPendingFormQueue(instanceId: string): void {
 
 async function sendFormCancel(instanceId: string, formId: string): Promise<void> {
   const form = getFormQueue(instanceId).find((item) => item.id === formId)
-  if (!form) throw new Error(`Form request not found: ${formId}`)
+  if (!form) throw sessionActionSuperseded(tGlobal("opencodeServers.pending.staleReply"))
+  const captured = capturePendingReply(instanceId, "form", form)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
   try {
-    await getRootClient(instanceId).session.form.cancel(
+    const options = { headers: { ...formRequestOptions({ ...form, location: captured.location?.directory ? { ...captured.location, directory: captured.location.directory } : form.location })?.headers, ...captured.options?.headers } }
+    captured.assertCurrent()
+    await captured.client.session.form.cancel(
       { sessionID: form.sessionID, formID: form.id },
-      formRequestOptions(form),
+      options,
     )
-    markFormSettled(instanceId, form.id)
-    removePendingForm(instanceId, form.id)
+    if (!captured.assertCurrent(true)) return
+    batch(() => { markFormSettled(instanceId, form.id); removePendingForm(instanceId, form.id) })
   } catch (error) {
-    schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(formRequestLocations, instanceId, form.id) ?? form.location)
-    throw error
-  }
+    throw captured.failed(error)
+  } finally { captured.finish() }
 }
 
 // Events after which assistant message cost/token totals may have changed.
@@ -2287,6 +2480,15 @@ const publishSynchronousPage = (
   if (options.updateUsage || Boolean(dropped?.updateUsage)) updateSessionInfo(instanceId, sessionId)
 }
 
+export function matchesPendingEvent(instanceId: string, request: QueuedRequest | undefined, sessionId: string, location?: RequestLocation, context?: InstanceEventContext): boolean {
+  if (isLiveOnlyInterruption(instanceId) && (!context || !capturePendingLiveConnection(instanceId, context)())) return false
+  if (!request) return true
+  if (request.payload.sessionID !== sessionId || getPendingRequestServerId(instanceId, request) !== (instances().get(instanceId)?.binding?.serverId ?? "local-shared")) return false
+  const nativeLocation = getPendingRequestLocation(instanceId, request), directory = nativeLocation?.directory
+  if (isLiveOnlyInterruption(instanceId)) return directory === location?.directory && location?.workspaceID === undefined
+  return !directory || !location?.directory || requestLocationKey(nativeLocation) === requestLocationKey(location)
+}
+
 // One stable, explicitly chunk-safe publication identity for ordinary replay.
 // Destructive event-specific effects below retain per-event callback barriers.
 const publishTranscriptChunk: NonNullable<OpenCodeDataEventAdmission["publication"]> = ({ instanceId, sessionId, data, events }) => {
@@ -2308,9 +2510,12 @@ const publishTranscriptChunk: NonNullable<OpenCodeDataEventAdmission["publicatio
   scheduleTranscriptProjection(instanceId, sessionId, data, options)
 }
 
-function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
+function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1], context?: InstanceEventContext): void {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
+  if (event.type === "server.connected") markLiveOnlyCoverageUnknown(instanceId, "disconnected", { connection: false })
+  if (isLiveOnlyInterruption(instanceId) && (event.type.startsWith("form.") || event.type.startsWith("permission."))
+    && (!context || !capturePendingLiveConnection(instanceId, context)())) return
   observePendingCompaction(instanceId, event)
   const sessionId = "sessionID" in event.data && typeof event.data.sessionID === "string"
     ? event.data.sessionID
@@ -2373,33 +2578,43 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
   else project(data)
   if (sessionId && (event.type === "permission.asked" || event.type === "permission.replied")) {
     const current = data.session.permission.list(sessionId) ?? []
-    const remote = (event.type === "permission.asked"
+    const remote = (isLiveOnlyInterruption(instanceId) ? event.type === "permission.asked" ? [event.data] : [] : event.type === "permission.asked"
       ? [event.data, ...current.filter((permission) => permission.id !== event.data.id)]
       : current).filter((permission) => !hasRepliedPermission(instanceId, permission.id))
     const location = event.location ?? sessions().get(instanceId)?.get(sessionId)?.location
     for (const permission of remote) {
       const queued = addPermissionToQueue(instanceId, permission, location) ?? permission
+      if (event.type === "permission.asked" && permission.id === event.data.id) admitInterruption(instanceId, "permission", queued, location, true, context)
       upsertPermissionV2(instanceId, queued)
     }
     if (event.type === "permission.replied") {
-      removePermissionFromQueue(instanceId, event.data.requestID)
-      removePermissionV2(instanceId, event.data.requestID)
+      const permission = getPermissionQueue(instanceId).find(item => item.id === event.data.requestID)
+      if (matchesPendingEvent(instanceId, permission && { kind: "permission", payload: permission }, sessionId, event.location, context)) {
+        removePermissionFromQueue(instanceId, event.data.requestID)
+        removePermissionV2(instanceId, event.data.requestID)
+      }
     }
   }
   if (sessionId && event.type.startsWith("form.")) {
     const current = data.session.form.list(sessionId, sessionId === "global" ? event.location : undefined) ?? []
-    const remote = event.type === "form.created"
+    const remote = isLiveOnlyInterruption(instanceId) ? event.type === "form.created" ? [event.data.form] : [] : event.type === "form.created"
       ? [event.data.form, ...current.filter((form) => form.id !== event.data.form.id)]
       : current
     const location = event.location ?? sessions().get(instanceId)?.get(sessionId)?.location
     for (const form of remote) {
       // Like recovery, keep a global Form's location: its reply and cancellation are addressed there.
       const queued = sessionId === "global" && event.location ? { ...form, location: event.location } : form
-      if (!hasSettledForm(instanceId, form.id)) addPendingForm(instanceId, queued, location)
+      if (!hasSettledForm(instanceId, form.id)) {
+        addPendingForm(instanceId, queued, location)
+        if (event.type === "form.created" && form.id === event.data.form.id) admitInterruption(instanceId, "form", getFormQueue(instanceId).find(item => item.id === form.id)!, location, true, context)
+      }
     }
     if (event.type === "form.replied" || event.type === "form.cancelled") {
-      markFormSettled(instanceId, event.data.id)
-      removePendingForm(instanceId, event.data.id)
+      const form = getFormQueue(instanceId).find(item => item.id === event.data.id)
+      if (matchesPendingEvent(instanceId, form && { kind: "form", payload: form }, sessionId, event.location, context)) {
+        markFormSettled(instanceId, event.data.id)
+        removePendingForm(instanceId, event.data.id)
+      }
     }
   }
   finishOpenCodeDataEvent(instanceId, event)
@@ -2427,10 +2642,14 @@ setTranscriptProjectionGates({
 })
 
 sseManager.onConnectionLost = (instanceId, reason) => {
+  markLiveOnlyCoverageUnknown(instanceId, "disconnected")
   const instance = instances().get(instanceId)
   if (!instance) {
     return
   }
+  // prototype-1236: an explicit server's project shows only its connection status;
+  // the backend reconnects on its own when the server returns.
+  if (instance.binding && instance.binding.serverId !== "local-shared") return
 
   setDisconnectedInstance({
     id: instanceId,

@@ -1,5 +1,11 @@
 # Fragen und Berechtigungen
 
+Der Kontext eines expliziten Servers zeigt Namen und stabile ID, damit gleiche Namen unterscheidbar bleiben. Unsichere oder überholte Antworten erscheinen als höflicher, nicht modaler Hinweis im Anfrageeditor; gewöhnliche Fehler behalten ihre Fehleranzeige.
+
+**Explizite OpenCode-Server:** Fragen und Berechtigungen kommen nur live an. Entwürfe bleiben bearbeitbar. Veraltete Berechtigungen warten auf eine aktuelle Live-Anfrage; bekannte Formulare bieten die ausdrückliche Prüfung unten. Die aufklappbaren Dock-Details erklären die Grenze. Eine Unterhaltung zu öffnen stellt fehlende Anfragen nicht automatisch wieder her. Der Yolo-Modus funktioniert auf diesen Servern: Nach einer erneuten Verbindung liest CodeNomad die ausstehenden Berechtigungen nur von Yolo-Unterhaltungen erneut ein und genehmigt sie einmal. Wiederherstellung und Belege unten gelten für den gemeinsam genutzten lokalen Dienst.
+
+Wählen Sie bei einem bekannten Formular **Status dieses Formulars prüfen** im ursprünglichen Editor. Ein bestätigtes wartendes Formular aktiviert nur seine eigenen Antwort-/Abbruchaktionen; prüfen Sie den Entwurf und entscheiden Sie gesondert. Beantwortete oder stornierte Formulare behalten den Entwurf zum Nachlesen, ohne fremde Antworten, deren Urheber oder das Ergebnis Ihres früheren Versuchs zu erfinden. Eine unklare Prüfung lässt den Entwurf bearbeitbar und Antworten gesperrt; prüfen Sie erneut ausdrücklich. Jede Prüfung ist auf 10 Sekunden und 4 MiB pro Antwort begrenzt; geänderte Feldschemata bleiben unklar. Prüfung und Versand erfolgen nie automatisch. Die Gesamtabdeckung bleibt unbekannt; fehlende Formulare und Berechtigungen werden damit nicht gefunden.
+
 Native Fragen, Forms und Berechtigungsanfragen werden im Unterbrechungsdock direkt über dem Eingabefeld beantwortet, nicht in wartenden Werkzeugkarten im Verlauf.
 
 ## Anfrage finden und Quelle prüfen {#request-dock}

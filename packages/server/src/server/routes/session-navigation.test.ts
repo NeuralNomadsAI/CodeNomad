@@ -15,6 +15,7 @@ function fixture(pluginsReady: () => Promise<void> = async () => {}) {
     window: () => ({ status: "window", messages: [], older: null, newer: null, resume: { kind: "latest" }, latest: true }),
   }
   registerSessionNavigationRoutes(app, { workspaceManager: {
+    requireWorkspaceCapability: () => new AbortController().signal,
     ownsLocation: async () => owned,
     desktopPluginsReady: pluginsReady,
     getSharedServiceClient: async () => ({ session: { get: async () => structuredClone(session) }, rpc: {

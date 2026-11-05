@@ -11,6 +11,12 @@ import { readAdmissionEnvironment } from "./admission-environment"
 import { canonicalScope } from "../host-lifetime/protocol"
 import { createHash } from "node:crypto"
 import path from "node:path"
+import { assertOpenCodeServersPatch } from "./protected-config"
+import { OpenCodeServerRegistry, summarizeOpenCodeServers } from "../opencode/servers/registry"
+import { OpenCodeServersSchema } from "../config/schema"
+import { OpenCodeServerCredentials } from "../opencode/servers/credentials"
+import { PairingTokenStore } from "../opencode/servers/pairing-store"
+import { OpenCodeServerConnections } from "../opencode/servers/connections"
 
 export type DocKind = "config" | "state"
 
@@ -38,6 +44,10 @@ function normalizeServerConfigOwner(value: SettingsDoc): SettingsDoc {
   }
 
   const next: SettingsDoc = { ...value }
+  if (next.opencodeServers !== undefined) {
+    const profiles = OpenCodeServersSchema.safeParse(next.opencodeServers)
+    if (profiles.success) next.opencodeServers = profiles.data
+  }
   const parsedLogLevel = CanonicalLogLevelSchema.safeParse(next.logLevel)
   if (parsedLogLevel.success) {
     next.logLevel = parsedLogLevel.data
@@ -72,6 +82,9 @@ function normalizeConfigDoc(doc: SettingsDoc): SettingsDoc {
 export class SettingsService {
   private readonly configStore: YamlDocStore
   private readonly stateStore: YamlDocStore
+  private serverRegistry?: OpenCodeServerRegistry
+  #serverCredentials?: OpenCodeServerCredentials
+  #serverConnections?: OpenCodeServerConnections
 
   constructor(
     private readonly location: ConfigLocation,
@@ -131,7 +144,49 @@ export class SettingsService {
     return this.location.configYamlPath
   }
 
+  getOpenCodeServerRegistry(): OpenCodeServerRegistry {
+    return this.serverRegistry ??= new OpenCodeServerRegistry(
+      () => this.configStore.getAuthoritativeOwner("server").opencodeServers,
+      profiles => {
+        const current = this.configStore.getAuthoritativeOwner("server")
+        const updated = this.configStore.replaceOwner("server", { ...current, opencodeServers: profiles })
+        this.publish("config", "server", updated)
+      },
+    )
+  }
+
+  /** One backend/config owner, shared by all windows and transports. */
+  getOpenCodeServerCredentials(): OpenCodeServerCredentials {
+    const scope = this.getProfileScope()
+    return this.#serverCredentials ??= new OpenCodeServerCredentials(
+      { profileKey: scope.key, configIdentity: scope.configIdentity }, this.getOpenCodeServerRegistry(),
+      // prototype-1236: paired tokens persist beside the profile's config, never inside it.
+      new PairingTokenStore(path.join(path.dirname(this.location.configYamlPath), "opencode-server-pairings.json")),
+    )
+  }
+
+  getOpenCodeServerConnections(local: ConstructorParameters<typeof OpenCodeServerConnections>[0]["local"]): OpenCodeServerConnections {
+    return this.#serverConnections ??= new OpenCodeServerConnections({
+      registry: this.getOpenCodeServerRegistry(), credentials: this.getOpenCodeServerCredentials(), local,
+    })
+  }
+
+  async getOpenCodeServerSummaries() {
+    const summaries = summarizeOpenCodeServers(this.getRawConfigOwner("server").opencodeServers)
+    return summaries.map(profile => {
+      if (profile.kind !== "explicit") return profile
+      const hasCredentials = this.getOpenCodeServerCredentials().hasCredentials(profile.id)
+      return { ...profile, hasCredentials, needsCredentials: !hasCredentials }
+    })
+  }
+
+  async disposeOpenCodeServers(): Promise<void> {
+    if (this.#serverConnections) await this.#serverConnections.dispose()
+    else await this.#serverCredentials?.dispose()
+  }
+
   mergePatchDoc(kind: DocKind, patch: unknown): SettingsDoc {
+    if (kind === "config") assertOpenCodeServersPatch(this.configStore.get(), patch)
     if (!isPlainObject(patch)) {
       throw new Error("Patch must be a JSON object")
     }
@@ -161,6 +216,9 @@ export class SettingsService {
   }
 
   mergePatchOwner(kind: DocKind, owner: string, patch: unknown): SettingsDoc {
+    if (kind === "config" && owner === "server") {
+      assertOpenCodeServersPatch(this.configStore.getOwner(owner), patch, owner)
+    }
     if (!isPlainObject(patch)) {
       throw new Error("Patch must be a JSON object")
     }
@@ -180,7 +238,7 @@ export class SettingsService {
   private publish(kind: DocKind, owner: string, value?: SettingsDoc) {
     if (!this.eventBus) return
     const type = kind === "config" ? "storage.configChanged" : "storage.stateChanged"
-    const nextValue = value ?? this.getOwner(kind, owner)
+    const nextValue = value ?? (owner === "*" ? this.getDoc(kind) : this.getOwner(kind, owner))
     const payload: WorkspaceEventPayload = {
       type,
       owner,

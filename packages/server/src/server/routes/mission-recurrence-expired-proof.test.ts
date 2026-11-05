@@ -99,6 +99,7 @@ async function fixture() {
   const manager = { get: () => workspace, getServiceLocation: () => ({ directory }),
     getServiceDirectoryForPath: async (_id: string, requested: string) => realpathSync(requested),
     getSharedServiceConnection: async () => state.connection, ownsLocation: async () => true,
+    requireWorkspaceCapability: () => new AbortController().signal,
     getServiceWslDistro: () => undefined, getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",
     getWorktreeIdentityForPath: async () => state.checkout, getHostPathForServicePath: async (_id: string, requested: string) => requested }
   const fence = new WorktreeDeletionFence(200)

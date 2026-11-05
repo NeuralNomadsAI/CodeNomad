@@ -11,6 +11,7 @@ import { recurrenceControlRequestDigest, signNativeRecurrenceControl } from "../
 import { resolveStandingProfileSource } from "../../missions/host-authority/profile-source"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import { requestAdmission } from "../request-admission"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 import { prepareMissionMapMutation, MissionMapMutationError } from "./mission-map-mutation"
 import { recurrenceHumanSession } from "./mission-recurrence-proof"
 import { readRecurrenceHoldOwner } from "./mission-recurrence-holds"
@@ -59,6 +60,7 @@ export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
         const pending = (result: object = {}) => reply.code(503).send({ ...result, missionID, pending: true,
           error: "Mission schedule action remains unconfirmed", code: "schedule-pending" })
         try {
+          deps.workspaceManager.requireWorkspaceCapability(selected.data.id, "missions")
           if (method === "POST" && (!human || !auth || !deps.bridgeToken || !deps.settings?.configYamlPathForAuthority))
             return reply.code(401).send({ error: "Human authentication required", code: "schedule-human-required" })
           const settings = deps.settings, manager = deps.workspaceManager, scope = settings?.getProfileScope()
@@ -212,7 +214,9 @@ export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
             return result.pending ? pending(result) : result
           })
         } catch (error) {
-          const status = error instanceof MissionMapMutationError || error instanceof ScheduledHoldError ? error.status : 503
+          if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
+          const status = error instanceof MissionMapMutationError || error instanceof ScheduledHoldError ? error.status
+            : error instanceof Error && "statusCode" in error && error.statusCode === 404 ? 404 : 503
           return reply.code(status).send({ missionID, pending: true, error: "Mission schedule action remains unconfirmed", code: "schedule-unconfirmed" })
         } finally { if (ownsHold) held?.dispose(); lifetime.dispose() }
       },

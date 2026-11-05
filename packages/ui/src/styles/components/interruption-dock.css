@@ -59,7 +59,7 @@
 .interruption-permission-content { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--space-md); scrollbar-width: auto; scrollbar-gutter: stable; scroll-padding-block: var(--space-md); }
 .interruption-permission-content { display: flex; flex-direction: column; gap: var(--space-sm); }
 .interruption-dock .form-request-field { padding: 0; border: 0; background: transparent; }
-.interruption-dock .form-request-description { color: var(--text-primary); font-size: var(--font-size-sm); }
+.interruption-dock .form-request-description { color: var(--text-primary); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 .interruption-dock .form-request-label { color: var(--text-secondary); font-size: var(--font-size-xs); }
 .interruption-dock .window-footer { flex-direction: row; flex-wrap: wrap; margin: 0; padding: var(--space-sm) var(--space-md); }
 .interruption-dock .window-footer .selector-button { width: auto; min-width: 0; }

@@ -4,6 +4,11 @@ import http from "node:http"
 import net from "node:net"
 import test, { type TestContext } from "node:test"
 import { FAKE_TUNNEL_HOST, startRemoteSurface } from "./test-support/surface"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import { SettingsService } from "../settings/service"
+import { resolveConfigLocation } from "../config/location"
 
 const HOST = FAKE_TUNNEL_HOST
 const ORIGIN = `https://${HOST}`
@@ -42,6 +47,68 @@ async function pair(target: string, code: string): Promise<string> {
   const cookie = String(response.headers["set-cookie"])
   return cookie.split(";")[0]!
 }
+
+test("paired devices cannot write the OpenCode registry through either generic PATCH surface", async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-remote-registry-"))
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const location = resolveConfigLocation(path.join(directory, "config.yaml"))
+  const events: unknown[] = []
+  const logger = { child: () => logger, info() {}, warn() {} }
+  const settings = new SettingsService(location, { publish: (value: unknown) => events.push(value) } as never, logger as never)
+  settings.mergePatchDoc("config", { server: { logLevel: "INFO" }, ui: { theme: "light" } })
+  const { target, code } = await startRemoteSurface(t, { settings })
+  const cookie = await pair(target(), code)
+  const headers = { cookie, origin: ORIGIN, "content-type": "application/json" }
+  const profiles = [{ kind: "explicit", id: "remote", label: "Remote", origin: "https://example.test" }]
+  const legacyFile = fs.readFileSync(location.configYamlPath, "utf8")
+  const legacyEvents = events.length
+  for (const [url, body] of [["/api/storage/config", { server: { opencodeServers: profiles } }],
+    ["/api/storage/config/server", { opencodeServers: profiles }]] as const) {
+    assert.equal((await send(target(), url, { method: "PATCH", headers, body: JSON.stringify(body) })).status, 400)
+    assert.equal(fs.readFileSync(location.configYamlPath, "utf8"), legacyFile)
+    assert.equal(events.length, legacyEvents)
+  }
+  for (const existing of [[], profiles]) {
+    settings.getOpenCodeServerRegistry().replace(existing)
+    const before = fs.readFileSync(location.configYamlPath, "utf8")
+    const eventCount = events.length
+    for (const patch of [{ opencodeServers: profiles }, { opencodeServers: [{ ...profiles[0], credentialRef: "rotation" }] },
+      { opencodeServers: null }, { opencodeServers: [] }, { opencodeServers: {} },
+      { opencodeServers: [], logLevel: "ERROR" }, null, [], "replace"]) {
+      for (const [url, body] of [
+        ["/api/storage/config", { server: patch, ui: { theme: "dark" } }],
+        ["/api/storage/config/server", patch],
+        ["/%61pi/storage/config", { server: patch }],
+        ["/api/storage/config/%73erver", patch],
+        ["/api/storage/config/server?conditional=missions-v1", patch],
+        ["/api/storage/config/%73erver?conditional=other", patch],
+        ["/api/storage/config/ui?conditional=missions-v1", { patch: { server: patch }, expected: [] }],
+      ] as const) {
+        const response = await send(target(), url, { method: "PATCH", headers, body: JSON.stringify(body) })
+        assert.equal(response.status, 400, `${url}: ${response.body}`)
+        assert.equal(fs.readFileSync(location.configYamlPath, "utf8"), before)
+        assert.equal(events.length, eventCount)
+      }
+    }
+    for (const body of [null, [], "replace"]) {
+      const response = await send(target(), "/api/storage/config", { method: "PATCH", headers, body: JSON.stringify(body) })
+      assert.equal(response.status, 400)
+      assert.equal(fs.readFileSync(location.configYamlPath, "utf8"), before)
+      assert.equal(events.length, eventCount)
+    }
+    for (const [url, body] of [["/api/storage/config", { server: { logLevel: "WARN" } }],
+      ["/api/storage/config/server", { logLevel: "INFO" }]] as const) {
+      const response = await send(target(), url, { method: "PATCH", headers, body: JSON.stringify(body) })
+      assert.equal(response.status, 200, response.body)
+      assert.doesNotMatch(response.body, /sentinel-reference|credentialRef/)
+      assert.deepEqual(settings.getRawConfigOwner("server").opencodeServers, existing)
+    }
+  }
+  const publicConfig = await send(target(), "/api/storage/config", { headers: { cookie } })
+  assert.equal(publicConfig.status, 200)
+  assert.doesNotMatch(publicConfig.body, /sentinel-reference|credentialRef/)
+  assert.doesNotMatch(JSON.stringify(events), /sentinel-reference|credentialRef/)
+})
 
 test("an unpaired remote browser reaches only the pairing surface", async (t) => {
   const { target } = await startRemoteSurface(t)

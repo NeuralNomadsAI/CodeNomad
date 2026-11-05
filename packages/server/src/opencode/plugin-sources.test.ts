@@ -40,6 +40,7 @@ async function fixture(options: { sameScopes?: boolean; catalog?: IntegrationCat
     },
   }
   const manager: any = {
+    requireWorkspaceCapability: () => new AbortController().signal,
     get: (id: string) => id === "w" || id === "w2" ? {} : undefined,
     getSharedServiceConnection: async () => connection,
     getServiceDirectoryForPath: async (_id: string, directory: string) => directory === project ? directory : undefined,
@@ -144,25 +145,38 @@ describe("plugin source mutations", () => {
     } finally { await f.cleanup() }
   })
 
-  it("refuses an add whose OpenCode reads stall, releases the queue, and never writes it later", async () => {
-    const f = await fixture()
-    try {
-      await writeFile(f.globalFile, "{}")
-      // This fake client ignores the abort signal: the grace period still releases the queue.
-      const sources = new PluginSources({ documents: f.controls, logger: { info() {} } as any, addTimeoutMs: 500, abortGraceMs: 50 })
-      let release!: () => void
-      f.state.gate = new Promise<void>(resolve => { release = resolve })
-      const stalled = sources.add("w", { location: f.location, scope: "global", spec: "stalled-plugin" })
-      // Let the queued turn start its daemon reads before later reads stop stalling.
-      await new Promise(resolve => setTimeout(resolve, 10))
-      f.state.gate = undefined
-      const next = sources.add("w2", { location: f.location, scope: "global", spec: "next-plugin" })
-      await assert.rejects(stalled, code("timeout", "unavailable"))
-      await next
-      release()
-      await new Promise(resolve => setTimeout(resolve, 50))
-      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["next-plugin"], "the abandoned add never writes")
-    } finally { await f.cleanup() }
+  it("refuses an add whose OpenCode reads stall, releases the queue, and never writes it later", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    const location = { directory: "/fixture" }, writes: string[] = []
+    let entered!: () => void, release!: () => void, reads = 0
+    const started = new Promise<void>(resolve => { entered = resolve })
+    const held = new Promise<void>(resolve => { release = resolve })
+    const documents: Pick<PluginControls, "read" | "readConfigDocuments" | "editConfigDocument"> = {
+      read: async () => {
+        // The first native read ignores abort. Its grace must release the same queue.
+        if (++reads === 1) { entered(); await held }
+        return { location, runtime: [], configured: { rules: [], sources: [] }, controls: [], targets: [] }
+      },
+      readConfigDocuments: async () => ({ location, entries: [], documents: [] }),
+      editConfigDocument: async (_id, _location, _scope, edit) => {
+        const document = { requestedPath: "/fixture/opencode.jsonc", writePath: "/fixture/opencode.jsonc",
+          exists: true, mode: 0o600, text: "{}", byteOrderMark: false, plugins: [] }
+        writes.push(...parse(await edit(document, { entries: [], path: document.writePath, location })).plugins)
+      },
+    }
+    const sources = new PluginSources({ documents, logger: { info() {} } as any, addTimeoutMs: 50, abortGraceMs: 20 })
+    const stalled = sources.add("w", { location, scope: "global", spec: "stalled-plugin" })
+    const refused = assert.rejects(stalled, code("timeout", "unavailable"))
+    await started
+    const next = sources.add("w2", { location, scope: "global", spec: "next-plugin" })
+    t.mock.timers.tick(50)
+    t.mock.timers.tick(20)
+    await refused
+    await next
+    release()
+    // Drain the abandoned turn's promise chain, without a filesystem/time assumption.
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.deepEqual(writes, ["next-plugin"], "the abandoned add never writes")
   })
 
   it("re-checks an aborted signal under the lock before the document commit", async () => {

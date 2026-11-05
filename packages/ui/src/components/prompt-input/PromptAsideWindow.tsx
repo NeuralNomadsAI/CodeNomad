@@ -7,10 +7,12 @@ import { copyToClipboard } from "../../lib/clipboard"
 import { useI18n } from "../../lib/i18n"
 import type { PromptAsideController } from "./usePromptAside"
 import { withHotkey, matchesHotkey } from "../../lib/hotkeys"
+import { restrictedMediaPolicy } from "../../lib/media-policy"
 
 export default function PromptAsideWindow(props: {
   id: string
   controller: PromptAsideController
+  instanceId?: string
   returnFocus?: () => HTMLElement | undefined
 }) {
   const { t } = useI18n()
@@ -60,9 +62,11 @@ export default function PromptAsideWindow(props: {
           </div>
         </form>
         <Show when={aside.error()}><p role="alert">{aside.error()}</p></Show>
+        <Show when={aside.interrupted()}><p role="status" aria-live="polite">{t("session.actions.interrupted")}</p></Show>
         <Show when={aside.answer()}>
           <section class="session-aside-answer" aria-label={t("promptInput.btw.answer")} tabindex="0">
-            <Markdown part={{ type: "text", text: aside.answer() }} escapeRawHtml />
+            <Markdown part={{ type: "text", text: aside.answer() }} instanceId={props.instanceId}
+              unownedMediaPolicy={restrictedMediaPolicy} escapeRawHtml />
           </section>
         </Show>
       </div>

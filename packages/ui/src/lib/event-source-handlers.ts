@@ -13,6 +13,7 @@ interface EventSourceHandlerOptions {
   onEvent: (event: WorkspaceEventPayload) => void
   onError?: () => void
   onPing?: (payload: { ts?: number }) => void
+  onParticipation?: (payload: unknown) => void
   logger: EventSourceLogger
 }
 
@@ -23,16 +24,16 @@ export function attachEventSourceHandlers(source: EventSource, options: EventSou
     let payload: WorkspaceEventPayload
     try {
       payload = JSON.parse(event.data) as WorkspaceEventPayload
-    } catch (error) {
-      options.logger.error("Failed to parse event", error)
+    } catch {
+      options.logger.error("Failed to parse event", { category: "invalid-event-json" })
       return
     }
     try {
       options.onEvent(payload)
-    } catch (error) {
+    } catch {
       // Deferred reactive flush errors occur after individual subscribers have
       // returned. They are application failures, not malformed transport data.
-      options.logger.error("Failed to dispatch event", error)
+      options.logger.error("Failed to dispatch event", { category: "event-dispatch-failed" })
     }
   }
 
@@ -61,8 +62,12 @@ export function attachEventSourceHandlers(source: EventSource, options: EventSou
     try {
       const payload = event.data ? (JSON.parse(event.data) as { ts?: number }) : {}
       options.onPing?.(payload)
-    } catch (error) {
-      options.logger.error("Failed to parse ping event", error)
+    } catch {
+      options.logger.error("Failed to parse ping event", { category: "invalid-ping-event" })
     }
+  })
+  source.addEventListener("codenomad.project.participation", (event: MessageEvent) => {
+    if (disconnected || typeof event.data !== "string" || event.data.length > 256) return
+    try { options.onParticipation?.(JSON.parse(event.data)) } catch { /* Private grants never enter diagnostics. */ }
   })
 }

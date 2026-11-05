@@ -1,8 +1,10 @@
-import { For, Show, createEffect, createMemo, on, onCleanup, untrack } from "solid-js"
+import { For, Show, createEffect, createMemo, createUniqueId, on, onCleanup, untrack } from "solid-js"
 import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageCircleQuestion, ShieldCheck, ShieldAlert } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-import { getPermissionQueue, sendFormCancel, sendFormReply } from "../stores/instances"
+import { getPermissionQueue, getInterruptionContext, sendFormCancel, sendFormReply } from "../stores/instances"
+import { canAnswerInterruption, isLiveOnlyInterruption } from "../stores/interruption-authority"
 import { getFormQueue } from "../stores/forms"
+import { canVerifyKnownForm, formVerificationStatus, verifyKnownForm } from "../stores/form-verification"
 import { sessions } from "../stores/sessions"
 import { focusInterruption, interruptionFocus } from "../stores/interruption-navigation"
 import FormRequest from "./form-request"
@@ -12,6 +14,8 @@ import { useInterruptionDockState } from "./interruption-dock-state"
 
 export function InterruptionDock(props: { instanceId: string; sessionId?: string | null; active?: boolean; onExpandedChange?: (expanded: boolean) => void; onViewConversation?: (sessionId: string) => void }) {
   const { t } = useI18n()
+  const domId = createUniqueId()
+  const bodyId = `interruption-body-${domId}`
   const { pending, current, expanded, select, index, move, previews, scope } = useInterruptionDockState(props)
   let root: HTMLElement | undefined
   const byKey = createMemo(() => new Map(pending().map(item => [item.key, item])))
@@ -51,7 +55,7 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
       <header class="window-header">
         <div class="interruption-heading">
           <button type="button" class="window-icon-button interruption-toggle icon-toggle" aria-label={!expanded() && !own() ? openLabel(sourceId()) : t(expanded() ? "interruption.collapse" : "interruption.expand")} title={t(expanded() ? "interruption.collapse" : "interruption.expand")} aria-expanded={expanded()}
-            aria-controls={`interruption-body-${props.instanceId}`} onClick={() => select(current()!.key, !expanded())}>
+            aria-controls={bodyId} onClick={() => select(current()!.key, !expanded())}>
             <Show when={!expanded()} fallback={<ChevronDown size={16} />}><ChevronUp size={16} /></Show>
           </button>
           <Show when={current()?.kind === "permission"} fallback={<MessageCircleQuestion size={18} aria-hidden="true" />}><ShieldCheck size={18} aria-hidden="true" /></Show>
@@ -68,7 +72,7 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
         <div class="window-actions">
           <Show when={!expanded() && !own() && !project() && !descendant()}>
             <button type="button" class="status-indicator session-status session-status-list session-permission badge-shape shrink-0"
-              aria-expanded="false" aria-controls={`interruption-body-${props.instanceId}`} onClick={() => focusInterruption(props.instanceId)}>
+              aria-expanded="false" aria-controls={bodyId} onClick={() => focusInterruption(props.instanceId)}>
               <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" />
               <span class="session-status-text">{t(current()?.kind === "permission" ? "sessionList.status.needsPermission" : "sessionList.status.needsInput")}</span>
             </button>
@@ -89,7 +93,7 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
         </Show>
         <Show when={previews()[0]}>{preview =>
           <button type="button" class="interruption-external-preview" aria-label={openLabel(preview().payload.sessionID)}
-            aria-expanded="false" aria-controls={`interruption-body-${props.instanceId}`}
+            aria-expanded="false" aria-controls={bodyId}
             onClick={() => focusInterruption(props.instanceId, preview().payload.sessionID, preview().payload.id, preview().kind)}>
             <ChevronUp size={16} aria-hidden="true" />
             <span title={origin(preview().payload.sessionID)}>{origin(preview().payload.sessionID)}</span>
@@ -97,10 +101,30 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
           </button>
         }</Show>
       </header>
-      <div id={`interruption-body-${props.instanceId}`} class="window-body interruption-body" hidden={!expanded()} inert={!expanded()}>
+      <div id={bodyId} class="window-body interruption-body" hidden={!expanded()} inert={!expanded()}>
         {/* Stable request keys preserve partial answers across native reconciliation and queue navigation. */}
         <For each={pending().map(item => item.key)}>{key => {
           const item = () => byKey().get(key)!
+          const blocked = () => !canAnswerInterruption(props.instanceId, item().kind, item().payload)
+          const verification = () => item().kind === "form" ? formVerificationStatus(item().payload as ReturnType<typeof getFormQueue>[number]) : undefined
+          const reasonId = `interruption-reason-${createUniqueId()}`
+          const replyStatus = () => blocked() || verification() ? t(verification() ? `formVerification.${verification()}` : isLiveOnlyInterruption(props.instanceId) ? "formVerification.stale" : "opencodeServers.pending.staleReply") : undefined
+          const checkable = () => verification() !== "checking" && canVerifyKnownForm(props.instanceId, item().payload as ReturnType<typeof getFormQueue>[number])
+          const notice = () => <>
+            <Show when={item().kind === "permission" && blocked()}><p id={reasonId} class="form-request-description" role="status" aria-live="polite">{t("opencodeServers.pending.staleReply")}</p></Show>
+            <Show when={item().kind === "form" && (blocked() || verification()) && isLiveOnlyInterruption(props.instanceId)}>
+              <button type="button" class="window-text-button" aria-describedby={reasonId} aria-busy={verification() === "checking"}
+                aria-disabled={!checkable()}
+                onClick={() => { if (checkable()) void verifyKnownForm(props.instanceId, item().payload as ReturnType<typeof getFormQueue>[number]) }}>
+                {t("formVerification.check")}
+              </button>
+            </Show>
+            <Show when={isLiveOnlyInterruption(props.instanceId)}><details class="form-request-description">
+              <summary>{t("opencodeServers.pending.liveOnly")}</summary>
+              <p><bdi>{getInterruptionContext(props.instanceId, item()).server}</bdi> · <bdi>{getInterruptionContext(props.instanceId, item()).directory}</bdi></p>
+              <p>{t("opencodeServers.pending.verifySession")}</p>
+            </details></Show>
+          </>
           let editor: HTMLDivElement | undefined
           onCleanup(() => {
             if (!editor?.contains(document.activeElement)) return
@@ -112,8 +136,10 @@ export function InterruptionDock(props: { instanceId: string; sessionId?: string
             })
           })
           return <div ref={editor} class="interruption-editor" hidden={!expanded() || current()?.key !== key} inert={!expanded() || current()?.key !== key}>
-            <Show when={item().kind === "form"} fallback={<InterruptionPermission instanceId={props.instanceId} permission={item().payload as ReturnType<typeof getPermissionQueue>[number]} />}>
+            <Show when={item().kind === "form"} fallback={<InterruptionPermission instanceId={props.instanceId} permission={item().payload as ReturnType<typeof getPermissionQueue>[number]} replyBlocked={blocked()} replyDescriptionId={blocked() ? reasonId : undefined} replyNotice={notice()} />}>
               <FormRequest form={item().payload as ReturnType<typeof getFormQueue>[number]}
+                replyBlocked={blocked()} replyDescriptionId={blocked() || verification() ? reasonId : undefined}
+                replyStatus={replyStatus()} replyNotice={notice()}
                 onReply={(answer, interaction) => sendFormReply(props.instanceId, item().payload.id, answer, interaction)} onCancel={() => sendFormCancel(props.instanceId, item().payload.id)} />
             </Show>
           </div>

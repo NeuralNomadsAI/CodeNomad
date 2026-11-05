@@ -32,13 +32,16 @@ function depthDraft(key: string) {
 
 export function MissionSubagentDepth(props: { instanceId: string; directory?: string; active: () => boolean }) {
   const { t } = useI18n(), description = createUniqueId()
+  let mounted = true
+  onCleanup(() => { mounted = false })
+  const active = () => mounted && props.active()
   const identity = () => JSON.stringify([props.instanceId, props.directory])
   const entry = () => depthDraft(identity()), state = () => entry().state[0]()
   const busy = () => ["confirming", "reading", "saving"].includes(state().phase)
-  const capture = createMissionViewFence(identity, props.active)
+  const capture = createMissionViewFence(identity, active)
   const [refreshPending, setRefreshPending] = createSignal(false)
   let readEpoch = 0
-  const invalidate = () => { if (props.active()) { readEpoch++; setRefreshPending(true) } }
+  const invalidate = () => { if (active()) { readEpoch++; setRefreshPending(true) } }
   const events = serverEvents.on("instance.event", event => {
     if (event.type === "instance.event" && event.instanceId === props.instanceId
       && ["config.updated", "server.connected"].includes(event.event.type)) invalidate()
@@ -47,8 +50,9 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
   let controller: AbortController | undefined, field: HTMLInputElement | undefined
   onCleanup(() => { controller?.abort(); events(); reconnect() })
   const read = async (explicit: boolean) => {
+    if (!active()) return
     const target = entry(), previous = target.state[0](), instanceId = props.instanceId, directory = props.directory
-    if (!props.active() || !directory || busy()) return
+    if (!directory || busy()) return
     const current = capture()
     if (previous.dirty || previous.phase === "uncertain") {
       if (!explicit) return
@@ -76,13 +80,13 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
   createEffect(() => {
     identity()
     instances().get(props.instanceId)?.client
-    const active = props.active()
+    const demanded = active()
     readEpoch++
     controller?.abort()
-    setRefreshPending(active)
+    setRefreshPending(demanded)
   })
   createEffect(() => {
-    if (!refreshPending() || !props.active() || busy()) return
+    if (!refreshPending() || !active() || busy()) return
     if (state().dirty || state().phase === "uncertain") { setRefreshPending(false); return }
     const timer = setTimeout(() => { setRefreshPending(false); void read(false) }, 50)
     onCleanup(() => clearTimeout(timer))
@@ -104,7 +108,7 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
   }
   // Reads and writes only lock the field (read-only keeps keyboard focus); it is disabled when unusable.
   const locked = () => busy() || refreshPending()
-  const disabled = () => !props.active() || state().phase === "uncertain" || state().error || !state().snapshot?.capability || !state().snapshot?.project
+  const disabled = () => !active() || state().phase === "uncertain" || state().error || !state().snapshot?.capability || !state().snapshot?.project
   /** Enter or leaving the field saves a changed value; an invalid one is flagged, never written. */
   const commit = () => {
     if (disabled() || locked() || !state().dirty) return
@@ -112,11 +116,12 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
     void save()
   }
   const inherit = () => {
-    if (locked()) return
+    if (disabled() || locked()) return
     entry().state[1]({ ...state(), draft: "", invalidInput: false, rejected: false, dirty: true, saved: false }); commit()
   }
   /** Escape discards an unsaved value without writing anything. */
   const discard = () => {
+    if (!active()) return
     const saved = state().snapshot?.project?.depth
     entry().state[1]({ ...state(), draft: saved == null ? "" : String(saved), invalidInput: false, rejected: false, dirty: false })
   }
@@ -146,7 +151,7 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
       ? <code dir="ltr" title={snapshot().origin!}>{snapshot().origin}</code> : t("missions.settings.noOrigin")}</p>}</Show>
     <label>{t("missions.depth.label")}<input type="number" step="1" min={state().snapshot?.capability?.minimum} max={state().snapshot?.capability?.maximum}
       placeholder={t("missions.depth.inherit")} aria-describedby={description} value={state().draft} disabled={disabled()} readOnly={locked()}
-      onInput={event => entry().state[1]({ ...state(), draft: event.currentTarget.value, invalidInput: event.currentTarget.validity.badInput, rejected: false, dirty: true, saved: false })}
+      onInput={event => { if (!disabled() && !locked()) entry().state[1]({ ...state(), draft: event.currentTarget.value, invalidInput: event.currentTarget.validity.badInput, rejected: false, dirty: true, saved: false }) }}
       onChange={commit} onKeyDown={event => {
         // Enter saves the depth only, never the enclosing mission form.
         if (event.key === "Enter") { event.preventDefault(); commit() }
@@ -164,7 +169,7 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
         onPointerDown={event => event.preventDefault()} onClick={inherit}>{t("missions.depth.inherit")}</button>
       {/* Clean values revalidate by themselves; refreshing is only a recovery step. */}
       <Show when={state().error || ["uncertain", "confirming"].includes(state().phase)}>
-        <button type="button" class="window-action mission-icon-action" aria-label={t("missions.depth.refresh")} title={t("missions.depth.refresh")} disabled={!props.active() || busy() || !props.directory} onClick={() => void read(true)}><RefreshCw aria-hidden="true" /></button>
+        <button type="button" class="window-action mission-icon-action" aria-label={t("missions.depth.refresh")} title={t("missions.depth.refresh")} disabled={!active() || busy() || !props.directory} onClick={() => void read(true)}><RefreshCw aria-hidden="true" /></button>
       </Show></div>
     {/* Only a confirmation or a write announces itself: a read keeps the field read-only and the layout still. */}
     <Show when={["confirming", "saving"].includes(state().phase)}><p role="status">{t("missions.control.mutation.pending")}</p></Show>

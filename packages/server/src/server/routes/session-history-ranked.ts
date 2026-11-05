@@ -9,6 +9,7 @@ import { captureDisplayIdentities } from "../../workspaces/worktree-display-iden
 import { historyDirectories, ownedHistorySessions } from "./session-history-scope"
 import { rankedHistoryPageSchema } from "./session-history-ranked-contract"
 import type { HistoryRouteDeps } from "./session-history"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 
 const MAX_LOCATIONS = 32
 const cursorSchema = z.object({ examined: z.number().int().nonnegative().safe(),
@@ -26,6 +27,11 @@ export function registerRankedHistoryRoute(app: FastifyInstance, deps: HistoryRo
     const parsed = historyRankedInputSchema.safeParse(request.body)
     if (!parsed.success) return reply.code(400).send({ error: "Invalid ranked history query" })
     const id = request.params.id, manager = deps.workspaceManager
+    try { manager.requireWorkspaceCapability(id, "historyEnrichment") }
+    catch (error) {
+      if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
+      throw error
+    }
     const base = manager.getServiceLocation(id)
     if (!base) return reply.code(404).send({ error: "Workspace not found" })
     const controller = new AbortController()

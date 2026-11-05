@@ -144,6 +144,7 @@ export const instanceMessages = {
   "filesPanel.viewer": "Dosya önizlemesi",
   "filesPanel.readOnly": "Salt okunur",
   "filesPanel.binary": "Bu ikili dosya için önizleme kullanılamıyor.",
+  "filesPanel.contentUnavailable": "İçerik kullanılamıyor veya eksik.",
   "filesPanel.image.before": "Önce",
   "filesPanel.image.after": "Sonra",
   "gitPanel.changes": "Değişiklikler",

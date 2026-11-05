@@ -92,6 +92,7 @@ export function useInstanceSessionContext(options: InstanceSessionContextOptions
   const handleSessionSelect = (sessionId: string) => {
     const instanceId = options.instanceId()
     if (sessionId === "info") {
+      if (!getProjectAvailability(instanceId, "serviceManagement").allowed) return
       setActiveSession(instanceId, sessionId)
       return
     }
@@ -113,3 +114,4 @@ export function useInstanceSessionContext(options: InstanceSessionContextOptions
     handleSessionSelect,
   }
 }
+import { getProjectAvailability } from "../../../stores/project-capability"

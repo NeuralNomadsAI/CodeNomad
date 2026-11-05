@@ -9,7 +9,7 @@ import { nativeEventConnections } from "../workspaces/opencode-service"
 import { locationRequestOptions, readLocationRef } from "../opencode/compatibility/location"
 import { PermissionReceiptStore, permissionSnapshot, receiptHash, type ReceiptQuery } from "./receipt-store"
 
-type Manager = Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "ownsLocation" | "getServiceWslDistro" | "getServicePathStyle">
+type Manager = Pick<WorkspaceManager, "requireWorkspaceCapability" | "get" | "getSharedServiceConnection" | "ownsLocation" | "getServiceWslDistro" | "getServicePathStyle">
 type InstanceEvent = Extract<WorkspaceEventPayload, { type: "instance.event" }>
 export class PermissionReceipts {
   private readonly scopes = new WeakMap<ServiceConnection, Promise<string>>()
@@ -26,6 +26,7 @@ export class PermissionReceipts {
     await Promise.allSettled(this.confirmations)
   }
   private scope(instanceId: string, connection: ServiceConnection): Promise<string> {
+    this.manager.requireWorkspaceCapability(instanceId, "historyEnrichment")
     let pending = this.scopes.get(connection)
     if (!pending) {
       const distro = this.manager.getServiceWslDistro(instanceId)?.toLowerCase()
@@ -70,6 +71,8 @@ export class PermissionReceipts {
     const event = payload.event as { type?: string; data?: any; created?: number }
     if (!event || !["permission.asked", "permission.replied", "session.deleted"].includes(event.type ?? "")) return
     const { instanceId } = payload
+    try { this.manager.requireWorkspaceCapability(instanceId, "historyEnrichment") }
+    catch { return }
     // Acquire while the ownership-validated event is delivered; stale connections
     // fail their fence rather than being reassigned to a replacement daemon.
     const connection = nativeEventConnections.get(payload.event)
@@ -78,6 +81,7 @@ export class PermissionReceipts {
     void scope.catch(() => {})
     const request = event.type === "permission.asked" ? permissionSnapshot(event.data) : undefined
     this.enqueue(instanceId, async () => {
+      this.manager.requireWorkspaceCapability(instanceId, "historyEnrichment")
       const identity = await scope
       if (request) {
         this.observe(instanceId, identity, request.sessionId)
@@ -100,7 +104,12 @@ export class PermissionReceipts {
     if (event.status !== "connected") return
     const workspace = this.manager.get(event.instanceId)
     if (!workspace) return
+    // Reconnect enumeration requires recovery admission independently of live
+    // receipt capture and exact, manually submitted permission replies.
+    try { this.manager.requireWorkspaceCapability(event.instanceId, "pendingRecovery") }
+    catch { return }
     this.enqueue(event.instanceId, async () => {
+      this.manager.requireWorkspaceCapability(event.instanceId, "pendingRecovery")
       const connection = await this.manager.getSharedServiceConnection(event.instanceId)
       if (!connection) return
       const current = () => {
@@ -174,6 +183,7 @@ export class PermissionReceipts {
     }
   }
   async list(instanceId: string, sessionId: string, query: ReceiptQuery) {
+    this.manager.requireWorkspaceCapability(instanceId, "historyEnrichment")
     const workspace = this.manager.get(instanceId)
     if (!workspace) throw Object.assign(new Error("Workspace not found"), { statusCode: 404 })
     const connection = await this.manager.getSharedServiceConnection(instanceId)

@@ -7,10 +7,11 @@ import { locationRequestOptions, readLocationRef } from "../../opencode/compatib
 import { PRUNING_RPC_ID } from "../../opencode/session-pruning/contract"
 import { imagesConversationInputSchema, imagesConversationResultSchema, type ImagesConversationInput } from "../../opencode/session-pruning/assets-gallery-contract"
 import type { GitExclusion, ImagesConversationResponse } from "./images-conversation-contract"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 
 export interface ImagesConversationRouteDeps {
   workspaceManager: Pick<WorkspaceManager, "getSharedServiceClient" | "ownsLocation" | "getWorktreeIdentityForPath" | "desktopPluginsReady"
-    | "getServiceWslDistro" | "getHostPathForServicePath">
+    | "getServiceWslDistro" | "getHostPathForServicePath" | "requireWorkspaceCapability">
   worktreeDeletionFence: WorktreeDeletionFence
   excludeDesignFolder?: typeof excludeDesignFolder
 }
@@ -34,6 +35,8 @@ export async function resolveImagesConversationAt(deps: ImagesConversationRouteD
 ): Promise<ImagesConversationResponse | ImagesConversationRefusal> {
   const exclude = deps.excludeDesignFolder ?? excludeDesignFolder
   const manager = deps.workspaceManager
+  manager.requireWorkspaceCapability(workspaceId, "integratedImages")
+  manager.requireWorkspaceCapability(workspaceId, "design")
   // Authorize the caller's directory before any OpenCode request: reading a
   // Location boots its services (configuration discovery, plugins).
   if (!await manager.ownsLocation(workspaceId, { directory }, undefined, options.signal)) return "denied"
@@ -69,6 +72,7 @@ export async function resolveImagesConversationAt(deps: ImagesConversationRouteD
     }
     if (result.status !== "found" || input.mode === "lookup") return result
     options.signal?.throwIfAborted()
+    manager.requireWorkspaceCapability(workspaceId, "design")
     const gitExclusion: GitExclusion = await exclude({
       directory, distro: manager.getServiceWslDistro(workspaceId),
       toHost: servicePath => manager.getHostPathForServicePath(workspaceId, servicePath),
@@ -94,7 +98,12 @@ export function registerImagesConversationRoute(app: FastifyInstance, deps: Imag
     const parsed = requestSchema.safeParse(request.body)
     if (!parsed.success) return reply.code(400).send({ error: "Invalid Images conversation request" })
     const { directory, ...input } = parsed.data
-    const result = await resolveImagesConversationAt(deps, request.params.id, directory, input)
+    let result
+    try { result = await resolveImagesConversationAt(deps, request.params.id, directory, input) }
+    catch (error) {
+      if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
+      throw error
+    }
     if (result === "denied") return reply.code(403).send({ error: "Location does not belong to workspace" })
     if (result === "deleting") return reply.code(409).send({ error: "Worktree deletion is in progress" })
     return result

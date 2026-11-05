@@ -2,6 +2,8 @@
 
 ## Einstellungen öffnen und Geltungsbereich erkennen {#open-settings}
 
+**Ausgewählter OpenCode-Server** kennzeichnet den Projektkontext (`local-shared` für den gemeinsamen lokalen Dienst); CodeNomad-Einstellungen gelten gemeinsam. Bei nicht verfügbaren Projekten bleiben OpenCode-Steuerelemente inaktiv. Konfigurationsdateien, Umgebungsvariablen und OpenCode-Wartung kennzeichnen das **lokale CodeNomad-Backend**: HOME-Dateien, Profilumgebung und gemeinsamer Dienst gehören dazu. **Lokales Backend verwalten** öffnet diese lokalen Steuerelemente ausdrücklich getrennt vom ausgewählten Projekt.
+
 1. Öffnen Sie **Einstellungen** über das Zahnrad **Einstellungen öffnen** in der Tab-Leiste (in der macOS-Desktop-App in der Titelleiste) oder auf der Startseite. Direktzugänge wie **Anbieter verwalten** in der Modellauswahl, das Zahnrad des Missionspanels oder das Zahnrad **Einstellungen** im Benachrichtigungsverlauf öffnen direkt den passenden Abschnitt.
 2. Wählen Sie einen Abschnitt. Lokale Electron-/Tauri-Fenster öffnen oder fokussieren ein natives Einstellungsfenster; Browser-/Remote-Ansichten verwenden die eingebettete Einstellungsseite.
 3. Prüfen Sie vor dem Verlassen den Geltungsbereich und mögliche **Speichern**-Aktionen.
@@ -15,7 +17,9 @@ Die meisten Auswahlen wirken sofort, auch die Missionsvorgaben, die jede Änderu
 | Globale/projektbezogene OpenCode-Einstellungen | Native Plugin-/Konfigurationsänderungen im angezeigten Umfang. Projektsteuerung benötigt ein aktives Projekt/eine Location. |
 | Desktop-Datenprofil | Native Fenster, Wiederherstellungszustand und Browserspeicher, unabhängig von Konfigurationsdatei und gemeinsamem OpenCode-Dienst. Siehe [Desktop-Fenster und Daten](desktop.md). |
 
-**Statistik** umfasst den gesamten verbundenen OpenCode-Dienst (alle Projekte, unabhängige Klone und Untersitzungen), nicht nur den geöffneten Ordner, für die letzten 7, 30, 90 oder 365 Tage. Sie benötigt ein geöffnetes Projekt und zeigt die von OpenCode erfassten Tokens und Kosten, keine Anbieterrechnungen oder Abonnementkontingente; während der Aktualisierung können zuvor gespeicherte Summen erscheinen. Plankontingente gehören in den Statusabschnitt **Nutzung**.
+Qualifizierte, explizit angegebene Server bieten einen schreibgeschützten Anbieter- und Modellkatalog. Zurückgestellte Abschnitte bleiben auswählbar und erläutern ihre Einschränkung; verwalten Sie diese Servereinstellungen direkt auf dem Server.
+
+**Statistik** umfasst den gesamten gemeinsamen lokalen OpenCode-Dienst (alle Projekte, unabhängige Klone und Untersitzungen), nicht nur den geöffneten Ordner, für die letzten 7, 30, 90 oder 365 Tage. Sie benötigt ein geöffnetes Projekt und zeigt die von OpenCode erfassten Tokens und Kosten, keine Anbieterrechnungen oder Abonnementkontingente; während der Aktualisierung können zuvor gespeicherte Summen erscheinen. Plankontingente gehören in den Statusabschnitt **Nutzung**. **Statistik** ist für explizit angegebene Server nicht verfügbar; der Abschnitt erläutert den Grund.
 
 Anzeigeeinstellungen neu zu setzen startet OpenCode nicht neu und wiederholt keinen Prompt. Native Konfiguration, Dienstwartung und Zugangsdaten haben separate Folgen: siehe [OpenCode-Einrichtung](opencode.md), [Anbieter](providers.md) und [Integrationen](integrations.md).
 
@@ -41,6 +45,8 @@ Ziehen Sie am inneren Rand eines angedockten Panels, um seine Größe zu ändern
 Erkannte [Integrationen](integrations.md#integration-sections) haben ebenfalls Statusabschnitte. Blenden Sie diese mit denselben Kontrollkästchen aus; ordnen Sie jeden Statusabschnitt per Ziehen oder mit den Tasten Auf/Ab um. Sichtbarkeit und Reihenfolge bleiben bei Neuladen und vorübergehend fehlenden Integrationen erhalten.
 
 Status enthält Tokeninformationen, Yolo-Modus, Anbieternutzung, Hintergrund-Shells, MCP und Plugins. Solange die Unterhaltung ein [Ziel](conversations.md#goal) hat, zeigt eine Zielzeile über diesen Abschnitten es an; diese Zeile ist kein Abschnitt und lässt sich weder ausblenden noch verschieben. Ausblenden deaktiviert keinen Dienst und widerruft keine Rechte. Schmale Layouts schließen Panels, die nicht mehr passen, statt die Unterhaltung einzuengen; ein dort geöffnetes Panel schwebt über ihr, und ein schwebendes Panel zu öffnen schließt das andere.
+
+Bei einem Projekt auf einem konfigurierten OpenCode-Server lesen diese Abschnitte diesen Server. **Nutzung** zeigt native OpenCode-Go-Kontingente und die zugangsdatenfreie Zen-Schätzung aus [Anbieter](providers.md#usage); andere Anbieter zeigen kein Kontingent. **Plugins** listet die Plugins des Servers mit ihrem Zustand; ihre Schalter bleiben schreibgeschützt, weil OpenCode keine API bietet, um die Plugin-Konfiguration des Servers zu ändern. MCP-Server lassen sich weiterhin verbinden oder trennen. **Hintergrund-Shells** listet die Shells des Servers für den geöffneten Ordner auf und stoppt sie.
 
 Integriertes Layout ist Fensterlayout, keine Projektänderung. Erweiterungskästchen sind anders: Sie aktivieren Code über alle Projekte dieser Konfiguration. **Zurücksetzen** ändert keine Erweiterungszustimmung. Siehe [Panel-Erweiterungen](extensions.md).
 

@@ -174,6 +174,7 @@ async function encodeSessionGraph(session: RestorableSessionState | null) {
         workspacePartition: await addPartition(workspace),
       }
       if (tab.occurrence !== undefined) shell.occurrence = tab.occurrence
+      if (tab.serverId !== undefined) shell.serverId = tab.serverId
       if (tab.projectName !== undefined) shell.projectName = tab.projectName
       if (tab.binaryPath !== undefined) shell.binaryPath = tab.binaryPath
       return shell
@@ -369,7 +370,11 @@ async function decodeGraph(
       continue
     }
     if (shell.kind !== "workspace"
-      || !hasExactKeys(shell, ["kind", "folder", "workspacePartition"], ["occurrence", "projectName", "binaryPath"])) return
+      || !hasExactKeys(shell, ["kind", "folder", "workspacePartition"], ["occurrence", "projectName", "binaryPath", "serverId", "credentialMode", "credentialRef"])) return
+    if (hasOwn(shell, "credentialMode") || hasOwn(shell, "credentialRef")) {
+      if (shell.credentialMode !== undefined && shell.credentialMode !== "memory" && shell.credentialMode !== "keychain") return
+      legacyGraph = true
+    }
     if (typeof shell.workspacePartition !== "string" || !PARTITION_KEY.test(shell.workspacePartition)) return
     declaredGraph.add(shell.workspacePartition)
     const workspace = await loadCanonical(shell.workspacePartition)
@@ -393,7 +398,7 @@ async function decodeGraph(
       unseenIdleSince: Object.create(null),
       generationRecovery: Object.create(null),
     }
-    for (const key of ["occurrence", "projectName", "binaryPath"] as const) {
+    for (const key of ["occurrence", "projectName", "binaryPath", "serverId"] as const) {
       if (hasOwn(shell, key)) tab[key] = shell[key]
     }
     for (const key of ["activeParentSessionId", "activeSessionId", "expandedSessionIds"] as const) {

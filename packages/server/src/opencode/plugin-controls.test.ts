@@ -739,6 +739,7 @@ function fakeManager(options: {
   return {
     calls,
     get: (id: string) => id === "workspace" ? { id } : undefined,
+    requireWorkspaceCapability: () => new AbortController().signal,
     getSharedServiceConnection: async () => ({
       client,
       assertCurrent: () => {

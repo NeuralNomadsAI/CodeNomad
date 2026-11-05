@@ -1,5 +1,9 @@
 # Fehlerbehebung
 
+Unterscheiden Sie gleichnamige Ausführungsserver anhand der stabilen ID neben dem Namen in Anfragedetails und Projektmeldungen. Eine unsichere Antwort bleibt im ursprünglichen Editor, ohne Fokuswechsel oder automatischen Neuversand.
+
+**Explizite OpenCode-Server:** Nach einer Unterbrechung oder einem Backend-Neustart ist die Abdeckung wartender Anfragen unbekannt, auch bei leerem Dock. Bewahren Sie Entwürfe auf; veraltete Berechtigungen warten auf eine aktuelle Live-Anfrage. Bei bekannten Formularen wählen Sie **Status dieses Formulars prüfen** im ursprünglichen Editor; unklare Ergebnisse sperren Antworten und erlauben eine neue ausdrückliche Prüfung. Grenze: insgesamt 10 Sekunden und 4 MiB pro Antwort; die Abdeckung bleibt unbekannt. Das Öffnen einer Unterhaltung zeigt deren Inhalt, ohne fehlende Anfragen automatisch zu finden. Eine vor der Unterbrechung gesendete Antwort kann angekommen sein; es wird nichts automatisch wiederholt. Die automatische Wiederherstellung unten betrifft den gemeinsam genutzten lokalen Dienst. Siehe [Fragen und Berechtigungen](permissions.md).
+
 Prüfen Sie zur Wiederherstellung zuerst die zuständige Komponente des fehlgeschlagenen Vorgangs: Browser, CodeNomad-Backend, OpenCode-Dienst oder Anbieter. Eine verlorene Antwort beweist keine fehlgeschlagene Änderung; lesen Sie vor Wiederholung den aktuellen Zustand erneut.
 
 ## Desktop-Startprobleme {#desktop-launch}

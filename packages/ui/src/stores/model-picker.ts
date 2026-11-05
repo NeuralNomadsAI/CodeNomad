@@ -6,12 +6,13 @@ import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { getFavoritesOnlyPreference, getProviderModelVisibilityPreference, uiState } from "./preferences"
 import { normalizeSessionDirectory } from "./session-list-options"
 import { providers } from "./session-state"
+import { LOCAL_SERVER_ID } from "../lib/project-identity"
 
 /** The list the conversation's model selector shows, under the user's model preferences. */
-export function preferredModelList<T extends CatalogModel>(models: readonly T[]) {
+export function preferredModelList<T extends CatalogModel>(models: readonly T[], serverId = LOCAL_SERVER_ID) {
   return listCatalogModels(models, {
     visibility: getProviderModelVisibilityPreference,
-    favorites: uiState().models.favorites ?? [],
+    favorites: (uiState().models.favorites ?? []).filter(item => (item.serverId ?? LOCAL_SERVER_ID) === serverId),
     favoritesOnly: getFavoritesOnlyPreference(),
   })
 }

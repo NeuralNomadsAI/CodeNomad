@@ -9,6 +9,7 @@ import {
   addInstance, removeInstance, updateInstance, syncPendingRequests, reconcilePendingRequestLiveness,
   addPermissionToQueue, getPermissionQueue, markPermissionReplied, hasRepliedPermission, sendPermissionResponse,
   addPendingForm, sendFormReply, sendFormCancel, incompletePendingRecovery,
+  getPermissionEnqueuedAtForInstance, removePermissionFromQueue,
 } from "./instances"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { getFormQueue, type FormWithLocation } from "./forms"
@@ -17,6 +18,7 @@ import { sessions, setSessions } from "./session-state"
 import { createClientSession } from "../types/session"
 import { reloadWorktrees } from "./worktrees"
 import toast from "solid-toast"
+import { initialServerCapabilities } from "../../../server/src/opencode/servers/capabilities"
 
 const permission = (id: string): PermissionRequest => ({ id, sessionID: "unloaded", action: "read", resources: ["file"] })
 const form = (id: string, sessionID = "global"): FormWithLocation => ({
@@ -91,6 +93,39 @@ function harness(): {
   fixtures.push(h)
   return h
 }
+
+test("explicit live-only reconnect skips worktree/snapshot readers and its compactions cannot defer local recovery", async () => {
+  const remote = harness(), local = harness()
+  updateInstance(remote.id, {
+    binding: { serverId: "A", directory: remote.directory },
+    capabilities: initialServerCapabilities({ kind: "explicit", id: "A", label: "A", origin: "https://a.example" }, 1),
+  })
+  let worktreeReads = 0
+  serverApi.fetchWorktrees = async () => { worktreeReads++; throw new Error("deferred reader dispatched") }
+  compact(remote, "started")
+  await syncPendingRequests(remote.id)
+  await reloadWorktrees(remote.id)
+  assert.equal(brokerReads, 0)
+  assert.equal(worktreeReads, 0)
+  assert.equal(incompletePendingRecovery().has(remote.id), true, "live-only coverage is unknown even with an empty local queue")
+  await syncPendingRequests(local.id)
+  assert.ok(brokerReads > 0, "remote compaction cannot block the local broker")
+  assert.equal(incompletePendingRecovery().has(local.id), false)
+})
+
+test("homonymous interruption timestamps and removals stay occurrence-bound", t => {
+  const a = harness(), b = harness()
+  let now = 100_000
+  t.mock.method(Date, "now", () => now)
+  addPermissionToQueue(a.id, permission("same-permission"))
+  now = 200_000
+  addPermissionToQueue(b.id, permission("same-permission"))
+  assert.equal(getPermissionEnqueuedAtForInstance(a.id, "same-permission"), 100_000)
+  assert.equal(getPermissionEnqueuedAtForInstance(b.id, "same-permission"), 200_000)
+  removePermissionFromQueue(a.id, "same-permission")
+  now = 300_000
+  assert.equal(getPermissionEnqueuedAtForInstance(b.id, "same-permission"), 200_000)
+})
 function compact(h: ReturnType<typeof harness>, phase: "started" | "delta" | "ended" | "failed", sessionID = "unknown-child", seq = ++h.clock) {
   sseManager["handleEvent"](h.id, {
     id: `event-${seq}`, created: seq, type: `session.compaction.${phase}`,
@@ -128,7 +163,7 @@ test("loaded-only scans defer across instances and recover idle/global Forms onl
   assert.equal(warnings(), before, "compaction deferral does not notify")
   assert.deepEqual([...a.reads, ...b.reads], [])
   assert.equal(getFormQueue(b.id)[0], draft)
-  await sendPermissionResponse(b.id, "ignored", "live", "once")
+  await sendPermissionResponse(b.id, "unloaded", "live", "once")
   await sendFormCancel(b.id, "live")
   assert.equal(b.mutations, 2)
   assert.deepEqual(b.reads, [])
@@ -264,7 +299,7 @@ test("ambiguous permission/Form replies and cancellation reconcile only known au
   addPendingForm(b.id, form("ambiguous-ordinary", "unloaded"), b.directory)
   b.permissions = [permission("ambiguous")]
   b.forms = [form("ambiguous-global"), form("ambiguous-ordinary", "unloaded")]
-  await assert.rejects(sendPermissionResponse(b.id, "ignored", "ambiguous", "once"))
+  await assert.rejects(sendPermissionResponse(b.id, "unloaded", "ambiguous", "once"))
   await until(() => b.reads.length === 2)
   await assert.rejects(sendFormReply(b.id, "ambiguous-global", { answer: "yes" }))
   await until(() => b.reads.length === 4)

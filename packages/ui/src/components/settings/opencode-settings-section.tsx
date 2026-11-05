@@ -9,7 +9,7 @@ import { OpenCodeLoginStartCard } from "./opencode-login-start-card"
 
 type LogLevelOption = { value: ServerLogLevel; label: string }
 
-export const OpenCodeSettingsSection: Component = () => {
+export const OpenCodeSettingsSection: Component<{ active?: () => boolean }> = (props) => {
   const { t } = useI18n()
   const { serverSettings, updateLogLevel } = useConfig()
   const logLevelOptions = createMemo<LogLevelOption[]>(() => [
@@ -24,8 +24,8 @@ export const OpenCodeSettingsSection: Component = () => {
 
   return (
     <div class="settings-section-stack">
-      <OpenCodeUpdateCard />
-      <OpenCodeExecutableCard />
+      <OpenCodeUpdateCard active={props.active} />
+      <OpenCodeExecutableCard active={props.active} />
       <OpenCodeLoginStartCard />
 
       <div class="settings-card">
@@ -43,7 +43,7 @@ export const OpenCodeSettingsSection: Component = () => {
             </div>
             <Select<LogLevelOption>
               value={selectedLogLevel()}
-              onChange={(option) => option && updateLogLevel(option.value)}
+              onChange={(option) => option && props.active?.() !== false && updateLogLevel(option.value)}
               options={logLevelOptions()}
               optionValue="value"
               optionTextValue="label"

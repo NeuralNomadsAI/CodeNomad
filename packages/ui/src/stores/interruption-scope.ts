@@ -1,16 +1,20 @@
 import type { Session } from "../types/session"
 import { getDescendantSessionsFromMap } from "./session-tree"
-import { getPendingRequestDirectory, getPermissionQueue, instances } from "./instances"
+import { getPendingRequestDirectory, getPendingRequestServerId, getPermissionQueue, instances } from "./instances"
 import { getFormQueue } from "./forms"
 import { getWorktrees } from "./worktrees"
 import { isWorkspaceSessionDirectory } from "./workspace-session-scope"
 import { isSessionInWorkspaceScope, sessions } from "./session-state"
 import { getPermissionSessionId } from "../types/permission"
+import { projectIdentity } from "../lib/project-identity"
 
 function queuedRequests(instanceId: string) {
+  const key = (item: Parameters<typeof getPendingRequestDirectory>[1]) => JSON.stringify([instanceId,
+    projectIdentity(getPendingRequestDirectory(instanceId, item) ?? "", getPendingRequestServerId(instanceId, item)),
+    item.kind, item.payload.sessionID, item.payload.id])
   return [
-    ...getPermissionQueue(instanceId).map(payload => ({ key: `permission:${payload.id}`, kind: "permission" as const, payload })),
-    ...getFormQueue(instanceId).map(payload => ({ key: `form:${payload.id}`, kind: "form" as const, payload })),
+    ...getPermissionQueue(instanceId).map(payload => ({ key: key({ kind: "permission", payload }), kind: "permission" as const, payload })),
+    ...getFormQueue(instanceId).map(payload => ({ key: key({ kind: "form", payload }), kind: "form" as const, payload })),
   ]
 }
 
@@ -25,14 +29,24 @@ function requestSessionId(item: ReturnType<typeof queuedRequests>[number]): stri
 }
 
 function shownHere(instanceId: string, item: ReturnType<typeof queuedRequests>[number]): boolean {
+  if (getPendingRequestServerId(instanceId, item) !== (instances().get(instanceId)?.binding?.serverId ?? "local-shared")) return true
   const sessionId = requestSessionId(item)
   if (sessionId && sessions().get(instanceId)?.has(sessionId) && isSessionInWorkspaceScope(instanceId, sessionId)) return true
   const directory = getPendingRequestDirectory(instanceId, item)
   if (!directory) return true
-  const lists = (id: string) => isWorkspaceSessionDirectory(directory, instances().get(id)?.folder ?? "", getWorktrees(id))
+  const instance = instances().get(instanceId)
+  const serverId = instance?.binding?.serverId ?? "local-shared"
+  const lists = (id: string) => {
+    const other = instances().get(id)
+    if ((other?.binding?.serverId ?? "local-shared") !== serverId) return false
+    return serverId !== "local-shared" ? other?.binding?.directory === directory
+      : isWorkspaceSessionDirectory(directory, other?.folder ?? "", getWorktrees(id))
+  }
   if (lists(instanceId)) return true
   return ![...instances().keys()].some(id => id !== instanceId && lists(id)
-    && queuedRequests(id).some(other => other.key === item.key))
+    && queuedRequests(id).some(other => other.kind === item.kind && other.payload.id === item.payload.id
+      && getPendingRequestServerId(id, other) === getPendingRequestServerId(instanceId, item)
+      && requestSessionId(other) === sessionId && getPendingRequestDirectory(id, other) === directory))
 }
 
 /** The requests this project shows and counts; answering and recovery use the full native queues. */

@@ -26,6 +26,9 @@ import { reloadWorktrees } from "./stores/worktrees"
 import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
 import { useAppSessionRestore } from "./lib/hooks/use-app-session-restore"
+import { useProjectParticipation } from "./lib/hooks/use-project-participation"
+import { getProjectAvailability } from "./stores/project-capability"
+import { captureInstanceRequestAuthority } from "./stores/session-api"
 import { loadedRestorableSession } from "./stores/client-state"
 import { shouldShowAppHomeOverlay, shouldShowAppRestoreLoading } from "./stores/app-session-restore-gate"
 import { getLogger } from "./lib/logger"
@@ -131,6 +134,7 @@ async function withForegroundRefreshTimeout<T>(
 const App: Component = () => {
   onMount(() => onCleanup(startNotificationIconBadge()))
   useAppSessionRestore()
+  useProjectParticipation()
   const { t } = useI18n()
   const {
     preferences,
@@ -264,10 +268,10 @@ const App: Component = () => {
       }
     }, 30_000)
     const openRequestedPreview = async (sessionID: string, url: string, requestID: string) => {
-      const findOwners = () => [...instances().values()].filter((instance) => getSessions(instance.id).some((session) => session.id === sessionID))
+      const findOwners = () => [...instances().values()].filter((instance) => getProjectAvailability(instance.id, "automation").allowed && getSessions(instance.id).some((session) => session.id === sessionID))
       let owners = findOwners()
       if (owners.length === 0) {
-        await Promise.all([...instances().values()].filter((instance) => instance.client).map((instance) => fetchSessions(instance.id, { reset: true }).catch(() => undefined)))
+        await Promise.all([...instances().values()].filter((instance) => instance.client && getProjectAvailability(instance.id, "automation").allowed).map((instance) => fetchSessions(instance.id, { reset: true }).catch(() => undefined)))
         owners = findOwners()
       }
       const activeTab = activeAppTab()
@@ -283,11 +287,13 @@ const App: Component = () => {
         })
         return
       }
-      if (!await claimNativeBrowserOpen(requestID)) return
+      const current = captureInstanceRequestAuthority(owner.id)
+      if (!current() || !getProjectAvailability(owner.id, "automation").allowed || !await claimNativeBrowserOpen(requestID)) return
       try {
         const instance = owner
+        if (!current() || !getProjectAvailability(instance.id, "automation").allowed) { await releaseNativeBrowserOpen(requestID); return }
         await openSessionPreview(sessionID, url, instance.folder)
-        if (disposed) {
+        if (disposed || !current() || !getProjectAvailability(instance.id, "automation").allowed) {
           await releaseNativeBrowserOpen(requestID)
           return
         }
@@ -459,19 +465,22 @@ const App: Component = () => {
     return recent?.projectName?.trim() || getPathBasename(folderPath)
   }
 
-  async function handleSelectFolder(folderPath: string): Promise<boolean> {
+  async function handleSelectFolder(folderPath: string, serverId?: string): Promise<boolean> {
     if (!folderPath) {
       return false
     }
 
     const selectedBinary = serverSettings().opencodeBinary || "opencode2"
-    const projectName = getProjectNameForFolder(folderPath)
+    // prototype-1236: a server folder is not a local recent folder.
+    const projectName = serverId ? getPathBasename(folderPath) : getProjectNameForFolder(folderPath)
     clearLaunchError()
 
     setIsSelectingFolder(true)
     try {
-      const result = await createInstance(folderPath, projectName)
-      recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, folderPath)
+      const result = await createInstance(folderPath, projectName, serverId ? { serverId } : undefined)
+      // prototype-1236 (R11): a server folder joins that server's recent folders only.
+      if (serverId) recordWorkspaceLaunch(folderPath, undefined, serverId)
+      else recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, folderPath)
       if (result.reused) {
         selectInstanceTab(result.instanceId)
         setShowFolderSelection(false)
@@ -495,7 +504,7 @@ const App: Component = () => {
         t("opencodeBinarySelector.validation.v2Required"),
       )
       const missingBinary = isMissingBinaryMessage(message)
-      if (missingBinary || message.includes("opencode_update_required")) {
+      if (!serverId && (missingBinary || message.includes("opencode_update_required"))) {
         openOpenCodeSetup(() => handleSelectFolder(folderPath))
         return false
       }
@@ -538,7 +547,10 @@ const App: Component = () => {
   function handleSelectExistingInstance(instanceId: string, recentPath: string) {
     const instance = instances().get(instanceId)
     if (!instance) return
-    recordWorkspaceLaunch(instance.folder, recentPath)
+    // prototype-1236: a server project stays in that server's recent folders.
+    const serverId = instance.binding?.serverId
+    if (serverId && serverId !== "local-shared") recordWorkspaceLaunch(instance.folder, undefined, serverId)
+    else recordWorkspaceLaunch(instance.folder, recentPath)
     selectInstanceTab(instanceId)
     setShowFolderSelection(false)
     log.info("Selected existing instance", { instanceId, folderPath: instance.folder })
@@ -883,7 +895,7 @@ const App: Component = () => {
           anchor={launcherAnchor()}
           isLoading={isSelectingFolder()}
           onOpenChange={setLauncherOpen}
-          onSelectFolder={(path) => void handleSelectFolder(path)}
+          onSelectFolder={(path, serverId) => void handleSelectFolder(path, serverId)}
           onSelectExistingInstance={handleSelectExistingInstance}
           onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
         />

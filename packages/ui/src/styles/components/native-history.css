@@ -1,0 +1,14 @@
+.history-native-context { position: relative; z-index: 10; flex-shrink: 0; }
+.history-native-feedback {
+  position: absolute;
+  inset-block-start: 100%;
+  inset-inline: 0;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  max-block-size: min(35vh, 12rem);
+  overflow: auto;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-base);
+  font-size: 0.75rem;
+}
+.history-native-feedback > span { flex: 1 1 14rem; min-width: 0; overflow-wrap: anywhere; }

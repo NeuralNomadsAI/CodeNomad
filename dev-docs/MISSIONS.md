@@ -19,6 +19,12 @@ the execution journal retains its task, report and lifecycle contracts.
 
 ## Ownership
 
+Missions is available for workspaces bound to the local shared service. Explicit
+OpenCode bindings return `explicit_capability_unavailable` for `missions` before
+connection acquisition, host inventory, Git, environment or plugin RPC work.
+Authenticated bridge discovery considers local owners only, including for
+ongoing Missions, managed roots, cleanup and human-answer verification.
+
 | Concern | Owner |
 | --- | --- |
 | Root sessions, prompts, durable inbox, execution, Forms, permissions | OpenCode V2 |

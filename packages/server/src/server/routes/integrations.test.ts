@@ -40,6 +40,7 @@ function harness(options: {
   const reader = new IntegrationsReader({
     controls: { read: async () => (options.snapshot ?? loadedSnapshot)() },
     workspaceManager: {
+      requireWorkspaceCapability: () => new AbortController().signal,
       getSharedServiceConnection: async () => ({ client, assertCurrent: options.assertCurrent ?? (() => undefined) }) as never,
       ownsLocation: async () => options.owns?.(ownership++) ?? true,
     },

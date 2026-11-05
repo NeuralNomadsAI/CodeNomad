@@ -44,7 +44,7 @@ function versionNewer(current: string, latest: string): boolean | null {
   return false
 }
 
-export const InfoSettingsSection: Component = () => {
+export const InfoSettingsSection: Component<{ localService?: boolean }> = (props) => {
   const { t, locale } = useI18n()
   const [metaLoadFailed, setMetaLoadFailed] = createSignal(false)
   const [meta, { mutate }] = createResource(async () => {
@@ -162,7 +162,7 @@ export const InfoSettingsSection: Component = () => {
   const osDisplay = createMemo(() => describeClientOs(navigator as ClientNavigator, osHints() ?? null))
 
   // Copy, download and Report a bug share the installed CLI and running service versions.
-  const opencodeVersions = () => ({ opencodeInstalled: openCodeSetupStatus()?.currentVersion, opencodeDaemon: openCodeSetupStatus()?.daemonVersion })
+  const opencodeVersions = () => props.localService === false ? {} : ({ opencodeInstalled: openCodeSetupStatus()?.currentVersion, opencodeDaemon: openCodeSetupStatus()?.daemonVersion })
 
   const handleCopy = async () => {
     const report = buildDiagnosticReport(meta() ?? null, osDisplay(), runtimeEnv, diagnosticLabels(), new Date(), opencodeVersions())
@@ -173,7 +173,7 @@ export const InfoSettingsSection: Component = () => {
 
   // Warm both reads: the click opens GitHub at once, within the browser's user activation.
   void readBugReportTemplateStatus()
-  if (!openCodeSetupStatus()) void refreshOpenCodeSetup()
+  if (props.localService !== false && !openCodeSetupStatus()) void refreshOpenCodeSetup()
   const handleReportBug = () => {
     const environment = buildBugReportEnvironment(meta() ?? null, osDisplay(), runtimeEnv, {
       ...opencodeVersions(), userAgent: navigator.userAgent,

@@ -47,7 +47,7 @@ function harness(options: { mission?: boolean; journal?: boolean; auth: boolean;
     : options.auth ? { sessionId: "cookie", username: "person" } : { sessionId: "auth-disabled", username: "local" }
   const deps = {
     auth: { isAuthEnabled: () => options.auth, getSessionFromRequest: () => human },
-    manager: { get: () => workspace, getServiceWslDistro: () => undefined, ownsLocation: async () => state.owned },
+    manager: { requireWorkspaceCapability: () => new AbortController().signal, get: () => workspace, getServiceWslDistro: () => undefined, ownsLocation: async () => state.owned },
     settings: { getProfileScope: () => ({ key: "profile", channel: "c", configIdentity: "i" }) },
     bridgeToken: "token",
     ...(options.remoteDevices === false ? {} : { remoteDevices: { isDeviceAuthorized: (id: string) => id === "device-1" && state.authorized } }),
@@ -145,7 +145,7 @@ test("the bridge verifier revalidates the exact principal kind against live auth
   const deps = (auth: boolean) => ({
     auth: { isAuthEnabled: () => auth, getCookieName: () => "c",
       getSessionFromHeaders: ({ cookie }: { cookie: string }) => cookie === "c=cookie" ? { sessionId: "cookie", username: "person" } : null },
-    manager: { get: () => workspace, getServiceWslDistro: () => undefined, getSharedServiceConnection: async () => connection, ownsLocation: async () => true },
+    manager: { requireWorkspaceCapability: () => new AbortController().signal, get: () => workspace, getServiceWslDistro: () => undefined, getSharedServiceConnection: async () => connection, ownsLocation: async () => true },
     settings: { getProfileScope: () => ({ key: "profile" }) },
     remoteDevices: { isDeviceAuthorized: (id: string) => id === "device-1" && authorized },
   }) as never

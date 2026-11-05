@@ -7,12 +7,14 @@ import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../s
 import { HistorySearchExcerpt, HistoryWorktreeBadge } from "./history-search-results"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { rankedSearchTerms } from "../lib/ranked-search"
+import { isExplicitHistory, requireHistoryEnrichment } from "../stores/session-history-capability"
 
 // An explicit result click reads only that native message. Keep it outside the
 // transcript store so opening historical results cannot displace its window.
 export default function HistoryMessagePreview(props: { instanceId: string; sessionId: string; messageId: string;
   highlight?: { query: string; match: SessionSearchMatch } }) {
   const { t, locale } = useI18n()
+  const explicit = createMemo(() => isExplicitHistory(props.instanceId))
   const [title, setTitle] = createSignal("")
   const [directory, setDirectory] = createSignal<string>()
   const [created, setCreated] = createSignal<number>()
@@ -26,6 +28,7 @@ export default function HistoryMessagePreview(props: { instanceId: string; sessi
   onCleanup(() => { target += 1 })
   createEffect(() => {
     const instanceId = props.instanceId, sessionID = props.sessionId, messageID = props.messageId
+    if (explicit()) { setPending(false); return }
     const generation = getOpenCodeInstanceGeneration(instanceId)
     const revision = getOpenCodeMutationRevision(instanceId, sessionID)
     const controller = new AbortController()
@@ -58,6 +61,7 @@ export default function HistoryMessagePreview(props: { instanceId: string; sessi
     onCleanup(() => controller.abort())
   })
   async function open() {
+    requireHistoryEnrichment(props.instanceId)
     const opened = target
     const current = () => opened === target
     setOpening(true)
@@ -68,6 +72,7 @@ export default function HistoryMessagePreview(props: { instanceId: string; sessi
     setOpenFailed(!result)
   }
   return <section class="history-message-preview" aria-live="polite">
+    <Show when={explicit()} fallback={<>
     <div class="history-message-preview-header">
       <strong>{title()}</strong>
       <HistoryWorktreeBadge instanceId={props.instanceId} directory={directory()} />
@@ -81,5 +86,6 @@ export default function HistoryMessagePreview(props: { instanceId: string; sessi
     <Show when={failed()}><span role="alert">{t("messageSection.search.failed")}</span></Show>
     <Show when={openFailed()}><span role="alert">{t("history.openFailed")}</span></Show>
     <For each={blocks()}>{text => <pre><HistorySearchExcerpt text={text} terms={terms()} /></pre>}</For>
+    </>}>{t("history.explicit.enrichmentUnavailable")}</Show>
   </section>
 }

@@ -94,6 +94,7 @@ import { validMissionContentSlice } from "./mission-content-slice"
 import { assertTaskReadLive, TASK_READ_TIMEOUT_MS, MissionTaskPageReadError } from "./mission-task-read-lifetime"
 import type { MissionTaskPageContext } from "./mission-task-page-schema"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
+import { isWebHost, isPreferencesWindow } from "./runtime-env"
 
 const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
 const EVENTS_URL = buildEventsUrl(API_BASE, DEFAULT_EVENTS_PATH)
@@ -396,6 +397,13 @@ export const serverApi = {
   },
   fetchServerMeta(): Promise<ServerMeta> {
     return request<ServerMeta>("/api/meta")
+  },
+  // prototype-1236: host-only; the backend exchanges the link and keeps the credential.
+  addOpenCodeServer(payload: { name?: string; address: string }): Promise<{ id: string; label: string; origin: string }> {
+    return request("/api/opencode-servers/add", { method: "POST", body: JSON.stringify(payload) })
+  },
+  removeOpenCodeServer(id: string): Promise<void> {
+    return request(`/api/opencode-servers/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
   probeRemoteServer(payload: RemoteServerProbeRequest): Promise<RemoteServerProbeResponse> {
     return request<RemoteServerProbeResponse>("/api/remote-servers/probe", {
@@ -740,6 +748,12 @@ export const serverApi = {
     const query = params.toString()
     return request<FileSystemListResponse>(query ? `/api/filesystem?${query}` : "/api/filesystem")
   },
+  // prototype-1236: folders of an explicit OpenCode server, read through its shared connection.
+  listOpenCodeFolders(serverId: string, path?: string): Promise<FileSystemListResponse> {
+    const params = new URLSearchParams({ serverId })
+    if (path) params.set("path", path)
+    return request<FileSystemListResponse>(`/api/opencode-folders?${params}`)
+  },
 
   createFileSystemFolder(parentPath: string | undefined, name: string): Promise<FileSystemCreateFolderResponse> {
     return request<FileSystemCreateFolderResponse>("/api/filesystem/folders", {
@@ -754,8 +768,8 @@ export const serverApi = {
     }
     return request<FileSystemFileContentResponse>(`/api/filesystem/files/content?${params.toString()}`)
   },
-  readInstanceData(id: string): Promise<InstanceData> {
-    return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)
+  readInstanceData(id: string, signal?: AbortSignal): Promise<InstanceData> {
+    return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`, { signal })
   },
   fetchMissionPanel(instanceId: string, selector: Exclude<import("../../../server/src/missions/mission-panel-wire").MissionPanelPageRequest, { source: "tasks" }>, scope: MissionPanelReadScope) {
     const deadline = Math.min(scope.deadline ?? Infinity, performance.now() + TASK_READ_TIMEOUT_MS)
@@ -972,12 +986,13 @@ export const serverApi = {
     onEvent: (event: WorkspaceEventPayload) => void,
     onError?: () => void,
     onPing?: (payload: { ts?: number }) => void,
+    onParticipation?: (payload: unknown) => void,
   ) {
     const identity = getClientIdentity()
     const url = buildClientEventsUrl(identity)
     sseLogger.info(`Connecting to ${url}`)
     const source = new EventSource(url, { withCredentials: true } as any)
-    attachEventSourceHandlers(source, { onEvent, onError, onPing, logger: sseLogger })
+    attachEventSourceHandlers(source, { onEvent, onError, onPing, onParticipation, logger: sseLogger })
     return source
   },
 }
@@ -986,6 +1001,7 @@ function buildClientEventsUrl(identity: { clientId: string; connectionId: string
   const url = new URL(EVENTS_URL, typeof window !== "undefined" ? window.location.origin : "http://localhost")
   url.searchParams.set("clientId", identity.clientId)
   url.searchParams.set("connectionId", identity.connectionId)
+  if (isWebHost() && !isPreferencesWindow()) url.searchParams.set("participation", "1")
   if (EVENTS_URL.startsWith("http://") || EVENTS_URL.startsWith("https://")) {
     return url.toString()
   }

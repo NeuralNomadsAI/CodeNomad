@@ -93,6 +93,7 @@ async function fixture() {
     assertCurrent() { if (!connection.current) throw new Error("Connection replaced") } }
     const manager = { get: () => location, getServiceLocation: () => location, getServiceDirectoryForPath: async () => directory,
       getSharedServiceConnection: async () => env.available ? connection : undefined, ownsLocation: async () => env.owns,
+      requireWorkspaceCapability: () => new AbortController().signal,
       getServiceWslDistro: () => undefined, getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",
       getWorktreeIdentityForPath: async () => checkout, getHostPathForServicePath: async () => directory }
     const app = Fastify({ logger: false })

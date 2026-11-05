@@ -51,3 +51,14 @@ test("a closing or superseded backend cannot start a native service", async () =
   await dispatchNativeRequest(child, request, async () => { executed = true }, () => false)
   assert.equal(executed, false)
 })
+
+test("attachment response preserves its opaque scoped request ID and canonical v1 header", async () => {
+  const id = "attachments-00000000-0000-4000-8000-000000000000"
+  const request = parseNativeRequest(`${NATIVE_REQUEST_PREFIX}${JSON.stringify({
+    v: 1, id, method: "projects.attachments.current", deadline: Date.now() + 5_000,
+  })}`)!
+  let wire = ""
+  const child = { stdin: { writable: true, write(line: string) { wire = line; return true } } } as unknown as ChildProcess
+  await dispatchNativeRequest(child, request, async () => true, () => true)
+  assert.equal(wire, `CODENOMAD_NATIVE_RESPONSE:{"v":1,"id":"${id}","ok":true,"result":true}\n`)
+})

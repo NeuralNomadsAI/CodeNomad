@@ -1,5 +1,9 @@
 # Autenticación y seguridad
 
+Elegir un archivo adjunto lo lee en tu dispositivo; enviar el mensaje transfiere sus bytes al servidor OpenCode del proyecto. El servicio local compartido pertenece al host de ejecución de CodeNomad, que puede ser distinto de tu dispositivo. La lectura de medios diferidos limita toda la respuesta descomprimida del servidor a 16 MiB antes del análisis, incluidos los errores. Un exceso, una cancelación o la retirada del proyecto o de la conexión hace fallar la lectura. El navegador gestiona las dimensiones de imagen y la memoria de las imágenes decodificadas; los envíos desde el dispositivo mantienen sus propios presupuestos.
+
+El chat interno de servidores explícitos autoriza medios antes de mostrarlos o descargarlos. Se rechazan URL de imágenes externas, imágenes SVG/HTML activas y medios HTML integrados; las descargas requieren una acción y las lecturas fallidas permanecen fallidas. El límite de 8 MiB por URI de datos acota la entrada codificada por separado de las dimensiones decodificadas y los límites de carga del dispositivo.
+
 El acceso a CodeNomad permite ejecutar trabajo en el equipo del backend mediante OpenCode. Trata las contraseñas de servidor, las sesiones de navegador y los dispositivos emparejados como credenciales potentes. CodeNomad no es un entorno aislado de ejecución multiusuario.
 
 ## Elegir cómo autentica el servidor {#authentication}

@@ -7,6 +7,7 @@ import type { NativeScheduleSettingsActivation } from "../../opencode/native-sch
 import { PluginControlsError } from "../../opencode/plugin-controls"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { requestAdmission } from "../request-admission"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 import { MissionMapMutationError, prepareMissionMapMutation, type MissionMapMutationManager } from "./mission-map-mutation"
 
 const params = z.object({ id: z.string().min(1).max(200) }).strict()
@@ -55,6 +56,7 @@ export function registerMissionScheduleList(app: FastifyInstance, deps: Deps) {
         return { ...view, activation } satisfies MissionScheduleCapability
       })
     } catch (error) {
+      if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
       const status = error instanceof MissionMapMutationError ? error.status : 503
       return reply.code(status).send({ error: "Mission schedule read unavailable", code: "schedule-read-unavailable" })
     } finally { lifetime.dispose() }

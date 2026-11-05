@@ -32,7 +32,7 @@ await withProductRuntime(process.argv[2], async ({ root }) => {
   }
   const record = {}, connection = { client, assertCurrent() {} }
   assert.equal(locations[0].project.id, locations[3].project.id, "Independent clones share native project identity")
-  const usage = new ServiceUsage({ get: () => record, getSharedServiceConnection: async () => connection })
+  const usage = new ServiceUsage({ requireWorkspaceCapability: () => new AbortController().signal, get: () => record, getSharedServiceConnection: async () => connection })
   const result = await usage.read("fixture", { from, to: Date.now() + 1000, timezone: "UTC" })
   assert.equal(result.scope, "service")
   assert.equal(result.stats.sessions, 4, "Explicit service scope includes worktrees, independent clones and unrelated projects")

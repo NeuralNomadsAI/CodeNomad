@@ -1,6 +1,43 @@
 import { z } from "zod"
+import { normalizeExplicitOrigin } from "../opencode/servers/origin"
+
+export const OpenCodeServerIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/)
+const ExplicitServerIdSchema = OpenCodeServerIdSchema.refine(id => id !== "local-shared")
+// Synchronous metadata validation; network admission also checks every DNS answer.
+const ServerOriginSchema = z.string().superRefine((value, ctx) => {
+  try {
+    if (value !== normalizeExplicitOrigin(value)) throw new Error()
+  } catch {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Expected a normalized HTTPS origin or HTTP loopback origin" })
+  }
+})
+export const OpenCodeServerProfileSchema = z.preprocess(value => {
+  if (!value || typeof value !== "object" || !("kind" in value) || value.kind !== "explicit") return value
+  // Development metadata migrates by discarding private references without accessing a vault.
+  const { credentialMode, credentialRef, ...metadata } = value as Record<string, unknown>
+  if (credentialMode !== undefined && credentialMode !== "keychain" && credentialMode !== "memory") return value
+  return metadata
+}, z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("local-shared"), id: z.literal("local-shared") }).strict(),
+  z.object({
+    kind: z.literal("explicit"), id: ExplicitServerIdSchema,
+    label: z.string().trim().min(1).max(200), origin: ServerOriginSchema,
+  }).strict(),
+]))
+export const OpenCodeServersSchema = z.array(OpenCodeServerProfileSchema).superRefine((profiles, ctx) => {
+  const ids = new Set<string>()
+  for (const profile of profiles) {
+    if (ids.has(profile.id)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Duplicate OpenCode server ID" })
+    ids.add(profile.id)
+  }
+})
+export const ProjectExecutionBindingSchema = z.object({
+  serverId: OpenCodeServerIdSchema.default("local-shared"),
+  directory: z.string().min(1).refine(value => !value.includes("\0")),
+}).strict()
 
 const ModelPreferenceSchema = z.object({
+  serverId: OpenCodeServerIdSchema.optional(),
   providerId: z.string(),
   modelId: z.string(),
 })
@@ -39,6 +76,7 @@ const PreferencesSchema = z
   .passthrough()
 
 const RecentFolderSchema = z.object({
+  serverId: OpenCodeServerIdSchema.optional(),
   path: z.string(),
   lastAccessed: z.number().nonnegative(),
   projectName: z.string().optional(),

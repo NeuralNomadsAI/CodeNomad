@@ -23,11 +23,13 @@ import { helpUrl } from "../help-url"
 import { openExternalUrl } from "../external-url"
 import { openSettings } from "../../stores/settings-screen"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
-import { canOpenWorkspacePaths, openWorkspacePath, type WorkspaceEditor, type WorkspaceOpenTarget } from "../workspace-open"
+import { canOpenWorkspacePaths, openWorkspacePath, WorkspacePathUnavailableError, type WorkspaceEditor, type WorkspaceOpenTarget } from "../workspace-open"
 import { getDefaultWorktreeSlug, getWorktreeSlugForSession } from "../../stores/worktrees"
 import { compactSession, executeSessionTechnicalPartDeletion, planSessionTechnicalPartDeletion, stageSessionRevert } from "../../stores/session-actions"
 import { beginSessionCleanup } from "../../stores/session-cleanup-progress"
 import { requestUserMessageJump } from "../../components/user-message-navigation"
+import { getProjectAvailability } from "../../stores/project-capability"
+import { captureInstanceRequestAuthority } from "../../stores/session-api"
 
 const log = getLogger("actions")
 
@@ -97,15 +99,12 @@ export function useCommands(options: UseCommandsOptions) {
 
     const openActiveWorkspace = async (target: WorkspaceOpenTarget, editor?: WorkspaceEditor) => {
       const workspace = activeWorkspace()
-      if (!workspace) {
-        showAlertDialog(tGlobal("commands.openWorkspace.projectRequired.message"), {
-          title: tGlobal("commands.openWorkspace.projectRequired.title"),
-        })
-        return
-      }
+      if (!workspace || !canOpenWorkspacePaths(workspace.instanceId)) return
+      const current = captureInstanceRequestAuthority(workspace.instanceId)
       try {
         await openWorkspacePath({ target, ...workspace, editor })
       } catch (error) {
+        if (!current() || activeInstance()?.id !== workspace.instanceId || error instanceof WorkspacePathUnavailableError) return
         showAlertDialog(tGlobal("commands.openWorkspace.failed.message", {
           message: error instanceof Error ? error.message : String(error),
         }), {
@@ -153,7 +152,8 @@ export function useCommands(options: UseCommandsOptions) {
         description: () => tGlobal("commands.openWorkspace.folder.description"),
         category: "Instance",
         keywords: () => splitKeywords("commands.openWorkspace.folder.keywords"),
-        disabled: () => !activeInstance(),
+        disabled: () => !activeInstance() || !canOpenWorkspacePaths(activeInstance()!.id),
+        hidden: () => !activeInstance() || !canOpenWorkspacePaths(activeInstance()!.id),
         action: () => openActiveWorkspace("default"),
       })
       commandRegistry.register({
@@ -162,7 +162,8 @@ export function useCommands(options: UseCommandsOptions) {
         description: () => tGlobal("commands.openWorkspace.terminal.description"),
         category: "Instance",
         keywords: () => splitKeywords("commands.openWorkspace.terminal.keywords"),
-        disabled: () => !activeInstance(),
+        disabled: () => !activeInstance() || !canOpenWorkspacePaths(activeInstance()!.id),
+        hidden: () => !activeInstance() || !canOpenWorkspacePaths(activeInstance()!.id),
         action: () => openActiveWorkspace("terminal"),
       })
       const editors: Array<[WorkspaceEditor, string]> = [
@@ -178,7 +179,8 @@ export function useCommands(options: UseCommandsOptions) {
           description: () => tGlobal("commands.openWorkspace.editor.description", { editor: name }),
           category: "Instance",
           keywords: () => [name, ...splitKeywords("commands.openWorkspace.editor.keywords")],
-          disabled: () => !activeInstance(),
+          disabled: () => !activeInstance() || !canOpenWorkspacePaths(activeInstance()!.id),
+          hidden: () => !activeInstance() || !canOpenWorkspacePaths(activeInstance()!.id),
           action: () => openActiveWorkspace("editor", editor),
         })
       }
@@ -248,6 +250,8 @@ export function useCommands(options: UseCommandsOptions) {
 
     commandRegistry.register({
       id: "switch-to-info",
+      hidden: () => !activeInstance() || !getProjectAvailability(activeInstance()!.id, "serviceManagement").allowed,
+      disabled: () => !activeInstance() || !getProjectAvailability(activeInstance()!.id, "serviceManagement").allowed,
       label: () => tGlobal("commands.instanceInfo.label"),
       description: () => tGlobal("commands.instanceInfo.description"),
       category: "Instance",
@@ -255,7 +259,7 @@ export function useCommands(options: UseCommandsOptions) {
       shortcutId: "switch-to-info",
       action: () => {
         const instance = activeInstance()
-        if (instance) setActiveSession(instance.id, "info")
+        if (instance && getProjectAvailability(instance.id, "serviceManagement").allowed) setActiveSession(instance.id, "info")
       },
     })
 
@@ -363,20 +367,25 @@ export function useCommands(options: UseCommandsOptions) {
       id: "remove-session-tools-and-reasoning",
       label: () => tGlobal("commands.removeSessionTechnicalParts.label"),
       description: () => tGlobal("commands.removeSessionTechnicalParts.description"),
+      hidden: () => !activeInstance() || !getProjectAvailability(activeInstance()!.id, "sessionPruning").allowed,
       category: "Session",
       keywords: () => splitKeywords("commands.removeSessionTechnicalParts.keywords"),
       disabled: () => {
         const sessionId = activeSessionIdForInstance()
-        return !activeInstance() || !sessionId || sessionId === "info"
+        return !activeInstance() || !getProjectAvailability(activeInstance()!.id, "sessionPruning").allowed || !sessionId || sessionId === "info"
       },
       action: async () => {
         const instance = activeInstance()
         const sessionId = activeSessionIdForInstance()
         if (!instance || !sessionId || sessionId === "info") return
+        if (!getProjectAvailability(instance.id, "sessionPruning").allowed) return
+        const sourceCurrent = captureInstanceRequestAuthority(instance.id)
+        const current = () => sourceCurrent() && activeInstance()?.id === instance.id && activeSessionIdForInstance() === sessionId
         const progress = beginSessionCleanup(instance.id, sessionId)
         if (!progress) return
         try {
           const plan = await planSessionTechnicalPartDeletion(instance.id, sessionId, { signal: progress.signal, progress: progress.planning })
+          if (!current()) return
           if (plan.candidates.length === 0) {
             if (plan.skipped) throw new Error(tGlobal("history.skipped", { count: plan.skipped }))
             showAlertDialog(tGlobal("commands.removeSessionTechnicalParts.empty.message"), {
@@ -393,10 +402,11 @@ export function useCommands(options: UseCommandsOptions) {
             confirmLabel: tGlobal("commands.removeSessionTechnicalParts.confirm.label"),
             variant: "warning",
           })
-          if (!confirmed) return
+          if (!confirmed || !current()) return
           progress.signal.throwIfAborted()
           progress.pruning(0, plan.candidates.length)
           const failed = await executeSessionTechnicalPartDeletion(plan, { signal: progress.signal, progress: progress.pruning })
+          if (!current()) return
           if (failed.length > 0 || plan.skipped) {
             showAlertDialog(tGlobal("commands.removeSessionTechnicalParts.failed.message", { count: failed.length + plan.skipped }), {
               title: tGlobal("commands.removeSessionTechnicalParts.failed.title"),
@@ -405,7 +415,7 @@ export function useCommands(options: UseCommandsOptions) {
             })
           }
         } catch (error) {
-          if (progress.signal.aborted) return
+          if (progress.signal.aborted || !current()) return
           showAlertDialog(error instanceof Error ? error.message : String(error), {
             title: tGlobal("commands.removeSessionTechnicalParts.failed.title"),
             variant: "error",
@@ -651,6 +661,8 @@ export function useCommands(options: UseCommandsOptions) {
   }
 
   function executeCommand(command: Command) {
+    if (command.disabled && resolveResolvable(command.disabled)) return
+    if (command.hidden && resolveResolvable(command.hidden)) return
     try {
       const result = command.action?.()
       if (result instanceof Promise) {

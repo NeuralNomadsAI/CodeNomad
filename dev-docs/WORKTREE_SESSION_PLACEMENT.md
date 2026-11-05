@@ -146,8 +146,10 @@ queued/restored prompts), slash command and session shell command. Existing
 sessions receive it on their next submission, as do newly created sessions on
 their first submission.
 
-The entry uses the user's current choice and appends the catalogue's default
-creation parent when available. It survives independently of the voice-mode
+For the shared local service, the entry uses the user's current choice and appends
+the catalogue's default creation parent when available. Explicit-server bindings
+receive exact-Location execution context and their deferred integration limits.
+Each branch survives independently of the voice-mode
 entry and is reapplied on every submission, never skipped by a browser-side
 success cache. A failed write propagates through the action failure path. Other
 instruction keys and session metadata stay intact.
@@ -159,6 +161,26 @@ agent-vs-user movement policy needs a supported native runtime control; never
 block the proxy for it.
 
 ## Directory spelling
+
+### Internal explicit-server authority
+
+An explicit workspace binds one exact `{ serverId, directory }` to its occurrence.
+Its native client and generation come from that target's connection owner.
+Location ownership compares the exact validated directory and rejects workspace
+selectors and clients pinned to another target. Each session requires its own
+native placement read through the captured connection; a moved session outside
+that directory loses authority. Family ancestry, native project IDs, repository
+roots, lexical descendants and alias metadata never expand that scope. An
+out-of-scope location requires a separate opening. Local worktree discovery and
+family-move helpers stay behind the local-workspace boundary.
+
+`scripts/test-opencode-explicit-location-native.mjs` qualifies the Location and
+readable-directory contract on an isolated runtime. It checks absent and
+permission-denied folders, directory aliases and native session placement, and
+records runtime metadata with its evidence. A readable alias retains its own
+Location spelling; repository canonical metadata grants no additional authority.
+
+### Local directory comparisons
 
 Do not lowercase paths globally (including case-sensitive hosts) or broaden
 project authority to hide native directory-filter discrepancies. When diagnosing an absent

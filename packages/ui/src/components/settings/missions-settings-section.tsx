@@ -6,11 +6,12 @@ import { MissionPreferences } from "../mission-preferences"
 
 /** Global Mission defaults plus the Location-scoped parts for the project that
  * opened Settings. Catalog/depth reads follow this section's visibility. */
-export const MissionsSettingsSection: Component<{ instanceId?: string; location?: LocationRef }> = (props) => {
+export const MissionsSettingsSection: Component<{ instanceId?: string; location?: LocationRef; catalogueActive?: () => boolean; executionActive?: () => boolean; authority?: string }> = (props) => {
   const instanceId = () => props.instanceId ?? activeInstanceId() ?? ""
   const directory = () => props.location?.directory ?? instances().get(instanceId())?.folder
   return <div class="settings-section-stack">
-    <MissionPreferences instanceId={instanceId()} directory={instanceId() ? directory() : undefined}
+    <MissionPreferences instanceId={instanceId()} directory={instanceId() ? directory() : undefined} location={props.location}
+      catalogueActive={props.catalogueActive} executionActive={props.executionActive} authority={props.authority}
       active={() => activeSettingsSection() === "missions"} />
   </div>
 }

@@ -7,6 +7,7 @@ export interface WorkspaceEventTransportCallbacks {
   onOpen?: () => void
   onStatus?: (status: WorkspaceEventTransportStatus) => void
   onPing?: (payload: { ts?: number }) => void
+  onParticipation?: (payload: unknown) => void
 }
 
 export type WorkspaceEventTransportStatus = "connecting" | "connected" | "disconnected"
@@ -24,7 +25,7 @@ export async function connectWorkspaceEvents(
   }
   const source = serverApi.connectEvents((event) => {
     callbacks.onBatch([event])
-  }, notifyDisconnected, callbacks.onPing)
+  }, notifyDisconnected, callbacks.onPing, callbacks.onParticipation)
   source.onopen = () => {
     callbacks.onStatus?.("connected")
     callbacks.onOpen?.()

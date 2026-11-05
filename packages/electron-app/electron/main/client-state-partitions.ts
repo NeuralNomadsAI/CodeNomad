@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { link, lstat, mkdir, open, readFile, readdir, rm, unlink } from "node:fs/promises"
+import { link, lstat, mkdir, open, readdir, rm, unlink } from "node:fs/promises"
 import { join } from "node:path"
 import { hasErrorCode } from "./client-state-process"
 
@@ -175,9 +175,26 @@ export class ClientStatePartitionStore {
       const path = join(this.directory, key)
       const stats = await lstat(path)
       if (!stats.isFile() || stats.isSymbolicLink()) return null
-      const bytes = await readFile(path)
-      if (bytes.length > MAX_PARTITION_BYTES || digest(bytes) !== key) return null
-      return bytes.toString("utf8")
+      const file = await open(path, "r")
+      try {
+        const chunk = Buffer.allocUnsafe(64 * 1024)
+        const chunks: Buffer[] = []
+        const hash = createHash("sha256")
+        let size = 0
+        for (;;) {
+          const { bytesRead } = await file.read(chunk, 0, Math.min(chunk.length, MAX_PARTITION_BYTES + 1 - size), null)
+          if (bytesRead === 0) break
+          size += bytesRead
+          if (size > MAX_PARTITION_BYTES) return null
+          const bytes = chunk.subarray(0, bytesRead)
+          hash.update(bytes)
+          chunks.push(Buffer.from(bytes))
+        }
+        if (hash.digest("hex") !== key) return null
+        return Buffer.concat(chunks, size).toString("utf8")
+      } finally {
+        await file.close()
+      }
     } catch (error) {
       if (hasErrorCode(error, "ENOENT")) return null
       throw error

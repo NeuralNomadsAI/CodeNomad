@@ -21,6 +21,16 @@ Zuletzt verwendete Einträge sind Verknüpfungen. **Arbeitsbereich umbenennen** 
 
 Ein normaler Klick öffnet weiterhin die vollständige Startseite. Der Schnellstarter ist ein Direktzugriff, keine Verwaltungsoberfläche: Benennen/entfernen Sie zuletzt verwendete Projekte und verwalten Sie Server-Lesezeichen auf der Startseite. Escape schließt den Schnellstarter und setzt den Fokus auf `+` zurück.
 
+## Projekt auf einem OpenCode-Server öffnen {#remote-project}
+
+1. Klappen Sie auf der Startseite oder im Schnellstarter **REMOTE** auf und wählen Sie **+ Projekt** bei einem Server. Sein Name bleibt neben dem Ordnerpfad sichtbar.
+2. Wählen Sie einen Server, durchsuchen Sie seine Ordner und wählen Sie **Öffnen**. **Rücktaste** wechselt zum übergeordneten Ordner; **Esc** kehrt zu den Servern zurück.
+3. Um einen Server hinzuzufügen, fügen Sie seinen `opencode pair`-Link oder `https://opencode:<Passwort>@host:port` in **Kopplungslink oder Adresse** ein. Rechtsklick auf einen Server (oder **Umschalt+F10**) für **Gespeicherten Server entfernen**.
+
+Der Tab zeigt ein Server-Symbol, und der Ordner erscheint unter den zuletzt verwendeten Projekten. **Ordner durchsuchen**, **Git-Repo klonen** und temporäre Instanzen bleiben auf diesem Computer.
+
+Das Host-Backend speichert Kopplungstoken und manuelle Passwörter über Neustarts hinweg in seiner privaten `opencode-server-pairings.json` (0600) neben `config.yaml`. Ablauf, HTTP 401, ein geänderter Ursprung oder Entfernen des Servers löschen das Geheimnis. Gespeicherte Projekte werden auf ihrem eigenen Server wiederhergestellt; nur der Host fügt Server hinzu oder entfernt sie.
+
 ## Projekt-Tab schließen {#close-stop}
 
 1. Verwenden Sie die Schließen-Schaltfläche des Tabs oder **Tab schließen** in der Befehlspalette (`Ctrl/Cmd+W` im Renderer).

@@ -8,6 +8,7 @@ import { SettingsService } from "../../../server/src/settings/service"
 import { resolveConfigLocation } from "../../../server/src/config/location"
 import { ServiceUsage } from "../../../server/src/opencode/service-usage"
 import type { BrowserContextOptions } from "playwright"
+import { setTimeout as delay } from "node:timers/promises"
 
 async function statsPage(fixture: Awaited<ReturnType<typeof startProductFixture>>, options: BrowserContextOptions = {}) {
   const page = await fixture.browser.newPage(options)
@@ -292,6 +293,7 @@ test("a new Preferences renderer/backend restores totals and charts before a two
     } },
   } }
   const manager: any = { get: () => record, getSharedServiceConnection: async () => connection,
+    requireWorkspaceCapability: (_id: string, capability: string) => { assert.equal(capability, "executionSettings"); return new AbortController().signal },
     getServicePathStyle: () => "posix", getServiceWslDistro: () => undefined }
   const reopen = () => new ServiceUsage(manager, new SettingsService(resolveConfigLocation(path.join(root, "config.yaml")), undefined, logger))
   let service = reopen()
@@ -360,6 +362,7 @@ test("P1/P2 held discovery cannot block real fresh display; abandoned periods ca
     } },
   } }
   const manager: any = { get: () => record, getSharedServiceConnection: async () => connection,
+    requireWorkspaceCapability: (_id: string, capability: string) => { assert.equal(capability, "executionSettings"); return new AbortController().signal },
     getServicePathStyle: () => "posix", getServiceWslDistro: () => undefined }
   const reopen = () => new ServiceUsage(manager, new SettingsService(resolveConfigLocation(path.join(root, "config.yaml")), undefined, logger))
   let service = reopen()
@@ -383,7 +386,9 @@ test("P1/P2 held discovery cannot block real fresh display; abandoned periods ca
     const page = await open("before-restart")
     await page.waitForFunction(() => (window as any).fixture.queries.length === 1)
     // The route has admitted the real initial native request before selection.
-    await admitted
+    const deadline = new AbortController()
+    try { await Promise.race([admitted, delay(30_000, undefined, { signal: deadline.signal }).then(() => { throw new Error("Native Stats request was not admitted") })]) }
+    finally { deadline.abort() }
     assert.deepEqual(calls, [30])
     await page.getByLabel("Period", { exact: true }).selectOption("7")
     await page.waitForFunction(() => [...document.querySelectorAll(".usage-metrics dt")].find(el => el.textContent === "Steps")?.nextElementSibling?.textContent === "7")

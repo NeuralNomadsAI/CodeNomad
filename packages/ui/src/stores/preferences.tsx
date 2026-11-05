@@ -8,6 +8,7 @@ import {
   updateInstanceConfig as updateInstanceData,
 } from "./instance-config"
 import { getLogger } from "../lib/logger"
+import { isServerId, LOCAL_SERVER_ID, projectIdentity } from "../lib/project-identity"
 import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
 import { buildSpeechPatch } from "../lib/speech-patch"
 import { normalizeHotkeyOverrides, type HotkeyBinding, type HotkeyOverrides } from "../lib/hotkey-bindings"
@@ -50,6 +51,7 @@ type DeepReadonly<T> = T extends (...args: any[]) => unknown
       : T
 
 export interface ModelPreference {
+  serverId?: string
   providerId: string
   modelId: string
 }
@@ -160,6 +162,7 @@ export interface OpenCodeBinary {
 }
 
 export interface RecentFolder {
+  serverId?: string
   path: string
   lastAccessed: number
   projectName?: string
@@ -175,6 +178,7 @@ interface UiConfigBucket {
 }
 
 interface ServerConfigBucket {
+  opencodeServers?: unknown
   listeningMode?: ListeningMode
   logLevel?: ServerLogLevel
   environmentVariables?: Record<string, string>
@@ -468,10 +472,13 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
       const p = (f as any).path
       const lastAccessed = (f as any).lastAccessed
       const projectName = (f as any).projectName
+      const serverId = (f as any).serverId
+      if (serverId !== undefined && !isServerId(serverId)) return null
       if (typeof p !== "string") return null
       const ts = typeof lastAccessed === "number" ? lastAccessed : Date.now()
       return {
         path: p,
+        ...(serverId === undefined ? {} : { serverId }),
         lastAccessed: ts,
         ...(typeof projectName === "string" && projectName.trim() ? { projectName: projectName.trim() } : {}),
       }
@@ -516,14 +523,18 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
         const providerId = (m as any).providerId
         const modelId = (m as any).modelId
         if (typeof providerId !== "string" || typeof modelId !== "string") return null
-        return { providerId, modelId }
+        const serverId = (m as any).serverId
+        if (serverId !== undefined && !isServerId(serverId)) return null
+        return { providerId, modelId, ...(serverId === undefined ? {} : { serverId }) }
       }),
       favorites: cloneArray<ModelPreference>((source.models as any)?.favorites, (m) => {
         if (!m || typeof m !== "object") return null
         const providerId = (m as any).providerId
         const modelId = (m as any).modelId
         if (typeof providerId !== "string" || typeof modelId !== "string") return null
-        return { providerId, modelId }
+        const serverId = (m as any).serverId
+        if (serverId !== undefined && !isServerId(serverId)) return null
+        return { providerId, modelId, ...(serverId === undefined ? {} : { serverId }) }
       }),
       thinkingSelections: normalizeRecord((source.models as any)?.thinkingSelections),
       favoritesOnly: (source.models as any)?.favoritesOnly === true,
@@ -558,14 +569,16 @@ function getModelKey(model: { providerId: string; modelId: string }): string {
   return `${model.providerId}/${model.modelId}`
 }
 
-function buildRecentFolderList(folderPath: string, source: RecentFolder[], aliasPath?: string, name?: string): RecentFolder[] {
-  const matchingPaths = new Set([folderPath, aliasPath].filter((value): value is string => Boolean(value)))
-  const aliasEntry = aliasPath ? source.find((folder) => folder.path === aliasPath) : undefined
-  const canonicalEntry = source.find((folder) => folder.path === folderPath)
+function buildRecentFolderList(folderPath: string, source: RecentFolder[], aliasPath?: string, name?: string, serverId = LOCAL_SERVER_ID): RecentFolder[] {
+  const matchingPaths = new Set([folderPath, ...(serverId === LOCAL_SERVER_ID && aliasPath ? [aliasPath] : [])]
+    .map(path => projectIdentity(path, serverId)))
+  const aliasEntry = serverId === LOCAL_SERVER_ID && aliasPath ? source.find((folder) => projectIdentity(folder.path, folder.serverId) === projectIdentity(aliasPath)) : undefined
+  const canonicalEntry = source.find((folder) => projectIdentity(folder.path, folder.serverId) === projectIdentity(folderPath, serverId))
   const projectName = name?.trim() || aliasEntry?.projectName || canonicalEntry?.projectName
-  const folders = source.filter((folder) => !matchingPaths.has(folder.path))
+  const folders = source.filter((folder) => !matchingPaths.has(projectIdentity(folder.path, folder.serverId)))
   folders.unshift({
     path: folderPath,
+    ...(serverId === LOCAL_SERVER_ID ? {} : { serverId }),
     lastAccessed: Date.now(),
     ...(projectName ? { projectName } : {}),
   })
@@ -626,6 +639,27 @@ function createRandomId(): string {
 
 const [uiConfigBucket, setUiConfigBucket] = createSignal<UiConfigBucket>({})
 const [serverConfigBucket, setServerConfigBucket] = createSignal<ServerConfigBucket>({})
+
+/** Display metadata from the existing server-owner snapshot; never an origin or credential. */
+export function getExecutionServerLabel(id: string): string | undefined {
+  const servers = serverConfigBucket().opencodeServers
+  if (!Array.isArray(servers)) return undefined
+  const entry = servers.find(value => value?.kind === "explicit" && value.id === id)
+  if (typeof entry?.label !== "string" || entry.label.length > 200) return undefined
+  return entry.label.replace(/[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]/g, "").trim() || undefined
+}
+/** prototype-1236: explicit OpenCode servers from the same snapshot, for the launcher (host and paired devices). */
+export function getExplicitOpenCodeServers(): Array<{ id: string; label: string }> {
+  const servers = serverConfigBucket().opencodeServers
+  if (!Array.isArray(servers)) return []
+  return servers.flatMap(value => value?.kind === "explicit" && typeof value.id === "string"
+    ? [{ id: value.id, label: getExecutionServerLabel(value.id) ?? value.id }] : [])
+}
+/** prototype-1236 (R12): one recent list, local and server projects together; a removed server's entries are hidden. */
+export function getLaunchableRecentFolders(): RecentFolder[] {
+  const servers = new Set(getExplicitOpenCodeServers().map(server => server.id))
+  return uiState().recentFolders.filter(folder => (folder.serverId ?? LOCAL_SERVER_ID) === LOCAL_SERVER_ID || servers.has(folder.serverId!))
+}
 const [uiStateBucket, setUiStateBucket] = createSignal<UiStateBucket>({})
 const [isLoaded, setIsLoaded] = createSignal(false)
 // Mission inputs require a successful UI-owner read, not server/state readiness.
@@ -685,7 +719,9 @@ const serverSettings = createMemo(() => normalizeServerConfig(serverConfigBucket
 const uiState = createMemo(() => normalizeUiState(uiStateBucket()))
 
 const preferences = uiSettings
-const recentFolders = createMemo<RecentFolder[]>(() => uiState().recentFolders)
+// The current path-only launcher admits local targets. Retain explicit metadata
+// in the owner document until a server-qualified opening surface is available.
+const recentFolders = createMemo<RecentFolder[]>(() => uiState().recentFolders.filter(folder => (folder.serverId ?? LOCAL_SERVER_ID) === LOCAL_SERVER_ID))
 const opencodeBinaries = createMemo<OpenCodeBinary[]>(() => uiState().opencodeBinaries)
 const remoteServers = createMemo<RemoteServerProfile[]>(() => uiState().remoteServers)
 
@@ -1101,7 +1137,7 @@ function removeOpenCodeBinary(path: string): void {
 }
 
 function addRecentFolder(folderPath: string): void {
-  const next = buildRecentFolderList(folderPath, recentFolders())
+  const next = buildRecentFolderList(folderPath, uiState().recentFolders)
   void patchStateOwner("ui", { recentFolders: next }).catch((error) => log.error("Failed to add recent folder", error))
 }
 
@@ -1124,17 +1160,17 @@ function rememberCloneParent(folderPath: string): void {
     .catch((error) => log.error("Failed to remember clone folder", error)))
 }
 
-function removeRecentFolder(folderPath: string): void {
-  const next = recentFolders().filter((f) => f.path !== folderPath)
+function removeRecentFolder(folderPath: string, serverId = LOCAL_SERVER_ID): void {
+  const next = uiState().recentFolders.filter((f) => projectIdentity(f.path, f.serverId) !== projectIdentity(folderPath, serverId))
   void patchStateOwner("ui", { recentFolders: next }).catch((error) => log.error("Failed to remove recent folder", error))
 }
 
-async function renameRecentFolderProject(folderPath: string, projectName: string): Promise<void> {
+async function renameRecentFolderProject(folderPath: string, projectName: string, serverId = LOCAL_SERVER_ID): Promise<void> {
   const name = projectName.trim()
   if (!folderPath || !name) return
   // Derive from loaded state; an unloaded empty list would erase every recent folder.
   await ensureLoaded()
-  const next = recentFolders().map((folder) => (folder.path === folderPath ? { ...folder, projectName: name } : folder))
+  const next = uiState().recentFolders.map((folder) => (projectIdentity(folder.path, folder.serverId) === projectIdentity(folderPath, serverId) ? { ...folder, projectName: name } : folder))
   try {
     await patchStateOwner("ui", { recentFolders: next })
   } catch (error) {
@@ -1166,8 +1202,8 @@ function removeRemoteServerProfile(id: string): void {
   void patchStateOwner("ui", { remoteServers: next }).catch((error) => log.error("Failed to remove remote server", error))
 }
 
-function recordWorkspaceLaunch(folderPath: string, aliasPath?: string): void {
-  const nextFolders = buildRecentFolderList(folderPath, recentFolders(), aliasPath)
+function recordWorkspaceLaunch(folderPath: string, aliasPath?: string, serverId = LOCAL_SERVER_ID): void {
+  const nextFolders = buildRecentFolderList(folderPath, uiState().recentFolders, aliasPath, undefined, serverId)
 
   void patchStateOwner("ui", { recentFolders: nextFolders }).catch((error) =>
     log.error("Failed to update ui state on launch", error),
@@ -1177,30 +1213,35 @@ function recordWorkspaceLaunch(folderPath: string, aliasPath?: string): void {
 /** Adds a named project to the recent folders, e.g. a kept temporary folder. */
 async function addNamedRecentFolder(folderPath: string, projectName: string): Promise<void> {
   await ensureLoaded()
-  await patchStateOwner("ui", { recentFolders: buildRecentFolderList(folderPath, recentFolders(), undefined, projectName) })
+  await patchStateOwner("ui", { recentFolders: buildRecentFolderList(folderPath, uiState().recentFolders, undefined, projectName) })
 }
 
 function addRecentModelPreference(model: ModelPreference): void {
   if (!model.providerId || !model.modelId) return
   const recents = uiState().models.recents
-  const filtered = recents.filter((item) => item.providerId !== model.providerId || item.modelId !== model.modelId)
+  const filtered = recents.filter((item) => !sameModelPreference(item, model))
   const updated = [model, ...filtered].slice(0, MAX_RECENT_MODELS)
   void patchStateOwner("ui", { models: { recents: updated } }).catch((error) => log.error("Failed to update model recents", error))
 }
 
 function isFavoriteModelPreference(model: ModelPreference): boolean {
   if (!model.providerId || !model.modelId) return false
-  return uiState().models.favorites.some((item) => item.providerId === model.providerId && item.modelId === model.modelId)
+  return uiState().models.favorites.some((item) => sameModelPreference(item, model))
+}
+
+function sameModelPreference(a: ModelPreference, b: ModelPreference): boolean {
+  return (a.serverId ?? LOCAL_SERVER_ID) === (b.serverId ?? LOCAL_SERVER_ID)
+    && a.providerId === b.providerId && a.modelId === b.modelId
 }
 
 function toggleFavoriteModelPreference(model: ModelPreference): void {
   if (!model.providerId || !model.modelId) return
   const favorites = uiState().models.favorites
-  const exists = favorites.some((item) => item.providerId === model.providerId && item.modelId === model.modelId)
+  const exists = favorites.some((item) => sameModelPreference(item, model))
 
   const updated = exists
-    ? favorites.filter((item) => item.providerId !== model.providerId || item.modelId !== model.modelId)
-    : [model, ...favorites.filter((item) => item.providerId !== model.providerId || item.modelId !== model.modelId)].slice(
+    ? favorites.filter((item) => !sameModelPreference(item, model))
+    : [model, ...favorites.filter((item) => !sameModelPreference(item, model))].slice(
         0,
         MAX_FAVORITE_MODELS,
       )
@@ -1331,9 +1372,10 @@ function toggleAutoCleanupBlankSessions(): void {
   updateUiSettings({ autoCleanupBlankSessions: nextValue })
 }
 
-async function setAgentModelPreference(instanceId: string, agent: string, model: ModelPreference): Promise<void> {
+async function setAgentModelPreference(instanceId: string, agent: string, model: ModelPreference, isCurrent: () => boolean = () => true): Promise<void> {
   if (!instanceId || !agent || !model.providerId || !model.modelId) return
-  await ensureInstanceConfigLoaded(instanceId)
+  await ensureInstanceConfigLoaded(instanceId, isCurrent)
+  if (!isCurrent()) return
   await updateInstanceData(instanceId, (draft) => {
     const selections = { ...(draft.agentModelSelections ?? {}) }
     const existing = selections[agent]
@@ -1342,12 +1384,13 @@ async function setAgentModelPreference(instanceId: string, agent: string, model:
     }
     selections[agent] = model
     draft.agentModelSelections = selections
-  })
+  }, isCurrent)
 }
 
-async function getAgentModelPreference(instanceId: string, agent: string): Promise<ModelPreference | undefined> {
+async function getAgentModelPreference(instanceId: string, agent: string, isCurrent: () => boolean = () => true): Promise<ModelPreference | undefined> {
   if (!instanceId || !agent) return undefined
-  await ensureInstanceConfigLoaded(instanceId)
+  await ensureInstanceConfigLoaded(instanceId, isCurrent)
+  if (!isCurrent()) return undefined
   const selections = getInstanceConfig(instanceId).agentModelSelections ?? {}
   return selections[agent]
 }

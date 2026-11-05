@@ -2,6 +2,8 @@
 
 Stored history, what the transcript currently displays and the model's compacted context are separate. Choose navigation or filtering before deleting anything.
 
+These enriched-history workflows apply to the shared local OpenCode service. Projects on explicit servers use native pages and a loaded-message timeline, preserving the saved reading position when a passage is unavailable and offering explicit latest-page recovery. Full-text search, previews of unloaded messages and technical cleanup remain unavailable there; previews of already loaded text remain available.
+
 ## Search full history {#full-history-search}
 
 1. Open **Search chat history** in the conversation header, or use its configured shortcut (default **Ctrl/Cmd+F**).

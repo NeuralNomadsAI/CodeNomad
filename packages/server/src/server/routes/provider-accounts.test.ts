@@ -23,6 +23,7 @@ async function fixture() {
   } as unknown as ProviderAccountsService
   const fence = new WorktreeDeletionFence()
   registerProviderAccountsRoutes(app, { accounts, worktreeDeletionFence: fence, workspaceManager: {
+    requireWorkspaceCapability: () => new AbortController().signal,
     get: id => id === "w" && state.available ? workspace as never : undefined,
     getSharedServiceConnection: async () => connection as never,
     getServiceDirectoryForPath: async (_id, directory) => directory === "D:/project" ? "/project" : undefined,

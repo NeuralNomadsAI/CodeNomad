@@ -57,6 +57,7 @@ export function cleanupBackend(unified = false) {
   // One stable workspace object: map mutations recheck its identity before dispatch.
   const workspace = { id: "fixture" }
   const manager = {
+    requireWorkspaceCapability: () => new AbortController().signal,
     list: () => [workspace], get: () => workspace, getServiceLocation: () => ({ directory: "/private-fixture" }),
     getSharedServiceClient: async () => client, getSharedServiceConnection: async () => ({ client, assertCurrent() {} }),
     ownsLocation: async (_id: string, location: { directory: string }) => state.owned && location.directory === "/private-fixture",

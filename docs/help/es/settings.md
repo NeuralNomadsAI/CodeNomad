@@ -2,6 +2,8 @@
 
 ## Abrir la configuración e identificar el ámbito {#open-settings}
 
+**Servidor OpenCode seleccionado** identifica el contexto del proyecto (`local-shared` para el servicio local compartido); las preferencias de CodeNomad siguen siendo compartidas. Los proyectos no disponibles mantienen inactivos sus controles OpenCode. Los archivos de configuración, variables de entorno y mantenimiento OpenCode identifican el **backend local de CodeNomad**: archivos HOME, entorno del perfil y servicio compartido. **Administrar backend local** abre explícitamente esos controles locales por separado del proyecto seleccionado.
+
 1. Abre **Configuración** con el engranaje **Abrir configuración** de la barra de pestañas (la barra de título en la aplicación de escritorio de macOS) o de la página de inicio. Accesos directos como **Gestionar proveedores** en el selector de modelos, el engranaje del panel Misiones o el engranaje **Configuración** del historial de notificaciones abren directamente la sección correspondiente.
 2. Selecciona una sección. Las ventanas locales de Electron y Tauri abren o enfocan una única ventana nativa de Preferencias; las vistas de navegador y remotas usan la pantalla de configuración integrada.
 3. Comprueba el ámbito del ajuste y cualquier acción de **Guardar** antes de salir.
@@ -15,7 +17,9 @@ La mayoría de las elecciones se aplican inmediatamente, incluidas las preferenc
 | Ajustes Global/Proyecto de OpenCode | Cambios nativos de plugins/configuración en el ámbito mostrado. Los controles de Proyecto requieren un proyecto/Location activo. |
 | Perfil de datos de escritorio | Ventanas nativas, estado de restauración y almacenamiento del navegador, independientemente del archivo de configuración y del servicio compartido de OpenCode. Consulta [Ventanas y datos de escritorio](desktop.md). |
 
-**Estadísticas** abarca todo el servicio OpenCode conectado (todos los proyectos, clones independientes y subsesiones), no solo la carpeta abierta, durante los últimos 7, 30, 90 o 365 días. Necesita un proyecto abierto y muestra los tokens y el coste registrados por OpenCode, no facturas del proveedor ni cuotas de suscripción; los totales guardados anteriormente pueden aparecer mientras se actualiza. Las cuotas del plan pertenecen a la sección **Uso** de Estado.
+Los servidores indicados explícitamente y cualificados ofrecen un catálogo de proveedores y modelos de solo lectura. Las secciones aplazadas siguen siendo seleccionables y explican su limitación; administra esos ajustes directamente en el servidor.
+
+**Estadísticas** abarca todo el servicio OpenCode local compartido (todos los proyectos, clones independientes y subsesiones), no solo la carpeta abierta, durante los últimos 7, 30, 90 o 365 días. Necesita un proyecto abierto y muestra los tokens y el coste registrados por OpenCode, no facturas del proveedor ni cuotas de suscripción; los totales guardados anteriormente pueden aparecer mientras se actualiza. Las cuotas del plan pertenecen a la sección **Uso** de Estado. **Estadísticas** no está disponible para servidores indicados explícitamente; su sección explica el motivo.
 
 Cambiar preferencias de visualización no reinicia OpenCode ni repite un mensaje. La configuración nativa, el mantenimiento del servicio y las credenciales tienen efectos independientes: consulta [configuración de OpenCode](opencode.md), [Proveedores](providers.md) e [Integraciones](integrations.md).
 
@@ -41,6 +45,8 @@ Arrastra el borde interior de un panel acoplado para cambiar su tamaño. El tira
 Las [integraciones](integrations.md#integration-sections) reconocidas también tienen secciones de Estado. Ocúltalas con las mismas casillas; reordena cualquier sección de Estado arrastrando o con las teclas Arriba/Abajo. La visibilidad y el orden persisten al recargar y durante la ausencia temporal de una integración.
 
 Estado incluye información de tokens, modo Yolo, Uso del proveedor, shells en segundo plano, MCP y Plugins. Mientras la conversación tiene un [objetivo](conversations.md#goal), una línea de objetivo encima de estas secciones lo muestra; esa línea no es una sección y no se puede ocultar ni mover. Ocultar una sección no desactiva su servicio ni revoca permisos. Las disposiciones estrechas cierran los paneles que ya no caben en lugar de estrechar la conversación; un panel abierto en ellas flota sobre la conversación, y abrir un panel flotante cierra el otro.
+
+En un proyecto en un servidor OpenCode configurado, estas secciones leen ese servidor. **Uso** muestra las cuotas nativas OpenCode Go y la estimación Zen sin credenciales descrita en [Proveedores](providers.md#usage); los demás proveedores no muestran cuota. **Plugins** lista los plugins del servidor con su estado; sus interruptores quedan en solo lectura porque OpenCode no ofrece ninguna API para cambiar la configuración de plugins del servidor. Los servidores MCP aún se pueden conectar o desconectar. **Shells en segundo plano** lista y detiene los shells del servidor de la carpeta abierta.
 
 La disposición integrada es disposición de ventana, no una modificación del proyecto. Las casillas de extensiones son distintas: activan código en todos los proyectos que usan la configuración. **Restablecer** no cambia el consentimiento de extensiones. Consulta [Extensiones de panel](extensions.md).
 

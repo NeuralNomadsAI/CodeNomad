@@ -44,6 +44,7 @@ import {
   type PersistedClientState,
 } from "./client-state-envelope"
 import type { PreferencesRequest } from "./preferences-window"
+import { retainedProjectMetadata } from "./client-state-attachment-metadata"
 
 const CLIENT_STATE_FILENAME = "client-state.json"
 const PRIMARY_LOCK_FILENAME = "client-state.primary.lock"
@@ -134,6 +135,8 @@ export class ClientStateManager {
   private unsupportedFutureEnvelope = false
   private frozen = false
   private rendererAccessTokens = new Map<string, string>()
+  private attachmentEpoch = randomUUID()
+  private attachmentPublicationUnknown = false
 
   constructor(
     userDataPath: string,
@@ -243,6 +246,33 @@ export class ClientStateManager {
     return [...this.state.windowOrder]
   }
 
+  /** Private parent transport only; the existing publication queue owns this projection. */
+  retainedAttachments() {
+    const receipt = this.attachmentEpoch
+    const current = () => {
+      if (receipt !== this.attachmentEpoch || this.frozen || this.unsupportedFutureEnvelope || this.attachmentPublicationUnknown) throw new Error("attachment_inventory_changed")
+      this.assertReplacementAllowed()
+    }
+    const operation = this.writeQueue.catch(() => {}).then(async () => {
+      const windows: Array<{ windowId: string; tabs: Awaited<ReturnType<typeof retainedProjectMetadata>> }> = []
+      try {
+        current()
+        for (const windowId of this.state.windowOrder) {
+          const tabs = await retainedProjectMetadata(this.windowRecord(windowId), key => this.partitions.load(key, current))
+          current()
+          windows.push({ windowId, tabs })
+        }
+        return { receipt, status: windows.every(window => window.tabs !== undefined) ? "complete" as const : "unknown" as const, windows }
+      } catch { return { receipt, status: "unknown" as const, windows: [] } }
+    })
+    this.writeQueue = operation.then(() => {})
+    return operation
+  }
+
+  attachmentReceiptCurrent(receipt: string): boolean {
+    try { this.assertReplacementAllowed(); return !this.frozen && !this.unsupportedFutureEnvelope && !this.attachmentPublicationUnknown && receipt === this.attachmentEpoch } catch { return false }
+  }
+
   get preferences(): PreferencesRequest | undefined {
     return this.isPrimary && !this.unsupportedFutureEnvelope ? this.state.preferences : undefined
   }
@@ -341,6 +371,7 @@ export class ClientStateManager {
   }
 
   resetRendererAccessToken(windowId = this.activeWindowId): void {
+    this.attachmentEpoch = randomUUID()
     this.windowRecord(windowId)
     this.rendererAccessTokens.delete(windowId)
   }
@@ -480,6 +511,7 @@ export class ClientStateManager {
     }
 
     this.frozen = true
+    this.attachmentEpoch = randomUUID()
     // The primary locks stay held until the queued root publication and GC have both drained.
     const drain = this.writeQueue.then(
       () => {
@@ -633,6 +665,7 @@ export class ClientStateManager {
     prepare?: () => Promise<void>,
     committed?: () => Promise<void>,
   ): Promise<boolean> {
+    this.attachmentEpoch = randomUUID()
     const operation = this.writeQueue.catch(() => {}).then(async () => {
       if (rendererToken !== undefined) this.assertRendererAccessToken(rendererToken, windowId)
       if (skipWhenSuppressed && this.persistenceSuppressed.has(windowId)) {
@@ -648,11 +681,13 @@ export class ClientStateManager {
         await this.writeAtomically(JSON.stringify(this.state), rendererToken, windowId)
       } catch (error) {
         this.state = previousState
+        this.attachmentPublicationUnknown = true
         this.persistenceSuppressed = previousPersistenceSuppressed
         this.unsupportedFutureEnvelope = previousUnsupportedFutureEnvelope
         throw error
       }
       await committed?.().catch((error) => console.warn("[client-state] failed to sweep partitions", error))
+      this.attachmentEpoch = randomUUID()
     })
     this.writeQueue = operation
     return operation.then(() => true)
@@ -663,6 +698,7 @@ export class ClientStateManager {
     committed?: () => Promise<void>,
   ): Promise<boolean> {
     if (this.frozen) return Promise.reject(new Error("Client state persistence is frozen for shutdown"))
+    this.attachmentEpoch = randomUUID()
     const operation = this.writeQueue.catch(() => {}).then(async () => {
       const previousState = JSON.parse(JSON.stringify(this.state)) as PersistedClientState
       try {
@@ -671,9 +707,11 @@ export class ClientStateManager {
         await this.writeAtomically(JSON.stringify(this.state))
       } catch (error) {
         this.state = previousState
+        this.attachmentPublicationUnknown = true
         throw error
       }
       await committed?.().catch((error) => console.warn("[client-state] failed to sweep partitions", error))
+      this.attachmentEpoch = randomUUID()
       return true
     })
     this.writeQueue = operation.then(() => {})
@@ -690,6 +728,7 @@ export class ClientStateManager {
       this.assertReplacementAllowed(rendererToken, windowId)
       await rename(temporaryPath, this.statePath)
       await syncDirectory(dirname(this.statePath))
+      this.attachmentPublicationUnknown = false
     } catch (error) {
       await rm(temporaryPath, { force: true }).catch(() => {})
       throw error

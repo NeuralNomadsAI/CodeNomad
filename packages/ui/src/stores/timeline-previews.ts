@@ -2,6 +2,7 @@ import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from
 import { serverApi } from "../lib/api-client"
 import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "./opencode-data"
 import { sessions } from "./session-state"
+import { isExplicitHistory } from "./session-history-capability"
 
 type Preview = { id: string; text: string; tools: string }
 // Separate from structural indexes: at most 512 bounded excerpts (~8 MiB UTF-16).
@@ -9,6 +10,7 @@ const cache = new Map<string, { preview: Preview; readAt: number }>()
 
 export function createTimelinePreviews(props: { instanceId: Accessor<string>; sessionId: Accessor<string>;
   active: Accessor<boolean>; requested: Accessor<string[]> }) {
+  const explicit = createMemo(() => isExplicitHistory(props.instanceId()))
   const [revision, setRevision] = createSignal(0)
   const identity = createMemo(() => JSON.stringify([props.instanceId(), props.sessionId(),
     getOpenCodeInstanceGeneration(props.instanceId()), getOpenCodeMutationRevision(props.instanceId(), props.sessionId()),
@@ -16,6 +18,7 @@ export function createTimelinePreviews(props: { instanceId: Accessor<string>; se
   const requested = createMemo(() => [...new Set(props.requested())].slice(0, 96).join("\0"))
   createEffect(() => {
     const scope = identity(), instanceId = props.instanceId(), sessionID = props.sessionId()
+    if (explicit()) return
     const ids = requested().split("\0").filter(Boolean)
     if (!props.active() || !ids.length) return
     const controller = new AbortController()
@@ -38,6 +41,7 @@ export function createTimelinePreviews(props: { instanceId: Accessor<string>; se
     onCleanup(() => { clearTimeout(timer); controller.abort() })
   })
   return (id: string): Preview | undefined => {
+    if (explicit()) return undefined
     revision()
     const key = `${identity()}\0${id}`, value = cache.get(key)
     if (value) { cache.delete(key); cache.set(key, value) }

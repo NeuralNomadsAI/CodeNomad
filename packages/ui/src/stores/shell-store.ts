@@ -85,35 +85,38 @@ export function createShellApi(client: OpenCodeClient): ShellApi {
   }
 }
 
-export function createShellStore(apiForInstance: (instanceId: string) => ShellApi) {
+export function createShellStore(apiForInstance: (instanceId: string) => ShellApi, captureCurrent: (instanceId: string) => () => boolean = () => () => true) {
   const [states, setStates] = createSignal<Map<string, ShellState>>(new Map())
-  const requests = new Map<string, { promise: Promise<void>; dirty: boolean }>()
+  const requests = new Map<string, { promise: Promise<void>; dirty: boolean; current: () => boolean }>()
   const key = (instanceId: string, directory: string, workspaceID?: string) => JSON.stringify([instanceId, directory, workspaceID])
   const setState = (stateKey: string, state: ShellState) => setStates((current) => new Map(current).set(stateKey, state))
   const readState = (stateKey: string): ShellState => untrack(() => states().get(stateKey) ?? EMPTY_STATE)
 
   const load = async (instanceId: string, directory: string, workspaceID?: string, refresh = false): Promise<void> => {
     if (!instanceId || !directory) return
+    const current = captureCurrent(instanceId)
+    if (!current()) return
     const stateKey = key(instanceId, directory, workspaceID)
     const pending = requests.get(stateKey)
-    if (pending) {
+    if (pending?.current()) {
       if (refresh) pending.dirty = true
       return pending.promise
     }
-    const request = { promise: Promise.resolve(), dirty: false }
+    const request = { promise: Promise.resolve(), dirty: false, current }
     requests.set(stateKey, request)
     setState(stateKey, { ...readState(stateKey), loading: true, failed: false })
     request.promise = Promise.resolve().then(async () => {
       do {
+        if (!request.current()) return
         request.dirty = false
         try {
           const items = await apiForInstance(instanceId).list(directory, workspaceID)
-          if (!request.dirty) setState(stateKey, { items, loading: false, failed: false })
+          if (request.current() && !request.dirty) setState(stateKey, { items, loading: false, failed: false })
         } catch {
-          if (!request.dirty) setState(stateKey, { ...readState(stateKey), loading: false, failed: true })
+          if (request.current() && !request.dirty) setState(stateKey, { ...readState(stateKey), loading: false, failed: true })
         }
       } while (request.dirty)
-    }).finally(() => requests.delete(stateKey))
+    }).finally(() => { if (requests.get(stateKey) === request) requests.delete(stateKey) })
     return request.promise
   }
 
@@ -129,8 +132,11 @@ export function createShellStore(apiForInstance: (instanceId: string) => ShellAp
   }
 
   const remove = async (instanceId: string, directory: string, shellId: string, workspaceID?: string): Promise<boolean> => {
+    const current = captureCurrent(instanceId)
+    if (!current()) return false
     try {
       await apiForInstance(instanceId).remove(directory, shellId, workspaceID)
+      if (!current()) return false
       await load(instanceId, directory, workspaceID, true)
       return true
     } catch { return false }

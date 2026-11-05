@@ -2,6 +2,8 @@
 
 Saklanan geçmiş, konuşma dökümünün şu anda görüntüledikleri ve modelin sıkıştırılmış bağlamı ayrıdır. Herhangi bir şeyi silmeden önce gezinmeyi veya filtrelemeyi seçin.
 
+Bu zenginleştirilmiş geçmiş iş akışları paylaşılan yerel OpenCode hizmeti içindir. Açık sunuculardaki projeler yerel API sayfalarını ve yüklenen iletilerin zaman çizelgesini kullanır, bölüm kullanılamadığında kayıtlı okuma konumunu korur ve son sayfaya açıkça dönmeyi sunar. Tam metin araması, yüklenmemiş iletilerin önizlemesi ve teknik temizleme orada kullanılamaz; yüklenmiş metnin önizlemesi kullanılabilir.
+
 ## Tüm geçmişi ara {#full-history-search}
 
 1. Konuşma başlığında **Sohbet geçmişinde ara** öğesini açın veya yapılandırılmış kısayolunu (varsayılan **Ctrl/Cmd+F**) kullanın.

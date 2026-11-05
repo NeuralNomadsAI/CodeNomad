@@ -6,6 +6,7 @@ import { getLogger } from "../lib/logger"
 import { showToastNotification } from "../lib/notifications"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { pluginControlsCache } from "../stores/plugin-controls"
+import { getProjectAvailability } from "../stores/project-capability"
 
 const log = getLogger("session")
 const [pending, setPending] = createSignal<ReadonlySet<string>>(new Set())
@@ -55,8 +56,11 @@ export function PluginActivationSwitch(props: {
   const { t } = useI18n()
   let disposed = false
   onCleanup(() => { disposed = true })
+  const writable = () => !disposed && props.active !== false && getProjectAvailability(props.instanceId, "plugins").allowed
+    && getProjectAvailability(props.instanceId, "pluginWrite").allowed
   const isPending = () => Boolean(props.control && isPluginActivationPending(props.instanceId, props.location, props.scope, props.control.id))
   const toggle = async (control: PluginActivationControl, enabled: boolean) => {
+    if (!writable()) return
     const instanceId = props.instanceId, location = { directory: props.location.directory }, scope = props.scope
     const key = pendingKey(instanceId, location, scope, control.id)
     if (pending().has(key)) return
@@ -78,18 +82,18 @@ export function PluginActivationSwitch(props: {
       <Show when={props.caption}><span class="plugin-control-switch-caption" aria-hidden="true">{props.caption}</span></Show>
       <Switch
         checked={props.control ? pluginScopeChecked(props.control, props.scope) : false}
-        disabled={!props.available}
+        disabled={!props.available || !writable()}
         color="success"
         size="small"
         inputProps={{
           "aria-label": props.label,
           "aria-describedby": props.describedBy,
-          "aria-disabled": isPending() || !props.available || Boolean(props.lockedReason),
+          "aria-disabled": isPending() || !props.available || !writable() || Boolean(props.lockedReason),
           "aria-busy": isPending(),
         }}
         onChange={(event, nextChecked) => {
           const current = props.control
-          if (isPending() || !props.available || props.lockedReason || !current) {
+          if (isPending() || !props.available || !writable() || props.lockedReason || !current) {
             // SUID restores the controlled checked value before calling us.
             // Cancel native activation too, while retaining keyboard focus.
             event.preventDefault()

@@ -21,6 +21,16 @@ Son kullanılan kayıtlar birer kısayoldur. **Workspace'i yeniden adlandır** g
 
 Normal bir tıklama yine de tam ana sayfayı açar. Başlatıcı, yönetim yüzeyi değil, bir kısayoldur: ana sayfadaki son projeleri yeniden adlandırın/kaldırın ve sunucu yer imlerini yönetin. Escape, başlatıcıyı kapatır ve odağı `+`'ye döndürür.
 
+## Bir OpenCode sunucusunda proje açın {#remote-project}
+
+1. Ana sayfada veya başlatıcıda **UZAKLAR** bölümünü genişletin ve bir sunucuda **+ Proje** seçin. Sunucunun adı klasör yolunun yanında görünür kalır.
+2. Bir sunucu seçin, klasörlerine göz atın ve **Aç** seçin. **Backspace** üst klasöre gider; **Esc** sunuculara döner.
+3. Sunucu eklemek için `opencode pair` bağlantısını veya `https://opencode:<parola>@host:port` adresini **Eşleştirme bağlantısı veya adres** alanına yapıştırın. **Kayıtlı sunucuyu kaldır** için sunucuya sağ tıklayın (veya **Shift+F10**).
+
+Sekmede sunucu simgesi görünür ve klasör son projelere eklenir. **Klasörlere Göz At**, **Git Deposunu Klonla** ve geçici örnekler bu bilgisayarda kalır.
+
+Ana makine arka ucu, eşleştirme belirteçlerini ve elle girilen parolaları yeniden başlatmalar arasında `config.yaml` yanındaki özel `opencode-server-pairings.json` (0600) dosyasında saklar. Süre sonu, HTTP 401, kaynak değişikliği veya sunucunun kaldırılması sırrı siler. Kayıtlı projeler kendi sunucularında geri yüklenir; yalnızca ana makine sunucu ekler veya kaldırır.
+
 ## Bir projeyi kapatın {#close-stop}
 
 1. Sekmenin kapat düğmesini veya komut paletindeki **Sekmeyi Kapat** öğesini (arayüzde `Ctrl/Cmd+W`) kullanın.

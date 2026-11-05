@@ -10,7 +10,7 @@ const encode = (value: ImageGenerationSelection) => value === false ? "off" : va
 const decode = (value: string): ImageGenerationSelection => value === "off" ? false : value === "auto" ? true : value.slice(6)
 
 /** Global OpenCode image settings, embedded in Settings → Providers' Images group. */
-export function ImageSettingsCard(props: { instanceId: string; location?: LocationRef }) {
+export function ImageSettingsCard(props: { instanceId: string; location?: LocationRef; active?: () => boolean }) {
   const { t } = useI18n()
   const settings = useImageSettings(props)
 

@@ -56,7 +56,8 @@ const observer = new MutationObserver(() => { if (metricsAt === undefined && doc
 observer.observe(document.getElementById("root")!, { childList: true, subtree: true })
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}>
   {new URLSearchParams(location.search).has("parent")
-    ? <SettingsScreen standalone providerContext={{ instanceId: instanceId() }} />
+    ? <SettingsScreen standalone executionRequest={{ section: "usage", instanceId: instanceId(), workspacePath: "/usage" }}
+        projectContext={{ instanceId: instanceId(), workspacePath: "/usage", location: { directory: "/usage" }, binding: { serverId: "local-shared", directory: "/usage" }, capabilities: undefined }} />
     : <main style={{ width: "min(760px, 100%)" }}><UsageSettingsSection instanceId={instanceId()} /></main>}
 </Show></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = { queries, setInstanceId, setVisible, mountedAt, get metricsAt() { return metricsAt }, fail: () => { fail = true }, defer: () => { defer = true }, release: () => release?.(), releaseCache: () => releaseCache?.(),

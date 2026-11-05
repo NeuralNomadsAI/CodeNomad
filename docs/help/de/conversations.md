@@ -1,10 +1,16 @@
 # Unterhaltungen
 
+Der Chat expliziter Server zeigt unterstützte eingebettete Bilder oder geprüfte native Medien derselben Unterhaltung. Andere Quellen erhalten einen Nicht-verfügbar-Hinweis. Lokale Bildpfade finden nur bereits in dieser Unterhaltung gehaltene Bilder; `/btw` akzeptiert nur eingebettete Bilder. Gültige eingebettete Dateien bieten einen ausdrücklichen Download.
+
 CodeNomad stellt native OpenCode-Sitzungen als Unterhaltungen dar, mit einer Hierarchie für delegierte Arbeit und separaten Bedienelementen für Ihre nächste Eingabe.
 
 Nachrichten stellen Markdown, Code, Diffs und unterstützte Bilder aus Werkzeugergebnissen dar. Textkopie, Vollverlaufssuche und Sprachausgabe verwenden Textprojektionen, keine eingebetteten Bildbytes. **Nachrichteninhalt** ändert die Sichtbarkeit, ohne gespeicherte Teile zu löschen; [Verlauf](history.md#operation-reference) unterscheidet Anzeigeeinstellungen und Bereinigung.
 
 Kopfzeilen von Denkprozessen und Werkzeugen zeigen, wie lange jeder Schritt gedauert hat, und zählen live mit, solange er läuft; Dauern unter einer Sekunde werden nicht angezeigt. Wenn **Tokens** in **Nachrichteninhalt** angezeigt wird (die Voreinstellung **Alles** zeigt sie), endet jede Agentennachricht nach ihrem letzten Text mit einer Token- und Kostenzeile. Diese Zeile summiert die Nachricht und die Nachrichten mit den Werkzeugen und Denkprozessen, die ihre Aktion **Tools und Denkprozesse aus dieser Antwort entfernen** abdeckt, innerhalb des geladenen Verlaufs; klappen Sie sie für Denk- und Cache-Zähler auf. Schritte, die nur Werkzeuge ausgeführt haben, haben keine eigene Zeile.
+
+Im internen Chat mit expliziten Servern bietet `@` deren Agenten und Skills an und erklärt nicht verfügbare Projektdateiverweise. Ein Verbindungswechsel während einer Aktion stoppt ihre restlichen Schritte. Prüfen Sie die Unterhaltung vor erneutem Senden einer ungewissen Aktion: Sie kann OpenCode bereits erreicht haben.
+
+Eine unterbrochene oder ungewisse Aktion hinterlässt einen nicht modalen Hinweis in ihrer Quellunterhaltung und erhält den aktuellen Fokus. Wird die Bearbeitung einer Warteschlangennachricht unterbrochen, bleibt ihr bekannter Inhalt in der geöffneten Quellunterhaltung wiederherstellbar: Prüfen Sie die Warteschlange, leeren Sie Entwurf und Anhänge und wählen Sie **Gespeicherte Nachricht wiederherstellen**. Dadurch entsteht ein bearbeitbarer Entwurf; Senden ist eine eigene Aktion. Eine überholte `/btw`-Frage erlaubt eine ausdrücklich neue Anfrage, sobald die alte Anfrage abgeschlossen ist.
 
 ## Unterhaltungen finden und navigieren {#navigate-conversations}
 

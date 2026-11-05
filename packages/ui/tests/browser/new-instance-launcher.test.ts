@@ -70,7 +70,8 @@ test("a click keeps the full home page while a long press opens the launcher", a
     assert.match(await options(page).nth(2).innerText(), /Blender tools/)
     assert.equal(await launcher(page).locator("footer, .new-instance-launcher-servers").count(), 0)
     assert.equal(await launcher(page).getByRole("button", { name: /Remote servers|SideCar|Full home page|Add a server/ }).count(), 0)
-    assert.deepEqual(await launcher(page).getByRole("button").allTextContents(), ["Browse…", "Temporary", "Clone…"])
+    // prototype-1236 (R27): the collapsed "Remote project" disclosure follows the local actions.
+    assert.deepEqual(await launcher(page).getByRole("button").allTextContents(), ["Browse…", "Temporary", "Clone…", "Remotes"])
     assert.deepEqual(remoteRequests, [], "saved profiles do not trigger launcher remote reads or probes")
     if (process.env.CODENOMAD_LAUNCHER_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_LAUNCHER_CAPTURE })
     assert.deepEqual(errors, [])

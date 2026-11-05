@@ -87,3 +87,21 @@ test("errors never retry mutations; native error envelopes, abort and origin fen
   await assert.rejects(fetch(`${endpoint.url}/api/session/s`, { method: "PATCH", signal: controller.signal }), { name: "AbortError" })
   await assert.rejects(fetch("http://127.0.0.1:4322/api/session"), /origin mismatch/)
 })
+
+test("preaborted streaming bodies never dispatch; invalid chunks cancel preparation", async () => {
+  const endpoint = { url: "http://127.0.0.1:4321" }
+  rememberRuntime(endpoint, { version: "2.2.3", pid: 1, discovery: "info" })
+  const fetch = createRuntimeFetch(endpoint, async () => { assert.fail("must not dispatch") })
+  const controller = new AbortController()
+  controller.abort()
+  await assert.rejects(fetch(new Request(`${endpoint.url}/api/session/s/prompt`, {
+    method: "POST", signal: controller.signal, body: new ReadableStream(), duplex: "half",
+  } as RequestInit)), { name: "AbortError" })
+  let cancelled = false
+  await assert.rejects(fetch(new Request(`${endpoint.url}/api/session/s/prompt`, {
+    method: "POST", body: new ReadableStream({
+      start(stream) { stream.enqueue("invalid") }, cancel() { cancelled = true },
+    }), duplex: "half",
+  } as RequestInit)), TypeError)
+  assert.equal(cancelled, true)
+})

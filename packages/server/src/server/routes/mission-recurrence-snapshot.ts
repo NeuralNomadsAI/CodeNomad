@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 import { z } from "zod"
 import type { MissionRecurrenceSnapshot } from "../../api-types"
 import { sameLocation, locationRequestOptions } from "../../opencode/compatibility/location"
@@ -16,7 +17,7 @@ const pageQuery = z.object({ section: z.coerce.number().int().nonnegative().opti
   revision: z.coerce.number().int().positive().optional() }).strict()
 
 export function registerMissionRecurrenceSnapshot(app: FastifyInstance, deps: {
-  workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceConnection" | "ownsLocation" | "getWorktreeIdentityForPath">
+  workspaceManager: Pick<WorkspaceManager, "requireWorkspaceCapability" | "get" | "getServiceLocation" | "getSharedServiceConnection" | "ownsLocation" | "getWorktreeIdentityForPath">
   worktreeDeletionFence?: WorktreeDeletionFence
 }): void {
   const read = async (request: FastifyRequest<{ Params: { id: string; scheduleID?: string; passageID?: string }; Querystring: unknown }>, reply: FastifyReply) => {
@@ -30,8 +31,9 @@ export function registerMissionRecurrenceSnapshot(app: FastifyInstance, deps: {
     const workspace = parsed.success && manager.get(parsed.data)
     const owned = parsed.success && manager.getServiceLocation(parsed.data)
     if (!workspace || !owned) { lifetime.dispose(); return reply.code(404).send({ error: "Workspace unavailable" }) }
-    const capture = captureDisplayIdentities(deps.worktreeDeletionFence, manager, parsed.data, [owned.directory])
     try {
+      manager.requireWorkspaceCapability(parsed.data, "missions")
+      const capture = captureDisplayIdentities(deps.worktreeDeletionFence, manager, parsed.data, [owned.directory])
       const connection = await lifetime.wait(manager.getSharedServiceConnection(parsed.data))
       if (!connection) return reply.code(503).send({ error: "Mission service unavailable" })
       const current = await lifetime.wait(capture)
@@ -74,7 +76,8 @@ export function registerMissionRecurrenceSnapshot(app: FastifyInstance, deps: {
         || !sameLocation(snapshot.location, owned)) return reply.code(502).send({ error: "Foreign Mission recurrence snapshot" })
       const result: MissionRecurrenceSnapshot = { version: 1, projectID: snapshot.projectID, schedules: snapshot.schedules }
       return result
-    } catch {
+    } catch (error) {
+      if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
       request.log.warn({ code: "recurrence-snapshot-unavailable" }, "Mission recurrence snapshot unavailable")
       return reply.code(503).send({ error: "Mission recurrence unavailable" })
     } finally { lifetime.dispose() }

@@ -11,7 +11,7 @@ import { sameLocation, locationRequestOptions } from "../../opencode/compatibili
 import { isRemoteRequest, remoteDeviceOf } from "../../remote-control/request-origin"
 import type { RemoteControlManager } from "../../remote-control/manager"
 
-type Manager = Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "ownsLocation" | "getServiceWslDistro">
+type Manager = Pick<WorkspaceManager, "requireWorkspaceCapability" | "get" | "getSharedServiceConnection" | "ownsLocation" | "getServiceWslDistro">
 type Deps = { auth: AuthManager; manager: Manager; settings: Pick<SettingsService, "getProfileScope">; bridgeToken: string
   /** Live Remote Control device authorization; absent means no remote principal qualifies. */
   remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized"> }
@@ -56,6 +56,7 @@ function requestPrincipal(request: FastifyRequest, deps: Deps): { principal: Hum
 
 async function prepareMissionHumanAnswer(request: FastifyRequest, workspaceID: string, sessionID: string,
   formID: string, deps: Deps, connection: ServiceConnection, signal: AbortSignal) {
+  deps.manager.requireWorkspaceCapability(workspaceID, "missions")
   const workspace = deps.manager.get(workspaceID), profile = deps.settings.getProfileScope()
   const distro = deps.manager.getServiceWslDistro(workspaceID), client = connection.client
   // Without an authenticated UI principal no mark can be written: answer ordinarily.
@@ -118,6 +119,7 @@ async function prepareMissionHumanAnswer(request: FastifyRequest, workspaceID: s
  * record or principal boolean supplied by a model. Nothing persists the cookie. */
 export async function verifyMissionHumanAnswer(raw: unknown, deps: Omit<Deps, "bridgeToken">, signal: AbortSignal) {
   const body = humanAnswerProofSchema.parse(raw)
+  deps.manager.requireWorkspaceCapability(body.workspaceID, "missions")
   assertHumanAnswerFresh(body); signal.throwIfAborted()
   const principal = body.principal
   const authenticated = () => {

@@ -35,7 +35,9 @@ export function createOpencodeYoloPersistence(
   createClient: (manager: WorkspaceManager, instanceId: string) => Promise<OpenCodeClient | null> = createInstanceClient,
 ): OpencodeYoloPersistence {
   const writes = new Map<string, Promise<unknown>>()
+  const requireCapability = (instanceId: string) => { workspaceManager.requireWorkspaceCapability(instanceId, "yolo") }
   const clientFor = async (instanceId: string) => {
+    requireCapability(instanceId)
     const client = await createClient(workspaceManager, instanceId)
     if (!client) throw new Error(`Yolo: instance ${instanceId} is not ready`)
     return client
@@ -52,6 +54,7 @@ export function createOpencodeYoloPersistence(
       const page = await client.session.list(cursor
         ? { cursor }
         : { directory, limit: SESSION_LIST_LIMIT })
+      requireCapability(instanceId)
       sessions.push(...page.data)
       cursor = page.cursor.next ?? undefined
     } while (cursor)
@@ -64,10 +67,12 @@ export function createOpencodeYoloPersistence(
     yoloEnabled: sessionState(settings, session.id).yoloEnabled === true,
   })
   const updateYolo = (
+    instanceId: string,
     sessionId: string,
     enabled: boolean,
   ): Promise<void> => {
     const write = (writes.get(sessionId) ?? Promise.resolve()).catch(() => undefined).then(() => {
+      requireCapability(instanceId)
       const next = { ...sessionState(settings, sessionId), yoloEnabled: enabled }
       settings.mergePatchOwner("state", STATE_OWNER, { sessions: { [sessionId]: next } })
     })
@@ -79,9 +84,12 @@ export function createOpencodeYoloPersistence(
   }
 
   return {
+    requireCapability,
     async loadSessions(instanceId): Promise<PersistedAutoAcceptSession[]> {
+      requireCapability(instanceId)
       const client = await clientFor(instanceId)
       const sessions = new Map((await listSessions(instanceId)).map((session) => [session.id, session]))
+      requireCapability(instanceId)
       await Promise.all(enabledSessionIds(settings).map(async (sessionId) => {
         if (sessions.has(sessionId)) return
         try {
@@ -91,22 +99,40 @@ export function createOpencodeYoloPersistence(
           // Stale persisted IDs are harmless and may belong to a stopped workspace.
         }
       }))
-      const owned = await Promise.all(Array.from(sessions.values()).map(async (session) => (
-        await workspaceManager.ownsDirectory(instanceId, session.location.directory) ? persistedSession(session) : null
-      )))
+      const owned = await Promise.all(Array.from(sessions.values()).map(async (session) => {
+        if (!(await workspaceManager.ownsDirectory(instanceId, session.location.directory))) return null
+        requireCapability(instanceId)
+        return persistedSession(session)
+      }))
+      requireCapability(instanceId)
       return owned.filter((session): session is PersistedAutoAcceptSession => session !== null)
     },
     async loadSession(instanceId, sessionId): Promise<PersistedAutoAcceptSession | null> {
+      requireCapability(instanceId)
       try {
         const session = await (await clientFor(instanceId)).session.get({ sessionID: sessionId })
         if (!(await workspaceManager.ownsDirectory(instanceId, session.location.directory))) return null
+        requireCapability(instanceId)
         return persistedSession(session)
       } catch {
         return null
       }
     },
-    persist(_instanceId, rootSessionId, enabled): Promise<void> {
-      return updateYolo(rootSessionId, enabled)
+    persist(instanceId, rootSessionId, enabled): Promise<void> {
+      requireCapability(instanceId)
+      return updateYolo(instanceId, rootSessionId, enabled)
+    },
+    // prototype-1236 (Q2): an explicit server's event stream is live-only. After a reconnect, re-read the
+    // pending permissions of the Yolo sessions only; local projects keep their own recovery.
+    async listPendingPermissions(instanceId, sessionId) {
+      requireCapability(instanceId)
+      if (!workspaceManager.isExplicitWorkspace?.(instanceId)) return []
+      const client = await clientFor(instanceId)
+      const session = await client.session.get({ sessionID: sessionId })
+      if (!(await workspaceManager.ownsDirectory(instanceId, session.location.directory))) return []
+      const pending = await client.permission.list({ sessionID: sessionId }, { signal: AbortSignal.timeout(10_000) })
+      requireCapability(instanceId)
+      return pending.flatMap(request => typeof request?.id === "string" && request.sessionID === sessionId ? [request.id] : [])
     },
   }
 }

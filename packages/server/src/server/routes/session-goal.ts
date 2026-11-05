@@ -3,9 +3,10 @@ import { z } from "zod"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { locationRequestOptions, readLocationRef } from "../../opencode/compatibility/location"
 import { GOAL_RPC_ID, goalStateSchema, type SessionGoalResponse } from "../../opencode/goal-contract"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 
 export interface SessionGoalRouteDeps {
-  workspaceManager: Pick<WorkspaceManager, "getSharedServiceClient" | "ownsLocation">
+  workspaceManager: Pick<WorkspaceManager, "getSharedServiceClient" | "ownsLocation" | "requireWorkspaceCapability">
 }
 
 const sessionIdSchema = z.string().min(4).max(512).regex(/^ses[A-Za-z0-9_-]*$/)
@@ -31,6 +32,11 @@ export function registerSessionGoalRoute(app: FastifyInstance, deps: SessionGoal
     if (!parsed.success) return reply.code(400).send({ error: "Invalid session" })
     const sessionID = parsed.data
     const manager = deps.workspaceManager
+    try { manager.requireWorkspaceCapability(request.params.id, "historyEnrichment") }
+    catch (error) {
+      if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
+      throw error
+    }
     const controller = new AbortController()
     const abort = () => { if (!reply.raw.writableEnded) controller.abort() }
     reply.raw.once("close", abort)

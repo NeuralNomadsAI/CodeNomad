@@ -5,10 +5,12 @@ import { serverApi } from "../lib/api-client.ts"
 import type { Session } from "../types/session.ts"
 import { sessions, setSessions } from "./session-state.ts"
 import { deleteWorktree, getWorktrees } from "./worktrees.ts"
+import { addInstance } from "./instances.ts"
 
 describe("worktree deletion authority", () => {
   it("keeps locations on failure and accepts authoritative refresh after DELETE succeeds", async () => {
     const instanceId = "server-owned-worktree-delete"
+    addInstance({ id: instanceId, folder: "/repo", client: null, port: 0, pid: 0, proxyPath: "", status: "ready" })
     const originalFetch = serverApi.fetchWorktrees
     const originalDelete = serverApi.deleteWorktree
     let deletes = 0

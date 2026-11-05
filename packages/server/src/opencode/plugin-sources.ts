@@ -79,9 +79,10 @@ export class PluginSources {
 
   private async addSerialized(workspaceId: string, request: PluginSourceAddRequest, signal: AbortSignal): Promise<PluginSourceMutationResponse> {
     const { spec, scope } = request
-    const [snapshot, raw, catalog] = await Promise.all([
+    // prototype-1236: the config documents carry write admission; read them before the (readable) inventory.
+    const raw = await this.options.documents.readConfigDocuments(workspaceId, request.location, signal)
+    const [snapshot, catalog] = await Promise.all([
       this.options.documents.read(workspaceId, request.location, signal),
-      this.options.documents.readConfigDocuments(workspaceId, request.location, signal),
       this.options.catalog?.read().then(view => view.catalog),
     ])
     signal.throwIfAborted()

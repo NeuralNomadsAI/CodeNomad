@@ -14,16 +14,18 @@ export function createRuntimeFetch(endpoint: Endpoint, fetcher: typeof fetch = g
   return createRuntimeTransport(endpoint, fetcher).fetch
 }
 
-export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch = globalThis.fetch, lifetime = new AbortController().signal) {
+export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch = globalThis.fetch, lifetime = new AbortController().signal,
+  contract: "local" | "explicit-e1" = "local") {
   const identity = runtimeIdentity(endpoint)
-  let profile = contractProfile(identity)
+  let profile = contract === "explicit-e1" ? "unknown" as const : contractProfile(identity)
   let negotiation: Promise<"modern"> | undefined
   const resolveProfile = async (signal?: AbortSignal) => {
     signal?.throwIfAborted()
     lifetime.throwIfAborted()
-    if (identity) assertSupportedOpenCode(identity.version)
+    if (identity && contract === "local") assertSupportedOpenCode(identity.version)
     if (profile !== "unknown") return profile
-    negotiation ??= negotiateRuntime(endpoint, fetcher, lifetime).then(value => {
+    negotiation ??= negotiateRuntime(endpoint, fetcher, lifetime, contract).then(value => {
+      lifetime.throwIfAborted()
       profile = value
       return value
     }).catch(error => { negotiation = undefined; throw error })
@@ -37,19 +39,23 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
     const headers = new Headers(request.headers)
     for (const [name, value] of Object.entries(Service.headers(endpoint) ?? {})) headers.set(name, value)
     // Credentialed native requests must never follow a redirect to another host.
-    const options: RequestInit = { method: request.method, headers, signal: AbortSignal.any([request.signal, lifetime]), redirect: "error" }
+    const signal = AbortSignal.any([request.signal, lifetime])
+    const options: RequestInit = { method: request.method, headers, signal, redirect: "error" }
+    const bytes = request.body ? await readBody(request.body, signal) : undefined
     if (headers.has(LOCATION_CONTEXT_HEADER)) {
-      const text = request.body ? await request.text() : undefined
+      const text = bytes ? new TextDecoder().decode(bytes) : undefined
       let body: unknown = text ? JSON.parse(text) : undefined
       body = applyLocationContext(url, request.method, body, headers)
       if (body !== undefined && !object(body)) throw new Error("Invalid OpenCode request body")
       options.body = body === undefined ? undefined : JSON.stringify(body)
       headers.delete("content-length")
       if (options.body === undefined) headers.delete("content-type")
-    } else if (request.body) {
-      options.body = await request.arrayBuffer()
+    } else if (bytes) {
+      options.body = bytes
     }
+    signal.throwIfAborted()
     const response = await fetcher(url, options)
+    if (lifetime.aborted) { await response.body?.cancel().catch(() => {}); lifetime.throwIfAborted() }
     if (!response.ok && !response.headers.get("content-type")?.includes("application/json")) {
       await response.body?.cancel()
       return Response.json({
@@ -60,6 +66,30 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
     return response
   }
   return { fetch: adaptedFetch, profile: resolveProfile }
+}
+
+async function readBody(body: ReadableStream<Uint8Array>, signal: AbortSignal): Promise<ArrayBuffer> {
+  const reader = body.getReader()
+  const abort = () => { void reader.cancel(signal.reason).catch(() => {}) }
+  signal.addEventListener("abort", abort, { once: true })
+  const chunks: Uint8Array[] = []
+  let length = 0
+  try {
+    signal.throwIfAborted()
+    while (true) {
+      const chunk = await reader.read()
+      signal.throwIfAborted()
+      if (chunk.done) break
+      if (!(chunk.value instanceof Uint8Array)) throw new TypeError("OpenCode request body must contain bytes")
+      chunks.push(chunk.value)
+      length += chunk.value.byteLength
+    }
+    const bytes = new Uint8Array(length)
+    let offset = 0
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
+    return bytes.buffer
+  } catch (error) { abort(); throw error }
+  finally { signal.removeEventListener("abort", abort); reader.releaseLock() }
 }
 
 // A cancelled subscriber must not cancel the connection's negotiation or wait

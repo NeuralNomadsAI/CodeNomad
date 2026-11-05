@@ -14,20 +14,27 @@ interface OpencodeReplierDeps {
  */
 export function createOpencodePermissionReplier(deps: OpencodeReplierDeps): PermissionReplier {
   return async (reply: AutoAcceptReply) => {
-    const connection = deps.permissionReceipts ? await deps.workspaceManager.getSharedServiceConnection(reply.instanceId) : undefined
+    const signal = deps.workspaceManager.requireWorkspaceCapability(reply.instanceId, "yolo")
+    // prototype-1236: an explicit server replies on its own connection; receipts stay a local history feature.
+    const receipts = deps.workspaceManager.isExplicitWorkspace?.(reply.instanceId) ? undefined : deps.permissionReceipts
+    const connection = receipts ? await deps.workspaceManager.getSharedServiceConnection(reply.instanceId) : undefined
     const client = connection?.client ?? await createInstanceClient(deps.workspaceManager, reply.instanceId)
     if (!client) {
       throw new Error(`Yolo: instance ${reply.instanceId} is not ready`)
     }
 
+    signal.throwIfAborted()
     const session = await client.session.get({ sessionID: reply.sessionId })
     if (!(await deps.workspaceManager.ownsLocation(reply.instanceId, session.location))) {
       throw new Error(`Yolo: session ${reply.sessionId} does not belong to workspace ${reply.instanceId}`)
     }
 
-    const confirm = connection && await deps.permissionReceipts?.prepare(reply.instanceId, connection,
+    signal.throwIfAborted()
+    const confirm = connection && await receipts?.prepare(reply.instanceId, connection,
       reply.sessionId, reply.permissionId, "once", "yolo")
     connection?.assertCurrent()
+    signal.throwIfAborted()
+    deps.workspaceManager.requireWorkspaceCapability(reply.instanceId, "yolo")
     try {
       await client.permission.reply({
         sessionID: reply.sessionId,

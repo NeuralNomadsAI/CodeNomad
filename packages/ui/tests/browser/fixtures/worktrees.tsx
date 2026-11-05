@@ -5,7 +5,8 @@ import { ConfigProvider, updatePreferences } from "../../../src/stores/preferenc
 import { I18nProvider } from "../../../src/lib/i18n"
 import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
-import { addInstance } from "../../../src/stores/instances"
+import { addInstance, instances } from "../../../src/stores/instances"
+import { getToastHistory } from "../../../src/lib/notifications"
 import { setSessions } from "../../../src/stores/session-state"
 import { ensureWorktreesLoaded, reloadWorktrees, getWorktrees } from "../../../src/stores/worktrees"
 import { serverEvents } from "../../../src/lib/server-events"
@@ -27,7 +28,7 @@ const client: any = { session: { list: async () => ({ data: fixtureSessions, cur
 ;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, client)
 const uiConfig = { settings: { locale: "en" } }
 serverApi.fetchConfigOwner = async () => uiConfig as any
-serverApi.patchConfigOwner = async (_owner, patch) => Object.assign(uiConfig, patch) as any
+serverApi.patchConfigOwner = async (_owner, patch) => ({ ...Object.assign(uiConfig, patch) }) as any
 serverApi.fetchStateOwner = async () => ({} as any)
 serverApi.fetchWorktrees = async () => ({ isGitRepo: true, defaultDirectory: "/repo/.codenomad/worktrees", worktrees: entries })
 serverApi.createWorktree = async (_id, input) => {
@@ -52,6 +53,9 @@ render(() => <ConfigProvider><I18nProvider><div style={{ width: "380px", margin:
 await updatePreferences({ locale: "en" })
 ;(window as any).fixture = {
   calls,
+  updatePreferences,
+  getToastHistory,
+  instance: () => instances().get(id),
   selectSession: setSelectedSession,
   setMounted,
   location: () => session.location.directory,

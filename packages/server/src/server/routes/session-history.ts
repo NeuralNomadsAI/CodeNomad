@@ -9,9 +9,10 @@ import { historyQuerySchema, historyNativeResultSchema, pruneBatchSchema, pruneB
 import { historyDirectories, ownedHistorySessions } from "./session-history-scope"
 import { registerRankedHistoryRoute } from "./session-history-ranked"
 import { assertOrdinaryMissionScheduleSession } from "../mission-schedule-input-guard"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 
 export interface HistoryRouteDeps {
-  workspaceManager: Pick<WorkspaceManager, "getSharedServiceClient" | "ownsLocation" | "getWorktreeIdentityForPath" | "getServiceLocation" | "getWorktrees" | "desktopPluginsReady">
+  workspaceManager: Pick<WorkspaceManager, "requireWorkspaceCapability" | "getSharedServiceClient" | "ownsLocation" | "getWorktreeIdentityForPath" | "getServiceLocation" | "getWorktrees" | "desktopPluginsReady">
     & Partial<Pick<WorkspaceManager, "getSharedServiceConnection">>
   worktreeDeletionFence: WorktreeDeletionFence
 }
@@ -24,6 +25,11 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
     if (!parsed.success) return reply.code(400).send({ error: "Invalid history query" })
     const input = parsed.data
     const manager = deps.workspaceManager
+    try { manager.requireWorkspaceCapability(request.params.id, "historyEnrichment") }
+    catch (error) {
+      if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
+      throw error
+    }
     const root = manager.getServiceLocation(request.params.id)
     if (!root) return reply.code(404).send({ error: "Workspace not found" })
     const client = await manager.getSharedServiceClient()
@@ -76,6 +82,11 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
     const parsed = pruneBatchSchema.safeParse(request.body)
     if (!parsed.success) return reply.code(400).send({ error: "Invalid pruning batch" })
     const input = parsed.data
+    try { deps.workspaceManager.requireWorkspaceCapability(request.params.id, "sessionPruning") }
+    catch (error) {
+      if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
+      throw error
+    }
     const client = await deps.workspaceManager.getSharedServiceClient()
     // Before authorization: ownership checks and fence entry must stay adjacent.
     await deps.workspaceManager.desktopPluginsReady()

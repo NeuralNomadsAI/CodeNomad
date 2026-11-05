@@ -88,4 +88,12 @@ mod tests {
             "CODENOMAD_NATIVE_RESPONSE:{\"v\":1,\"id\":\"r1\",\"ok\":true,\"result\":{\"available\":true}}\n"
         );
     }
+
+    #[test]
+    fn attachment_response_preserves_opaque_scoped_id_and_canonical_header() {
+        let id = "attachments-00000000-0000-4000-8000-000000000000";
+        let request = parse(&format!("{REQUEST_PREFIX}{{\"v\":1,\"id\":\"{id}\",\"method\":\"projects.attachments.current\",\"deadline\":9999999999999}}")).unwrap();
+        assert_eq!(request.id, id);
+        assert_eq!(response(&request.id, Ok(json!(true))), format!("{RESPONSE_PREFIX}{{\"v\":1,\"id\":\"{id}\",\"ok\":true,\"result\":true}}\n"));
+    }
 }

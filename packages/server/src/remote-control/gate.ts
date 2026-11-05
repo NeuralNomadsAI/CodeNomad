@@ -19,7 +19,7 @@ const PUBLIC_PATHS = new Set([PAIR_PAGE_PATH, PAIR_EXCHANGE_PATH, "/api/auth/sta
 // windows, local tools and the automation bridge. Never reachable remotely, except
 // web previews through their capability token while the host allows them.
 const LOCAL_ONLY_PATHS = new Set(["/login", "/api/auth/login", "/api/auth/token", "/api/auth/password", "/api/auth/logout"])
-const LOCAL_ONLY_PREFIXES = ["/auth/", "/api/remote-control/", "/api/remote-proxy/", "/api/remote-servers/", "/api/opencode-plugin/", "/sidecars/", "/previews/"]
+const LOCAL_ONLY_PREFIXES = ["/auth/", "/api/remote-control/", "/api/remote-proxy/", "/api/remote-servers/", "/api/opencode-servers/", "/api/opencode-plugin/", "/sidecars/", "/previews/"]
 const REMOTE_MANAGEMENT_READS = new Set(["/api/remote-control/status"])
 // Client-supplied routing or authority metadata is never trusted on the remote surface.
 const SPOOFABLE_HEADERS = ["forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip", "x-codenomad-remote-control"]

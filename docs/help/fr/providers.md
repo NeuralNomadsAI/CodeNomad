@@ -4,6 +4,8 @@ L’authentification des fournisseurs appartient au service OpenCode connecté, 
 
 ## Connecter un fournisseur de modèles ou de recherche {#connect}
 
+Vérifiez **Serveur OpenCode sélectionné**. Les paramètres de connexion, de comptes, de recherche web et d’images décrits ci-dessous s’appliquent au service local partagé. Un serveur explicitement indiqué et qualifié affiche uniquement un catalogue natif de fournisseurs et de modèles en lecture seule ; gérez son authentification et sa configuration directement sur ce serveur, hors des capacités actuelles de CodeNomad. Les contrôles des projets indisponibles restent inactifs ; les préférences CodeNomad restent accessibles. Sur le service local, les groupes **Modèles**, **Recherche web** et **Images** repliés attendent leur ouverture pour lire leurs données.
+
 1. Ouvrez un espace de travail, puis **Paramètres → Fournisseurs**. **Modèles** est déplié au départ ; dépliez **Recherche web** pour les fournisseurs de recherche. **Images** regroupe les réglages d'images.
 2. Dans ce groupe, choisissez **Sélectionner un fournisseur**, puis **Connecter**.
 3. Pour un fournisseur de modèles, effectuez la **Méthode d'authentification** native proposée : clé API, OAuth ou commande. Pour OAuth, utilisez **Ouvrir la page d'autorisation** et ne soumettez un code d’autorisation que si demandé. Les fournisseurs de recherche se connectent avec une clé API.

@@ -119,6 +119,7 @@ test("GET /missions over the plugin observes and loads only open and selected mi
   const app = Fastify({ logger: false })
   const workspace = { id: "workspace-1" }
   registerMissionRoutes(app, { workspaceManager: { get: () => workspace, getServiceLocation: () => location,
+    requireWorkspaceCapability: () => new AbortController().signal,
     getSharedServiceConnection: async () => ({ client, assertCurrent() {} }), ownsLocation: async () => true,
     getWorktreeIdentityForPath: async (_id: string, directory: string) => directory } as never, worktreeDeletionFence: new WorktreeDeletionFence() })
   try {

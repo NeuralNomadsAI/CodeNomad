@@ -4,6 +4,8 @@ Provider authentication belongs to the connected OpenCode service, not to the br
 
 ## Connect a model or search provider {#connect}
 
+Check **Selected OpenCode server**. The connection, account, web-search and image settings described below apply to the shared local service. A qualified explicit server shows only a read-only native provider/model catalogue; administer its authentication and configuration directly on that server, outside CodeNomad's current capabilities. Unavailable projects keep their controls inactive; CodeNomad preferences remain usable. On the local service, folded **Models**, **Web search** and **Images** groups defer their reads until expanded.
+
 1. Open a workspace, then **Settings → Providers**. **Models** starts expanded; expand **Web search** for search providers. **Images** holds the image settings.
 2. In that group, choose **Select provider**, then **Connect**.
 3. For a model provider, complete the native **Authentication method** offered: API key, OAuth or command. For OAuth, use **Open authorization page** and submit an authorization code only when requested. Search providers connect with an API key.

@@ -29,6 +29,7 @@ import { shouldWaitForSavedSessionList } from "../../stores/app-session-restore-
 import { waitForSettledPrerequisite } from "../trailing-resync"
 import { HttpResponseError } from "../retryable-file-search"
 import { registerOpenCodeRestoreRecovery } from "../../stores/opencode-setup"
+import { LOCAL_SERVER_ID } from "../project-identity"
 const log = getLogger("actions")
 const INITIAL_LOAD_TIMEOUT_MS = 15_000
 const OPERATION_TIMEOUT_MS = 30_000
@@ -81,9 +82,9 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
   }
   if (signal.aborted) return Promise.all(sidecars).then(() => undefined)
   const matches = reconcileWorkspaceTabs(snapshot.tabs.map((tab) => tab.kind === "workspace"
-    ? { kind: tab.kind, folderPath: tab.folder, occurrence: tab.occurrence }
+    ? { kind: tab.kind, folderPath: tab.folder, serverId: tab.serverId, occurrence: tab.occurrence }
      : { kind: tab.kind }), Array.from(instances().values())
-       .map(({ id, folder, status }) => ({ id, folderPath: folder, status })))
+        .map(({ id, folder, status, binding }) => ({ id, folderPath: folder, serverId: binding?.serverId, status })))
     .filter(match => !retryIndexes || (retryIndexes.get(match.tabIndex)?.() && !hasLocalRestoredTab(capture, match.tabIndex)))
   const existing = matches.filter(({ existingWorkspaceId }) => existingWorkspaceId)
   const missing = matches.filter(({ existingWorkspaceId }) => !existingWorkspaceId)
@@ -108,6 +109,9 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
     if (signal.aborted) return
     const tab = snapshot.tabs[match.tabIndex]
     if (!tab || tab.kind !== "workspace") return
+    // prototype-1236 (R11): a saved project on an explicit OpenCode server reopens on that
+    // server; its directory is never interpreted as a local create request.
+    const serverId = tab.serverId && tab.serverId !== LOCAL_SERVER_ID ? tab.serverId : undefined
     const canCommitCreation = retryIndexes?.get(match.tabIndex) ?? capture.createRestoredTabCommitGuard(match.tabIndex)
     if (!canCommitCreation()) return
     let workspaceOpened = false
@@ -121,6 +125,7 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
             || capture.restoredTabIds()[match.tabIndex] === getInstanceAppTabId(id)),
           onBeforeCreateCommit: (id) => seedRestoredWorkspaceState(id, tab),
           onCreateCommit: (id) => capture.recordRestoredTab(match.tabIndex, getInstanceAppTabId(id)),
+          ...(serverId ? { serverId } : {}),
         })
         const creation = existingId || isWebHost() ? null : await create()
         if (creation && finishCreateCommit) await waitForWorkspaceMountAdoption()

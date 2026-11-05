@@ -43,6 +43,8 @@ Chaque remplacement révoque l’activation dans tous les projets, même si les 
 
 ## Contexte, consentement aux ressources et limites du bac à sable {#permissions-sandbox}
 
+Les éléments de dépôt de l’API 3 sont disponibles uniquement pour les projets utilisant le service OpenCode local partagé. Ils sont indisponibles pour tout serveur OpenCode configuré explicitement, y compris en loopback ou déconnecté, quelle que soit sa prise en charge native de Git ; le refus intervient avant tout accès au Git de l’hôte, aux connexions aux forges ou au réseau.
+
 | Contrat | Ce que l’activation permet |
 | --- | --- |
 | API 1 / `session.context` | Identifiant de session courante (ou aucun), langue et apparence d’interface. Aucun texte de transcription ni accès aux fichiers. |

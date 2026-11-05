@@ -1,4 +1,4 @@
-import { FastifyInstance } from "fastify"
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import fs from "fs/promises"
 import os from "os"
 import path from "path"
@@ -15,7 +15,8 @@ interface ConfigFileRouteOptions {
 
 const ConfigFileContentBodySchema = z.object({
   contents: z.string(),
-})
+}).strict()
+const HostOnlyQuerySchema = z.object({}).strict()
 
 function resolveOpenCodeGlobalConfigPaths(): ConfigFileEntry[] {
   if (process.platform === "win32") {
@@ -69,11 +70,18 @@ function getConfigFile(files: ConfigFileEntry[], id: string): ConfigFileEntry | 
 }
 
 export function registerConfigFileRoutes(app: FastifyInstance, options: ConfigFileRouteOptions = {}) {
+  // The fixed allowlist belongs to the CodeNomad host, independently of the
+  // selected project. Explicit-server configuration has its own admission.
   const configFiles = options.files ?? defaultConfigFileEntries()
+  const hostOnlyQuery = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!HostOnlyQuerySchema.safeParse(request.query ?? {}).success) {
+      return reply.code(400).send({ error: "Invalid host config file query" })
+    }
+  }
 
-  app.get("/api/config-files", async () => listConfigFiles(configFiles))
+  app.get("/api/config-files", { preHandler: hostOnlyQuery }, async () => listConfigFiles(configFiles))
 
-  app.get<{ Params: { id: string } }>("/api/config-files/:id/content", async (request, reply) => {
+  app.get<{ Params: { id: string } }>("/api/config-files/:id/content", { preHandler: hostOnlyQuery }, async (request, reply) => {
     const file = getConfigFile(configFiles, request.params.id)
     if (!file) {
       reply.code(404)
@@ -93,7 +101,7 @@ export function registerConfigFileRoutes(app: FastifyInstance, options: ConfigFi
     }
   })
 
-  app.put<{ Params: { id: string } }>("/api/config-files/:id/content", async (request, reply) => {
+  app.put<{ Params: { id: string } }>("/api/config-files/:id/content", { preHandler: hostOnlyQuery }, async (request, reply) => {
     const file = getConfigFile(configFiles, request.params.id)
     if (!file) {
       reply.code(404)

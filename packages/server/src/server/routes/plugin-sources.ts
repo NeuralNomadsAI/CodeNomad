@@ -3,6 +3,7 @@ import { z } from "zod"
 import { PluginControlsError } from "../../opencode/plugin-controls"
 import { PluginSourcesError, type PluginSources } from "../../opencode/plugin-sources"
 import { PLUGIN_SOURCE_MAX_SPEC_LENGTH } from "../../opencode/plugin-source-document"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 
 interface RouteDeps {
   sources: Pick<PluginSources, "add" | "remove">
@@ -51,6 +52,7 @@ function invalidRequest(reply: FastifyReply) {
 }
 
 function handleError(error: unknown, workspaceId: string, logger: FastifyReply["log"], reply: FastifyReply) {
+  if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
   if (error instanceof PluginControlsError) {
     const status = error.kind === "not-found" ? 404
       : error.kind === "forbidden" ? 403

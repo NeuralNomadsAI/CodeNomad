@@ -34,6 +34,7 @@ function harness(hooks: { inventory?(state: State): void; dispatch?(state: State
     get: () => state.workspace,
     getServiceLocation: () => state.workspace ? { directory: "/owned/repo" } : undefined,
     getSharedServiceConnection: async () => ({ client, assertCurrent: () => { if (!state.current) throw new Error("Connection replaced") } }),
+    requireWorkspaceCapability: () => new AbortController().signal,
     ownsLocation: async () => state.workspace !== undefined,
     getServiceDirectoryForPath: async (_id: string, directory: string) => directory,
     getWorktreeIdentityForPath: async (_id: string, directory: string) => directory,

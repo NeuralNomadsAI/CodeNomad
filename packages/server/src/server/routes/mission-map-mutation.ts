@@ -5,7 +5,7 @@ import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../mission
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import { admitMissionCreationLocations } from "./mission-creation-admission"
 
-export type MissionMapMutationManager = Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceConnection"
+export type MissionMapMutationManager = Pick<WorkspaceManager, "requireWorkspaceCapability" | "get" | "getServiceLocation" | "getSharedServiceConnection"
   | "ownsLocation" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath">
 
 export class MissionMapMutationError extends Error {
@@ -28,6 +28,7 @@ export async function prepareMissionMapMutation(input: {
   signal.throwIfAborted()
   const workspace = manager.get(workspaceID), base = manager.getServiceLocation(workspaceID)
   if (!workspace || !base) throw new MissionMapMutationError(404, "Workspace unavailable")
+  manager.requireWorkspaceCapability(workspaceID, "missions")
   if (!input.fence) throw new MissionMapMutationError(503, "Mission plugin unavailable")
   let connection: ServiceConnection | undefined
   try { connection = await wait(manager.getSharedServiceConnection(workspaceID)) }

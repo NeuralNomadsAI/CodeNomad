@@ -4,6 +4,7 @@ import { navigationWindowInputSchema, navigationWindowResultSchema, outlineInput
 import { locationRequestOptions, readLocationRef, sameLocation } from "../../opencode/compatibility/location"
 import { deferToolMedia, wantsDeferredMedia } from "../../opencode/session-media"
 import type { HistoryRouteDeps } from "./session-history"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 
 // The native SDK throws the declared RPC error body as the error's own fields.
 function isMethodNotFound(error: unknown) {
@@ -19,6 +20,11 @@ export function registerSessionNavigationRoutes(app: FastifyInstance, deps: Pick
     app.post<{ Params: { id: string } }>(`/api/workspaces/:id/session-history/${method}`, { bodyLimit: method === "outline" ? 96 * 1024 : 8192 }, async (request, reply) => {
       const parsed = inputs[method].safeParse(request.body)
       if (!parsed.success) return reply.code(400).send({ error: "Invalid history navigation request" })
+      try { deps.workspaceManager.requireWorkspaceCapability(request.params.id, "historyEnrichment") }
+      catch (error) {
+        if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
+        throw error
+      }
       const client = await deps.workspaceManager.getSharedServiceClient()
       // The first timeline/history read after a backend start would otherwise
       // reach the plugin before it observed this backend and be refused.

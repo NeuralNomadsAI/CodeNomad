@@ -21,7 +21,7 @@ export const missionCreationRequestSchema = z.object({
   profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.default("native"),
 }).strict()
 
-export type MissionCreationPipelineManager = Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceConnection"
+export type MissionCreationPipelineManager = Pick<WorkspaceManager, "requireWorkspaceCapability" | "get" | "getServiceLocation" | "getSharedServiceConnection"
   | "ownsLocation" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath">
 
 export class MissionCreationPreparationError extends Error {
@@ -43,6 +43,7 @@ export async function prepareMissionCreation(input: {
   const { manager, workspaceID, signal } = input
   const wait = input.wait ?? (<T>(operation: Promise<T>) => operation)
   signal.throwIfAborted()
+  if (manager.get(workspaceID)) manager.requireWorkspaceCapability(workspaceID, "missions")
   const parsed = missionCreationRequestSchema.safeParse(input.request)
   if (!parsed.success) throw new MissionCreationPreparationError(400, "Invalid mission creation request")
   const request = parsed.data

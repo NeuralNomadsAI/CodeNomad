@@ -2,6 +2,8 @@
 
 Gespeicherter Verlauf, aktuell angezeigter Gesprächsverlauf und komprimierter Modellkontext sind getrennte Dinge. Wählen Sie Navigation oder Filter, bevor Sie etwas löschen.
 
+Diese erweiterten Verlaufsfunktionen gelten für den gemeinsam genutzten lokalen OpenCode-Dienst. Projekte auf expliziten Servern verwenden native Seiten und eine Zeitleiste geladener Nachrichten, bewahren bei unerreichbaren Passagen die gespeicherte Leseposition und bieten die ausdrückliche Rückkehr zur neuesten Seite. Volltextsuche, Vorschauen ungeladener Nachrichten und technische Bereinigung bleiben dort unverfügbar; Vorschauen bereits geladenen Textes bleiben verfügbar.
+
 ## Gesamten Verlauf durchsuchen {#full-history-search}
 
 1. Öffnen Sie **Chat-Verlauf durchsuchen** im Unterhaltungskopf oder verwenden Sie das zugewiesene Tastenkürzel (standardmäßig **Ctrl/Cmd+F**).

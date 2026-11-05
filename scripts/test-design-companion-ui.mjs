@@ -42,6 +42,7 @@ export async function testDesignCompanionUI({ cli, client, url, password, root, 
     get: id => id === instanceId ? { id, path: directory } : undefined,
     getSharedServiceEndpoint: async () => endpoint, getSharedServiceConnection: async () => connection,
     getInstanceAuthorizationHeader: () => authorization,
+    requireWorkspaceCapability: () => new AbortController().signal,
     getServiceDirectory: () => directory, getServiceLocation: () => location, getWorktrees: async () => ({ worktrees: [] }),
     getSharedServiceClient: async () => connection.client, getSharedServiceFetch: async () => runtimeFetch, desktopPluginsReady: async () => {},
     // The snapshot sent to the isolated session: the fixture's own environment, never this process's.

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import Fastify from "fastify"
+import { OpenCode } from "@opencode/client"
 import { mediaDigest } from "../../opencode/session-media"
 import { registerSessionMediaRoutes } from "./session-media"
 
@@ -9,6 +10,7 @@ const uri = `data:image/png;base64,${bytes.toString("base64")}`
 
 function fixture() {
   const app = Fastify()
+  const workspace = { path: "/repo" }
   let owned = true, session: any = { id: "s", location: { directory: "/repo" } }
   let afterRead = () => {}
   const message = { id: "msg_2", type: "assistant", content: [
@@ -16,11 +18,20 @@ function fixture() {
     { type: "tool", id: "call", name: "read", state: { status: "completed", content: [{ type: "text", text: "ok" }, { type: "file", mime: "image/png", uri }] } },
   ] }
   registerSessionMediaRoutes(app, { workspaceManager: {
+    get: () => workspace,
+    requireWorkspaceCapability: () => new AbortController().signal,
+    getSharedServiceConnection: async () => ({ endpoint: { url: "http://media.invalid" }, assertCurrent() {},
+      fetch: async (input: string | URL | Request) => {
+        const path = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url).pathname
+        if (path.includes("/message/")) {
+          afterRead()
+          if (!path.endsWith(`/${message.id}`)) return new Response("{}", { status: 404 })
+          return Response.json({ data: structuredClone(message) })
+        }
+        return Response.json({ data: structuredClone(session) })
+      }, client: OpenCode.make({ baseUrl: "http://unused.invalid", fetch: async () => { throw new Error("Unbounded client forbidden") } }),
+    }),
     ownsLocation: async () => owned,
-    getSharedServiceClient: async () => ({ session: {
-      get: async () => structuredClone(session),
-      message: { get: async ({ messageID }: any) => { afterRead(); if (messageID !== message.id) throw new Error("missing"); return structuredClone(message) } },
-    } }) as any,
   } as any })
   const url = (overrides: { message?: string; part?: string; index?: string; digest?: string } = {}) =>
     `/api/workspaces/w/session-media/s/${overrides.message ?? "msg_2"}/${overrides.part ?? "1"}/${overrides.index ?? "1"}/${overrides.digest ?? mediaDigest(uri)}`

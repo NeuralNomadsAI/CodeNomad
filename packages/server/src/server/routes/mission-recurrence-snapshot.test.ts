@@ -14,6 +14,7 @@ test("owned recurrence snapshots expose simple metadata; foreign, oversized and 
   registerMissionRecurrenceSnapshot(app, { worktreeDeletionFence: fence, workspaceManager: {
     get: () => workspace, getServiceLocation: () => location, ownsLocation: async () => owned,
     getWorktreeIdentityForPath: async (_id: string, directory: string) => directory,
+    requireWorkspaceCapability: () => new AbortController().signal,
     getSharedServiceConnection: async () => ({ assertCurrent: () => { if (!connected) throw new Error("Connection changed") }, client: {
       location: { get: async () => ({ project: { id: "project", canonical: "/project" } }) },
       plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
@@ -47,6 +48,7 @@ test("a WSL snapshot read during its worktree identity's deletion is never publi
   registerMissionRecurrenceSnapshot(app, { worktreeDeletionFence: fence, workspaceManager: {
     get: () => workspace, getServiceLocation: () => location, ownsLocation: async () => true,
     getWorktreeIdentityForPath: async () => "wsl:ubuntu:/home/dev/repo",
+    requireWorkspaceCapability: () => new AbortController().signal,
     getSharedServiceConnection: async () => ({ assertCurrent: () => {}, client: {
       location: { get: async () => ({ project: { id: "project", canonical: "/home/dev/repo" } }) },
       plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },

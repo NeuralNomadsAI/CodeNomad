@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 import { z } from "zod"
 import type { AuthManager } from "../../auth/manager"
 import type { WorkspaceManager } from "../../workspaces/manager"
@@ -17,7 +18,7 @@ import type { RemoteControlManager } from "../../remote-control/manager"
  * generic RPC proxy, even when a signed archive establishes prior commitment. */
 export function registerMissionRecurrenceControlStatus(app: FastifyInstance, deps: {
   auth: Pick<AuthManager, "isAuthEnabled" | "getSessionFromRequest">
-  manager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getServiceDirectoryForPath" | "getSharedServiceConnection" | "ownsLocation"
+  manager: Pick<WorkspaceManager, "requireWorkspaceCapability" | "get" | "getServiceLocation" | "getServiceDirectoryForPath" | "getSharedServiceConnection" | "ownsLocation"
     | "getWorktreeIdentityForPath">
   fence: WorktreeDeletionFence
   remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">
@@ -33,6 +34,7 @@ export function registerMissionRecurrenceControlStatus(app: FastifyInstance, dep
     if (!input.success) return reply.code(400).send({ error: "Invalid exact control status request" })
     const lifetime = requestAdmission(request, reply), id = request.params.id
     try {
+      deps.manager.requireWorkspaceCapability(id, "missions")
       const workspace = deps.manager.get(id), base = deps.manager.getServiceLocation(id)
       if (!workspace || !base) return reply.code(404).send({ error: "Workspace unavailable" })
       const directory = requestedDirectory ? await lifetime.wait(deps.manager.getServiceDirectoryForPath(id, requestedDirectory)) : base.directory
@@ -71,7 +73,8 @@ export function registerMissionRecurrenceControlStatus(app: FastifyInstance, dep
       current()
       reconcileRecurrenceControlHold(deps.fence, id, location, read, result, connection, owner)
       return result
-    } catch {
+    } catch (error) {
+      if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
       request.log.warn({ code: "recurrence-control-status-unavailable" }, "Mission recurrence control status unavailable")
       return reply.code(503).send({ error: "Exact recurrence control status unavailable" })
     } finally { lifetime.dispose() }

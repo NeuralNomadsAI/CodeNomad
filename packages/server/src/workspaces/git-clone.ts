@@ -2,6 +2,7 @@ import fs from "fs"
 import path from "path"
 import { spawn } from "child_process"
 import { homedir } from "os"
+import { WorkspaceCapabilityError } from "../opencode/servers/capabilities"
 
 class GitCloneError extends Error {
   statusCode: number
@@ -149,10 +150,14 @@ export function isGitCloneError(error: unknown): error is GitCloneError {
 }
 
 export async function cloneGitRepository(params: {
+  serverId?: string
   repositoryUrl: string
   destinationPath: string
   cleanup?: boolean
 }): Promise<{ path: string }> {
+  if (params.serverId !== undefined && params.serverId !== "local-shared") {
+    throw new WorkspaceCapabilityError("git", { code: "deferred" })
+  }
   const repositoryUrl = params.repositoryUrl.trim()
   const requestedDestinationPath = params.destinationPath.trim()
 

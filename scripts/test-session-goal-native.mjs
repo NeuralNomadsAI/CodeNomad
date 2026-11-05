@@ -16,6 +16,7 @@ await withProductRuntime(process.argv[2], async () => ({}), async ({ client, roo
   const owns = async (id, location) => id === "fixture" && location?.directory === root
   const records = [{ id: "fixture", path: root }]
   const manager = {
+    requireWorkspaceCapability: () => new AbortController().signal,
     list: () => records, ownsDirectory: async (id, directory) => owns(id, { directory }), ownsLocation: owns,
     getSharedServiceClient: async () => client, subscribeToSharedService: signal => client.event.subscribe({ signal }),
     invalidateWorktrees() {},

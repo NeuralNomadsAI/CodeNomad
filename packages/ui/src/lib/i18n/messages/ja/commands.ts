@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openWorkspace.localOnly": "ネイティブのファイル・エディター・ターミナル操作には、共有ローカル OpenCode サービス上のプロジェクトが必要です。",
   "commands.openHelp.failed": "ブラウザーでヘルプを開けませんでした。https://neuralnomadsai.github.io/CodeNomad/ を手動で開いてください。",
   "commands.openSponsor.failed": "ブラウザーで「CodeNomad を支援する」ページを開けませんでした。{url} を手動で開いてください。",
   "commandPalette.title": "コマンドパレット",

@@ -2,6 +2,7 @@ import type { PermissionReceipt } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { receiptReads } from "../lib/background-read-queue"
 import { serverEvents } from "../lib/server-events"
+import { requireHistoryEnrichment } from "./session-history-capability"
 
 export type PermissionReceiptScope = { messageId: string } | { unanchored: true }
 export interface PermissionReceiptSnapshot { receipts: PermissionReceipt[]; next?: string; pages: number }
@@ -67,6 +68,7 @@ export function ownsPermissionReceipt(receipt: PermissionReceipt, sessionId: str
 
 /** Joins (or starts) the shared read for a row; call release when the row stops waiting. */
 export function acquirePermissionReceipts(instanceId: string, sessionId: string, scope: PermissionReceiptScope, pages: number) {
+  requireHistoryEnrichment(instanceId)
   const key = permissionReceiptKey(instanceId, sessionId, scope)
   let read = reads.get(key)
   if (!read || read.pages < pages) read = startRead(key, instanceId, sessionId, scope, pages)
@@ -93,7 +95,11 @@ function startRead(key: string, instanceId: string, sessionId: string, scope: Pe
     let cursor: string | undefined
     let fetched = 0
     do {
-      const page = await receiptReads.run(signal, () => serverApi.fetchPermissionReceipts(instanceId, sessionId, scope, cursor, signal))
+      const page = await receiptReads.run(signal, () => {
+        requireHistoryEnrichment(instanceId)
+        return serverApi.fetchPermissionReceipts(instanceId, sessionId, scope, cursor, signal)
+      })
+      requireHistoryEnrichment(instanceId)
       receipts.push(...page.receipts.filter(receipt => ownsPermissionReceipt(receipt, sessionId, scope)))
       cursor = page.next
       fetched++

@@ -5,19 +5,26 @@ import type { PluginControlLocation } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { IntegrationCatalogWindow } from "./integration-catalog-window"
 import { PluginSourceAdd } from "./plugin-source-add"
+import { ProjectCapabilityBoundary } from "./project-capability-gate"
 
 type Item = { kind: "integration" | "plugin" }
 // Stable descriptors: icons are created by the item renderer, once per rendered item.
 const ITEMS: readonly Item[] = [{ kind: "integration" }, { kind: "plugin" }]
 
 /** The Plugins "+" menu: "Add an integration…" (the reviewed catalogue) and "Add a plugin…" (any package). */
-export function PluginAddMenu(props: {
+interface PluginAddMenuProps {
   instanceId: string
   location: PluginControlLocation
   projectAvailable: boolean
   active?: boolean
   sessionId?: string
-}) {
+}
+
+export function PluginAddMenu(props: PluginAddMenuProps) {
+  return <ProjectCapabilityBoundary instanceId={props.instanceId} feature="pluginWrite"><AdmittedPluginAddMenu {...props} /></ProjectCapabilityBoundary>
+}
+
+function AdmittedPluginAddMenu(props: PluginAddMenuProps) {
   const { t } = useI18n()
   const [plugin, setPlugin] = createSignal(false)
   const [catalog, setCatalog] = createSignal(false)

@@ -63,6 +63,7 @@ test("real cookie human Play uses exact selected YAML; lost ACK performs one rec
       settings: { configYamlPathForAuthority: () => yaml, getProfileScope: () => selected },
       manager: { get: () => workspace, getServiceLocation: () => location, getServiceDirectoryForPath: async () => directory,
         getSharedServiceConnection: async () => ({ client, assertCurrent: () => {} }), ownsLocation: async () => true,
+        requireWorkspaceCapability: () => new AbortController().signal,
         getServiceWslDistro: () => undefined, getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",
         getWorktreeIdentityForPath: async () => canonicalWorktreeIdentity(directory), getHostPathForServicePath: async () => directory } } as never)
     const url = "/api/workspaces/owned/missions/recurrence/daily_review/control"

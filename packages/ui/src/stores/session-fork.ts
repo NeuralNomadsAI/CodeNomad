@@ -7,6 +7,7 @@ export async function forkAfterMessage(
   sessionID: string,
   messageID: string,
   isCurrent: () => boolean,
+  requestOptions?: { headers: Record<string, string> },
 ) {
   const checkAuthority = () => {
     if (!isCurrent()) throw new Error("Session fork was superseded by reconnect")
@@ -16,19 +17,21 @@ export async function forkAfterMessage(
   const seen = new Set<string>()
   for (;;) {
     checkAuthority()
-    const page = await client.message.list({ sessionID, limit: 200, ...(cursor ? { cursor } : { order: "desc" as const }) })
+    const page = await client.message.list({ sessionID, limit: 200, ...(cursor ? { cursor } : { order: "desc" as const }) }, requestOptions)
     checkAuthority()
     for (const message of page.data) {
       if (message.id === messageID) {
         if (message.type === "assistant" && !message.time.completed) {
           throw new Error("Cannot fork after an unfinished response")
         }
-        const fork = await client.session.fork({ sessionID, ...(successor ? { before: successor } : {}) })
+        const fork = await client.session.fork({ sessionID, ...(successor ? { before: successor } : {}) }, requestOptions)
         checkAuthority()
         // A tail fork is atomic in OpenCode, but another client can append
         // between our read and that write. Never open a fork past the selection.
         if (!successor && (fork.fork?.boundary.type !== "through" || fork.fork.boundary.messageID !== messageID)) {
-          await client.session.remove({ sessionID: fork.id })
+          checkAuthority()
+          await client.session.remove({ sessionID: fork.id }, requestOptions)
+          checkAuthority()
           throw new Error("Session changed while forking; please try again")
         }
         return fork

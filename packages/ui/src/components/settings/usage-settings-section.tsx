@@ -8,7 +8,7 @@ import { isExecutionTerminalEvent } from "../../lib/native-execution-events"
 import { activeInstanceId } from "../../stores/instances"
 import { createEventRefreshScheduler, type RefreshUrgency } from "../../lib/event-refresh-scheduler"
 
-export function UsageSettingsSection(props: { instanceId?: string }) {
+export function UsageSettingsSection(props: { instanceId?: string; active?: () => boolean }) {
   const { t, locale } = useI18n()
   const [days, setDays] = createSignal(30)
   const [choice, setChoice] = createSignal<{ id: string; days: number }>()
@@ -28,10 +28,10 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
     let periodKnown = selected !== undefined, freshEpoch = -1
     let controller: AbortController | undefined
     setDays(count); setSnapshot(undefined); setError(false); setBusy(false); setStale(true)
-    if (!id) return
-    const current = (epoch: number) => !disposed && untrack(visible) && epoch === revision
+    if (!id || props.active?.() === false) return
+    const current = (epoch: number) => !disposed && props.active?.() !== false && untrack(visible) && epoch === revision
     const load = async () => {
-      if (disposed || !untrack(visible) || !connected) return
+      if (disposed || props.active?.() === false || !untrack(visible) || !connected) return
       controller?.abort()
       const epoch = ++revision, observed = invalidation
       controller = new AbortController()
@@ -94,6 +94,7 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
     }
     const scheduler = createEventRefreshScheduler(load)
     const invalidate = (urgency: RefreshUrgency = "urgent") => {
+      if (disposed || props.active?.() === false) return
       invalidation++; setStale(true)
       if (untrack(visible) && connected) scheduler.schedule("stats", urgency)
     }

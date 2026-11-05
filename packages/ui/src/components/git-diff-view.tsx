@@ -14,6 +14,7 @@ import { writeClientLayoutValue } from "../stores/client-state"
 import { readStoredEnum, RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY, RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY } from "./instance/shell/storage"
 import { preferences } from "../stores/preferences"
 import { classifyHiddenDiffChange } from "./file-viewer/diff-whitespace"
+import { remoteReadErrorText } from "../lib/remote-read-error"
 
 const MonacoDiffViewer = lazy(() => import("./file-viewer/monaco-diff-viewer").then(module => ({ default: module.MonacoDiffViewer })))
 
@@ -59,7 +60,7 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
       if (result.isBinary && !result.image) { setContent(null); setError(t("instanceShell.gitChanges.binaryViewer")) }
       else setContent(result)
     } catch (cause) {
-      if (!request.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause))
+      if (!request.signal.aborted) setError(remoteReadErrorText(cause instanceof Error ? cause.message : String(cause), t))
     } finally {
       if (controller === request) {
         setLoading(false)

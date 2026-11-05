@@ -2,6 +2,8 @@
 
 ## Open settings and identify the scope {#open-settings}
 
+**Selected OpenCode server** identifies the project context (`local-shared` for the shared local service); CodeNomad preferences remain shared. Unavailable projects keep their OpenCode controls inactive. Config Files, Environment Variables and OpenCode maintenance identify the **local CodeNomad backend**: HOME files, profile environment and the shared service belong there. When **Manage local backend** is offered, it explicitly opens those local controls separately from the selected project.
+
 1. Open **Settings** with the **Open settings** gear in the tab bar (the title bar in the macOS desktop app) or on the home page. Shortcuts such as **Manage Providers** in the model selector, the Missions panel gear or the **Settings** gear in the notification history open the matching section directly.
 2. Select a section. Local Electron and Tauri windows open or focus one native Preferences window; browser and remote views use the embedded settings screen.
 3. Check the setting's scope and any **Save** action before leaving.
@@ -15,7 +17,9 @@ Most choices apply immediately, including Mission preferences, which save each c
 | Global/Project OpenCode settings | Native plugin/configuration changes at their displayed scope. Project controls require an active project/Location. |
 | Desktop data profile | Native windows, restore state and browser storage, independently of the configuration file and shared OpenCode service. See [Desktop windows and data](desktop.md). |
 
-**Stats** covers the entire connected OpenCode service (all projects, independent clones and subsessions), not only the opened folder, for the last 7, 30, 90 or 365 days. It needs an open project and shows OpenCode's recorded tokens and cost, not provider invoices or subscription allowances; previous saved totals can appear while it refreshes. Plan quotas belong to the **Usage** Status section.
+Qualified explicit servers expose a read-only provider/model catalogue. Deferred sections remain selectable and explain their limitation; administer those server settings directly on the server.
+
+**Stats** covers the entire shared local OpenCode service (all projects, independent clones and subsessions), not only the opened folder, for the last 7, 30, 90 or 365 days. It needs an open project and shows OpenCode's recorded tokens and cost, not provider invoices or subscription allowances; previous saved totals can appear while it refreshes. Plan quotas belong to the **Usage** Status section. **Stats** is unavailable for explicit servers; its section explains why.
 
 Changing display preferences does not restart OpenCode or replay a prompt. Native configuration, service maintenance and credentials have separate effects: see [OpenCode setup](opencode.md), [Providers](providers.md) and [Integrations](integrations.md).
 
@@ -41,6 +45,8 @@ Drag a docked panel's inner edge to resize it. The handle stays highlighted and 
 Recognised [integrations](integrations.md#integration-sections) also have Status sections. Hide them with the same checkboxes; reorder any Status section by dragging or with Up/Down keys. Visibility and order persist across reloads and temporary absence of an integration.
 
 Status includes token information, Yolo mode, provider Usage, background shells, MCP and Plugins. While the conversation has a [goal](conversations.md#goal), a goal line above these sections shows it; that line is not a section and cannot be hidden or moved. Hiding a section does not disable its service or revoke permissions. Narrow layouts close panels that no longer fit instead of squeezing the conversation; a panel opened there floats over it, and opening one floating panel closes the other.
+
+For a project on a configured OpenCode server, these sections read that server. **Usage** shows native OpenCode Go quotas and the credential-free Zen estimate described in [Providers](providers.md#usage); other providers show no quota. **Plugins** lists the server's plugins with their state; their switches stay read-only because OpenCode offers no API to change the server's plugin configuration. MCP servers can still be connected or disconnected. **Background Shells** lists and stops the server's shells of the opened folder.
 
 Built-in layout is window layout, not a project mutation. Extension checkboxes are different: they activate code across all projects using the configuration. **Reset** does not change extension consent. See [Panel extensions](extensions.md).
 

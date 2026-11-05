@@ -6,6 +6,8 @@ import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { PluginActivationControls } from "./plugin-activation-controls"
 import { createIntegrationContext } from "./integration-context"
+import { getProjectAvailability } from "../stores/project-capability"
+import { captureInstanceRequestAuthority } from "../stores/session-api"
 
 const log = getLogger("session")
 
@@ -79,6 +81,8 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
   }
 
   const toggleMcpServer = async (serverName: string, shouldEnable: boolean) => {
+    if (!getProjectAvailability(instance().id, "plugins").allowed) return
+    const current = captureInstanceRequestAuthority(instance().id)
     const client = instance().client
     if (!client?.mcp) return
     const action: "connect" | "disconnect" = shouldEnable ? "connect" : "disconnect"
@@ -93,7 +97,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
       } else {
         await client.mcp.disconnect({ server: serverName, location })
       }
-      await refreshMetadata()
+      if (current() && getProjectAvailability(instance().id, "plugins").allowed) await refreshMetadata()
     } catch (error) {
       log.error("Failed to toggle MCP server", { serverName, action, error })
     } finally {
@@ -152,17 +156,18 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
                           <div class={statusDotClass()} style={statusDotStyle()} />
                         </div>
                         <div class="flex items-center gap-1.5">
-                          <Switch
+                          <Show when={getProjectAvailability(instance().id, "plugins").allowed}><Switch
                             checked={isRunning()}
                             disabled={switchDisabled()}
                             color="success"
                             size="small"
                             inputProps={{ "aria-label": t("instanceServiceStatus.mcp.toggleAriaLabel", { name: server.name }) }}
+                            onClick={event => { if (!getProjectAvailability(instance().id, "plugins").allowed) event.preventDefault() }}
                             onChange={(_, checked) => {
                               if (switchDisabled()) return
                               void toggleMcpServer(server.name, Boolean(checked))
                             }}
-                          />
+                          /></Show>
                         </div>
                       </div>
 

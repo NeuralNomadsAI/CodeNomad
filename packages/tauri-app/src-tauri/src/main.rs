@@ -285,9 +285,20 @@ pub(crate) fn handle_native_request(
     method: &str,
     params: Option<serde_json::Value>,
     deadline: u64,
+    backend_generation: u64,
 ) -> Result<serde_json::Value, String> {
     let state = app.state::<AppState>();
+    if method.starts_with("projects.attachments.") {
+        app.state::<client_state::ClientState>().bind_attachment_backend(backend_generation);
+    }
     match method {
+        "projects.attachments.read" => app.state::<client_state::ClientState>()
+            .attachment_inventory(&app.state::<local_windows::LocalWindows>()),
+        "projects.attachments.current" => {
+            let receipt = params.as_ref().and_then(|value| value.get("receipt")).and_then(serde_json::Value::as_str);
+            Ok(serde_json::Value::Bool(receipt.is_some_and(|receipt| app.state::<client_state::ClientState>()
+                .attachment_receipt_current(receipt, &app.state::<local_windows::LocalWindows>()))))
+        }
         "browser.probe" | "browser.execute" | "browser.page.begin" | "browser.page.send"
         | "browser.page.check" | "browser.page.end" => state
             .browser_controller

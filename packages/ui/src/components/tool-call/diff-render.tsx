@@ -10,19 +10,21 @@ import { getCacheEntry } from "../../lib/global-cache"
 import { copyToClipboard } from "../../lib/clipboard"
 import type { RecordTextRevealTarget } from "../../stores/message-v2/record-display-cache"
 import { HiddenTextNotice, createTextWindow } from "../hidden-text"
+import { sanitizeRenderedMarkdown } from "../../lib/markdown-html-policy"
+import type { MediaPolicy } from "../../lib/media-policy"
 
 const LazyToolCallDiffViewer = lazy(() =>
   import("../diff-viewer").then((module) => ({ default: module.ToolCallDiffViewer })),
 )
 
-function CachedDiffMarkup(props: { html: string; onRendered?: () => void }) {
+function CachedDiffMarkup(props: { html: string; policy: MediaPolicy; onRendered?: () => void }) {
   onMount(() => {
     props.onRendered?.()
   })
 
   return (
     <div class="tool-call-diff-viewer">
-      <div innerHTML={props.html} />
+      <div innerHTML={sanitizeRenderedMarkdown(props.html, props.policy)} />
     </div>
   )
 }
@@ -38,6 +40,7 @@ type DiffPrefs = {
 
 export function createDiffContentRenderer(params: {
   toolState: Accessor<ToolState | undefined>
+  mediaPolicy: Accessor<MediaPolicy>
   preferences: Accessor<DiffPrefs>
   setDiffViewMode: (mode: DiffViewMode) => void
   isDark: Accessor<boolean>
@@ -195,7 +198,7 @@ export function createDiffContentRenderer(params: {
         {renderAsPlainText ? (
           <pre class="tool-call-diff-fallback">{renderedDiffText()}</pre>
         ) : cachedHtml() ? (
-          <CachedDiffMarkup html={cachedHtml()!} onRendered={handleDiffRendered} />
+          <CachedDiffMarkup html={cachedHtml()!} policy={params.mediaPolicy()} onRendered={handleDiffRendered} />
         ) : (
           <Suspense fallback={<pre class="tool-call-diff-fallback">{renderedDiffText()}</pre>}>
             <LazyToolCallDiffViewer

@@ -7,6 +7,7 @@ interface LoadErrorStateProps {
   retryLabel: string
   onRetry: () => void
   variant?: "compact" | "panel"
+  live?: "polite" | "assertive"
 }
 
 const LoadErrorState: Component<LoadErrorStateProps> = (props) => {
@@ -27,11 +28,11 @@ const LoadErrorState: Component<LoadErrorStateProps> = (props) => {
   )
 
   if (props.variant === "compact") {
-    return <div class="m-3 border border-danger bg-danger/10 p-3" role="alert">{content}</div>
+    return <div class="m-3 border border-danger bg-danger/10 p-3" role={props.live === "polite" ? "status" : "alert"} aria-live={props.live}>{content}</div>
   }
 
   return (
-    <div class="flex flex-1 items-center justify-center p-12" role="alert">
+    <div class="flex flex-1 items-center justify-center p-12" role={props.live === "polite" ? "status" : "alert"} aria-live={props.live}>
       <div class="w-full max-w-md border border-danger bg-danger/10 p-6">{content}</div>
     </div>
   )

@@ -5,6 +5,7 @@ import { requiresMissionCalendar } from "../../missions/launch-policy"
 import type { NativeScheduleSettingsActivation } from "../../opencode/native-schedule-settings-activation"
 import { PluginControlsError } from "../../opencode/plugin-controls"
 import { requestAdmission } from "../request-admission"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 import { MissionMapMutationError, prepareMissionMapMutation, type MissionMapMutationManager } from "./mission-map-mutation"
 import { missionScheduleActivationJournal } from "./mission-schedule-activation-journal"
 
@@ -62,6 +63,7 @@ export function registerMissionScheduleActivation(app: FastifyInstance, deps: De
           }
         })
       } catch (error) {
+        if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
         const status = error instanceof MissionMapMutationError ? error.status : error instanceof PluginControlsError
           ? error.kind === "forbidden" ? 403 : error.kind === "invalid" ? 400 : error.kind === "conflict" ? 409 : 503 : 503
         return reply.code(status).send({ error: "Mission schedule configuration remains unconfirmed", code: "schedule-activation-pending" })

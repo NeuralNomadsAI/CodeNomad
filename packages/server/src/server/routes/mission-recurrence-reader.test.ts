@@ -289,6 +289,7 @@ test("authenticated backend GET forwards only exact archive selectors and owned 
     get: () => workspace, getServiceLocation: () => ({ directory: f.directory }),
     getWorktreeIdentityForPath: async (_id: string, directory: string) => directory,
     ownsLocation: async (_id: string, location: unknown) => { assert.deepEqual(location, { directory: f.directory }); return owned },
+    requireWorkspaceCapability: () => new AbortController().signal,
     getSharedServiceConnection: async () => {
       connections++
       return { assertCurrent: () => { if (!connected) throw new Error("Connection changed") }, client: {
