@@ -28,7 +28,7 @@ With multiple saved credentials on a supported integration, **Auto-select accoun
 | Eligible integration | Eligible account type |
 | --- | --- |
 | OpenAI / Codex | Codex browser/device OAuth subscription accounts, not OpenAI pay-as-you-go keys or the ChatGPT sign-in method whose usage OpenAI does not provide. |
-| OpenCode Go | Go key, or OpenCode Console sign-in/key used for the **Go provider only**, not Zen pay-as-you-go credits. |
+| OpenCode Go | Go key, or OpenCode Console sign-in/key used for the **Go provider only**; paid Console models stay manual. |
 | Anthropic | OpenCode's Claude Pro/Max OAuth login, **not** the Claude Code login. |
 | GitHub Copilot | OAuth with readable premium-request quota; enterprise-endpoint credentials are not readable candidates. |
 | Coding plans | Key-based `zai-coding-plan`, `zhipuai-coding-plan`, `kimi-for-coding`, `minimax-coding-plan`, `minimax-cn-coding-plan`. |
@@ -54,7 +54,15 @@ For Google connections using OpenCode's Gemini CLI authentication method, **Usag
 
 Google's [Antigravity FAQ](https://antigravity.google/docs/faq/) states that using third-party software with an Antigravity login violates its terms and may lead to account suspension or termination.
 
-For free OpenCode Zen models, **Usage** estimates consumption from this service's recorded steps since 00:00 UTC, using an assumed reference of 200 requests/day and the next UTC midnight as an estimated reset. Steps approximate requests; other traffic and changing IP-based limits can make the estimate differ from actual quota usage.
+For paid models on the `opencode` integration, **OpenCode Console** shows **Requests** for **Today (UTC)**, **7 days (UTC)** and **30 days (UTC)**. These are UTC calendar windows including today, beginning at 00:00 UTC today, six days ago and 29 days ago respectively. **Requests by model · 30 days** lists each model with its provider. Counts follow the connected Console account and use your app language's number formatting. **Service account budgets** shows **Budgets unavailable.** OpenCode Go uses its own quota reader.
+
+The reader uses the saved `opencode` API key or, preferentially, its OAuth Console connection. OAuth requires `https://opencode.ai/console` and the connection's organization ID; Console access needs the **Usage › Read** permission. CodeNomad never refreshes these credentials. An invalid or expired OAuth connection must be repaired through its owner, even when an API key is also saved.
+
+Console errors distinguish a missing connection, invalid or expired credentials (401), access denied (403), an invalid usage response, and network failure. For connection errors, use **Settings → Providers** to check the login and its permissions, then refresh **Usage**. A failed summary or model page makes the entire Console reading unavailable.
+
+For free OpenCode models (`big-pickle` and model IDs ending in `-free`), **Usage** shows **Estimated**: this service's recorded steps since 00:00 UTC against a reference of 200 requests/day, with an estimated reset at the next UTC midnight. Steps approximate requests; other clients' traffic and variable IP-based limits can make the actual quota differ. A quota failure on a free-model step marks all free models on that OpenCode connection **Exhausted** until 00:00 UTC. The gauge shows 100% while the known count stays unchanged; an unknown count stays unknown. The mark lives in backend memory per connection and clears on restart.
+
+Console calibration of the free estimate is implemented but disabled pending verification that Console counts free requests in the matching scope. The free estimate, exhaustion mark and paid Console counters are display-only; automatic account selection uses its separate quota readers and rules.
 
 OpenAI does not provide usage for one ChatGPT sign-in method: Usage says so instead of showing quota windows. Choose [View ChatGPT usage](https://chatgpt.com/settings/usage) to review app usage and manage access to your plan and credits in ChatGPT. Chatting still works, and reconnecting the same login does not restore the reading.
 

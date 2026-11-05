@@ -28,7 +28,7 @@ Desteklenen entegrasyonda birden fazla kayıtlı kimlik bilgisi varsa **Hesabı 
 | Uygun entegrasyon | Uygun hesap türü |
 | --- | --- |
 | OpenAI / Codex | Codex tarayıcı/cihaz OAuth abonelik hesapları; OpenAI kullandıkça öde anahtarları veya kullanım verisini OpenAI'ın sağlamadığı ChatGPT oturum açma yöntemi değil. |
-| OpenCode Go | Go anahtarı veya **yalnızca Go sağlayıcısı** için kullanılan OpenCode Console girişi/anahtarı; Zen kullandıkça öde kredileri için değil. |
+| OpenCode Go | Go anahtarı veya **yalnızca Go sağlayıcısı** için kullanılan OpenCode Console girişi/anahtarı; ücretli Console modelleri elle seçilir. |
 | Anthropic | OpenCode'un Claude Pro/Max OAuth girişi; Claude Code girişi **değil**. |
 | GitHub Copilot | Okunabilir premium istek kotasına sahip OAuth; kurumsal uç nokta kimlik bilgileri okunabilir aday değildir. |
 | Kodlama planları | Anahtar tabanlı `zai-coding-plan`, `zhipuai-coding-plan`, `kimi-for-coding`, `minimax-coding-plan`, `minimax-cn-coding-plan`. |
@@ -54,7 +54,15 @@ OpenCode'un Gemini CLI kimlik doğrulama yöntemini kullanan Google bağlantıla
 
 Google'ın [Antigravity SSS](https://antigravity.google/docs/faq/) sayfası, Antigravity girişiyle üçüncü taraf yazılım kullanmanın hizmet koşullarını ihlal ettiğini ve hesabın askıya alınmasına veya kapatılmasına yol açabileceğini belirtir.
 
-Ücretsiz OpenCode Zen modelleri için **Kullanım**, bu hizmette 00:00 UTC'den beri kaydedilen adımları, varsayılan günlük 200 isteğe göre tahmin eder; sonraki UTC gece yarısı tahmini sıfırlanma zamanıdır. Adımlar istekleri yaklaşık yansıtır; diğer trafik ve değişken IP sınırları gerçek kota kullanımından farklı sonuç verebilir.
+`opencode` entegrasyonunun ücretli modellerinde **OpenCode Console**, **Bugün (UTC)**, **7 gün (UTC)** ve **30 gün (UTC)** için **İstekler** gösterir. Bunlar bugünü içeren UTC takvim dönemleridir; sırasıyla bugün, altı gün önce ve 29 gün önce 00:00 UTC'de başlar. **Modele göre istekler · 30 gün** her modeli sağlayıcısıyla listeler. Sayaçlar bağlı Console hesabını kapsar ve sayılar uygulamanın diline göre biçimlendirilir. **Hizmet hesabı bütçeleri** altında **Bütçeler kullanılamıyor.** görünür. OpenCode Go kendi kota okuyucusunu kullanır.
+
+Okuyucu kayıtlı `opencode` API anahtarını veya öncelikli olarak OAuth Console bağlantısını kullanır. OAuth için `https://opencode.ai/console` ve bağlantının kuruluş kimliği gerekir; Console erişimi **Usage › Read** izni gerektirir. CodeNomad bu kimlik bilgilerini asla yenilemez. Geçersiz veya süresi dolmuş OAuth bağlantısı, API anahtarı da kayıtlı olsa bile sahibi üzerinden düzeltilmelidir.
+
+Console hataları eksik bağlantı, geçersiz veya süresi dolmuş kimlik bilgisi (401), erişim reddi (403), geçersiz kullanım yanıtı ve ağ hatasını ayırır. Bağlantı hatalarında **Ayarlar → Sağlayıcılar** üzerinden girişi ve izinleri kontrol edip **Kullanım** görünümünü yenileyin. Bir özet veya model sayfası başarısız olursa Console okumasının tamamı kullanılamaz olur.
+
+Ücretsiz OpenCode modellerinde (`big-pickle` ve kimliği `-free` ile biten modeller) **Kullanım**, **Tahmini** gösterir: bu hizmette 00:00 UTC'den beri kaydedilen adımlar, günlük 200 istek referansıyla karşılaştırılır; sonraki UTC gece yarısı tahmini sıfırlanma zamanıdır. Adımlar istekleri yaklaşık yansıtır; diğer istemcilerin trafiği ve değişken IP sınırları gerçek kotayı değiştirebilir. Ücretsiz model adımında kota hatası olursa bu OpenCode bağlantısındaki tüm ücretsiz modeller 00:00 UTC'ye kadar **Tükendi** olarak işaretlenir. Gösterge %100 olurken bilinen sayı değişmez; bilinmeyen sayı bilinmeyen kalır. İşaret bağlantı başına backend belleğinde tutulur ve yeniden başlatmada silinir.
+
+Ücretsiz tahmin için Console kalibrasyonu uygulanmıştır ancak Console'un ilgili kapsamda ücretsiz istekleri saydığı doğrulanana kadar devre dışıdır. Tahmin, tükenme işareti ve ücretli Console sayaçları yalnızca görüntüleme içindir; otomatik hesap seçimi ayrı kota okuyucuları ve kuralları kullanır.
 
 OpenAI, ChatGPT oturum açma yöntemlerinden biri için kullanım verisi sağlamaz: Kullanım, kota pencereleri göstermek yerine bunu belirtir. ChatGPT'de uygulama kullanımını incelemek ve planınıza ve kredilerinize erişimi yönetmek için [ChatGPT kullanımını görüntüle](https://chatgpt.com/settings/usage) seçeneğini kullanın. Sohbet etmek yine çalışır ve aynı girişle yeniden bağlanmak bu okumayı geri getirmez.
 

@@ -268,13 +268,17 @@ The native `opencode` integration supplies a key or OAuth through
 `usage/native-credentials.ts`; OAuth wins regardless of entry order, including
 when expired or invalid. OAuth requires metadata server exactly
 `https://opencode.ai/console`, a matching `org_`/`wrk_` alphanumeric organization
-ID and an unexpired access token. It sends `Authorization: Bearer` plus
+ID (`^(?:org|wrk)_[A-Za-z0-9]+$`) and an unexpired access token. Console access
+requires the **Usage › Read** permission. It sends `Authorization: Bearer` plus
 `x-org-id`. Keys declaring another server are refused. Never refresh or exchange
 credentials, fall back to another login, or use this display for account selection.
 
 The fixed public Console API supplies three mandatory `usage/summary` request
 counters (`24h`, `7d`, `30d`) and sequential `usage/models?range=30d` pages of 50.
 These calendar windows begin at UTC midnight today, six days ago and 29 days ago.
+The UI labels them **Today (UTC)**, **7 days (UTC)** and **30 days (UTC)**,
+formats counters in the selected app locale and lists **Requests by model · 30 days**
+with both model and provider identities. OpenCode Go uses its own quota reader.
 Decimal-string counters, token totals and micro-cent costs must fit safe
 nonnegative integers, including cumulative sums; 100,000,000 micro-cents is USD 1.
 Pagination must remain consistent across the complete read, bounded to 20 pages,
@@ -289,15 +293,19 @@ mandatory failure discards the whole Console result. Stable unavailable reasons
 distinguish missing credentials, invalid/expired credentials (401), denied access
 (403), malformed/oversized/inconsistent responses and network/timeout failures.
 Service-account budget status is `unavailable` with empty items: its endpoint
-returns 404. The budget contract reserves named account items with spend, limit
-and reset for an available upstream endpoint.
+returns 404. The UI shows **Service account budgets → Budgets unavailable.**
+The budget contract carries named account items with spend, limit and reset.
+Missing, invalid/expired and denied credentials offer **Settings → Providers**;
+malformed-response and network errors keep their distinct localized messages.
 
 ## OpenCode free-model display
 
 Free `opencode` models (`big-pickle` and `*-free`) use the display-only
 `usage/opencode-free-usage.ts` orchestration. Native `session.stats` since 00:00
 UTC (`tools: "none"`) supplies the summed free-model step estimate against a
-200-request reference. `freeEstimate` carries the actual `requests` (null when
+200-request daily reference and an estimated reset at the next UTC midnight.
+The UI keeps the **Estimated** label alongside **Exhausted** when marked.
+`freeEstimate` carries the estimated `requests` (null when
 stats fail), `reference` and `exhausted`; `estimated` and the `windows.daily`
 gauge remain available. Unknown counts stay unknown; exhaustion forces the gauge
 to 100% while keeping any known count unchanged.
@@ -312,7 +320,7 @@ observer receives events before rotation deduplication, independently of saved
 credentials and automatic-selection policy. Marks live in backend memory and
 are lost on restart. Never feed this evidence to account selection.
 
-`OPENCODE_FREE_CONSOLE_CALIBRATION` in `usage/opencode-free-usage.ts` defaults to
+`OPENCODE_FREE_CONSOLE_CALIBRATION` in `usage/opencode-free-usage.ts` is
 false, keeping free usage credential-free. Enabling it requires proof that the
 Console counts free traffic in the relevant scope. The enabled path uses the
 same bounded models parser for sequential `range=24h` pages and raises a known
