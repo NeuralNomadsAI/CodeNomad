@@ -58,7 +58,7 @@ Bir konuşma çalışırken veya klasör başka sekmede/pencerede açıkken At i
 2. Mevcut keşfedilen bir çalışma ağacını seçin veya **+ Worktree oluştur** öğesini seçin.
 3. Oluşturmak için **Ad** girin ve **Worktree oluştur ve kullan** öğesini seçin.
 
-CodeNomad çalışma ağaçlarını OpenCode aracılığıyla keşfeder ve açılan depoya ait olduklarını doğrular. Yeni dal adı seçili çalışma kopyasının HEAD revizyonundan başlar. Mevcut dal adı o dalın güncel revizyonunu kullanır; Git başka yerde kullanıma alınmış dalı reddedebilir. Çalışma ağaçları varsayılan `.codenomad/worktrees` konumunu kullanır. Commit edilmemiş değişiklikler özgün çalışma kopyasında kalır; oluşturma bunları yeni çalışma ağacına kopyalamaz.
+CodeNomad çalışma ağaçlarını OpenCode aracılığıyla keşfeder ve açılan depoya ait olduklarını doğrular. Proje bir depo içindeki klasörse yalnızca o klasörü içeren çalışma ağaçları listelenir. Yeni dal adı seçili çalışma kopyasının HEAD revizyonundan başlar. Mevcut dal adı o dalın güncel revizyonunu kullanır; Git başka yerde kullanıma alınmış dalı reddedebilir. Çalışma ağaçları varsayılan `.codenomad/worktrees` konumunu kullanır. Commit edilmemiş değişiklikler özgün çalışma kopyasında kalır; oluşturma bunları yeni çalışma ağacına kopyalamaz.
 
 İleti düzenleyicisindeki seçici, üst konuşmayı ve tüm alt konuşmalarını doğrulanmış bir aile olarak taşır. Alt oturum bu seçiciyi bağımsız değiştiremez. Etkin oturumlar işlemi engeller: önce ailenin tamamlanmasını bekleyin veya yürütmesini durdurun. Yeni taşıma istemeden önce mevcut taşımanın sonuçlanmasını bekleyin; hata durumunda yeniden denemeden önce yenilenen konuşma/çalışma ağacı durumunu inceleyin.
 

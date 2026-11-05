@@ -58,7 +58,7 @@ La suppression est refusée si une conversation est active ou si le dossier est 
 2. Sélectionnez un worktree découvert existant ou choisissez **+ Créer un worktree**.
 3. Pour une création, saisissez **Nom** et choisissez **Créer et utiliser le worktree**.
 
-CodeNomad découvre les worktrees via OpenCode et vérifie qu’ils appartiennent au dépôt ouvert. Un nouveau nom de branche part du HEAD de la copie sélectionnée. Un nom de branche existant utilise sa révision actuelle ; Git peut refuser une branche déjà extraite ailleurs. Les worktrees utilisent l’emplacement par défaut `.codenomad/worktrees`. Les modifications non validées restent dans la copie d’origine ; la création ne les copie pas dans le nouveau worktree.
+CodeNomad découvre les worktrees via OpenCode et vérifie qu'ils appartiennent au dépôt ouvert. Quand le projet est un dossier situé dans un dépôt, seuls les worktrees qui contiennent ce dossier sont proposés. Un nouveau nom de branche part du HEAD de la copie sélectionnée. Un nom de branche existant utilise sa révision actuelle ; Git peut refuser une branche déjà extraite ailleurs. Les worktrees utilisent l’emplacement par défaut `.codenomad/worktrees`. Les modifications non validées restent dans la copie d’origine ; la création ne les copie pas dans le nouveau worktree.
 
 Le sélecteur de la zone de saisie déplace la conversation parente et ses descendants récursifs en tant que famille vérifiée. Une sous-session ne peut pas modifier ce sélecteur indépendamment. Les sessions actives bloquent l’opération : laissez la famille terminer ou arrêtez d’abord son exécution. Attendez qu’un déplacement soit réglé avant d’en demander un autre ; en cas d’erreur, vérifiez l’état actualisé de la conversation/du worktree avant de réessayer.
 

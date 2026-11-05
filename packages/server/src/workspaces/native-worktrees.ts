@@ -23,6 +23,16 @@ async function sameDirectory(left: string, right: string): Promise<boolean> {
   return a.isDirectory() && b.isDirectory() && a.dev === b.dev && a.ino === b.ino && a.birthtimeMs === b.birthtimeMs
 }
 
+async function isDirectory(directory: string): Promise<boolean> {
+  try {
+    return (await stat(directory)).isDirectory()
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === "ENOENT" || code === "ENOTDIR") return false
+    throw error
+  }
+}
+
 export async function listNativeWorktrees(context: NativeWorktreeContext, options: { refresh?: boolean } = {}): Promise<WorktreeListResponse> {
   const { client, location, workspacePath, toHost } = context
   let isGitRepo: boolean
@@ -94,10 +104,14 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
     if (seen.has(registeredDirectory)) return
     seen.add(registeredDirectory)
     const root = await sameDirectory(local.root, registeredDirectory)
+    const directory = root ? workspacePath : path.join(registeredDirectory, ...relative.split(/[\\/]/).filter(Boolean))
+    // A nested workspace folder (ignored, untracked or branch-specific) can be absent
+    // from a sibling checkout, which then holds no location of this workspace.
+    if (!root && directory !== registeredDirectory && !await isDirectory(directory)) return
     worktrees.push({
       slug: root ? "root" : identifier(registeredDirectory),
       label: annotation.branch ?? `${path.basename(registeredDirectory)} @ ${annotation.head?.slice(0, 7) ?? "HEAD"}`,
-      directory: root ? workspacePath : path.join(registeredDirectory, ...relative.split(/[\\/]/).filter(Boolean)),
+      directory,
       serviceDirectory: root ? current.directory : paths.join(entry.directory, relative),
       registeredDirectory,
       serviceRoot: entry.directory,
