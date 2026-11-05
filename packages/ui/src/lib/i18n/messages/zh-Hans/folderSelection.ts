@@ -108,7 +108,7 @@ export const folderSelectionMessages = {
   "folderSelection.browseMenu.title": "浏览",
   "folderSelection.browseMenu.thisComputer": "此电脑",
   "folderSelection.browseMenu.addServer": "添加服务器…",
-  "folderSelection.recentTabs.title": "最近的标签页",
+  "newInstanceLauncher.recentTitle": "最近",
   "folderSelection.recent.sidecar": "SideCar",
   "folderSelection.newServer": "新建服务器",
   "folderSelection.newSidecar": "新建 SideCar",

@@ -108,7 +108,7 @@ export const folderSelectionMessages = {
   "folderSelection.browseMenu.title": "Durchsuchen",
   "folderSelection.browseMenu.thisComputer": "Dieser Computer",
   "folderSelection.browseMenu.addServer": "Server hinzufügen…",
-  "folderSelection.recentTabs.title": "Zuletzt geöffnete Tabs",
+  "newInstanceLauncher.recentTitle": "Zuletzt verwendet",
   "folderSelection.recent.sidecar": "SideCar",
   "folderSelection.newServer": "Neuer Server",
   "folderSelection.newSidecar": "Neuer SideCar",

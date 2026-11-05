@@ -108,7 +108,7 @@ export const folderSelectionMessages = {
   "folderSelection.browseMenu.title": "ब्राउज गर्नुहोस्",
   "folderSelection.browseMenu.thisComputer": "यो कम्प्युटर",
   "folderSelection.browseMenu.addServer": "सर्भर थप्नुहोस्…",
-  "folderSelection.recentTabs.title": "हालका ट्याबहरू",
+  "newInstanceLauncher.recentTitle": "हालका",
   "folderSelection.recent.sidecar": "SideCar",
   "folderSelection.newServer": "नयाँ सर्भर",
   "folderSelection.newSidecar": "नयाँ SideCar",

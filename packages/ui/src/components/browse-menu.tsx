@@ -1,11 +1,12 @@
 import { For, Show, createMemo, createSignal, createUniqueId, onMount } from "solid-js"
-import { ChevronRight, Globe, Laptop, Server } from "lucide-solid"
+import { ChevronRight, Globe, Laptop, Plus, Server } from "lucide-solid"
 import type { RemoteServerProfile, SideCar } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { serverDisplayName } from "../lib/codenomad-link"
 import { withHotkey } from "../lib/hotkeys"
 import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
+import { openRemoteServerEditor } from "../stores/remote-server-editor"
 import { openSidecar } from "../stores/sidecar-open"
 import { ensureSidecarsLoaded, sidecars } from "../stores/sidecars"
 
@@ -25,8 +26,9 @@ const [expanded, setExpanded] = createSignal(false)
 /**
  * Browse, shared by the home page (a tab) and the new-instance launcher (a
  * folded section): this computer's folders, each saved CodeNomad server, whose
- * project tab picks the folder, and each configured SideCar. Only host windows
- * (never a web client, a Remote Control device or a remote page) list servers.
+ * project tab picks the folder, each configured SideCar, then Add server….
+ * Only host windows (never a web client, a Remote Control device or a remote
+ * page) list or add servers.
  */
 export default function BrowseMenu(props: BrowseMenuProps) {
   const { t } = useI18n()
@@ -115,6 +117,13 @@ export default function BrowseMenu(props: BrowseMenuProps) {
               </button>
             )}
           </For>
+          <Show when={canOpenRemoteWindows()}>
+            <button type="button" class="browse-menu-row" data-browse-nav disabled={props.isLoading}
+              onClick={() => run(() => openRemoteServerEditor())}>
+              <Plus class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
+              <span class="browse-menu-name">{t("folderSelection.browseMenu.addServer")}</span>
+            </button>
+          </Show>
         </div>
       </Show>
     </div>

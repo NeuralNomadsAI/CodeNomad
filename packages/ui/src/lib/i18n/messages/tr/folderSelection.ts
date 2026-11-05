@@ -96,7 +96,7 @@ export const folderSelectionMessages = {
   "folderSelection.browseMenu.title": "Gözat",
   "folderSelection.browseMenu.thisComputer": "Bu bilgisayar",
   "folderSelection.browseMenu.addServer": "Sunucu ekle…",
-  "folderSelection.recentTabs.title": "Son sekmeler",
+  "newInstanceLauncher.recentTitle": "Son kullanılanlar",
   "folderSelection.recent.sidecar": "SideCar",
   "folderSelection.newServer": "Yeni sunucu",
   "folderSelection.newSidecar": "Yeni SideCar",

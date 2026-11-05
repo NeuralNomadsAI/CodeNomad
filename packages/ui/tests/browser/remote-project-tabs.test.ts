@@ -186,6 +186,7 @@ test("without the parameter a remote page keeps its full interface and lists no 
       await page.getByRole("button", { name: "This computer", exact: true }).waitFor()
       assert.equal(await page.locator("[data-remote-server]").count(), 0)
       assert.equal(await page.getByRole("button", { name: "New server" }).count(), 0)
+      assert.equal(await page.getByRole("button", { name: "Add server…" }).count(), 0)
     } finally { await page.close() }
   }
 })
@@ -266,7 +267,7 @@ test("Browse lists saved servers by name and a server's tab shows that name befo
     await open(page, "", { context: "local", host: "electron", uiState: { remoteServers: [server("box"), pasted] } })
     await page.locator(".folder-home-root").waitFor()
     await browse(page)
-    assert.deepEqual(await page.locator(".browse-menu-row").allTextContents(), ["This computer", "Box", "127.0.0.1"])
+    assert.deepEqual(await page.locator(".browse-menu-row").allTextContents(), ["This computer", "Box", "127.0.0.1", "Add server…"])
     // Servers are managed in Settings, not from Browse.
     await page.getByRole("button", { name: "Open a project on Box" }).click({ button: "right" })
     assert.equal(await page.getByRole("menuitem").count(), 0)
@@ -314,7 +315,7 @@ test("Browse opens a running SideCar, which then joins the recent tabs of the ho
     await browse(page)
     const rows = page.locator(".browse-menu-row")
     await page.locator('[data-sidecar="docs"]').waitFor()
-    assert.deepEqual(await rows.allTextContents(), ["This computer", "Box", "DocsRunning", "WikiStopped"])
+    assert.deepEqual(await rows.allTextContents(), ["This computer", "Box", "DocsRunning", "WikiStopped", "Add server…"])
     // A stopped SideCar shows its state and cannot open.
     assert.equal(await page.locator('[data-sidecar="wiki"]').isDisabled(), true)
     await page.locator('[data-sidecar="docs"]').click()
@@ -340,7 +341,7 @@ test("Browse opens a running SideCar, which then joins the recent tabs of the ho
     const launcher = page.locator(".new-instance-launcher")
     await launcher.getByRole("option", { name: /Docs/ }).waitFor()
     await launcher.getByRole("button", { name: "Browse", exact: true }).click()
-    assert.deepEqual(await launcher.locator(".browse-menu-row").allTextContents(), ["This computer", "Box", "DocsRunning", "WikiStopped"])
+    assert.deepEqual(await launcher.locator(".browse-menu-row").allTextContents(), ["This computer", "Box", "DocsRunning", "WikiStopped", "Add server…"])
   } finally { await page.close() }
 })
 

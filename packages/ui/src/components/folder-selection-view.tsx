@@ -465,7 +465,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                           >
                             <span class="panel-title text-base"
                               style={{ color: homeTab() === tab ? "var(--text-primary)" : "var(--text-secondary)" }}>
-                              {t(tab === "recent" ? "folderSelection.recentTabs.title" : "folderSelection.browseMenu.title")}
+                              {t(tab === "recent" ? "newInstanceLauncher.recentTitle" : "folderSelection.browseMenu.title")}
                             </span>
                           </button>
                         )}

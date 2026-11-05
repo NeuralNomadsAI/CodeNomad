@@ -6,7 +6,7 @@
   min-width: 0;
 }
 
-/* Titled like the launcher's Recent heading: no frame, no icon. */
+/* A section title with its chevron first: no frame, no icon (Browse, and the launcher's Recent). */
 .browse-menu-toggle {
   display: flex;
   align-items: center;

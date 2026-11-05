@@ -1,6 +1,6 @@
 import { Popover } from "@kobalte/core/popover"
 import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js"
-import { Search } from "lucide-solid"
+import { ChevronRight, Search } from "lucide-solid"
 import { createNewInstanceDialogs } from "./new-instance-dialogs"
 import BrowseMenu from "./browse-menu"
 import NewTabActions from "./new-tab-actions"
@@ -25,11 +25,15 @@ interface NewInstanceLauncherProps {
 
 /**
  * Compact launcher opened by a long press, right-click or Alt+Down on the
- * new-instance button, the home page's logic in short: recent tabs first
- * (projects, remote projects and SideCars; type to filter, Enter to open), the
- * folded Browse section, then the creation buttons. Managing recents stays on
- * the full home page, servers and SideCars in Settings.
+ * new-instance button, the home page's logic in short: the search, the
+ * collapsible Recent section (projects, remote projects and SideCars; type to
+ * filter, Enter to open), the folded Browse section, then Clone and New
+ * temporary tab. Managing recents stays on the full home page, servers and
+ * SideCars in Settings.
  */
+// The recents section's disclosure, unfolded by default and kept per window.
+const [recentsExpanded, setRecentsExpanded] = createSignal(true)
+
 export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
   const { t } = useI18n()
   const [query, setQuery] = createSignal("")
@@ -91,11 +95,27 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
   }
 
   function handleSearchKeyDown(event: KeyboardEvent) {
-    if (event.key === "ArrowDown") { event.preventDefault(); moveActive(1) }
+    // A folded list unfolds on the first arrow.
+    if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !recentsExpanded()) {
+      event.preventDefault()
+      setRecentsExpanded(true)
+    }
+    else if (event.key === "ArrowDown") { event.preventDefault(); moveActive(1) }
     else if (event.key === "ArrowUp") { event.preventDefault(); moveActive(-1) }
-    else if (event.key === "Enter") {
+    else if (event.key === "Enter" && recentsExpanded()) {
       const folder = matches()[activeIndex()]
       if (folder) { event.preventDefault(); openRecent(folder) }
+    }
+  }
+
+  // Escape folds an unfolded section without closing the launcher, as in Browse; Down returns to the search.
+  function handleRecentsToggleKeyDown(event: KeyboardEvent) {
+    if (event.key === "Escape" && recentsExpanded()) {
+      event.preventDefault()
+      setRecentsExpanded(false)
+    } else if (event.key === "ArrowDown" && recentsExpanded()) {
+      event.preventDefault()
+      contentRef?.querySelector<HTMLInputElement>(".new-instance-launcher-search-input")?.focus()
     }
   }
 
@@ -134,20 +154,25 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
                 type="text"
                 class="new-instance-launcher-search-input"
                 role="combobox"
-                aria-expanded="true"
+                aria-expanded={recentsExpanded()}
                 aria-controls="new-instance-launcher-recents"
-                aria-activedescendant={matches().length ? optionId(activeIndex()) : undefined}
+                aria-activedescendant={recentsExpanded() && matches().length ? optionId(activeIndex()) : undefined}
                 aria-label={t("newInstanceLauncher.searchLabel")}
                 placeholder={t("newInstanceLauncher.searchPlaceholder")}
                 value={query()}
-                onInput={(event) => setQuery(event.currentTarget.value)}
+                onInput={(event) => { setQuery(event.currentTarget.value); setRecentsExpanded(true) }}
                 onKeyDown={handleSearchKeyDown}
               />
             </div>
 
-            <div class="new-instance-launcher-section-title" id="new-instance-launcher-recents-title">
-              {t("folderSelection.recentTabs.title")}
-            </div>
+            {/* A folded section titled like Browse; the search keeps driving its list. */}
+            <button type="button" class="browse-menu-toggle new-instance-launcher-recents-toggle" id="new-instance-launcher-recents-title"
+              aria-expanded={recentsExpanded()} aria-controls="new-instance-launcher-recents"
+              onClick={() => setRecentsExpanded(!recentsExpanded())} onKeyDown={handleRecentsToggleKeyDown}>
+              <ChevronRight class="disclosure-chevron w-3.5 h-3.5" aria-hidden="true" />
+              <span>{t("newInstanceLauncher.recentTitle")}</span>
+            </button>
+            <Show when={recentsExpanded()}>
             <div
               class="window-body new-instance-launcher-recents"
               id="new-instance-launcher-recents"
@@ -196,6 +221,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
                 }}
               </For>
             </div>
+            </Show>
 
             <BrowseMenu isLoading={props.isLoading} onRun={close} onBrowseLocal={() => void dialogs.browse()} />
             <div class="new-instance-launcher-actions">

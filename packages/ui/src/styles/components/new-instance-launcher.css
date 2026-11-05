@@ -33,12 +33,9 @@
   font-size: var(--font-size-sm);
 }
 
-.new-instance-launcher-section-title {
+/* Recent, a folded section styled like Browse (`.browse-menu-toggle`). */
+.new-instance-launcher-recents-toggle {
   padding: var(--space-xs) var(--window-inline-padding) 0;
-  font-size: var(--font-size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
 }
 
 /* About eight rows stay visible; the rest scroll. */

@@ -17,8 +17,9 @@ interface NewTabActionsProps {
 
 /**
  * The creation buttons shared by the home page and the launcher: clone a
- * repository, a temporary tab, a CodeNomad server (host windows only, through
- * the server dialog) and a SideCar (its form in Settings → SideCars).
+ * repository and a temporary tab; the home page adds a CodeNomad server (host
+ * windows only, through the server dialog) and a SideCar (its form in
+ * Settings → SideCars).
  */
 export default function NewTabActions(props: NewTabActionsProps) {
   const { t } = useI18n()
@@ -49,10 +50,13 @@ export default function NewTabActions(props: NewTabActionsProps) {
             onClick={() => onNewTemporary()()} />
         )}
       </Show>
-      <Show when={canOpenRemoteWindows()}>
-        <Action label={t("folderSelection.newServer")} icon={Server} onClick={() => openRemoteServerEditor()} />
+      {/* The launcher keeps only the project creations; servers and SideCars are added from the home page. */}
+      <Show when={props.variant === "home"}>
+        <Show when={canOpenRemoteWindows()}>
+          <Action label={t("folderSelection.newServer")} icon={Server} onClick={() => openRemoteServerEditor()} />
+        </Show>
+        <Action label={t("folderSelection.newSidecar")} icon={Globe} onClick={() => void openSettingsRow("sidecars", "sidecar-add")} />
       </Show>
-      <Action label={t("folderSelection.newSidecar")} icon={Globe} onClick={() => void openSettingsRow("sidecars", "sidecar-add")} />
     </>
   )
 }

@@ -108,7 +108,7 @@ export const folderSelectionMessages = {
   "folderSelection.browseMenu.title": "参照",
   "folderSelection.browseMenu.thisComputer": "このコンピューター",
   "folderSelection.browseMenu.addServer": "サーバーを追加…",
-  "folderSelection.recentTabs.title": "最近のタブ",
+  "newInstanceLauncher.recentTitle": "最近",
   "folderSelection.recent.sidecar": "SideCar",
   "folderSelection.newServer": "新しいサーバー",
   "folderSelection.newSidecar": "新しい SideCar",

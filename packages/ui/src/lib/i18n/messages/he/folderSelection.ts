@@ -108,7 +108,7 @@ export const folderSelectionMessages = {
   "folderSelection.browseMenu.title": "עיון",
   "folderSelection.browseMenu.thisComputer": "המחשב הזה",
   "folderSelection.browseMenu.addServer": "הוספת שרת…",
-  "folderSelection.recentTabs.title": "לשוניות אחרונות",
+  "newInstanceLauncher.recentTitle": "אחרונים",
   "folderSelection.recent.sidecar": "SideCar",
   "folderSelection.newServer": "שרת חדש",
   "folderSelection.newSidecar": "SideCar חדש",
