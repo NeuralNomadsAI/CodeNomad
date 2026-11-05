@@ -131,13 +131,43 @@ refuse otherwise. Only one-time coordinators are offered and told about
   honestly, and an empty result notes that only canonical assignments are visible.
 - `mission.prepare` creates a paused one-time hand-off through the same
   `prepareMissionCreation` pipeline, holds and fences as the editor, at the
-  coordinator's Location. It never starts. The trusted `preparedBy`
+  coordinator's Location. The user starts it with Play. The trusted `preparedBy`
   (`{ missionId, coordinatorSessionId }`) gives that coordinator read-only
-  visibility (`inspect({ missionID })`, `inspect({ list: true })`), never control.
+  visibility (`inspect({ missionID })`, `inspect({ list: true })`). An active
+  one-time coordinator can prepare hand-offs; a caller outside an active mission
+  receives `mission-not-found` with guidance to use the Missions editor. Never
+  create an intermediate mission solely to prepare others.
+
+  Both `mission.prepare` and `mission.inspect({ start })` resolve omitted
+  coordinator/role profiles and `taskMode` from the owning CodeNomad backend's
+  `ui.missionProfileDefaults`. The editor and server share
+  `missions/profile-defaults.ts`: a playbook's slot overrides the global `all`
+  slot; the global `specialist` supplies task roles, with the Compare judge using
+  the coordinator's model by default. Each supplied profile slot wins whole,
+  including `{}` (OpenCode defaults) or an agent-only profile; `profiles: {}`
+  leaves every slot eligible for preferences. An explicit `taskMode` wins over
+  the playbook preference, then the global preference; the final fallback is
+  `native`. Missing profile preferences fall back to OpenCode defaults.
+
+  Creation responses include `selection: { profiles, taskMode, origins }`:
+  the saved coordinator and every role of the selected playbook, plus origins
+  `explicit`, `preference` or `opencode-default` for the coordinator, each role
+  and task mode. The default Compare judge inherits the coordinator's origin
+  along with its model. These are saved requested selectors; catalog validation and native
+  execution checks establish availability and actual execution separately.
+  `inspect({ start })` uses the caller as coordinator and requires its existing
+  native profile to match the resolved coordinator selection. An unreadable
+  preference document or unavailable backend returns
+  `mission-preferences-unavailable`; invalid preferences return
+  `mission-preferences-invalid`. Both refuse creation and ask for preference
+  recovery, including when profiles were supplied explicitly.
+
   The requestID is scoped to the coordinator and mission. A retry first reads the
-  journal's creation event and returns the saved mission (or a conflict) without
-  another backend call; a held uncertain attempt is reported uncertain, never as
-  nothing created.
+  journal's creation event and returns the saved mission or a conflict. Reuse the
+  same requestID and original inputs: a durable pre-dispatch intent retains the
+  chosen profiles, task mode and origins across uncertain attempts, preference
+  changes and restarts. `inspect({ start })` retains these choices under its
+  native invocation identity too. A held uncertain attempt is reported uncertain.
 
 The human-answer gate's `discover` finds fresh children of the expected parent
 whose `subagent` call carried the exact assignment prompt, and the coordinator's

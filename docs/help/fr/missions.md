@@ -20,6 +20,8 @@ Les Missions associent un plan de projet durable aux conversations natives OpenC
 
 Les missions ponctuelles enregistrées conservent leurs commandes d’exécution, leur arbre de tâches, leurs conversations et leurs rapports finaux. Les programmations quotidiennes existantes restent dans la liste avec leurs commandes quotidiennes et leurs [règles horaires quotidiennes](#existing-daily-schedules). Sélectionnez l’entrée et utilisez les commandes disponibles pour cet objet.
 
+Les suites préparées par un agent utilisent vos [défauts des nouvelles missions](#profiles) enregistrés pour les profils et les sessions de tâches omis. Hors d'une mission active, utilisez **Créer une mission** dans le panneau Missions.
+
 ### Scénarios {#playbooks}
 
 Le sélecteur **Scénario** affiche juste en dessous une description en une phrase du scénario sélectionné. **Voir les détails** ouvre le scénario sélectionné dans le lecteur central : ses étapes, ses rôles et, repliées à la fin, les instructions exactes en anglais que reçoivent ses agents. [Scénarios](playbooks.md) explique les étapes, les rôles et les questions de chaque scénario, ainsi que ce que CodeNomad vérifie.
@@ -138,6 +140,8 @@ Enregistrer une profondeur préserve les programmations natives activées dans l
 Chaque liste **Modèle** affiche ce qu’affiche le sélecteur **Modèle** de la conversation, sous les mêmes noms et groupé par fournisseur : les modèles masqués en sont exclus et, tant que le filtrage limité aux favoris est actif, les autres modèles aussi (voir [Visibilité des modèles, favoris et Réflexion](providers.md#models)). Les modèles sans prise en charge des outils sont également exclus. Un modèle enregistré absent de la liste reste sélectionné. **Indisponible** signale un modèle enregistré que le sélecteur ne peut pas proposer actuellement : il est absent du catalogue actuel du projet, obsolète ou sans prise en charge des outils.
 
 Un choix refusé ou non confirmé n’est jamais renvoyé : les valeurs enregistrées sont réaffichées, et **Recharger** n’apparaît que lorsqu’elles ne peuvent pas être lues. Si un changement de profondeur n’est pas confirmé, votre valeur est conservée ; utilisez **Actualiser la profondeur du projet** avant un autre changement. N’interprétez pas **Profondeur OpenCode effective inconnue** comme zéro ou désactivée.
+
+Ces défauts s'appliquent aussi quand un agent prépare une mission : chaque profil de coordinateur ou de rôle omis utilise l'exception du scénario, puis le choix global ; le spécialiste global fournit les rôles de tâches, tandis que le juge de comparaison utilise par défaut le modèle du coordinateur. Un profil explicitement fourni prime en entier, y compris un choix de défauts OpenCode ou un agent seul. **Sessions des tâches** omis suit le même ordre de préférences, puis **Sous-agents natifs**. La réponse de création à l'agent donne les profils enregistrés, le mode des sessions de tâches et l'origine de chaque choix : explicite, préférence ou défaut OpenCode. Des préférences illisibles ou invalides bloquent la création avec une erreur demandant leur correction ou leur rechargement. Les réessais conservent les choix enregistrés à l'origine, même si vous modifiez les défauts.
 
 ## Réutiliser une consigne enregistrée {#saved-briefs}
 

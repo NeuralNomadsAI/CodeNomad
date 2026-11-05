@@ -20,6 +20,8 @@ Görevler, kalıcı bir proje planını OpenCode'un kendi konuşmalarıyla birle
 
 Kayıtlı tek seferlik görevler yürütme kontrollerini, görev ağacını, konuşmalarını ve nihai raporlarını korur. Mevcut günlük zamanlamalar günlük kontrolleri ve [günlük zamanlama kurallarıyla](#existing-daily-schedules) listede kalır. Kaydı seçip o nesne için sunulan kontrolleri kullanın.
 
+Bir ajanın hazırladığı devam görevleri, belirtilmeyen profiller ve görev oturumu seçimleri için kayıtlı [yeni görev varsayılanlarınızı](#profiles) kullanır. Etkin bir görevin dışında, Görevler panelindeki **Görev oluştur** eylemini kullanın.
+
 ### İş akışı rehberleri {#playbooks}
 
 **Rehber** seçicisinin hemen altında seçili rehberin tek cümlelik açıklaması gösterilir. **Ayrıntıları gör**, seçili rehberi merkezi okuyucuda açar: adımlarını, rollerini ve sonda katlanmış olarak, ajanlarının aldığı tam İngilizce talimatları. [İş akışı rehberleri](playbooks.md) her rehberin adımlarını, rollerini ve sorularını ve CodeNomad'in neleri denetlediğini açıklar.
@@ -138,6 +140,8 @@ Derinliği kaydetmek, proje yapılandırmasında etkin yerel zamanlamaları koru
 Her **Model** listesi, konuşmanın **Model** seçicisinin gösterdiklerini aynı adlarla ve sağlayıcıya göre gruplanmış olarak gösterir: gizlenen modeller yer almaz ve yalnızca favorilere yönelik filtreleme açıkken diğer modeller de yer almaz (bkz. [Model görünürlüğü, favoriler ve Düşünme](providers.md#models)). Araç desteği olmayan modeller de yer almaz. Liste dışındaki kayıtlı bir model seçili kalır. **Kullanılamıyor**, seçicinin şu anda sunamadığı kayıtlı bir modeli işaretler: model projenin güncel kataloğunda yoktur, kullanımdan kaldırılmıştır veya araç desteği yoktur.
 
 Reddedilen veya doğrulanmayan bir seçim asla yeniden gönderilmez: kayıtlı değerler yeniden gösterilir ve **Yeniden yükle** yalnızca bu değerler okunamadığında görünür. Bir derinlik değişikliği doğrulanmadıysa değeriniz korunur; başka bir değişiklik yapmadan önce **Proje derinliğini yenile** eylemini kullanın. **Etkin OpenCode derinliği bilinmiyor** durumunu sıfır veya devre dışı olarak yorumlamayın.
+
+Bir ajan görev hazırlarken de bu varsayılanlar uygulanır: belirtilmeyen her koordinatör veya rol profili önce rehber istisnasını, ardından genel seçimi kullanır; genel uzman görev rollerini sağlar, karşılaştırma hakemi ise varsayılan olarak koordinatörün modelini kullanır. Açıkça verilen profil, OpenCode varsayılanı veya yalnızca ajan seçimi dahil, bütünüyle önceliklidir. Belirtilmeyen **Görev oturumları** aynı tercih sırasını, ardından **Yerel alt ajanlar** seçimini kullanır. Ajana dönen oluşturma yanıtı kayıtlı profilleri, görev oturumu modunu ve her seçimin kaynağını listeler: açık seçim, tercih veya OpenCode varsayılanı. Okunamayan veya geçersiz tercihler, düzeltme ya da yeniden yükleme isteyen bir hatayla oluşturmayı engeller. Varsayılanları değiştirseniz bile yeniden denemeler ilk kaydedilen seçimleri korur.
 
 ## Kayıtlı bir özeti yeniden kullanın {#saved-briefs}
 

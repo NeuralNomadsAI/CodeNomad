@@ -20,6 +20,8 @@ Las Misiones combinan un plan de proyecto duradero con conversaciones nativas de
 
 Las misiones puntuales guardadas conservan sus controles de ejecución, árbol de tareas, conversaciones e informes finales. Las programaciones diarias existentes siguen en la lista con sus controles diarios y sus [reglas horarias diarias](#existing-daily-schedules). Selecciona la entrada y usa los controles disponibles para ese objeto.
 
+Los seguimientos preparados por un agente usan tus [valores para nuevas misiones](#profiles) guardados para los perfiles y las sesiones de tareas omitidos. Fuera de una misión activa, usa **Crear misión** en el panel Misiones.
+
 ### Guiones {#playbooks}
 
 El selector **Guion** muestra justo debajo una descripción de una frase del guion seleccionado. **Ver detalles** abre el guion seleccionado en el lector central: sus pasos, sus roles y, plegadas al final, las instrucciones exactas en inglés que reciben sus agentes. [Guiones](playbooks.md) explica los pasos, roles y preguntas de cada guion, y lo que CodeNomad comprueba.
@@ -138,6 +140,8 @@ Guardar una profundidad conserva las programaciones nativas activadas en la conf
 Cada lista **Modelo** muestra lo mismo que el selector **Modelo** de la conversación, con los mismos nombres y agrupado por proveedor: se omiten los modelos ocultos y, mientras el filtrado de solo favoritos está activo, también los demás modelos (consulta [Visibilidad de modelos, favoritos y Razonamiento](providers.md#models)). También se omiten los modelos sin compatibilidad con herramientas. Un modelo guardado fuera de la lista sigue seleccionado. **No disponible** marca un modelo guardado que el selector no puede ofrecer ahora: falta en el catálogo actual del proyecto, está obsoleto o no admite herramientas.
 
 Una elección rechazada o sin confirmar nunca se reenvía: se vuelven a mostrar los valores guardados, y **Recargar** solo aparece cuando no se pueden leer. Si un cambio de profundidad no está confirmado, tu valor se conserva; usa **Actualizar profundidad del proyecto** antes de otro cambio. No interpretes **Profundidad efectiva de OpenCode desconocida** como cero o desactivada.
+
+Estos valores también se aplican cuando un agente prepara una misión: cada perfil de coordinador o rol omitido usa la excepción del guion y luego la elección global; el especialista global proporciona los roles de tareas, mientras que el juez de comparación usa por defecto el modelo del coordinador. Un perfil indicado explícitamente tiene prioridad en su totalidad, incluidos los valores de OpenCode o una elección de solo agente. **Sesiones de tareas** omitido sigue el mismo orden de preferencias y luego **Subagentes nativos**. La respuesta de creación al agente enumera los perfiles guardados, el modo de sesiones y el origen de cada elección: explícito, preferencia o valor predeterminado de OpenCode. Las preferencias ilegibles o inválidas bloquean la creación con un error que pide corregirlas o recargarlas. Los reintentos conservan las elecciones guardadas originales aunque cambies los valores predeterminados.
 
 ## Reutilizar una descripción guardada {#saved-briefs}
 

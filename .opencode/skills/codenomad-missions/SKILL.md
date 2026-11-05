@@ -16,9 +16,27 @@ Prefer ordinary native delegation for bounded work. Use a mission only when the 
 7. Finish through `mission.report({ final: true, ... })` only when the objective is actually met. Retired work never counts as success; retiring does not interrupt admitted native execution, which can finish on its own or be stopped with `mission.interrupt` when eligible; playbook proof requirements still apply. A retired native task takes no coordinator readout; record what it returned under its replacement or in the final report. Admitted retired work settles through its actor's terminal report or an observed native end.
 
 Use `mission.inspect({ catalog: true })` before selecting a native execution profile.
+For `mission.prepare` and `mission.inspect({ start })`, omitted coordinator/role
+slots and `taskMode` inherit the user's Missions preferences: playbook exception,
+then global defaults (the global specialist supplies task roles; the Compare judge
+defaults to the coordinator's model). Each explicit profile slot wins whole:
+`{}` selects OpenCode defaults for that slot, and an agent-only slot keeps its
+native model default. `profiles: {}` inherits all slots. With absent preferences,
+profiles use OpenCode defaults and task mode uses `native`.
+Read the creation response's `selection.profiles`, `selection.taskMode` and
+`selection.origins` to check the saved coordinator and every playbook role:
+`explicit`, `preference` or `opencode-default` (the default Compare judge inherits
+the coordinator's origin). Unreadable/invalid preferences refuse creation; report
+the error and arrange recovery of the Missions preferences before retrying.
+`inspect({ start })` requires the caller's existing coordinator profile to match
+the resolved selection. For `prepare`, reuse the same requestID and original
+inputs: saved choices stay frozen across retries and preference changes.
+Outside an active mission, use the Missions editor in CodeNomad; never create an
+intermediate mission merely to gain access to `mission.prepare`.
+
 The mission `role` is independent of `execution.agent`. To pin execution, pass
 `execution: { agent: "catalog-agent-id", model: { providerID: "catalog-provider", id: "catalog-model", variant: "optional-catalog-variant" } }`.
-Repeat the same selection when retrying a task. Omitted fields use native defaults.
+Repeat the same selection when retrying a task. Omitted task execution fields use native defaults.
 Native tasks accept subagent/all agents; independent roots and tasks stored
 without an execution mode accept primary/all agents. Each child owns its bounded assignment and
 may recursively decompose independent subtasks when useful, integrating actual returned

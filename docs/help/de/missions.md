@@ -20,6 +20,8 @@ Missionen verbinden einen dauerhaften Projektplan mit nativen OpenCode-Unterhalt
 
 Gespeicherte einmalige Missionen behalten ihre Ausführungssteuerung, ihren Aufgabenbaum, ihre Unterhaltungen und ihre Abschlussberichte. Bestehende tägliche Zeitpläne bleiben mit ihren täglichen Steuerelementen und [täglichen Zeitregeln](#existing-daily-schedules) aufgelistet. Wählen Sie den Eintrag und verwenden Sie die für dieses Objekt verfügbaren Steuerelemente.
 
+Von einem Agenten vorbereitete Folgemissionen verwenden Ihre gespeicherten [Vorgaben für neue Missionen](#profiles) für ausgelassene Profile und Aufgabensitzungen. Verwenden Sie außerhalb einer aktiven Mission **Mission erstellen** im Missionsbereich.
+
 ### Playbooks {#playbooks}
 
 Direkt unter dem Auswahlfeld **Playbook** steht eine einsätzige Beschreibung des ausgewählten Playbooks. **Details anzeigen** öffnet das ausgewählte Playbook im zentralen Leser: seine Schritte, seine Rollen und, am Ende eingeklappt, die genauen englischen Anweisungen, die seine Agenten erhalten. [Playbooks](playbooks.md) erklärt Schritte, Rollen und Fragen jedes Playbooks und was CodeNomad prüft.
@@ -138,6 +140,8 @@ Das Speichern einer Tiefe erhält aktivierte native Zeitpläne in der Projektkon
 Jede **Modell**-Liste zeigt, was die **Modell**-Auswahl der Unterhaltung zeigt, unter denselben Namen und nach Anbieter gruppiert: Ausgeblendete Modelle fehlen und, solange der Nur-Favoriten-Filter aktiv ist, auch die übrigen Modelle (siehe [Modellsichtbarkeit, Favoriten und Denken](providers.md#models)). Modelle ohne Werkzeugunterstützung fehlen ebenfalls. Ein gespeichertes Modell außerhalb der Liste bleibt ausgewählt. **Nicht verfügbar** kennzeichnet ein gespeichertes Modell, das die Auswahl derzeit nicht anbieten kann: Es fehlt im aktuellen Katalog des Projekts, ist veraltet oder unterstützt keine Werkzeuge.
 
 Eine abgelehnte oder unbestätigte Auswahl wird nie erneut gesendet: Die gespeicherten Werte werden wieder angezeigt, und **Neu laden** erscheint nur, wenn sie nicht gelesen werden können. Ist eine Tiefenänderung unbestätigt, bleibt Ihr Wert erhalten; verwenden Sie vor einer weiteren Änderung **Tiefe dieses Projekts aktualisieren**. Interpretieren Sie **Effektive OpenCode-Tiefe unbekannt** nicht als null oder deaktiviert.
+
+Diese Vorgaben gelten auch, wenn ein Agent eine Mission vorbereitet: Jedes ausgelassene Koordinator- oder Rollenprofil verwendet zuerst die Playbook-Ausnahme, dann die globale Auswahl. Der globale Spezialist liefert die Aufgabenrollen; der Vergleichsrichter verwendet standardmäßig das Modell des Koordinators. Ein ausdrücklich angegebenes Profil hat als Ganzes Vorrang, auch bei OpenCode-Standardwerten oder einer reinen Agentenauswahl. Ausgelassene **Aufgabensitzungen** folgen derselben Reihenfolge, danach **Native Unteragenten**. Die Erstellungsantwort an den Agenten nennt die gespeicherten Profile, den Sitzungsmodus und die Herkunft jeder Auswahl: ausdrücklich, Vorgabe oder OpenCode-Standard. Unlesbare oder ungültige Vorgaben blockieren die Erstellung mit einer Fehlermeldung zur Korrektur oder zum Neuladen. Wiederholungen behalten die ursprünglich gespeicherte Auswahl auch bei geänderten Vorgaben bei.
 
 ## Gespeicherten Auftrag wiederverwenden {#saved-briefs}
 
