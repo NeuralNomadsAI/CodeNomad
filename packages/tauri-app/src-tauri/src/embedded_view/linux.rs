@@ -1,7 +1,7 @@
 pub(super) fn install(webview: &tauri::Webview) -> Result<(), String> {
     use std::sync::mpsc;
     use std::time::Duration;
-    use webkit2gtk::prelude::*;
+    use webkit2gtk::{PermissionRequestExt, WebViewExt};
 
     let (sender, receiver) = mpsc::sync_channel(1);
     webview
