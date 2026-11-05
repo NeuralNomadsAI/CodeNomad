@@ -81,6 +81,16 @@ reply the goal reviewer rejects, pausing the goal) runs in the minimum/latest CI
 
 ### Contract notes
 
+Agent memory qualifies the optional session instruction entry GET/PUT/DELETE
+contract per authenticated connection (`memory/instructions-capability.ts`). A
+valid contract declaring the routes absent keeps memory inactive silently while
+preserving its preference; authentication and transient/unreadable discovery
+remain distinct. Native child sessions get their own entries through the awaited
+plugin prompt-admission hook, with instruction changes carried by native
+context-update notices. The isolated
+`scripts/test-memory-instructions-native.mjs` checks first-call child delivery,
+resumed updates and failed-admission rejection. See [Agent memory](AGENT_MEMORY.md).
+
 - Generated client URLs keep their `baseUrl` prefix and pass through unchanged;
   scheduling classifies API paths relative to the proxy prefix.
 - The generated `experimental.session` methods and their `session` aliases use

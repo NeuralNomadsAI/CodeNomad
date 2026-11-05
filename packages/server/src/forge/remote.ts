@@ -2,9 +2,9 @@ import { isIP } from "node:net"
 import { runGitProcess } from "../workspaces/git-process"
 
 export interface ForgeRemote {
-  /** Lower-case web authority: the host name, with the port of an HTTPS remote on a non-default port. */
+  /** Lower-case authority. Forge parsing keeps web ports; repository parsing keeps transport ports. */
   host: string
-  /** Repository path on the host, without `.git`: `owner/repo`, or `group/subgroup/project` on GitLab. */
+  /** Repository path on the host, without `.git`; forge parsing requires an owner/group and name. */
   path: string
 }
 
@@ -19,6 +19,15 @@ const PATH_SEGMENT = /^[A-Za-z0-9_.-]+$/
  * Local paths, file URLs and anything without an owner and a name yield undefined.
  */
 export function parseRemoteUrl(url: string): ForgeRemote | undefined {
+  return parseGitRemoteUrl(url, false)
+}
+
+/** Repository identity shares the validated parser, retaining every explicit transport port. */
+export function parseRepositoryRemoteUrl(url: string): ForgeRemote | undefined {
+  return parseGitRemoteUrl(url, true)
+}
+
+function parseGitRemoteUrl(url: string, forIdentity: boolean): ForgeRemote | undefined {
   const trimmed = url.trim()
   let host: string | undefined
   let port = ""
@@ -28,7 +37,11 @@ export function parseRemoteUrl(url: string): ForgeRemote | undefined {
     try {
       const parsed = new URL(trimmed)
       host = parsed.hostname.toLowerCase()
-      if (/^https?:$/i.test(parsed.protocol)) port = parsed.port
+      if (forIdentity) {
+        // URL.port drops explicit default HTTP ports; identity retains the written authority.
+        const explicit = /:(\d+)$/.exec(trimmed.split("/")[2]?.split("@").at(-1) ?? "")?.[1]
+        port = explicit ? String(Number(explicit)) : ""
+      } else if (/^https?:$/i.test(parsed.protocol)) port = parsed.port
       rawPath = decodeURIComponent(parsed.pathname)
     } catch {
       return undefined
@@ -43,7 +56,7 @@ export function parseRemoteUrl(url: string): ForgeRemote | undefined {
   if (!host || !(ipv6 ? isIP(ipv6[1]!) === 6 : HOST_NAME.test(host)) || (port && !/^\d{1,5}$/.test(port)) || !rawPath) return undefined
   const path = rawPath.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "")
   const segments = path.split("/")
-  if (segments.length < 2 || segments.some(segment => !PATH_SEGMENT.test(segment) || /^\.+$/.test(segment))) return undefined
+  if (segments.length < (forIdentity ? 1 : 2) || segments.some(segment => !PATH_SEGMENT.test(segment) || /^\.+$/.test(segment))) return undefined
   return { host: port ? `${host}:${port}` : host, path }
 }
 
