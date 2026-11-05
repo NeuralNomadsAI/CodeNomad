@@ -20,6 +20,7 @@ import { preferences } from "../stores/preferences"
 import type { PromptDelivery, PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
 import type { Attachment } from "../types/attachment"
 import { usePromptState } from "./prompt-input/usePromptState"
+import { backendScoped, parseInstanceKey } from "../lib/backend-identity"
 import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
@@ -172,6 +173,7 @@ export default function PromptInput(props: PromptInputProps) {
     instanceId: () => props.instanceId,
     sessionId: () => props.sessionId,
     instanceFolder: () => props.instanceFolder,
+    historyKey: () => backendScoped(parseInstanceKey(props.instanceId).backendId, props.instanceFolder),
   })
 
   const {

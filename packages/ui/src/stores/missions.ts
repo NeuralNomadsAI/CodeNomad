@@ -3,11 +3,12 @@ import { createEventRefreshScheduler, type RefreshUrgency } from "../lib/event-r
 import { serverEvents } from "../lib/server-events"
 import { createMissionPanelInventory } from "./mission-panel-inventory"
 import { instances } from "./instances"
+import { projectScope } from "../lib/backend-identity"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { createRoot, createComputed, untrack } from "solid-js"
 
 export const missionStore = createMissionPanelInventory({
-  scope: instanceId => instances().get(instanceId)?.folder ?? instanceId,
+  scope: instanceId => { const instance = instances().get(instanceId); return instance ? projectScope(instance) : instanceId },
   projectID: instanceId => instances().get(instanceId)?.metadata?.project?.id,
   capture: instanceId => {
     const origin = instances().get(instanceId), client = origin?.client, folder = origin?.folder, projectID = origin?.metadata?.project?.id, generation = getOpenCodeInstanceGeneration(instanceId)

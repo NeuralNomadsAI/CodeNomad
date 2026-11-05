@@ -36,7 +36,7 @@ import { getRootClient } from "./opencode-client"
 import { refreshSessionRuntimeStatus } from "./session-api"
 import { buildV2RequestLocations, locationAuthorityKey, locationWorkspaceID, requestLocationOptions, toRequestLocation, type RequestLocation } from "./request-locations"
 import { backgroundReads } from "../lib/background-read-queue"
-import { normalizeWorkspacePath } from "./app-session-reconciliation"
+import { normalizeWorkspacePath, workspaceIdentity } from "./app-session-reconciliation"
 import { claimPendingRecoveryNotice, pendingRecoveryNoticeKey, releasePendingRecoveryNotices } from "./pending-recovery-notices"
 import { fetchCommands, clearCommands } from "./commands"
 import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
@@ -308,8 +308,8 @@ function notifyPendingRecovery(instanceId: string, cause: PendingRecoveryCause):
 }
 
 function pendingRecoveryProject(instanceId: string): string {
-  const folder = instances().get(instanceId)?.folder
-  return folder ? normalizeWorkspacePath(folder) : instanceId
+  const instance = instances().get(instanceId)
+  return instance?.folder ? workspaceIdentity(instance.folder, instance.backendId) : instanceId
 }
 
 // A cause marks an attempt that counts toward the warning; without one, the state only changes.

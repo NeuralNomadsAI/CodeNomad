@@ -69,6 +69,8 @@ describe("per-backend workspace list fence", () => {
   it("completing one backend's list keeps another backend's mutations and ignores its ids", () => {
     const fence = new BackendWorkspaceListReconciliationFence()
     const local = fence.begin("local"), lab = fence.begin("lab")
+    assert.equal(fence.isCurrent(local), true, "starting another backend's list keeps the local request current")
+    assert.equal(fence.allows(local, "w1"), true)
     fence.markMutation("w1")
     fence.markMutation("lab~w1")
     assert.equal(fence.allows(local, "w1"), false)
