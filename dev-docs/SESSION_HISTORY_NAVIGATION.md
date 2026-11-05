@@ -350,7 +350,11 @@ and does so even if the prompt is then rejected (the saved passage is not restor
 
 In-place reveals (`alignElement`) are reader-settlement holds on the revealed
 element; key jumps hold their row the same way at offset 0, or the block their
-optional selector finds in it on that frame (a timeline marker's own block). While
+optional selector finds in it on that frame (a timeline marker's own block). An
+immediate jump to the top holds the first live row at its top offset: right after
+a window replacement Virtua can apply a size compensation computed against its
+previous offset after the jump's write, which would otherwise carry the reader back
+down (a First jump from the bottom of a long transcript). While
 a jump's row is not rendered, the hold rewrites Virtua's current estimate of its
 offset instead, since measuring the rows around a distant estimate can carry the
 row out of the rendered range; once rendered it is aligned. Both last a fixed

@@ -50,8 +50,17 @@ const client: any = {
   },
   model: { default: async () => ({ data: model }) },
   permission: { list: async () => [] },
-  message: { list: async ({ cursor, limit = 200 }: { cursor?: string; limit?: number } = {}) => {
+  message: { list: async ({ cursor, limit = 200, order }: { cursor?: string; limit?: number; order?: "asc" | "desc" } = {}) => {
     calls++
+    // The oldest window reads forward from the first record, like the native
+    // ascending page, whose boundary cursor promises no older page.
+    if (order === "asc" || cursor?.startsWith("asc:")) {
+      const offset = Number(cursor?.slice(4) ?? 0)
+      return { data: nativeMessages.slice(offset, offset + limit), cursor: {
+        previous: "asc-boundary",
+        ...(offset + limit < nativeMessages.length ? { next: `asc:${offset + limit}` } : {}),
+      } }
+    }
     const offset = Number(cursor ?? 0), messages = nativeMessages.slice().reverse()
     return { data: messages.slice(offset, offset + limit), cursor: offset + limit < messages.length ? { next: String(offset + limit) } : {} }
   } },
