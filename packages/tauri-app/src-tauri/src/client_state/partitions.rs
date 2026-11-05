@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 #[cfg(not(windows))]
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 pub(super) const PROTOCOL_VERSION: u64 = 1;
@@ -245,15 +245,18 @@ impl PartitionStore {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(err) => return Err(err.to_string()),
         }
-        match fs::read(path) {
-            Ok(bytes) if bytes.len() <= MAX_PARTITION_BYTES && hex_digest(&bytes) == key => {
+        let bytes = match fs::File::open(path).and_then(read_bounded_partition) {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err.to_string()),
+        };
+        match bytes {
+            Some(bytes) if hex_digest(&bytes) == key => {
                 String::from_utf8(bytes)
                     .map(Some)
                     .map_err(|err| err.to_string())
             }
-            Ok(_) => Ok(None),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(err) => Err(err.to_string()),
+            _ => Ok(None),
         }
     }
 
@@ -295,6 +298,21 @@ impl PartitionStore {
     }
 }
 
+fn read_bounded_partition(mut reader: impl Read) -> std::io::Result<Option<Vec<u8>>> {
+    let mut bytes = Vec::with_capacity(MAX_PARTITION_BYTES);
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        let remaining = chunk.len().min(MAX_PARTITION_BYTES + 1 - bytes.len());
+        let read = match reader.read(&mut chunk[..remaining]) {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            result => result?,
+        };
+        if read == 0 { return Ok(Some(bytes)); }
+        if bytes.len() + read > MAX_PARTITION_BYTES { return Ok(None); }
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+}
+
 fn authority(authority_valid: &dyn Fn() -> bool) -> Result<(), String> {
     if authority_valid() {
         Ok(())
@@ -322,3 +340,7 @@ pub(super) fn sync_directory(_path: &Path) -> Result<(), String> {
     // Windows std::fs cannot open directories; synced files plus atomic publication are the stdlib limit.
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "partitions_tests.rs"]
+mod tests;

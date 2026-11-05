@@ -5,6 +5,8 @@ import { createAgentAttachment, createFileAttachment, createSkillAttachment, cre
 import { addAttachment, getAttachments } from "../../stores/attachments"
 import type { PickerMode } from "./types"
 import type { PickerSelectAction } from "../unified-picker"
+import { instances } from "../../stores/instances"
+import { explicitSessionDirectory } from "../../stores/session-inventory-scope"
 
 type PickerItem =
   | { type: "agent"; agent: Agent }
@@ -202,6 +204,7 @@ export function usePromptPicker(options: PromptPickerOptions): PromptPickerContr
         }, 0)
       }
     } else if (item.type === "file") {
+      if (explicitSessionDirectory(instances().get(options.instanceId())) !== undefined) return
       const displayPath = item.file.path
       const relativePath = item.file.relativePath ?? displayPath
       const isFolder = item.file.isDirectory ?? displayPath.endsWith("/")

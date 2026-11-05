@@ -10,6 +10,7 @@ import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { serverApi } from "../../../src/lib/api-client"
+import { serverEvents } from "../../../src/lib/server-events"
 import { addInstance, addPendingForm, addPermissionToQueue, getPermissionQueue, syncPendingRequests, clearReloadableInstanceState, invalidatePendingRequestSync } from "../../../src/stores/instances"
 import { getToastHistory } from "../../../src/lib/notifications"
 import { getFormQueue } from "../../../src/stores/forms"
@@ -24,6 +25,13 @@ import { getQuestionToolSearchText } from "../../../src/components/tool-call/sea
 import { reloadWorktrees, getWorktrees } from "../../../src/stores/worktrees"
 import "../../../src/index.css"
 import { installActivationFrameGate } from "./activation-frame-gate"
+
+// Native frames and recovery below are synthetic; unrelated HTTP retries own no authority here.
+;(serverEvents as any).connectGeneration++
+;(serverEvents as any).clearReconnectTimer()
+;(serverEvents as any).connection?.disconnect()
+;(serverEvents as any).connection = null
+;(serverEvents as any).watchdog.setConnected(false)
 
 const instanceId = "interruptions", sessionId = "s", toolId = "question-tool"
 let messageId = "msg_0000"

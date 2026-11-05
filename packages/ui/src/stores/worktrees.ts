@@ -9,7 +9,9 @@ import { showToastNotification } from "../lib/notifications"
 import { tGlobal } from "../lib/i18n"
 import { normalizeSessionDirectory } from "./session-list-options"
 import { prioritizedRead } from "../lib/prioritized-read"
-import { activeInstanceId } from "./instances"
+import { activeInstanceId, instances } from "./instances"
+import { getProjectAvailability, requireProjectAvailability } from "./project-capability"
+import { captureInstanceRequestAuthority } from "./session-api"
 
 const log = getLogger("api")
 
@@ -20,6 +22,7 @@ const worktreeRequests = new Map<string, Promise<void>>()
 const pendingWorktreeRefreshes = new Set<string>()
 const freshWorktreeRequests = new Map<string, Promise<void>>()
 const worktreeReads = new Map<string, Promise<void>>()
+const requestOwners = new WeakMap<Promise<void>, () => boolean>()
 const worktreeReadyRefreshes = new Map<string, Promise<void>>()
 const familyMoveRequests = new Map<string, Promise<void>>()
 const unreconciledFamilyMoves = new Map<string, { instanceId: string; directories: string[]; settled: boolean; request: Promise<void> }>()
@@ -29,23 +32,29 @@ const defaultDirectories = new Map<string, string>()
 type WorktreeReadyRefresh = (instanceId: string) => Promise<void>
 
 async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh = false): Promise<void> {
+  const current = captureInstanceRequestAuthority(instanceId)
+  const available = () => current() && getProjectAvailability(instanceId, "worktrees").allowed
+  if (!available()) return
   const requests = fresh ? freshWorktreeRequests : worktreeRequests
   const existing = requests.get(instanceId)
-  if (existing) {
+  if (existing && requestOwners.get(existing)?.()) {
     if (!initial && !fresh) pendingWorktreeRefreshes.add(instanceId)
     return existing
   }
   const load = (initialRead: boolean) => {
     // Display and required-fresh callers have independent outcomes, but every
     // read/publication shares one lane. An older cached response cannot land last.
-    const previous = worktreeReads.get(instanceId)
+    const held = worktreeReads.get(instanceId)
+    const previous = held && requestOwners.get(held)?.() ? held : undefined
     const read = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+      if (!available()) return
       try {
         const response = await prioritizedRead(
           () => activeInstanceId() === instanceId,
           new AbortController().signal,
-          () => serverApi.fetchWorktrees(instanceId, fresh),
+          () => available() ? serverApi.fetchWorktrees(instanceId, fresh) : Promise.reject(new Error("explicit_capability_unavailable")),
         )
+        if (!available()) return
         if (response.defaultDirectory) defaultDirectories.set(instanceId, response.defaultDirectory)
         else defaultDirectories.delete(instanceId)
         setWorktreesByInstance((prev) => {
@@ -60,6 +69,7 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh 
           return next
         })
       } catch (error) {
+        if (!available()) return
         log.warn(initialRead ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
         if (!initialRead || fresh) throw error
         // A fresh read may have published while this initial display read waited.
@@ -81,6 +91,7 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh 
       }
     })
     worktreeReads.set(instanceId, read)
+    requestOwners.set(read, current)
     return read.finally(() => {
       if (worktreeReads.get(instanceId) === read) worktreeReads.delete(instanceId)
     })
@@ -102,6 +113,7 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh 
   })
 
   requests.set(instanceId, task)
+  requestOwners.set(task, current)
   await task.finally(() => {
     if (requests.get(instanceId) === task) {
       requests.delete(instanceId)
@@ -171,6 +183,7 @@ export function getDirectoryOnlyWorktree(instanceId: string): WorktreeDescriptor
 }
 
 async function createWorktree(instanceId: string, slug: string, fromSlug = "root"): Promise<{ slug: string; directory: string; branch?: string }> {
+  requireProjectAvailability(instanceId, "worktrees")
   if (!instanceId) {
     throw new Error("Missing instanceId")
   }
@@ -188,6 +201,8 @@ async function deleteWorktree(
   refreshSessions: (instanceId: string) => Promise<void> = (id) =>
     import("./session-api").then(({ fetchSessions }) => fetchSessions(id, { reset: true, strictStatus: true })),
 ): Promise<void> {
+  requireProjectAvailability(instanceId, "worktrees")
+  const current = captureInstanceRequestAuthority(instanceId)
   if (!instanceId) {
     throw new Error("Missing instanceId")
   }
@@ -201,6 +216,7 @@ async function deleteWorktree(
   } catch (error) {
     deleteError = error
   }
+  if (!current() || !getProjectAvailability(instanceId, "worktrees").allowed) return
   const refreshers = [() => reloadWorktrees(instanceId), () => refreshSessions(instanceId)]
   const refreshes = await Promise.allSettled(refreshers.map((refresh) => refresh()))
   const failed = refreshes.flatMap((refresh, index) => refresh.status === "rejected" ? [index] : [])
@@ -303,7 +319,11 @@ async function setWorktreeSlugForParentSession(
     refreshSessions?: (instanceId: string) => Promise<void>
   } = {},
 ): Promise<void> {
+  requireProjectAvailability(instanceId, "worktrees")
+  const current = captureInstanceRequestAuthority(instanceId)
   await ensureWorktreesLoaded(instanceId)
+  if (!current()) return
+  requireProjectAvailability(instanceId, "worktrees")
   const rootSessionId = getParentSessionId(instanceId, parentSessionId)
   const normalizedSlug = normalizeWorktreeSlug(instanceId, slug)
   const worktree = getWorktrees(instanceId).find((candidate) => candidate.slug === normalizedSlug)
@@ -322,6 +342,8 @@ async function setWorktreeSlugForParentSession(
   const refreshSessions = options.refreshSessions ?? ((id: string) =>
     import("./session-api").then(({ fetchSessions }) => fetchSessions(id, { reset: true, strictStatus: true })))
   const task: Promise<void> = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+    if (!current()) return
+    requireProjectAvailability(instanceId, "worktrees")
     const family = [...(sessions().get(instanceId)?.values() ?? [])].filter(session => getParentSessionId(instanceId, session.id) === rootSessionId)
     const prior = unreconciledFamilyMoves.get(key)
     const recovery = { instanceId,
@@ -334,6 +356,7 @@ async function setWorktreeSlugForParentSession(
       moveError = error
     }
     recovery.settled = true
+    if (!current() || !getProjectAvailability(instanceId, "worktrees").allowed) return
     try {
       await refreshSessions(instanceId)
     } catch {

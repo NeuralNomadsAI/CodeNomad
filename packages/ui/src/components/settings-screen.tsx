@@ -1,7 +1,6 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import useMediaQuery from "@suid/material/useMediaQuery"
-import type { LocationRef } from "@opencode/client"
 import { Settings, Bell, ChevronDown, FileCog, Flag, Globe, Info, Keyboard, MessageSquare, MonitorUp, PlugZap, SlidersHorizontal, Terminal, Volume2, X } from "lucide-solid"
 import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
@@ -34,6 +33,12 @@ import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
 import { NativeTitlebar } from "./native-titlebar"
 import { createSettingsScrollRestoration } from "./settings/settings-scroll-restoration"
+import type { PreferencesProjectContext } from "./settings/preferences-project-context"
+import type { NativePreferencesRequest } from "../lib/native/preferences-window"
+import { activeInstanceId, instances } from "../stores/instances"
+import { LOCAL_SERVER_ID } from "../lib/project-identity"
+import { LocalBackendSettings } from "./settings/local-backend-settings"
+import { getActiveCatalogLocation } from "../stores/sessions"
 
 type SettingsSectionOption = {
   id: SettingsSectionId
@@ -43,7 +48,8 @@ type SettingsSectionOption = {
 
 interface SettingsScreenProps {
   standalone?: boolean
-  providerContext?: { instanceId?: string; location?: LocationRef }
+  executionRequest?: NativePreferencesRequest
+  projectContext?: PreferencesProjectContext
   onClose?: () => void | Promise<void>
   onSectionChange?: (section: SettingsSectionId) => void | Promise<void>
   scrollPosition?: { scrollTop?: number }
@@ -53,6 +59,33 @@ interface SettingsScreenProps {
 export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const { t } = useI18n()
   const phoneQuery = useMediaQuery("(max-width: 640px)")
+  const selectedId = () => props.executionRequest?.instanceId ?? (props.standalone ? "" : activeInstanceId()) ?? ""
+  const selectedServer = () => props.standalone ? props.executionRequest?.serverId ?? LOCAL_SERVER_ID
+    : instances().get(selectedId())?.binding?.serverId ?? LOCAL_SERVER_ID
+  const local = () => selectedServer() === LOCAL_SERVER_ID
+  const localBackendAutomatic = () => local() && (!selectedId() || Boolean(project()))
+  const project = createMemo<PreferencesProjectContext | undefined>(() => {
+    if (props.standalone) return props.projectContext
+    const instance = instances().get(selectedId())
+    if (!instance || instance.status !== "ready") return
+    return { instanceId: instance.id, serverId: instance.binding?.serverId, workspacePath: instance.folder,
+      location: getActiveCatalogLocation(instance.id),
+      binding: instance.binding ?? { serverId: LOCAL_SERVER_ID, directory: instance.folder }, capabilities: instance.capabilities }
+  })
+  const catalogue = () => {
+    const value = project()
+    return value && (local() || value.capabilities?.features?.chat?.state === "available") ? value : undefined
+  }
+  const execution = () => {
+    const value = project(), state = value?.capabilities?.features?.executionSettings?.state
+    return local() && value && (!value.capabilities || state === "available" || state === "unknown") ? value : undefined
+  }
+  // Consent and retained callbacks are fenced by the accepted request and fresh capability snapshot.
+  const target = () => JSON.stringify([selectedServer(), selectedId(), props.executionRequest?.workspacePath,
+    props.executionRequest?.location, project()?.location, project()?.binding, project()?.capabilities])
+  const unavailable = () => <p class="settings-card-message" role="status">{t(project() ? "settings.execution.deferred" : "settings.execution.unavailable")}</p>
+  const providers = () => <ProvidersSettingsSection instanceId={project()?.instanceId ?? ""} location={project()?.location}
+    executionContext={execution()} catalogueContext={catalogue()} scoped />
 
   const sections = createMemo(() => {
     const items: SettingsSectionOption[] = [
@@ -97,21 +130,22 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
           </div>
         )
       case "opencode":
-        return <OpenCodeSettingsSection />
+        return <LocalBackendSettings target={target()} local={localBackendAutomatic()}>{active => <OpenCodeSettingsSection active={active} />}</LocalBackendSettings>
       case "providers":
-        return <ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
+        return providers()
       case "missions":
-        return <MissionsSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
+        return <Show when={target()} keyed>{authority => <MissionsSettingsSection instanceId={catalogue()?.instanceId ?? ""} location={catalogue()?.location}
+          catalogueActive={() => target() === authority && Boolean(catalogue())} executionActive={() => target() === authority && Boolean(execution())} authority={authority} />}</Show>
       case "usage":
-        return <UsageSettingsSection instanceId={props.providerContext?.instanceId} />
+        return <Show when={execution()} keyed fallback={unavailable()}>{context => <UsageSettingsSection instanceId={context.instanceId} active={() => execution() === context} />}</Show>
       case "sidecars":
         return <SideCarsSettingsSection />
       case "config-files":
-        return <ConfigFilesSettingsSection />
+        return <LocalBackendSettings target={target()} local={localBackendAutomatic()}>{active => <ConfigFilesSettingsSection active={active} />}</LocalBackendSettings>
       case "advanced":
-        return <AdvancedSettingsSection />
+        return <AdvancedSettingsSection local={localBackendAutomatic()} target={target()} />
       case "info":
-        return <InfoSettingsSection />
+        return <InfoSettingsSection localService={localBackendAutomatic()} />
       case "general":
       default:
         return <GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} />
@@ -304,7 +338,14 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
                 </button></Show>
               </header>
 
-              <div ref={settingsScroll} class="window-body settings-screen-scroll">{renderSection()}</div>
+              <div ref={settingsScroll} class="window-body settings-screen-scroll">
+                <div class="settings-card-message" role="note" data-settings-execution-scope>
+                  <p>{t("settings.execution.shared")}</p>
+                  <p class="break-all">{t("settings.execution.target")}: <bdi>{selectedServer()}</bdi>
+                    <Show when={props.executionRequest?.workspacePath ?? project()?.workspacePath}>{path => <> · <bdi>{path()}</bdi></>}</Show></p>
+                </div>
+                {renderSection()}
+              </div>
             </div>
     </>
   )

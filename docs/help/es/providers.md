@@ -4,6 +4,8 @@ La autenticación de proveedores pertenece al servicio OpenCode conectado, no al
 
 ## Conectar un proveedor de modelos o búsqueda {#connect}
 
+Comprueba **Servidor OpenCode seleccionado**. Los ajustes de conexión, cuentas, búsqueda web e imágenes descritos a continuación se aplican al servicio local compartido. Un servidor indicado explícitamente y cualificado solo muestra un catálogo nativo de proveedores y modelos de solo lectura; administra su autenticación y configuración directamente en ese servidor, fuera de las capacidades actuales de CodeNomad. Los proyectos no disponibles mantienen sus controles inactivos; las preferencias de CodeNomad siguen disponibles. En el servicio local, los grupos plegados **Modelos**, **Búsqueda web** e **Imágenes** aplazan la lectura de sus datos hasta que se expanden.
+
 1. Abre un espacio de trabajo y después **Configuración → Proveedores**. **Modelos** empieza expandido; expande **Búsqueda web** para los proveedores de búsqueda. **Imágenes** reúne los ajustes de imágenes.
 2. En ese grupo, elige **Seleccionar proveedor** y después **Conectar**.
 3. Para un proveedor de modelos, completa el **Método de autenticación** nativo ofrecido: clave API, OAuth o comando. Para OAuth, usa **Abrir página de autorización** y envía un código de autorización solo cuando se solicite. Los proveedores de búsqueda se conectan con una clave API.

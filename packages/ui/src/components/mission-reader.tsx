@@ -43,6 +43,7 @@ import { missionBodyPresent, missionOwnBody } from "../lib/mission-bodies"
 import type { MissionPanelMap, MissionReport } from "../../../server/src/api-types"
 import { MissionPanelPaging } from "./mission-panel-paging"
 import { createDocumentAttention } from "./session/session-idle-attention"
+import { ProjectCapabilityBoundary } from "./project-capability-gate"
 
 // One bounded page per section, including raw artifacts. Leave shared Markdown/tool budgets alone.
 const READER_PAGE_SIZE = 9_000
@@ -150,6 +151,12 @@ export function MissionReaderSection(props: { text?: string; body?: MissionReade
 }
 
 export function MissionReader(props: { instanceId: string; scope: string }) {
+  return <ProjectCapabilityBoundary instanceId={props.instanceId} feature="missions">
+    <LocalMissionReader {...props} />
+  </ProjectCapabilityBoundary>
+}
+
+function LocalMissionReader(props: { instanceId: string; scope: string }) {
   const { t, locale } = useI18n()
   const target = () => missionProjectView(props.scope).reader
   const projectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? projectMissionStore.state(props.instanceId).projectID

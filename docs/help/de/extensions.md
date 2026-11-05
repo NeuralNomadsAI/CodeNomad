@@ -43,6 +43,8 @@ Jeder Ersatz widerruft die Aktivierung in allen Projekten, selbst bei unverände
 
 ## Kontext, Asset-Zustimmung und Sandbox-Grenzen {#permissions-sandbox}
 
+Repository-Einträge der API 3 sind nur für Projekte verfügbar, die den gemeinsamen lokalen OpenCode-Dienst verwenden. Für jeden ausdrücklich konfigurierten OpenCode-Server, auch über Loopback oder bei getrennter Verbindung, sind sie unabhängig von dessen nativer Git-Unterstützung nicht verfügbar; die Ablehnung erfolgt vor Zugriffen auf Host-Git, Forge-Anmeldungen oder das Netzwerk.
+
 | Vertrag | Was Aktivierung erlaubt |
 | --- | --- |
 | API 1 / `session.context` | Aktuelle Sitzungskennung (oder keine), Oberflächensprache und Darstellung. Kein Verlaufstext oder Dateisystemzugriff. |

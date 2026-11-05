@@ -1,5 +1,7 @@
 # Native Integrationen
 
+Die folgenden Installations-, Anwendungsanbindungs- und Konfigurationsaktionen gelten für gemeinsam genutzte lokale OpenCode-Projekte. Explizite Server behalten das schreibgeschützte Plugin-Inventar und den Integrationsstatus; Anbindung und Installation bleiben dort unverfügbar.
+
 CodeNomad stellt OpenCodes native MCP-Verbindungen, Plugin-Aktivierung, Skills und benutzerdefinierte Befehle bereit. Sie laufen auf dem Ausführungshost. Sie sind getrennt von [Panel-Erweiterungen](extensions.md) in der Sandbox und [SideCars](browser-sidecars.md).
 
 ## Passende Steuerung wählen {#integration-scopes}

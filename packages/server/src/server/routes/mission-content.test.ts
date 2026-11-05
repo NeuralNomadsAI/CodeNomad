@@ -24,6 +24,7 @@ async function routeFixture() {
   const app = Fastify({ logger: false })
   registerMissionRoutes(app, { workspaceManager: {
     get: () => ({ id: "workspace" }), getServiceLocation: () => location, getWorktreeIdentityForPath: async (_id: string, directory: string) => directory,
+    requireWorkspaceCapability: () => new AbortController().signal,
     ownsLocation: async () => true, getSharedServiceConnection: async () => ({ client, assertCurrent() {} }),
   } as never, worktreeDeletionFence: new WorktreeDeletionFence() })
   return { f, plugin, app, state }

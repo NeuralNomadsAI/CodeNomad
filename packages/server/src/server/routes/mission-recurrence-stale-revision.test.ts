@@ -84,6 +84,7 @@ test("a control or Run now refused for a stale revision is a definitive conflict
     const fence = new WorktreeDeletionFence(), connection = { client, assertCurrent: () => {} }
     const manager = { get: () => workspace, getServiceLocation: () => location, getServiceDirectoryForPath: async () => directory,
       getSharedServiceConnection: async () => connection, ownsLocation: async () => true,
+      requireWorkspaceCapability: () => new AbortController().signal,
       getServiceWslDistro: () => undefined, getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",
       getWorktreeIdentityForPath: async () => canonicalWorktreeIdentity(directory), getHostPathForServicePath: async () => directory }
     const deps = { auth, bridgeToken: "existing-bridge-token", fence, manager,

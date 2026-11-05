@@ -3,6 +3,7 @@ import { CrossHostRegistration, createCrossHostOwner } from "./client-state-cros
 import { getProcessStartIdentity } from "./client-state-process-identity"
 import { isPidAlive } from "./client-state-process"
 import { ClientStateManager } from "./client-state"
+import { requirePreferencesRequest } from "./preferences-window"
 
 const [directory, startPath, readyPath, mode, userDataPath, participantReadyPath, participantContinuePath, legacyTauriDataPath, operation, payload] = process.argv.slice(2)
 if (!directory || !startPath) throw new Error("Expected election directory and start path")
@@ -36,9 +37,14 @@ if (manager?.isPrimary && operation === "save") {
   await manager.setRestoreEnabled(true)
   await manager.saveClientState(JSON.parse(payload))
 }
+if (manager?.isPrimary && operation === "save-preferences") {
+  const request = JSON.parse(payload)
+  await manager.setPreferences(requirePreferencesRequest(request.section, request))
+}
 process.stdout.write(`${JSON.stringify({
   acquired: manager?.isPrimary ?? Boolean(registration?.isPrimary),
   state: operation === "load" ? manager?.loadClientState() : undefined,
+  preferences: operation === "load" ? manager?.preferences : undefined,
 })}\n`)
 process.stdin.resume()
 process.stdin.once("end", () => {

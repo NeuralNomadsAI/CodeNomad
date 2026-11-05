@@ -4,12 +4,18 @@ import { uiState, getAgentModelPreference } from "./preferences"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { resolveAgentId } from "../types/session"
-import { requestLocationOptions, toRequestLocation } from "./request-locations"
+import { requestConnectionOptions, requestLocationOptions, toRequestLocation } from "./request-locations"
+import { LOCAL_SERVER_ID } from "../lib/project-identity"
+import { captureInstanceRequestAuthority } from "./session-api"
+import { explicitSessionDirectory } from "./session-inventory-scope"
+import { tGlobal } from "../lib/i18n"
 
 const DEFAULT_MODEL_OUTPUT_LIMIT = 32_000
 
 function getActiveCatalogLocation(instanceId: string): LocationRef {
   const instance = instances().get(instanceId)
+  const explicit = explicitSessionDirectory(instance)
+  if (explicit !== undefined) return { directory: explicit }
   const selectedId = activeSessionId().get(instanceId)
   const selectedLocation = selectedId && selectedId !== "info"
     ? sessions().get(instanceId)?.get(selectedId)?.location
@@ -33,7 +39,7 @@ function getRecentModelPreferenceForInstance(
 ): { providerId: string; modelId: string } | undefined {
   const recents = uiState().models.recents ?? []
   for (const item of recents) {
-    if (isModelValid(instanceId, item)) {
+    if ((item.serverId ?? LOCAL_SERVER_ID) === (instances().get(instanceId)?.binding?.serverId ?? LOCAL_SERVER_ID) && isModelValid(instanceId, item)) {
       return item
     }
   }
@@ -42,7 +48,12 @@ function getRecentModelPreferenceForInstance(
 async function getDefaultModel(
   instanceId: string,
   agentName?: string,
+  location = getActiveCatalogLocation(instanceId),
 ): Promise<{ providerId: string; modelId: string }> {
+  const current = captureInstanceRequestAuthority(instanceId)
+  const client = instances().get(instanceId)?.client ? getRootClient(instanceId) : undefined
+  const requestOptions = requestConnectionOptions(instances().get(instanceId)) ?? requestLocationOptions(location)
+  const assertCurrent = () => { if (!current()) throw new Error(tGlobal("session.actions.superseded")) }
   const instanceProviders = providers().get(instanceId) || []
   const instanceAgents = agents().get(instanceId) || []
   const agentId = agentName ? resolveAgentId(instanceAgents, agentName) : ""
@@ -56,7 +67,8 @@ async function getDefaultModel(
       }
     }
 
-    const stored = await getAgentModelPreference(instanceId, agentId)
+    const stored = await getAgentModelPreference(instanceId, agentId, current)
+    assertCurrent()
     if (isModelValid(instanceId, stored)) {
       return stored
     }
@@ -91,11 +103,12 @@ async function getDefaultModel(
   }
 
   if (!instanceProviders.some((provider) => provider.models.length > 0)) {
-    const instance = instances().get(instanceId)
-    if (instance?.client) {
-      const response = await getRootClient(instanceId).model.default({
-        location: toRequestLocation(getActiveCatalogLocation(instanceId)),
-      }, requestLocationOptions(getActiveCatalogLocation(instanceId))).catch(() => null)
+    if (client) {
+      assertCurrent()
+      const response = await client.model.default({
+        location: toRequestLocation(location),
+      }, requestOptions).catch(() => null)
+      assertCurrent()
       if (response?.data) {
         return { providerId: response.data.providerID, modelId: response.data.id }
       }

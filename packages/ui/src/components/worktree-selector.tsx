@@ -20,7 +20,10 @@ import {
 } from "../stores/worktrees"
 import { sessions } from "../stores/sessions"
 import { useI18n } from "../lib/i18n"
-import { canOpenWorkspacePaths, openWorkspacePath } from "../lib/workspace-open"
+import { canOpenWorkspacePaths, openWorkspacePath, WorkspacePathUnavailableError } from "../lib/workspace-open"
+import { ProjectCapabilityBoundary } from "./project-capability-gate"
+import { getProjectAvailability } from "../stores/project-capability"
+import { captureInstanceRequestAuthority } from "../stores/session-api"
 
 const log = getLogger("session")
 
@@ -129,7 +132,17 @@ interface WorktreeSelectorProps {
 }
 
 export default function WorktreeSelector(props: WorktreeSelectorProps) {
+  let root: HTMLDivElement | undefined
+  return <ProjectCapabilityBoundary instanceId={props.instanceId} feature="worktrees" focusWithin={() => root?.parentElement ?? undefined}
+    onRemovedFocus={parent => parent.querySelector<HTMLElement>("[data-agent-selector]")?.focus({ preventScroll: true })}>
+    <LocalWorktreeSelector {...props} onRoot={element => { root = element }} />
+  </ProjectCapabilityBoundary>
+}
+
+function LocalWorktreeSelector(props: WorktreeSelectorProps & { onRoot: (element: HTMLDivElement) => void }) {
   const { t } = useI18n()
+  const sourceCurrent = captureInstanceRequestAuthority(props.instanceId)
+  const allowed = () => sourceCurrent() && getProjectAvailability(props.instanceId, "worktrees").allowed
   const createInputId = createUniqueId()
   const [isOpen, setIsOpen] = createSignal(false)
   const [createOpen, setCreateOpen] = createSignal(false)
@@ -194,6 +207,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   })
 
   const openDeleteDialog = (opt: WorktreeOption & { kind: "worktree" }) => {
+    if (!allowed()) return
     if (opt.slug === "root") return
     setForceDelete(false)
     setDeleteError(null)
@@ -217,24 +231,29 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   }
 
   const handleCopyPath = async (directory: string) => {
+    if (!allowed()) return
     try {
       const ok = await copyToClipboard(directory)
+      if (!allowed()) return
       showToastNotification({ category: "copy",
         message: t(ok ? "instanceShell.filesShell.toast.copyPathSuccess" : "instanceShell.filesShell.toast.copyPathError"),
         variant: ok ? "success" : "error",
       })
     } catch (error) {
+      if (!allowed()) return
       log.error("Failed to copy worktree path", error)
       showToastNotification({ category: "copy", message: t("instanceShell.filesShell.toast.copyPathError"), variant: "error" })
     }
   }
 
   const handleOpenInFileManager = async (worktreeSlug: string) => {
+    if (!allowed()) return
     try {
       await openWorkspacePath({ target: "default", instanceId: props.instanceId, worktreeSlug })
     } catch (error) {
+      if (!allowed() || error instanceof WorkspacePathUnavailableError) return
       log.error("Failed to open worktree in file manager", error)
-      showToastNotification({ category: "files", message: t("instanceShell.worktree.openInFileManager.error"), variant: "error" })
+      showToastNotification({ category: "files", message: error instanceof WorkspacePathUnavailableError ? error.message : t("instanceShell.worktree.openInFileManager.error"), variant: "error" })
     }
   }
 
@@ -253,12 +272,14 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   }
 
   const handleCopyDeleteError = async (mode: "raw" | "sanitized") => {
+    if (!allowed()) return
     const raw = deleteError()
     if (!raw) return
     const text = mode === "sanitized" ? sanitizeDeleteError(raw) : raw
 
     try {
       const ok = await copyToClipboard(text)
+      if (!allowed()) return
       showToastNotification({ category: "copy",
         message: ok
           ? t(mode === "sanitized" ? "instanceShell.worktree.delete.error.copySanitizedSuccess" : "instanceShell.worktree.delete.error.copySuccess")
@@ -266,6 +287,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
         variant: ok ? "success" : "error",
       })
     } catch (error) {
+      if (!allowed()) return
       log.error("Failed to copy delete worktree error", error)
       showToastNotification({ category: "copy",
         message: t("instanceShell.worktree.delete.error.copyFailure"),
@@ -322,6 +344,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   })
 
   const handleChange = async (value: WorktreeOption | null) => {
+    if (!allowed()) return
     if (worktreesUnavailable()) return
     if (!value) return
     if (value.kind === "action") {
@@ -336,12 +359,13 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   }
 
   return (
-    <div class="sidebar-selector">
+    <div class="sidebar-selector" ref={props.onRoot}>
       <Select<WorktreeOption>
         gutter={0}
         open={isOpen()}
         onOpenChange={(open) => {
           if (!open) { setIsOpen(false); return }
+          if (!allowed()) return
           setIsOpen(true)
           void reloadWorktrees(props.instanceId).catch(error => log.warn("Failed to refresh worktrees", error))
         }}
@@ -436,7 +460,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   >
                     <Copy class="w-3 h-3" />
                   </button>
-                  <Show when={canOpenWorkspacePaths()}>
+                  <Show when={canOpenWorkspacePaths(props.instanceId)}>
                     <button
                       type="button"
                       class="session-item-close opacity-80 hover:opacity-100 hover:bg-surface-hover"
@@ -560,16 +584,20 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                     /[\x00-\x1F\x7F]/.test(createSlug())
                   }
                   onClick={() => {
+                    if (!allowed()) return
                     const slug = createSlug().trim()
                     void (async () => {
                       setIsCreating(true)
                       const created = await createWorktree(props.instanceId, slug, currentSlug())
+                      if (!allowed()) return
                       await reloadWorktrees(props.instanceId)
+                      if (!allowed()) return
                       await setWorktreeSlugForParentSession(props.instanceId, parentId(), created.slug)
                       setCreateOpen(false)
                       showToastNotification({ category: "files", message: t("instanceShell.worktree.create.success", { slug }), variant: "success" })
                     })()
                       .catch((error) => {
+                        if (!allowed() || (error as { code?: unknown } | null)?.code === "explicit_capability_unavailable") return
                         log.warn("Failed to create worktree", error)
                         showToastNotification({ category: "files",
                           message: error instanceof Error ? error.message : t("instanceShell.worktree.create.error"),
@@ -636,6 +664,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   class="selector-button selector-button-primary"
                   disabled={isDeleting() || !deleteTarget()}
                   onClick={() => {
+                    if (!allowed()) return
                     const target = deleteTarget()
                     if (!target) {
                       closeDeleteDialog()
@@ -646,6 +675,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       setIsDeleting(true)
                       setDeleteError(null)
                       await deleteWorktree(props.instanceId, target.slug, { force: forceDelete() })
+                      if (!allowed()) return
 
                       closeDeleteDialog()
                       showToastNotification({ category: "files",
@@ -654,6 +684,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       })
                     })()
                       .catch((error) => {
+                        if (!allowed() || (error as { code?: unknown } | null)?.code === "explicit_capability_unavailable") return
                         log.warn("Failed to delete worktree", error)
                         setDeleteError(error instanceof Error ? error.message : t("instanceShell.worktree.delete.error.fallback"))
                       })

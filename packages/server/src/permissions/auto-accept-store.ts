@@ -111,6 +111,10 @@ export class AutoAcceptStore {
     return resolveFamilyRoot(sessionId, (id) => tree?.get(id))
   }
 
+  sessionIds(instanceId: string): string[] {
+    return [...(this.sessions.get(instanceId)?.keys() ?? [])]
+  }
+
   enabledRoots(instanceId: string): string[] {
     return [...(this.enabled.get(instanceId) ?? [])]
   }

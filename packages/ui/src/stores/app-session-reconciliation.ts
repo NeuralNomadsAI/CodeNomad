@@ -1,5 +1,7 @@
-export type ReconcileTabDescriptor = { kind: string; folderPath?: string; occurrence?: number }
-type LiveWorkspaceDescriptor = { id: string; folderPath: string; status?: string }
+import { projectIdentity } from "../lib/project-identity"
+export { normalizeLocalProjectPath as normalizeWorkspacePath } from "../lib/project-identity"
+export type ReconcileTabDescriptor = { kind: string; folderPath?: string; serverId?: string; occurrence?: number }
+type LiveWorkspaceDescriptor = { id: string; folderPath: string; serverId?: string; status?: string }
 export type SessionDescriptor = { id: string; parentId?: string | null }
 export interface RestoredSessionReferences {
   activeParentSessionId?: string
@@ -10,11 +12,6 @@ export interface RestoredSessionReferences {
   idleMarkerSessionIds?: readonly string[]
   generationRecoverySessionIds?: readonly string[]
   expandedSessionIds?: readonly string[]
-}
-export function normalizeWorkspacePath(folderPath: string): string {
-  const windowsLike = /^(?:[A-Za-z]:[/\\]|[/\\]{2})/.test(folderPath)
-  const normalized = windowsLike ? folderPath.replace(/\\/g, "/").toLowerCase() : folderPath
-  return normalized === "/" || /^[a-z]:\/$/.test(normalized) ? normalized : normalized.replace(/\/+$/, "")
 }
 export function getUnavailableWorkspaceIds(
   localIds: Iterable<string>,
@@ -30,14 +27,14 @@ export function reconcileWorkspaceTabs(
   const liveByPath = new Map<string, LiveWorkspaceDescriptor[]>()
   for (const workspace of liveWorkspaces) {
     if (workspace.status === "stopped" || workspace.status === "error") continue
-    const path = normalizeWorkspacePath(workspace.folderPath)
+    const path = projectIdentity(workspace.folderPath, workspace.serverId)
     liveByPath.set(path, [...(liveByPath.get(path) ?? []), workspace])
   }
   const nextOccurrences = new Map<string, number>()
   const claimed = new Set<string>()
   return tabs.flatMap((tab, tabIndex) => {
     if (tab.kind !== "workspace" || typeof tab.folderPath !== "string") return []
-    const path = normalizeWorkspacePath(tab.folderPath)
+    const path = projectIdentity(tab.folderPath, tab.serverId)
     const inferred = nextOccurrences.get(path) ?? 0
     const occurrence = Number.isInteger(tab.occurrence) && Number(tab.occurrence) >= 0 ? Number(tab.occurrence) : inferred
     nextOccurrences.set(path, Math.max(inferred, occurrence) + 1)
@@ -46,7 +43,7 @@ export function reconcileWorkspaceTabs(
     if (existingWorkspaceId) claimed.add(existingWorkspaceId)
     return [{
       tabIndex,
-      descriptor: { kind: "workspace" as const, folderPath: tab.folderPath, occurrence },
+      descriptor: { kind: "workspace" as const, folderPath: tab.folderPath, ...(tab.serverId ? { serverId: tab.serverId } : {}), occurrence },
       existingWorkspaceId,
     }]
   })

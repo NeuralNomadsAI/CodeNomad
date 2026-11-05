@@ -7,10 +7,25 @@ import { useAssetsChannel } from "./assets-channel"
 import { useWorkItemsChannel } from "./work-items-channel"
 import { useApi4Channel, type Api4Host } from "./api4-channel"
 import { resolveCssColor } from "../../lib/css-color"
+import { ProjectCapabilityBoundary } from "../project-capability-gate"
+
+export function extensionProjectFeature(entry: PanelExtensionSummary) {
+  return entry.manifest.apiVersion === 2 ? "historyEnrichment" as const
+    // prototype-1236: work items read the host checkout's forge remote, never an explicit server's Git.
+    : entry.manifest.apiVersion === 3 ? "hostGit" as const
+    : entry.manifest.apiVersion === 4 && entry.manifest.permissions.some(permission => permission !== "session.context" && permission !== "panel.preferences") ? "design" as const : undefined
+}
 
 export function ExtensionPanel(props: {
   entry: PanelExtensionSummary; instanceId: string; active: boolean; context: PanelExtensionContext; host: Api4Host
 }) {
+  const feature = () => extensionProjectFeature(props.entry)
+  return <Show when={feature()} fallback={<ActivePanel {...props} />}>
+    {closed => <ProjectCapabilityBoundary instanceId={props.instanceId} feature={closed()}><ActivePanel {...props} /></ProjectCapabilityBoundary>}
+  </Show>
+}
+
+function ActivePanel(props: { entry: PanelExtensionSummary; instanceId: string; active: boolean; context: PanelExtensionContext; host: Api4Host }) {
   const identity = createMemo(() => props.active ? JSON.stringify([props.instanceId, props.entry.digest, props.context.sessionId]) : null)
   return <Show keyed when={identity()}>{_identity => <PanelFrame entry={props.entry} instanceId={props.instanceId} context={props.context} host={props.host} />}</Show>
 }

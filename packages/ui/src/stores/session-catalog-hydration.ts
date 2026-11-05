@@ -1,6 +1,8 @@
 import { batch } from "solid-js"
 import type { PersistedSessionCatalogEntry } from "./session-catalog-persistence"
 import { getAuthoritativelyDeletedSessionIdsForInstance, setSessions, setSessionPage } from "./session-state"
+import { instances } from "./instances"
+import { sessionMatchesInventory } from "./session-inventory-scope"
 
 const seeded = new WeakMap<PersistedSessionCatalogEntry[], Set<string>>()
 
@@ -15,7 +17,7 @@ export function seedSessionCatalog(instanceId: string, catalog: PersistedSession
     setSessions(previous => {
       const current = new Map(previous.get(instanceId) ?? [])
       for (const row of catalog) {
-        if (deleted.has(row.id)) continue
+        if (deleted.has(row.id) || !sessionMatchesInventory(instances().get(instanceId), row)) continue
         candidates.push(row.id)
         if (current.has(row.id)) continue
         current.set(row.id, { ...row, instanceId, status: "idle", runtimeStatusKnown: false, catalogSnapshot: true })

@@ -1,4 +1,5 @@
 import { isSessionNotFoundError } from "@opencode/client"
+import { localMissionWorkspaces } from "../../missions/workspace-capability"
 import { z } from "zod"
 import { isDeepStrictEqual } from "node:util"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
@@ -24,7 +25,7 @@ type Manager = Pick<WorkspaceManager, "list" | "getSharedServiceConnection" | "o
 export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDeletionFence, coordinatorID: string, command: unknown, signal: AbortSignal,
   authority?: MissionAuthorityCheckpoint) {
   const { input } = schema.parse(command)
-  const owner = await Promise.any(manager.list().map(async workspace => {
+  const owner = await Promise.any(localMissionWorkspaces(manager).map(async workspace => {
     const connection = await manager.getSharedServiceConnection(workspace.id)
     if (!connection) throw new Error("Workspace unavailable")
     const coordinator = await connection.client.session.get({ sessionID: coordinatorID }, { signal })

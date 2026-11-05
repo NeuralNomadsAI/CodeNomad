@@ -348,6 +348,11 @@ settlement, original identity/correlation and completed-only source consumption
 apply to both paths; `lastDaily` and daily watched-cursor fields belong to the
 daily format. The Wayfinder UI-answer mark is shared by both paths.
 
+Recurring schedules use the local shared service binding. Explicit OpenCode
+workspaces fail the `missions` capability gate before preparation, snapshots,
+current-passage reads, exact control status or authenticated proof callbacks
+acquire a connection or read host state.
+
 Creation stores a paused schedule, never starts work or arms a timer, and is never
 resent; Play requests carry the then-current revision so CAS refuses a duplicate.
 New titles follow the 1–60 Mission title rule; stored schedules keep their

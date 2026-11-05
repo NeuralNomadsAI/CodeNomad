@@ -22,7 +22,7 @@ export class IntegrationAttachmentError extends Error {
 
 export interface IntegrationAttachmentsDeps {
   controls: Pick<PluginControls, "read">
-  workspaceManager: Pick<WorkspaceManager, "getSharedServiceConnection" | "ownsLocation"> & Partial<Pick<WorkspaceManager, "getServiceWslDistro">>
+  workspaceManager: Pick<WorkspaceManager, "getSharedServiceConnection" | "ownsLocation" | "requireWorkspaceCapability"> & Partial<Pick<WorkspaceManager, "getServiceWslDistro">>
   catalog: Pick<IntegrationCatalogSource, "read">
   now?: () => number
   timeoutMs?: number
@@ -40,6 +40,7 @@ export class IntegrationAttachments {
   constructor(private readonly deps: IntegrationAttachmentsDeps) {}
 
   async installHost(workspaceId: string, integrationId: string, location: PluginControlLocation, signal?: AbortSignal) {
+    this.requireHostControls(workspaceId)
     // Refuse before catalog.read(), which can persist a refresh. A mirrored offer never authorizes installation.
     if (this.deps.workspaceManager.getServiceWslDistro?.(workspaceId)) throw new IntegrationAttachmentError("unsupported")
     if ((this.deps.hostPlatform ?? process.platform) === "linux") {
@@ -123,6 +124,7 @@ export class IntegrationAttachments {
 
   private async run<T>(workspaceId: string, integrationId: string, location: PluginControlLocation, outer: AbortSignal | undefined,
     operation: (context: Context) => Promise<T>, readOnlyCatalog = false): Promise<T> {
+    this.requireHostControls(workspaceId)
     if (!/^[a-z][a-z0-9-]{0,31}$/.test(integrationId) || location.workspaceID !== undefined
       || !location.directory || location.directory.length > 32_768 || /\p{Cc}/u.test(location.directory)) throw new IntegrationAttachmentError("invalid")
     const timeout = AbortSignal.timeout(this.deps.timeoutMs ?? INTEGRATION_ATTACHMENT_TIMEOUT_MS)
@@ -153,6 +155,7 @@ export class IntegrationAttachments {
   }
 
   private async authorize(context: Context) {
+    this.requireHostControls(context.workspaceId)
     context.signal.throwIfAborted()
     context.connection.assertCurrent()
     if (context.location.workspaceID !== undefined || !await this.deps.workspaceManager.ownsLocation(
@@ -160,6 +163,11 @@ export class IntegrationAttachments {
     )) throw new IntegrationAttachmentError("forbidden")
     context.signal.throwIfAborted()
     context.connection.assertCurrent()
+  }
+
+  private requireHostControls(workspaceId: string) {
+    try { this.deps.workspaceManager.requireWorkspaceCapability(workspaceId, "executionSettings") }
+    catch { throw new IntegrationAttachmentError("forbidden") }
   }
 
   private async session(context: Context, sessionID: string) {

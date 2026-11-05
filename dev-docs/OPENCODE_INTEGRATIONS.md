@@ -241,6 +241,16 @@ request after an uncertain result: check the application, then require a fresh a
 
 ## UI read model
 
+Explicit OpenCode projects admit read-only plugin inventory and integration status
+through `plugins`. Integration attachment/binding, catalog installation and host
+installation require shared-local execution admission. The Status module admits
+`plugins` before context and inventory/status demand, and `pluginWrite` before
+constructing host controllers or binding demand. Remote sections retain plugin,
+application and connection status with read-only switches; the conversation line
+requires its admitted attachment owner. Add and row-action
+components gate before mounting their dialogs or subscriptions. The shared
+activation switch rechecks `pluginWrite` at native activation and dispatch.
+
 `createIntegrationsStore` (`stores/integrations-store.ts`, reading through `lib/integrations-api.ts`) is the read
 model for UI surfaces that show integrations. `demand(instance, directory)` reads that Location until its release;
 releasing its last demand aborts the read. A surface retains its demand across session navigation within the same

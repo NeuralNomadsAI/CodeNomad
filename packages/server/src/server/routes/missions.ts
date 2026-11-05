@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 
 import type { OpenCodeClient } from "@opencode/client"
 import type { MissionActivityProjection, MissionList, MissionListResponse, MissionListUnavailableResponse, MissionMap, MissionPanelMap,
@@ -38,7 +39,7 @@ import type { NativeScheduleCapabilityReader } from "../../opencode/native-sched
 interface MissionRouteDeps {
   scheduleCapability?: Pick<NativeScheduleCapabilityReader, "read">
   scheduleSettingsActivation?: Pick<NativeScheduleSettingsActivation, "prepare" | "apply">
-  workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"
+  workspaceManager: Pick<WorkspaceManager, "requireWorkspaceCapability" | "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"
     | "getSharedServiceConnection" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath"
     | "getHostPathForServicePath" | "getServiceWslDistro">
     & Partial<Pick<WorkspaceManager, "getServicePathStyle">>
@@ -210,6 +211,7 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
         workspaceID: request.params.id, request: request.body, signal: lifetime.signal, wait: lifetime.wait })
       return await creation.execute()
     } catch (error) {
+      if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
       // Hold codes keep their own meaning: a creation-uncertain retry may follow
       // an earlier dispatched attempt with the same request identity.
       if (error instanceof MissionCreationHoldError) {
@@ -289,7 +291,7 @@ interface MissionPluginRead {
 
 /** The read routes' shared path to the owned Location's active plugin. */
 async function readMissionPlugin<T>(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply, deps: MissionRouteDeps,
-  read: (plugin: MissionPluginRead) => Promise<T>): Promise<T | MissionListUnavailableResponse> {
+  read: (plugin: MissionPluginRead) => Promise<T>): Promise<T | MissionListUnavailableResponse | FastifyReply> {
   const lifetime = requestAdmission(request, reply)
   const parsed = MissionParamsSchema.safeParse(request.params)
   if (!parsed.success || !deps.workspaceManager.get(parsed.data.id)) {
@@ -298,6 +300,12 @@ async function readMissionPlugin<T>(request: FastifyRequest<{ Params: { id: stri
     return unavailable("workspace-unavailable")
   }
   const workspaceID = parsed.data.id
+  try { deps.workspaceManager.requireWorkspaceCapability(workspaceID, "missions") }
+  catch (error) {
+    lifetime.dispose()
+    if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
+    throw error
+  }
   const ownedLocation = deps.workspaceManager.getServiceLocation(workspaceID)
   if (!ownedLocation) { lifetime.dispose(); return unavailable("workspace-unavailable") }
   // Without its bridge this backend never provisions the plugin: reconnecting or
@@ -361,6 +369,7 @@ async function mutate(request: FastifyRequest, reply: FastifyReply, deps: Missio
     return await prepared.run(call)
   } catch (error) {
     if (error instanceof MissionMapMutationError) return reply.code(error.status).send({ error: error.message })
+    if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
     return mutationError(reply, error)
   } finally { lifetime.dispose() }
 }

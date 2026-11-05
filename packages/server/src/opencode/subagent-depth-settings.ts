@@ -56,9 +56,14 @@ async function generalRules(connection: ServiceConnection, directory: string) {
  * General subagent launch subagents; never reloads Locations. */
 export class SubagentDepthSettings {
   constructor(private readonly documents: Pick<PluginControls, "readConfigDocuments" | "editConfigDocument">,
-    private readonly manager: Pick<WorkspaceManager, "getSharedServiceConnection" | "getServicePathStyle">) {}
+    private readonly manager: Pick<WorkspaceManager, "getSharedServiceConnection" | "getServicePathStyle" | "requireWorkspaceCapability">) {}
 
   private async context(workspaceId: string, location: PluginControlLocation) {
+    try { this.manager.requireWorkspaceCapability(workspaceId, "executionSettings") }
+    catch (error) {
+      if (error instanceof Error && "statusCode" in error && error.statusCode === 404) throw new PluginControlsError("Workspace not found", "not-found")
+      throw error
+    }
     const connection = await this.manager.getSharedServiceConnection(workspaceId)
     if (!connection) throw new PluginControlsError("OpenCode is unavailable", "unavailable")
     // Document acquisition proves directory ownership before the schema request.

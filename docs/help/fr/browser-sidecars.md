@@ -1,5 +1,7 @@
 # Aperçus navigateur et SideCars
 
+Les liens du chat interne des serveurs explicites restent des liens externes ouverts par votre action, y compris les URL loopback. Ils conservent l’adresse écrite et utilisent le réseau de votre navigateur. Les aperçus hôte sont indisponibles dans ce chat ; aucun tunnel vers le serveur d’exécution n’est fourni.
+
 ## Ouvrir un navigateur de session {#session-browser}
 
 1. Dans la barre d’outils d’une conversation, choisissez **Ouvrir l'aperçu web**.

@@ -13,6 +13,8 @@ import { writeClientLayoutValue } from "../stores/client-state"
 import { readStoredEnum, RIGHT_PANEL_FILES_WORD_WRAP_KEY } from "./instance/shell/storage"
 import { decodeWorkspaceText, useWorkspaceFileEditor } from "./workspace-file-editor"
 import { showConfirmDialog } from "../stores/alerts"
+import { getProjectAvailability } from "../stores/project-capability"
+import { remoteReadErrorText } from "../lib/remote-read-error"
 
 const MonacoFileViewer = lazy(() => import("./file-viewer/monaco-file-viewer").then(module => ({ default: module.MonacoFileViewer })))
 const imageTypes: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif", svg: "image/svg+xml", ico: "image/x-icon", bmp: "image/bmp", avif: "image/avif" }
@@ -25,6 +27,8 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
   const [source, setSource] = createSignal(false)
   const [wrap, setWrap] = createSignal(readStoredEnum(RIGHT_PANEL_FILES_WORD_WRAP_KEY, ["on", "off"] as const) === "on")
   const editor = useWorkspaceFileEditor({ instanceId: props.instanceId, target: () => props.target, active: () => props.active, t, onError: setError })
+  // prototype-1236: an explicit server's files are read-only (no OpenCode file write).
+  const writable = () => getProjectAvailability(props.instanceId, "fileWrite").allowed
   createEffect(() => writeClientLayoutValue(RIGHT_PANEL_FILES_WORD_WRAP_KEY, wrap() ? "on" : "off"))
   let controller: AbortController | undefined
   let pending = false
@@ -50,7 +54,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
         } catch { setContent({ binary: true }) }
       }
     } catch (cause) {
-      if (!request.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause))
+      if (!request.signal.aborted) setError(remoteReadErrorText(cause instanceof Error ? cause.message : String(cause), t))
     } finally {
       if (controller === request) {
         setLoading(false)
@@ -83,13 +87,15 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
   return <section class="git-diff-view workspace-file-view" aria-label={t("filesPanel.viewer")}>
     <header class="window-header git-diff-header">
       <div class="git-diff-heading"><strong title={props.target.path}>{props.target.path}</strong>
-        <span title={props.target.directory}>{props.target.directory}<Show when={editor.dirty()}> · ●</Show><Show when={content()?.text === undefined}> · {t("filesPanel.readOnly")}</Show></span></div>
+        <span title={props.target.directory}>{props.target.directory}<Show when={editor.dirty()}> · ●</Show><Show when={content()?.text === undefined || !writable()}> · {t("filesPanel.readOnly")}</Show></span></div>
       <button class="file-viewer-toolbar-button" disabled={loading() || editor.saving()} onClick={() => void explicitRefresh()}>{t("instanceShell.rightPanel.actions.refresh")}</button>
       <Show when={markdown() && content()?.text !== undefined}>
         <button class="file-viewer-toolbar-button" onClick={() => setSource(!source())}>{t(source() ? "instanceShell.filesShell.previewMarkdown" : "instanceShell.filesShell.showSource")}</button>
       </Show>
       <Show when={content()?.text !== undefined && (!markdown() || source())}>
+<Show when={writable()}>
         <button class="files-header-icon-button" aria-label={t("instanceShell.rightPanel.actions.save")} title={withHotkey(t("instanceShell.rightPanel.actions.save"), "file-save")} disabled={!editor.dirty() || editor.saving()} onClick={() => void editor.save()}><Save size={16} /></button>
+        </Show>
         <button class="files-header-icon-button icon-toggle" aria-label={t(wrap() ? "instanceShell.filesShell.disableWordWrap" : "instanceShell.filesShell.enableWordWrap")} aria-pressed={wrap()} onClick={() => setWrap(!wrap())}><WrapText size={16} /></button>
       </Show>
       <button class="files-header-icon-button" aria-label={t("gitPanel.backChat")} title={t("gitPanel.backChat")} onClick={props.onClose}><X size={16} /></button>
@@ -101,9 +107,10 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
       <Show when={value().binary}><div class="p-3 text-secondary">{t("filesPanel.binary")}</div></Show>
       <Show when={value().text !== undefined}>
         <Show when={markdown() && !source()} fallback={<div class="git-diff-content"><Suspense>
-          <MonacoFileViewer scopeKey={`${props.instanceId}:${props.target.directory}:workspace-editor`} path={props.target.path} content={editor.text()} wordWrap={wrap() ? "on" : "off"} onContentChange={editor.change} onSave={value => void editor.save(value)} />
+          <MonacoFileViewer scopeKey={`${props.instanceId}:${props.target.directory}:workspace-editor`} path={props.target.path} content={editor.text()} wordWrap={wrap() ? "on" : "off"} readOnly={!writable()}
+            onContentChange={writable() ? editor.change : undefined} onSave={writable() ? value => void editor.save(value) : undefined} />
         </Suspense></div>}>
-          <div class="workspace-markdown"><Markdown part={{ type: "text", text: editor.text() }} isDark={isDark()} escapeRawHtml /></div>
+          <div class="workspace-markdown"><Markdown part={{ type: "text", text: editor.text() }} instanceId={props.instanceId} isDark={isDark()} escapeRawHtml /></div>
         </Show>
       </Show>
     </>}</Show>

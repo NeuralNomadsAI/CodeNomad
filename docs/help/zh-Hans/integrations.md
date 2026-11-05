@@ -1,5 +1,7 @@
 # 原生集成
 
+以下安装、应用连接和配置操作适用于共享本地 OpenCode 项目。显式服务器保留只读插件清单和集成状态，应用连接和安装操作在这些服务器上不可用。
+
 CodeNomad 提供 OpenCode 的原生 MCP 连接、插件激活、技能和自定义命令。这些在执行主机上运行，与沙箱[面板扩展](extensions.md)和 [SideCar](browser-sidecars.md) 分开。
 
 ## 选择正确的控件 {#integration-scopes}

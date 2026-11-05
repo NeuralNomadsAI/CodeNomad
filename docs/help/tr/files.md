@@ -19,6 +19,10 @@ Genişletilmiş klasörler mod değişikliklerinden etkilenmez. Listeleme/durum/
 
 Satır eylemleri arasında **Yolu kopyala** ve istemcinin arka uç yollarının açılmasını desteklediği durumlarda **Varsayılan uygulamayla aç**, **Klasörde göster**, **Dosya yöneticisinde aç** ve **Burada terminal aç** gibi dosya yöneticisi/düzenleyici/terminal eylemleri bulunur. Alan sınırlı olduğunda eylemler **{name} için daha fazla eylem** öğesine taşınabilir; dosya veya klasör adı `{name}`'nin yerine geçer. Uzak bir tarayıcı, sunucu yolunun yerel aygıt yolu olduğunu varsayamaz; bkz. [Uzaktan Kontrol](remote-control.md).
 
+### OpenCode sunucusundaki projeler {#opencode-server-files}
+
+Yapılandırılmış bir OpenCode sunucusunda açılan bir proje için **Dosyalar** bu sunucuyu OpenCode API'si üzerinden okur; bu bilgisayarın diskini veya Git'ini asla okumaz. **Çalışma alanı** açılan klasörü salt okunur olarak listeler ve önizler (**Kaydet** yok; önizlemeler 5 MiB'de durur). **Değişiklikler** açılan klasörün ve dalının çalışma kopyası değişikliklerini tek bir **Değişiklikler** listesinde gösterir; stage, commit, **Commitler** veya **Git'i başlat** yoktur. Sunucu eksiksiz ve kesin bir durum bildiremediğinde panel boş bir liste yerine **İçerik kullanılamıyor veya eksik.** gösterir. Ajan dosyaları değiştirdikten sonra **Yenile**'yi kullanın; panel, sunucu dosya veya dal değişikliği bildirdiğinde de yenilenir. Bu bilgisayarda açma eylemleri kullanılamaz durumda kalır.
+
 ## Kaynağı düzenleyin ve güvenle kaydedin {#edit-save}
 
 1. Çalışma Alanındaki bir metin dosyasını göz simgesiyle açın.

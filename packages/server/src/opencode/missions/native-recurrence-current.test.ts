@@ -166,6 +166,7 @@ for (const revisions of [72, 144]) test(`current display stays byte bounded for 
       permission: { request: { list: async () => ({ location: owned, data: [] }) } } }
     app = Fastify({ logger: false })
     registerMissionRecurrenceCurrent(app, { workspaceManager: { get: () => workspace, getServiceLocation: () => owned,
+      requireWorkspaceCapability: () => new AbortController().signal,
       getSharedServiceConnection: async () => ({ client: api, assertCurrent() {} }), ownsLocation: async () => true,
       getWorktreeIdentityForPath: async () => f.root }, worktreeDeletionFence: new WorktreeDeletionFence() } as never)
     const url = "/api/workspaces/workspace/missions/recurrence/schedule/current"

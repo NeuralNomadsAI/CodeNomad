@@ -1,5 +1,11 @@
 # Questions et autorisations
 
+Le contexte d’un serveur explicite comprend son nom et son ID stable pour distinguer les noms identiques. Une réponse incertaine ou dépassée utilise une annonce polie, non modale, dans l’éditeur de demande ; les échecs ordinaires gardent leur traitement d’erreur.
+
+**Serveurs OpenCode explicites :** questions et permissions arrivent uniquement en direct. Les brouillons restent modifiables. Les permissions obsolètes attendent une demande live courante ; les Forms connues proposent la vérification explicite ci-dessous. Le volet de détails du dock explique cette limite. Ouvrir une conversation permet de la consulter, sans récupérer automatiquement les demandes manquantes. Le mode Yolo fonctionne sur ces serveurs : après une reconnexion, CodeNomad relit les permissions en attente des seules conversations en Yolo et les approuve une fois. Les parcours de récupération et de reçus ci-dessous concernent le service local partagé.
+
+Pour une Form connue, choisissez **Vérifier l’état de ce formulaire** dans son éditeur source. Une Form vérifiée encore en attente active uniquement ses propres actions ; relisez le brouillon puis répondez ou annulez par un geste distinct. Une Form déjà répondue ou annulée conserve le brouillon consultable, sans afficher la réponse d'un autre client ni inventer son auteur ou le résultat de votre tentative. Une vérification indéterminée conserve l'édition et bloque les réponses ; vous pouvez la relancer explicitement. Chaque vérification est bornée à 10 secondes et 4 MiB par réponse ; un schéma de champs modifié reste aussi indéterminé. Aucun contrôle ni renvoi automatique. La couverture générale reste inconnue ; cette vérification ne retrouve ni Forms manquantes ni permissions.
+
 Les questions, Forms et demandes d’autorisation natives se traitent dans le dock d’interruption juste au-dessus de la zone de saisie, pas dans les cartes d’outils en attente de la transcription.
 
 ## Trouver la demande et vérifier sa source {#request-dock}

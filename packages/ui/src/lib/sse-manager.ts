@@ -12,7 +12,7 @@ import type {
   TuiToastShow,
   V2Event,
 } from "@opencode/client"
-import { serverEvents } from "./server-events"
+import { serverEvents, type InstanceEventContext } from "./server-events"
 import type { WorkspaceEventTransportStatus } from "./event-transport"
 import type { InstanceStreamEvent, WorkspaceEventPayload } from "../../../server/src/api-types"
 import { getLogger } from "./logger"
@@ -78,8 +78,7 @@ class SSEManager {
 
     serverEvents.on("instance.event", (event) => {
       const payload = event as InstanceEventPayload
-      this.updateConnectionStatus(payload.instanceId, "connected")
-      this.handleEvent(payload.instanceId, payload.event as SSEEvent)
+      this.handleEvent(payload.instanceId, payload.event as SSEEvent, serverEvents.captureEventContext(payload))
     })
 
     serverEvents.onTransportStatus((status) => {
@@ -96,14 +95,16 @@ class SSEManager {
     setConnectionStatus((prev) => seedConnectionStatusIfMissing(prev, instanceId, status))
   }
 
-  private handleEvent(instanceId: string, event: SSEEvent | InstanceStreamEvent): void {
+  private handleEvent(instanceId: string, event: SSEEvent | InstanceStreamEvent, context?: InstanceEventContext): void {
     if (!event || typeof event !== "object" || typeof (event as { type?: unknown }).type !== "string") {
-      log.warn("Dropping malformed event", event)
+      log.warn("Dropping malformed event", { category: "invalid-native-event-type" })
       return
     }
+    if (context?.source?.serverId !== undefined && context.source.serverId !== "local-shared"
+      && event.type === "server.connected" && !context.current()) return
 
-    log.info("Received event", { type: event.type, event })
-    this.onInvalidation?.(instanceId, event as V2Event)
+    log.info("Received event", { type: event.type })
+    this.onInvalidation?.(instanceId, event as V2Event, context)
 
     switch (event.type) {
       case "session.created":
@@ -127,10 +128,10 @@ class SSEManager {
         this.onTuiToast?.(instanceId, event as TuiToastShow)
         break
       case "permission.asked":
-        this.onPermissionUpdated?.(instanceId, event as PermissionAsked)
+        this.onPermissionUpdated?.(instanceId, event as PermissionAsked, context)
         break
       case "permission.replied":
-        this.onPermissionReplied?.(instanceId, event as PermissionReplied)
+        this.onPermissionReplied?.(instanceId, event as PermissionReplied, context)
         break
       case "worktree.ready":
         try {
@@ -165,10 +166,10 @@ class SSEManager {
   onSessionCompacted?: (instanceId: string, event: SessionCompactionEnded) => void
   onSessionError?: (instanceId: string, event: SessionExecutionFailed) => void
   onTuiToast?: (instanceId: string, event: TuiToastShow) => void
-  onPermissionUpdated?: (instanceId: string, event: PermissionAsked) => void
-  onPermissionReplied?: (instanceId: string, event: PermissionReplied) => void
+  onPermissionUpdated?: (instanceId: string, event: PermissionAsked, context?: InstanceEventContext) => void
+  onPermissionReplied?: (instanceId: string, event: PermissionReplied, context?: InstanceEventContext) => void
   onNativeSessionEvent?: (instanceId: string, event: NativeSessionEvent) => void
-  onInvalidation?: (instanceId: string, event: V2Event) => void
+  onInvalidation?: (instanceId: string, event: V2Event, context?: InstanceEventContext) => void
   onWorktreeReady?: (instanceId: string, event: WorktreeReadyEvent) => void | Promise<void>
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>
 

@@ -20,6 +20,9 @@ import { openSessionPreview } from "../stores/session-previews"
 import { instances } from "../stores/instances"
 import { showAlertDialog } from "../stores/alerts"
 import { previewsUnavailable, previewsAvailabilityResolved, getServerMeta } from "../lib/server-meta"
+import { createContentMediaPolicy } from "../lib/content-media-policy"
+import { isRestrictedMedia, restrictedMediaPolicy, type MediaPolicy } from "../lib/media-policy"
+import { sanitizeRenderedMarkdown } from "../lib/markdown-html-policy"
 
 const log = getLogger("session")
 
@@ -30,6 +33,7 @@ let loopbackPreviewMetaRequested = false
 type MarkdownModule = typeof import("../lib/markdown")
 
 interface ResolvedMarkdownSnapshot {
+  mediaPolicy: MediaPolicy
   part: TextPart
   text: string
   themeKey: string
@@ -116,6 +120,7 @@ interface MarkdownProps {
   part: TextPart
   instanceId?: string
   sessionId?: string
+  unownedMediaPolicy?: MediaPolicy
   isDark?: boolean
   size?: "base" | "sm" | "tight"
   disableHighlight?: boolean
@@ -138,6 +143,7 @@ interface MarkdownProps {
 
 export function Markdown(props: MarkdownProps) {
   const { t } = useI18n()
+  const mediaPolicy = createContentMediaPolicy(() => props.instanceId, () => props.sessionId, props.unownedMediaPolicy)
 
   // A loopback link click opens the session preview on the instance owning
   // the session; failures surface through the shared alert dialog.
@@ -157,8 +163,8 @@ export function Markdown(props: MarkdownProps) {
   // off the default false would otherwise open a dead preview before the
   // server meta answers. Other callers (update checks, settings) usually
   // resolve the meta earlier.
-  const loopbackLinksOpenPreview = () => previewsAvailabilityResolved() && !previewsUnavailable()
-  if (props.instanceId && props.sessionId && !previewsAvailabilityResolved() && !loopbackPreviewMetaRequested) {
+  const loopbackLinksOpenPreview = () => !isRestrictedMedia(mediaPolicy()) && previewsAvailabilityResolved() && !previewsUnavailable()
+  if (props.instanceId && props.sessionId && !isRestrictedMedia(mediaPolicy()) && !previewsAvailabilityResolved() && !loopbackPreviewMetaRequested) {
     loopbackPreviewMetaRequested = true
     void getServerMeta().catch(() => {
       loopbackPreviewMetaRequested = false
@@ -166,6 +172,11 @@ export function Markdown(props: MarkdownProps) {
   }
 
   const [html, setHtml] = createSignal("")
+  const [htmlOwner, setHtmlOwner] = createSignal<string>()
+  const publicationPolicy = (): MediaPolicy => {
+    const policy = mediaPolicy(), ownerKey = htmlOwner()
+    return ownerKey && ownerKey !== policy.ownerKey ? { ...restrictedMediaPolicy, ownerKey } : policy
+  }
   // Whether `html` is the Markdown render rather than its plain-text fallback. The
   // reveal line waits for it, so a reveal's anchor never sits on a prefix that re-lays out.
   const [rendered, setRendered] = createSignal(false)
@@ -255,7 +266,7 @@ export function Markdown(props: MarkdownProps) {
     // 45 000 characters; short replies keep rendering every chunk, highlighted.
     const deferred = Boolean(props.streaming) && text.length > STREAMING_INSTANT_RENDER_CHARACTER_LIMIT
     const highlightEnabled = !props.disableHighlight && !deferred && text.length <= MARKDOWN_HIGHLIGHT_CHARACTER_LIMIT
-    const escapeRawHtml = Boolean(props.escapeRawHtml)
+    const escapeRawHtml = Boolean(props.escapeRawHtml) || isRestrictedMedia(mediaPolicy())
     const defaultCodeBlockWrap = props.defaultCodeBlockWrap ?? true
     const partId = typeof part.id === "string" && part.id.length > 0 ? part.id : undefined
     const cacheId = resolvePartCacheId(part, text)
@@ -264,6 +275,7 @@ export function Markdown(props: MarkdownProps) {
       ? `${resolvePartVersion(part, text)}@${window.text.length}`
       : resolvePartVersion(part, text)
     return {
+      mediaPolicy: mediaPolicy(),
       revealSteps: bounded.steps(),
       deferred,
       part,
@@ -298,13 +310,18 @@ export function Markdown(props: MarkdownProps) {
     // No `text`: a window is a slice that would retain the whole part beyond its
     // eviction while the cache accounts only for the slice.
     const cacheEntry: RenderCache = {
-      html: renderedHtml,
+      html: sanitizeRenderedMarkdown(renderedHtml, snapshot.mediaPolicy),
+      mediaOwnerKey: snapshot.mediaPolicy.ownerKey,
       theme: snapshot.themeKey,
       mode: `${snapshot.version}:${snapshot.literalRawHtml ? "literal" : snapshot.escapeRawHtml ? "escaped" : "raw"}:${snapshot.defaultCodeBlockWrap ? "wrap" : "nowrap"}`,
     }
-    setHtml(renderedHtml)
+    setHtmlOwner(cacheEntry.mediaOwnerKey)
+    setHtml(cacheEntry.html)
     setRendered(true)
-    if (options?.cache ?? true) {
+    // ponytail: native-reference Markdown re-parses on demand; retain inert source
+    // candidates if caching those uncommon blocks becomes worth the extra format.
+    const cacheNativeReferences = !(isRestrictedMedia(snapshot.mediaPolicy) && snapshot.text.includes("/session-media/"))
+    if ((options?.cache ?? true) && cacheNativeReferences) {
       cacheHandle.set(cacheEntry)
     }
     notifyRendered()
@@ -314,15 +331,16 @@ export function Markdown(props: MarkdownProps) {
     const markdown = await loadMarkdownModule()
     // Awaiting even a warm module suspends this invocation. Skip stale work before
     // entering the synchronous parser, including retries with the same key.
-    if (!isCurrentRender(request)) return
+    if (!isCurrentRender(request) || snapshot.mediaPolicy !== mediaPolicy()) return
     markdown.setMarkdownTheme(snapshot.themeKey === "dark")
     const rendered = await markdown.renderMarkdown(snapshot.text, {
       suppressHighlight: !snapshot.highlightEnabled,
       escapeRawHtml: snapshot.escapeRawHtml,
       literalRawHtml: snapshot.literalRawHtml,
       defaultCodeBlockWrap: snapshot.defaultCodeBlockWrap,
+      mediaPolicy: snapshot.mediaPolicy,
     })
-    if (!isCurrentRender(request)) return
+    if (!isCurrentRender(request) || snapshot.mediaPolicy !== mediaPolicy()) return
     const shouldCache = !snapshot.highlightEnabled || !markdown.hasPendingCodeHighlight(snapshot.text)
 
     if (isCurrentRender(request)) {
@@ -365,6 +383,7 @@ export function Markdown(props: MarkdownProps) {
     const localCache = snapshot.part.renderCache
     if (localCache && cacheMatches(localCache)) {
       cancelDeferredRender()
+      setHtmlOwner(localCache.mediaOwnerKey ?? "unqualified-cache")
       setHtml(localCache.html)
       setRendered(true)
       notifyRendered()
@@ -374,6 +393,7 @@ export function Markdown(props: MarkdownProps) {
     const globalCache = cacheHandle.get<RenderCache>()
     if (globalCache && cacheMatches(globalCache)) {
       cancelDeferredRender()
+      setHtmlOwner(globalCache.mediaOwnerKey ?? "unqualified-cache")
       setHtml(globalCache.html)
       setRendered(true)
       notifyRendered()
@@ -408,7 +428,7 @@ export function Markdown(props: MarkdownProps) {
     // Decorate exactly the links that intercept: only session-bound loopback
     // links while previews are known available, and never over an author's
     // own title attribute.
-    const decorate = Boolean(props.instanceId && props.sessionId) && loopbackLinksOpenPreview()
+    const decorate = Boolean(props.instanceId && props.sessionId) && !isRestrictedMedia(publicationPolicy()) && loopbackLinksOpenPreview()
     const title = decorate ? t("markdown.link.previewOpens") : ""
     Promise.resolve().then(() => {
       if (disposed || !containerRef) {
@@ -438,9 +458,11 @@ export function Markdown(props: MarkdownProps) {
     if (!instanceId || !sessionId || !html().includes("data-local-image")) return
     const store = messageStoreBus.getOrCreate(instanceId)
     const candidates = [...store.getSessionMessageIds(sessionId)].reverse()
-      .flatMap(id => { const message = store.getMessage(id); return message ? messageImageCandidates(message) : [] })
+      .flatMap(id => { const message = store.getMessage(id); return message ? messageImageCandidates(message, publicationPolicy()) : [] })
+    const policy = publicationPolicy()
     Promise.resolve().then(() => {
-      if (!disposed && containerRef) resolveLocalImages(containerRef, candidates)
+      if (!disposed && containerRef && props.instanceId === instanceId && props.sessionId === sessionId
+        && publicationPolicy().kind === policy.kind && publicationPolicy().ownerKey === policy.ownerKey) resolveLocalImages(containerRef, candidates)
     })
   })
 
@@ -458,7 +480,7 @@ export function Markdown(props: MarkdownProps) {
         // Firefox fires `click` for the middle button too; only a primary
         // left click without modifiers opens the preview.
         const plainClick = mouseEvent.button === 0 && !mouseEvent.ctrlKey && !mouseEvent.metaKey && !mouseEvent.shiftKey && !mouseEvent.altKey
-        if (plainClick && loopbackLinksOpenPreview() && isLoopbackHttpUrl(href)) {
+        if (plainClick && !isRestrictedMedia(publicationPolicy()) && loopbackLinksOpenPreview() && isLoopbackHttpUrl(href)) {
           event.preventDefault()
           openLoopbackPreview(props.instanceId, props.sessionId, href)
           return
@@ -549,7 +571,7 @@ export function Markdown(props: MarkdownProps) {
         data-part-id={resolved().partId}
         data-markdown-theme={resolved().themeKey}
         data-markdown-highlight={resolved().highlightEnabled ? "true" : "false"}
-        innerHTML={html()}
+        innerHTML={sanitizeRenderedMarkdown(html(), publicationPolicy())}
       />
       <Show when={bounded.window().hidden > 0 && rendered()}>
         <HiddenTextNotice window={bounded.window()} onReveal={bounded.reveal} />

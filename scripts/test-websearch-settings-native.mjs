@@ -14,6 +14,7 @@ await withProductRuntime(process.argv[2], async ({ configDirectory }) => {
   await client.location.get({ location: { directory: root } })
   const connection = { client, assertCurrent() {} }
   const controls = new PluginControls({ workspaceManager: {
+    requireWorkspaceCapability: () => new AbortController().signal,
     get: () => ({}), getSharedServiceConnection: async () => connection,
     getServiceDirectoryForPath: async (_id, directory) => directory === root ? root : undefined,
     ownsLocation: async (_id, location) => location.directory === root,

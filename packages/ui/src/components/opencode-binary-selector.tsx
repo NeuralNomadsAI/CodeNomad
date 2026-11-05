@@ -23,6 +23,7 @@ interface OpenCodeBinarySelectorProps {
   disabled?: boolean
   isVisible?: boolean
   defaultVersion?: string
+  active?: () => boolean
 }
 
 const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) => {
@@ -39,6 +40,8 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   const [versionInfo, setVersionInfo] = createSignal<Map<string, string>>(new Map<string, string>())
   const [validatingPaths, setValidatingPaths] = createSignal<Set<string>>(new Set<string>())
   const [isBinaryBrowserOpen, setIsBinaryBrowserOpen] = createSignal(false)
+  let disposed = false
+  const active = () => !disposed && props.active?.() !== false
  
   const binaries = () => opencodeBinaries()
 
@@ -51,6 +54,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   const currentSelectionPath = () => props.selectedBinary || "opencode2"
 
   createEffect(() => {
+    if (!active() || props.disabled) return
     if (!props.selectedBinary && lastUsedBinary()) {
       props.onBinaryChange(lastUsedBinary()!)
     } else if (!props.selectedBinary) {
@@ -78,7 +82,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   })
 
   createEffect(() => {
-    if (!props.isVisible) return
+    if (!active() || !props.isVisible) return
     const cache = versionInfo()
     const pathsToValidate = ["opencode2", ...customBinaries().map((binary) => binary.path)].filter(
       (path) => !cache.has(path),
@@ -86,19 +90,23 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
 
     if (pathsToValidate.length === 0) return
 
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      if (!active()) return
       pathsToValidate.forEach((path) => {
         validateBinary(path).catch((error) => log.error("Failed to validate binary", { path, error }))
       })
     }, 0)
+    onCleanup(() => clearTimeout(timer))
   })
 
   onCleanup(() => {
+    disposed = true
     setValidatingPaths(new Set<string>())
     setValidating(false)
   })
 
   async function validateBinary(path: string): Promise<{ valid: boolean; version?: string; error?: string }> {
+    if (!active()) return { valid: false }
     // Persisted versions are display metadata, not proof that this path still
     // supports V2. In particular, always revalidate an explicit add/browse.
     if (validatingPaths().has(path)) {
@@ -111,6 +119,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
       setValidationError(null)
 
       const response = await serverApi.validateBinary(path)
+      if (!active()) return { valid: false }
       const result = response.errorCode === OPENCODE_V2_REQUIRED_ERROR_CODE
         ? { ...response, error: t("opencodeBinarySelector.validation.v2Required") }
         : response
@@ -137,13 +146,13 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   }
 
   async function handleBrowseBinary() {
-    if (props.disabled) return
+    if (!active() || props.disabled) return
     setValidationError(null)
     if (supportsNativeDialogsInCurrentWindow()) {
       const selected = await openNativeFileDialog({
         title: t("opencodeBinarySelector.dialog.title"),
       })
-      if (selected) {
+      if (selected && active() && !props.disabled) {
         setCustomPath(selected)
         void handleValidateAndAdd(selected)
       }
@@ -153,7 +162,9 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   }
  
   async function handleValidateAndAdd(path: string) {
+    if (!active() || props.disabled) return
     const validation = await validateBinary(path)
+    if (!active() || props.disabled) return
 
     if (validation.valid) {
       addOpenCodeBinary(path, validation.version)
@@ -166,12 +177,14 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   }
  
   function handleBinaryBrowserSelect(path: string) {
+    if (!active() || props.disabled) return
     setIsBinaryBrowserOpen(false)
     setCustomPath(path)
     void handleValidateAndAdd(path)
   }
  
   async function handleCustomPathSubmit() {
+    if (!active() || props.disabled) return
 
     const path = customPath().trim()
     if (!path) return
@@ -179,14 +192,14 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
   }
 
   function handleSelectBinary(path: string) {
-    if (props.disabled) return
+    if (!active() || props.disabled) return
     if (path === props.selectedBinary) return
     props.onBinaryChange(path)
   }
 
   function handleRemoveBinary(path: string, event: Event) {
     event.stopPropagation()
-    if (props.disabled) return
+    if (!active() || props.disabled) return
     removeOpenCodeBinary(path)
 
     if (props.selectedBinary === path) {

@@ -1,4 +1,5 @@
 mod access;
+mod attachments;
 mod commands;
 mod cross_host;
 mod envelope;
@@ -98,6 +99,7 @@ pub struct ClientState {
     renderer_flush: RendererFlush,
     startup_commands: startup_command::StartupCommands,
     write_state: StateWriter,
+    attachment_state: Mutex<attachments::AttachmentState>,
 }
 
 type StateWriter =
@@ -109,6 +111,7 @@ impl ClientState {
         window_id: &str,
         url: &Url,
     ) -> Result<(), String> {
+        self.attachments_changed();
         self.renderer_access
             .begin_navigation_for(window_id, Some(url))
             .map(|_| ())
@@ -233,6 +236,7 @@ impl ClientState {
             renderer_flush: RendererFlush::default(),
             startup_commands: startup_command::StartupCommands::default(),
             write_state,
+            attachment_state: Mutex::new(attachments::AttachmentState::default()),
         }
     }
 
@@ -336,7 +340,7 @@ impl ClientState {
         &self,
         request: Option<crate::preferences_window::PreferencesRequest>,
     ) -> Result<bool, String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let _write = self.attachment_publication_guard()?;
         if !self.is_primary() {
             return Ok(false);
         }
@@ -351,6 +355,7 @@ impl ClientState {
             let previous = (state.preferences.clone(), state.last_preferences.clone());
             if let Some(request) = &request {
                 state.last_preferences = Some(crate::preferences_window::PreferencesRequest {
+                    server_id: None,
                     section: request.section.clone(),
                     scroll_top: request.scroll_top,
                     instance_id: None,
@@ -382,7 +387,7 @@ impl ClientState {
     }
 
     pub(crate) fn set_active_window(&self, window_id: &str) -> Result<bool, String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let _write = self.attachment_publication_guard()?;
         if !self.is_primary() {
             return Ok(false);
         }
@@ -419,7 +424,7 @@ impl ClientState {
         access_token: &str,
         renderer_url: &Url,
     ) -> Result<(), String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let _write = self.attachment_publication_guard()?;
         let persisted = self
             .state
             .lock()
@@ -547,7 +552,7 @@ impl ClientState {
         snapshot: Value,
         access_valid: impl Fn() -> bool,
     ) -> Result<bool, String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let _write = self.attachment_publication_guard()?;
         if !access_valid() {
             return Err("Client state renderer authority changed before mutation".to_string());
         }
@@ -593,7 +598,7 @@ impl ClientState {
         payload: partitions::PartitionCommit,
         access_valid: impl Fn() -> bool,
     ) -> Result<bool, String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let _write = self.attachment_publication_guard()?;
         if !access_valid() {
             return Err("Client state renderer authority changed before mutation".to_string());
         }
@@ -650,7 +655,7 @@ impl ClientState {
         enabled: bool,
         access_valid: impl Fn() -> bool,
     ) -> Result<bool, String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let _write = self.attachment_publication_guard()?;
         if !access_valid() {
             return Err("Client state renderer authority changed before mutation".to_string());
         }
@@ -699,7 +704,7 @@ impl ClientState {
         window_id: &str,
         access_valid: impl Fn() -> bool,
     ) -> Result<bool, String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let _write = self.attachment_publication_guard()?;
         if !access_valid() {
             return Err("Client state renderer authority changed before mutation".to_string());
         }
@@ -736,7 +741,7 @@ impl ClientState {
     }
 
     fn flush(&self) -> Result<(), String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let _write = self.attachment_publication_guard()?;
         let unsupported = self
             .state
             .lock()
@@ -787,9 +792,14 @@ impl ClientState {
             let state = self.state.lock().map_err(|err| err.to_string())?;
             serde_json::to_vec(&*state).map_err(|err| err.to_string())?
         };
-        (self.write_state)(&self.state_path, &bytes, &|| {
+        let result = (self.write_state)(&self.state_path, &bytes, &|| {
             self.is_primary() && replacement_valid()
-        })?;
+        });
+        if let Ok(mut attachments) = self.attachment_state.lock() {
+            attachments.publication_unknown = result.is_err();
+            attachments.epoch = uuid::Uuid::new_v4().to_string();
+        }
+        result?;
         // New events may already be queued, but only this serialized writer can
         // have merged captures into the state we just published.
         self.window_captures_published();
@@ -822,7 +832,7 @@ impl ClientState {
     }
 
     pub(crate) fn add_window(&self, window_id: String) -> Result<bool, String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let _write = self.attachment_publication_guard()?;
         if !self.is_primary() {
             return Ok(false);
         }
@@ -853,6 +863,7 @@ impl ClientState {
     }
 
     pub(crate) fn unregister_window(&self, window_id: &str) {
+        self.attachments_changed();
         self.renderer_access.remove(window_id);
         if let Ok(mut windows) = self.ephemeral_windows.lock() {
             windows.remove(window_id);
@@ -863,7 +874,7 @@ impl ClientState {
     }
 
     pub(crate) fn remove_window(&self, window_id: &str) -> Result<bool, String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        let _write = self.attachment_publication_guard()?;
         if !self.is_primary() {
             return Ok(false);
         }
@@ -899,6 +910,8 @@ impl ClientState {
     }
 
     fn release_locks(&self) {
+        let _publication = self.attachment_publication_admission().ok();
+        self.attachments_changed();
         self.stop_window_captures();
         self.window_flush.stop();
         // Lock order fences takeover until root publication and partition GC leave write_lock.

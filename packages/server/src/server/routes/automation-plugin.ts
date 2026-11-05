@@ -1,4 +1,6 @@
 import { timingSafeEqual } from "node:crypto"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
+import { localMissionWorkspaces } from "../../missions/workspace-capability"
 import type { FastifyInstance, FastifyRequest } from "fastify"
 import type { AuthManager } from "../../auth/manager"
 import type { DeveloperCdp } from "../../developer-cdp"
@@ -69,14 +71,20 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       if (!deps.settings) return reply.code(503).send({ error: "Human answer admission unavailable" })
       try { return reply.send({ result: await verifyMissionHumanAnswer(body.command,
         { auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, remoteDevices: deps.remoteDevices }, lifetime.signal) }) }
-      catch { return reply.code(403).send({ error: "Human answer admission unavailable" }) }
+      catch (error) {
+        if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
+        return reply.code(403).send({ error: "Human answer admission unavailable" })
+      }
     }
     if (body?.mode === "recurrence-control-verify") {
       try {
         return reply.send({ result: await verifyHumanRecurrenceRequest(body.command, {
           auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, remoteDevices: deps.remoteDevices,
         }, lifetime.signal) })
-      } catch { return reply.code(403).send({ error: "Recurrence human admission unavailable" }) }
+      } catch (error) {
+        if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
+        return reply.code(403).send({ error: "Recurrence human admission unavailable" })
+      }
     }
     if (!body || !["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute", "mission-input"].includes(String(body.mode))
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {
@@ -89,6 +97,12 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     const signal = body.mode === "mission-input"
       ? AbortSignal.any([lifetime.signal, AbortSignal.timeout(lifecycle ? 85_000 : 30_000)]) : lifetime.signal
 
+    const candidates = localMissionWorkspaces(deps.workspaceManager)
+    if (!candidates.length) {
+      if (!deps.workspaceManager.list().length) return reply.code(404).send({ error: "Session is not owned by this CodeNomad instance" })
+      const capability = body.mode === "mission-input" || body.purpose === "mission" ? "missions" : "automation"
+      return reply.code(403).send({ error: "explicit_capability_unavailable", code: "explicit_capability_unavailable", capability, reason: { code: "deferred" } })
+    }
     let location
     try {
       signal.throwIfAborted()
@@ -100,7 +114,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     }
     // One validated owner is sufficient. Waiting for every unrelated inventory
     // can exceed the plugin's discovery deadline despite a ready local owner.
-    const owned = await lifetime.wait(Promise.any(deps.workspaceManager.list().map(async workspace => {
+    const owned = await lifetime.wait(Promise.any(candidates.map(async workspace => {
       if (!await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, signal)) throw new Error("Not an owner")
       return true
     }))).catch(() => false)

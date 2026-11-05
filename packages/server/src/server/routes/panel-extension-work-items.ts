@@ -4,6 +4,7 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import type { PanelExtensionStore } from "../../panel-extensions/store"
 import { PanelExtensionError } from "../../panel-extensions/archive"
 import { FORGE_MAX_PAGE, type ForgeWorkItems } from "../../forge/work-items"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 
 const kind = z.enum(["issue", "pullRequest"])
 const authority = { instanceId: z.string().min(1).max(256), digest: z.string().regex(/^[a-f0-9]{64}$/) }
@@ -33,12 +34,15 @@ export function registerPanelExtensionWorkItemRoutes(app: FastifyInstance, deps:
         await deps.store.authorize(id, input.digest, "repository.workItems.read")
         const workspace = deps.workspaceManager.get(input.instanceId)
         if (!workspace) throw new PanelExtensionError("missing")
+        // This integration uses host Git and forge sign-ins, independently of native Git capabilities.
+        if (workspace.binding && workspace.binding.serverId !== "local-shared") throw new WorkspaceCapabilityError("git", { code: "localOnly" })
         const result = await read(workspace.path, input, abandoned.signal)
         // Revocation, replacement or closing the project during the read fences its result.
         await deps.store.authorize(id, input.digest, "repository.workItems.read")
         if (deps.workspaceManager.get(input.instanceId)?.path !== workspace.path) throw new PanelExtensionError("unavailable")
         return result
       } catch (error) {
+        if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
         const code = error instanceof z.ZodError ? 400 : error instanceof PanelExtensionError
           ? { missing: 404, disabled: 403, conflict: 409, invalid: 400, limit: 413, unavailable: 503 }[error.code] : 503
         return reply.code(code).send({ error: "Work items unavailable" })

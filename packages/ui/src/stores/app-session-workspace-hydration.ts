@@ -9,6 +9,10 @@ import { seedRestoredSessionSelection } from "./session-state"
 import { seedSessionOutlineIndexes } from "./session-outline"
 import { seedSessionCatalog } from "./session-catalog-hydration"
 import { hydrateSeenInterruptions } from "./session-interruption-seen"
+import { instances } from "./instances"
+import { projectIdentity } from "../lib/project-identity"
+import { explicitSessionDirectory } from "./session-inventory-scope"
+import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import {
   getSessions, hasAuthoritativeSessionSelection, hydrateActiveSessionSelection,
   hydrateRestoredSessionChain, hydrateSessionExpansion, hydrateSessionGenerationRecovery, hydrateSessionIdleMarkers,
@@ -20,6 +24,8 @@ export function seedRestoredWorkspaceState(
   instanceId: string,
   snapshot: RestorableWorkspaceTabState,
 ): void {
+  const instance = instances().get(instanceId)
+  if (instance && projectIdentity(instance.folder, instance.binding?.serverId) !== projectIdentity(snapshot.folder, snapshot.serverId)) return
   const scrollSeeds: MessageScrollSnapshotSeed[] = Object.entries(snapshot.scrollSnapshots)
     .map(([sessionId, scrollSnapshot]) => ({ sessionId, scope: MESSAGE_STREAM_SCROLL_SCOPE, snapshot: scrollSnapshot }))
   messageStoreBus.seedScrollSnapshots(instanceId, scrollSeeds)
@@ -39,6 +45,15 @@ export async function hydrateRestoredWorkspaceState(
   signal: AbortSignal,
   isCurrentBinding: () => boolean,
 ): Promise<Set<string> | null> {
+  const instance = instances().get(instanceId)
+  const client = instance?.client
+  const generation = getOpenCodeInstanceGeneration(instanceId)
+  const current = isCurrentBinding
+  isCurrentBinding = () => {
+    const live = instances().get(instanceId)
+    return Boolean(live && live.client === client && getOpenCodeInstanceGeneration(instanceId) === generation && current()
+      && projectIdentity(live.folder, live.binding?.serverId) === projectIdentity(snapshot.folder, snapshot.serverId))
+  }
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null
   // Session selection mounts MessageSection synchronously. Seed scroll state
@@ -49,7 +64,13 @@ export async function hydrateRestoredWorkspaceState(
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null
   let sessions = getSessions(instanceId)
-  let selection = resolveRestoredSessionSelection(sessions, snapshot.activeParentSessionId, snapshot.activeSessionId)
+  const resolveSelection = () => {
+    const ids = new Set(sessions.map(session => session.id))
+    const candidates = explicitSessionDirectory(instances().get(instanceId)) === undefined ? sessions
+      : sessions.map(session => ({ id: session.id, parentId: session.parentId && ids.has(session.parentId) ? session.parentId : null }))
+    return resolveRestoredSessionSelection(candidates, snapshot.activeParentSessionId, snapshot.activeSessionId)
+  }
+  let selection = resolveSelection()
   if (!hasAuthoritativeSessionSelection(instanceId)) {
     hydrateActiveSessionSelection(instanceId, selection?.parentSessionId ?? null, selection?.activeSessionId ?? null)
   }
@@ -68,7 +89,7 @@ export async function hydrateRestoredWorkspaceState(
   if (!isCurrentBinding()) return null
   sessions = getSessions(instanceId)
   const validIds = new Set(sessions.map(({ id }) => id))
-  selection = resolveRestoredSessionSelection(sessions, snapshot.activeParentSessionId, snapshot.activeSessionId)
+  selection = resolveSelection()
   const unavailable = getUnavailableRestoredSessionIds(sessions, {
     activeParentSessionId: snapshot.activeParentSessionId, activeSessionId: snapshot.activeSessionId,
     draftSessionIds: Object.keys(snapshot.drafts), attachmentSessionIds: Object.keys(snapshot.attachments),

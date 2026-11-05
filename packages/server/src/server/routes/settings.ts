@@ -8,6 +8,8 @@ import { sanitizeConfigDoc, sanitizeConfigOwner } from "../../settings/public-co
 import { resolveDefaultInstallation } from "../../opencode-update/shared-installation"
 import { applyConditionalMissionPreferences, MissionPreferenceConflictError } from "../../settings/mission-preference-condition"
 import { SettingsReadError } from "../../settings/yaml-doc-store"
+import { isPlainObject } from "../../settings/merge-patch"
+import { assertOpenCodeServersPatch } from "../../settings/protected-config"
 
 interface RouteDeps {
   settings: SettingsService
@@ -25,7 +27,7 @@ function validateBinaryPath(binaryPath: string): Promise<BinaryValidationResult>
 }
 
 export function enforceSpeechCredentialPairing(body: unknown, currentSpeech?: unknown): unknown {
-  if (!body || typeof body !== "object") return body
+  if (!isPlainObject(body)) return body
   const patch = { ...(body as Record<string, unknown>) }
   const speech = patch.speech
   if (!speech || typeof speech !== "object") return patch
@@ -63,11 +65,12 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/storage/config", async () => sanitizeConfigDoc(deps.settings.getDoc("config")))
   app.patch("/api/storage/config", async (request, reply) => {
     try {
-      let body = request.body ?? {}
+      let body = request.body === undefined ? {} : request.body
+      assertOpenCodeServersPatch({ server: deps.settings.getRawConfigOwner("server") }, body)
       if (body && typeof body === "object" && "server" in body) {
         const bodyObj = { ...(body as Record<string, unknown>) }
         const serverPatch = bodyObj.server
-        if (serverPatch && typeof serverPatch === "object") {
+        if (isPlainObject(serverPatch)) {
           const currentServer = deps.settings.getOwner("config", "server")
           bodyObj.server = enforceSpeechCredentialPairing(serverPatch, currentServer)
         }
@@ -98,6 +101,9 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.patch<{ Params: { owner: string }; Querystring: { conditional?: unknown } }>("/api/storage/config/:owner", async (request, reply) => {
     try {
+      if (request.params.owner === "server") {
+        assertOpenCodeServersPatch(deps.settings.getRawConfigOwner("server"), request.body === undefined ? {} : request.body, "server")
+      }
       if (Object.prototype.hasOwnProperty.call(request.query, "conditional")) {
         if (request.query.conditional !== "missions-v1") throw new Error("Unknown conditional patch mode")
         return sanitizeConfigOwner(
@@ -109,8 +115,8 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
         ? deps.settings.getOwner("config", "server")
         : undefined
       const processed = request.params.owner === "server"
-        ? enforceSpeechCredentialPairing(request.body ?? {}, currentOwner)
-        : request.body ?? {}
+        ? enforceSpeechCredentialPairing(request.body === undefined ? {} : request.body, currentOwner)
+        : request.body === undefined ? {} : request.body
       const saved = deps.settings.mergePatchOwner("config", request.params.owner, processed)
       if (request.params.owner === "server" && processed && typeof processed === "object" && "opencodeBinary" in processed)
         await refreshLoginStart(deps)

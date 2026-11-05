@@ -1,0 +1,21 @@
+{
+  "root": {
+    "version": 2,
+    "revision": 1,
+    "savedAt": 1,
+    "layout": {},
+    "sessionPartition": "4d77c030cf26b6b3396377510bf82efdd83c22615f93833bb48bbc35e8786df0",
+    "partitionKeys": [
+      "4d77c030cf26b6b3396377510bf82efdd83c22615f93833bb48bbc35e8786df0",
+      "f38de955f3e6fcde33d55c4d3ff9981c23c4935c5079e10f096cba491a25777a"
+    ]
+  },
+  "partitions": {
+    "4d77c030cf26b6b3396377510bf82efdd83c22615f93833bb48bbc35e8786df0": "{\"format\":2,\"session\":{\"activeTabIndex\":0,\"tabs\":[{\"folder\":\"Z:\\\\Case\\\\Project/ \",\"kind\":\"workspace\",\"serverId\":\"unknown-A\",\"workspacePartition\":\"f38de955f3e6fcde33d55c4d3ff9981c23c4935c5079e10f096cba491a25777a\"}]}}",
+    "f38de955f3e6fcde33d55c4d3ff9981c23c4935c5079e10f096cba491a25777a": "{\"format\":2,\"sessions\":{}}"
+  },
+  "partitionKeys": [
+    "4d77c030cf26b6b3396377510bf82efdd83c22615f93833bb48bbc35e8786df0",
+    "f38de955f3e6fcde33d55c4d3ff9981c23c4935c5079e10f096cba491a25777a"
+  ]
+}

@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { localMissionWorkspaces } from "../../missions/workspace-capability"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { removeCleanupTarget, type MissionCleanupTarget } from "../../missions/native-session-cleanup"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
@@ -18,7 +19,7 @@ type Manager = Pick<WorkspaceManager, "list" | "getSharedServiceConnection" | "o
 export async function cleanupMissionSession(manager: Manager, fence: WorktreeDeletionFence, coordinatorID: string, command: unknown, signal: AbortSignal) {
   const { input } = schema.parse(command)
   signal.throwIfAborted()
-  const owner = await Promise.any(manager.list().map(async workspace => {
+  const owner = await Promise.any(localMissionWorkspaces(manager).map(async workspace => {
     const connection = await manager.getSharedServiceConnection(workspace.id)
     if (!connection) throw new Error("Workspace unavailable")
     const coordinator = await connection.client.session.get({ sessionID: coordinatorID }, { signal })

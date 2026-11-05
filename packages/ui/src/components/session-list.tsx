@@ -45,8 +45,13 @@ import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
 import { useConfig } from "../stores/preferences"
 import { isSessionListViewportAttached, shouldRenderSessionRows } from "./session-list-visibility"
-import { getDescendantSessions, getSessionAncestorIds, revealSubsession } from "../stores/session-state"
+import { getDescendantSessions, getSessionAncestorIds, revealSubsession, isSessionSearchComplete } from "../stores/session-state"
+import { instances } from "../stores/instances"
+import { explicitSessionDirectory } from "../stores/session-inventory-scope"
+import { canRetrySessionPage, captureSessionInventoryAuthority } from "../stores/session-api"
 const log = getLogger("session")
+/** prototype-1236: automatic native pages showing nothing new before a user scroll re-arms paging. */
+const MAX_IDLE_NATIVE_PAGES = 3
 
 
 
@@ -79,7 +84,57 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [includeMainSessions, setIncludeMainSessions] = createSignal(true)
   const [includeSubsessions, setIncludeSubsessions] = createSignal(false)
   const normalizedQuery = createMemo(() => (props.enableFilterBar ? filterQuery().trim().toLowerCase() : ""))
+  const exactInventory = () => explicitSessionDirectory(instances().get(props.instanceId)) !== undefined
+  const [loadingMore, setLoadingMore] = createSignal(false)
+  const [paginationAnnouncement, setPaginationAnnouncement] = createSignal("")
+  let disposed = false
+  let cancelPageInteraction = () => {}
+  onCleanup(() => { disposed = true; cancelPageInteraction() })
+  const handleLoadMore = async () => {
+    if (disposed || loadingMore() || isFetchingSessions() || !hasMore()) return
+    const list = listEl()
+    const visible = () => Boolean(list?.isConnected && list.getClientRects().length
+      && list.checkVisibility?.() !== false && document.visibilityState !== "hidden")
+    if (!visible()) return
+    const instanceId = props.instanceId, query = normalizedQuery()
+    const authority = captureSessionInventoryAuthority(instanceId)
+    const current = () => !disposed && authority() && props.instanceId === instanceId && normalizedQuery() === query
+    const origin = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const ownedFocus = Boolean(origin && list?.contains(origin))
+    let focusMoved = false
+    const interacted = (event: Event) => {
+      if (event.target !== origin && !(event.target instanceof Node && origin?.contains(event.target))) focusMoved = true
+    }
+    document.addEventListener("focusin", interacted, true)
+    document.addEventListener("pointerdown", interacted, true)
+    const cleanup = () => {
+      document.removeEventListener("focusin", interacted, true)
+      document.removeEventListener("pointerdown", interacted, true)
+    }
+    cancelPageInteraction = cleanup
+    setLoadingMore(true)
+    setPaginationAnnouncement(t("sessionList.loading.more"))
+    try {
+      await loadMoreSessions(instanceId)
+      if (current() && visible()) setPaginationAnnouncement(t(getSessionHasMore(instanceId)
+        ? "sessionList.pagination.pageLoaded" : "sessionList.pagination.complete"))
+      else setPaginationAnnouncement("")
+    } catch (error) {
+      setPaginationAnnouncement("") // The shared error state announces failure once.
+      log.error("Failed to load more sessions:", error)
+    } finally {
+      setLoadingMore(false)
+      if (current() && visible() && ownedFocus && !focusMoved) {
+        const destination = origin?.isConnected ? origin : list
+        destination?.focus({ preventScroll: true })
+      }
+      cleanup()
+      if (cancelPageInteraction === cleanup) cancelPageInteraction = () => {}
+    }
+  }
   let failedSortExhaustion: string | undefined
+
+  createEffect(on(() => normalizedQuery(), () => setPaginationAnnouncement("")))
 
   createEffect(() => {
     const selected = normalizeSessionDirectory(worktreeDirectory())
@@ -125,6 +180,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   })
 
   const [sentinelEl, setSentinelEl] = createSignal<HTMLDivElement | null>(null)
+  const [idleNativePages, setIdleNativePages] = createSignal(0)
 
   const hasMore = createMemo(() => {
     if (normalizedQuery()) return false
@@ -134,6 +190,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   const isFetchingSessions = createMemo(() => {
     return loading().fetchingSessions.get(props.instanceId) ?? false
   })
+  createEffect(() => { if (isFetchingSessions()) setPaginationAnnouncement("") })
   const sessionListError = createMemo(() => getSessionListError(props.instanceId))
   const descendantActivity = createMemo(() => collectDescendantActivity(
     sessionStateSessions().get(props.instanceId),
@@ -148,7 +205,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       failedSortExhaustion = undefined
       return
     }
-    if (normalizedQuery() || failedSortExhaustion === key
+    if (exactInventory() || normalizedQuery() || failedSortExhaustion === key
       || !getSessionHasMore(props.instanceId) || isFetchingSessions()) return
     void loadAllSessions(props.instanceId).catch((error) => {
       failedSortExhaustion = key
@@ -157,6 +214,11 @@ const SessionList: Component<SessionListProps> = (props) => {
   })
 
   const handleRetrySessions = () => {
+    if (loadingMore() || isFetchingSessions()) return
+    if (exactInventory() && canRetrySessionPage(props.instanceId)) {
+      void handleLoadMore()
+      return
+    }
     failedSortExhaustion = undefined
     void fetchSessions(props.instanceId, { reset: true }).catch((error) => {
       log.error("Failed to retry session list:", error)
@@ -165,13 +227,22 @@ const SessionList: Component<SessionListProps> = (props) => {
 
   createEffect(() => {
     const el = sentinelEl()
-    if (!el || !hasMore() || isFetchingSessions()) return
+    // prototype-1236: an exact (native) inventory pages on scroll too, through the guarded loader.
+    // A failed page waits for Retry; pages that add no visible row stop after a few until the
+    // user scrolls the list again.
+    if (!el || !hasMore() || isFetchingSessions() || loadingMore()) return
+    if (exactInventory() && (sessionListError() || idleNativePages() >= MAX_IDLE_NATIVE_PAGES)) return
 
     const observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[0]
         if (entry?.isIntersecting && hasMore() && !isFetchingSessions()) {
           failedSortExhaustion = undefined
+          if (exactInventory()) {
+            const shown = visibleProjection().ids.length
+            void handleLoadMore().then(() => setIdleNativePages(count => visibleProjection().ids.length > shown ? 0 : count + 1))
+            return
+          }
           void loadMoreSessions(props.instanceId).catch((error) => {
             log.error("Failed to load more sessions:", error)
           })
@@ -1020,8 +1091,13 @@ const SessionList: Component<SessionListProps> = (props) => {
       </Show>
 
        <div
-         class="session-list flex-1 overflow-y-auto"
-         ref={setListElement}
+          class="session-list flex-1 overflow-y-auto"
+          ref={setListElement}
+          onWheel={() => setIdleNativePages(0)}
+          onTouchMove={() => setIdleNativePages(0)}
+          tabIndex={-1}
+          role="group"
+          aria-label={t("sessionList.header.title")}
          onFocusIn={(event) => {
            const target = event.target
            if (!(target instanceof Element)) return
@@ -1033,12 +1109,15 @@ const SessionList: Component<SessionListProps> = (props) => {
            if (nextTarget instanceof Node && listEl()?.contains(nextTarget)) return
            setFocusedSessionId(undefined)
          }}
-       >
+        >
+
+          <span class="sr-only" role={paginationAnnouncement() ? "status" : undefined} aria-live="polite" aria-atomic="true">{paginationAnnouncement()}</span>
 
           <Show when={sessionListError()}>
             {(error) => (
               <LoadErrorState
                 variant="compact"
+                live={exactInventory() ? "polite" : undefined}
                 title={t("sessionList.loadError.title")}
                 error={error()}
                 retryLabel={t("sessionList.loadError.retry")}
@@ -1047,7 +1126,11 @@ const SessionList: Component<SessionListProps> = (props) => {
             )}
           </Show>
 
-          <Show when={!sessionListError() && (hasMore() || isFetchingSessions()) && visibleProjection().ids.length === 0}>
+          <Show when={normalizedQuery() && !isSessionSearchLoading(props.instanceId) && !isSessionSearchComplete(props.instanceId)}>
+            <p class="p-3 text-xs text-muted" role="status">{t("sessionList.search.partial")}</p>
+          </Show>
+
+          <Show when={!sessionListError() && ((!exactInventory() && hasMore()) || isFetchingSessions()) && visibleProjection().ids.length === 0}>
             <div class="flex items-center justify-center p-4 text-xs text-muted" role="status">
               <span class="animate-pulse">{t("sessionList.loading.initial")}</span>
             </div>

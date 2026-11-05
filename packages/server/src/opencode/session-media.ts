@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "./session-media-contract"
+import { isEmbeddedAsset } from "./embedded-asset"
 
 export { DEFERRED_MEDIA_HEADER } from "./session-media-contract"
 /** Data URIs up to this length stay inline. */
@@ -15,12 +16,11 @@ export function mediaDigest(uri: string): string {
   return createHash("sha256").update(uri).digest("hex")
 }
 
-/** An image the renderer shows inline: a base64 data URI of its declared image type. */
+/** Bounded image data, validated before digesting or decoding; permission is separate. */
 export function isRenderableToolImage(value: unknown): value is ToolImage {
   const file = value as Partial<ToolImage> | null
-  if (file?.type !== "file" || typeof file.mime !== "string" || !/^image\/[\w.+-]+$/i.test(file.mime) || typeof file.uri !== "string") return false
-  const header = `data:${file.mime.toLowerCase()};base64,`
-  return file.uri.slice(0, header.length).toLowerCase() === header
+  return file?.type === "file" && typeof file.mime === "string" && typeof file.uri === "string"
+    && isEmbeddedAsset({ mime: file.mime, uri: file.uri }) && file.mime.toLowerCase().startsWith("image/")
 }
 
 export function sessionMediaPath(target: { workspaceId: string; sessionId: string; messageId: string; part: number; index: number; digest: string }): string {

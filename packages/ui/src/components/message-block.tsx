@@ -1,6 +1,8 @@
 import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
 import { ChevronRight, Copy, ExternalLink, FoldVertical, Layers3, Loader2, Trash2, XCircle } from "lucide-solid"
 import MessageItem from "./message-item"
+import { getProjectAvailability } from "../stores/project-capability"
+import { captureSessionRequestAuthority } from "../stores/session-api"
 import SystemMessage from "./system-message"
 import type { SessionInboxUser } from "@opencode/client"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
@@ -380,12 +382,17 @@ function ToolCallItem(props: ToolCallItemProps) {
     navigateToTaskSession(location)
   }
 
+  const cleanupAllowed = () => getProjectAvailability(props.instanceId, "sessionPruning").allowed
   const handleDelete = async () => {
+    if (!cleanupAllowed()) return
+    const current = captureSessionRequestAuthority(props.instanceId, props.sessionId)
+    if (!current()) return
     if (deleting() || (record()?.status !== "complete" && record()?.status !== "error")) return
     setDeleting(true)
     try {
       await deleteMessagePart(props.instanceId, props.sessionId, props.messageId, props.partId)
     } catch (error) {
+      if (!current() || !cleanupAllowed()) return
       showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
         title: t("messagePart.actions.deleteFailedTitle"),
         detail: error instanceof Error ? error.message : String(error),
@@ -412,7 +419,7 @@ function ToolCallItem(props: ToolCallItemProps) {
       })
     }
 
-    items.push({
+    if (cleanupAllowed()) items.push({
       key: "delete-part",
       label: deleting() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete"),
       icon: <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />,
@@ -1132,16 +1139,21 @@ function ExplorationGroup(props: ExplorationGroupProps) {
     const part = props.store().getMessage(item.messageId)?.parts[item.partId]?.data
     return part?.type === "tool" && isBackgroundableTool(part)
   })
-  const canDeleteGroup = () => props.completed && groupTools().length > 1 && groupTools().every((item) => {
+  const canDeleteGroup = () => cleanupAllowed() && props.completed && groupTools().length > 1 && groupTools().every((item) => {
     const status = props.store().getMessage(item.messageId)?.status
     return status === "complete" || status === "error"
   })
+  const cleanupAllowed = () => getProjectAvailability(props.instanceId, "sessionPruning").allowed
   const handleDeleteGroup = async () => {
+    if (!cleanupAllowed()) return
+    const current = captureSessionRequestAuthority(props.instanceId, props.sessionId)
+    if (!current()) return
     if (deletingGroup() || !canDeleteGroup()) return
     setDeletingGroup(true)
     try {
       await deleteTechnicalPartGroup(props.instanceId, props.sessionId, groupTools())
     } catch (error) {
+      if (!current() || !cleanupAllowed()) return
       showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
         title: t("messagePart.actions.deleteFailedTitle"),
         detail: error instanceof Error ? error.message : String(error),
@@ -1370,16 +1382,21 @@ function ReasoningGroupCard(props: {
     const latest = summaryParts().at(-1)
     return latest ? parseReasoningSummary(getReasoningText(latest.part)).title ?? "" : ""
   })
-  const canDeleteGroup = () => props.completed && summaryParts().length > 1 && summaryParts().every((item) => {
+  const canDeleteGroup = () => cleanupAllowed() && props.completed && summaryParts().length > 1 && summaryParts().every((item) => {
     const status = messageStoreBus.getOrCreate(props.instanceId).getMessage(item.messageId)?.status
     return status === "complete" || status === "error"
   })
+  const cleanupAllowed = () => getProjectAvailability(props.instanceId, "sessionPruning").allowed
   const handleDeleteGroup = async () => {
+    if (!cleanupAllowed()) return
+    const current = captureSessionRequestAuthority(props.instanceId, props.sessionId)
+    if (!current()) return
     if (deletingGroup() || !canDeleteGroup()) return
     setDeletingGroup(true)
     try {
       await deleteTechnicalPartGroup(props.instanceId, props.sessionId, summaryParts())
     } catch (error) {
+      if (!current() || !cleanupAllowed()) return
       showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
         title: t("messagePart.actions.deleteFailedTitle"),
         detail: error instanceof Error ? error.message : String(error),
@@ -1659,13 +1676,18 @@ function ReasoningCard(props: ReasoningCardProps) {
     await copyToClipboard(text)
   }
 
+  const cleanupAllowed = () => getProjectAvailability(props.instanceId, "sessionPruning").allowed
   const handleDelete = async () => {
+    if (!cleanupAllowed()) return
+    const current = captureSessionRequestAuthority(props.instanceId, props.sessionId)
+    if (!current()) return
     const partId = typeof props.part.id === "string" ? props.part.id : ""
     if (!partId || deleting() || (props.status !== "complete" && props.status !== "error")) return
     setDeleting(true)
     try {
       await deleteMessagePart(props.instanceId, props.sessionId, props.messageId, partId)
     } catch (error) {
+      if (!current() || !cleanupAllowed()) return
       showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
         title: t("messagePart.actions.deleteFailedTitle"),
         detail: error instanceof Error ? error.message : String(error),
@@ -1737,7 +1759,7 @@ function ReasoningCard(props: ReasoningCardProps) {
             />
           </Show>
 
-          <button
+          <Show when={cleanupAllowed()}><button
             type="button"
             class="message-action-button"
             disabled={deleting() || (props.status !== "complete" && props.status !== "error")}
@@ -1752,7 +1774,7 @@ function ReasoningCard(props: ReasoningCardProps) {
             title={deleting() ? t("messagePart.actions.deleting") : t("messagePart.actions.delete")}
           >
             <Trash2 class="w-3.5 h-3.5" aria-hidden="true" />
-          </button>
+          </button></Show>
         </div>
       </div>
 

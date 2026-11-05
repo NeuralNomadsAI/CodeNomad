@@ -1,6 +1,18 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { sanitizeConfigOwner } from "./public-config"
+import { sanitizeConfigDoc, sanitizeConfigOwner } from "./public-config"
+
+it("sanitizes registry metadata in document, owner and full-document events without mutating private data", () => {
+  const server = { opencodeServers: [{ kind: "explicit", id: "remote", label: "Remote", origin: "https://example.test",
+    credentialMode: "keychain", credentialRef: "secret-ref-sentinel", password: "password-sentinel" }] }
+  const original = structuredClone(server)
+  for (const value of [sanitizeConfigOwner("server", server), sanitizeConfigDoc({ server }), sanitizeConfigOwner("*", { server })]) {
+    assert.doesNotMatch(JSON.stringify(value), /secret-ref-sentinel|password-sentinel|credentialRef|password/)
+    assert.match(JSON.stringify(value), /"hasCredentials":false/)
+    assert.match(JSON.stringify(value), /"needsCredentials":true/)
+  }
+  assert.deepEqual(server, original)
+})
 
 describe("sanitizeConfigOwner server speech", () => {
   it("strips shared apiKey and sets hasApiKey", () => {

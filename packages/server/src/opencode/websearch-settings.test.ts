@@ -25,6 +25,7 @@ test("web settings retain foreign fields and comments; scopes, reset and shared 
       plugin: { list: async () => ({ data: [] }) },
     } }
     const controls = new PluginControls({ workspaceManager: {
+      requireWorkspaceCapability: () => new AbortController().signal,
       get: () => ({}), getSharedServiceConnection: async () => connection,
       getServiceDirectoryForPath: async (_id: string, directory: string) => directory === project ? directory : undefined,
       ownsLocation: async () => owned, getWorktreeIdentityForPath: async () => "owned",

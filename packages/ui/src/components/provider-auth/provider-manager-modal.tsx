@@ -59,6 +59,7 @@ interface ProviderManagerModalProps {
   open?: boolean
   embedded?: boolean
   location?: LocationRef
+  active?: () => boolean
   onOpenChange?: (open: boolean) => void
 }
 
@@ -98,13 +99,15 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   let loadedClient: OpenCodeClient | null = null
   let loadedCatalogLocationKey: string | null = null
   let oauthCodeInput: HTMLInputElement | undefined
+  let disposed = false
 
   const instance = createMemo(() => instances().get(props.instanceId) ?? null)
-  const client = createMemo<OpenCodeClient | null>(() => {
+  const resolvedClient = createMemo<OpenCodeClient | null>(() => {
     if (props.instanceId && props.location) return getRootClient(props.instanceId)
     const current = instance()
     return current?.status === "ready" ? current.client ?? null : null
   })
+  const client = () => !disposed && props.active?.() !== false ? resolvedClient() : null
   const currentCatalogLocation = () => props.location ? { ...props.location } : { ...getActiveCatalogLocation(props.instanceId) }
   const requestLocation = (location: LocationRef) => toRequestLocation(location)
   const isActiveCatalogLocation = (location: LocationRef) => {
@@ -274,8 +277,8 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   }
 
   createEffect(() => {
-    const version = ++loadVersion
     if (!props.embedded && !props.open) {
+      loadVersion++
       loadedInstanceId = null
       loadedClient = null
       loadedCatalogLocationKey = null
@@ -286,6 +289,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const instanceId = props.instanceId
     const authClient = client()
     if (!authClient) {
+      loadVersion++
       loadedInstanceId = null
       loadedClient = null
       loadedCatalogLocationKey = null
@@ -295,7 +299,9 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     }
     const catalogLocation = currentCatalogLocation()
     const catalogLocationKey = locationAuthorityKey(catalogLocation)
+    // A redundant context publication keeps the existing catalogue read alive.
     if (loadedInstanceId === instanceId && loadedClient === authClient && loadedCatalogLocationKey === catalogLocationKey) return
+    const version = ++loadVersion
     resetFlow(null)
     setManagedProviderId(null)
     setLoadError(null)
@@ -346,6 +352,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   })
 
   onCleanup(() => {
+    disposed = true
     loadVersion += 1
     disposePendingAuth()
   })
@@ -356,6 +363,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     catalogLocation: LocationRef,
   ): Promise<void> {
     const isCurrentLoad = () => version === loadVersion && client() === authClient && isActiveCatalogLocation(catalogLocation)
+    if (!isCurrentLoad()) return
     setLoading(true)
     setLoadError(null)
     try {
@@ -458,6 +466,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   }
 
   async function submitCredentialAuth(providerId: string, authClient: OpenCodeClient, instanceId: string, operationVersion: number, catalogLocation: LocationRef) {
+    if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     const method = selectedMethod()
     const input = {
       integrationID: providerId,
@@ -475,6 +484,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   }
 
   async function submitOAuthAuthorize(providerId: string, authClient: OpenCodeClient, instanceId: string, operationVersion: number, catalogLocation: LocationRef) {
+    if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     const method = selectedMethod()
     if (method.type !== "oauth") throw new Error(t("settings.providers.errors.noAuthorization"))
     const response = await authClient.integration.oauth.connect({
@@ -504,6 +514,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     setStage("waiting")
     callbackAbortController = new AbortController()
     while (true) {
+      if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
       const result = await authClient.integration.oauth.status(
         { integrationID: providerId, attemptID: data.attemptID, location: requestLocation(catalogLocation) },
         { ...requestLocationOptions(catalogLocation), signal: callbackAbortController.signal },
@@ -520,6 +531,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
   }
 
   async function submitCommandAuth(providerId: string, authClient: OpenCodeClient, instanceId: string, operationVersion: number, catalogLocation: LocationRef) {
+    if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
     const method = selectedMethod()
     if (method.type !== "command") throw new Error(t("settings.providers.errors.noAuthorization"))
     const response = await authClient.integration.command.connect({
@@ -534,6 +546,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     setStage("waiting")
     callbackAbortController = new AbortController()
     while (true) {
+      if (!isCurrentOperation(operationVersion, instanceId, authClient)) return
       const result = await authClient.integration.command.status(
         { integrationID: providerId, attemptID, location: requestLocation(catalogLocation) },
         { ...requestLocationOptions(catalogLocation), signal: callbackAbortController.signal },
@@ -857,7 +870,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                                 resetFlow(providerId)
                                 queueMicrotask(() => document.querySelector<HTMLElement>(".providers-connect-panel")?.scrollIntoView({ block: "nearest" }))
                               } : undefined}
-                              location={currentCatalogLocation()} disabled={stage() !== "idle"} onChanged={refreshProviderData} />
+                              location={currentCatalogLocation()} active={() => Boolean(client())} disabled={stage() !== "idle"} onChanged={refreshProviderData} />
                           </Show>
                         </article>
                       )}}</For>

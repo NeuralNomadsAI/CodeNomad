@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 import { z } from "zod"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
@@ -38,7 +39,7 @@ const schema = z.object({ requestID: z.string().regex(/^[A-Za-z0-9_-]{3,100}$/),
   profiles: missionProfilesInputSchema,
   taskMode: missionTaskModeInputSchema,
 }).strict()
-type Manager = Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceConnection" | "ownsLocation"
+type Manager = Pick<WorkspaceManager, "requireWorkspaceCapability" | "get" | "getServiceLocation" | "getSharedServiceConnection" | "ownsLocation"
   | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath" | "getHostPathForServicePath" | "getServiceWslDistro">
 type NativeSummary = { schedule: { id: string; revision: number; state: string; digest: string;
   projectID: string; projectCanonical: string } | null }
@@ -66,6 +67,7 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
         return reply.code(400).send({ error: "Invalid recurrence creation request" })
       }
       const input = parsed.data, manager = deps.workspaceManager, workspaceID = request.params.id
+      manager.requireWorkspaceCapability(workspaceID, "missions")
       if (input.template === "compare") {
         const error = compareModelError(input.profiles)
         if (error) return reply.code(400).send({ error, code: error })
@@ -216,6 +218,7 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
       admission.settled()
       return { schedule: created.schedule }
     } catch (error) {
+      if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
       // Hold codes keep their own meaning: creation-uncertain stays held in the UI.
       if (error instanceof MissionCreationHoldError) {
         return reply.code(error.code === "creation-capacity" ? 503 : 409).send({ error: error.message, code: error.code })

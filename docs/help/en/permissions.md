@@ -1,5 +1,11 @@
 # Questions and permissions
 
+An explicit server's context includes its name and stable ID, so identical names remain distinguishable. Uncertain or superseded replies use a polite, non-modal notice in the request editor; ordinary failures retain their error treatment.
+
+**Explicit OpenCode servers:** questions and permissions arrive live only. Known drafts remain editable. Stale permissions wait for a current live request; known Forms have the explicit check below. The dock's disclosure explains the limitation. Opening a conversation lets you review it, without automatically recovering missing requests. Yolo mode works on these servers: after a reconnection, CodeNomad re-reads the pending permissions of Yolo conversations only and approves them once. The recovery and receipt workflows below apply to the shared local service.
+
+For a known Form, choose **Check this form’s status** in its source editor. A verified waiting Form enables only its own reply/cancel controls; review the draft and make a separate explicit choice. An answered or cancelled Form keeps the draft for reference, without showing another client's answer or inventing its author or the outcome of your earlier attempt. An inconclusive check keeps editing available and responses blocked; you can explicitly check again. Each check is limited to 10 seconds and 4 MiB per response; a changed field schema also stays inconclusive. No automatic check or resend occurs. Overall coverage remains unknown; this check finds neither missing Forms nor permissions.
+
 Native questions, Forms and permission requests are answered in the interruption dock immediately above the composer, not inside pending transcript tool cards.
 
 ## Find the request and check its source {#request-dock}

@@ -11,6 +11,7 @@
 @import "./components/session-child-activity.css";
 @import "./components/transcript-filters.css";
 @import "./components/new-instance-launcher.css";
+@import "./components/remote-project-menu.css";
 @import "./panels/right-panel.css";
 @import "./panels/integration-section.css";
 @import "./panels/status-tokens.css";

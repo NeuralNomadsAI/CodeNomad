@@ -14,6 +14,10 @@ import { UnsupportedOpenCodeError } from "../../opencode/runtime-support"
 import { GitRequiredError } from "../../workspaces/git-requirement"
 import { getGitHistory, getGitCommit, getGitCommitDiff } from "../../workspaces/git-history"
 import { getLocalGitBranches } from "../../workspaces/git-branches"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
+import {
+  listRemoteFiles, readRemoteFile, remoteGitDiff, remoteGitStatus, RemoteWorkspaceError, searchRemoteFiles,
+} from "../../opencode/servers/remote-workspace"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
@@ -22,15 +26,17 @@ interface RouteDeps {
 
 const WorkspaceCreateSchema = z.object({
   path: z.string(),
+  serverId: z.string().min(1).optional(),
   name: z.string().optional(),
   requestId: z.string().trim().min(1).max(128).optional(),
 })
 
 const WorkspaceCloneSchema = z.object({
+  serverId: z.string().optional(),
   repositoryUrl: z.string().trim().min(1, "Repository URL is required"),
   destinationPath: z.string().trim().min(1, "Destination path is required"),
   cleanup: z.boolean().optional(),
-})
+}).strict()
 
 const WorkspaceCreationReleaseSchema = z.object({
   requestId: z.string().trim().min(1).max(128),
@@ -77,12 +83,25 @@ const WorkspaceFileSearchQuerySchema = z.object({
     .transform((value) => (value === undefined ? undefined : value === "true")),
 })
 
+// prototype-1236: an explicit project reads Files and Changes through its server, never the host disk or Git.
+async function explicitScope(deps: RouteDeps, id: string, capability: "files" | "git", directory?: string) {
+  const scope = await deps.workspaceManager.explicitReadScope?.(id, capability)
+  if (!scope) return undefined
+  if (directory !== undefined && directory !== scope.directory) throw new WorkspaceCapabilityError(capability, { code: "deferred" })
+  return { ...scope, signal: AbortSignal.any([scope.signal, AbortSignal.timeout(20_000)]) }
+}
+
+function refuseExplicit(deps: RouteDeps, id: string, capability: "files" | "git") {
+  if (deps.workspaceManager.isExplicitWorkspace?.(id)) throw new WorkspaceCapabilityError(capability, { code: "deferred" })
+}
+
 export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get<{ Params: { id: string } }>("/api/workspaces/:id/git-branches", async (request, reply) => {
     try {
       const { directory } = z.object({ directory: z.string().min(1).max(4096) }).strict().parse(request.query)
       const id = request.params.id, workspace = deps.workspaceManager.get(id)
       if (!workspace) return reply.code(404).send({ error: "Workspace not found" })
+      refuseExplicit(deps, id, "git")
       const owned = await deps.workspaceManager.getServiceDirectoryForPath(id, directory)
       const host = owned && await deps.workspaceManager.getHostPathForServicePath(id, owned)
       const identity = host && await deps.workspaceManager.getWorktreeIdentityForPath(id, host)
@@ -100,6 +119,8 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get<{ Params: { id: string } }>("/api/workspaces/:id/files/preview", async (request, reply) => {
     try {
       const query = z.object({ path: z.string().min(1), directory: z.string().min(1).optional() }).parse(request.query)
+      const remote = await explicitScope(deps, request.params.id, "files", query.directory)
+      if (remote) return await readRemoteFile(remote.connection, request.params.id, remote.directory, query.path, "base64", remote.signal)
       return await deps.workspaceManager.previewFile(request.params.id, query.path, query.directory)
     } catch (error) { return handleWorkspaceError(error, reply) }
   })
@@ -129,8 +150,10 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.post("/api/workspaces", async (request, reply) => {
     try {
       const body = WorkspaceCreateSchema.parse(request.body ?? {})
+      // prototype-1236: explicit opening reaches the existing ExplicitWorkspace owner.
       const result = await deps.workspaceManager.create(body.path, body.name, {
         requestId: body.requestId,
+        ...(body.serverId !== undefined && body.serverId !== "local-shared" ? { serverId: body.serverId } : {}),
       })
       reply.code(201)
       return result.created ? result.workspace : { ...result.workspace, reused: true as const }
@@ -199,6 +222,8 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   }>("/api/workspaces/:id/files", async (request, reply) => {
     try {
       const query = WorkspaceFilesQuerySchema.parse(request.query ?? {})
+      const remote = await explicitScope(deps, request.params.id, "files", query.directory)
+      if (remote) return await listRemoteFiles(remote.connection, remote.directory, query.path ?? ".", remote.signal)
       return await deps.workspaceManager.listFiles(request.params.id, query.path ?? ".", query.directory)
     } catch (error) {
       return handleWorkspaceError(error, reply)
@@ -211,6 +236,8 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   }>("/api/workspaces/:id/files/search", async (request, reply) => {
     try {
       const query = WorkspaceFileSearchQuerySchema.parse(request.query ?? {})
+      const remote = await explicitScope(deps, request.params.id, "files", query.directory)
+      if (remote) return await searchRemoteFiles(remote.connection, remote.directory, query.q, { limit: query.limit, type: query.type }, remote.signal)
       return await deps.workspaceManager.searchFiles(request.params.id, query.q, {
         limit: query.limit,
         type: query.type,
@@ -231,6 +258,10 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   }>("/api/workspaces/:id/files/content", async (request, reply) => {
     try {
       const query = WorkspaceFileContentQuerySchema.parse(request.query ?? {})
+      deps.workspaceManager.requireWorkspaceCapability(request.params.id, "files")
+      if (query.worktree && query.worktree !== "root") refuseExplicit(deps, request.params.id, "files")
+      const remote = await explicitScope(deps, request.params.id, "files", query.directory)
+      if (remote) return await readRemoteFile(remote.connection, request.params.id, remote.directory, query.path, query.encoding ?? "utf-8", remote.signal)
       if (query.worktree && query.worktree !== "root") {
         const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, query.worktree, request.log, reply)
         if (!directory) return
@@ -249,6 +280,8 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
     try {
       const query = WorkspaceFileContentQuerySchema.parse(request.query ?? {})
       const body = WorkspaceFileContentBodySchema.parse(request.body ?? {})
+      deps.workspaceManager.requireWorkspaceCapability(request.params.id, "files")
+      refuseExplicit(deps, request.params.id, "files")
       if (query.directory) {
         const directory = query.directory
         const mutation = await runWorktreeMutation(deps, request.params.id, directory, reply, async () => {
@@ -285,6 +318,8 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
     Querystring: { hideWhitespace?: string }
   }>("/api/workspaces/:id/worktrees/:slug/git-status", async (request, reply) => {
     try {
+      const remote = request.params.slug === "root" ? await explicitScope(deps, request.params.id, "git") : undefined
+      if (remote) return await remoteGitStatus(remote.connection, remote.directory, remote.signal)
       const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
       if (!directory) return
 
@@ -300,6 +335,8 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   }>("/api/workspaces/:id/worktrees/:slug/git-diff", async (request, reply) => {
     try {
       const query = WorktreeGitDiffQuerySchema.parse(request.query ?? {})
+      const remote = request.params.slug === "root" && query.scope === "unstaged" ? await explicitScope(deps, request.params.id, "git") : undefined
+      if (remote) return await remoteGitDiff(remote.connection, remote.directory, query.path, remote.signal)
       const directory = await resolveGitWorktreeDirectory(deps.workspaceManager, request.params.id, request.params.slug, request.log, reply)
       if (!directory) return
 
@@ -382,6 +419,8 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
       const body = z.object({ directory: z.string().trim().min(1) }).parse(request.body ?? {})
       const workspace = deps.workspaceManager.get(request.params.id)
       if (!workspace) return reply.code(404).send({ error: "Workspace not found" })
+      deps.workspaceManager.requireWorkspaceCapability(workspace.id, "git")
+      refuseExplicit(deps, workspace.id, "git")
       const [target, root] = await Promise.all([realpath(body.directory).catch(() => undefined), realpath(workspace.path).catch(() => undefined)])
       if (!target || target !== root) {
         return reply.code(409).send({ error: "Only the opened folder can be initialized", code: "git_init_directory_mismatch" })
@@ -439,6 +478,9 @@ async function resolveGitWorktreeDirectory(
     return null
   }
 
+  workspaceManager.requireWorkspaceCapability(workspaceId, "git")
+  // prototype-1236: no host Git for an explicit project; its native reads are handled above.
+  if (workspaceManager.isExplicitWorkspace?.(workspaceId)) throw new WorkspaceCapabilityError("git", { code: "deferred" })
   const gitAvailable = await isGitAvailable(workspace.path)
   if (!gitAvailable) {
     const error = new GitRequiredError()
@@ -471,6 +513,8 @@ async function resolveGitWorktreeDirectory(
 
 
 function handleWorkspaceError(error: unknown, reply: FastifyReply) {
+  if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
+  if (error instanceof RemoteWorkspaceError) return reply.code(error.status).send({ error: error.code, code: error.code })
   if (error instanceof GitRequiredError || error instanceof GitInitError) return reply.code(error.statusCode).send({ error: error.message, code: error.code })
   if (isGitCloneError(error)) {
     reply.code(error.statusCode)

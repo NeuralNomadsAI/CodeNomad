@@ -155,6 +155,7 @@ export const instanceMessages = {
   "filesPanel.viewer": "ファイルのプレビュー",
   "filesPanel.readOnly": "読み取り専用",
   "filesPanel.binary": "このバイナリファイルはプレビューできません。",
+  "filesPanel.contentUnavailable": "内容を取得できないか、不完全です。",
   "filesPanel.image.before": "変更前",
   "filesPanel.image.after": "変更後",
   "gitPanel.changes": "変更",

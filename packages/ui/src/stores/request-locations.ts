@@ -1,4 +1,12 @@
 import type { LocationGetInput } from "@opencode/client"
+import type { Instance } from "../types/instance"
+
+/** Explicit multi-request actions retain their connection even before metadata catches up. */
+export function requestConnectionOptions(instance: Instance | undefined): { headers: Record<string, string> } | undefined {
+  return instance?.binding && instance.binding.serverId !== "local-shared"
+    ? { headers: { "x-codenomad-connection-generation": String(instance.capabilities?.generation ?? 0) } }
+    : undefined
+}
 
 // Internal request authority; serialize public fields separately from context.
 export type RequestLocation = NonNullable<LocationGetInput["location"]> & { workspaceID?: string }

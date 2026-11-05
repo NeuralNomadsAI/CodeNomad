@@ -1,10 +1,16 @@
 # Conversaciones
 
+El chat de servidores explícitos muestra imágenes integradas compatibles o medios nativos verificados de la misma conversación. Las demás fuentes indican indisponibilidad. Las rutas locales solo encuentran imágenes ya presentes en esa conversación; `/btw` solo acepta imágenes integradas. Los archivos integrados válidos ofrecen una descarga explícita.
+
 CodeNomad presenta las sesiones nativas de OpenCode como conversaciones, con una jerarquía para el trabajo delegado y controles independientes para lo que envías a continuación.
 
 Los mensajes muestran Markdown, código, diferencias e imágenes compatibles de resultados de herramientas. La copia de texto, la búsqueda en todo el historial y la voz usan proyecciones de texto, no los bytes de las imágenes incrustadas. **Contenido de los mensajes** cambia la visibilidad sin eliminar las partes almacenadas; [Historial](history.md#operation-reference) distingue los controles de visualización de la limpieza.
 
 Los encabezados de razonamiento y de herramientas muestran cuánto duró cada paso, con un contador en vivo mientras se ejecuta; no se muestran duraciones inferiores a un segundo. Cuando **Tokens** se muestra en **Contenido de los mensajes** (el preajuste **Todo** lo muestra), cada mensaje del agente termina con una línea de tokens y coste después de su texto final. Esa línea suma el mensaje y los mensajes que contienen las herramientas y el razonamiento que cubre su acción **Eliminar herramientas y razonamientos de esta respuesta**, dentro de la transcripción cargada; despliégala para ver los recuentos de razonamiento y de caché. Los pasos que solo ejecutaron herramientas no tienen línea propia.
+
+En el chat interno con servidores explícitos, `@` ofrece los agentes y habilidades de ese servidor y explica que las referencias a archivos del proyecto no están disponibles. Un cambio de conexión durante una acción detiene sus pasos restantes. Comprueba la conversación antes de repetir una acción incierta: puede haber llegado ya a OpenCode.
+
+Una acción interrumpida o incierta deja un aviso no modal en su conversación de origen y mantiene el foco actual. Si se interrumpe la edición de un mensaje en cola, su contenido conocido sigue disponible en la conversación de origen abierta: comprueba la cola, vacía el borrador y los adjuntos y elige **Restaurar mensaje guardado**. Se restaura un borrador editable; enviarlo es otra acción. Una pregunta `/btw` retirada permite una nueva solicitud explícita cuando termina la anterior.
 
 ## Buscar y recorrer conversaciones {#navigate-conversations}
 

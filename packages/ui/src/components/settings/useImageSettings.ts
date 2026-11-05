@@ -6,7 +6,7 @@ import { serverEvents } from "../../lib/server-events"
 import { getActiveCatalogLocation } from "../../stores/sessions"
 
 /** Reads while mounted; config, model-catalog and connection events coalesce into one trailing reread. */
-export function useImageSettings(props: { instanceId: string; location?: LocationRef }) {
+export function useImageSettings(props: { instanceId: string; location?: LocationRef; active?: () => boolean }) {
   const [snapshot, setSnapshot] = createSignal<ImageSettingsSnapshot>()
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal(false)
@@ -18,9 +18,9 @@ export function useImageSettings(props: { instanceId: string; location?: Locatio
     let disposed = false, reading = false, writing = false, trailing = false, revision = 0
     setSnapshot(undefined); setError(false); setBusy(false)
     mutate = async () => {}
-    if (!instanceId || !directory) return
+    if (!instanceId || !directory || props.active?.() === false) return
     const load = async () => {
-      if (disposed) return
+      if (disposed || props.active?.() === false) return
       if (reading || writing) { trailing = true; return }
       reading = true; setBusy(true)
       do {
@@ -35,7 +35,7 @@ export function useImageSettings(props: { instanceId: string; location?: Locatio
       if (!disposed && !writing) setBusy(false)
     }
     mutate = async change => {
-      if (disposed || writing || reading) return
+      if (disposed || props.active?.() === false || writing || reading) return
       writing = true; revision++; setBusy(true); setError(false)
       let failed = false
       try { await serverApi.setImageSettings(instanceId, { location: { directory }, ...change }) } catch { failed = true }

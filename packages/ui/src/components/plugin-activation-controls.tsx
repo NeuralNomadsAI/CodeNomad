@@ -17,6 +17,7 @@ import { PluginActivationSwitch } from "./plugin-activation-switch"
 import { PluginRowActions } from "./plugin-row-actions"
 import { PluginAddMenu } from "./plugin-add-menu"
 import "../stores/plugin-controls-events"
+import { getProjectAvailability } from "../stores/project-capability"
 
 interface PluginActivationControlsProps {
   instanceId: string
@@ -27,6 +28,11 @@ interface PluginActivationControlsProps {
 
 export const PluginActivationControls: Component<PluginActivationControlsProps> = (props) => {
   const { t } = useI18n()
+  let disposed = false
+  onCleanup(() => { disposed = true })
+  const admitted = () => !disposed && getProjectAvailability(props.instanceId, "plugins").allowed
+  // prototype-1236: an explicit server lists its plugins; no OpenCode API writes their configuration.
+  const writable = () => getProjectAvailability(props.instanceId, "pluginWrite").allowed
   const headingId = `plugin-controls-${createUniqueId()}`
   const noticeId = `${headingId}-notice`
   const globalLabelId = `plugin-controls-${createUniqueId()}-global`
@@ -34,7 +40,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   const directory = createMemo(() => props.location.directory)
   createEffect(() => {
     const instanceId = props.instanceId, location = directory()
-    if (props.active === false || !location) return
+    if (props.active === false || !location || !admitted()) return
     onCleanup(integrations.demand(instanceId, location))
   })
   // A source that designates an ambiguous integration belongs to none: its row says so.
@@ -102,10 +108,9 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   createEffect(() => {
     const instanceId = props.instanceId
     const location = requestLocation()
-    if (props.active === false) return
+    if (props.active === false || !admitted()) return
     onCleanup(pluginControlsCache.acquireDemand(instanceId, location))
   })
-
   const bidi = (text: string): string => `⁨${text}⁩`
 
   const sourceLabel = (source: PluginRuntimeSource): string => {
@@ -140,6 +145,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     snapshot()?.configured.sources.filter(matches) ?? []
   )
   const refresh = () => {
+    if (!admitted()) return
     void pluginControlsCache.load(props.instanceId, requestLocation(), { force: true })
     void integrations.refreshDemanded(props.instanceId)
   }
@@ -166,7 +172,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       for (const target of snapshot()?.targets ?? []) {
         lines.push(`${scopeLabel(target.scope)} — ${target.path}`)
       }
-      if (!isAvailable("project")) lines.push(t("instanceServiceStatus.plugins.scope.unavailable"))
+      if (!isAvailable("project") && writable()) lines.push(t("instanceServiceStatus.plugins.scope.unavailable"))
       if (state().error) lines.push(t("instanceServiceStatus.plugins.errors.refresh"))
       return lines.map(bidi).join("\n")
     }
@@ -185,8 +191,8 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           <Tooltip.Portal>
             <Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content>
           </Tooltip.Portal>
-        </Tooltip>{nonConformingLabel(declarationsFor(matchesControl))}<PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={pluginId}
-          source={control()?.runtime?.source} removable={removable()} refresh={refresh} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} /></div>
+        </Tooltip>{nonConformingLabel(declarationsFor(matchesControl))}<Show when={writable()}><PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={pluginId}
+          source={control()?.runtime?.source} removable={removable()} refresh={refresh} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} /></Show></div>
         {renderSwitch("global")}
         {renderSwitch("project")}
       </div>
@@ -214,8 +220,8 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           <Tooltip.Portal><Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content></Tooltip.Portal>
         </Tooltip>
         {nonConformingLabel(declarationsFor(source => source.target === target))}
-        <PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} source={entry()?.source}
-          removable={removable()} refresh={refresh} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} />
+        <Show when={writable()}><PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} source={entry()?.source}
+          removable={removable()} refresh={refresh} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} /></Show>
       </div>
     </div>
   }
@@ -245,8 +251,8 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           </span>
         </Show>
         {nonConformingLabel(declarationsFor(source => source.target === target))}
-        <PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} removable={removable()}
-          refresh={state() === "unconfirmed" ? refresh : undefined} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} />
+        <Show when={writable()}><PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} removable={removable()}
+          refresh={state() === "unconfirmed" ? refresh : undefined} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} /></Show>
       </div>
     </div>
   }
@@ -273,7 +279,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           >
             <RefreshCw class="h-3.5 w-3.5" classList={{ "animate-spin": state().loading || state().refreshing }} aria-hidden="true" />
           </button>
-          <Show when={snapshot()}>
+          <Show when={snapshot() && writable()}>
             <PluginAddMenu instanceId={props.instanceId} location={requestLocation()} sessionId={props.session?.id} projectAvailable={projectAvailable()} active={props.active} />
           </Show>
         </div>

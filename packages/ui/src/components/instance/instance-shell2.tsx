@@ -44,6 +44,7 @@ import { getInterruptionQueue } from "../../stores/interruption-scope"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
+import { getProjectAvailability } from "../../stores/project-capability"
 import { registerViewMenuPanels } from "../../lib/native/view-menu"
 import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { useFilePreviewLifetime } from "./shell/file-preview-lifetime"
@@ -90,6 +91,9 @@ import { readClientLayoutValue, writeClientLayoutValue } from "../../stores/clie
 import { runtimeEnv } from "../../lib/runtime-env"
 import { getServerMeta, previewsUnavailable } from "../../lib/server-meta"
 import { useInterruptionViewport } from "./shell/useInterruptionViewport"
+import { captureInstanceRequestAuthority } from "../../stores/session-api"
+import { isSessionActionInterrupted, sessionActionSuperseded } from "../../stores/session-action-queue"
+import { getOpencodeErrorMessage } from "../../lib/opencode-api"
 
 const log = getLogger("session")
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
@@ -123,6 +127,8 @@ interface InstanceShellProps {
 }
 
 const InstanceShell2: Component<InstanceShellProps> = (props) => {
+  let disposed = false
+  onCleanup(() => { disposed = true })
   const { t, locale } = useI18n()
   const { preferences } = useConfig()
   const isRTL = () => locale() === "he"
@@ -149,7 +155,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const [now, setNow] = createSignal(Date.now())
   const [sessionPromptApis, setSessionPromptApis] = createSignal<Record<string, PromptInputApi | null>>({})
-  const pendingFirstPromptText = new Map<string, string>()
+  const firstPromptAttempts = new Map<string, { api?: PromptInputApi; unchanged?: () => boolean; recover?: () => void }>()
+  onCleanup(() => firstPromptAttempts.clear())
   const [draftAgent, setDraftAgent] = createSignal("")
   const [draftModel, setDraftModel] = createSignal({ providerId: "", modelId: "" })
   const [draftModelManuallySelected, setDraftModelManuallySelected] = createSignal(false)
@@ -451,21 +458,26 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       ...current,
       [sessionId]: api,
     }))
-    const text = api ? pendingFirstPromptText.get(sessionId) : undefined
-    if (api && text !== undefined) {
-      pendingFirstPromptText.delete(sessionId)
-      api.setPromptText(text, { focus: true })
+    const attempt = firstPromptAttempts.get(sessionId)
+    if (api && attempt && !attempt.api) {
+      attempt.api = api
+      attempt.unchanged = api.captureDraft()
+      attempt.recover?.()
     }
   }
 
   async function handleOpenPreview() {
+    if (!getProjectAvailability(props.instance.id, "automation").allowed) return
+    const current = captureInstanceRequestAuthority(props.instance.id)
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return
     try {
       const restored = await restoreSessionPreview(sessionId, props.instance.folder)
+      if (!current() || !getProjectAvailability(props.instance.id, "automation").allowed) return
       if (restored) showSessionPreview(restored.storageKey)
       else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, props.instance.folder)
     } catch (error) {
+      if (!current() || !getProjectAvailability(props.instance.id, "automation").allowed) return
       showAlertDialog(t("sessionPreview.open.title"), {
         title: t("sessionPreview.open.title"),
         detail: error instanceof Error ? error.message : String(error),
@@ -475,6 +487,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   }
 
   function handlePreviewButtonClick() {
+    if (!getProjectAvailability(props.instance.id, "automation").allowed) return
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return
 
@@ -575,6 +588,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   }
 
   const renderYoloModePill = () => {
+    if (!getProjectAvailability(props.instance.id, "yolo").allowed) return null
     if (!yoloModeEnabled()) return null
     return (
       <span
@@ -601,7 +615,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   )
 
   const renderPreviewToggleButton = () => (
-    <Show when={!showingInfoView()}>
+    <Show when={!showingInfoView() && getProjectAvailability(props.instance.id, "automation").allowed}>
       <IconButton
         class="icon-toggle"
         color="inherit"
@@ -635,6 +649,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   }
 
   const handleChatSearchClick = () => {
+    if (!getProjectAvailability(props.instance.id, "historyEnrichment").allowed) return
     const id = activeSessionIdForInstance()
     if (id && id !== "info") setSessionSearchOpen(props.instance.id, id, !isSessionSearchOpen(props.instance.id, id))
   }
@@ -658,7 +673,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       onSelect: handleCommandPaletteClick,
     }]
     if (showingInfoView()) return items
-    items.push({
+    if (getProjectAvailability(props.instance.id, "historyEnrichment").allowed) items.push({
       key: "search",
       checked: searchOpen(),
       label: t("instanceShell.chatSearch.openAriaLabel"),
@@ -666,7 +681,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       icon: <Search class="w-4 h-4" aria-hidden="true" />,
       onSelect: handleChatSearchClick,
     })
-    if (!previewsUnavailable()) items.push({
+    if (!previewsUnavailable() && getProjectAvailability(props.instance.id, "automation").allowed) items.push({
       key: "preview",
       label: previewToggleLabel(),
       checked: activeSessionPreview()?.mode === "preview",
@@ -907,7 +922,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const headerActionMenuItems = createMemo(() => buildHeaderActionMenuItems())
 
   // Readers that need no conversation: schedules and playbook details.
-  const readingWithoutConversation = () => Boolean(props.isActiveInstance)
+  const readingWithoutConversation = () => getProjectAvailability(props.instance.id, "missions").allowed && Boolean(props.isActiveInstance)
     && ["recurrence", "playbook"].includes(missionProjectView(props.instance.folder).reader?.kind ?? "")
   const activeSessionTitle = createMemo(() => {
     if (showingInfoView()) return null
@@ -936,8 +951,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (!agent || draftModelManuallySelected()) return
 
     let cancelled = false
+    const current = captureInstanceRequestAuthority(props.instance.id)
     void getDefaultModel(props.instance.id, agent).then((model) => {
-      if (!cancelled) setDraftModel(model)
+      if (!cancelled && current()) setDraftModel(model)
     }).catch((error) => log.warn("Failed to resolve draft model", error))
 
     onCleanup(() => {
@@ -946,10 +962,12 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   })
 
   async function handleDraftAgentChange(agent: string) {
+    const instanceId = props.instance.id
+    const current = captureInstanceRequestAuthority(instanceId)
     setDraftAgent(agent)
     setDraftModelManuallySelected(false)
-    const model = await getDefaultModel(props.instance.id, agent)
-    setDraftModel(model)
+    const model = await getDefaultModel(instanceId, agent)
+    if (current() && props.instance.id === instanceId && draftAgent() === agent && !draftModelManuallySelected()) setDraftModel(model)
   }
 
   async function handleDraftModelChange(model: { providerId: string; modelId: string }) {
@@ -966,40 +984,34 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     }
   }
 
-  function getActiveCreatedSessionPane(sessionId: string) {
-    if (activeSessionIdForInstance() !== sessionId) return null
-    const pane = sessionCenterEl()?.querySelector<HTMLElement>('.session-cache-pane[data-session-active="true"]')
-    return pane?.dataset.sessionId === sessionId ? pane : null
-  }
-
-  function focusCreatedSessionPrompt(sessionId: string) {
-    const textarea = getActiveCreatedSessionPane(sessionId)?.querySelector<HTMLTextAreaElement>(".prompt-input")
-    if (!textarea || textarea.disabled) return
-    try {
-      textarea.focus({ preventScroll: true })
-    } catch {
-      textarea.focus()
-    }
-  }
-
   let draftSessionCreation: ReturnType<typeof createSession> | undefined
 
   function createAndActivateDraftSession() {
     if (draftSessionCreation) return draftSessionCreation
+    const instanceId = props.instance.id
+    const current = captureInstanceRequestAuthority(instanceId)
+    const draftUnchanged = draftPromptInputApi()?.captureDraft()
+    const focused = document.activeElement
+    const assertCurrent = () => { if (disposed || !current() || props.instance.id !== instanceId) throw sessionActionSuperseded(t("session.actions.superseded")) }
     const creation = (async () => {
       const agent = draftAgent()
       const model = draftModel()
       if (agent && model.providerId && model.modelId) {
-        await setAgentModelPreference(props.instance.id, agent, model)
+        await setAgentModelPreference(instanceId, agent, model, current)
+        assertCurrent()
       }
-      const session = await createSession(props.instance.id, agent || undefined)
+      const session = await createSession(instanceId, agent || undefined)
+      assertCurrent()
       if (model.providerId && model.modelId) {
-        await updateSessionModel(props.instance.id, session.id, model)
+        await updateSessionModel(instanceId, session.id, model)
+        assertCurrent()
       }
-      if (!window.matchMedia?.("(pointer: coarse)")?.matches || window.matchMedia?.("(any-pointer: fine)")?.matches) {
-        setFocusConversationSessionId(session.id)
+      if (props.isActiveInstance !== false && draftUnchanged?.()) {
+        if (focused === document.activeElement && (!window.matchMedia?.("(pointer: coarse)")?.matches || window.matchMedia?.("(any-pointer: fine)")?.matches)) {
+          setFocusConversationSessionId(session.id)
+        }
+        setActiveParentSession(instanceId, session.id)
       }
-      setActiveParentSession(props.instance.id, session.id)
       return session
     })()
     draftSessionCreation = creation
@@ -1013,20 +1025,40 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     submit: (sessionId: string) => Promise<void>,
     draft?: { text: string; attachments: Attachment[] },
   ) {
+    const instanceId = props.instance.id
+    const current = captureInstanceRequestAuthority(instanceId)
     const session = await createAndActivateDraftSession()
+    const source = props.instance
+    const attempt: { api?: PromptInputApi; unchanged?: () => boolean; recover?: () => void } = {}
+    firstPromptAttempts.set(session.id, attempt)
+    const existing = sessionPromptApis()[session.id]
+    if (existing) { attempt.api = existing; attempt.unchanged = existing.captureDraft() }
+    const ownsSource = () => !disposed && props.instance.id === instanceId && props.instance.folder === source.folder
+      && props.instance.binding?.serverId === source.binding?.serverId && props.instance.binding?.directory === source.binding?.directory
     try {
+      if (disposed || !current() || props.instance.id !== instanceId) throw sessionActionSuperseded(t("session.actions.superseded"))
       await submit(session.id)
+      if (firstPromptAttempts.get(session.id) === attempt) firstPromptAttempts.delete(session.id)
     } catch (error) {
-      if (draft) {
-        const api = sessionPromptApis()[session.id]
-        if ((!api || !api.getPromptText()) && getAttachments(props.instance.id, session.id).length === 0) {
-          clearAttachments(props.instance.id, session.id)
-          for (const attachment of draft.attachments) addAttachment(props.instance.id, session.id, attachment)
-          if (api) api.setPromptText(draft.text, { focus: true })
-          else pendingFirstPromptText.set(session.id, draft.text)
+      // The first conversation's composer may mount after admission starts.
+      // Capture its draft at registration, before it can accept user edits.
+      attempt.recover = () => {
+        const api = attempt.api
+        if (!api) return
+        if (ownsSource()) {
+          if (draft && attempt.unchanged?.()) {
+            for (const attachment of draft.attachments) addAttachment(instanceId, session.id, attachment)
+            api.setPromptText(draft.text)
+          }
+          if (!current() || isSessionActionInterrupted(error)) api.showActionFeedback()
+          else if (props.isActiveInstance !== false && activeSessionIdForInstance() === session.id) {
+            showAlertDialog(t("promptInput.send.errorFallback"), { title: t("promptInput.send.errorTitle"),
+              detail: getOpencodeErrorMessage(error, t("promptInput.send.errorFallback")), variant: "error" })
+          }
         }
+        if (firstPromptAttempts.get(session.id) === attempt) firstPromptAttempts.delete(session.id)
       }
-      focusCreatedSessionPrompt(session.id)
+      attempt.recover()
       throw error
     }
   }
@@ -1130,7 +1162,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           <CommandIcon class="w-5 h-5" aria-hidden="true" />
                         </IconButton>
                         <Show when={!showingInfoView()}>
-                          <IconButton
+                          <Show when={getProjectAvailability(props.instance.id, "historyEnrichment").allowed}><IconButton
                             color="inherit"
                             onClick={handleChatSearchClick}
                             class="icon-toggle"
@@ -1142,7 +1174,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                             size="small"
                           >
                             <Search class="w-5 h-5" aria-hidden="true" />
-                          </IconButton>
+                          </IconButton></Show>
                           <Show when={!previewsUnavailable()}>{renderPreviewToggleButton()}</Show>
                           {renderFullscreenButton()}
                           <TranscriptFilters open={filtersOpen()} onOpenChange={setFiltersOpen}
@@ -1263,11 +1295,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             }
           >
             <div class="info-view-pane mission-transcript-surface flex flex-col flex-1 min-h-0 overflow-y-auto">
-              <InfoView
+              <Show when={getProjectAvailability(props.instance.id, "serviceManagement").allowed}><InfoView
                 instanceId={props.instance.id}
                 active={Boolean(props.isActiveInstance) && showingInfoView()}
                 onBackToConversation={handleBackToConversation}
-              />
+              /></Show>
               <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
             </div>
           </Show>

@@ -6,9 +6,10 @@ import { PanelExtensionError } from "../../panel-extensions/archive"
 import { PRUNING_RPC_ID } from "../../opencode/session-pruning/contract"
 import { assetsInputSchema, assetsResultSchema, assetReadInputSchema, assetReadResultSchema } from "../../opencode/session-pruning/assets-contract"
 import { locationRequestOptions, readLocationRef } from "../../opencode/compatibility/location"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 
 export function registerPanelExtensionAssetRoutes(app: FastifyInstance, deps: {
-  store: PanelExtensionStore; workspaceManager: Pick<WorkspaceManager, "getSharedServiceConnection" | "ownsLocation" | "desktopPluginsReady">
+  store: PanelExtensionStore; workspaceManager: Pick<WorkspaceManager, "getSharedServiceConnection" | "ownsLocation" | "desktopPluginsReady" | "requireWorkspaceCapability">
 }) {
   const authority = { instanceId: z.string().min(1).max(256), digest: z.string().regex(/^[a-f0-9]{64}$/) }
   const idSchema = z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{1,39}\.[a-z][a-z0-9-]{1,39}$/) }).strict()
@@ -19,6 +20,13 @@ export function registerPanelExtensionAssetRoutes(app: FastifyInstance, deps: {
         const { id } = idSchema.parse(request.params)
         const schema = (method === "assets" ? assetsInputSchema : assetReadInputSchema).extend(authority).strict()
         const { instanceId, digest, ...input } = schema.parse(request.body)
+        try {
+          deps.workspaceManager.requireWorkspaceCapability(instanceId, "integratedImages")
+          deps.workspaceManager.requireWorkspaceCapability(instanceId, "design")
+        } catch (error) {
+          if (error instanceof Error && "statusCode" in error && error.statusCode === 404) throw new PanelExtensionError("missing")
+          throw error
+        }
         await deps.store.authorize(id, digest, "session.assets.read")
         const connection = await deps.workspaceManager.getSharedServiceConnection(instanceId)
         if (!connection) throw new PanelExtensionError("unavailable")
@@ -44,6 +52,7 @@ export function registerPanelExtensionAssetRoutes(app: FastifyInstance, deps: {
         if (output.status === "blocked") return reply.code(503).send({ error: "Assets unavailable" })
         return output
       } catch (error) {
+        if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
         const code = error instanceof z.ZodError ? 400 : error instanceof PanelExtensionError
           ? { missing: 404, disabled: 403, conflict: 409, invalid: 400, limit: 413, unavailable: 503 }[error.code] : 503
         return reply.code(code).send({ error: "Assets unavailable" })

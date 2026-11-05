@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openWorkspace.localOnly": "नेटिभ फाइल, सम्पादक र टर्मिनल कार्यहरूका लागि साझा स्थानीय OpenCode सेवामा परियोजना आवश्यक छ।",
   "commands.openHelp.failed": "ब्राउजरमा मद्दत खोल्न सकिएन। https://neuralnomadsai.github.io/CodeNomad/ आफैँ खोल्नुहोस्।",
   "commands.openSponsor.failed": "ब्राउजरमा CodeNomad आर्थिक सहयोग पृष्ठ खोल्न सकिएन। {url} आफैँ खोल्नुहोस्।",
   "commandPalette.title": "कमाण्ड प्यालेट (Command Palette)",

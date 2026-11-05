@@ -1,5 +1,7 @@
 # Yerel entegrasyonlar
 
+Aşağıdaki kurulum, uygulama bağlama ve yapılandırma kontrolleri paylaşılan yerel OpenCode projeleri içindir. Açık sunucularda salt okunur eklenti envanteri ve entegrasyon durumu korunur; uygulama bağlama ve kurulum kullanılamaz.
+
 CodeNomad OpenCode'un MCP bağlantılarını, eklenti etkinleştirmesini, becerilerini ve özel komutlarını sunar. Bunlar yürütme ana bilgisayarında çalışır. Korumalı [panel uzantılarından](extensions.md) ve [SideCars](browser-sidecars.md) araçlarından ayrıdır.
 
 ## Doğru kontrolü seçin {#integration-scopes}

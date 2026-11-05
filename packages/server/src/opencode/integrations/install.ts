@@ -18,7 +18,7 @@ export class IntegrationInstallError extends Error {
 
 export interface IntegrationInstallerDeps {
   controls: Pick<PluginControls, "read">
-  workspaceManager: Pick<WorkspaceManager, "getSharedServiceConnection" | "ownsLocation">
+  workspaceManager: Pick<WorkspaceManager, "getSharedServiceConnection" | "ownsLocation" | "requireWorkspaceCapability">
   catalog: Pick<IntegrationCatalogSource, "read">
   sources: Pick<PluginSources, "add">
 }
@@ -35,6 +35,7 @@ export class IntegrationInstaller {
     if (!/^[a-z][a-z0-9-]{0,31}$/.test(integrationId) || (scope !== "global" && scope !== "project")
       || location.workspaceID !== undefined || !location.directory) throw new IntegrationInstallError("invalid")
     try {
+      this.requireHostControls(workspaceId)
       const connection = await this.deps.workspaceManager.getSharedServiceConnection(workspaceId)
       if (!connection) throw new IntegrationInstallError("unavailable")
       // The snapshot read checks Location ownership before any catalog-derived answer.
@@ -60,6 +61,7 @@ export class IntegrationInstaller {
   }
 
   private async authorize(workspaceId: string, location: PluginControlLocation, connection: ServiceConnection, signal?: AbortSignal) {
+    this.requireHostControls(workspaceId)
     signal?.throwIfAborted()
     connection.assertCurrent()
     if (!await this.deps.workspaceManager.ownsLocation(workspaceId, location, connection.client, signal)) {
@@ -67,6 +69,11 @@ export class IntegrationInstaller {
     }
     signal?.throwIfAborted()
     connection.assertCurrent()
+  }
+
+  private requireHostControls(workspaceId: string) {
+    try { this.deps.workspaceManager.requireWorkspaceCapability(workspaceId, "executionSettings") }
+    catch { throw new IntegrationInstallError("forbidden") }
   }
 }
 

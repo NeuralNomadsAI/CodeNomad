@@ -65,3 +65,20 @@ test("a transform rewrites only successful JSON responses and releases each requ
     assert.equal(invalidations, 0)
   } finally { await app.close(); await upstream.close() }
 })
+
+test("the execution owner can revoke a completed fetch before response publication", async () => {
+  const app = Fastify()
+  let releases = 0
+  app.get("/fixture", (request, reply) => forwardRuntimeRequest({
+    request, reply, url: "http://fixture/api/session/s", body: undefined, headers: {},
+    fetch: async () => new Response("stale-private-data"),
+    assertCurrent: () => { throw new Error("retired") },
+    invalidate: () => {}, release: () => { releases++ },
+  }))
+  try {
+    const response = await app.inject("/fixture")
+    assert.equal(response.statusCode, 500)
+    assert(!response.body.includes("stale-private-data"))
+    assert.equal(releases, 1)
+  } finally { await app.close() }
+})

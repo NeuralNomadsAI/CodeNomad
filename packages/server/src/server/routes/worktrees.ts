@@ -22,6 +22,7 @@ import {
 } from "../../workspaces/project-session-families"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { locationRequestOptions, readLocationRef } from "../../opencode/compatibility/location"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 
 interface RouteDeps {
   workspaceManager: WorkspaceManager
@@ -49,6 +50,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
 
     try {
+      deps.workspaceManager.requireWorkspaceCapability(workspace.id, "worktrees")
       const response: WorktreeListResponse = await deps.workspaceManager.getWorktrees(workspace.id, query.data.fresh === "true" ? "fresh" : "cached")
       return response
     } catch (error) {
@@ -64,6 +66,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
 
     try {
+      deps.workspaceManager.requireWorkspaceCapability(workspace.id, "worktrees")
       const body = WorktreeCreateSchema.parse(request.body ?? {})
       const slug = body.slug
       if (!isValidWorktreeSlug(slug) || slug === "root") {
@@ -118,6 +121,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
 
     try {
+      deps.workspaceManager.requireWorkspaceCapability(workspace.id, "worktrees")
       const { worktreeSlug } = WorktreeSessionMoveSchema.parse(request.body ?? {})
       const { isGitRepo } = await resolveRepoRoot(workspace.path, request.log)
       if (!isGitRepo) throw new ProjectSessionError("Workspace is not a Git repository", 409)
@@ -172,21 +176,22 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
       return { error: "Workspace not found" }
     }
 
-    const slug = (request.params.slug ?? "").trim()
-    if (!isValidWorktreeSlug(slug) || slug === "root") {
-      reply.code(400)
-      return { error: "Invalid worktree slug" }
-    }
-
-    const { isGitRepo } = await resolveRepoRoot(workspace.path, request.log)
-    if (!isGitRepo) {
-      reply.code(400)
-      return { error: "Workspace is not a Git repository" }
-    }
-
-    const force = (request.query?.force ?? "").toString().toLowerCase() === "true"
-
     try {
+      deps.workspaceManager.requireWorkspaceCapability(workspace.id, "worktrees")
+      const slug = (request.params.slug ?? "").trim()
+      if (!isValidWorktreeSlug(slug) || slug === "root") {
+        reply.code(400)
+        return { error: "Invalid worktree slug" }
+      }
+
+      const { isGitRepo } = await resolveRepoRoot(workspace.path, request.log)
+      if (!isGitRepo) {
+        reply.code(400)
+        return { error: "Workspace is not a Git repository" }
+      }
+
+      const force = (request.query?.force ?? "").toString().toLowerCase() === "true"
+
       const worktrees = await strictWorktrees(deps.workspaceManager, workspace.id)
       const match = worktrees.find((wt) => wt.slug === slug)
       if (!match || match.kind === "root") {
@@ -352,6 +357,7 @@ async function assertNoWorktreeBlockers(
 }
 
 function handleError(error: unknown, reply: FastifyReply) {
+  if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
   if (error instanceof GitRequiredError) return reply.code(error.statusCode).send({ error: error.message, code: error.code })
   reply.code(error instanceof ProjectSessionError ? error.statusCode : 400)
   return { error: error instanceof Error ? error.message : "Unable to fulfill request" }

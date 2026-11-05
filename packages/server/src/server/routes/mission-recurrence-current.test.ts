@@ -62,6 +62,7 @@ async function fixture() {
     getWorktreeIdentityForPath: async (_id: string, directory: string) => directory,
     ownsLocation: async (_id: string, target: typeof location) => state.owned && target.directory === location.directory,
     getSharedServiceConnection: async () => state.available ? { client, assertCurrent() { if (!state.connected) throw new Error("Connection replaced") } } : undefined,
+    requireWorkspaceCapability: () => new AbortController().signal,
   } as never, worktreeDeletionFence: fence })
   const url = `/api/workspaces/workspace/missions/recurrence/${scheduleID}/current`
   const page = async (selector: unknown) => app.inject({ method: "POST", url: `${url}/${passageID}/page`, payload: { source: envelope().source, selector } })

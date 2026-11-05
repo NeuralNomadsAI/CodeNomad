@@ -17,6 +17,7 @@ import {
 import { INTEGRATION_SECTION_ORDER, integrationSectionId, integrationSectionIds } from "./integration-sections"
 import type { RightPanelModule, RightPanelSectionModule } from "./registry"
 import "../../../../stores/plugin-controls-events"
+import { createProjectAdmission } from "../../../../stores/project-capability"
 
 interface IntegrationStatusModuleOptions {
   instanceId: string
@@ -34,6 +35,13 @@ export const INTEGRATION_ANNOUNCE_DELAY_MS = 500
  * the single attachment (picker, bindings, receipts) of the displayed conversation that they share.
  */
 export function createIntegrationStatusModule(options: IntegrationStatusModuleOptions): Accessor<RightPanelModule> {
+  const admission = createProjectAdmission(() => options.instanceId, () => "plugins")
+  const runtime = createMemo(() => admission() ? untrack(() => createAdmittedIntegrationStatusModule(options)) : undefined)
+  const unavailable: RightPanelModule = { id: "integration-status", displayNameKey: "", origin: "first-party", statusSections: [] }
+  return createMemo(() => runtime()?.() ?? unavailable)
+}
+
+function createAdmittedIntegrationStatusModule(options: IntegrationStatusModuleOptions): Accessor<RightPanelModule> {
   let statusMarker: HTMLDivElement | undefined
   const pluginsTrigger = () => {
     const root = statusMarker?.closest(".status-tab-container")
@@ -61,23 +69,30 @@ export function createIntegrationStatusModule(options: IntegrationStatusModuleOp
     announceTimer = setTimeout(() => { setAnnouncement(queued.join(" ")); queued = [] }, INTEGRATION_ANNOUNCE_DELAY_MS)
   }
   onCleanup(() => clearTimeout(announceTimer))
-  const attachment = createIntegrationAttachment({
-    instanceId: options.instanceId,
-    get directory() { return directory() },
-    get session() { return session() },
-    get active() { return options.isActive() },
-    onMessage: announce,
-    focusFallback: () => pluginsTrigger(),
-  })
-  const installation = createIntegrationHostInstallation({
-    instanceId: options.instanceId,
-    get directory() { return directory() },
-    get sessionId() { return session()?.id },
-    get active() { return options.isActive() },
-    entries: attachment.entries,
-  })
+  // Read-only remote status never constructs host controllers or binding demand.
+  const hostAdmission = createProjectAdmission(() => options.instanceId, () => "pluginWrite")
+  const controllers = createMemo(() => hostAdmission() ? untrack(() => {
+    const attachment = createIntegrationAttachment({
+      instanceId: options.instanceId,
+      get directory() { return directory() },
+      get session() { return session() },
+      get active() { return options.isActive() },
+      onMessage: announce,
+      focusFallback: () => pluginsTrigger(),
+    })
+    const installation = createIntegrationHostInstallation({
+      instanceId: options.instanceId,
+      get directory() { return directory() },
+      get sessionId() { return session()?.id },
+      get active() { return options.isActive() },
+      entries: attachment.entries,
+    })
+    return { attachment, installation }
+  }) : undefined)
   const context: IntegrationSectionContext = {
-    instanceId: options.instanceId, location, session, active: options.isActive, attachment, installation,
+    instanceId: options.instanceId, location, session, active: options.isActive,
+    get attachment() { return controllers()?.attachment },
+    get installation() { return controllers()?.installation },
     pluginsTrigger: () => pluginsTrigger(),
   }
   const entry = (id: string): IntegrationView | undefined => response()?.integrations.find(item => item.id === id)
@@ -151,7 +166,7 @@ export function createIntegrationStatusModule(options: IntegrationStatusModuleOp
   }, { defer: true }))
 
   const renderStatusExtras = () => <>
-    {attachment.picker()}
+    {controllers()?.attachment.picker()}
     <div ref={statusMarker} class="sr-only" role="status" aria-live="polite" data-integration-announcements>{announcement()}</div>
   </>
   return createMemo<RightPanelModule>(() => ({

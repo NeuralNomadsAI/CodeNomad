@@ -2,6 +2,8 @@
 
 ## Ayarları açın ve kapsamını belirleyin {#open-settings}
 
+**Seçili OpenCode sunucusu** proje bağlamını belirtir (ortak yerel hizmet için `local-shared`); CodeNomad tercihleri ortak kalır. Kullanılamayan projelerin OpenCode denetimleri etkinleşmez. Yapılandırma dosyaları, ortam değişkenleri ve OpenCode bakımı **yerel CodeNomad arka ucuna** aittir: HOME dosyaları, profil ortamı ve ortak hizmet. **Yerel arka ucu yönet**, bu yerel denetimleri seçili projeden ayrı olarak açıkça açar.
+
 1. Sekme çubuğundaki (macOS masaüstü uygulamasında başlık çubuğundaki) veya ana sayfadaki **Ayarları aç** dişli simgesiyle **Ayarlar** öğesini açın. Model seçicideki **Provider'ları yönet**, Görevler panelinin dişli simgesi veya bildirim geçmişindeki **Ayarlar** dişli simgesi gibi kısayollar ilgili bölümü doğrudan açar.
 2. Bir bölüm seçin. Yerel Electron ve Tauri pencereleri bir yerel Tercihler penceresini açar veya odaklar; tarayıcı ve uzak görünümler yerleşik ayarlar ekranını kullanır.
 3. Ayrılmadan önce ayarın kapsamını ve herhangi bir **Kaydet** eylemini kontrol edin.
@@ -15,7 +17,9 @@ Her değişikliği siz yaptıkça kaydeden Görev tercihleri dahil, çoğu seçi
 | Genel/Proje OpenCode ayarları | Görüntülenen kapsamda yerel eklenti/yapılandırma değişiklikleri. Proje kontrolleri etkin bir proje/Location gerektirir. |
 | Masaüstü veri profili | Yerel pencereler, yapılandırma dosyasından ve paylaşılan OpenCode hizmetinden bağımsız olarak geri yükleme durumu ve tarayıcı depolaması. Bkz. [Masaüstü pencereleri ve veriler](desktop.md). |
 
-**İstatistikler**, yalnızca açılan klasörü değil, bağlı OpenCode hizmetinin tamamını (tüm projeler, bağımsız klonlar ve alt oturumlar) son 7, 30, 90 veya 365 gün için kapsar. Açık bir proje gerektirir ve sağlayıcı faturalarını veya abonelik haklarını değil, OpenCode'un kaydettiği token ve maliyetleri gösterir; yenileme sırasında daha önce kaydedilmiş toplamlar görünebilir. Plan kotaları **Kullanım** Durum bölümüne aittir.
+Açıkça belirtilmiş ve uygunluğu doğrulanmış sunucular salt okunur bir sağlayıcı/model kataloğu sunar. Ertelenen bölümler seçilebilir durumda kalır ve kısıtlamalarını açıklar; bu sunucu ayarlarını doğrudan sunucuda yönetin.
+
+**İstatistikler**, yalnızca açılan klasörü değil, ortak yerel OpenCode hizmetinin tamamını (tüm projeler, bağımsız klonlar ve alt oturumlar) son 7, 30, 90 veya 365 gün için kapsar. Açık bir proje gerektirir ve sağlayıcı faturalarını veya abonelik haklarını değil, OpenCode'un kaydettiği token ve maliyetleri gösterir; yenileme sırasında daha önce kaydedilmiş toplamlar görünebilir. Plan kotaları **Kullanım** Durum bölümüne aittir. **İstatistikler** açıkça belirtilmiş sunucularda kullanılamaz; ilgili bölüm bunun nedenini açıklar.
 
 Görüntü tercihlerinin değiştirilmesi OpenCode'u yeniden başlatmaz veya bir istemi yeniden oynatmaz. Yerel yapılandırma, hizmet bakımı ve kimlik bilgilerinin ayrı etkileri vardır: bkz. [OpenCode kurulumu](opencode.md), [Sağlayıcılar](providers.md) ve [Entegrasyonlar](integrations.md).
 
@@ -41,6 +45,8 @@ Sabitlenmiş bir paneli yeniden boyutlandırmak için iç kenarını sürükleyi
 Tanınan [entegrasyonların](integrations.md#integration-sections) da Durum bölümleri vardır. Aynı onay kutularıyla gizleyin; tüm Durum bölümlerini sürükleyerek veya Yukarı/Aşağı tuşlarıyla sıralayın. Görünürlük ve sıra yeniden yüklemelerde ve entegrasyon geçici olarak yokken korunur.
 
 Durum; belirteç bilgilerini, Yolo modunu, sağlayıcı Kullanımı, arka plan kabuklarını, MCP ve Eklentileri içerir. Görüşmenin bir [hedefi](conversations.md#goal) olduğu sürece bu bölümlerin üzerindeki bir hedef satırı onu gösterir; bu satır bir bölüm değildir, gizlenemez ve taşınamaz. Bir bölümün gizlenmesi, o bölümün hizmetini devre dışı bırakmaz veya izinleri iptal etmez. Dar düzenler, konuşmayı sıkıştırmak yerine artık sığmayan panelleri kapatır; orada açılan bir panel konuşmanın üzerinde yüzer ve bir yüzer panelin açılması diğerini kapatır.
+
+Yapılandırılmış bir OpenCode sunucusundaki bir proje için bu bölümler o sunucuyu okur. **Kullanım**, yerel API OpenCode Go kotalarını ve [Sağlayıcılar](providers.md#usage) bölümünde açıklanan kimlik bilgisi gerektirmeyen Zen tahminini gösterir; diğer sağlayıcılar kota göstermez. **Eklentiler** sunucunun eklentilerini durumlarıyla listeler; OpenCode sunucunun eklenti yapılandırmasını değiştirecek bir API sunmadığı için anahtarları salt okunur kalır. MCP sunucularına yine de bağlanılabilir veya bağlantıları kesilebilir. **Arka Plan Shell'leri** açılan klasör için sunucunun shell'lerini listeler ve durdurur.
 
 Yerleşik düzen proje değişikliği değil, pencere yerleşimidir. Uzantı onay kutuları farklıdır: yapılandırmayı kullanan tüm projelerde kodu etkinleştirir. **Sıfırla** uzantı onayını değiştirmez. Bkz. [Panel uzantıları](extensions.md).
 

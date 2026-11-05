@@ -8,6 +8,9 @@ import { readUsageCredentials } from "../../usage/native-credentials"
 import { getProviderUsage, resolveUsageProvider } from "../../usage/service"
 import { estimateOpenCodeFreeUsage, isOpenCodeFreeModel, openCodeFreeWindow } from "../../usage/opencode-free-estimate"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
+import { readJson } from "../../opencode/servers/remote-workspace"
+import type { ProviderUsageResponse } from "../../api-types"
 
 const UsageParamsSchema = z.object({ providerId: z.string().trim().min(1) })
 const UsageQuerySchema = z.object({
@@ -17,7 +20,8 @@ const UsageQuerySchema = z.object({
 
 export interface UsageRouteDeps {
   workspaceManager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "ownsLocation"
-    | "getSessionEnvironment" | "getServiceWslDistro" | "getHostPathForServicePath">
+    | "getSessionEnvironment" | "getServiceWslDistro" | "getHostPathForServicePath" | "requireWorkspaceCapability">
+    & Partial<Pick<WorkspaceManager, "isExplicitWorkspace">>
 }
 
 // opencode-claude and OpenCode's Claude Agent run Claude Code inside the daemon,
@@ -45,6 +49,11 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
       if (!params.success || !query.success) return reply.code(400).send({ error: "Invalid usage request" })
       const { instanceId, sessionId, modelId } = query.data
       const manager = deps.workspaceManager
+      try { manager.requireWorkspaceCapability(instanceId, "providerUsage") }
+      catch (error) {
+        if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
+        throw error
+      }
       const workspace = manager.get(instanceId)
       if (!workspace) return reply.code(404).send({ error: "Workspace not found" })
       const controller = new AbortController()
@@ -67,6 +76,20 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
           signal.throwIfAborted()
           connection.assertCurrent()
           const free = isOpenCodeFreeModel(params.data.providerId, modelId)
+          // prototype-1236: an explicit server publishes only its own quotas; its credentials are never read.
+          if (manager.isExplicitWorkspace?.(instanceId)) {
+            const usage = free ? await openCodeFreeUsage(connection, params.data.providerId, modelId, signal)
+              : await publishedServerUsage(connection, params.data.providerId, location.directory, modelId, signal)
+            const current = await connection.client.session.get({ sessionID: sessionId }, { signal })
+            connection.assertCurrent()
+            signal.throwIfAborted()
+            // Explicit descriptors are fresh snapshots; their frozen binding is the occurrence identity.
+            if (manager.get(instanceId)?.binding !== workspace.binding || readLocationRef(current.location).directory !== location.directory
+              || !await manager.ownsLocation(instanceId, readLocationRef(current.location), connection.client)) {
+              return reply.code(403).send({ error: "Session does not belong to workspace" })
+            }
+            return usage
+          }
           const provider = free ? null : resolveUsageProvider(params.data.providerId)
           const native = free ? await openCodeFreeUsage(connection, params.data.providerId, modelId, signal)
             : !provider || provider.id === "codex"
@@ -119,6 +142,25 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
       }
     },
   )
+}
+
+// prototype-1236: OpenCode Go meters the server publishes for its Console workspace; nothing else is supported.
+async function publishedServerUsage(connection: ServiceConnection, providerId: string, directory: string, modelId: string | undefined, signal: AbortSignal): Promise<ProviderUsageResponse> {
+  const base = { requestedProviderId: providerId, providerId: null, providerName: providerId, ...(modelId ? { modelId } : {}), windows: {}, fetchedAt: Date.now() }
+  const provider = resolveUsageProvider(providerId)
+  if (provider?.id !== "opencode-go") return { ...base, supported: false, configured: false, ok: false }
+  const named = { ...base, providerId: provider.id, providerName: provider.name }
+  const limits = await readJson(connection, "/api/experimental/usage/limits", {}, directory, signal).catch(() => undefined)
+  if (!limits) return { ...named, supported: true, configured: true, ok: false }
+  const go = limits.data?.go
+  if (!go) return { ...named, supported: true, configured: false, ok: false }
+  const windows: ProviderUsageResponse["windows"] = {}
+  for (const [label, seconds, meter] of [["5h", 18_000, go.rolling], ["weekly", 604_800, go.weekly], ["monthly", 2_592_000, go.monthly]] as const) {
+    if (!meter || typeof meter.percent !== "number") continue
+    const used = meter.limited ? 100 : Math.max(0, Math.min(100, meter.percent))
+    windows[label] = { usedPercent: used, remainingPercent: 100 - used, windowSeconds: seconds, resetAt: Number.isFinite(meter.resetsAt) ? meter.resetsAt : null }
+  }
+  return { ...named, supported: true, configured: true, ok: Object.keys(windows).length > 0, windows }
 }
 
 async function openCodeFreeUsage(connection: ServiceConnection, providerId: string, modelId: string | undefined, signal: AbortSignal) {

@@ -1,5 +1,9 @@
 # Authentication and security
 
+Selecting an attachment reads it on your device; sending the message transfers its bytes to the project's OpenCode server. The shared local service belongs to the CodeNomad execution host, which may differ from your device. Deferred-media reads cap the entire decompressed server response at 16 MiB before parsing, including errors. Overflow, cancellation or a retired project/connection fails the read. Image dimensions and decoded-image memory are managed by the browser; device uploads retain separate budgets.
+
+Internal explicit-server chat authorizes media before display or download. External image URLs, active SVG/HTML images and HTML media embeds are refused; downloads require your action and a failed read stays failed. The 8 MiB data-URI limit bounds encoded input separately from decoded image dimensions and device upload limits.
+
 Access to CodeNomad can execute work on the backend host through OpenCode. Treat server passwords, browser sessions and paired devices as powerful credentials. CodeNomad is not a multi-tenant execution sandbox.
 
 ## Choose how the server authenticates {#authentication}

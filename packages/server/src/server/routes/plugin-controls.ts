@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply } from "fastify"
 import { z } from "zod"
 import type { PluginControls } from "../../opencode/plugin-controls"
 import { PluginControlsError } from "../../opencode/plugin-controls"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 
 type PluginControlsApi = Pick<PluginControls, "read" | "mutate">
 
@@ -56,6 +57,7 @@ function invalidRequest(reply: FastifyReply) {
 }
 
 function handleError(error: unknown, workspaceId: string, logger: FastifyReply["log"], reply: FastifyReply) {
+  if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
   if (error instanceof PluginControlsError) {
     const status = error.kind === "not-found" ? 404
       : error.kind === "forbidden" ? 403

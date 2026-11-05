@@ -1,4 +1,5 @@
 import type { SettingsDoc } from "./yaml-doc-store"
+import { summarizeOpenCodeServers } from "../opencode/servers/registry"
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -6,6 +7,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function sanitizeServerOwner(value: SettingsDoc): SettingsDoc {
   const next: SettingsDoc = { ...value }
+  if ("opencodeServers" in next) next.opencodeServers = summarizeOpenCodeServers(next.opencodeServers)
   const speech = isPlainObject(next.speech) ? { ...next.speech } : null
 
   if (!speech) {
@@ -39,6 +41,7 @@ function sanitizeServerOwner(value: SettingsDoc): SettingsDoc {
 }
 
 export function sanitizeConfigOwner(owner: string, value: SettingsDoc): SettingsDoc {
+  if (owner === "*") return sanitizeConfigDoc(value)
   if (owner !== "server") {
     return value
   }

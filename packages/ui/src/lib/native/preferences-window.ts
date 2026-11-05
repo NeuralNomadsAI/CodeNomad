@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core"
 import { isElectronHost, isTauriHost, runtimeEnv } from "../runtime-env"
 import type { SettingsSectionId } from "../../stores/settings-screen"
 import { getLogger } from "../logger"
+import { isServerId } from "../project-identity"
 import { normalizeOpenerStartupStateResult, type OpenerStartupStateResult, type StartupStateCommand } from "./startup-state-command"
 
 const sections = new Set<SettingsSectionId>([
@@ -15,7 +16,8 @@ export interface NativePreferencesRequest {
   section: SettingsSectionId
   scrollTop?: number
   instanceId?: string
-  /** Opened folder on the CodeNomad backend host, separate from the native Location (WSL/worktrees). */
+  serverId?: string
+  /** Opened project folder, separate from the selected native Location (WSL/worktrees). */
   workspacePath?: string
   location?: LocationRef
 }
@@ -24,14 +26,25 @@ export function normalizeNativePreferencesRequest(value: unknown): NativePrefere
   if (typeof value === "string") return sections.has(value as SettingsSectionId) ? { section: value as SettingsSectionId } : null
   if (!value || typeof value !== "object") return null
   const candidate = value as Record<string, unknown>
+  if (Array.isArray(value) || Object.keys(candidate).some(key => !["section", "scrollTop", "instanceId", "serverId", "workspacePath", "location"].includes(key))) return null
+  if (Object.prototype.hasOwnProperty.call(candidate, "serverId") && !isServerId(candidate.serverId)) return null
   if (!sections.has(candidate.section as SettingsSectionId)) return null
+  const workspacePath = candidate.workspacePath
+  if (workspacePath !== undefined && workspacePath !== null
+    && (typeof workspacePath !== "string" || !workspacePath || workspacePath.length > 32768 || workspacePath.includes("\0"))) return null
   const location = candidate.location
+  if (location !== undefined && location !== null) {
+    if (typeof location !== "object" || Array.isArray(location)) return null
+    const value = location as Record<string, unknown>
+    if (Object.keys(value).some(key => !["directory", "workspaceID"].includes(key))
+      || typeof value.directory !== "string" || !value.directory || value.directory.length > 32768 || value.directory.includes("\0")) return null
+  }
   return {
     section: candidate.section as SettingsSectionId,
+    ...(isServerId(candidate.serverId) ? { serverId: candidate.serverId } : {}),
     ...(Number.isSafeInteger(candidate.scrollTop) && (candidate.scrollTop as number) >= 0 && (candidate.scrollTop as number) <= 10_000_000 ? { scrollTop: candidate.scrollTop as number } : {}),
     ...(typeof candidate.instanceId === "string" && candidate.instanceId ? { instanceId: candidate.instanceId } : {}),
-    ...(typeof candidate.workspacePath === "string" && candidate.workspacePath && candidate.workspacePath.length <= 32768 && !candidate.workspacePath.includes("\0")
-      ? { workspacePath: candidate.workspacePath } : {}),
+    ...(typeof workspacePath === "string" ? { workspacePath } : {}),
     ...(location && typeof location === "object" && typeof (location as LocationRef).directory === "string"
       ? { location: location as LocationRef }
       : {}),
@@ -40,25 +53,30 @@ export function normalizeNativePreferencesRequest(value: unknown): NativePrefere
 
 export function readPreferencesRequestFromUrl(url: string): NativePreferencesRequest | null {
   const params = new URL(url).searchParams
+  for (const key of ["preferences", "preferencesServerId", "preferencesInstanceId", "preferencesWorkspacePath", "preferencesDirectory", "preferencesWorkspaceId"]) {
+    if (params.getAll(key).length > 1) return null
+  }
   const section = params.get("preferences")
   if (!section || !sections.has(section as SettingsSectionId)) return null
   const instanceId = params.get("preferencesInstanceId") || undefined
-  const workspacePath = params.get("preferencesWorkspacePath") || undefined
+  const workspacePath = params.get("preferencesWorkspacePath")
   const directory = params.get("preferencesDirectory")
   const workspaceID = params.get("preferencesWorkspaceId") || undefined
-  return {
+  if (workspaceID && directory === null) return null
+  return normalizeNativePreferencesRequest({
     section: section as SettingsSectionId,
+    ...(params.has("preferencesServerId") ? { serverId: params.get("preferencesServerId") } : {}),
     ...(instanceId ? { instanceId } : {}),
-    ...(workspacePath ? { workspacePath } : {}),
+    ...(workspacePath !== null ? { workspacePath } : {}),
     ...(directory !== null ? { location: { directory, ...(workspaceID ? { workspaceID } : {}) } } : {}),
-  }
+  })
 }
 
 export async function openNativePreferences(request: NativePreferencesRequest, toggle = false, resume = false): Promise<void> {
   if (runtimeEnv.host === "electron") {
     const open = window.electronAPI?.openPreferences
     if (!open) throw new Error("Native Preferences is unavailable")
-    await open(request.section, { instanceId: request.instanceId, workspacePath: request.workspacePath, location: request.location }, toggle, resume)
+    await open(request.section, { ...(request.serverId !== undefined ? { serverId: request.serverId } : {}), instanceId: request.instanceId, workspacePath: request.workspacePath, location: request.location }, toggle, resume)
     return
   }
   if (runtimeEnv.host === "tauri") {

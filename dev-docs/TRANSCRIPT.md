@@ -2,15 +2,57 @@
 
 Message content visibility and presets, token lines, tool renderers, native session lifecycle signals and transcript re-projection.
 
+Session inventory and restored ancestry use the exact explicit-Location contract in
+[PROJECTS.md](PROJECTS.md). Inventory pagination and its opaque native cursors have
+their own traversal owner, separate from transcript windows and enriched history
+queries ([SESSION_HISTORY_NAVIGATION.md](SESSION_HISTORY_NAVIGATION.md)).
+Native move events update held explicit-session placement before projection, so a
+moved-out session leaves the displayed exact inventory even while its historical
+pages remain unloaded. Cold native-event metadata reads share the inventory's
+captured client, binding and native/connection-generation authority; returned
+identity and explicit Location are validated before publication or dependent
+model/status reconciliation.
+Model reconciliation retains that authority through its admission queue and its
+dependent metadata read. Cold status/retry continuations follow native lifecycle
+order while metadata hydration preserves concurrently published runtime state.
+Shared metadata request ordering distinguishes a row published by an earlier
+inventory from newer native/local edits, including a rename during cold hydration.
+
+Internal explicit-server transcript loads use bounded native message pages, with
+the window's originating order and captured request authority kept in memory.
+Every fetched explicit page merges changed resident native rows through the shared
+row-snapshot merge; latest pages also retain new live rows, while historical pages
+keep their own membership. Final normalization follows dependent model reads using
+the original pre-HTTP snapshot. Native empty replies are checked before live rows
+join them. Window commits preserve the current session metadata
+provenance through `withSession`. Empty/failed historical probes retain resident
+content and anchors. Cold nonresident anchors offer explicit latest-page recovery;
+the existing saved position stays intact until that action succeeds. Navigation
+and enriched-reader admission are specified in
+[SESSION_HISTORY_NAVIGATION.md](SESSION_HISTORY_NAVIGATION.md).
+
+Explicit transcripts present one polite loading/error region and destination
+recovery outside the virtualized header. Technical cleanup retains its capability
+guard. Receipt readers stay outside explicit transcript mounts; live-only request
+scope is available through the dock's source disclosure.
+
 ## Agent conventions
 
 - Partial live projections preserve omitted resident message runs beside their preceding shared row, with leading history before the snapshot and pending optimistic sends at the tail. Shared rows follow the incoming native order. HTTP pages can contain later steps whose events are still in transit; message IDs and wall-clock timestamps remain identity/display data rather than transcript sort keys.
+
+- Deferred-media reads construct a request-local official Promise client around the captured connection's authenticated fetch. `session-media-fetch.ts` bounds each complete decompressed HTTP envelope, including metadata and error bodies, at `MESSAGE_LIMIT` (16 MiB) before SDK text/JSON parsing. Overflow, the 30-second request deadline, socket close and workspace/connection retirement cancel the upstream body and release its reader. Shared embedded-asset validation precedes digest/base64 decoding; explicit serving additionally requires the UI's passive-raster MIME qualification. Native content, exact URI digests, session placement and undo-boundary authority remain separate checks.
+
+- Native chat mutations capture instance client, binding, native generation and explicit connection generation before queueing or any await. `captureSessionRequestAuthority` additionally retains the selected session's exact Location through instructions, agent/model writes and acknowledgement. Every dependent dispatch and metadata/optimistic publication rechecks that authority; queued work rejects after replacement and uncertain writes stay unreplayed. Native forks validate returned explicit placement before publication. UI continuations retain their initiating view through latest-page reads, queued edits and fork activation. Admission settlement keeps newer session metadata provenance intact through `withSession`.
+
+- Native cancellation and undo acknowledgements retain separate authority for their local draft continuation. Prefill requires the captured text revision, attachment state and source view; focus restoration separately requires unchanged user focus. Changed drafts remain intact. Known queued payloads offer explicit recovery in their open source composer, including after an uncertain cancellation acknowledgement. Late action errors use source-local feedback after authority or outcome uncertainty, preserving other conversations and external focus. A settled side-question controller releases only its own transient state, independently of permission to publish its response. See [COMPOSER.md](COMPOSER.md).
 
 - The message-content popup and Chat settings share `components/transcript-visibility.ts` and the semantic icons from `components/message-content-icons.ts`; tool presentation metadata lives independently of renderers in `components/tool-call/tool-presentation.ts`. Popup styles live in `styles/components/transcript-filters.css`. Popup rows show a requested state at once and keep it until the save carrying it settles. Each save re-renders the transcript, so a drag sweep (`dev-docs/UI_CONVENTIONS.md`) saves its rows once, on release (`afterSweep`). Saves run in order, each built from the preferences the previous one returned; a batch of rows is sealed as it joins the queue, so a later click never jumps ahead of a preset change nor rides along with a sweep still held.
 - Transcript presets are Nothing (hides every row, including all tools), Minimal, Balanced and Everything (`TRANSCRIPT_PRESETS`); saved Detailed choices load as Custom with their effective tool column. Chat settings shows the four as buttons; the popup shows the same choice as a native select under its title, where a disabled Custom entry appears only after a manual row change. Escape closes an open list before the popup. Preset names and descriptions are localized in every locale; covered by `tests/browser/transcript-presets.test.ts`.
 - Status Tokens are independent of message token visibility. A collapsed section uses the non-interactive `renderSummary` slot for one ellipsized session input/output/cost line; expanded content shows session metrics then descendant-inclusive totals as separate wrapping groups. Keep this layout in `styles/panels/status-tokens.css`.
 - Message token disclosures keep one row in both states: collapsed shows the input/output/cost summary chips on a single ellipsized line; expanded swaps the same row to all six chips beside the chevron, which wrap onto further lines when narrow instead of truncating (expansion exists to read every value). Keep the metric renderer local and chip/row styles in `styles/messaging/message-usage.css`.
-- Tool-result images retain native `state.content` and render through the shared `components/tool-call/output-images.tsx` surface, including MCP and specialized tools. Keep image bytes out of text projections (copy/search/speech); image styles live in `styles/messaging/tool-call/images.css`.
+- Tool-result files retain native `state.content` and render through the shared `components/tool-call/output-images.tsx` surface, including MCP and specialized tools. Images use the shared image presentation; other files keep a label and an authorized explicit download action. Keep file bytes out of text projections (copy/search/speech); image styles live in `styles/messaging/tool-call/images.css`.
+- Explicit content uses `lib/media-policy.ts` before source assignment or download. Its owner comes from the rendering instance/session through `createContentMediaPolicy`, including each nested tool's own session. Supported raster data URIs use the shared lightweight embedded-asset validator and 8 MiB complete-URI ceiling. Native media references require canonical segments, the current media capability and request authority, and an exact held message/part/content-index/digest match in that session. User file bytes remain native parts; valid non-image embedded files offer download only. Source refusal keeps the native content and the shared localized image-unavailable fallback.
+- `lib/markdown-html-policy.ts` filters explicit HTML in an inert template immediately before publication, including raw tool HTML, malformed HTML, Markdown-generated images, local/global cache hits and owner changes. Raw HTML uses the shared tag whitelist; the publication profile additionally preserves generated code actions and passive Shiki/KaTeX geometry/styles. Every image is reauthorized; resource-loading HTML, handlers, source sets and resource-bearing CSS/SVG are removed. Explicit links retain user-initiated HTTP(S)/mailto navigation; host preview conversion and decoration are scoped to local content. Attachment thumbnails, hover previews and downloads use the same policy; async downloads retain source/session authority through publication and failures show locally.
 - Transcript pages carry large tool images by reference: the UI's native message list reads (`lib/sdk-manager.ts`) and history windows (`fetchHistoryWindow`) send the `x-codenomad-media: deferred` opt-in (`server/src/opencode/session-media-contract.ts`), and the server replaces each tool image data URI over `INLINE_MEDIA_LIMIT` (32 KiB) with a `/api/workspaces/<id>/session-media/<session>/<message>/<part>/<index>/<sha256>` path (`opencode/session-media.ts`). `toolImageSource` resolves that path on the API base, so the lazy `<img>` loads only shown images; `routes/session-media.ts` serves the bytes of the owned session's native message, pinned by the digest and refused at or after an undo boundary, as an immutable sandboxed image. Single-message reads (`session.message.get`: pruning revisions, previews), live events, user attachments and requests without the opt-in stay whole, so revisions hash native content.
 - Markdown images of local file paths (`C:/…`, `file://`, absolute or relative POSIX paths) cannot load in the renderer. `lib/markdown.ts` renders them as their alt text in a `span.markdown-local-image`, and `components/markdown.tsx` swaps the label for an `<img>` with the source of a completed tool image of the same path already in the session's loaded messages (`lib/markdown-local-images.ts`: the image's file name or its single-image tool's `filePath`; Windows paths compare case-insensitively, a relative path must match one known path's end). Only blocks containing such a label read and track the session's tool parts. Never fetch local paths through a backend route for this; an unmatched path keeps its alt text.
 - Code Mode reads native `metadata.toolCalls` in `tool-call/renderers/execute-data.ts`; keep call-list styling in `styles/messaging/tool-call/execute.css`, with native image/output ownership in the shared tool shell.

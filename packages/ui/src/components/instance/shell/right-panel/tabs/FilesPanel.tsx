@@ -20,6 +20,7 @@ import type { GitChangeListItem, GitChangeSection } from "../types"
 import type { useWorkspaceTree } from "../useWorkspaceTree"
 import { WorkspaceTree } from "../components/WorkspaceTree"
 import type { FilesPanelMode } from "../files-panel-state"
+import { remoteReadErrorText } from "../../../../../lib/remote-read-error"
 
 interface FilesPanelProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -39,6 +40,8 @@ interface FilesPanelProps {
   onWorktreeChange: (slug: string) => void
   onOpenFile: (file: Pick<FilePreviewTarget, "kind" | "path" | "originalPath" | "scope" | "commit" | "subject">) => void
   canOpenFile: boolean
+  /** prototype-1236: explicit server: working changes only, no history, index, commit or init. */
+  readOnly?: boolean
 }
 
 const FilesPanel: Component<FilesPanelProps> = props => {
@@ -67,7 +70,7 @@ const FilesPanel: Component<FilesPanelProps> = props => {
   const commits = createMemo(() => (props.history.page()?.commits ?? []).filter(commit =>
     `${commit.subject} ${commit.author} ${commit.id}`.toLowerCase().includes(filter().toLowerCase())))
   const handleStageDragEnd = ({ draggable, droppable }: SolidDndDragEvent) => {
-    if (!droppable) return
+    if (!droppable || props.readOnly) return
     const target = String(droppable.id)
     if (target !== "staged" && target !== "unstaged") return
     const item = items().find(entry => entry.id === String(draggable.id))
@@ -76,7 +79,8 @@ const FilesPanel: Component<FilesPanelProps> = props => {
     else props.git.unstageGitFile(item)
   }
   const loading = () => props.mode === "workspace" ? props.tree.busy().size > 0 : props.mode === "history" ? props.history.loading() || props.history.detailLoading() : props.git.gitStatusLoading()
-  const error = () => props.mode === "workspace" || !props.gitAvailable ? null : props.mode === "history" ? props.history.error() : props.git.gitStatusError()
+  const rawError = () => props.mode === "workspace" || !props.gitAvailable ? null : props.mode === "history" ? props.history.error() : props.git.gitStatusError()
+  const error = () => { const value = rawError(); return value && remoteReadErrorText(value, props.t) }
   const basename = (path: string) => path.replace(/\\/g, "/").split("/").pop() || path
   const date = (value: string) => new Date(value).toLocaleDateString(document.documentElement.lang || undefined, { month: "short", day: "numeric" })
 
@@ -100,7 +104,7 @@ const FilesPanel: Component<FilesPanelProps> = props => {
       <div class="git-panel-switch" role="group" aria-label={props.t("instanceShell.rightPanel.tabs.files")}>
         <button aria-pressed={props.mode === "workspace"} onClick={() => props.onModeChange("workspace")}>{props.t("filesPanel.workspace")}</button>
         <button aria-pressed={props.mode === "changes"} onClick={() => props.onModeChange("changes")}>{props.t("gitPanel.changes")}</button>
-        <button aria-pressed={props.mode === "history"} onClick={() => props.onModeChange("history")}>{props.t("filesPanel.commits")}</button>
+        <Show when={!props.readOnly}><button aria-pressed={props.mode === "history"} onClick={() => props.onModeChange("history")}>{props.t("filesPanel.commits")}</button></Show>
       </div>
       <Show when={props.gitAvailable && props.mode === "changes" && props.git.gitStatusEntries()}>
         <span class="git-panel-count">{props.t("gitPanel.files", { count: props.git.gitStatusEntries()?.length ?? 0 })}</span>
@@ -116,11 +120,11 @@ const FilesPanel: Component<FilesPanelProps> = props => {
     <Show when={!props.gitAvailable && props.mode !== "workspace"}>
       <div class="git-init-empty">
         <p>{props.t("filesPanel.gitInit.notRepository")}</p>
-        <button type="button" class="git-change-commit-button git-init-button" disabled={props.gitInit.pending()} aria-busy={props.gitInit.pending()}
+        <Show when={!props.readOnly}><button type="button" class="git-change-commit-button git-init-button" disabled={props.gitInit.pending()} aria-busy={props.gitInit.pending()}
           title={props.directory} onClick={() => void props.gitInit.initialize()}>
           <GitBranch size={14} aria-hidden="true" />
           {props.t(props.gitInit.pending() ? "filesPanel.gitInit.pending" : "filesPanel.gitInit.action")}
-        </button>
+        </button></Show>
       </div>
     </Show>
     <div ref={historyBody} class="git-panel-body" style={{ display: props.gitAvailable && props.mode === "history" ? undefined : "none" }}>
@@ -162,8 +166,8 @@ const FilesPanel: Component<FilesPanelProps> = props => {
       <DragDropProvider collisionDetector={closestCenter} onDragEnd={handleStageDragEnd}>
         <DragDropSensors>
           <Show when={items().length === 0}><p class="p-3 text-xs text-secondary">{props.git.gitStatusLoading() ? props.t("instanceInfo.loading") : props.t("instanceShell.gitChanges.empty")}</p></Show>
-          <For each={["staged", "unstaged"] as const}>{section =>
-            <ChangeSection t={props.t} section={section}
+          <For each={props.readOnly ? ["unstaged"] as const : ["staged", "unstaged"] as const}>{section =>
+            <ChangeSection t={props.t} section={section} readOnly={props.readOnly}
               git={props.git} canOpenFile={props.canOpenFile} onOpenFile={togglePreview} previewActive={previewActive}>
               <Show when={section === "staged"}>
                 <div class="git-change-commit-box" role="group" aria-label={props.t("gitPanel.actions")}>
@@ -199,6 +203,7 @@ const ChangeSection: Component<{
   onOpenFile: FilesPanelProps["onOpenFile"]
   previewActive: (file: Parameters<FilesPanelProps["onOpenFile"]>[0]) => boolean
   children?: JSX.Element
+  readOnly?: boolean
 }> = sectionProps => {
   const droppable = createDroppable(sectionProps.section)
   const [open, setOpen] = createSignal(true)
@@ -226,7 +231,7 @@ const ChangeSection: Component<{
     </button>
     <div ref={content} id={contentId} hidden={!open()}>
       {sectionProps.children}
-      <For each={rows().rows}>{item => <GitChangeRow t={sectionProps.t} item={item} git={sectionProps.git}
+      <For each={rows().rows}>{item => <GitChangeRow t={sectionProps.t} item={item} git={sectionProps.git} readOnly={sectionProps.readOnly}
         canOpenFile={sectionProps.canOpenFile} onOpenFile={sectionProps.onOpenFile} previewActive={sectionProps.previewActive} />}</For>
       <Show when={rows().hidden > 0}>
         <div class="git-change-hidden-rows">
@@ -249,6 +254,7 @@ const GitChangeRow: Component<{
   canOpenFile: boolean
   onOpenFile: FilesPanelProps["onOpenFile"]
   previewActive: (file: Parameters<FilesPanelProps["onOpenFile"]>[0]) => boolean
+  readOnly?: boolean
 }> = rowProps => {
   const draggable = createDraggable(rowProps.item.id)
   const staged = () => rowProps.item.section === "staged"
@@ -265,8 +271,8 @@ const GitChangeRow: Component<{
   const actions: ActionOverflowMenuItem[] = [
     { key: "preview", get label() { return `${rowProps.t("filesPanel.viewer")} · ${rowProps.item.path}` }, icon: <Eye size={14} />,
       get checked() { return rowProps.previewActive(target()) }, get disabled() { return !rowProps.canOpenFile }, onSelect: () => rowProps.onOpenFile(target()) },
-    { key: "stage", get label() { return `${stageLabel()} · ${rowProps.item.path}` },
-      get icon() { return <Show when={staged()} fallback={<Plus size={14} />}><Minus size={14} /></Show> }, onSelect: toggleStage },
+    ...(rowProps.readOnly ? [] : [{ key: "stage", get label() { return `${stageLabel()} · ${rowProps.item.path}` },
+      get icon() { return <Show when={staged()} fallback={<Plus size={14} />}><Minus size={14} /></Show> }, onSelect: toggleStage }]),
   ]
   const selected = () => rowProps.git.isGitItemSelected(rowProps.item.id)
   // A focused row that leaves the list (moved to the other section, removed) hands focus on.

@@ -1,5 +1,7 @@
 # Native integrations
 
+The installation, application attachment and configuration controls below apply to shared-local OpenCode projects. Explicit servers retain read-only Plugins inventory and integration status; attachment and installation controls stay unavailable there.
+
 CodeNomad exposes OpenCode's native MCP connections, plugin activation, skills and custom commands. These run on the execution host. They are separate from sandboxed [panel Extensions](extensions.md) and [SideCars](browser-sidecars.md).
 
 ## Choose the right control {#integration-scopes}

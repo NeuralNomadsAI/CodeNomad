@@ -1,5 +1,23 @@
 use super::*;
 
+#[test]
+fn attachments_registry_receipt_retires_on_add_remove_and_same_id_reuse() {
+    let mut registry = Registry::default();
+    let empty = registry.attachment_epoch.clone();
+    let first = registry.add(id(1), false).unwrap();
+    assert_ne!(registry.attachment_epoch, empty);
+    let live = registry.attachment_epoch.clone();
+    registry.remove(&first.label).unwrap();
+    registry.add(id(1), true).unwrap();
+    assert_ne!(registry.attachment_epoch, live);
+    assert_ne!(registry.attachment_epoch, empty);
+    let reused = registry.attachment_epoch.clone();
+    let hidden = registry.add_window(id(2), false, true).unwrap();
+    assert_ne!(registry.attachment_epoch, reused);
+    assert_eq!(registry.mru_label(), Some(first.label));
+    assert!(hidden.connect_only);
+}
+
 fn id(value: u8) -> String {
     format!("00000000-0000-4000-8000-{value:012}")
 }

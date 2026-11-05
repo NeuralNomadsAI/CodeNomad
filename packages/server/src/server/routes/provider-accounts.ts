@@ -3,9 +3,10 @@ import { z } from "zod"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import type { ProviderAccountsService } from "../../provider-accounts/service"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 
 type Deps = {
-  workspaceManager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "getServiceDirectoryForPath" | "ownsLocation" | "getWorktreeIdentityForPath">
+  workspaceManager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "getServiceDirectoryForPath" | "ownsLocation" | "getWorktreeIdentityForPath" | "requireWorkspaceCapability">
   worktreeDeletionFence: WorktreeDeletionFence
   accounts: ProviderAccountsService
 }
@@ -22,7 +23,13 @@ export function registerProviderAccountsRoutes(app: FastifyInstance, deps: Deps)
       const input = method === "GET" ? readSchema.safeParse(request.query) : writeSchema.safeParse(request.body)
       if (!params.success || !input.success) return reply.code(400).send({ error: "Invalid provider accounts request" })
       const { id, integrationID } = params.data
-      const manager = deps.workspaceManager, workspace = manager.get(id)
+      const manager = deps.workspaceManager
+      try { manager.requireWorkspaceCapability(id, "executionSettings") }
+      catch (error) {
+        if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
+        throw error
+      }
+      const workspace = manager.get(id)
       if (!workspace) return reply.code(404).send({ error: "Workspace not found" })
       const controller = new AbortController()
       const close = () => controller.abort()

@@ -1,4 +1,4 @@
-import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, type Accessor, type Component } from "solid-js"
+import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, onCleanup, onMount, type Accessor, type Component } from "solid-js"
 import {
   DragDropProvider,
   DragDropSensors,
@@ -30,10 +30,12 @@ import {
 import { createCoreRightPanelRuntime } from "./core-runtime"
 import { createMissionsRightPanelModule } from "./missions-plugin"
 import { FILES_PANEL_MIGRATION_KEY, mergeFilesPanelCustomization } from "./files-panel-state"
-import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
+import { CORE_STATUS_SECTION_ITEMS, statusSectionAvailable } from "./tabs/status-sections"
 import { useI18n } from "../../../../lib/i18n"
 import { useTheme } from "../../../../lib/theme"
-import { ExtensionPanel } from "../../../panel-extensions/extension-panel"
+import { ExtensionPanel, extensionProjectFeature } from "../../../panel-extensions/extension-panel"
+import { getProjectAvailability } from "../../../../stores/project-capability"
+import { getOpenCodeInstanceGeneration } from "../../../../stores/opencode-data"
 import { usePanelExtensions } from "../../../panel-extensions/use-panel-extensions"
 import { RightPanelCustomizationPopover } from "./RightPanelCustomizationPopover"
 import { createIntegrationStatusModule } from "./integration-status-module"
@@ -106,6 +108,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const extensions = usePanelExtensions(() => props.instanceId, props.isActive)
   const savedTab = readStoredRightPanelTab("files")
   const [rightPanelTab, setRightPanelTab] = createSignal<RightPanelTab>(savedTab === "git-changes" ? "files" : savedTab)
+  let admissionFallback: RightPanelTab | undefined
   const defaultStatusSectionIds = CORE_STATUS_SECTION_ITEMS.map((section) => section.id)
   const [rightPanelExpandedItems, setRightPanelExpandedItems] = createSignal<string[]>(defaultStatusSectionIds)
   const [rightPanelCustomizationOpen, setRightPanelCustomizationOpen] = createSignal(false)
@@ -121,9 +124,18 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const tabGroupId = `right-panel-${createUniqueId()}`
   const tabId = (id: string) => `${tabGroupId}-tab-${id}`
   const tabPanelId = (id: string) => `${tabGroupId}-panel-${id}`
+  let contentRoot: HTMLDivElement | undefined, lastFocused: HTMLElement | undefined
+  onMount(() => {
+    const focus = (event: FocusEvent) => { lastFocused = contentRoot?.contains(event.target as Node) ? event.target as HTMLElement : undefined }
+    const pointer = (event: PointerEvent) => { if (!contentRoot?.contains(event.target as Node)) lastFocused = undefined }
+    document.addEventListener("focusin", focus, true)
+    document.addEventListener("pointerdown", pointer, true)
+    onCleanup(() => { document.removeEventListener("focusin", focus, true); document.removeEventListener("pointerdown", pointer, true) })
+  })
 
   createEffect(() => {
-    writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, rightPanelTab())
+    const tab = rightPanelTab()
+    if (tab !== admissionFallback) writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, tab)
   })
 
   const handleAccordionChange = (values: string[]) => {
@@ -171,7 +183,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     if (!target) return
 
     event.preventDefault()
-    setRightPanelTab(target.id)
+    selectRightPanelTab(target.id)
     queueMicrotask(() => document.getElementById(tabId(target.id))?.focus())
   }
 
@@ -227,19 +239,25 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const extraStatusContent = createMemo(() => rightPanelModules().flatMap(module => module.renderStatusExtras ? [module.renderStatusExtras] : []), [],
     { equals: (left, right) => left.length === right.length && left.every((item, index) => item === right[index]) })
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
+  const tabAvailable = (tab: RightPanelTabModule) => {
+    if (tab.id === "files") return getProjectAvailability(props.instanceId, "files").allowed
+    if (tab.id === "missions") return getProjectAvailability(props.instanceId, "missions").allowed
+    const entry = extensionForTab(tab.id), feature = entry && extensionProjectFeature(entry)
+    return !feature || getProjectAvailability(props.instanceId, feature).allowed
+  }
   const visibleRightPanelTabs = createMemo(() =>
     applyRightPanelItemCustomization(
-      allRightPanelTabs().filter(tab => extensionForTab(tab.id)?.enabled ?? true),
+      allRightPanelTabs().filter(tab => tabAvailable(tab) && (extensionForTab(tab.id)?.enabled ?? true)),
       rightPanelCustomization().tabOrder,
       // Addons have one profile-wide activation, not a second per-window visibility gate.
       rightPanelCustomization().hiddenTabIds.filter(id => !id.startsWith("extension:")),
     ),
   )
-  const orderedRightPanelTabs = createMemo(() => applyRightPanelItemCustomization(allRightPanelTabs(), rightPanelCustomization().tabOrder, []))
+  const orderedRightPanelTabs = createMemo(() => applyRightPanelItemCustomization(allRightPanelTabs().filter(tab => extensionForTab(tab.id) || tabAvailable(tab)), rightPanelCustomization().tabOrder, []))
   // Same sections, same array: Status keeps its rows mounted across unrelated module updates.
   const extraStatusSections = createMemo(() => collectRightPanelItems<RightPanelSectionModule>(rightPanelModules(), "statusSections"), [],
     { equals: (left, right) => left.length === right.length && left.every((item, index) => item === right[index]) })
-  const allStatusSections = createMemo<RightPanelItem[]>(() => [...CORE_STATUS_SECTION_ITEMS, ...extraStatusSections()])
+  const allStatusSections = createMemo<RightPanelItem[]>(() => [...CORE_STATUS_SECTION_ITEMS, ...extraStatusSections()].filter(section => statusSectionAvailable(props.instanceId, section.id)))
   const orderedStatusSections = createMemo(() => applyRightPanelItemCustomization(allStatusSections(), rightPanelCustomization().statusSectionOrder, []))
   const visibleStatusSections = createMemo(() =>
     applyRightPanelItemCustomization(
@@ -249,16 +267,34 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     ),
   )
   const activeRightPanelTab = createMemo(() => visibleRightPanelTabs().find((tab) => tab.id === rightPanelTab()) ?? visibleRightPanelTabs()[0])
+  function selectRightPanelTab(id: RightPanelTab) {
+    const tab = allRightPanelTabs().find(tab => tab.id === id)
+    if (!tab || !tabAvailable(tab)) return
+    const unchanged = rightPanelTab() === id
+    admissionFallback = undefined
+    setRightPanelTab(id)
+    if (unchanged) writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, id)
+  }
 
   createEffect(() => {
     const active = activeRightPanelTab()
+    // Admission may remove a focused reader without changing the selected tab.
+    getOpenCodeInstanceGeneration(props.instanceId)
+    getProjectAvailability(props.instanceId, "executionSettings")
     if (active && active.id !== rightPanelTab()) {
+      const previous = allRightPanelTabs().find(tab => tab.id === rightPanelTab())
+      admissionFallback = previous && !tabAvailable(previous) ? active.id : undefined
       setRightPanelTab(active.id)
     }
+    const focused = lastFocused
+    queueMicrotask(() => {
+      if (active && props.isActive() && contentRoot?.isConnected && focused && !focused.isConnected
+        && document.hasFocus() && document.activeElement === document.body) document.getElementById(tabId(active.id))?.focus({ preventScroll: true })
+    })
   })
 
   return (
-    <div id={props.panelId} class="relative flex flex-col h-full" ref={props.setContentEl}>
+    <div id={props.panelId} class="relative flex flex-col h-full" ref={element => { contentRoot = element; props.setContentEl(element) }}>
       <div class="panel-header right-panel-tab-bar">
         <div class="tab-container">
           <div class="panel-header-actions tab-strip-shortcuts">
@@ -290,7 +326,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                             label={tab.label ?? props.t(tab.labelKey)}
                             dragTitle={props.t("instanceShell.rightPanel.customize.dragToReorder")}
                             tabIndex={rightPanelTab() === tab.id ? 0 : -1}
-                            onSelect={() => setRightPanelTab(tab.id)}
+                            onSelect={() => selectRightPanelTab(tab.id)}
                             onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
                           />
                         )}

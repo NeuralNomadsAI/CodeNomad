@@ -1,5 +1,9 @@
 # Kimlik doğrulama ve güvenlik
 
+Ek seçimi dosyayı cihazınızda okur; mesajı göndermek baytları projenin OpenCode sunucusuna aktarır. Paylaşılan yerel hizmet, cihazınızdan farklı olabilen CodeNomad yürütme ana makinesine aittir. Ertelenen medya okumaları, hatalar dahil açılmış sunucu yanıtının tamamını ayrıştırmadan önce 16 MiB ile sınırlar. Aşım, iptal veya proje/bağlantı yetkisinin kaldırılması okumayı başarısız kılar. Görsel boyutları ve çözümlenen görsellerin belleği tarayıcı tarafından yönetilir; cihazdan yüklemelerin kendi bütçeleri korunur.
+
+Açıkça yapılandırılmış sunucuların dahili sohbeti, gösterim veya indirme öncesinde medyayı doğrular. Harici resim URL’leri, etkin SVG/HTML resimleri ve HTML medya gömmeleri reddedilir; indirmeler sizin işleminizi gerektirir ve başarısız okuma başarısız kalır. Veri URI’si başına 8 MiB sınırı, kodlanmış girdiyi çözümlenmiş resim boyutlarından ve cihaz yükleme sınırlarından ayrı sınırlar.
+
 CodeNomad erişimi, OpenCode aracılığıyla arka uç ana bilgisayarında iş yürütmeye olanak tanır. Sunucu parolalarını, tarayıcı oturumlarını ve eşleştirilmiş cihazları güçlü kimlik bilgileri olarak değerlendirin. CodeNomad çok kiracılı bir yürütme korumalı alanı değildir.
 
 ## Sunucunun kimlik doğrulama yöntemini seçin {#authentication}

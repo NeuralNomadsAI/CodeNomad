@@ -200,6 +200,7 @@ export class TemporaryWorkspaces {
   private requireTemporary(workspaceId: string) {
     const workspace = this.options.workspaceManager.get(workspaceId)
     if (!workspace) throw new TemporaryWorkspaceError("temporary_not_found", "Workspace not found", 404)
+    this.options.workspaceManager.requireWorkspaceCapability(workspaceId, "worktrees")
     if (!this.options.registry.has(workspace.path)) {
       throw new TemporaryWorkspaceError("temporary_not_temporary", "This workspace is not temporary", 400)
     }
@@ -223,7 +224,9 @@ export class TemporaryWorkspaces {
   async discard(workspaceId: string, options: { onlyIfEmpty?: boolean } = {}): Promise<void> {
     const manager = this.options.workspaceManager
     const workspace = this.requireTemporary(workspaceId)
-    if (manager.list().some((other) => other.id !== workspaceId && this.options.registry.sameFolder(other.path, workspace.path))) {
+    if (manager.list().some((other) => other.id !== workspaceId
+      && (other.binding?.serverId ?? "local-shared") === "local-shared"
+      && this.options.registry.sameFolder(other.path, workspace.path))) {
       throw new TemporaryWorkspaceError("temporary_open_elsewhere", "This temporary folder is open in another tab", 409)
     }
     const serviceDirectory = manager.getServiceDirectory(workspaceId) ?? workspace.path

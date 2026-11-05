@@ -1,3 +1,5 @@
+import { nativeStdinFramer } from "./native-response"
+
 type ShutdownLogger = Pick<import("./logger").Logger, "info" | "warn" | "error">
 type ShutdownOperation = () => void | Promise<void>
 
@@ -28,19 +30,17 @@ export function installShutdownStdinHandler(
   source: ShutdownStdinSource,
   shutdown: (signal: ServerShutdownTrigger) => Promise<void>,
   handleLine?: (line: string) => boolean,
+  onOverflow?: (id: string) => void,
 ): void {
-  let buffer = ""
   let requested = false
+  let shutdownRequested = false
+  const frame = nativeStdinFramer(line => {
+    if (line.trim() === STDIN_SHUTDOWN_COMMAND) shutdownRequested = true
+    else handleLine?.(line)
+  }, onOverflow)
   const onData = (chunk: Buffer | string) => {
     if (requested) return
-    buffer += chunk.toString()
-    const lines = buffer.split(/\r?\n/)
-    buffer = lines.pop() ?? ""
-    let shutdownRequested = false
-    for (const line of lines) {
-      if (line.trim() === STDIN_SHUTDOWN_COMMAND) shutdownRequested = true
-      else handleLine?.(line)
-    }
+    frame(chunk)
     if (!shutdownRequested) return
 
     requested = true

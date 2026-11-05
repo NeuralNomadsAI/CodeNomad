@@ -15,6 +15,7 @@ await withProductRuntime(process.argv[2], async (fixture) => {
 }, async ({ client, root, connection }) => {
   await client.location.get({ location: { directory: root } })
   const manager = {
+    requireWorkspaceCapability: () => new AbortController().signal,
     get: () => ({}), getSharedServiceConnection: async () => connection,
     getServiceDirectoryForPath: async (_id, directory) => directory === root ? root : undefined,
     ownsLocation: async (_id, location) => location.directory === root,

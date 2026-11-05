@@ -1,9 +1,10 @@
-import { For, Show, createEffect, createSignal, onCleanup, untrack } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import type { PermissionReceipt } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
 import { useI18n } from "../lib/i18n"
+import { isExplicitHistory } from "../stores/session-history-capability"
 import {
   acquirePermissionReceipts, cachedPermissionReceipts, invalidatePermissionReceipts, ownsPermissionReceipt,
   permissionReceiptGeneration, permissionReceiptKey, rememberPermissionReceipts, type PermissionReceiptSnapshot,
@@ -20,6 +21,7 @@ interface PermissionReceiptsProps {
 // copy, search or speech projections.
 export default function PermissionReceipts(props: PermissionReceiptsProps) {
   const { t } = useI18n()
+  const allowed = createMemo(() => !isExplicitHistory(props.instanceId))
   const [state, setState] = createStore<{ receipts: PermissionReceipt[] }>({ receipts: [] })
   const [busy, setBusy] = createSignal(false)
   const [failed, setFailed] = createSignal(false)
@@ -33,7 +35,7 @@ export default function PermissionReceipts(props: PermissionReceiptsProps) {
     setFailed(false)
     setBusy(false)
     read = () => {}
-    if (!active || !instanceId || !sessionId || sessionId === "__no_session_draft__") return
+    if (!allowed() || !active || !instanceId || !sessionId || sessionId === "__no_session_draft__") return
 
     const controller = new AbortController()
     let disposed = false
@@ -51,7 +53,7 @@ export default function PermissionReceipts(props: PermissionReceiptsProps) {
     }
 
     const load = async (more = false) => {
-      if (disposed) return
+      if (disposed || !allowed()) return
       if (running) {
         if (!more) trailing = true
         return
@@ -122,7 +124,7 @@ export default function PermissionReceipts(props: PermissionReceiptsProps) {
   })
 
   return (
-    <Show when={state.receipts.length > 0 || next() || failed()}>
+    <Show when={allowed() && (state.receipts.length > 0 || next() || failed())}>
       <section class="permission-receipts" aria-label={t("permissionReceipts.title")} data-permission-message={props.messageId ?? "unanchored"} aria-busy={busy()}>
         <Show when={!props.messageId} fallback={<ReceiptRows receipts={state.receipts} />}>
           <details>

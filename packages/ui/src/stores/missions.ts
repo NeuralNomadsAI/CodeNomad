@@ -2,6 +2,8 @@ import { serverApi } from "../lib/api-client"
 import { createEventRefreshScheduler, type RefreshUrgency } from "../lib/event-refresh-scheduler"
 import { serverEvents } from "../lib/server-events"
 import { createMissionPanelInventory } from "./mission-panel-inventory"
+import { getProjectAvailability, requireProjectAvailability } from "./project-capability"
+import { captureInstanceRequestAuthority } from "./session-api"
 import { instances } from "./instances"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { createRoot, createComputed, untrack } from "solid-js"
@@ -10,18 +12,23 @@ export const missionStore = createMissionPanelInventory({
   scope: instanceId => instances().get(instanceId)?.folder ?? instanceId,
   projectID: instanceId => instances().get(instanceId)?.metadata?.project?.id,
   capture: instanceId => {
+    const current = captureInstanceRequestAuthority(instanceId)
     const origin = instances().get(instanceId), client = origin?.client, folder = origin?.folder, projectID = origin?.metadata?.project?.id, generation = getOpenCodeInstanceGeneration(instanceId)
-    return () => instances().get(instanceId)?.client === client && instances().get(instanceId)?.folder === folder
+    return () => current() && getProjectAvailability(instanceId, "missions").allowed && instances().get(instanceId)?.client === client && instances().get(instanceId)?.folder === folder
       && instances().get(instanceId)?.metadata?.project?.id === projectID && getOpenCodeInstanceGeneration(instanceId) === generation
   },
   read: (instanceId, selector, scope) => {
+    requireProjectAvailability(instanceId, "missions")
+    const current = captureInstanceRequestAuthority(instanceId)
     const origin = instances().get(instanceId), client = origin?.client, folder = origin?.folder, generation = getOpenCodeInstanceGeneration(instanceId)
     return serverApi.fetchMissionPanel(instanceId, selector, { ...scope, projectID: scope.projectID ?? origin?.metadata?.project?.id,
-      current: () => scope.current() && instances().get(instanceId)?.client === client && instances().get(instanceId)?.folder === folder && getOpenCodeInstanceGeneration(instanceId) === generation })
+      current: () => current() && getProjectAvailability(instanceId, "missions").allowed && scope.current() && instances().get(instanceId)?.client === client && instances().get(instanceId)?.folder === folder && getOpenCodeInstanceGeneration(instanceId) === generation })
   },
   tasks: (instanceId, missionId, request, scope) => {
+    requireProjectAvailability(instanceId, "missions")
+    const current = captureInstanceRequestAuthority(instanceId)
     const origin = instances().get(instanceId), client = origin?.client, folder = origin?.folder, generation = getOpenCodeInstanceGeneration(instanceId)
-    return serverApi.fetchMissionTasks(instanceId, missionId, request, { ...scope, current: () => scope.current()
+    return serverApi.fetchMissionTasks(instanceId, missionId, request, { ...scope, current: () => current() && getProjectAvailability(instanceId, "missions").allowed && scope.current()
       && instances().get(instanceId)?.client === client && instances().get(instanceId)?.folder === folder && getOpenCodeInstanceGeneration(instanceId) === generation })
   } })
 
@@ -32,6 +39,7 @@ const refreshes = createEventRefreshScheduler((instanceId) => {
 })
 
 export function activateMissionDemand(instanceId: string): void {
+  if (!getProjectAvailability(instanceId, "missions").allowed) return
   missionStore.setDemand(instanceId, true)
   if (missionStore.state(instanceId).status === "idle") void missionStore.ensure(instanceId)
   else void missionStore.refresh(instanceId)
@@ -65,6 +73,7 @@ export function isMissionActivityEvent(event: { type: string }): boolean {
 }
 
 function scheduleRefresh(instanceId: string, urgency: RefreshUrgency): void {
+  if (!getProjectAvailability(instanceId, "missions").allowed) return
   if (missionStore.demandedInstanceIds().includes(instanceId)) refreshes.schedule(instanceId, urgency)
 }
 

@@ -88,7 +88,8 @@ function ProjectStatus() {
     customization={customization} onCustomizationChange={setCustomization} />
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>{params.has("page")
-  ? <SettingsScreen standalone providerContext={{ instanceId: "web", location: { directory: directory() } }} />
+  ? <SettingsScreen standalone executionRequest={{ section: "providers", instanceId: "web", workspacePath: directory() }}
+      projectContext={{ instanceId: "web", workspacePath: directory(), location: { directory: directory() }, binding: { serverId: "local-shared", directory: directory() }, capabilities: undefined }} />
   : <main style={{ width: "min(700px, 100%)" }}>
   {new URLSearchParams(location.search).has("project") ? <ProjectStatus />
     : new URLSearchParams(location.search).has("preview")

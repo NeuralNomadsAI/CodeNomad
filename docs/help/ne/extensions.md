@@ -43,6 +43,8 @@ extension store चयनित CodeNomad कन्फिगरेसनछे�
 
 ## सन्दर्भ, asset सहमति र sandbox सीमा {#permissions-sandbox}
 
+API 3 का repository वस्तुहरू साझा स्थानीय OpenCode सेवा प्रयोग गर्ने परियोजनाका लागि मात्र उपलब्ध छन्। स्पष्ट रूपमा कन्फिगर गरिएका सबै OpenCode सर्भरमा, loopback सर्भर र विच्छेदित लक्ष्यसहित, तिनको native Git समर्थन जस्तो भए पनि यी उपलब्ध हुँदैनन्; होस्टको Git, forge साइन-इन वा नेटवर्कमा पहुँच हुनुअघि अनुरोध अस्वीकार हुन्छ।
+
 | Contract | सक्रियताले दिने अनुमति |
 | --- | --- |
 | API 1 / `session.context` | हालको session identifier (वा कुनै होइन), interface भाषा र रूप। transcript पाठ वा filesystem पहुँच छैन। |

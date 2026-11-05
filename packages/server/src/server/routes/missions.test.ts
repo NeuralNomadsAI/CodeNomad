@@ -41,6 +41,7 @@ function manager(options: {
   let fakeClient: unknown
   const value = {
       get: (id: string) => options.workspace === false || id !== "workspace-1" ? undefined : workspace,
+      requireWorkspaceCapability: () => new AbortController().signal,
       getSharedServiceConnection: async () => ({ client: await value.getSharedServiceClient(), assertCurrent() {} }),
       getServiceLocation: (id: string) => id === "workspace-1" ? { directory: options.directory ?? "/owned/repo" } : undefined,
       ownsLocation: async () => true,
@@ -204,6 +205,7 @@ function mutationManager(options: { owns?: boolean; error?: unknown; dropProfile
     },
     getServiceDirectoryForPath: async (_id: string, directory: string) => directory,
     getWorktreeIdentityForPath: async (_id: string, directory: string) => directory,
+    requireWorkspaceCapability: () => new AbortController().signal,
     getSharedServiceConnection: async () => options.noConnection ? undefined : ({ client: await value.getSharedServiceClient(), assertCurrent() {} }),
     getSharedServiceClient: async () => ({
       location: { get: async ({ location }: { location: { directory: string } }) => {
@@ -353,6 +355,7 @@ test("damage written outside the index generation refuses admission while the di
   }
   const app = Fastify({ logger: false })
   registerMissionRoutes(app, { workspaceManager: { get: () => ({ id: "workspace-1" }), getServiceLocation: () => ({ directory: "/repo" }),
+    requireWorkspaceCapability: () => new AbortController().signal,
     getSharedServiceConnection: async () => ({ client, assertCurrent() {} }) } as never })
   try {
     const display = (await app.inject({ method: "GET", url: `/api/workspaces/workspace-1/missions/${mission.id}` })).json()

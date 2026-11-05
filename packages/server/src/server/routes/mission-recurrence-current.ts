@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 import { z } from "zod"
 import { projectMissionActivity } from "../../missions/activity"
 import { recurrenceIDSchema } from "../../missions/recurrence-contract"
@@ -13,7 +14,7 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 import { requestAdmission } from "../request-admission"
 
-type Deps = { workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceConnection" | "ownsLocation" | "getWorktreeIdentityForPath">;
+type Deps = { workspaceManager: Pick<WorkspaceManager, "requireWorkspaceCapability" | "get" | "getServiceLocation" | "getSharedServiceConnection" | "ownsLocation" | "getWorktreeIdentityForPath">;
   worktreeDeletionFence?: WorktreeDeletionFence }
 type Params = { id: string; scheduleID: string; passageID?: string }
 const paramsSchema = z.object({ id: z.string().trim().min(1).max(200), scheduleID: recurrenceIDSchema, passageID: recurrenceIDSchema.optional() }).strict()
@@ -35,8 +36,9 @@ export function registerMissionRecurrenceCurrent(app: FastifyInstance, deps: Dep
     const lifetime = requestAdmission(request, reply), manager = deps.workspaceManager
     const workspace = manager.get(params.data.id), owned = manager.getServiceLocation(params.data.id)
     if (!workspace || !owned) { lifetime.dispose(); return reply.code(404).send({ error: "Workspace unavailable" }) }
-    const deletionCapture = captureDisplayIdentities(deps.worktreeDeletionFence, manager, params.data.id, [owned.directory])
     try {
+      manager.requireWorkspaceCapability(params.data.id, "missions")
+      const deletionCapture = captureDisplayIdentities(deps.worktreeDeletionFence, manager, params.data.id, [owned.directory])
       const connection = await lifetime.wait(manager.getSharedServiceConnection(params.data.id))
       if (!connection) throw new Error("Mission service unavailable")
       const deletionCurrent = await lifetime.wait(deletionCapture)
@@ -99,6 +101,7 @@ export function registerMissionRecurrenceCurrent(app: FastifyInstance, deps: Dep
       if (missionPanelBytes(result) > MISSION_PANEL_PAGE_BYTES) throw new Error("Current passage response capacity")
       return result
     } catch (error) {
+      if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
       request.log.warn({ err: error, workspaceId: params.data.id }, "Current Mission passage unavailable")
       return reply.code(503).send({ error: "Current Mission passage unavailable" })
     } finally { lifetime.dispose() }

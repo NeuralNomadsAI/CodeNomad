@@ -94,6 +94,7 @@ async function fixture(drainTimeoutMs = 300) {
   const manager = { get: () => env.workspace, getServiceLocation: () => ({ directory }),
     getServiceDirectoryForPath: async (_id: string, requested: string) => realpathSync(requested),
     getSharedServiceConnection: async () => state.connection, ownsLocation: async () => true,
+    requireWorkspaceCapability: () => new AbortController().signal,
     getServiceWslDistro: () => undefined, getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",
     getWorktreeIdentityForPath: async (_id: string, requested: string) => canonicalWorktreeIdentity(requested),
     getHostPathForServicePath: async (_id: string, requested: string) => requested }

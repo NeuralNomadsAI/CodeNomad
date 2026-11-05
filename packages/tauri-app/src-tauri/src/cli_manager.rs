@@ -1503,6 +1503,7 @@ impl CliProcessManager {
                                         &request.method,
                                         request.params,
                                         request.deadline,
+                                        generation,
                                     )
                                 };
                                 manager.write_native_response(

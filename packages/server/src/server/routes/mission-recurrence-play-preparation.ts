@@ -23,11 +23,12 @@ import { recurrenceHumanSession } from "./mission-recurrence-proof"
  * inside the authenticated human request, never from native RPC path options. */
 export async function prepareHumanRecurrenceControl(request: FastifyRequest, workspaceID: string, raw: unknown,
   deps: { auth: AuthManager; settings: Pick<SettingsService, "getProfileScope" | "configYamlPathForAuthority">;
-    manager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getServiceDirectoryForPath" | "getSharedServiceConnection"
+    manager: Pick<WorkspaceManager, "requireWorkspaceCapability" | "get" | "getServiceLocation" | "getServiceDirectoryForPath" | "getSharedServiceConnection"
       | "ownsLocation" | "getServiceWslDistro" | "getServicePathStyle" | "getWorktreeIdentityForPath" | "getHostPathForServicePath">;
     fence: WorktreeDeletionFence; bridgeToken: string; remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized"> }, signal: AbortSignal) {
   const input = recurrenceControlHttpSchema.parse(raw), session = recurrenceHumanSession(request, deps)
   if (!session) throw new Error("Human authentication required")
+  deps.manager.requireWorkspaceCapability(workspaceID, "missions")
   const workspace = deps.manager.get(workspaceID), base = deps.manager.getServiceLocation(workspaceID)
   if (!workspace || !base) throw new Error("Workspace unavailable")
   const profile = deps.settings.getProfileScope(), distro = deps.manager.getServiceWslDistro(workspaceID)

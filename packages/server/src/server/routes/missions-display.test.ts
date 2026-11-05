@@ -40,6 +40,7 @@ async function fixture(kind: "valid" | "no-fence" | "delete-aba" | "connection" 
   registerMissionRoutes(app, { workspaceManager: {
     get: () => workspace,
     getServiceLocation: () => location,
+    requireWorkspaceCapability: () => new AbortController().signal,
     getSharedServiceConnection: async () => ({ client, assertCurrent() { if (!connected) throw new Error("replaced") } }),
     ownsLocation: async () => true,
     getWorktreeIdentityForPath: async (_id: string, directory: string) => directory,

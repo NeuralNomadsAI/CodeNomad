@@ -1,5 +1,11 @@
 # Preguntas y permisos
 
+El contexto de un servidor explícito incluye su nombre e ID estable para distinguir nombres iguales. Las respuestas inciertas o reemplazadas usan un aviso no modal de prioridad moderada en el editor de solicitudes; los fallos ordinarios conservan su tratamiento de error.
+
+**Servidores OpenCode explícitos:** las preguntas y permisos llegan solo en directo. Los borradores siguen editables. Los permisos obsoletos esperan una solicitud actual en directo; los formularios conocidos ofrecen la comprobación explícita de abajo. Los detalles desplegables del panel explican el límite. Abrir una conversación permite revisarla, sin recuperar automáticamente solicitudes faltantes. El modo Yolo funciona en estos servidores: tras una reconexión, CodeNomad vuelve a leer los permisos pendientes solo de las conversaciones con Yolo y los aprueba una vez. La recuperación y los recibos descritos abajo corresponden al servicio local compartido.
+
+Para un formulario conocido, elige **Comprobar el estado de este formulario** en su editor de origen. Si sigue esperando, se habilitan solo sus acciones; revisa el borrador y responde o cancela con otro gesto explícito. Si ya tiene respuesta o está cancelado, se conserva el borrador sin mostrar respuestas ajenas ni inventar su autor o el resultado de tu intento anterior. Una comprobación inconclusa mantiene la edición y bloquea las respuestas; puedes repetirla explícitamente. Cada comprobación se limita a 10 segundos y 4 MiB por respuesta; un esquema de campos cambiado también queda inconcluso. No hay comprobaciones ni reenvíos automáticos. La cobertura general sigue siendo desconocida; no se recuperan formularios ni permisos faltantes.
+
 Las preguntas nativas, los formularios y las solicitudes de permiso se responden en el panel de interrupciones justo encima del editor de mensajes, no dentro de las tarjetas de herramientas pendientes de la transcripción.
 
 ## Buscar la solicitud y comprobar su origen {#request-dock}

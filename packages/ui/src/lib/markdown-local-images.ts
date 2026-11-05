@@ -1,5 +1,6 @@
 import { untrack } from "solid-js"
 import { isToolImageContent, toolImageSource } from "./tool-content"
+import { trustedMediaPolicy, type MediaPolicy } from "./media-policy"
 
 const decode = (value: string) => { try { return decodeURIComponent(value) } catch { return value } }
 
@@ -98,14 +99,14 @@ export function resolveLocalImages(container: ParentNode, candidates: readonly S
 type PartData = { type?: string; state?: { status?: string; input?: Record<string, unknown>; content?: unknown } }
 export interface MessageImageSource { revision: number; partIds: string[]; parts: Record<string, { data: unknown }> }
 
-function* scanMessage(message: MessageImageSource): Generator<SessionImageCandidate> {
+function* scanMessage(message: MessageImageSource, policy: MediaPolicy): Generator<SessionImageCandidate> {
   for (const partId of [...message.partIds].reverse()) {
     const data = message.parts[partId]?.data as PartData | undefined
     if (data?.type !== "tool" || data.state?.status !== "completed" || !Array.isArray(data.state.content)) continue
     const images = data.state.content.filter(isToolImageContent)
     const input = data.state.input?.filePath ?? data.state.input?.path
     for (const image of images) {
-      const source = toolImageSource(image)
+      const source = toolImageSource(image, undefined, policy)
       if (!source) continue
       const paths = [image.name, images.length === 1 ? input : undefined].filter((value): value is string => typeof value === "string" && value.length > 0)
       if (paths.length) yield { paths, source }
@@ -117,11 +118,13 @@ const scanned = new WeakMap<object, { revision: number; candidates: SessionImage
 
 /** One message's tool-result images, newest first, keyed by file name and the single-image tool's file path.
  * Tracks only the message's revision; its parts are rescanned once per revision and shared by every reader. */
-export function messageImageCandidates(message: MessageImageSource): SessionImageCandidate[] {
+export function messageImageCandidates(message: MessageImageSource, policy: MediaPolicy = trustedMediaPolicy): SessionImageCandidate[] {
+  // Restricted readers reauthorize native candidates in their current owner on every demand.
+  if (policy.kind === "explicit" || policy.kind === "unknown") return [...scanMessage(message, policy)]
   const revision = message.revision
   const cached = scanned.get(message)
   if (cached?.revision === revision) return cached.candidates
-  const candidates = untrack(() => [...scanMessage(message)])
+  const candidates = untrack(() => [...scanMessage(message, policy)])
   scanned.set(message, { revision, candidates })
   return candidates
 }

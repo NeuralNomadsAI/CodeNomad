@@ -156,6 +156,7 @@ struct Registry {
     records: HashMap<String, LocalWindowRecord>,
     mru: Vec<String>,
     backend_target: Option<String>,
+    attachment_epoch: String,
 }
 
 impl Registry {
@@ -188,6 +189,7 @@ impl Registry {
             view_menu_state: None,
         };
         self.records.insert(label.clone(), record.clone());
+        self.attachment_epoch = uuid::Uuid::new_v4().to_string();
         self.mark_focused(&label);
         Ok(record)
     }
@@ -202,6 +204,7 @@ impl Registry {
     }
 
     fn remove(&mut self, label: &str) -> Option<LocalWindowRecord> {
+        self.attachment_epoch = uuid::Uuid::new_v4().to_string();
         self.mru.retain(|candidate| candidate != label);
         self.records.remove(label)
     }
@@ -246,6 +249,16 @@ impl LocalWindows {
     fn release_startup_restore(&self) {
         self.startup_restore_deferred
             .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn register(&self, id: String, persisted: bool) -> Result<LocalWindowRecord, String> {
+        self.registry.lock().map_err(|error| error.to_string())?.add(id, persisted)
+    }
+
+    pub(crate) fn attachment_membership(&self) -> Result<(String, Vec<String>), String> {
+        let registry = self.registry.lock().map_err(|_| "attachment_inventory_unavailable")?;
+        Ok((registry.attachment_epoch.clone(), registry.records.values().map(|record| record.id.clone()).collect()))
     }
 
     pub(crate) fn records(&self) -> Vec<LocalWindowRecord> {

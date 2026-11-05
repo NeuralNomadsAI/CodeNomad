@@ -14,6 +14,8 @@ OpenCode sessions and messages live in the shared OpenCode daemon and are the sa
 
 ## Selecting a profile
 
+Workspace-open authority belongs to the project execution binding. Both desktop hosts fetch the active occurrence from their authenticated local CodeNomad backend and reject explicit OpenCode bindings before resolving host paths or launching applications. This applies equally to explicit loopback profiles and paths matching host folders; unbound legacy descriptors retain local behavior. Renderer availability and native guards share the `explicit_capability_unavailable` / `files` / `localOnly` refusal contract.
+
 Precedence, evaluated by both Electron (`electron/main/data-profile.ts`) and Tauri (`src-tauri/src/data_profile.rs`) before any profile path, singleton or WebView storage is fixed:
 
 1. `CODENOMAD_PROFILE=<name>` — explicit profile.
@@ -29,6 +31,15 @@ After trimming ASCII whitespace and lowercasing ASCII letters: 1–64 characters
 
 ### Storage
 
+Both hosts retain the V3 window envelope and V2 content-addressed partition graph.
+Each workspace shell can carry `serverId`, scoped to that window's existing tab
+occurrence. Imported unknown server IDs remain attached to their saved data.
+The shared renderer codec validates these IDs and retains exact remote directories;
+native hosts validate the enclosing document and partition hashes. Runtime source
+generations, connection tokens and credential availability stay in memory. The
+server registry persists labels/origins separately; restoration retains only the
+server ID and directory. Backend restart requires fresh credential entry.
+
 The default profile with the default config uses the unscoped locations (`~/.codenomad/client-state/v2`, Electron's `userData`, Tauri's stable identifier and WebView directory). Every other profile/config pair uses `<scope> = <key>-sha256(key + "\0" + configIdentity)[0..16]`, i.e. `%APPDATA%/CodeNomad/scopes/<scope>` (Electron `userData` and both hosts' client state) and `…-v2/scopes/<scope>` (Tauri WebView), plus a scoped Tauri identifier. The default profile's key is `stable`, so existing folders such as `dev-<hash>` and `dev-v2-<hash>` are reached with `CODENOMAD_PROFILE=dev` / `dev-v2`.
 
 On Windows, Tauri runs each profile under its identifier as AppUserModelID, and its system notifications carry that ID. Windows shows a desktop app's notifications only under an ID it knows, and the installer's Start menu shortcut carries the stable one, so every launch registers the running ID under `HKCU\Software\Classes\AppUserModelId\<identifier>` (`DisplayName` CodeNomad, `IconUri` the bundled web app icon `resources\server\public\pwa-192x192.png`; `windows_notification_identity.rs`). Electron always uses the stable ID.
@@ -38,6 +49,52 @@ The alias uses each host's own normalization (Electron lowercases Unicode and tu
 Non-ASCII config paths on Windows: each host folds the config identity's case differently (Electron uses Unicode lowercase, Tauri ASCII lowercase), so for a path such as `C:\Users\Émile\…` the two hosts compute different scope hashes. Keep this divergence: changing either fold would move scoped folders. The choices file uses one shared fold (see below).
 
 Every backend launch (the default profile included, as key `stable`) receives the resolved scope that the backend uses as its Mission profile scope: `CODENOMAD_UPDATE_CHANNEL=<profile key>`, `CODENOMAD_PROFILE_CONFIG_IDENTITY=<config identity>` and the selected `CLI_CONFIG`. Tauri applies these only to the backend `Command`, never through a process-wide `set_var`. They are backend-only: the backend strips them and `CODENOMAD_PROFILE` from the environment of the shared OpenCode daemon it starts (`workspaces/host-opencode-service.ts`), so agent shells never pin a desktop launched from them to this profile.
+
+### Private attachment inventory
+
+The native-parent methods `projects.attachments.read` and
+`projects.attachments.current` expose bounded metadata within the running
+backend/profile/config scope. Electron serializes retained projection on its
+client-state queue; Tauri takes its publication lock before the state mutex.
+V1/V2/V3 envelopes use the existing migration owners. Partitioned snapshots load
+only the verified session manifest; workspace documents, conversations and blobs
+remain with restoration. Each host issues opaque memory-only owner/tab handles
+and receipts. Publication admission, rollback uncertainty, window replacement,
+observed document-token resets, private-transport backend replacement and ownership
+loss retire captured observations. A fresh read also
+retires the previous native receipt. Conservative invalidation includes unrelated
+client-state writes. Corruption, missing manifests, unsupported versions and
+secondary ownership retain unknown coverage. Live registrations contribute window
+presence with unknown tab membership, including restore-disabled windows.
+
+Manifest file reads retain at most 1 MiB and inspect at most one additional byte,
+through a fixed 64-KiB scratch buffer. Accepted raw bytes keep SHA-256 verification
+before decoding. Tauri publication admission holds a distinct memory-only owner
+through waiting, root commit and rollback; receipts require every admitted writer
+to have left that phase. Electron retains its serialized publication queue.
+
+The two private attachment methods use opaque `attachments-<UUID>` request IDs,
+echoed unchanged by both native serializers. Their canonical v1 responses begin
+with `v,id`; stdin classifies at most 256 header bytes before retaining the body.
+The serialized result allowance is 8 MiB plus the exact prefix/success-envelope
+overhead for that ID (and optional CR/LF framing). Overflow drains to LF and releases
+the matching pending owner; direct responses apply the same pre-parse limit.
+Owned 64-KiB body blocks bound per-frame storage metadata; concatenation and UTF-8
+decoding each use an additional copy bounded by the frame allowance. String adapters
+encode in bounded pieces and preserve split surrogate pairs.
+Ordinary native methods retain their own response contracts. Each read/current
+request has its own five-second monotonic settlement deadline alongside the
+wall-clock wire deadline consumed by the host. Caller expiry fences publication;
+host I/O retains its existing execution lifetime.
+
+Browser participation is a separate backend-memory owner. A dedicated named event
+delivers a random capability only to its authenticated SSE response; publication
+requires that capability, the same current cookie/device principal and trusted
+Origin/Fetch Metadata. Publication rejects raw `?` and `;` query delimiters, including
+empty queries, before body parsing or capability admission. Every declaration stays scoped to this running backend's
+profile/config identity. Native application, Preferences and remote desktop windows
+keep their native owners. Browser declarations preserve unknown global coverage;
+native window linkage and pre-mutation fencing retain their qualification gates.
 
 ## Automatic choice
 
@@ -93,6 +150,34 @@ The default profile's folders are parents of other roots, so they are never remo
 Known limits: the Tauri singleton itself is not file-based; a Tauri instance is detected through the running marker it creates while starting, and its WebView2 locks. A profile opened between the last check and a removal is caught only by the operating system's file locks.
 
 ## Validation
+
+### Explicit OpenCode credentials
+
+Explicit OpenCode credentials are scoped by resolved data profile/config identity,
+server ID and normalized origin. Pairing tokens and manual passwords persist in
+the private backend `opencode-server-pairings.json` (0600), beside `config.yaml`.
+Saved configuration retains the server's name and URL. Secrets must never enter
+public config, events, logs or browser storage. Restart reuses the private secret;
+expiry, HTTP 401, origin replacement and server removal erase it.
+
+`opencode/servers/credentials.ts` owns a private backend-owner Map keyed by
+profile/config scope, server ID and origin. Its asynchronous mutations perform
+their changes synchronously. Reading invalidates an entry when the origin differs
+or the server is missing; `clear(serverId)` also works after metadata removal.
+Errors use fixed codes: `unknown_server`, `invalid_credentials`,
+`metadata_unavailable` and `closed`. Static config summaries conservatively return
+`hasCredentials: false`, `needsCredentials: true`; the owning service's status
+provides live booleans through `SettingsService.getOpenCodeServerSummaries()`.
+
+`SettingsService` retains one registry, credential owner and connection owner for
+all backend windows. Registry origin changes/removal clear credentials before
+publication and subsequent ID reuse. Rotation, forgetting, Disconnect and shutdown
+abort owned HTTP/streams and fence captured clients, transports and late results.
+`WorkspaceManager.shutdown()` disposes the owners and private memory before cleanup.
+
+Electron and Tauri use the same backend contract. Their packaged restart checks
+must verify retained name/URL, reconnection with the saved token or password,
+and removal/401 revocation.
 
 - Electron: `data-profile.test.ts`, `profile-transition.test.ts` (including unwritable choices/lock and the leftover-folder sweep), `startup.test.ts`, `data-profile-cleanup.test.ts`, `data-profile-cleanup-ipc.test.ts`, `preload/index.test.ts`.
 - Tauri: `data_profile`, `profile_transition`, `client_state::restorable`, `identity`, `data_profile_cleanup` tests.

@@ -3,6 +3,7 @@ import AgentSelector from "../agent-selector"
 import ModelSelector from "../model-selector"
 import ThinkingSelector from "../thinking-selector"
 import WorktreeSelector from "../worktree-selector"
+import { getProjectAvailability } from "../../stores/project-capability"
 
 interface PromptContextControlsProps {
   instanceId: string
@@ -15,8 +16,8 @@ interface PromptContextControlsProps {
 }
 
 const PromptContextControls: Component<PromptContextControlsProps> = (props) => (
-  <div class="prompt-context-controls" data-has-worktree={props.worktreeSessionId ? "true" : "false"}>
-    <Show when={props.worktreeSessionId}>
+  <div class="prompt-context-controls" data-has-worktree={props.worktreeSessionId && getProjectAvailability(props.instanceId, "worktrees").allowed ? "true" : "false"}>
+    <Show when={getProjectAvailability(props.instanceId, "worktrees").allowed && props.worktreeSessionId}>
       {(sessionId) => <WorktreeSelector instanceId={props.instanceId} sessionId={sessionId()} />}
     </Show>
     <AgentSelector

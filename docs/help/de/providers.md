@@ -4,6 +4,8 @@ Anbieterauthentifizierung gehört zum verbundenen OpenCode-Dienst, nicht zum Bro
 
 ## Modell- oder Suchanbieter verbinden {#connect}
 
+Prüfen Sie **Ausgewählter OpenCode-Server**. Die nachfolgend beschriebenen Verbindungs-, Konto-, Websuch- und Bildeinstellungen gelten für den gemeinsamen lokalen Dienst. Ein qualifizierter, explizit angegebener Server zeigt nur einen schreibgeschützten nativen Anbieter- und Modellkatalog; verwalten Sie seine Authentifizierung und Konfiguration direkt auf diesem Server, außerhalb der aktuellen Möglichkeiten von CodeNomad. Bei nicht verfügbaren Projekten bleiben die Steuerelemente inaktiv; CodeNomad-Einstellungen bleiben nutzbar. Beim lokalen Dienst lesen zugeklappte Gruppen **Modelle**, **Websuche** und **Bilder** ihre Daten erst beim Aufklappen.
+
 1. Öffnen Sie einen Arbeitsbereich und dann **Einstellungen → Anbieter**. **Modelle** ist anfangs aufgeklappt; klappen Sie für Suchanbieter **Websuche** auf. **Bilder** enthält die Bildeinstellungen.
 2. Wählen Sie in dieser Gruppe zuerst **Anbieter auswählen**, dann **Verbinden**.
 3. Durchlaufen Sie bei einem Modellanbieter die angebotene native **Authentifizierungsmethode**: API-Schlüssel, OAuth oder Befehl. Verwenden Sie bei OAuth **Autorisierungsseite öffnen** und übermitteln Sie einen Autorisierungscode nur auf Aufforderung. Suchanbieter verbinden sich mit einem API-Schlüssel.

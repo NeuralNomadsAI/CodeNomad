@@ -5,12 +5,14 @@ import { tGlobal } from "../lib/i18n"
 import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision, invalidateOpenCodeSessionContent } from "./opencode-data"
 import { invalidateSessionMessageLoad } from "./session-state"
+import { requireHistoryEnrichment } from "./session-history-capability"
 
 export async function pruneMessageContent(
   instanceId: string, sessionId: string,
   message: Extract<SessionMessageInfo, { type: "assistant" }>, indexes: number[],
   apply: (message: SessionMessageInfo) => void,
 ): Promise<void> {
+  requireHistoryEnrichment(instanceId)
   const client = getRootClient(instanceId)
   const generation = getOpenCodeInstanceGeneration(instanceId)
   const result = await serverApi.pruneSessionMessage(instanceId, {

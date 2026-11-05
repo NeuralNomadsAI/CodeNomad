@@ -3,8 +3,9 @@ import { CODENOMAD_API_BASE } from "./api-client"
 import { backgroundReads } from "./background-read-queue"
 import { authenticatedFetch } from "./auth-recovery"
 import { prioritizedRead } from "./prioritized-read"
-import { SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../../../server/src/api-types"
+import { SESSION_ENVIRONMENT_FAILED_ERROR_CODE, EXPLICIT_REQUEST_UNCERTAIN_ERROR_CODE } from "../../../server/src/api-types"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
+import { sessionActionSuperseded } from "../stores/session-action-queue"
 
 class SDKManager {
   private clients = new Map<string, OpenCodeClient>()
@@ -65,15 +66,27 @@ export function createInstanceFetch(baseUrl: string, isForeground: () => boolean
         const { reportOpenCodeSetupRequired } = await import("../stores/opencode-setup")
         reportOpenCodeSetupRequired()
       }
+      if (response.status === 409) {
+        const body = await response.clone().json().catch(() => undefined)
+        if (body?.error === "explicit_action_superseded") {
+          const { tGlobal } = await import("./i18n")
+          throw sessionActionSuperseded(tGlobal("session.actions.superseded"))
+        }
+      }
       if (response.status === 502) {
         const body = await response.clone().json().catch(() => undefined)
+        if (/\/workspaces\/[^/]+\/instance\/$/.test(basePath) && requestUrl.pathname.startsWith(basePath)
+          && apiPath.startsWith("/api/") && body?.error === EXPLICIT_REQUEST_UNCERTAIN_ERROR_CODE) {
+          const { tGlobal } = await import("./i18n")
+          throw Object.assign(new Error(tGlobal("session.actions.interrupted")), { code: EXPLICIT_REQUEST_UNCERTAIN_ERROR_CODE })
+        }
         if (body?.error === SESSION_ENVIRONMENT_FAILED_ERROR_CODE) {
           const { tGlobal } = await import("./i18n")
-          throw new Error(tGlobal("envEditor.applyFailed"))
+          throw Object.assign(new Error(tGlobal("envEditor.applyFailed")), { code: SESSION_ENVIRONMENT_FAILED_ERROR_CODE })
         }
         if (body?.error === "PROVIDER_ACCOUNT_SELECTION_FAILED") {
           const { tGlobal } = await import("./i18n")
-          throw new Error(tGlobal("settings.accounts.error"))
+          throw Object.assign(new Error(tGlobal("settings.accounts.error")), { code: "PROVIDER_ACCOUNT_SELECTION_FAILED" })
         }
       }
       return response

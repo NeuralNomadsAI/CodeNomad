@@ -1,11 +1,13 @@
-import { For, Show, createMemo } from "solid-js"
+import { For, Show, createMemo, onCleanup } from "solid-js"
 import { ChevronDown, ChevronRight, Copy, ExternalLink, Eye, Folder, FolderOpen, FileCode, FileText, Image, File, RefreshCw, TerminalSquare } from "lucide-solid"
 import type { useWorkspaceTree } from "../useWorkspaceTree"
 import type { ActionOverflowMenuItem } from "../../../../action-overflow-menu"
 import FileRowActions from "../FileRowActions"
 import { copyToClipboard } from "../../../../../lib/clipboard"
 import { showToastNotification } from "../../../../../lib/notifications"
-import { canOpenWorkspacePaths, openWorkspacePath } from "../../../../../lib/workspace-open"
+import { canOpenWorkspacePaths, openWorkspacePath, WorkspacePathUnavailableError } from "../../../../../lib/workspace-open"
+import { getProjectAvailability } from "../../../../../stores/project-capability"
+import { captureInstanceRequestAuthority } from "../../../../../stores/session-api"
 
 export function WorkspaceTree(props: {
   tree: ReturnType<typeof useWorkspaceTree>
@@ -17,6 +19,10 @@ export function WorkspaceTree(props: {
   previewPath?: string
   onOpen: (path: string) => void
 }) {
+  const current = captureInstanceRequestAuthority(props.instanceId)
+  let disposed = false
+  onCleanup(() => { disposed = true })
+  const admitted = () => !disposed && current() && getProjectAvailability(props.instanceId, "files").allowed
   const icon = (name: string) => /\.(png|jpe?g|gif|webp|svg|ico|bmp|avif)$/i.test(name) ? Image
     : /\.(md|mdx|txt|rst)$/i.test(name) ? FileText
     : /\.(tsx?|jsx?|json|ya?ml|css|html|py|rs|sh)$/i.test(name) ? FileCode : File
@@ -50,7 +56,9 @@ export function WorkspaceTree(props: {
   }
 
   const handleCopyPath = async (path: string) => {
+    if (!admitted()) return
     const ok = await copyToClipboard(path)
+    if (!admitted()) return
     showToastNotification({ category: "copy",
       message: ok ? props.t("instanceShell.filesShell.toast.copyPathSuccess") : props.t("instanceShell.filesShell.toast.copyPathError"),
       variant: ok ? "success" : "error",
@@ -58,9 +66,11 @@ export function WorkspaceTree(props: {
   }
 
   const handleNativeOpen = async (target: "default" | "reveal" | "terminal", path: string) => {
+    if (!admitted() || !canOpenWorkspacePaths(props.instanceId)) return
     try {
       await openWorkspacePath({ target, instanceId: props.instanceId, worktreeSlug: props.worktreeSlug, path })
     } catch (error) {
+      if (!admitted() || error instanceof WorkspacePathUnavailableError) return
       showToastNotification({ category: "files",
         message: props.t("instanceShell.filesShell.toast.openError", {
           message: error instanceof Error ? error.message : String(error),
@@ -77,7 +87,7 @@ export function WorkspaceTree(props: {
       get icon() { return <Eye class="w-3.5 h-3.5" /> }, disabled: !props.canOpen,
       checked: props.previewPath === row.path, onSelect: () => props.onOpen(row.path),
     })
-    if (canOpenWorkspacePaths()) {
+    if (canOpenWorkspacePaths(props.instanceId)) {
       if (row.type === "directory") {
         const isMacApp = isMacDesktop && row.path.toLowerCase().endsWith(".app")
         items.push(

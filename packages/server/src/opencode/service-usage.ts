@@ -6,7 +6,7 @@ import type { ServiceConnection } from "../workspaces/opencode-service"
 import type { SettingsService } from "../settings/service"
 import { ServiceUsageCache } from "./service-usage-cache"
 
-type Manager = Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "getServiceWslDistro" | "getServicePathStyle">
+type Manager = Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "getServiceWslDistro" | "getServicePathStyle" | "requireWorkspaceCapability">
 export type UsageQuery = { from: number; to: number; timezone: string; restorePeriod?: boolean }
 
 // Deliberately service-wide, as authorized for the Usage Preferences surface.
@@ -29,6 +29,11 @@ export class ServiceUsage {
     if (settings) this.cache = new ServiceUsageCache(settings)
   }
   private async context(workspaceId: string) {
+    try { this.manager.requireWorkspaceCapability(workspaceId, "executionSettings") }
+    catch (error) {
+      if (error instanceof Error && "statusCode" in error && error.statusCode === 404) throw new PluginControlsError("Workspace not found", "not-found")
+      throw error
+    }
     if (this.closing.signal.aborted) throw new PluginControlsError("Stats service closed", "unavailable")
     const record = this.manager.get(workspaceId)
     if (!record) throw new PluginControlsError("Workspace not found", "not-found")

@@ -2,14 +2,15 @@ import { createContext, createMemo, createSignal, onCleanup, type Accessor, type
 import type { InstanceData } from "../../../server/src/api-types"
 import { storage } from "../lib/storage"
 import { getLogger } from "../lib/logger"
+import { sessionActionSuperseded } from "./session-action-queue"
 
 const log = getLogger("api")
 
 const DEFAULT_INSTANCE_DATA: InstanceData = { messageHistory: [], agentModelSelections: {} }
 
 const [instanceDataMap, setInstanceDataMap] = createSignal<Map<string, InstanceData>>(new Map())
-const loadPromises = new Map<string, Promise<void>>()
-const instanceSubscriptions = new Map<string, () => void>()
+const loadPromises = new Map<string, { promise: Promise<void>; current: () => boolean }>()
+const instanceSubscriptions = new Map<string, { unsubscribe?: () => void }>()
 
 function cloneInstanceData(data?: InstanceData | null): InstanceData {
   const source = data ?? DEFAULT_INSTANCE_DATA
@@ -22,17 +23,18 @@ function cloneInstanceData(data?: InstanceData | null): InstanceData {
 
 function attachSubscription(instanceId: string) {
   if (instanceSubscriptions.has(instanceId)) return
-  const unsubscribe = storage.onInstanceDataChanged(instanceId, (data) => {
-    setInstanceData(instanceId, data)
+  const owner: { unsubscribe?: () => void } = {}
+  instanceSubscriptions.set(instanceId, owner)
+  owner.unsubscribe = storage.onInstanceDataChanged(instanceId, (data) => {
+    if (instanceSubscriptions.get(instanceId) === owner) setInstanceData(instanceId, data)
   })
-  instanceSubscriptions.set(instanceId, unsubscribe)
 }
 
 function detachSubscription(instanceId: string) {
-  const unsubscribe = instanceSubscriptions.get(instanceId)
-  if (!unsubscribe) return
-  unsubscribe()
+  const owner = instanceSubscriptions.get(instanceId)
+  if (!owner) return
   instanceSubscriptions.delete(instanceId)
+  owner.unsubscribe?.()
 }
 
 function setInstanceData(instanceId: string, data: InstanceData) {
@@ -43,43 +45,58 @@ function setInstanceData(instanceId: string, data: InstanceData) {
   })
 }
 
-async function ensureInstanceConfig(instanceId: string): Promise<void> {
+async function ensureInstanceConfig(instanceId: string, isCurrent: () => boolean = () => true): Promise<void> {
   if (!instanceId) return
   if (instanceDataMap().has(instanceId)) return
-  if (loadPromises.has(instanceId)) {
-    await loadPromises.get(instanceId)
-    return
+  let existing = loadPromises.get(instanceId)
+  const replacingLoad = Boolean(existing)
+  for (let joined = 0; existing?.current(); joined++) {
+    if (joined === 3) {
+      const { tGlobal } = await import("../lib/i18n")
+      throw sessionActionSuperseded(tGlobal("session.actions.superseded"))
+    }
+    await existing.promise
+    if (!isCurrent() || instanceDataMap().has(instanceId)) return
+    // The initiating caller may have retired while this reader stayed current.
+    // Join a current replacement, or start one read under this reader's authority.
+    existing = loadPromises.get(instanceId)
   }
+  if (!isCurrent()) return
+  const state = { promise: Promise.resolve(), current: isCurrent }
+  const current = () => isCurrent() && loadPromises.get(instanceId) === state
   const promise = storage
-    .loadInstanceData(instanceId)
+    .loadInstanceData(instanceId, current)
     .then((data) => {
-      setInstanceData(instanceId, data)
+      if (!current()) return
       attachSubscription(instanceId)
     })
     .catch((error) => {
+      if (!current()) return
       log.warn("Failed to load instance data", error)
+      if (replacingLoad) throw error
       setInstanceData(instanceId, DEFAULT_INSTANCE_DATA)
       attachSubscription(instanceId)
     })
     .finally(() => {
-      loadPromises.delete(instanceId)
+      if (loadPromises.get(instanceId) === state) loadPromises.delete(instanceId)
     })
-  loadPromises.set(instanceId, promise)
+  state.promise = promise
+  loadPromises.set(instanceId, state)
   await promise
 }
 
-async function updateInstanceConfig(instanceId: string, mutator: (draft: InstanceData) => void): Promise<void> {
+async function updateInstanceConfig(instanceId: string, mutator: (draft: InstanceData) => void, isCurrent: () => boolean = () => true): Promise<void> {
   if (!instanceId) return
-  await ensureInstanceConfig(instanceId)
+  await ensureInstanceConfig(instanceId, isCurrent)
+  if (!isCurrent()) return
   const current = instanceDataMap().get(instanceId) ?? DEFAULT_INSTANCE_DATA
   const draft = cloneInstanceData(current)
   mutator(draft)
   try {
-    await storage.saveInstanceData(instanceId, draft)
+    await storage.saveInstanceData(instanceId, draft, isCurrent)
   } catch (error) {
     log.warn("Failed to persist instance data", error)
   }
-  setInstanceData(instanceId, draft)
 }
 
 function getInstanceConfig(instanceId: string): InstanceData {
@@ -95,6 +112,8 @@ function useInstanceConfig(instanceId: string): Accessor<InstanceData> {
 }
 
 function clearInstanceConfig(instanceId: string): void {
+  loadPromises.delete(instanceId)
+  storage.forgetInstanceData(instanceId)
   setInstanceDataMap((prev) => {
     if (!prev.has(instanceId)) return prev
     const next = new Map(prev)
@@ -122,8 +141,8 @@ const contextValue: InstanceConfigContextValue = {
 
 const InstanceConfigProvider: ParentComponent = (props) => {
   onCleanup(() => {
-    for (const unsubscribe of instanceSubscriptions.values()) {
-      unsubscribe()
+    for (const owner of instanceSubscriptions.values()) {
+      owner.unsubscribe?.()
     }
     instanceSubscriptions.clear()
   })

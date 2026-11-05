@@ -4,6 +4,42 @@ import Fastify from "fastify"
 import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
 import { registerAutomationPluginRoute } from "./automation-plugin"
 
+test("explicit-only bindings never acquire the local client or reach host automation, even for identical IDs and paths", async t => {
+  const app = Fastify()
+  t.after(() => app.close())
+  const unexpected = () => { throw new Error("Explicit workspace crossed the local bridge") }
+  registerAutomationPluginRoute(app, {
+    authManager: { isLoopbackRequest: () => true }, bridgeToken: "fixture",
+    nativeParent: { available: true, request: unexpected }, developerCdp: {},
+    workspaceManager: { list: () => [{ id: "explicit", binding: { serverId: "loopback-explicit", directory: "/repo" } }],
+      getSharedServiceClient: unexpected, ownsLocation: unexpected },
+  } as never)
+  for (const mode of ["browser-claim", "browser-probe", "browser-execute", "developer-probe", "developer-execute", "mission-input"]) {
+    const result = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
+      headers: { "x-codenomad-automation-token": "fixture" }, payload: { mode, sessionID: "ses_same" } })
+    assert.equal(result.statusCode, 403)
+    assert.deepEqual(result.json(), { error: "explicit_capability_unavailable", code: "explicit_capability_unavailable",
+      capability: mode === "mission-input" ? "missions" : "automation", reason: { code: "deferred" } })
+  }
+})
+
+test("an explicit workspace sharing a local session path cannot become a bridge owner", async t => {
+  const app = Fastify(), checked: string[] = []
+  t.after(() => app.close())
+  registerAutomationPluginRoute(app, {
+    authManager: { isLoopbackRequest: () => true }, bridgeToken: "fixture", nativeParent: { available: true }, developerCdp: {},
+    workspaceManager: {
+      list: () => [{ id: "explicit", binding: { serverId: "loopback-explicit", directory: "/repo" } }, { id: "local" }],
+      getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "/repo" } }) } }),
+      ownsLocation: async (id: string) => { checked.push(id); return id === "explicit" },
+    },
+  } as never)
+  const result = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
+    headers: { "x-codenomad-automation-token": "fixture" }, payload: { mode: "browser-claim", sessionID: "ses_same" } })
+  assert.equal(result.statusCode, 404)
+  assert.deepEqual(checked, ["local"])
+})
+
 test("a slow unrelated workspace cannot hide an already verified automation owner", { timeout: 2_000 }, async t => {
   const app = Fastify()
   let unblock!: () => void

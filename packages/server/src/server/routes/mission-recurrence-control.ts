@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 import { prepareHumanRecurrenceControl } from "./mission-recurrence-play-preparation"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { recurrenceControlStatusSchema, recurrenceControlRouteSchema, recurrenceControlStateMatches, recurrenceRefusalCode } from "../../missions/recurrence-control-contract"
@@ -65,6 +66,7 @@ export function registerMissionRecurrenceControl(app: FastifyInstance, deps: {
         return reply.code(result.outcome === "committed" ? 200 : 503).send(result)
       }
     } catch (error) {
+      if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
       // Drop only this attempt's still-preparing admission before classification.
       // dispose is idempotent and preserves any original partial/uncertain permit.
       if (!dispatched) prepared?.dispose()

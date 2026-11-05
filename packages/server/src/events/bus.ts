@@ -10,13 +10,27 @@ export class EventBus extends EventEmitter {
   }
 
   publish(event: WorkspaceEventPayload): boolean {
+    if (event.type === "workspace.stopped" || event.type === "workspace.error") {
+      const instanceId = event.type === "workspace.stopped" ? event.workspaceId : event.workspace.id
+      // The last lease can dispose its relay before the workspace stop is published.
+      for (const [key, status] of this.instanceStatuses) {
+        if (status.instanceId === instanceId) this.instanceStatuses.delete(key)
+      }
+    }
     if (event.type === "instance.eventStatus") {
+      const key = JSON.stringify([event.source?.serverId ?? "local-shared", event.instanceId])
+      const previous = this.instanceStatuses.get(key)
+      if (previous?.source && event.source && previous.source.generation > event.source.generation) return false
+      if (previous?.source?.generation === event.source?.generation && previous?.liveGeneration !== undefined && event.liveGeneration !== undefined
+        && previous.liveGeneration > event.liveGeneration) return false
+      if (previous?.source?.generation === event.source?.generation && previous?.liveGeneration !== undefined && previous.liveGeneration === event.liveGeneration
+        && (previous.status !== event.status || previous.source?.connectionGeneration !== event.source?.connectionGeneration)) return false
       const terminal = event.status === "disconnected"
         && (event.reason === "workspace stopped" || event.reason === "workspace error")
       if (terminal) {
-        this.instanceStatuses.delete(event.instanceId)
+        this.instanceStatuses.delete(key)
       } else {
-        this.instanceStatuses.set(event.instanceId, event)
+        this.instanceStatuses.set(key, event)
       }
     }
     if (event.type !== "instance.event" && event.type !== "instance.eventStatus") {

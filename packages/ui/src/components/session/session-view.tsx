@@ -1,7 +1,7 @@
 import { Show, createMemo, createEffect, createSignal, on, onCleanup, type Component, type JSXElement } from "solid-js"
 import type { SessionInboxUser, SessionInboxUserPayload } from "@opencode/client"
 import type { Session } from "../../types/session"
-import { createAgentAttachment, createFileAttachment, createSkillAttachment, type Attachment } from "../../types/attachment"
+import type { Attachment } from "../../types/attachment"
 import type { ClientPart } from "../../types/message"
 import MessageSection from "../message-section"
 import { MissionReader } from "../mission-reader"
@@ -37,6 +37,11 @@ import { DESIGN_AGENT_ID, isDesignAgentMissing, isImagesConversation, locationAg
 import { clearComposerFocusRequest, composerFocusRequested } from "../../stores/composer-focus"
 import { isSelectablePrimaryAgent } from "../../types/session"
 import DesignAgentNotice from "../prompt-input/DesignAgentNotice"
+import { captureSessionRequestAuthority } from "../../stores/session-api"
+import { requestConnectionOptions } from "../../stores/request-locations"
+import { isSessionActionInterrupted, sessionActionSuperseded } from "../../stores/session-action-queue"
+import { queuedPromptDraft, type QueuedPromptDraft } from "../prompt-input/usePromptRecovery"
+import { getProjectAvailability } from "../../stores/project-capability"
 
 const log = getLogger("session")
 
@@ -65,6 +70,15 @@ interface SessionViewProps {
 }
 
 export const SessionView: Component<SessionViewProps> = (props) => {
+  let disposed = false
+  onCleanup(() => { disposed = true })
+  function captureActionView() {
+    const instanceId = props.instanceId, sessionId = props.sessionId
+    const current = captureSessionRequestAuthority(instanceId, sessionId)
+    const isCurrent = () => !disposed && props.instanceId === instanceId && props.sessionId === sessionId && current()
+    const assertCurrent = () => { if (!isCurrent()) throw sessionActionSuperseded(t("session.actions.superseded")) }
+    return { instanceId, sessionId, isCurrent, assertCurrent }
+  }
   const documentAttentionActive = createDocumentAttention()
   const { t } = useI18n()
   const { preferences } = useConfig()
@@ -104,8 +118,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   const pendingUserPrompts = createMemo(() => getOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)
     .filter((item): item is SessionInboxUser => item.type === "user"))
   const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
-  const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceFolder))
-  const missionReader = () => props.isActive ? missionProjectView(props.instanceFolder).reader : undefined
+  const preview = createMemo(() => getProjectAvailability(props.instanceId, "automation").allowed ? getSessionPreview(props.sessionId, props.instanceFolder) : null)
+  const missionReader = () => props.isActive && getProjectAvailability(props.instanceId, "missions").allowed ? missionProjectView(props.instanceFolder).reader : undefined
   const readingMission = () => Boolean(missionReader())
   // A layout-restored reader for a one-time Mission the loaded map no longer
   // contains has nothing to show: release the central surface to the transcript.
@@ -117,11 +131,12 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       updateMissionProjectView(props.instanceFolder, { reader: undefined })
   })
   const filePreview = createMemo(() => {
+    if (!getProjectAvailability(props.instanceId, "files").allowed) return null
     const target = getFilePreview(props.instanceId)
-    return target?.sessionId === props.sessionId ? target : null
+    return target?.sessionId === props.sessionId && getProjectAvailability(props.instanceId, target.kind === "workspace" ? "files" : "git").allowed ? target : null
   })
   createEffect(() => { if (props.isActive && preview()?.mode === "preview") closeFilePreview(props.instanceId) })
-  const centralPreview = () => props.isActive !== false && preview()?.mode === "preview" && !filePreview() && !readingMission()
+  const centralPreview = () => getProjectAvailability(props.instanceId, "automation").allowed && props.isActive !== false && preview()?.mode === "preview" && !filePreview() && !readingMission()
   // The latest explicit reader selection owns the central surface. Opening one
   // must not leave the other mounted invisibly above it; editor drafts live in
   // their own store and the composer stays outside both readers.
@@ -136,6 +151,13 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   let pendingSelectionInsert: { text: string; mode: PromptInsertMode } | null = null
   let pendingCommentText: string | null = null
   const [queueBusyId, setQueueBusyId] = createSignal<string>()
+  createEffect(on([
+    () => props.instanceId, () => props.sessionId,
+    () => instances().get(props.instanceId)?.client,
+    () => instances().get(props.instanceId)?.binding?.serverId,
+    () => instances().get(props.instanceId)?.binding?.directory,
+    () => instances().get(props.instanceId)?.capabilities?.generation,
+  ], () => setQueueBusyId(undefined), { defer: true }))
 
   createEffect(on(
     () => `${props.instanceId}:${props.sessionId}`,
@@ -432,14 +454,18 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     delivery: PromptDelivery,
     restoredPayload?: SessionInboxUserPayload,
   ) {
-    if (!isLatestMessageWindow(props.instanceId, props.sessionId)) {
-      await loadLatestMessageWindow(props.instanceId, props.sessionId)
+    const { instanceId, sessionId, isCurrent, assertCurrent } = captureActionView()
+    assertCurrent()
+    if (!isLatestMessageWindow(instanceId, sessionId)) {
+      await loadLatestMessageWindow(instanceId, sessionId)
+      assertCurrent()
     }
     const messageCount = visibleMessageCount()
     const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
     const initialPinIntent = startSubmitBottomPinIntent(submittedExchangeTargetCount, { createdMessageCount: messageCount })
     try {
-      await sendMessage(props.instanceId, props.sessionId, prompt, attachments, { delivery, restoredPayload })
+      await sendMessage(instanceId, sessionId, prompt, attachments, { delivery, restoredPayload, admissionCurrent: isCurrent })
+      assertCurrent()
       const latestMessageCount = visibleMessageCount()
       if (latestMessageCount < submittedExchangeTargetCount && !sessionStreamingActive()) {
         setSubmitBottomPinIntent(null)
@@ -450,7 +476,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         })
       }
     } catch (error) {
-      setSubmitBottomPinIntent(null)
+      if (isCurrent()) setSubmitBottomPinIntent(null)
       throw error
     }
   }
@@ -465,44 +491,44 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   async function manageQueuedPrompt(item: SessionInboxUser, action: "delivery" | "edit" | "remove") {
     if (queueBusyId()) return
+    const { instanceId, sessionId, isCurrent, assertCurrent } = captureActionView()
+    const requestOptions = requestConnectionOptions(instances().get(instanceId))
+    const api = promptInputApi
+    if (action === "edit" && !api) return
+    const unchanged = api?.captureDraft()
+    const focused = document.activeElement
+    let draft: QueuedPromptDraft | undefined
     setQueueBusyId(item.id)
     try {
-      const inbox = instances().get(props.instanceId)?.client?.session.inbox
+      assertCurrent()
+      if (action === "edit") draft = queuedPromptDraft(item)
+      const inbox = instances().get(instanceId)?.client?.session.inbox
       if (!inbox) throw new Error("Instance not ready")
       if (action === "remove" || action === "edit") {
-        await inbox.cancel({ sessionID: props.sessionId, inboxID: item.id })
-        if (action === "edit") {
-          const displayText = item.payload.metadata?.displayText
-          const text = typeof displayText === "string" && displayText ? displayText : item.payload.text
-          const restoredAttachments = [
-            ...(item.payload.files ?? []).map((file) => {
-              const uri = file.source.type === "uri" ? file.source.uri : `data:${file.mime};base64,${file.data}`
-              const name = file.name ?? file.mention?.text.replace(/^@/, "") ?? file.mime
-              const attachment = createFileAttachment(uri, name, file.mime)
-              if (file.mention?.text) attachment.display = file.mention.text
-              return attachment
-            }),
-            ...(item.payload.agents ?? []).map((agent) => createAgentAttachment(agent.name)),
-            ...(item.payload.skills ?? []).map((skill) => createSkillAttachment(skill.id, skill.name)),
-          ]
-          clearAttachments(props.instanceId, props.sessionId)
-          for (const attachment of restoredAttachments) addAttachment(props.instanceId, props.sessionId, attachment)
-          if (promptInputApi) promptInputApi.restoreQueuedPrompt(text, item.payload)
-          else {
-            pendingPromptText = text
-            pendingQueuedPayload = item.payload
+        await inbox.cancel({ sessionID: sessionId, inboxID: item.id }, requestOptions)
+        if (draft) {
+          if (isCurrent() && props.isActive !== false && api && api === promptInputApi && unchanged?.()) {
+            clearAttachments(instanceId, sessionId)
+            for (const attachment of draft.attachments) addAttachment(instanceId, sessionId, attachment)
+            api.restoreQueuedPrompt(draft.text, draft.payload, { focus: focused === document.activeElement })
+          } else {
+            // Cancellation can already be committed. Keep its known payload on
+            // the held source for explicit recovery, independently of native authority.
+            api?.recoverQueuedPrompt(draft)
           }
         }
       } else if (item.delivery === "queue") {
-        await inbox.update({ sessionID: props.sessionId, inboxID: item.id, delivery: "steer" })
+        await inbox.update({ sessionID: sessionId, inboxID: item.id, delivery: "steer" }, requestOptions)
       } else {
-        await inbox.update({ sessionID: props.sessionId, inboxID: item.id, delivery: "queue" })
+        await inbox.update({ sessionID: sessionId, inboxID: item.id, delivery: "queue" }, requestOptions)
       }
     } catch (error) {
-      showQueueError(error)
+      if (draft) api?.recoverQueuedPrompt(draft)
+      if (!isCurrent() || props.isActive === false || isSessionActionInterrupted(error)) api?.showActionFeedback()
+      else showQueueError(error)
     } finally {
-      await syncOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder).catch(() => undefined)
-      setQueueBusyId(undefined)
+      if (isCurrent()) await syncOpenCodeSessionInbox(instanceId, sessionId, props.instanceFolder).catch(() => undefined)
+      if (isCurrent()) setQueueBusyId(undefined)
     }
   }
 
@@ -513,12 +539,15 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   async function handleAbortSession() {
     const currentSession = session()
     if (!currentSession) return
+    const { isCurrent } = captureActionView()
+    const api = promptInputApi
  
     try {
       await abortSession(props.instanceId, currentSession.id)
       log.info("Abort requested", { instanceId: props.instanceId, sessionId: currentSession.id })
     } catch (error) {
       log.error("Failed to abort session", error)
+      if (!isCurrent() || props.isActive === false || isSessionActionInterrupted(error)) { api?.showActionFeedback(); return }
       showAlertDialog(t("sessionView.alerts.abortFailed.message"), {
         title: t("sessionView.alerts.abortFailed.title"),
         detail: error instanceof Error ? error.message : String(error),
@@ -528,10 +557,13 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   }
 
   async function handleBackgroundSession() {
+    const { isCurrent } = captureActionView()
+    const api = promptInputApi
     try {
       await backgroundSession(props.instanceId, props.sessionId)
     } catch (error) {
       log.error("Failed to move blocking tools to background", error)
+      if (!isCurrent() || props.isActive === false || isSessionActionInterrupted(error)) { api?.showActionFeedback(); return }
       showAlertDialog(t("promptInput.background.error.message"), {
         title: t("promptInput.background.error.title"),
         variant: "error",
@@ -557,23 +589,26 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
 
   async function handleRevert(messageId: string) {
+    const { instanceId, sessionId, isCurrent, assertCurrent } = captureActionView()
+    const api = promptInputApi
+    const unchanged = api?.captureDraft()
+    const focused = document.activeElement
     const instance = instances().get(props.instanceId)
     if (!instance || !instance.client) return
     const restoredText = getUserMessageText(messageId)
 
     try {
-      await stageSessionRevert(props.instanceId, props.sessionId, messageId)
+      await stageSessionRevert(instanceId, sessionId, messageId)
+      assertCurrent()
 
       if (restoredText) {
-        if (promptInputApi) {
-          promptInputApi.setPromptText(restoredText, { focus: true })
-        } else {
-          pendingPromptText = restoredText
-          pendingQueuedPayload = undefined
-        }
+        if (props.isActive !== false && api && api === promptInputApi && unchanged?.()) {
+          api.setPromptText(restoredText, { focus: focused === document.activeElement })
+        } else api?.showActionFeedback()
       }
     } catch (error) {
       log.error("Failed to revert message", error)
+      if (!isCurrent() || props.isActive === false || isSessionActionInterrupted(error)) { api?.showActionFeedback(); return }
       showAlertDialog(t("sessionView.alerts.revertFailed.message"), {
         title: t("sessionView.alerts.revertFailed.title"),
         variant: "error",
@@ -588,20 +623,25 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     }
 
     const parentTitle = (session()?.title ?? "").trim() || t("sessionList.session.untitled")
+    const { instanceId, sessionId, isCurrent, assertCurrent } = captureActionView()
+    const api = promptInputApi
 
     try {
-      const forkedSession = await forkSession(props.instanceId, props.sessionId, { afterMessageId: messageId })
+      const forkedSession = await forkSession(instanceId, sessionId, { afterMessageId: messageId })
+      assertCurrent()
+      if (props.isActive === false) { api?.showActionFeedback(); return }
 
-      renameSession(props.instanceId, forkedSession.id, `Fork: ${parentTitle}`).catch((error) => {
+      renameSession(instanceId, forkedSession.id, `Fork: ${parentTitle}`).catch((error) => {
         log.error("Failed to rename forked session", error)
       })
 
-      ensureSessionAncestorsExpanded(props.instanceId, forkedSession.id)
-      setActiveSessionFromList(props.instanceId, forkedSession.id)
+      ensureSessionAncestorsExpanded(instanceId, forkedSession.id)
+      setActiveSessionFromList(instanceId, forkedSession.id)
 
-      await loadMessages(props.instanceId, forkedSession.id).catch((error) => log.error("Failed to load forked session messages", error))
+      await loadMessages(instanceId, forkedSession.id).catch((error) => log.error("Failed to load forked session messages", error))
     } catch (error) {
       log.error("Failed to fork session", error)
+      if (!isCurrent() || props.isActive === false || isSessionActionInterrupted(error)) { api?.showActionFeedback(); return }
       showAlertDialog(t("sessionView.alerts.forkFailed.message"), {
         title: t("sessionView.alerts.forkFailed.title"),
         variant: "error",
@@ -618,8 +658,9 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       }
     >
       <div ref={rootRef} class="session-view" classList={{ "mission-reading": readingMission() }}>
-        <Show when={preview()}>
+        <Show when={getProjectAvailability(props.instanceId, "automation").allowed && preview()}>
           <SessionPreviewView
+            instanceId={props.instanceId}
             preview={preview()!}
             active={centralPreview()}
             onInsertComment={handleInsertPreviewComment}
@@ -667,7 +708,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
               onQuoteSelection={handleQuoteSelection}
             />
         </Show>
-        }>{target => <FilesPreviewView instanceId={props.instanceId} target={target()} active={Boolean(props.isActive)} onClose={() => closeFilePreview(props.instanceId)} onInsertComment={handleInsertPreviewComment} />}</Show>
+        }>{target => <FilesPreviewView instanceId={props.instanceId} target={target()} active={Boolean(props.isActive)} onClose={() => closeFilePreview(props.instanceId)} onInsertComment={handleInsertPreviewComment}
+          focusWithin={() => rootRef} onRemovedFocus={() => { if (props.isActive) focusConversationStream(rootRef) }} />}</Show>
 
         </div>
         <Show when={readingMission()}>

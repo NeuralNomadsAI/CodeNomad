@@ -12,6 +12,49 @@ function serviceWithStore(store: Record<string, unknown>) {
 }
 
 describe("SettingsService config persistence", () => {
+  it("normalizes development server metadata without reading a credential provider", () => {
+    const profile = { kind: "explicit", id: "one", label: "One", origin: "https://example.test" }
+    let doc = { server: { opencodeServers: [{ ...profile, credentialMode: "keychain", credentialRef: "private-ref" }] } }
+    let writes = 0
+    const service = serviceWithStore({
+      get: () => doc,
+      replace: (value: typeof doc) => { writes++; doc = value; return doc },
+    })
+    assert.deepEqual(service.getDoc("config"), { server: { opencodeServers: [profile] } })
+    assert.equal(writes, 1)
+    assert.deepEqual(service.getDoc("config"), { server: { opencodeServers: [profile] } })
+    assert.equal(writes, 1)
+  })
+  it("reserves registry writes and ancestor removals before persistence or publication", () => {
+    const profiles = [{ kind: "explicit", id: "one", label: "One", origin: "https://example.test" }]
+    let doc = { server: { opencodeServers: profiles, logLevel: "INFO" }, ui: { theme: "light" } }
+    const events: unknown[] = []
+    let writes = 0
+    const service = serviceWithStore({
+      get: () => doc, getOwner: () => doc.server, getAuthoritativeOwner: () => doc.server,
+      replace: (value: typeof doc) => { writes++; doc = value; return doc },
+      replaceOwner: (_owner: string, value: typeof doc.server) => { writes++; doc.server = value; return value },
+    })
+    Object.assign(service as any, { eventBus: { publish: (value: unknown) => events.push(value) } })
+    for (const patch of [{ opencodeServers: [] }, { opencodeServers: null }, { opencodeServers: {} },
+      { opencodeServers: profiles }, { opencodeServers: [], logLevel: "ERROR" }, null, [], "replace"]) {
+      assert.throws(() => service.mergePatchOwner("config", "server", patch))
+      assert.throws(() => service.mergePatchDoc("config", { server: patch, ui: { theme: "dark" } }))
+    }
+    assert.equal(writes, 0)
+    assert.deepEqual(events, [])
+    service.mergePatchOwner("config", "server", { logLevel: "WARN" })
+    service.mergePatchDoc("config", { ui: { theme: "dark" } })
+    assert.deepEqual(doc.server.opencodeServers, profiles)
+    assert.equal(writes, 2)
+    assert.equal(events.length, 2)
+    assert.match(JSON.stringify(events[1]), /"owner":"\*"/)
+    assert.match(JSON.stringify(events[1]), /"hasCredentials":false/)
+    service.getOpenCodeServerRegistry().replace([])
+    assert.deepEqual(doc.server.opencodeServers, [])
+    assert.equal(writes, 3)
+    assert.equal(events.length, 3)
+  })
   it("preserves Tauri's ASCII-folded Unicode Windows identity without moving profile state", () => {
     if (process.platform !== "win32") return
     const service = serviceWithStore({})

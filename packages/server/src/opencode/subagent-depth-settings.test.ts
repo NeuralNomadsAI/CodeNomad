@@ -46,6 +46,7 @@ test("owned depth editing preserves JSONC, inherited settings and original draft
       plugin: { list: async () => ({ data: [] }) } },
     }
     const manager: any = {
+      requireWorkspaceCapability: () => new AbortController().signal,
       get: () => ({}), getSharedServiceConnection: async () => connection,
       getServiceDirectoryForPath: async (_id: string, directory: string) => directory === project ? directory : undefined,
       ownsLocation: async () => owned, getWorktreeIdentityForPath: async () => "owned",
@@ -164,6 +165,7 @@ async function nestingFixture(run: (fixture: {
       } } },
     }
     const manager: any = {
+      requireWorkspaceCapability: () => new AbortController().signal,
       get: () => ({}), getSharedServiceConnection: async () => connection,
       getServiceDirectoryForPath: async (_id: string, directory: string) => directory === project ? directory : undefined,
       ownsLocation: async () => true, getWorktreeIdentityForPath: async () => "owned",
@@ -337,7 +339,7 @@ test("depth origin follows the effective native block, including ancestor, pathl
     [[global, { type: "document", info: { experimental: { subagent_depth: 0 } } }], null, 0],
   ] as const) {
     const settings = new SubagentDepthSettings({ readConfigDocuments: async () => ({ location: { directory: "/project" }, entries, documents: [] }) } as any,
-      { getServicePathStyle: () => "posix", getSharedServiceConnection: async () => ({ assertCurrent: () => {}, endpoint: { url: "http://127.0.0.1:1234" },
+      { requireWorkspaceCapability: () => new AbortController().signal, getServicePathStyle: () => "posix", getSharedServiceConnection: async () => ({ assertCurrent: () => {}, endpoint: { url: "http://127.0.0.1:1234" },
         fetch: async () => Response.json(contract({ type: "integer", minimum: 0, default: 1 })) }) } as any)
     const snapshot = await settings.read("w", { directory: "/project" })
     assert.equal(snapshot.origin, expectedOrigin)
@@ -367,6 +369,7 @@ test("Inherit removes a block left with only the Global image storage, only when
       plugin: { list: async () => ({ data: [] }) } },
     }
     const manager: any = {
+      requireWorkspaceCapability: () => new AbortController().signal,
       get: () => ({}), getSharedServiceConnection: async () => connection,
       getServiceDirectoryForPath: async (_id: string, directory: string) => directory === project ? directory : undefined,
       ownsLocation: async () => true, getWorktreeIdentityForPath: async () => "owned",

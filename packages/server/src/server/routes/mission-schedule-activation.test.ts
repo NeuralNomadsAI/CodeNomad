@@ -51,6 +51,7 @@ async function fixture(run: (f: any) => Promise<void>) {
     } }
   const workspace = { id: "w" }, fence = new WorktreeDeletionFence()
   const manager: any = { get: () => workspace, getSharedServiceConnection: async () => connection,
+    requireWorkspaceCapability: () => new AbortController().signal,
     getServiceLocation: () => ({ directory: project }), getServiceDirectoryForPath: async (_id: string, dir: string) => dir === project ? dir : undefined,
     ownsLocation: async () => owned, getWorktreeIdentityForPath: async () => "owned-physical-root",
     getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix", getServiceWslDistro: () => undefined,

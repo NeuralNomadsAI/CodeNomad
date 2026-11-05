@@ -7,6 +7,8 @@ import { showToastNotification } from "../../../../lib/notifications"
 import { HttpResponseError } from "../../../../lib/retryable-file-search"
 import { instances } from "../../../../stores/instances"
 import { reloadWorktrees } from "../../../../stores/worktrees"
+import { getProjectAvailability } from "../../../../stores/project-capability"
+import { captureInstanceRequestAuthority } from "../../../../stores/session-api"
 
 const log = getLogger("api")
 
@@ -35,10 +37,14 @@ export function useGitInit(options: {
   t: (key: string, vars?: Record<string, any>) => string
 }) {
   const [pending, setPending] = createSignal(false)
+  const sourceCurrent = captureInstanceRequestAuthority(options.instanceId)
+  const allowed = () => !disposed && sourceCurrent() && getProjectAvailability(options.instanceId, "git").allowed
+    && getProjectAvailability(options.instanceId, "hostGit").allowed
   let disposed = false
   onCleanup(() => { disposed = true })
 
   const refreshAfterAttempt = async () => {
+    if (!allowed()) return
     invalidateFilesystemCaches(options.instanceId)
     const instance = instances().get(options.instanceId)
     // A markerless folder's native project changes with its repository. Reload the
@@ -47,7 +53,7 @@ export function useGitInit(options: {
     const refreshes = await Promise.allSettled([
       reloadWorktrees(options.instanceId),
       import("../../../../stores/session-api").then(({ fetchSessions }) =>
-        fetchSessions(options.instanceId, { reset: true, strictStatus: true, projectMetadata })),
+        allowed() ? fetchSessions(options.instanceId, { reset: true, strictStatus: true, projectMetadata }) : undefined),
     ])
     for (const refresh of refreshes) {
       if (refresh.status === "rejected") log.warn("Refresh after Git initialization failed", { instanceId: options.instanceId, error: refresh.reason })
@@ -55,14 +61,14 @@ export function useGitInit(options: {
   }
 
   const initialize = async () => {
-    if (pending()) return
+    if (pending() || !allowed()) return
     setPending(true)
     try {
       await serverApi.initializeWorkspaceGit(options.instanceId, options.directory())
-      if (!disposed) showToastNotification({ category: "files", message: options.t("filesPanel.gitInit.success"), variant: "success" })
+      if (allowed()) showToastNotification({ category: "files", message: options.t("filesPanel.gitInit.success"), variant: "success" })
     } catch (error) {
       const key = errorKey(error)
-      if (!disposed) showToastNotification({ category: "files",
+      if (allowed()) showToastNotification({ category: "files",
         message: key ? options.t(key) : options.t("filesPanel.gitInit.error", { message: error instanceof Error ? error.message : String(error) }),
         variant: "error",
       })
@@ -73,7 +79,7 @@ export function useGitInit(options: {
   }
 
   // Explicit refresh notices a repository created outside CodeNomad.
-  const recheck = () => reloadWorktrees(options.instanceId).catch(error => log.warn("Failed to recheck repository", { instanceId: options.instanceId, error }))
+  const recheck = () => allowed() ? reloadWorktrees(options.instanceId).catch(error => log.warn("Failed to recheck repository", { instanceId: options.instanceId, error })) : Promise.resolve()
 
   return { pending, initialize, recheck }
 }

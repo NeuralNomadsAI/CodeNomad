@@ -9,6 +9,8 @@ import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { readGitCommonDirectory } from "../../workspaces/git-common-directory"
 import { deferPendingDiscovery, markLoadedPendingSupported, PENDING_DISCOVERY_DEFERRED } from "../../workspaces/pending-discovery"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
+import { formInfoSchema as formSchema } from "../../opencode/form-contract"
 
 const directorySchema = z.string().min(1).max(4096)
 const directoryListSchema = z.union([directorySchema, z.array(directorySchema).min(1).max(64)])
@@ -17,28 +19,6 @@ const permissionSchema = z.object({
   id: z.string(), sessionID: z.string(), action: z.string(), resources: z.array(z.string()),
   save: z.array(z.string()).optional(), metadata: z.record(z.unknown()).optional(), message: z.string().optional(),
   source: z.object({ type: z.literal("tool"), messageID: z.string(), id: z.string() }).optional(),
-})
-const numeric = z.union([z.number(), z.enum(["Infinity", "-Infinity", "NaN"])])
-const option = z.object({ value: z.string(), label: z.string(), description: z.string().optional() })
-const field = z.object({
-  key: z.string(), title: z.string().optional(), description: z.string().optional(),
-  required: z.boolean().optional(), hidden: z.boolean().optional(),
-  when: z.array(z.object({ key: z.string(), op: z.enum(["eq", "neq"]), value: z.union([z.string(), numeric, z.boolean()]) })).optional(),
-})
-const fieldSchema = z.discriminatedUnion("type", [
-  field.extend({ type: z.literal("string"), format: z.enum(["email", "uri", "date", "date-time"]).optional(),
-    minLength: z.number().optional(), maxLength: z.number().optional(), pattern: z.string().optional(),
-    placeholder: z.string().optional(), default: z.string().optional(), options: z.array(option).optional(), custom: z.boolean().optional() }),
-  field.extend({ type: z.literal("number"), minimum: numeric.optional(), maximum: numeric.optional(), default: numeric.optional() }),
-  field.extend({ type: z.literal("integer"), minimum: numeric.optional(), maximum: numeric.optional(), default: numeric.optional() }),
-  field.extend({ type: z.literal("boolean"), default: z.boolean().optional() }),
-  field.extend({ type: z.literal("multiselect"), options: z.array(option), minItems: z.number().optional(),
-    maxItems: z.number().optional(), custom: z.boolean().optional(), default: z.array(z.string()).optional() }),
-  field.extend({ type: z.literal("external"), url: z.string() }),
-])
-const formSchema = z.object({
-  id: z.string(), sessionID: z.string(), title: z.string(), metadata: z.record(z.unknown()).optional(),
-  fields: z.array(fieldSchema).min(1),
 })
 // One backend-owned RPC; never exposed by the generic instance proxy.
 const snapshotSchema = z.object({ originDirectory: directorySchema, data: z.array(
@@ -66,7 +46,7 @@ async function drainOwnershipReads<T>(reads: Promise<T>[]): Promise<T[]> {
 const missingHost = (host: string) => lstat(host).then(() => false, error => (error as NodeJS.ErrnoException).code === "ENOENT")
 
 export interface PendingRequestsRouteDeps {
-  workspaceManager: Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "getServiceLocation" | "getServicePathStyle" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath" | "getHostPathForServicePath" | "ownsLocation" | "desktopPluginsReady">
+  workspaceManager: Pick<WorkspaceManager, "requireWorkspaceCapability" | "get" | "getSharedServiceConnection" | "getServiceLocation" | "getServicePathStyle" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath" | "getHostPathForServicePath" | "ownsLocation" | "desktopPluginsReady">
   worktreeDeletionFence: Pick<WorktreeDeletionFence, "isBlocked">
   /** Test seam only; production always uses the real Git common-directory reader. */
   readGitCommonDirectory?: typeof readGitCommonDirectory
@@ -96,6 +76,7 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
       reply.header("Server-Timing", timing.join(", "))
     }
     try {
+      manager.requireWorkspaceCapability(id, "pendingRecovery")
       const connection = await manager.getSharedServiceConnection(id)
       if (!connection) return reply.code(503).send({ error: "Pending requests unavailable" })
       if (deferPendingDiscovery(connection, { loadedOnly: true })) return reply.header("Retry-After", "30").code(503).send({ error: PENDING_DISCOVERY_DEFERRED, code: "deferred" })
@@ -393,7 +374,8 @@ export function registerPendingRequestRoutes(app: FastifyInstance, deps: Pending
           reason: deleting.has(directory) ? "deleting" as const : rejectedPlacement.get(directory) ?? "changed" as const })),
       ]
       return result
-    } catch {
+    } catch (error) {
+      if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
       record(phase)
       // Keep queue contents/paths and native payloads out of diagnostic logs.
       request.log.warn({ workspaceId: id, phase, nativeStatus, timedOut: signal.aborted, elapsedMs: Date.now() - started }, "Pending request recovery failed")

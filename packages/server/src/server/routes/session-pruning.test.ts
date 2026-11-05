@@ -12,6 +12,7 @@ function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; w
   const app = Fastify()
   const fence = new WorktreeDeletionFence()
   registerSessionPruningRoutes(app, { worktreeDeletionFence: fence, workspaceManager: {
+    requireWorkspaceCapability: () => new AbortController().signal,
     getServiceLocation: () => ({ directory: "/owned/worktree" }),
     getWorktrees: async () => ({ isGitRepo: false, worktrees: [] }),
     getSharedServiceClient: async () => ({

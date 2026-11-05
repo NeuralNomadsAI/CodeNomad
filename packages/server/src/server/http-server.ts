@@ -20,10 +20,14 @@ import { syncSessionGitContext } from "../workspaces/session-git-context"
 import { assertOrdinaryMissionScheduleBody, assertOrdinaryMissionScheduleSession, MissionScheduleInputError } from "./mission-schedule-input-guard"
 import { readGitStatus } from "../workspaces/git-requirement"
 import { registerSettingsRoutes } from "./routes/settings"
+import { registerOpenCodeServerAdminGuard, registerOpenCodeServerAdminPrivacy, registerOpenCodeServerRoutes, isOpenCodeServerAdminTarget } from "./routes/opencode-servers"
+import { registerOpenCodeFolderRoutes } from "./routes/opencode-folders"
 import { registerFilesystemRoutes } from "./routes/filesystem"
 import { registerConfigFileRoutes } from "./routes/config-files"
 import { registerMetaRoutes } from "./routes/meta"
 import { registerEventRoutes } from "./routes/events"
+import { isProjectParticipationTarget, registerProjectParticipationPrivacy, registerProjectParticipationRoutes } from "./routes/project-participation"
+import { ProjectParticipants } from "../workspaces/project-participants"
 import { registerStorageRoutes } from "./routes/storage"
 import { registerYoloRoutes } from "./routes/yolo"
 import { registerPermissionReceiptRoutes } from "./routes/permission-receipts"
@@ -77,7 +81,7 @@ import { registerOpenCodeLoginStartRoutes } from "./routes/opencode-login-start"
 import { registerSubagentDepthSettingsRoutes } from "./routes/subagent-depth-settings"
 import { ImageSettings } from "../opencode/image-settings"
 import { registerImageSettingsRoutes } from "./routes/image-settings"
-import { PROMPT_INLINE_FILE_LIMITS, ServerMeta, SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../api-types"
+import { PROMPT_INLINE_FILE_LIMITS, ServerMeta, SESSION_ENVIRONMENT_FAILED_ERROR_CODE, EXPLICIT_REQUEST_UNCERTAIN_ERROR_CODE } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
 import type { AuthManager } from "../auth/manager"
@@ -101,6 +105,7 @@ import { parsePreviewUpgradePath } from "../previews/upgrade-path"
 import { forwardRuntimeRequest } from "../opencode/compatibility/proxy"
 import { requestAdmission } from "./request-admission"
 import { LOCATION_CONTEXT_HEADER, locationRequestOptions, readLocationContext, readLocationRef, sameLocation } from "../opencode/compatibility/location"
+import { proxyExplicitWorkspaceRequest } from "./explicit-proxy"
 import { DEFERRED_MEDIA_HEADER, deferToolMedia, wantsDeferredMedia } from "../opencode/session-media"
 import { decodeSessionListScope, prepareLocationImport, readRequestLocations, type SessionListScope } from "../opencode/compatibility/proxy-locations"
 import type { RemoteProxySessionManager } from "./remote-proxy"
@@ -170,6 +175,11 @@ export function createHttpServer(deps: HttpServerDeps) {
   const app = Fastify(
     ({
       logger: false,
+      frameworkErrors: (error: unknown, request: FastifyRequest, reply: FastifyReply) => {
+        // Router decoding can fail before hooks; never echo the unparsed target.
+        if (!isOpenCodeServerAdminTarget(request.raw.url ?? request.url) && !isProjectParticipationTarget(request.raw.url ?? request.url)) { reply.send(error); return }
+        reply.header("cache-control", "no-store").code(400).send({ error: "invalid_request", code: "invalid_request" })
+      },
       ...(deps.protocol === "https" && deps.httpsOptions ? { https: deps.httpsOptions } : {}),
     } as unknown) as any,
   ) as unknown as FastifyInstance
@@ -190,6 +200,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   }
 
   registerRequestLogging(app, apiLogger)
+  registerOpenCodeServerAdminPrivacy(app)
+  registerProjectParticipationPrivacy(app)
 
   // Remote Control admission runs before CORS, authentication and routing.
   const remoteGate = deps.remoteControlManager.gate()
@@ -218,6 +230,13 @@ export function createHttpServer(deps: HttpServerDeps) {
     }
     return origins
   }
+
+  registerOpenCodeServerAdminGuard(app, { auth: deps.authManager, selfOrigins: getSelfOrigins, devOrigins: allowedDevOrigins, protocol: deps.protocol })
+  const participation = deps.workspaceManager.projectParticipants instanceof ProjectParticipants
+    ? registerProjectParticipationRoutes(app, { auth: deps.authManager, remote: deps.remoteControlManager,
+        owner: deps.workspaceManager.projectParticipants, manager: deps.workspaceManager,
+        selfOrigins: getSelfOrigins, devOrigins: allowedDevOrigins, protocol: deps.protocol })
+    : undefined
 
   app.register(cors, {
     origin: (origin, cb) => {
@@ -371,6 +390,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   const loginStart = createOpenCodeLoginStart(deps.settings, deps.workspaceManager)
   registerOpenCodeLoginStartRoutes(app, { loginStart, auth: deps.authManager, remoteDevices: deps.remoteControlManager })
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, refreshLoginStart: () => loginStart.refresh() })
+  registerOpenCodeServerRoutes(app, { settings: deps.settings, connections: () => deps.workspaceManager.getServerConnections() })
+  registerOpenCodeFolderRoutes(app, { connections: () => deps.workspaceManager.getServerConnections() }) // prototype-1236
   const accounts = new ProviderAccountsService(deps.settings)
   const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts)
   app.addHook("onClose", async () => stopQuotaObserver())
@@ -388,6 +409,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     registerClient: registerSseClient,
     logger: sseLogger,
     connectionManager: deps.clientConnectionManager,
+    participation,
   })
   registerWorktreeRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerPendingRequestRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
@@ -515,6 +537,7 @@ export function createHttpServer(deps: HttpServerDeps) {
 }
 
 export interface InstanceProxyWorkspaceManager {
+  requireWorkspaceCapability?(id: string, capability: import("../opencode/servers/capabilities").ServerCapability): AbortSignal
   get(id: string): ReturnType<WorkspaceManager["get"]>
   getSharedServiceEndpoint(id: string): ReturnType<WorkspaceManager["getSharedServiceEndpoint"]>
   getSharedServiceConnection?(id: string): ReturnType<WorkspaceManager["getSharedServiceConnection"]>
@@ -817,6 +840,14 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     return
   }
   const pathname = decodeURIComponent(routeUrl.pathname)
+  if (workspace.binding?.serverId && workspace.binding.serverId !== "local-shared") {
+    try {
+      return await proxyExplicitWorkspaceRequest({ request, reply, workspaceManager, workspaceId, workspace, pathname, signal, wait })
+    } catch {
+      signal.throwIfAborted()
+      return reply.code(502).send({ error: EXPLICIT_REQUEST_UNCERTAIN_ERROR_CODE, message: "Explicit OpenCode request unavailable; do not replay uncertain mutations" })
+    }
+  }
   if (!isAllowedInstanceApiRoute(request.method, pathname)) {
     reply.code(403).send({ error: "OpenCode route is not available through a workspace" })
     return
@@ -1408,6 +1439,7 @@ function sanitizeInstanceProxyRequestHeaders(
     LOCATION_CONTEXT_HEADER,
     HUMAN_ANSWER_HEADER,
     DEFERRED_MEDIA_HEADER,
+    "x-codenomad-connection-generation",
   ])
   const connection = headers.connection
   for (const name of (Array.isArray(connection) ? connection.join(",") : connection ?? "").split(",")) blocked.add(name.trim().toLowerCase())

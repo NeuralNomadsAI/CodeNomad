@@ -31,6 +31,7 @@ function fixture(options: { root?: string; directories?: string[] } = {}) {
   }
   replace()
   registerSessionHistoryRoutes(app, { worktreeDeletionFence: fence, workspaceManager: {
+    requireWorkspaceCapability: () => new AbortController().signal,
     getServiceLocation: () => root ? { directory: root } : undefined,
     getSharedServiceConnection: async () => active,
     getSharedServiceClient: async () => active.client,

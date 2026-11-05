@@ -123,6 +123,7 @@ describe("form interruption lifecycle", () => {
     ;(client.session.form as any).cancel = async (...args: unknown[]) => { calls.push(args) }
 
     try {
+      addInstance({ id: instanceId, folder: "/worktree", status: "ready", client } as any)
       addPendingForm(instanceId, globalForm)
       await sendFormReply(instanceId, globalForm.id, { channel: "stable" })
       addPendingForm(instanceId, globalForm)
@@ -140,6 +141,7 @@ describe("form interruption lifecycle", () => {
       ])
     } finally {
       removePendingForm(instanceId, globalForm.id)
+      removeInstance(instanceId)
       sdkManager.destroyClientsForInstance(instanceId)
     }
   })

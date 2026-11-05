@@ -4,10 +4,12 @@ import Fastify from "fastify"
 import { registerImagesConversationRoute } from "./images-conversation"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import type { ExcludeTarget, GitExclusion } from "../../workspaces/design-git-exclude"
+import { WorkspaceCapabilityError, type ServerCapability } from "../../opencode/servers/capabilities"
 
 const url = "/api/workspaces/w/images-conversation"
 const model = { providerID: "fixture", id: "chosen" }
-function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; distro?: string; exclusion?: GitExclusion; directory?: string } = {}) {
+function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; distro?: string; exclusion?: GitExclusion; directory?: string;
+  admit?: (capability: ServerCapability, rpcCalls: number) => void } = {}) {
   const calls: any[] = []
   const order: string[] = []
   const excluded: ExcludeTarget[] = []
@@ -17,6 +19,7 @@ function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; d
     worktreeDeletionFence: fence,
     excludeDesignFolder: async target => { excluded.push(target); return options.exclusion ?? "excluded" },
     workspaceManager: {
+      requireWorkspaceCapability: (_id, capability) => { options.admit?.(capability, calls.length); return new AbortController().signal },
       getSharedServiceClient: async () => {
         order.push("client")
         return {
@@ -83,6 +86,19 @@ test("open pins the fixed method, passes the caller's title, agent and model, th
     assert.deepEqual(calls, [{ rpcID: "codenomad.session-pruning", method: "imagesConversation",
       input: { mode: "open", title: "Images", agent: "design", model }, location: { directory: "/owned/repo" } }])
     assert.deepEqual(excluded.map(target => [target.directory, target.distro]), [["/owned/repo", undefined]])
+  } finally { await app.close() }
+})
+
+test("Design admission is rechecked after creation before any exclude write", async () => {
+  const { app, calls, excluded } = fixture({ admit: (capability, rpcCalls) => {
+    if (capability === "design" && rpcCalls) throw new WorkspaceCapabilityError(capability, { code: "deferred" })
+  } })
+  try {
+    const response = await app.inject({ method: "POST", url, payload: { directory: "/owned/repo", mode: "open" } })
+    assert.equal(response.statusCode, 403)
+    assert.deepEqual(response.json(), { error: "explicit_capability_unavailable", code: "explicit_capability_unavailable", capability: "design", reason: { code: "deferred" } })
+    assert.equal(calls.length, 1)
+    assert.deepEqual(excluded, [])
   } finally { await app.close() }
 })
 

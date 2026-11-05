@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import type { BrowserWindow } from "electron"
 import { createPreferencesUrl, PreferencesWindowRegistry, requirePreferencesRequest, requirePreferencesSection } from "./preferences-window"
+import { createClientState, parseClientState } from "./client-state-envelope"
 
 function fakeWindow() {
   const windowEvents = new Map<string, Function>()
@@ -84,7 +85,42 @@ test("Preferences sections and backend URLs are constrained", () => {
   assert.deepEqual(requirePreferencesRequest("providers", { instanceId: "workspace-1", workspacePath: "C:\\repo", location: { directory: "/mnt/c/repo" } }), {
     section: "providers", instanceId: "workspace-1", workspacePath: "C:\\repo", location: { directory: "/mnt/c/repo" },
   })
-  for (const workspacePath of [42, "x".repeat(32769), "bad\0path"]) {
+  for (const workspacePath of ["", 42, "x".repeat(32769), "bad\0path"]) {
     assert.throws(() => requirePreferencesRequest("providers", { workspacePath }), /Invalid Preferences workspace path/)
   }
+})
+
+test("server-bound Preferences survives normalization, guarded reuse, acceptance and the strict state codec", () => {
+  const request = requirePreferencesRequest("providers", { serverId: "unknown-A", instanceId: "same", workspacePath: "C:\\App/", location: { directory: "/App//" }, scrollTop: 123 })
+  assert.equal(request.serverId, "unknown-A")
+  const registry = new PreferencesWindowRegistry(), target = fakeWindow()
+  registry.register(target.window, request)
+  target.contentEvents.get("did-finish-load")?.()
+  registry.markReady(target.window)
+  const next = { ...request, serverId: "B" }
+  registry.reuse(next)
+  assert.deepEqual(registry.request(target.window), request)
+  registry.acceptRequest(target.window, next)
+  assert.deepEqual(registry.request(target.window), next)
+  const state = createClientState()
+  state.preferences = next
+  state.lastPreferences = request
+  const parsed = parseClientState(JSON.stringify(state))
+  assert.equal(parsed.unsupportedFutureEnvelope, false)
+  assert.deepEqual(parsed.state.preferences, next)
+  assert.deepEqual(parsed.state.lastPreferences, request)
+  for (const serverId of [null, undefined, "", "a/b", "a".repeat(129), 42]) {
+    assert.throws(() => requirePreferencesRequest("providers", { serverId }), /server ID/)
+  }
+  assert.throws(() => requirePreferencesRequest("providers", { serverId: "A", token: "forbidden" }), /context/)
+  assert.equal(Object.prototype.hasOwnProperty.call(requirePreferencesRequest("general", {}), "serverId"), false)
+  assert.equal(parseClientState(JSON.stringify({ ...state, preferences: { ...next, serverId: null } })).unsupportedFutureEnvelope, true)
+  for (const workspacePath of ["", 42, "x".repeat(32769), "bad\0path"]) {
+    assert.equal(parseClientState(JSON.stringify({ ...state, preferences: { ...next, workspacePath } })).unsupportedFutureEnvelope, true)
+  }
+  state.preferences = { section: "general" }
+  state.lastPreferences = { section: "general" }
+  const legacy = parseClientState(JSON.stringify(state)).state
+  assert.deepEqual(legacy.preferences, { section: "general" })
+  assert.deepEqual(legacy.lastPreferences, { section: "general" })
 })

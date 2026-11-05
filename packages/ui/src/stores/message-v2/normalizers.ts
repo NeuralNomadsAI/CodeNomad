@@ -1,5 +1,5 @@
 import { decodeHtmlEntities } from "../../lib/text-render-utils"
-import { isToolImageContent } from "../../lib/tool-content"
+import { isToolFileContent } from "../../lib/tool-content"
 import type { SessionMessageInfo } from "@opencode/client"
 import type { ClientPart, Message, MessageInfo } from "../../types/message"
 
@@ -55,7 +55,7 @@ function toolOutput(content: unknown): unknown {
     .filter((item): item is { type: "text"; text: string } => item?.type === "text" && typeof item.text === "string")
     .map((item) => item.text)
     .join("\n")
-  return text || content.filter(item => !isToolImageContent(item))
+  return text || content.filter(item => !isToolFileContent(item))
 }
 
 export function normalizeSessionMessage(sessionId: string, source: SessionMessageInfo): NormalizedSessionMessage {

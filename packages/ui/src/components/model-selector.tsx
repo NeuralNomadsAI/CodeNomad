@@ -1,7 +1,8 @@
 import { Combobox, useComboboxContext } from "@kobalte/core/combobox"
 import { createEffect, createMemo, createSignal } from "solid-js"
 import { providers, fetchProviders } from "../stores/sessions"
-import { waitForInstanceInitialSessionHydration } from "../stores/instances"
+import { instances, waitForInstanceInitialSessionHydration } from "../stores/instances"
+import { LOCAL_SERVER_ID } from "../lib/project-identity"
 import { ChevronDown, PlugZap, Star } from "lucide-solid"
 import type { Model } from "../types/session"
 import { useI18n } from "../lib/i18n"
@@ -79,9 +80,10 @@ export default function ModelSelector(props: ModelSelectorProps) {
   )
 
   // Missions' model selectors list the same models (`preferredModelList`).
-  const modelList = createMemo(() => preferredModelList(catalogModels()))
+  const serverId = () => instances().get(props.instanceId)?.binding?.serverId ?? LOCAL_SERVER_ID
+  const modelList = createMemo(() => preferredModelList(catalogModels(), serverId()))
 
-  const favoriteKeySet = createMemo(() => favoriteModelKeys(uiState().models.favorites ?? []))
+  const favoriteKeySet = createMemo(() => favoriteModelKeys((uiState().models.favorites ?? []).filter(item => (item.serverId ?? LOCAL_SERVER_ID) === serverId())))
 
   const hasFavorites = createMemo(() => modelList().favorites.length > 0)
 
@@ -319,6 +321,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
                       event.preventDefault()
                       event.stopPropagation()
                       toggleFavoriteModelPreference({
+                        serverId: serverId(),
                         providerId: model.providerId,
                         modelId: model.id,
                       })

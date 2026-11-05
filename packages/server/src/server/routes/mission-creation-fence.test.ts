@@ -72,6 +72,7 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
     get: () => current ? { id: "workspace" } : undefined, list: () => [{ id: "workspace" }],
     getServiceLocation: () => ({ directory }), getSharedServiceClient: async () => client,
     getSharedServiceConnection: async () => connection,
+    requireWorkspaceCapability: () => new AbortController().signal,
     ownsLocation: async (_id: string, location: any) => current && location.directory === directory,
     getServiceDirectoryForPath: async (_id: string, path: string) => current && path === directory ? directory : undefined,
     getWorktreeIdentityForPath: async (_id: string, path: string) => current && path === directory ? physical : undefined,

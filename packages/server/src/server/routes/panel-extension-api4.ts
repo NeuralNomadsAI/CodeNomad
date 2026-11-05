@@ -14,6 +14,7 @@ import { generationTargetSchema, imageReadResultSchema, imageReferenceResultSche
 import { locationRequestOptions, readLocationRef } from "../../opencode/compatibility/location"
 import { resolveImagesConversationAt, type ImagesConversationRouteDeps } from "./images-conversation"
 import { checkDesignFolderExclusion } from "../../workspaces/design-git-exclude"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 
 const Id = z.string().min(1).max(256)
 const authority = { instanceId: Id, digest: z.string().regex(/^[a-f0-9]{64}$/) }
@@ -74,6 +75,15 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
       try {
         const { id } = idSchema.parse(request.params)
         const input = schema.parse(request.body) as z.infer<z.ZodObject<T & typeof authority>> & { instanceId: string; digest: string }
+        if (permission && permission !== "panel.preferences") {
+          try {
+            manager.requireWorkspaceCapability(input.instanceId, "integratedImages")
+            manager.requireWorkspaceCapability(input.instanceId, "design")
+          } catch (error) {
+            if (error instanceof Error && "statusCode" in error && error.statusCode === 404) throw new Refused(404)
+            throw error
+          }
+        }
         // The route settles on the deadline or the caller's departure, whatever its reads still await.
         return await settle(signal, async () => {
           const entry = permission ? await deps.store.authorize(id, input.digest, permission) : undefined
@@ -90,6 +100,7 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
           return result
         })
       } catch (error) {
+        if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
         const code = error instanceof Refused ? error.status : error instanceof z.ZodError ? 400 : error instanceof PanelExtensionError
           ? { missing: 404, disabled: 403, conflict: 409, invalid: 400, limit: 413, unavailable: 503 }[error.code] : 503
         return reply.code(code).send({ error: "Panel extension request unavailable" })

@@ -78,6 +78,7 @@ test("authenticated recurrence CREATE shares project identity, rejects foreign/c
     const workspace = { id: "workspace" }
     const manager: any = { get: () => workspace, getServiceLocation: () => ({ directory: active }),
       getSharedServiceConnection: async () => connection,
+      requireWorkspaceCapability: () => new AbortController().signal,
       ownsLocation: async (_id: string, location: any) => locations.includes(location.directory),
       getServiceDirectoryForPath: async (_id: string, directory: string) => locations.includes(directory) ? directory : undefined,
       getWorktreeIdentityForPath: async (_id: string, directory: string) => {

@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify"
 import { z } from "zod"
 import { FileSystemBrowser } from "../../filesystem/browser"
+import { hostOnlyQuery } from "./host-only-query"
 
 interface RouteDeps {
   fileSystemBrowser: FileSystemBrowser
@@ -9,23 +10,24 @@ interface RouteDeps {
 const FilesystemQuerySchema = z.object({
   path: z.string().optional(),
   includeFiles: z.coerce.boolean().optional(),
-})
+}).strict()
 
 const FilesystemCreateFolderSchema = z.object({
   parentPath: z.string().optional(),
   name: z.string(),
-})
+}).strict()
 
 const FilesystemFileContentQuerySchema = z.object({
   path: z.string(),
   encoding: z.enum(["utf-8", "base64"]).optional(),
-})
+}).strict()
 
 export function registerFilesystemRoutes(app: FastifyInstance, deps: RouteDeps) {
+  // These are host browser operations. Project paths use the workspace API;
+  // reject scope selectors rather than silently treating them as host paths.
   app.get("/api/filesystem", async (request, reply) => {
-    const query = FilesystemQuerySchema.parse(request.query ?? {})
-
     try {
+      const query = FilesystemQuerySchema.parse(request.query ?? {})
       return await deps.fileSystemBrowser.browse(query.path, {
         includeFiles: query.includeFiles,
       })
@@ -35,10 +37,9 @@ export function registerFilesystemRoutes(app: FastifyInstance, deps: RouteDeps) 
     }
   })
 
-  app.post("/api/filesystem/folders", async (request, reply) => {
-    const body = FilesystemCreateFolderSchema.parse(request.body ?? {})
-
+  app.post("/api/filesystem/folders", { preHandler: hostOnlyQuery("files") }, async (request, reply) => {
     try {
+      const body = FilesystemCreateFolderSchema.parse(request.body ?? {})
       const created = await deps.fileSystemBrowser.createFolder(body.parentPath, body.name)
       reply.code(201)
       return created
@@ -58,9 +59,8 @@ export function registerFilesystemRoutes(app: FastifyInstance, deps: RouteDeps) 
   })
 
   app.get("/api/filesystem/files/content", async (request, reply) => {
-    const query = FilesystemFileContentQuerySchema.parse(request.query ?? {})
-
     try {
+      const query = FilesystemFileContentQuerySchema.parse(request.query ?? {})
       return await deps.fileSystemBrowser.readFileContent(query.path, { encoding: query.encoding })
     } catch (error) {
       reply.code(400).type("text/plain").send((error as Error).message)

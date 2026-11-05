@@ -42,6 +42,7 @@ export type NativeConfigDocuments = { location: PluginControlLocation; entries: 
 
 type PluginControlsWorkspaceManager = Pick<WorkspaceManager,
   | "get"
+  | "requireWorkspaceCapability"
   | "getSharedServiceConnection"
   | "ownsLocation"
   | "getServiceDirectoryForPath"
@@ -49,7 +50,7 @@ type PluginControlsWorkspaceManager = Pick<WorkspaceManager,
   | "getServicePathStyle"
   | "getServiceWslDistro"
   | "getHostPathForServicePath"
->
+> & Partial<Pick<WorkspaceManager, "isExplicitWorkspace">>
 
 interface PluginControlsMutationFence {
   enter(identities: string[]): (() => void) | undefined
@@ -104,7 +105,7 @@ export class PluginControls {
   }) {}
 
   async read(workspaceId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<PluginControlsSnapshot> {
-    const context = await this.readContext(workspaceId, location, signal)
+    const context = await this.readContext(workspaceId, location, signal, false, false)
     const snapshot = buildSnapshot(context)
     const documents = configDocuments(context).documents
     await Promise.all(context.targets.map(async target => {
@@ -318,7 +319,13 @@ export class PluginControls {
     })
   }
 
-  private async readContext(workspaceId: string, input: PluginControlLocation, signal?: AbortSignal, strictDocuments = false): Promise<ReadContext> {
+  private async readContext(workspaceId: string, input: PluginControlLocation, signal?: AbortSignal, strictDocuments = false, write = true): Promise<ReadContext> {
+    // prototype-1236: the plugin inventory is readable on an explicit server; config document IO stays local-only.
+    try { this.options.workspaceManager.requireWorkspaceCapability(workspaceId, write ? "executionSettings" : "plugins") }
+    catch (error) {
+      if (error instanceof Error && "statusCode" in error && error.statusCode === 404) throw new PluginControlsError("Workspace not found", "not-found")
+      throw error
+    }
     if (!this.options.workspaceManager.get(workspaceId)) {
       throw new PluginControlsError("Workspace not found", "not-found")
     }
@@ -365,6 +372,12 @@ export class PluginControls {
     }
     if (!validAbsolutePath(paths, location.directory)) {
       throw new PluginControlsError("OpenCode location directory is invalid", "invalid")
+    }
+    // An explicit server has no native config write API: no writable targets, so every switch is read-only.
+    if (this.options.workspaceManager.isExplicitWorkspace?.(workspaceId)) {
+      if (write) throw new PluginControlsError("OpenCode configuration scope is unavailable", "unavailable")
+      assertCurrentConnection(connection)
+      return { connection, entries, runtime, location, paths, style, globalDirectory, targets: [], fileSystem: hostPluginControlDocumentFileSystem }
     }
     const distro = this.options.workspaceManager.getServiceWslDistro(workspaceId)
     const fileSystem = distro

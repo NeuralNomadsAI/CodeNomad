@@ -6,6 +6,9 @@ import { tGlobal } from "./i18n"
 import type { Highlighter } from "shiki/bundle/full"
 import { decodeHtmlEntities, escapeHtml } from "./text-render-utils"
 import { isFileUrl, localImagePath } from "./markdown-local-images"
+import { RAW_HTML_TAGS, DROP_HTML_TAGS } from "./markdown-html-policy"
+import { authorizedImageUri, isRestrictedMedia, trustedMediaPolicy, type MediaPolicy } from "./media-policy"
+import { CODENOMAD_API_BASE } from "./api-base"
 
 const log = getLogger("actions")
 
@@ -18,6 +21,7 @@ let escapeRawHtmlEnabled = false
 let literalRawHtmlEnabled = false
 let defaultCodeBlockWrapEnabled = true
 let rendererSetup = false
+let currentMediaPolicy: MediaPolicy = trustedMediaPolicy
 let shikiModulePromise: Promise<typeof import("shiki/bundle/full")> | null = null
 let bundledLanguagesCache: typeof import("shiki/bundle/full")["bundledLanguages"] | null = null
 const codeBlockRenderOccurrences = new Map<string, number>()
@@ -53,49 +57,12 @@ function findBracketDisplayStart(src: string): number {
   return -1
 }
 
-const ALLOWED_RAW_HTML_TAGS = new Set([
-  "a",
-  "blockquote",
-  "br",
-  "code",
-  "del",
-  "details",
-  "div",
-  "em",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-  "hr",
-  "img",
-  "kbd",
-  "li",
-  "ol",
-  "p",
-  "pre",
-  "span",
-  "strong",
-  "sub",
-  "summary",
-  "sup",
-  "table",
-  "tbody",
-  "td",
-  "th",
-  "thead",
-  "tr",
-  "ul",
-])
-
-const DROP_RAW_HTML_TAGS = new Set(["script", "style", "iframe", "object", "embed", "meta", "link"])
-
 function sanitizeUrlAttribute(tagName: string, attrName: string, value: string): string | null {
   const trimmed = value.trim()
   if (!trimmed) return null
 
   if (attrName === "src" && tagName === "img") {
+    if (isRestrictedMedia(currentMediaPolicy)) return authorizedImageUri(trimmed, currentMediaPolicy, CODENOMAD_API_BASE) ?? null
     if (/^(https?:|data:image\/|\/|\.\/|\.\.\/|#)/i.test(trimmed)) return trimmed
     return null
   }
@@ -119,12 +86,12 @@ function sanitizeRawHtmlFragment(html: string): string {
 
   const sanitizeElement = (element: Element) => {
     const tagName = element.tagName.toLowerCase()
-    if (DROP_RAW_HTML_TAGS.has(tagName)) {
+    if (DROP_HTML_TAGS.has(tagName)) {
       element.remove()
       return
     }
 
-    if (!ALLOWED_RAW_HTML_TAGS.has(tagName)) {
+    if (!RAW_HTML_TAGS.has(tagName)) {
       element.replaceWith(...Array.from(element.childNodes))
       return
     }
@@ -607,8 +574,14 @@ function setupRenderer(isDark: boolean) {
   // A local file path cannot load in the renderer: keep its alt text, which Markdown.tsx swaps
   // for the transcript's own image of that path when it has one.
   renderer.image = (href: string, title: string | null, text: string) => {
+    const qualified = isRestrictedMedia(currentMediaPolicy) && authorizedImageUri(href, currentMediaPolicy, CODENOMAD_API_BASE)
+    if (qualified) return marked.Renderer.prototype.image.call(renderer, qualified, title, text)
     const local = localImagePath(href)
-    if (local === undefined) return marked.Renderer.prototype.image.call(renderer, href, title, text)
+    if (local === undefined) {
+      const source = authorizedImageUri(href, currentMediaPolicy, CODENOMAD_API_BASE)
+      return source ? marked.Renderer.prototype.image.call(renderer, source, title, text)
+        : `<span role="status" data-media-unavailable>${escapeHtml(tGlobal("toolCall.image.unavailable"))}</span>`
+    }
     const label = text.trim() || escapeHtml(local.split("/").filter(Boolean).at(-1) ?? local)
     const exact = isFileUrl(href) ? " data-local-image-exact" : ""
     return `<span class="markdown-local-image" data-local-image="${escapeHtml(local)}"${exact} title="${escapeHtml(local)}">${label}</span>`
@@ -661,6 +634,7 @@ export async function renderMarkdown(
     escapeRawHtml?: boolean
     literalRawHtml?: boolean
     defaultCodeBlockWrap?: boolean
+    mediaPolicy?: MediaPolicy
   },
 ): Promise<string> {
   if (!isInitialized) {
@@ -683,10 +657,12 @@ export async function renderMarkdown(
   const previousEscapeRawHtml = escapeRawHtmlEnabled
   const previousLiteralRawHtml = literalRawHtmlEnabled
   const previousDefaultCodeBlockWrap = defaultCodeBlockWrapEnabled
+  const previousMediaPolicy = currentMediaPolicy
   highlightSuppressed = suppressHighlight
-  escapeRawHtmlEnabled = escapeRawHtml
+  escapeRawHtmlEnabled = escapeRawHtml || isRestrictedMedia(options?.mediaPolicy ?? trustedMediaPolicy)
   literalRawHtmlEnabled = literalRawHtml
   defaultCodeBlockWrapEnabled = defaultCodeBlockWrap
+  currentMediaPolicy = options?.mediaPolicy ?? trustedMediaPolicy
 
   try {
     // Proceed to parse immediately - highlighting will be available on next render
@@ -698,6 +674,7 @@ export async function renderMarkdown(
     escapeRawHtmlEnabled = previousEscapeRawHtml
     literalRawHtmlEnabled = previousLiteralRawHtml
     defaultCodeBlockWrapEnabled = previousDefaultCodeBlockWrap
+    currentMediaPolicy = previousMediaPolicy
   }
 }
 

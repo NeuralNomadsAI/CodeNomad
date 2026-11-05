@@ -20,6 +20,7 @@ function createHarness(serviceDirectory = "/repo") {
   } as unknown as SettingsService
   const listInputs: Record<string, unknown>[] = []
   const workspaceManager = {
+    requireWorkspaceCapability() { return new AbortController().signal },
     get: () => ({ path: "/repo" }),
     getServiceDirectory: () => serviceDirectory,
     ownsDirectory: async (_instanceId: string, directory: string) => directory === "/repo" || directory === "/worktree",

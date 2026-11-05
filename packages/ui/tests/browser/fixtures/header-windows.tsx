@@ -13,6 +13,7 @@ import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { runtimeEnv } from "../../../src/lib/runtime-env"
 import { sseManager } from "../../../src/lib/sse-manager"
+import { serverEvents } from "../../../src/lib/server-events"
 import { getFormQueue } from "../../../src/stores/forms"
 import { focusInterruption } from "../../../src/stores/interruption-navigation"
 import { addInstance, addPendingForm, addPermissionToQueue, instances, setActiveInstanceId } from "../../../src/stores/instances"
@@ -20,6 +21,13 @@ import { setSessions, setActiveSession, setActiveParentSession, clearActiveParen
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { initializeClientState, readClientLayoutValue } from "../../../src/stores/client-state"
 import "../../../src/index.css"
+
+// Synthetic native events below own this fixture's connection lifecycle.
+;(serverEvents as any).connectGeneration++
+;(serverEvents as any).clearReconnectTimer()
+;(serverEvents as any).connection?.disconnect()
+;(serverEvents as any).connection = null
+;(serverEvents as any).watchdog.setConnected(false)
 
 // Optional, synchronous test-only marks; no observer is installed on native pages.
 const bootStage = (phase: string) => (window as any).__headerFixtureBoot?.mark(phase)

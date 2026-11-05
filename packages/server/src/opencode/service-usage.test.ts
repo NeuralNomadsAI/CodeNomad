@@ -21,6 +21,7 @@ function fixture() {
     session: { stats: async (input: any) => { calls.push(input); if (defer) await new Promise<void>(resolve => { defer = resolve }); return stats(input.from, input.to) } },
   } }
   const manager: any = { get: () => present ? record : undefined, getSharedServiceConnection: async () => connection,
+    requireWorkspaceCapability: () => new AbortController().signal,
     getServiceWslDistro: () => distro, getServicePathStyle: () => "posix" }
   return { service: new ServiceUsage(manager), calls, manager, connection, record, root: (value: string) => { root = value }, distro: (value: string) => { distro = value },
     stale: () => { current = false }, close: () => { present = false },

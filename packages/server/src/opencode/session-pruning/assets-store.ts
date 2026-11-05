@@ -6,8 +6,9 @@ import { ownedSession } from "./navigation-scope"
 import type { HistoryScope } from "./history-store"
 import { ASSET_URI_LIMIT, isEmbeddedAsset, type AssetTarget, type AssetsResult, type AssetReadResult } from "./assets-contract"
 import { mediaBlobBase64, mediaBlobSizes, mediaDataUri, mediaDataUriLength, toolMediaHash } from "./media-blob"
+import { MESSAGE_LIMIT } from "../session-media-contract"
 
-export const MESSAGE_LIMIT = 16 * 1024 * 1024
+export { MESSAGE_LIMIT } from "../session-media-contract"
 export const cursorSchema = z.object({ binding: z.string().length(64), through: z.number().int().min(0),
   sequence: z.number().int().min(0), offset: z.number().int().min(0).max(100000) }).strict()
 export const hash = (value: string) => createHash("sha256").update(value).digest("hex")

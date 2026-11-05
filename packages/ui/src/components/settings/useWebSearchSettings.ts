@@ -7,7 +7,7 @@ import { getRootClient } from "../../stores/opencode-client"
 import { getActiveCatalogLocation } from "../../stores/sessions"
 import { requestLocationOptions, toRequestLocation } from "../../stores/request-locations"
 
-export function useWebSearchSettings(props: { instanceId: string; location?: LocationRef }) {
+export function useWebSearchSettings(props: { instanceId: string; location?: LocationRef; active?: () => boolean }) {
   const [snapshot, setSnapshot] = createSignal<WebSearchSettingsSnapshot>()
   const [providers, setProviders] = createSignal<WebSearchProvider[]>([])
   const [integrations, setIntegrations] = createSignal<IntegrationInfo[]>([])
@@ -23,9 +23,9 @@ export function useWebSearchSettings(props: { instanceId: string; location?: Loc
     setSnapshot(undefined); setProviders([]); setIntegrations([]); setError(false); setBusy(false)
     refresh = () => {}
     mutate = async () => false
-    if (!instanceId || !directory) return
+    if (!instanceId || !directory || props.active?.() === false) return
     const load = async () => {
-      if (disposed) return
+      if (disposed || props.active?.() === false) return
       if (reading || writing) { trailing = true; return }
       reading = true; setBusy(true)
       do {
@@ -49,7 +49,7 @@ export function useWebSearchSettings(props: { instanceId: string; location?: Loc
     }
     refresh = () => { void load() }
     mutate = async operation => {
-      if (disposed || writing || reading) return false
+      if (disposed || props.active?.() === false || writing || reading) return false
       writing = true; revision++; setBusy(true); setError(false)
       let failed = false
       try { await operation() } catch { failed = true }

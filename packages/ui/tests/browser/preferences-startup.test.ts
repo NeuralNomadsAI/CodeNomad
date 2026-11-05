@@ -64,8 +64,11 @@ async function installHost(page: Page, host: "electron" | "tauri", request: Nati
   }` })
 }
 
-const workspace = (id: string, path = "D:/current-project", status = "ready") => ({
+const workspace = (id: string, path = "D:/current-project", status = "ready", serverId?: string) => ({
   id, path, status, proxyPath: `/workspaces/${id}/instance`, binaryId: "fixture", binaryLabel: "fixture",
+  ...(serverId ? { binding: { serverId, directory: path }, capabilities: { serverId, generation: 1,
+    features: { chat: { state: "available", reason: { code: "contractVerified" }, evidence: "nativeContract" },
+      executionSettings: { state: "unavailable", reason: { code: "deferred" }, evidence: "e1Policy" } } } } : {}),
   createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
 })
 const emit = (page: Page, event: unknown) => page.evaluate(event => {
@@ -170,6 +173,33 @@ async function restoredFixture(page: Page, host: "electron" | "tauri", request: 
 }
 
 for (const host of ["electron", "tauri"] as const) {
+  test(`${host}: server-qualified Preferences rejects reused IDs and homonymous local/other-server folders`, async () => {
+    const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
+    const request: NativePreferencesRequest = { section: "providers", instanceId: "old", serverId: "A", workspacePath: "/App/", location: { directory: "/App/", workspaceID: "stale" } }
+    const fixture = await restoredFixture(page, host, request)
+    fixture.inventory([workspace("old", "/App/", "ready", "B"), workspace("local", "/App/"), workspace("case", "/app/", "ready", "A"), workspace("new-A", "/App/", "ready", "A")])
+    try {
+      const model = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/model"))
+      await page.goto(url)
+      await page.waitForFunction(() => (window as any).fixtureRequest.instanceId === "new-A")
+      const accepted = await page.evaluate(() => (window as any).fixtureRequest)
+      assert.equal(accepted.serverId, "A")
+      assert.equal(accepted.section, "providers")
+      assert.deepEqual(accepted.location, { directory: "/App/" })
+      await model
+      assert.ok(fixture.requests.every(value => new URL(value).pathname.includes("/new-A/")), JSON.stringify(fixture.requests))
+      assert.deepEqual(fixture.writes, [])
+
+      // A missing profile remains unavailable even with an exact occurrence ID on another target.
+      const baseline = fixture.requests.length
+      await nativeRequest(page, { ...request, serverId: "deleted-profile" })
+      await page.waitForFunction(() => (window as any).fixtureRequest.serverId === "deleted-profile")
+      await page.waitForTimeout(200)
+      assert.equal(fixture.requests.length, baseline)
+      assert.deepEqual(fixture.errors, [])
+    } finally { await page.close() }
+  })
+
   test(`${host}: restored Providers waits for the same folder's new ready workspace and persists its identity`, async () => {
     const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
     const fixture = await restoredFixture(page, host, { section: "providers", instanceId: "old", location: { directory: "D:\\current-project", workspaceID: "old-native-id" } })
@@ -234,6 +264,8 @@ for (const host of ["electron", "tauri"] as const) {
       assert.equal(await page.evaluate(() => (window as any).fixtureRequest.instanceId), "other")
       assert.deepEqual(fixture.writes, [])
       assert.deepEqual(fixture.errors, [])
+    } catch (error) {
+      console.error({ host, errors: fixture.errors, requests: fixture.requests, body: (await page.locator("body").innerText()).slice(0, 1800) }); throw error
     } finally { hold.resolve(); await page.unrouteAll({ behavior: "wait" }); await page.close() }
   })
 
@@ -262,6 +294,8 @@ for (const host of ["electron", "tauri"] as const) {
       await page.waitForTimeout(150)
       assert.equal(fixture.requests.length, count, "closing a project never binds to its surviving sibling")
       assert.deepEqual(fixture.errors, [])
+    } catch (error) {
+      console.error({ host, errors: fixture.errors, requests: fixture.requests, body: (await page.locator("body").innerText()).slice(0, 1800) }); throw error
     } finally { await page.close() }
   })
 
@@ -378,6 +412,7 @@ for (const host of ["electron", "tauri"] as const) {
       fixture.inventory([ready])
       await emit(page, { type: "workspace.started", workspace: ready })
       await page.waitForFunction(() => Boolean((window as any).fixtureReleasePersistence))
+      assert.deepEqual(fixture.requests, [], "a rebound context waits for native acceptance before creating execution clients")
       const scroll = page.locator(".settings-screen-scroll")
       await scroll.hover(); await page.mouse.wheel(0, 350)
       await page.waitForFunction(() => document.querySelector(".settings-screen-scroll")!.scrollTop >= 300)

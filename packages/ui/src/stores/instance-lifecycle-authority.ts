@@ -2,6 +2,7 @@ export interface InstanceLifecycleAuthorityEvent {
   type: "removed" | "opened" | "unavailable"
   instanceId: string
   folder: string
+  serverId?: string
   occurrence: number
 }
 

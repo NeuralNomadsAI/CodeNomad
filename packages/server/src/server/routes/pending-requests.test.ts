@@ -54,6 +54,7 @@ async function harness(options: Pick<PendingRequestsRouteDeps, "readGitCommonDir
     },
   } as unknown as ServiceConnection
   const manager: PendingRequestsRouteDeps["workspaceManager"] = {
+    requireWorkspaceCapability: () => new AbortController().signal,
     get: (id) => id === "fixture" && state.present ? workspace : undefined,
     getSharedServiceConnection: async () => connection,
     getServiceLocation: () => ({ directory: state.bootstrap }),

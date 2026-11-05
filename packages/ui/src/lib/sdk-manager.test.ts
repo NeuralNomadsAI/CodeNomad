@@ -5,6 +5,8 @@ import { OpenCode } from "@opencode/client"
 import { buildInstanceBaseUrl, createInstanceFetch, sdkManager } from "./sdk-manager.ts"
 import { tGlobal } from "./i18n"
 import { getOpencodeErrorMessage } from "./opencode-api"
+import { isSessionActionInterrupted } from "../stores/session-action-queue"
+import { EXPLICIT_REQUEST_UNCERTAIN_ERROR_CODE } from "../../../server/src/api-types"
 
 afterEach(() => {
   sdkManager.destroyClientsForInstance("instance-a")
@@ -12,6 +14,57 @@ afterEach(() => {
 })
 
 describe("SDKManager", () => {
+  it("preserves only qualified CodeNomad uncertain outcomes through the real SDK without replay", async () => {
+    const original = globalThis.fetch
+    const baseUrl = buildInstanceBaseUrl("/workspaces/first/instance", "https://codenomad.test/tenant")
+    const client = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) })
+    const cases = [
+      { error: EXPLICIT_REQUEST_UNCERTAIN_ERROR_CODE, interrupted: true },
+      { error: "session_environment_failed", interrupted: false, message: tGlobal("envEditor.applyFailed") },
+      { error: "PROVIDER_ACCOUNT_SELECTION_FAILED", interrupted: false, message: tGlobal("settings.accounts.error") },
+      { error: "ordinary_upstream_failure", interrupted: false },
+    ]
+    try {
+      for (const fixture of cases) {
+        let sends = 0
+        globalThis.fetch = async () => { sends++; return Response.json({ error: fixture.error }, { status: 502 }) }
+        await assert.rejects(client.session.prompt({ sessionID: "owned", text: "once" }), error => {
+          assert.equal(isSessionActionInterrupted(error), fixture.interrupted)
+          if (fixture.message) assert.equal(getOpencodeErrorMessage(error, "fallback"), fixture.message)
+          if (fixture.interrupted) assert.equal((error as any).cause.code, EXPLICIT_REQUEST_UNCERTAIN_ERROR_CODE)
+          return true
+        })
+        assert.equal(sends, 1)
+      }
+      const outside = "https://codenomad.test/other/"
+      globalThis.fetch = async () => Response.json({ error: EXPLICIT_REQUEST_UNCERTAIN_ERROR_CODE }, { status: 502 })
+      const unrelated = OpenCode.make({ baseUrl: outside, fetch: createInstanceFetch(outside) })
+      await assert.rejects(unrelated.session.prompt({ sessionID: "owned", text: "once" }), error => {
+        assert.equal(isSessionActionInterrupted(error), false)
+        return true
+      })
+    } finally { globalThis.fetch = original }
+  })
+  it("localizes a stale explicit action and forwards its captured generation exactly once", async () => {
+    const original = globalThis.fetch
+    let calls = 0
+    try {
+      globalThis.fetch = async (_input, init) => {
+        calls++
+        assert.equal(new Headers(init?.headers).get("x-codenomad-connection-generation"), "7")
+        return Response.json({ error: "explicit_action_superseded" }, { status: 409 })
+      }
+      const baseUrl = buildInstanceBaseUrl("/workspaces/first/instance", "https://codenomad.test/tenant")
+      const client = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) })
+      await assert.rejects(client.session.prompt({ sessionID: "owned", text: "fixture" }, {
+        headers: { "x-codenomad-connection-generation": "7" },
+      }), error => {
+        assert.equal(getOpencodeErrorMessage(error, "fallback"), tGlobal("session.actions.superseded"))
+        return true
+      })
+      assert.equal(calls, 1)
+    } finally { globalThis.fetch = original }
+  })
   it("keeps detailed client failures actionable without replaying a mutation", async () => {
     const original = globalThis.fetch
     const baseUrl = buildInstanceBaseUrl("/workspaces/first/instance", "https://codenomad.test/tenant")

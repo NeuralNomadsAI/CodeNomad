@@ -55,6 +55,69 @@ challenge as history queries. Never expose generic RPC or SQL access through the
 
 ## UI navigation
 
+### Internal explicit-server transcript pages
+
+Explicit projects open through the home/launcher Remotes disclosure. Their
+reader uses one native `message.list` page of at most 200 messages per demand.
+Latest starts descending, oldest ascending; continuations send the opaque cursor
+without `order`. `cursor.next` continues in the originating order and
+`cursor.previous` returns in the opposite traversal direction while retaining that
+order. The in-memory window retains that order and its captured instance/client,
+binding, native-data generation and connection-capability generation authority.
+Backend cursor validation accepts the qualified `{ id, order, direction }` native
+shape; unknown shapes and CodeNomad window tokens fail before upstream access.
+
+Selected transcript pages have foreground priority. Other transcript-page reads
+share the two-slot secondary budget and promote with selection. Cancellation and
+authority checks fence queued dispatch and publication. Failed pages keep the
+resident passage and reading position. An empty older boundary probe retires only
+its older cursor; empty newer/reload probes keep the passage and offer retry or
+latest. Native cursors can name an empty boundary, so a returned token keeps the
+window conservatively incomplete. The explicit latest action selects the live tail.
+
+Same-intent consumers join only a read whose instance authority, internal load
+signal/epoch and source window remain current. Resident navigation supersedes that
+read immediately. A fresh demand starts independently while the cancelled read
+finishes. Native empty replies are classified before adding live rows; a latest
+empty reply with residents retains both passage and saved reading position. The
+row snapshot taken before HTTP also covers any dependent model lookup: final
+normalization/publication includes the live rows admitted during that await.
+
+Native paging uses one polite feedback region for loading and errors, outside
+virtualized rows. An unavailable anchor offers latest-page recovery. A disappearing recovery control returns focus
+to the transcript only while its view, request and binding remain current and no
+other focus target has taken ownership. Local navigation retains its own controls.
+Technical cleanup retains its direct-handler/store guards. Explicit rows keep receipt
+readers unmounted and their cache lane inactive. Native request coverage remains live-only.
+
+The timeline and user-message shortcuts cover resident messages. Outline scans,
+remote excerpts, full-text queries and pruning mount a localized explanation or
+refuse in their direct handlers before reads. A nonresident anchor, including a
+cold restoration, retains its saved position and offers an explicit latest-page
+action. Resident navigation supersedes pending page loads. Around seeking stays
+with the qualified local enriched-window reader. An all-hidden undo page returns
+a visible limitation after its single native read; the saved position remains.
+
+`session-native-history.test.ts` exercises stores/reducers and multiserver request
+ownership; `tests/browser/native-history.test.ts` exercises the real Solid
+transcript, restoration, search shortcut and resident timeline. The owned-runtime
+`scripts/test-opencode-message-pages-native.mjs <absolute-cli>` imports synthetic
+native messages, checks both orders and previous/next continuations against the
+backend decoder, and asserts zero provider calls. Browser, native Windows runtime
+and desktop-host qualification are separate scopes.
+
+Reflow checks cover 320 CSS pixels, including a compact RTL reason at DPR 2 with
+the `session-center-column` context. The CSS-zoom check measures notice wrapping;
+a reason-window overflow under CSS zoom remains a separate observed defect.
+Native 200% page zoom awaits dedicated host qualification.
+
+Session-inventory pagination uses native opaque cursors independently of transcript
+windows. Explicit bindings consume only `cursor.next`, on demand, and send only
+`{ cursor }` for continuation. The renderer preserves tokens unchanged. Backend
+authorization decodes the qualified native scope and requires the exact opened
+directory. Unknown cursor formats fail closed. The isolated inventory qualification
+checks daemon-issued continuations against that decoder with synthetic sessions.
+
 `history-window.ts` translates this contract into explicitly namespaced CodeNomad
 window cursors. These are never forwarded to native `message.list`. Native page
 cursors are also supported. A truncated newer-page path switches to a

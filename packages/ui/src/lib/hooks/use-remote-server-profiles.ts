@@ -3,6 +3,7 @@ import { serverApi } from "../api-client"
 import { useI18n } from "../i18n"
 import { openRemoteServerWindow, type RemoteWindowOpenOptions } from "../native/remote-window"
 import { splitPairingLink } from "../remote-pairing-link"
+import { isOpenCodeServerAddress } from "../opencode-pairing-link"
 import { canOpenRemoteWindows, isTauriHost } from "../runtime-env"
 import { showAlertDialog } from "../../stores/alerts"
 import { useConfig } from "../../stores/preferences"
@@ -14,12 +15,31 @@ export type RemoteServerInput = {
   skipTlsVerify: boolean
 }
 
+// prototype-1236: an unnamed server is named after its URL's host.
+export function defaultServerName(address: string): string {
+  try {
+    return new URL(address.trim()).hostname
+  } catch {
+    return ""
+  }
+}
+
 export function useRemoteServerProfiles() {
   const { t } = useI18n()
   const { remoteServers, saveRemoteServerProfile, markRemoteServerConnected, removeRemoteServerProfile } = useConfig()
   const [connectingServerId, setConnectingServerId] = createSignal<string | null>(null)
 
   const saveServer = async (input: RemoteServerInput, requestedWindow: boolean, windowOptions: RemoteWindowOpenOptions = {}) => {
+    // prototype-1236: an `opencode pair` link (or user:password URL) adds an OpenCode server;
+    // only the host backend exchanges it, so this window never opens the single-use link.
+    if (isOpenCodeServerAddress(input.baseUrl)) {
+      const name = input.name.trim() || defaultServerName(input.baseUrl)
+      try {
+        return await serverApi.addOpenCodeServer({ name, address: input.baseUrl.trim() })
+      } catch {
+        throw new Error(t("folderSelection.servers.dialog.errorConnect"))
+      }
+    }
     // A Remote Control pairing code is consumed by the window that opens it, so a pairing link opens one where possible.
     const pairing = splitPairingLink(input.baseUrl)
     const openWindow = requestedWindow || (pairing !== null && canOpenRemoteWindows())
@@ -27,8 +47,8 @@ export function useRemoteServerProfiles() {
       throw new Error("Remote server windows can only be opened from a local desktop window")
     }
 
-    const name = input.name.trim()
     const baseUrl = pairing?.baseUrl ?? input.baseUrl.trim()
+    const name = input.name.trim() || defaultServerName(baseUrl)
     if (!name || !baseUrl) throw new Error(t("folderSelection.servers.dialog.errorRequired"))
     // Remote Control certificates are publicly trusted. Skipping verification would later route Tauri through the
     // TLS proxy, whose incognito window store does not keep the paired device cookie.

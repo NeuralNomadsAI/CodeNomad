@@ -1,9 +1,24 @@
 # Profile environment at send time
 
-The profile's `server.environmentVariables` apply on each conversation's next
+For the shared local service, the profile's `server.environmentVariables` apply on each conversation's next
 send through CodeNomad (prompt, command, shell; Electron, Tauri and web share the
 server path), including resumed conversations and later-prompted forks: the
 server awaits `session.environment({ sessionID, variables })` before forwarding.
+
+Explicit-server workspaces use their target's native environment. The closed E1
+proxy (`server/explicit-proxy.ts`) admits prompt, command and session-shell sends
+on one captured current connection, including queued/restored payloads and sends
+to resumed forks. It skips profile/environment reads, execution-host snapshots,
+Git instructions and provider-account selection/activation. Direct environment
+writes are refused by the `sessionEnvironment` capability. Background Shells and
+PTY management have separate deferred capabilities.
+
+The renderer's named placement instruction branches on the explicit binding before
+awaiting native writes. Explicit context names OpenCode as the execution boundary,
+its native environment and exact Location scope, with the qualified integration
+limits. Local repository/worktree-parent context stays on local submissions; voice
+context remains an independent named entry. Instruction setup retains the action's
+captured authority before and after each write.
 
 ## Implementation
 
@@ -112,4 +127,6 @@ installation path. It never calls a provider or touches an existing conversation
 
 ## Agent conventions
 
-- Profile environment variables are applied server-side before each native session prompt, custom command or session shell request, after ownership and worktree-mutation admission. Build a complete execution-host snapshot with `workspaces/session-environment.ts`; never send the profile environment through the browser or skip the per-send write using a cache. Reads and settings edits must never mutate native sessions. Keep native environment failures fail-closed and redact SDK request bodies.
+- Advanced preferences labels the environment editor as a local CodeNomad backend control. An explicit or unresolved project scope first offers a deliberate local-management action; mounting and retained editor callbacks are fenced to that accepted target. The other shared Advanced preferences remain usable. Editing this local profile applies to subsequent sends on the shared local service; explicit-server sends use their native environment.
+
+- For local-service workspaces, profile environment variables are applied server-side before each native session prompt, custom command or session shell request, after ownership and worktree-mutation admission. Build a complete execution-host snapshot with `workspaces/session-environment.ts`; never send the profile environment through the browser or skip the local per-send write using a cache. Explicit workspaces retain their native environment through the separate E1 admission path. Reads and settings edits must never mutate native sessions. Keep native environment failures fail-closed and redact SDK request bodies.

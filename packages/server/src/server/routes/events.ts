@@ -4,6 +4,8 @@ import { EventBus } from "../../events/bus"
 import { WorkspaceEventPayload } from "../../api-types"
 import type { ClientConnectionManager } from "../../clients/connection-manager"
 import { Logger } from "../../logger"
+import { PARTICIPATION_EVENT } from "../../workspaces/project-participants"
+import type { registerProjectParticipationRoutes } from "./project-participation"
 
 interface RouteDeps {
   eventBus: EventBus
@@ -12,6 +14,7 @@ interface RouteDeps {
   connectionManager: ClientConnectionManager
   backpressureLimitBytes?: number
   backpressureTimeoutMs?: number
+  participation?: ReturnType<typeof registerProjectParticipationRoutes>
 }
 
 let nextClientId = 0
@@ -20,6 +23,7 @@ const ConnectionQuerySchema = z.object({
   clientId: z.string().trim().min(1),
   connectionId: z.string().trim().min(1),
 })
+const EventQuerySchema = ConnectionQuerySchema.extend({ participation: z.literal("1").optional() })
 
 const PongBodySchema = ConnectionQuerySchema.extend({
   pingTs: z.number().optional(),
@@ -28,7 +32,7 @@ const PongBodySchema = ConnectionQuerySchema.extend({
 export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/events", (request, reply) => {
     const clientId = ++nextClientId
-    const connection = ConnectionQuerySchema.parse(request.query ?? {})
+    const connection = EventQuerySchema.parse(request.query ?? {})
     deps.logger.debug({ clientId }, "SSE client connected")
 
     for (const [name, value] of Object.entries(reply.getHeaders())) {
@@ -37,7 +41,7 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
       }
     }
     reply.raw.setHeader("Content-Type", "text/event-stream")
-    reply.raw.setHeader("Cache-Control", "no-cache")
+    reply.raw.setHeader("Cache-Control", connection.participation === "1" ? "no-store" : "no-cache")
     reply.raw.setHeader("Connection", "keep-alive")
     reply.raw.flushHeaders?.()
     reply.hijack()
@@ -50,6 +54,7 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
     let closed = false
     let cleaned = false
     let backpressured = false
+    let participant: ReturnType<NonNullable<RouteDeps["participation"]>["open"]>
     let bufferedBytes = 0
     const pending: Array<{ payload: string; bytes: number }> = []
     const backpressureLimitBytes = Math.max(1, deps.backpressureLimitBytes ?? 1024 * 1024)
@@ -62,6 +67,7 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
     const close = (force = false) => {
       if (closed) return
       closed = true
+      participant?.close()
       if (heartbeat) clearInterval(heartbeat)
       clearDrain()
       pending.length = 0
@@ -120,7 +126,7 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
     const send = (event: WorkspaceEventPayload) => {
       deps.logger.debug({ clientId, type: event.type }, "SSE event dispatched")
       if (deps.logger.isLevelEnabled("trace")) {
-        deps.logger.trace({ clientId, event }, "SSE event payload")
+        deps.logger.trace({ clientId, type: event.type, ...(event.type === "instance.event" ? { nativeType: event.event.type } : {}) }, "SSE event dispatched")
       }
       write(`data: ${JSON.stringify(event)}\n\n`)
     }
@@ -140,6 +146,12 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
       ...connection,
       close,
     })
+
+    if (!closed && connection.participation === "1") {
+      participant = deps.participation?.open(request, () => !closed && !reply.raw.destroyed
+        && !reply.raw.writableEnded && !request.raw.aborted && !request.raw.socket.destroyed)
+      if (participant) write(`event: ${PARTICIPATION_EVENT}\ndata: ${JSON.stringify(participant.grant)}\n\n`)
+    }
 
     request.raw.on("close", () => handleClose())
     request.raw.on("error", () => handleClose())

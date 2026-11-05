@@ -155,6 +155,7 @@ export const instanceMessages = {
   "filesPanel.viewer": "Dateivorschau",
   "filesPanel.readOnly": "Schreibgeschützt",
   "filesPanel.binary": "Keine Vorschau für diese Binärdatei verfügbar.",
+  "filesPanel.contentUnavailable": "Inhalt nicht verfügbar oder unvollständig.",
   "filesPanel.image.before": "Vorher",
   "filesPanel.image.after": "Nachher",
   "gitPanel.changes": "Änderungen",

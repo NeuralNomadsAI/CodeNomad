@@ -4,6 +4,8 @@ Sağlayıcı kimlik doğrulaması, tarayıcı cihazına veya bir CodeNomad proje
 
 ## Bir modeli veya arama sağlayıcısını bağlayın {#connect}
 
+**Seçili OpenCode sunucusu** bilgisini kontrol edin. Aşağıda açıklanan bağlantı, hesap, web araması ve görsel ayarları ortak yerel hizmet için geçerlidir. Açıkça belirtilmiş ve uygunluğu doğrulanmış bir sunucu yalnızca sunucunun kendi sağlayıcı/model kataloğunu salt okunur olarak gösterir; kimlik doğrulamasını ve yapılandırmasını CodeNomad’in mevcut yetenekleri dışında, doğrudan o sunucuda yönetin. Kullanılamayan projelerin denetimleri devre dışı kalır; CodeNomad tercihleri kullanılabilir. Yerel hizmette daraltılmış **Modeller**, **Web araması** ve **Görseller** grupları, verilerini genişletilene kadar okumaz.
+
 1. Çalışma alanı açıp **Ayarlar → Provider'lar** yoluna gidin. **Modeller** açık olarak başlar; arama sağlayıcıları için **Web araması** bölümünü genişletin. **Görseller** görsel ayarlarını içerir.
 2. O grupta **Provider seç** öğesini, ardından **Bağlan** öğesini seçin.
 3. Model sağlayıcısı için sunulan yerel **Kimlik doğrulama yöntemi** öğesini tamamlayın: API anahtarı, OAuth veya komut. OAuth için **Yetkilendirme sayfasını aç** öğesini kullanın ve yalnızca istendiğinde bir yetkilendirme kodu gönderin. Arama sağlayıcıları API anahtarıyla bağlanır.

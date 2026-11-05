@@ -16,6 +16,7 @@ import { cleanupBlankSession } from "./blank-session-cleanup"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { flushTranscriptProjections } from "./opencode-projection-frame"
 import {
+  inheritSessionReadBaseline,
   resolveAuthoritativeGenerationRecovery,
   resolveHydratedGenerationRecovery,
   type PersistedGenerationRecovery,
@@ -32,6 +33,7 @@ import {
 export type { SessionThread } from "./session-tree"
 import { getDirectoryOnlyWorktree, getGitRepoStatus, worktreesByInstance } from "./worktrees"
 import { selectWorkspaceFamilyIds } from "./workspace-session-scope"
+import { explicitSessionDirectory, scopedSessionMap } from "./session-inventory-scope"
 
 const log = getLogger("session")
 let generationAdmissionSequence = 0
@@ -60,7 +62,56 @@ export interface SessionInfo {
   contextAvailableTokens: number | null
 }
 
-const [sessions, setSessions] = createSignal<Map<string, Map<string, Session>>>(new Map())
+type SessionMap = Map<string, Map<string, Session>>
+const [sessions, publishSessions] = createSignal<SessionMap>(new Map())
+type Placement = { directory?: string; workspaceID?: string; present: boolean; token: object }
+const capturedPlacements = new Map<string, Map<string, Placement>>()
+
+export function retireSessionPlacementAuthority(instanceId: string): void {
+  capturedPlacements.delete(instanceId)
+}
+
+/** Capture only demanded placement owners; accepted writes retire them before subscribers run. */
+export function captureSessionPlacementAuthority(instanceId: string, sessionId: string, knownLocation?: { directory?: string; workspaceID?: string }): () => boolean {
+  const row = sessions().get(instanceId)?.get(sessionId), location = row?.location ?? knownLocation
+  const entries = capturedPlacements.get(instanceId) ?? new Map<string, Placement>()
+  let captured = entries.get(sessionId)
+  if (!captured || (!captured.present && location && (captured.directory !== location.directory || captured.workspaceID !== location.workspaceID))) {
+    captured = { directory: location?.directory, workspaceID: location?.workspaceID, present: Boolean(row), token: {} }
+    entries.set(sessionId, captured)
+    capturedPlacements.set(instanceId, entries)
+  }
+  const token = captured.token
+  return () => {
+    sessions()
+    return capturedPlacements.get(instanceId)?.get(sessionId)?.token === token
+  }
+}
+
+function setSessions(update: SessionMap | ((previous: SessionMap) => SessionMap)): SessionMap {
+  return publishSessions(previous => {
+    const next = typeof update === "function" ? update(previous) : update
+    // Writers may mutate an inner Map. Scalars retained at capture survive that mutation.
+    // ponytail: scan captured owners only; index changed rows if this publication path becomes hot.
+    for (const [instanceId, entries] of capturedPlacements) {
+      for (const [sessionId, placement] of entries) {
+        const row = next.get(instanceId)?.get(sessionId)
+        if (!row) {
+          if (placement.present) entries.delete(sessionId)
+          continue
+        }
+        if (row.location?.directory !== placement.directory || row.location?.workspaceID !== placement.workspaceID) {
+          placement.directory = row.location?.directory
+          placement.workspaceID = row.location?.workspaceID
+          placement.token = {}
+        }
+        placement.present = true
+      }
+      if (!entries.size) capturedPlacements.delete(instanceId)
+    }
+    return next
+  })
+}
 const [activeSessionId, setActiveSessionId] = createSignal<Map<string, string>>(new Map())
 const [activeParentSessionId, setActiveParentSessionId] = createSignal<Map<string, string>>(new Map())
 const [agents, setAgents] = createSignal<Map<string, Agent[]>>(new Map())
@@ -103,6 +154,7 @@ type SessionSearchState = {
   ids: string[]
   loading: boolean
   requestId: number
+  complete?: boolean
 }
 
 const [sessionPagination, setSessionPagination] = createSignal<Map<string, SessionPaginationState>>(new Map())
@@ -121,13 +173,14 @@ function getSessionPaginationState(instanceId: string): SessionPaginationState {
 
 function getSessionListIds(instanceId: string): string[] {
   const ids = getSessionPaginationState(instanceId).ids
-  const current = sessions().get(instanceId)
+  const current = getInventorySessions(instanceId)
   if (!current) return ids
   const directoryOnly = getDirectoryOnlyWorktree(instanceId)
-  const directory = directoryOnly?.serviceDirectory ?? directoryOnly?.directory
+  const directory = explicitSessionDirectory(instances().get(instanceId)) ?? directoryOnly?.serviceDirectory ?? directoryOnly?.directory
   // Restored catalogs retain all candidates before worktree scope is known.
   // Match the thread builder's root projection without rewriting native parents.
-  return ids.filter(id => !current.has(id) || getSessionRootFromMap(current, id, directory)?.id === id)
+  return ids.filter(id => (!current.has(id) && explicitSessionDirectory(instances().get(instanceId)) === undefined)
+    || getSessionRootFromMap(current, id, directory)?.id === id)
 }
 
 function getSessionNextCursor(instanceId: string): string | undefined {
@@ -176,11 +229,11 @@ function isLatestSessionSearch(instanceId: string, query: string, requestId: num
   return Boolean(current && current.query === query && current.requestId === requestId)
 }
 
-function setSessionSearchResults(instanceId: string, query: string, ids: string[], requestId: number): boolean {
+function setSessionSearchResults(instanceId: string, query: string, ids: string[], requestId: number, complete = true): boolean {
   if (!isLatestSessionSearch(instanceId, query, requestId)) return false
   setSessionSearch((prev) => {
     const next = new Map(prev)
-    next.set(instanceId, { query, ids, loading: false, requestId })
+    next.set(instanceId, { query, ids, loading: false, requestId, complete })
     return next
   })
   return true
@@ -208,6 +261,10 @@ function isSessionSearchLoading(instanceId: string): boolean {
   return sessionSearch().get(instanceId)?.loading ?? false
 }
 
+export function isSessionSearchComplete(instanceId: string): boolean {
+  return sessionSearch().get(instanceId)?.complete !== false
+}
+
 // A workspace also holds sessions of nested checkouts of other repositories it
 // owns (an opened parent folder receives their live events). Its list,
 // indicators and notices show the inventory's scope: complete families with a
@@ -215,10 +272,17 @@ function isSessionSearchLoading(instanceId: string): boolean {
 // inventory, and for Git-unavailable folders (which project their own
 // directory), every held session is in scope. The active session's family is
 // always in scope: a session opened explicitly is shown where it was opened.
-const workspaceScopes = new Map<string, { sessions: unknown; worktrees: unknown; active?: string; scope: ReadonlySet<string> }>()
+const workspaceScopes = new Map<string, {
+  sessions: unknown; worktrees: unknown; active?: string; scope: ReadonlySet<string>
+  directory?: string; serverId?: string; inventory?: Map<string, Session>
+}>()
 
 function getWorkspaceSessionScope(instanceId: string): ReadonlySet<string> | null {
   const all = sessions()
+  if (explicitSessionDirectory(instances().get(instanceId)) !== undefined) {
+    getInventorySessions(instanceId)
+    return workspaceScopes.get(instanceId)?.scope ?? new Set()
+  }
   const worktrees = worktreesByInstance().get(instanceId)
   if (!worktrees || getGitRepoStatus(instanceId) === null || getDirectoryOnlyWorktree(instanceId)) return null
   const active = activeSessionId().get(instanceId)
@@ -532,6 +596,7 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
       return prev
     }
 
+    inheritSessionReadBaseline(current, updatedSession)
     instanceSessions.set(sessionId, updatedSession)
 
     const next = new Map(prev)
@@ -576,6 +641,10 @@ function reconcileSessionPendingState(
 
     const reconciled = applySessionPendingState(instanceSessions, permissionSessionIds, formSessionIds)
     if (reconciled === instanceSessions) return prev
+    for (const [id, session] of reconciled) {
+      const original = instanceSessions.get(id)
+      if (original && original !== session) inheritSessionReadBaseline(original, session)
+    }
 
     const next = new Map(prev)
     next.set(instanceId, reconciled)
@@ -640,7 +709,7 @@ function hydrateSessionGenerationRecovery(
   }
 }
 
-function beginSessionGenerationAdmission(instanceId: string, sessionId: string): {
+function beginSessionGenerationAdmission(instanceId: string, sessionId: string, isCurrent: () => boolean = () => true): {
   complete: () => void
   rollback: () => void
 } {
@@ -683,6 +752,7 @@ function beginSessionGenerationAdmission(instanceId: string, sessionId: string):
     admission.accepted ||= accepted
     if (--admission.pending > 0) return
     generationAdmissions.delete(key)
+    if (!isCurrent()) return
     withSession(instanceId, sessionId, (session) => {
       if (session.generationAdmissionToken !== admission.token) return false
       session.generationAdmissionToken = undefined
@@ -772,6 +842,8 @@ function seedRestoredSessionSelection(instanceId: string, parentSessionId: strin
 }
 
 function clearInstanceSessionSelection(instanceId: string): void {
+  workspaceScopes.delete(instanceId)
+  indicatorStatuses.delete(instanceId)
   writeActiveParentSession(instanceId, null)
   writeActiveSession(instanceId, null)
   setAuthoritativeSessionSelectionInstanceIds((prev) => {
@@ -831,12 +903,12 @@ function getActiveSession(instanceId: string): Session | null {
   const sessionId = activeSessionId().get(instanceId)
   if (!sessionId) return null
 
-  const instanceSessions = sessions().get(instanceId)
+  const instanceSessions = getInventorySessions(instanceId)
   return instanceSessions?.get(sessionId) || null
 }
 
 function getSessions(instanceId: string): Session[] {
-  const instanceSessions = sessions().get(instanceId)
+  const instanceSessions = getInventorySessions(instanceId)
   return instanceSessions ? Array.from(instanceSessions.values()) : []
 }
 
@@ -851,12 +923,12 @@ function getChildSessions(instanceId: string, parentId: string): Session[] {
 }
 
 function getDescendantSessions(instanceId: string, parentId: string): Session[] {
-  const instanceSessions = sessions().get(instanceId)
+  const instanceSessions = getInventorySessions(instanceId)
   return instanceSessions ? getDescendantSessionsFromMap(instanceSessions, parentId) : []
 }
 
 function getSessionFamily(instanceId: string, parentId: string): Session[] {
-  const parent = sessions().get(instanceId)?.get(parentId)
+  const parent = getInventorySessions(instanceId)?.get(parentId)
   if (!parent) return []
 
   const children = getDescendantSessions(instanceId, parentId)
@@ -864,16 +936,39 @@ function getSessionFamily(instanceId: string, parentId: string): Session[] {
 }
 
 function getSessionRoot(instanceId: string, sessionId: string): Session | null {
-  const instanceSessions = sessions().get(instanceId)
+  const instanceSessions = getInventorySessions(instanceId)
   if (!instanceSessions) return null
   const directoryOnly = getDirectoryOnlyWorktree(instanceId)
-  return getSessionRootFromMap(instanceSessions, sessionId, directoryOnly?.serviceDirectory ?? directoryOnly?.directory)
+  return getSessionRootFromMap(instanceSessions, sessionId, explicitSessionDirectory(instances().get(instanceId)) ?? directoryOnly?.serviceDirectory ?? directoryOnly?.directory)
+}
+
+/** Reproject the selected conversation's parent without selecting or reloading it. */
+export function reconcileActiveSessionParent(instanceId: string): boolean {
+  const selected = activeSessionId().get(instanceId)
+  const root = selected && getSessionRoot(instanceId, selected)
+  if (!root) return false
+  writeActiveParentSession(instanceId, root.id)
+  return true
+}
+
+function getInventorySessions(instanceId: string): Map<string, Session> | undefined {
+  const all = sessions(), current = all.get(instanceId)
+  const instance = instances().get(instanceId)
+  const directory = explicitSessionDirectory(instance)
+  if (!current || directory === undefined) return current
+  const cached = workspaceScopes.get(instanceId)
+  if (cached?.sessions === all && cached.directory === directory && cached.serverId === instance?.binding?.serverId) return cached.inventory
+  const inventory = scopedSessionMap(instance, current)
+  workspaceScopes.set(instanceId, { sessions: all, directory, serverId: instance?.binding?.serverId,
+    inventory, scope: new Set(inventory.keys()), worktrees: undefined })
+  return inventory
 }
 
 function buildSessionThreads(instanceId: string, rootIds: string[], childIds?: Set<string>): SessionThread[] {
-  const instanceSessions = sessions().get(instanceId)
+  const instanceSessions = getInventorySessions(instanceId)
   const directoryOnly = getDirectoryOnlyWorktree(instanceId)
-  return instanceSessions ? buildSessionThreadsFromMap(instanceSessions, rootIds, childIds, directoryOnly?.serviceDirectory ?? directoryOnly?.directory) : []
+  return instanceSessions ? buildSessionThreadsFromMap(instanceSessions, rootIds, childIds,
+    explicitSessionDirectory(instances().get(instanceId)) ?? directoryOnly?.serviceDirectory ?? directoryOnly?.directory) : []
 }
 
 function getSessionThreads(instanceId: string): SessionThread[] {
@@ -881,7 +976,7 @@ function getSessionThreads(instanceId: string): SessionThread[] {
 }
 
 function getSessionSearchSessions(instanceId: string): Session[] {
-  const instanceSessions = sessions().get(instanceId)
+  const instanceSessions = getInventorySessions(instanceId)
   if (!instanceSessions) return []
   return getSessionSearchResultIds(instanceId).flatMap(id => {
     const session = instanceSessions.get(id)

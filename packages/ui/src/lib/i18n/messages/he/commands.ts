@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openWorkspace.localOnly": "פעולות קבצים, עורך ומסוף מקומיות דורשות פרויקט בשירות OpenCode המקומי המשותף.",
   "commands.openHelp.failed": "לא ניתן לפתוח את העזרה בדפדפן. פתחו את https://neuralnomadsai.github.io/CodeNomad/ ידנית.",
   "commands.openSponsor.failed": "לא ניתן לפתוח בדפדפן את הדף תמכו ב־CodeNomad. פתחו את {url} ידנית.",
   "commandPalette.title": "לוח פקודות",

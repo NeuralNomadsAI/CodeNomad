@@ -12,6 +12,7 @@ function fixture(options: { owned?: boolean; cursor?: string | null; output?: un
   const ownershipChecks: string[] = []
   const fence = new WorktreeDeletionFence()
   registerSessionHistoryRoutes(app, { worktreeDeletionFence: fence, workspaceManager: {
+    requireWorkspaceCapability: () => new AbortController().signal,
     desktopPluginsReady: async () => {},
     getServiceLocation: () => ({ directory: "/repo" }),
     getWorktrees: async () => ({ isGitRepo: true, worktrees: [

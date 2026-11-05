@@ -73,6 +73,7 @@ async function fixture(t: TestContext, permissions: string[], options: {
         generation: options.generation === undefined ? { global: true, effective: true, models: [{ ref: "p/img", name: "Img" }] } : options.generation as any }
     } },
     workspaceManager: {
+      requireWorkspaceCapability: () => new AbortController().signal,
       get: (id: string) => id === "i" ? { id, path: "/repo" } as any : undefined,
       getSharedServiceConnection: async (id: string) => id === "i" ? { client,
         assertCurrent() { if (!connection.current) throw new Error("Superseded connection") } } as any : undefined,

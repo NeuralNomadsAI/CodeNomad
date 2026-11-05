@@ -9,6 +9,24 @@ import { registerWorkspaceRoutes } from "./workspaces"
 import { WorkspaceSearchBusyError } from "../../filesystem/search-cache"
 
 describe("workspace routes", () => {
+  // prototype-1236: explicit targets reach the manager's ExplicitWorkspace owner, which refuses unknown servers.
+  it("hands explicit targets to the manager and keeps local opening unchanged", async () => {
+    const app = Fastify()
+    const calls: Array<string | undefined> = []
+    const workspaceManager = { create: async (_path: string, _name: string, options: { serverId?: string }) => {
+      calls.push(options.serverId)
+      if (options.serverId === "unknown") throw new Error("unknown_server")
+      return { created: true, workspace: { id: "workspace" } }
+    } } as unknown as WorkspaceManager
+    registerWorkspaceRoutes(app, { workspaceManager, worktreeDeletionFence: new WorktreeDeletionFence() })
+    try {
+      assert.equal((await app.inject({ method: "POST", url: "/api/workspaces", payload: { path: "/remote", serverId: "explicit-loopback" } })).statusCode, 201)
+      assert.equal((await app.inject({ method: "POST", url: "/api/workspaces", payload: { path: "/remote", serverId: "unknown" } })).statusCode, 400)
+      assert.equal((await app.inject({ method: "POST", url: "/api/workspaces", payload: { path: "/local", serverId: "local-shared" } })).statusCode, 201)
+      assert.equal((await app.inject({ method: "POST", url: "/api/workspaces", payload: { path: "/local" } })).statusCode, 201)
+      assert.deepEqual(calls, ["explicit-loopback", "unknown", undefined, undefined])
+    } finally { await app.close() }
+  })
   it("awaits file writes and reports bounded search admission as retryable", async () => {
     const app = Fastify()
     let release!: () => void
@@ -16,6 +34,7 @@ describe("workspace routes", () => {
     const gate = new Promise<void>((resolve) => { release = resolve })
     const entered = new Promise<void>((resolve) => { started = resolve })
     const workspaceManager = {
+      requireWorkspaceCapability: () => new AbortController().signal,
       get: () => ({ id: "test", path: "/private/root" }),
       getWorktreeIdentityForPath: async () => "/private/root",
       writeFile: async () => { started(); await gate; throw new Error("disk write failed") },
@@ -47,6 +66,7 @@ describe("workspace routes", () => {
     let writes = 0
     const identities: string[] = []
     const workspaceManager = {
+      requireWorkspaceCapability: () => new AbortController().signal,
       get: (id: string) => id === "test" ? { id, path: "/private/root" } : undefined,
       getWorktreeIdentityForPath: async (_id: string, directory: string) => { identities.push(directory); return directory },
       writeFile: async () => { writes++ },
@@ -77,6 +97,7 @@ describe("workspace routes", () => {
     const gate = new Promise<void>(resolve => { release = resolve })
     const entered = new Promise<void>(resolve => { started = resolve })
     const workspaceManager = {
+      requireWorkspaceCapability: () => new AbortController().signal,
       get: () => ({ id: "test", path: "/private/root" }),
       getWorktreeIdentityForPath: async () => "/private/root",
       writeFile: async () => { started(); await gate },
@@ -111,6 +132,7 @@ describe("workspace routes", () => {
       updatedAt: "2026-01-01T00:00:00.000Z",
     }
     const workspaceManager = {
+      requireWorkspaceCapability: () => new AbortController().signal,
       create: async (...args: unknown[]) => {
         calls.push(args)
         return { workspace: descriptor, created: true }
@@ -172,6 +194,7 @@ describe("workspace routes", () => {
     const started = new Promise<void>((resolve) => { cancellationStarted = resolve })
     const deletion = new Promise<void>((resolve) => { finishDeletion = resolve })
     const workspaceManager = {
+      requireWorkspaceCapability: () => new AbortController().signal,
       cancelCreationRequest: async () => {
         state = "cancelled"
         cancellationStarted()
@@ -220,6 +243,7 @@ describe("workspace routes", () => {
     }
     let ownerRequestId: string | undefined
     const workspaceManager = {
+      requireWorkspaceCapability: () => new AbortController().signal,
       create: async (_path: string, _name: string | undefined, options: { requestId?: string }) => {
         const owner = ownerRequestId === undefined
         ownerRequestId ??= options.requestId

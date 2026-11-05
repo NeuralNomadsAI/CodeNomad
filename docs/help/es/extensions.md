@@ -43,6 +43,8 @@ Cada reemplazo revoca la activación en todos los proyectos, incluso si la lista
 
 ## Contexto, consentimiento de recursos y límites del aislamiento {#permissions-sandbox}
 
+Los elementos del repositorio de la API 3 solo están disponibles para proyectos que usan el servicio OpenCode local compartido. No están disponibles para ningún servidor OpenCode configurado explícitamente, incluidos los servidores de loopback y los destinos desconectados, independientemente de su compatibilidad nativa con Git; el rechazo ocurre antes de acceder a Git del anfitrión, a las sesiones de las forjas o a la red.
+
 | Contrato | Qué permite la activación |
 | --- | --- |
 | API 1 / `session.context` | Identificador de sesión actual (o ninguno), idioma y apariencia de la interfaz. Sin texto de transcripción ni acceso al sistema de archivos. |

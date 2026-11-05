@@ -11,6 +11,7 @@ interface Options {
   instanceId: Accessor<string>
   sessionId: Accessor<string>
   instanceFolder: Accessor<string>
+  source?: Accessor<unknown>
   active?: Accessor<boolean>
   disabled?: Accessor<boolean>
   prompt: Accessor<string>
@@ -30,7 +31,7 @@ export function useDeviceAttachments(options: Options) {
   let identity: string | undefined
   const available = () => !disposed && options.active?.() !== false && !options.disabled?.()
   createComputed(() => {
-    const nextIdentity = JSON.stringify([options.instanceId(), options.sessionId(), options.instanceFolder(), options.active?.() !== false, Boolean(options.disabled?.())])
+    const nextIdentity = JSON.stringify([options.instanceId(), options.sessionId(), options.instanceFolder(), options.source?.(), options.active?.() !== false, Boolean(options.disabled?.())])
     if (nextIdentity === identity) return
     identity = nextIdentity
     setGeneration(value => value + 1)

@@ -7,7 +7,8 @@ import { ConfigProvider, updatePreferences } from "../../../src/stores/preferenc
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { sdkManager } from "../../../src/lib/sdk-manager"
-import { addInstance, setActiveInstanceId } from "../../../src/stores/instances"
+import { addInstance, updateInstance, removeInstance, setActiveInstanceId } from "../../../src/stores/instances"
+import { initialServerCapabilities } from "../../../../server/src/opencode/servers/capabilities"
 import { activeSessionId, sessions, setSessions, setActiveSession, setProviders } from "../../../src/stores/session-state"
 import { fetchSessions } from "../../../src/stores/session-api"
 import { getAttachments } from "../../../src/stores/attachments"
@@ -17,7 +18,9 @@ import "../../../src/index.css"
 const instanceId = "upload-instance"
 const params = new URLSearchParams(location.search)
 const directory = params.get("directory") || "/remote/workspace"
-serverApi.fetchConfigOwner = async () => ({ settings: { locale: params.get("locale") || "en" } }) as any
+serverApi.fetchConfigOwner = async owner => owner === "server" ? ({ opencodeServers: [
+  { id: "A", kind: "explicit", label: "Shared lab" }, { id: "B", kind: "explicit", label: "Shared lab" },
+] }) as any : ({ settings: { locale: params.get("locale") || "en" } }) as any
 serverApi.fetchStateOwner = async () => ({}) as any
 serverApi.patchConfigOwner = async (_owner, patch) => patch as any
 const [active, setActive] = createSignal(true)
@@ -40,6 +43,14 @@ const client: any = {
 }
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
 addInstance({ id: instanceId, folder: directory, port: 0, pid: 0, proxyPath: "", status: "ready", client })
+function bind(serverId: string, qualified = true) {
+  const capabilities = initialServerCapabilities({ id: serverId, kind: "explicit", label: serverId, origin: "http://127.0.0.1:1" }, 1)
+  if (qualified) for (const name of ["sessions", "chat", "media", "permissions", "questions", "events"] as const) {
+    capabilities.features[name] = { state: "available", reason: { code: "contractVerified" }, evidence: "nativeContract" }
+  }
+  updateInstance(instanceId, { binding: { serverId, directory }, capabilities })
+}
+if (params.has("execution")) bind(params.get("execution")!)
 setActiveInstanceId(instanceId)
 setProviders(prev => new Map(prev).set(instanceId, [{ id: "fixture", name: "Fixture", models: [{ id: "fixture", name: "Fixture", providerId: "fixture", limit: { context: 10000, output: 1000 }, cost: { input: 0, output: 0 } }] }]))
 // Boot stages for the readiness diagnostic installed by the test page.
@@ -64,6 +75,9 @@ bootMark("preferences-updated")
   mounted: setMounted,
   submitOnEnter: (value: boolean) => updatePreferences({ promptSubmitOnEnter: value }),
   hotkeys: (value: Parameters<typeof updatePreferences>[0]["hotkeyOverrides"]) => updatePreferences({ hotkeyOverrides: value }),
+  bind,
+  globalTarget: setActiveInstanceId,
+  forget: () => removeInstance(instanceId),
   move: (directory: string) => setSessions(previous => {
     const next = new Map(previous), list = new Map(next.get(instanceId))
     const id = activeSessionId().get(instanceId)!

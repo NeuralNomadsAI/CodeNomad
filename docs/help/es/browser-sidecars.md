@@ -1,5 +1,7 @@
 # Vistas previas de navegador y SideCars
 
+Los enlaces del chat interno de servidores explícitos siguen siendo enlaces externos que abre mediante una acción, incluidas las URL loopback. Conservan la dirección escrita y usan el contexto de red de su navegador. Las vistas previas del anfitrión quedan indisponibles en este chat; no se proporciona un túnel al servidor de ejecución.
+
 ## Abrir el navegador de una sesión {#session-browser}
 
 1. En la barra de herramientas de una conversación, elige **Abrir vista previa web**.

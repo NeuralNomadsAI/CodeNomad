@@ -2,6 +2,8 @@ import type { FastifyInstance, FastifyRequest } from "fastify"
 import type { Logger } from "../logger"
 import { isHumanAnswerProofPayload } from "../missions/human-answer"
 import { isRecurrenceProofPayload } from "../missions/recurrence-control-proof"
+import { isOpenCodeServerAdminTarget } from "./routes/opencode-servers"
+import { isProjectParticipationTarget } from "./routes/project-participation"
 
 const integrationRoute = "/api/workspaces/:id/integrations"
 const integrationRoutes = new Set([integrationRoute, "/api/workspaces/:id/plugin-sources", ...["hosts", "binding", "attach", "detach", "install", "install-host"].map(action => `${integrationRoute}/:integrationId/${action}`)])
@@ -30,10 +32,17 @@ export function registerRequestLogging(app: FastifyInstance, apiLogger: Logger) 
     const start = starts.get(request)
     const durationMs = start === undefined ? undefined : Number((process.hrtime.bigint() - start) / BigInt(1_000_000))
     const integration = integrationLogRoute(request)
-    const base = { method: request.method, url: integration ?? request.url, status: reply.statusCode, durationMs }
+    const privateAdmin = isOpenCodeServerAdminTarget(request.raw.url ?? request.url)
+    const privateParticipation = isProjectParticipationTarget(request.raw.url ?? request.url)
+    const privatePayload = privateAdmin || privateParticipation
+    const base = {
+      method: privatePayload && !["GET", "POST", "HEAD", "OPTIONS", "PATCH", "PUT", "DELETE"].includes(request.method) ? "OTHER" : request.method,
+      url: privateAdmin ? "/api/opencode-servers/<redacted>" : privateParticipation ? "/api/project-participation/<redacted>" : integration ?? request.url,
+      status: reply.statusCode, durationMs,
+    }
     apiLogger.debug(base, "HTTP request completed")
     if (apiLogger.isLevelEnabled("trace")) {
-      apiLogger.trace(integration ? base : {
+      apiLogger.trace(integration || privatePayload ? base : {
         ...base,
         params: redactSecrets(request.params),
         query: redactSecrets(request.query),

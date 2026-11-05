@@ -19,6 +19,10 @@ Expanded folders survive mode changes. Listings/status/history use cached snapsh
 
 Row actions include **Copy path** and, where the client supports opening backend paths, file-manager/editor/terminal actions such as **Open with default application**, **Show in folder**, **Open in file manager** and **Open terminal here**. Actions can move into **More actions for {name}** when space is limited; the file or folder name replaces `{name}`. A remote browser cannot assume a server path is a local-device path; see [Remote Control](remote-control.md).
 
+### Projects on an OpenCode server {#opencode-server-files}
+
+For a project opened on a configured OpenCode server, **Files** reads that server through its OpenCode API, never this computer's disk or Git. **Workspace** lists and previews the opened folder read-only (no **Save**; previews stop at 5 MiB). **Changes** shows the working-copy changes of the opened folder and its branch, in one **Changes** list without staging, commit, **Commits** or **Initialize Git**. When the server cannot report a complete, unambiguous state, the panel shows **Content unavailable or incomplete.** instead of an empty list. Use **Refresh** after the agent changes files; the panel also refreshes when the server reports file or branch changes. Open-on-this-computer actions stay unavailable.
+
 ## Edit source and save safely {#edit-save}
 
 1. Open a Workspace text file with its eye action.

@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openWorkspace.localOnly": "Yerel dosya, düzenleyici ve terminal işlemleri, paylaşılan yerel OpenCode hizmetinde bir proje gerektirir.",
   "commands.openHelp.failed": "Yardım tarayıcıda açılamadı. https://neuralnomadsai.github.io/CodeNomad/ adresini elle açın.",
   "commands.openSponsor.failed": "CodeNomad'i destekleyin sayfası tarayıcıda açılamadı. {url} adresini elle açın.",
   "commandPalette.title": "Komut Paleti",

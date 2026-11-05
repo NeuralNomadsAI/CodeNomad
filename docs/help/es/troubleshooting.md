@@ -1,5 +1,9 @@
 # Solución de problemas
 
+Para servidores de ejecución con el mismo nombre, usa el ID estable junto al nombre en los detalles y avisos del proyecto. Una respuesta incierta permanece en su editor de origen, sin mover el foco ni reenviarse automáticamente.
+
+**Servidores OpenCode explícitos:** tras una desconexión o reinicio del backend se desconoce la cobertura de solicitudes pendientes, aunque el panel esté vacío. Conserva los borradores; los permisos obsoletos esperan una solicitud actual en directo. Para un formulario conocido, usa **Comprobar el estado de este formulario** en su editor de origen; un resultado inconcluso bloquea las respuestas y permite otra comprobación explícita. Límite: 10 segundos en total y 4 MiB por respuesta; la cobertura sigue siendo desconocida. Abrir una conversación permite ver su contenido sin encontrar automáticamente solicitudes faltantes. Una respuesta enviada antes del corte puede haber llegado; no hay reenvío automático. La recuperación automática descrita abajo corresponde al servicio local compartido. Consulta [Preguntas y permisos](permissions.md).
+
 Para recuperarte, comprueba primero quién controla la operación fallida: navegador, backend de CodeNomad, servicio OpenCode o proveedor. Una respuesta perdida no demuestra que una modificación fallara; vuelve a leer el estado actual antes de repetirla.
 
 ## Problemas al iniciar el escritorio {#desktop-launch}

@@ -41,10 +41,16 @@ export interface PersistedAutoAcceptSession extends AutoAcceptSessionInfo {
 }
 
 export interface AutoAcceptPersistence {
+  requireCapability?(instanceId: string): void
   loadSessions(instanceId: string): Promise<PersistedAutoAcceptSession[]>
   loadSession?(instanceId: string, sessionId: string): Promise<PersistedAutoAcceptSession | null>
   persist(instanceId: string, rootSessionId: string, enabled: boolean): Promise<void>
+  /** prototype-1236: pending permission IDs of one session, read after a reconnect; [] when not applicable. */
+  listPendingPermissions?(instanceId: string, sessionId: string): Promise<string[]>
 }
+
+/** prototype-1236: bounded reconnect re-read, Yolo sessions only. */
+const MAX_RECOVERED_SESSIONS = 50
 
 export class AutoAcceptManager {
   private static readonly MAX_REPLY_ATTEMPTS = 3
@@ -68,6 +74,7 @@ export class AutoAcceptManager {
     if (this.unsubscribe) return
     const handler = (payload: { instanceId?: string; event?: InstanceStreamPayload }) => {
       if (!payload || !payload.instanceId || !payload.event) return
+      if (!this.admitted(payload.instanceId)) return
       if (this.deps.persistence && !this.hydratedInstances.has(payload.instanceId)) {
         const queued = this.queuedEvents.get(payload.instanceId) ?? []
         queued.push(payload.event)
@@ -82,6 +89,7 @@ export class AutoAcceptManager {
     const onStarted = (event: { workspace?: { id?: string } }) => {
       const instanceId = event.workspace?.id
       if (!instanceId) return
+      if (!this.admitted(instanceId)) return
       void this.hydrateInstance(instanceId).catch((error) => {
         this.deps.logger.warn({ instanceId, err: error }, "Failed to hydrate persisted Yolo state")
       })
@@ -92,12 +100,20 @@ export class AutoAcceptManager {
     const onError = (event: { workspace?: { id?: string } }) => {
       if (event?.workspace?.id) this.clearInstance(event.workspace.id)
     }
+    const onStatus = (event: { instanceId?: string; status?: string }) => {
+      if (event?.status !== "connected" || !event.instanceId || !this.admitted(event.instanceId)) return
+      void this.recoverPending(event.instanceId).catch((error) => {
+        this.deps.logger.warn({ instanceId: event.instanceId, err: error }, "Failed to re-read Yolo permissions after reconnect")
+      })
+    }
     this.deps.eventBus.on("instance.event", handler)
+    this.deps.eventBus.on("instance.eventStatus", onStatus)
     this.deps.eventBus.on("workspace.started", onStarted)
     this.deps.eventBus.on("workspace.stopped", onStopped)
     this.deps.eventBus.on("workspace.error", onError)
     this.unsubscribe = () => {
       this.deps.eventBus.off("instance.event", handler)
+      this.deps.eventBus.off("instance.eventStatus", onStatus)
       this.deps.eventBus.off("workspace.started", onStarted)
       this.deps.eventBus.off("workspace.stopped", onStopped)
       this.deps.eventBus.off("workspace.error", onError)
@@ -110,10 +126,26 @@ export class AutoAcceptManager {
   }
 
   isEnabled(instanceId: string, sessionId: string): boolean {
+    this.requireCapability(instanceId)
     return this.store.isEnabled(instanceId, sessionId)
   }
 
+  requireCapability(instanceId: string): void {
+    this.deps.persistence?.requireCapability?.(instanceId)
+  }
+
+  private admitted(instanceId: string): boolean {
+    try {
+      this.requireCapability(instanceId)
+      return true
+    } catch {
+      this.clearInstance(instanceId)
+      return false
+    }
+  }
+
   hydrateInstance(instanceId: string): Promise<void> {
+    this.requireCapability(instanceId)
     if (!this.deps.persistence || this.hydratedInstances.has(instanceId)) return Promise.resolve()
     const existing = this.hydration.get(instanceId)
     if (existing) return existing
@@ -146,6 +178,7 @@ export class AutoAcceptManager {
   }
 
   toggle(instanceId: string, sessionId: string): boolean | Promise<boolean> {
+    this.requireCapability(instanceId)
     if (this.deps.persistence) return this.togglePersisted(instanceId, sessionId)
     const enabled = this.store.toggle(instanceId, sessionId)
     this.deps.eventBus.publish({ type: "yolo.stateChanged", instanceId, sessionId, enabled })
@@ -219,6 +252,20 @@ export class AutoAcceptManager {
     return settled
   }
 
+  /** prototype-1236 (Q2): permissions asked while a live-only stream was down, for Yolo sessions only. */
+  async recoverPending(instanceId: string): Promise<void> {
+    const list = this.deps.persistence?.listPendingPermissions
+    if (!list) return
+    await this.hydrateInstance(instanceId)
+    const generation = this.instanceGeneration.get(instanceId) ?? 0
+    const sessions = this.store.sessionIds(instanceId).filter(sessionId => this.store.isEnabled(instanceId, sessionId)).slice(0, MAX_RECOVERED_SESSIONS)
+    for (const sessionId of sessions) {
+      const permissionIds = await list.call(this.deps.persistence, instanceId, sessionId)
+      if ((this.instanceGeneration.get(instanceId) ?? 0) !== generation || !this.admitted(instanceId)) return
+      for (const permissionId of permissionIds) this.handlePermissionRequest(instanceId, { id: permissionId, sessionID: sessionId })
+    }
+  }
+
   clearInstance(instanceId: string): void {
     this.instanceGeneration.set(instanceId, (this.instanceGeneration.get(instanceId) ?? 0) + 1)
     this.hydratedInstances.delete(instanceId)
@@ -230,6 +277,7 @@ export class AutoAcceptManager {
   }
 
   handleInstanceEvent(instanceId: string, event: InstanceStreamPayload): void {
+    if (!this.admitted(instanceId)) return
     if (!event || typeof event.type !== "string") return
 
     if (event.type === "session.created") {
@@ -369,6 +417,7 @@ export class AutoAcceptManager {
     permissionId: string,
     sessionId: string,
   ): void {
+    if (!this.admitted(instanceId)) return
     const key = permissionId
     if (this.inFlight.has(key)) return
     const attempts = this.replyAttempts.get(key) ?? 0

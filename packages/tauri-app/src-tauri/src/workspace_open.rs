@@ -22,6 +22,26 @@ struct LaunchCandidate {
 #[derive(Deserialize)]
 struct WorkspaceDescriptor {
     path: String,
+    binding: Option<WorkspaceBinding>,
+}
+
+#[derive(Deserialize)]
+struct WorkspaceBinding {
+    #[serde(rename = "serverId")]
+    server_id: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+enum WorkspaceOpenReason {
+    LocalOnly,
+}
+
+fn local_only_error() -> String {
+    serde_json::json!({
+        "code": "explicit_capability_unavailable", "capability": "files",
+        "reason": { "code": WorkspaceOpenReason::LocalOnly }
+    }).to_string()
 }
 
 #[derive(Deserialize)]
@@ -65,6 +85,14 @@ fn resolve_active_workspace_folder(
     instance_id: &str,
     worktree_slug: &str,
 ) -> Result<String, String> {
+    resolve_workspace_folder(instance_id, worktree_slug, |path| get_local_json(manager, path))
+}
+
+fn resolve_workspace_folder(
+    instance_id: &str,
+    worktree_slug: &str,
+    mut get_json: impl FnMut(&str) -> Result<serde_json::Value, String>,
+) -> Result<String, String> {
     if instance_id.is_empty()
         || !instance_id
             .bytes()
@@ -72,13 +100,18 @@ fn resolve_active_workspace_folder(
     {
         return Err("Invalid workspace id".into());
     }
-    let workspace: WorkspaceDescriptor =
-        get_local_json(manager, &format!("/api/workspaces/{instance_id}"))?;
+    let workspace: WorkspaceDescriptor = serde_json::from_value(
+        get_json(&format!("/api/workspaces/{instance_id}"))?
+    ).map_err(|error| error.to_string())?;
+    if workspace.binding.as_ref().is_some_and(|binding| binding.server_id != "local-shared") {
+        return Err(local_only_error());
+    }
     if worktree_slug == "root" {
         return Ok(workspace.path);
     }
-    let payload: WorktreeListResponse =
-        get_local_json(manager, &format!("/api/workspaces/{instance_id}/worktrees"))?;
+    let payload: WorktreeListResponse = serde_json::from_value(
+        get_json(&format!("/api/workspaces/{instance_id}/worktrees"))?
+    ).map_err(|error| error.to_string())?;
     payload
         .worktrees
         .into_iter()
@@ -599,6 +632,51 @@ pub async fn open_workspace_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_binding_refuses_before_paths_worktrees_or_launch() {
+        for server_id in ["loopback-profile", "remote", "missing-profile"] {
+            for folder in [r"C:\workspace\app", "/workspace/app", "."] {
+                for slug in ["root", "branch"] {
+                    for _target in ["default", "reveal", "terminal", "editor"] {
+                        let mut reads = 0;
+                        let result = resolve_workspace_folder("id", slug, |_| {
+                            reads += 1;
+                            assert_eq!(reads, 1, "worktree reads must be refused");
+                            Ok(serde_json::json!({ "path": folder, "binding": {
+                                "serverId": server_id, "directory": folder
+                            }}))
+                        }).and_then(|folder| {
+                            panic!("filesystem/launch adapter must not be entered: {folder}");
+                        });
+                        let result: Result<(), String> = result;
+                        let error: serde_json::Value = serde_json::from_str(&result.unwrap_err()).unwrap();
+                        assert_eq!(error["code"], "explicit_capability_unavailable");
+                        assert_eq!(error["reason"]["code"], "localOnly");
+                        assert_eq!(reads, 1);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn folder_authority_keeps_local_and_refuses_invalid_or_stale_ids() {
+        for binding in [serde_json::Value::Null, serde_json::json!({"serverId": "local-shared"})] {
+            for slug in ["root", "branch"] {
+                let folder = resolve_workspace_folder("id", slug, |route| Ok(
+                    if route.ends_with("/worktrees") {
+                        serde_json::json!({"worktrees": [{"slug": "branch", "directory": "local/branch"}]})
+                    } else { serde_json::json!({"path": "local", "binding": binding}) }
+                )).unwrap();
+                assert_eq!(folder, if slug == "root" { "local" } else { "local/branch" });
+            }
+        }
+        for id in ["id%2Fother", "id/other", ""] {
+            assert!(resolve_workspace_folder(id, "root", |_| panic!("invalid id read")).is_err());
+        }
+        assert!(resolve_workspace_folder("stale", "root", |_| Err("Workspace is not active".into())).is_err());
+    }
 
     #[test]
     fn rejects_paths_outside_the_workspace() {

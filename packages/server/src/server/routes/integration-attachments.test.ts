@@ -34,6 +34,7 @@ function harness(options: {
   catalogEmpty?: boolean
   updateError?: boolean
   guardHintRead?: boolean
+  explicit?: boolean
 } = {}) {
   const state = { current: true, owned: true, directory: "/work", workspaceID: undefined as string | undefined,
     sessionID: undefined as string | undefined, locations: {} as Record<string, string>,
@@ -77,6 +78,7 @@ function harness(options: {
     controls: { read: async (_id, location) => { await options.onControls?.(); if (options.controlsError) throw options.controlsError; return { ...snapshot(), location } } },
     catalog: { read: async input => { catalogReads.push(input); return { state: "fresh", catalog: options.catalogEmpty ? catalogOf() : catalogOf(catalogEntry("fixture", { family: options.family ?? "native" })) } } },
     workspaceManager: {
+      requireWorkspaceCapability: () => { if (options.explicit) throw new Error("Explicit host controls unavailable"); return new AbortController().signal },
       getSharedServiceConnection: async () => ({ client, assertCurrent: () => { if (!state.current) throw new Error(secret) } }) as never,
       ownsLocation: async () => state.owned,
       getServiceWslDistro: () => options.wslDistro,
@@ -103,6 +105,19 @@ function harness(options: {
   }
   return { app, attachments, state, calls, trace, writes, logs, request, catalogReads }
 }
+
+it("explicit projects refuse every host control before catalog, RPC, metadata or kernel reads", async t => {
+  const f = harness({ explicit: true, readKernelVersion: async () => { throw new Error("Host kernel read") } })
+  t.after(() => f.app.close())
+  for (const action of ["hosts", "binding", "attach", "detach", "install-host"] as const) {
+    const response = await f.request(action)
+    assert.equal(response.statusCode, 403, action)
+  }
+  assert.deepEqual(f.calls, [])
+  assert.deepEqual(f.catalogReads, [])
+  assert.deepEqual(f.writes, [])
+  assert.deepEqual(f.trace, [])
+})
 
 describe("integration attachment routes (real service and schemas)", () => {
   it("AC-C12 validates the whole binding then projects only state/label, independent of Q8", async t => {

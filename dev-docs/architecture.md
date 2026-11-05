@@ -64,7 +64,18 @@ Yolo state endpoints live at `/workspaces/:id/yolo/sessions/:sessionId`; Yolo no
 
 `packages/ui/src/lib/sdk-manager.ts` uses `OpenCode.make()` and caches generated Promise clients by instance proxy path. `packages/ui/src/stores/opencode-client.ts` is the root-client authority; native directory/location fields select the worktree.
 
-The server holds one `client.event.subscribe()` stream. `InstanceEventBridge` maps native location events to CodeNomad `instance.event` records, and `/api/events` multiplexes them with workspace and Yolo events for the browser; heartbeats use `POST /api/client-connections/pong`. The stream is volatile and has no replay guarantee: reconnect must reconcile sessions and pending requests and reread authoritative file/config state. Pending recovery uses the loaded-only broker, never worktree-wide ordinary lists; see [compatibility](OPENCODE_COMPATIBILITY.md), whose Agent conventions also specify relay ordering and ownership fences.
+The server holds one `client.event.subscribe()` stream per admitted execution
+target, shared by all its project occurrences. `InstanceEventBridge` retains the
+local adapter and observes explicit admission from the existing connection owner.
+Each source owns its runner, retry, FIFO lanes, placement caches and status, within
+the fixed aggregate [budgets](CACHE_REFRESH_CONVENTIONS.md). Records carry server
+ID and relay-attempt generation before routing; `/api/events` multiplexes them with
+workspace and Yolo events for the browser. Heartbeats use
+`POST /api/client-connections/pong`. UI dispatch checks the occurrence binding and
+the generation established by a source status before notifying subscribers. The
+stream is volatile: reconnect reconciles only available capabilities. Local pending
+recovery uses the loaded-only broker; explicit E1 recovery retains unknown/live-only
+coverage. See [compatibility](OPENCODE_COMPATIBILITY.md) for routing fences.
 
 Native events include session lifecycle/output events (`session.created`, `session.renamed`, `session.moved`, `session.execution.*`, `session.retry.scheduled`, `session.step.*`, `session.compaction.*`, `session.text.*`, `session.reasoning.*`, `session.tool.*`), background Shell refresh via `shell.created`, `shell.exited`, `shell.deleted`, file invalidation via `filesystem.changed`, and configuration invalidation via `config.updated`. Each busy period settles with exactly one `session.execution.succeeded`/`failed`/`interrupted`; derive session activity from these events, never from the declared but unpublished `session.status`/`session.idle`.
 
@@ -89,6 +100,62 @@ Session Shell and conversation instructions are native features. Session Shell i
 ## Persistence
 
 CodeNomad configuration resolves through `packages/server/src/config/location.ts`: `config.yaml`, `state.yaml`, `remote-control-devices.json`, and `instances/` under `~/.config/codenomad/`. `config.json` is read only as migration input.
+
+### Execution-server metadata foundation
+
+`SettingsService.getOpenCodeServerRegistry()` owns `server.opencodeServers` in the
+current config document. The registry validates discriminated local/explicit
+profiles, unique IDs and normalized root origins. Saved metadata includes the
+server name and URL. An absent registry implicitly contains `local-shared`, without a
+migration write. Public workspace creation uses the shared local service.
+
+Internal explicit workspace creation uses `workspaces/explicit-workspace.ts` and
+the backend-wide connection owner. A per-occurrence lease precedes admission and
+native validation; connection generation and occurrence cancellation fence each
+asynchronous result and publication. Validation reads native `/api/location` and
+`/api/fs/list` through the protected transport, with exact directory comparisons
+and bounded response size/time. The lease survives publication and releases on
+the last occurrence closure across windows. `WorkspaceDescriptor` exposes the
+immutable execution binding and capability snapshot; local binary metadata is
+optional for explicit occurrences. Workspace client acquisition is target-bound,
+and host filesystem, worktree and environment helpers reject explicit workspaces.
+The public workspace POST accepts a registered explicit `serverId` and validates
+its directory through that target's native API before publishing the occurrence.
+
+The internal binding parser preserves `{ serverId, directory }`, defaults a
+missing server ID to `local-shared`, and retains unknown IDs for repair. Explicit
+directories stay opaque. Connection generations belong to transient capability
+snapshots, separately from durable bindings. The closed E1 capability template
+marks native contracts unverified, pending recovery live-only and deferred
+integrations unavailable. Static config summaries whitelist metadata and conservatively
+report `hasCredentials: false`, `needsCredentials: true`; the internal
+`SettingsService.getOpenCodeServerSummaries()` derives live booleans from its shared
+credential owner. Explicit pairing tokens and manual passwords persist in the private
+backend `opencode-server-pairings.json` (0600), scoped by profile/config identity,
+server ID and normalized origin. Backend restart reuses them. Registry changes clear credentials before origin changes or
+removal; credential changes revoke owned requests and captured transports synchronously.
+`WorkspaceManager.shutdown()` disposes the backend owner before workspace cleanup.
+The home/launcher Remotes disclosure shares pairing, folder browsing and project opening.
+
+`opencode/servers/connections.ts` supplies the internal target resolver, isolated
+clients/fetches, coalesced admission, generation fences and project-occurrence leases.
+`SettingsService` retains one registry, credential owner and connection owner for all
+windows. The published local workspace connection reader delegates through this resolver
+to the existing local lifecycle. Explicit acquisition requires a server ID and an
+admission intent; workspace reads require an admitted target. Explicit project opening,
+administrative routes and user-facing integration have separate qualification boundaries.
+Active-target limits and release rules are in [CACHE_REFRESH_CONVENTIONS.md](CACHE_REFRESH_CONVENTIONS.md).
+
+Generic config PATCH operations reserve this subtree for the registry, for both
+host and paired-device callers. Patch/result checks reject direct writes and
+ancestor replacements that remove it before persistence or event publication.
+Document and owner responses/events share the public sanitizer.
+
+Schema preprocessing safely discards recognized development `credentialMode` and
+`credentialRef` fields; SettingsService normalizes valid metadata through the
+registry. The credential service uses a private per-instance Map and synchronous
+memory changes inside asynchronous mutations, with origin/missing-server
+invalidation on read and clearing usable after metadata removal.
 
 ## Implementation Map
 

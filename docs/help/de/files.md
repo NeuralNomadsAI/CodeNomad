@@ -19,6 +19,10 @@ Aufgeklappte Ordner bleiben bei Moduswechseln erhalten. Listen/Status/Verlauf ve
 
 Zeilenaktionen umfassen **Pfad kopieren** und, soweit der Client Backend-Pfade öffnen kann, Dateimanager-/Editor-/Terminal-Aktionen wie **Mit Standardanwendung öffnen**, **Im Ordner anzeigen**, **Im Dateimanager öffnen** und **Terminal hier öffnen**. Bei wenig Platz können Aktionen unter **Weitere Aktionen für {name}** erscheinen; der Datei- oder Ordnername ersetzt `{name}`. Ein Remote-Browser darf einen Serverpfad nicht als lokalen Gerätepfad voraussetzen; siehe [Fernsteuerung](remote-control.md).
 
+### Projekte auf einem OpenCode-Server {#opencode-server-files}
+
+Bei einem Projekt, das auf einem konfigurierten OpenCode-Server geöffnet ist, liest **Dateien** diesen Server über seine OpenCode-API, nie die Festplatte oder Git dieses Computers. **Arbeitsbereich** listet den geöffneten Ordner schreibgeschützt auf und zeigt ihn in der Vorschau (kein **Speichern**; Vorschauen enden bei 5 MiB). **Änderungen** zeigt die Änderungen der Arbeitskopie des geöffneten Ordners und seines Branches in einer einzigen Liste **Änderungen**, ohne Stagen, Commit, **Commits** oder **Git initialisieren**. Kann der Server keinen vollständigen, eindeutigen Zustand melden, zeigt das Panel **Inhalt nicht verfügbar oder unvollständig.** statt einer leeren Liste. Verwenden Sie **Aktualisieren**, nachdem der Agent Dateien geändert hat; das Panel aktualisiert sich auch, wenn der Server Datei- oder Branch-Änderungen meldet. Aktionen zum Öffnen auf diesem Computer bleiben nicht verfügbar.
+
 ## Quelltext bearbeiten und sicher speichern {#edit-save}
 
 1. Öffnen Sie eine Textdatei im Arbeitsbereich mit ihrer Augenaktion.

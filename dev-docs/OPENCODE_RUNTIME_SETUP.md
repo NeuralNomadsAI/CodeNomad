@@ -28,7 +28,93 @@ Missing APIs, explicit OFF, a masking block, failed activation or missing exact
 calendar registration keep the schedule paused or in an explained error state.
 Play of a Mission without launch criteria follows its own admission path.
 
+## Internal explicit-endpoint admission
+
+`opencode/servers/origin.ts` supplies synchronous root-origin and literal-address
+validation to both registry metadata and `opencode/servers/endpoint.ts`, rejecting
+userinfo, query, fragment, subpaths and wildcard hosts. Explicit private addresses
+are accepted; HTTP requires loopback, including every DNS answer for localhost.
+Wildcard, multicast, link-local, cloud metadata and unsupported IPv6 transition
+addresses are refused, including IPv4-mapped forms. DNS is resolved and all answers
+validated on every dispatch; Undici dials one validated address with the original
+hostname retained for TLS verification and SNI. Redirect responses are refused.
+Registry metadata requires the normalized origin, including canonical IPv4-mapped
+loopback literals; DNS checks belong to dispatch admission.
+The shared local service keeps its own `assertLoopbackServiceUrl` admission.
+
+`createExplicitTransport` is a backend-only foundation seam. Its `fetch` preserves
+native methods, paths, query, directory headers, bodies and response streaming;
+`probe` permits only GET `/api/info` and `/openapi.json`, with a five-second overall
+deadline and an eight-MiB body limit. Probe limits include DNS and body consumption;
+cancellation/overflow close the owned dispatcher. Functional chat and SSE keep
+their caller/lifetime cancellation without the probe deadline or buffering limit.
+Request and response filtering removes hop-by-hop headers and fields nominated
+by `Connection`; responses also strip upstream cookies and authentication challenges.
+
+TLS uses verified platform trust. A supplied profile CA returns the structured
+`custom_ca_unsupported` diagnostic; use a recognized certificate chain or an
+existing loopback tunnel. Endpoint diagnostics carry stable codes for translation.
+The foundation is consumed internally; public profile testing and project opening
+remain with their separately authorized routes.
+
 ## Setup and recovery
+
+### Internal explicit OpenCode credentials
+
+Explicit OpenCode credentials are scoped by resolved profile/config identity,
+server ID and normalized origin. `credentials.ts` and `pairing-store.ts` retain
+pairing tokens and manually entered passwords across launches in the private
+backend `opencode-server-pairings.json` (0600) beside the profile's `config.yaml`.
+The backend shares one credential owner across its windows; configuration stores
+the server name and URL, while public config/events expose whitelisted metadata.
+Static summaries conservatively return `hasCredentials: false` and
+`needsCredentials: true`; live summaries use the credential owner's status.
+Removal, origin replacement, credential expiry or HTTP 401 clears the secret.
+`clear(serverId)` works after metadata removal. Errors use only `unknown_server`,
+`invalid_credentials`, `metadata_unavailable` or `closed`.
+
+`SettingsService` retains a single credential and connection owner across backend
+windows. Rotation and forgetting synchronously revoke the target's generation;
+Disconnect releases its reservation and aborts owned HTTP/streams. Registry changes
+clear credentials before origin retargeting or removal, including subsequent ID reuse.
+`WorkspaceManager.shutdown()` disposes connections and private memory before cleanup.
+Captured SDK clients, fetches and pending admissions are fenced at dispatch and completion.
+Uncertain sends are never replayed.
+The shared home/launcher Remotes disclosure pairs, browses and opens projects;
+host-only addition and removal use the authenticated administrative routes. See
+[DESKTOP_DATA_PROFILES.md](DESKTOP_DATA_PROFILES.md#explicit-opencode-credentials).
+
+`OpenCodeServerConnections` admits explicit E1 contracts using bounded read-only
+OpenAPI negotiation through the protected dispatch seam. Missing required contracts
+produce `missing_contract`, independently of the local runtime minimum. The explicit
+contract consumes canonical session/chat/replay/Form/permission/event APIs;
+environment projection, desktop plugins and integrated images retain separate capability
+policy. Project-occurrence lease acquisition and explicit Connect share a target's
+reservation and pending connection. Administrative probes share a separate single
+five-second/eight-MiB lane. Registered and ephemeral candidate probes share its
+`probe_busy` admission. One monotone operation deadline spans credential admission,
+DNS, TLS, OpenAPI negotiation, canonical `server.info()`, decoded bodies and result
+publication. The shared bounded-response wrapper charges success and error bytes
+before SDK parsing. Request cancellation, socket close and owner disposal retire
+the operation; reader/dispatcher cleanup runs independently of its completion.
+Response ownership starts immediately at transport receipt and spans admission
+before reader acquisition. Rejected admission cancels through the owned body or
+reader exactly once, including a response received after cancellation; cleanup
+rejection is observed independently of the operation's completion.
+Candidate authentication lives only in operation-local backend memory. Probes use
+GET `/openapi.json` and `/api/info`; active reservations, project leases and event
+subscriptions keep their separate owners.
+
+`GET /api/opencode-servers` reads local-first validated metadata and live owner
+state. The read matches captured reservation origins to current metadata and its
+displayed summaries; a mismatch yields `unknown` with the real quota reservation
+retained. Dispatch assertions retain their normal lifecycle authority.
+`POST /api/opencode-servers/probe` tests a validated, unregistered root
+origin with optional Basic credentials. Both require authenticated host admission,
+a loopback peer outside Remote Control ingress, a known listener/configured Host
+and trusted browser Origin/Fetch Metadata. Responses carry `no-store` and fixed
+diagnostics; missing/unstructured info leaves version unavailable. Public opening
+passes its explicit server ID through the qualified workspace creation path.
 
 Startup recovery and Preferences share `OpenCodeSetupPanel` and its store, but
 missing installations, known incompatibility and optional updates expose

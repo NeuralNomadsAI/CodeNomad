@@ -1,5 +1,7 @@
 # Tarayıcı önizlemeleri ve SideCars
 
+Açıkça yapılandırılmış sunucuların dahili sohbetindeki bağlantılar, loopback URL’leri dahil, sizin işleminizle açılan harici bağlantılar olarak kalır. Yazılan adresi korur ve tarayıcınızın ağ bağlamını kullanırlar. Bu sohbette ana makine önizlemeleri kullanılamaz; yürütme sunucusuna tünel sağlanmaz.
+
 ## Bir oturum tarayıcısı açın {#session-browser}
 
 1. Konuşmanın araç çubuğunda **Web önizlemesini aç** öğesini seçin.

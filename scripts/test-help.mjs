@@ -11,6 +11,7 @@ import { parse as parseYaml } from "yaml"
 import { buildHelp, HELP_BASE_URL, languageRedirectScript, readDownloads, readFunding, readSite, readChromeStrings, SECTION_IDS, TOUR_MEDIA, TOUR_URL, TRANSLATION_PROBLEMS, validateFunding, validateRelease } from "./build-help.mjs"
 import { fetchReleases, nextPage, run as resolveRelease, selectRelease } from "./resolve-help-release.mjs"
 import "./test-help-download.mjs"
+import "./test-help-media.mjs"
 
 // Help builds and checks are offline: any fetch fails the call and the final test.
 const fetchCalls = []

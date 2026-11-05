@@ -331,7 +331,7 @@ export class OpenCodeSharedService {
 
   private clear(): void {
     if (this.connected) this.previousConnection = this.connected
-    if (this.connected) this.negotiationControllers.get(this.connected)?.abort()
+    if (this.connected) this.negotiationControllers.get(this.connected)?.abort(new Error("OpenCode connection changed; refresh before retrying"))
     this.connection = undefined
     this.connected = undefined
     this.healthCheck = undefined

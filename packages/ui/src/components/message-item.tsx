@@ -8,6 +8,7 @@ import type { MessageRecord } from "../stores/message-v2/types"
 import MessagePart from "./message-part"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
+import { getProjectAvailability } from "../stores/project-capability"
 import { isTauriHost } from "../lib/runtime-env"
 import { useSpeech } from "../lib/hooks/use-speech"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
@@ -19,6 +20,11 @@ import { deleteMessageTechnicalParts } from "../stores/session-actions"
 import { agents, providers } from "../stores/session-state"
 import { showAlertDialog, showConfirmDialog } from "../stores/alerts"
 import type { TechnicalCleanupPart } from "../lib/message-part-grouping"
+import { createContentMediaPolicy } from "../lib/content-media-policy"
+import { authorizedMediaSource, isRestrictedMedia } from "../lib/media-policy"
+import { CODENOMAD_API_BASE } from "../lib/api-base"
+import { captureSessionRequestAuthority } from "../stores/session-api"
+import { authenticatedFetch } from "../lib/auth-recovery"
 
 interface MessageItemProps {
   record: MessageRecord
@@ -45,11 +51,15 @@ interface MessageItemProps {
 
 export default function MessageItem(props: MessageItemProps) {
   const { t, locale } = useI18n()
+  const mediaPolicy = createContentMediaPolicy(() => props.instanceId, () => props.sessionId)
+  let disposed = false
+  onCleanup(() => { disposed = true })
   const [copied, setCopied] = createSignal(false)
   const [deletingTechnicalParts, setDeletingTechnicalParts] = createSignal(false)
 
   type ImagePreviewState = {
     url: string
+    part: FilePart
     name: string
     anchor: HTMLElement
   }
@@ -194,6 +204,7 @@ export default function MessageItem(props: MessageItemProps) {
     if (part.filename && part.filename.trim().length > 0) {
       return part.filename
     }
+    if (isRestrictedMedia(mediaPolicy())) return t("messageItem.attachment.defaultName")
     const url = part.url || ""
     if (url.startsWith("data:")) {
       return t("messageItem.attachment.defaultName")
@@ -215,9 +226,21 @@ export default function MessageItem(props: MessageItemProps) {
     return typeof part.url === "string" && part.url.startsWith("data:image/")
   }
 
+  const attachmentSource = (part: FilePart, image = isImageAttachment(part)) => authorizedMediaSource({
+    uri: part.url ?? "", mime: part.mime ?? "application/octet-stream",
+  }, mediaPolicy(), CODENOMAD_API_BASE, image)
+
+  let latestDownloadRequest = 0
   const handleAttachmentDownload = async (part: FilePart) => {
-    const url = part.url
+    const url = attachmentSource(part)
     if (!url) return
+    const request = ++latestDownloadRequest
+    const instanceId = props.instanceId, sessionId = props.sessionId, record = props.record
+    const current = captureSessionRequestAuthority(instanceId, sessionId)
+    const sourceHeld = () => !disposed && props.instanceId === instanceId && props.sessionId === sessionId
+      && props.record === record && fileAttachments().includes(part) && attachmentSource(part) === url
+      && (url.startsWith("data:") || !isRestrictedMedia(mediaPolicy()) || current())
+    const held = () => request === latestDownloadRequest && sourceHeld()
 
     const filename = getAttachmentName(part)
     const directDownload = (href: string) => {
@@ -232,7 +255,10 @@ export default function MessageItem(props: MessageItemProps) {
     }
 
     if (url.startsWith("data:")) {
-      directDownload(url)
+      if (held()) {
+        directDownload(url)
+        if (held()) setAttachmentFailure(undefined)
+      }
       return
     }
 
@@ -243,20 +269,33 @@ export default function MessageItem(props: MessageItemProps) {
     }
 
     try {
-      const response = await fetch(url)
+      if (!held()) return
+      const response = await (isRestrictedMedia(mediaPolicy())
+        ? authenticatedFetch(url, { credentials: "include" }) : fetch(url))
+      if (!held()) return
       if (!response.ok) throw new Error(`Failed to fetch attachment: ${response.status}`)
       const blob = await response.blob()
+      if (!held()) return
       const objectUrl = URL.createObjectURL(blob)
-      directDownload(objectUrl)
-      URL.revokeObjectURL(objectUrl)
+      try {
+        if (held()) {
+          directDownload(objectUrl)
+          if (held()) setAttachmentFailure(undefined)
+        }
+      } finally { URL.revokeObjectURL(objectUrl) }
     } catch (error) {
-      directDownload(url)
+      // A failed read never becomes permission to navigate to the original URL.
+      if (held()) setAttachmentFailure({ isCurrent: sourceHeld })
     }
   }
 
-  const showImagePreview = (anchor: HTMLElement, url: string, name: string) => {
+  const [attachmentFailure, setAttachmentFailure] = createSignal<{ isCurrent: () => boolean }>()
+  const attachmentFailed = () => attachmentFailure()?.isCurrent() ?? false
+
+  const showImagePreview = (anchor: HTMLElement, part: FilePart, name: string) => {
+    const url = attachmentSource(part, true)
     if (!url) return
-    setImagePreview({ anchor, url, name })
+    setImagePreview({ anchor, part, url, name })
   }
 
   const errorMessage = () => {
@@ -349,6 +388,9 @@ export default function MessageItem(props: MessageItemProps) {
   const recordSettled = createMemo(() => props.record.status === "complete" || props.record.status === "error")
 
   const handleDeleteTechnicalParts = async () => {
+    if (!getProjectAvailability(props.instanceId, "sessionPruning").allowed) return
+    const current = captureSessionRequestAuthority(props.instanceId, props.sessionId)
+    if (!current()) return
     if (deletingTechnicalParts() || (props.record.status !== "complete" && props.record.status !== "error")) return
     const counts = technicalPartCounts()
     if (counts.tools + counts.reasoning === 0) return
@@ -360,7 +402,7 @@ export default function MessageItem(props: MessageItemProps) {
       confirmLabel: t("messageItem.actions.deleteTechnicalParts.confirmLabel"),
       variant: "warning",
     })
-    if (!confirmed) return
+    if (!confirmed || !current() || !getProjectAvailability(props.instanceId, "sessionPruning").allowed) return
     setDeletingTechnicalParts(true)
     try {
       const byMessage = new Map<string, TechnicalCleanupPart[]>()
@@ -368,9 +410,11 @@ export default function MessageItem(props: MessageItemProps) {
         byMessage.set(part.messageId, [...(byMessage.get(part.messageId) ?? []), part])
       }
       for (const [messageId, parts] of byMessage) {
+        if (!current() || !getProjectAvailability(props.instanceId, "sessionPruning").allowed) return
         await deleteMessageTechnicalParts(props.instanceId, props.sessionId, messageId, parts.map((part) => part.partId))
       }
     } catch (error) {
+      if (!current() || !getProjectAvailability(props.instanceId, "sessionPruning").allowed) return
       showAlertDialog(t("messageItem.actions.deleteTechnicalParts.failedMessage"), {
         title: t("messageItem.actions.deleteTechnicalParts.failedTitle"),
         detail: error instanceof Error ? error.message : String(error),
@@ -528,7 +572,8 @@ export default function MessageItem(props: MessageItemProps) {
     }
 
     const counts = technicalCounts()
-    if (!isUser() && props.showTechnicalCleanup && recordSettled() && counts.tools + counts.reasoning > 0) {
+    if (!isUser() && props.showTechnicalCleanup && getProjectAvailability(props.instanceId, "sessionPruning").allowed
+      && recordSettled() && counts.tools + counts.reasoning > 0) {
       items.push({
         key: "delete-technical-parts",
         label: deletingTechnicalParts()
@@ -536,7 +581,7 @@ export default function MessageItem(props: MessageItemProps) {
           : t("messageItem.actions.deleteTechnicalParts"),
         icon: <Eraser class="w-3.5 h-3.5" aria-hidden="true" />,
         disabled: deletingTechnicalParts(),
-        onMouseEnter: () => props.onTechnicalCleanupHoverChange?.(true),
+        onMouseEnter: () => { if (getProjectAvailability(props.instanceId, "sessionPruning").allowed) props.onTechnicalCleanupHoverChange?.(true) },
         onMouseLeave: () => props.onTechnicalCleanupHoverChange?.(false),
         onSelect: handleDeleteTechnicalParts,
       })
@@ -783,11 +828,11 @@ export default function MessageItem(props: MessageItemProps) {
                     onMouseEnter={(e) => {
                       if (!isImage) return
                       const el = e.currentTarget as HTMLElement
-                      showImagePreview(el, attachment.url || "", name)
+                      showImagePreview(el, attachment, name)
                     }}
                     onMouseLeave={() => setImagePreview(null)}
                   >
-                    <Show when={isImage} fallback={
+                    <Show when={isImage && attachmentSource(attachment, true)} fallback={
                       <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path
                           stroke-linecap="round"
@@ -797,10 +842,10 @@ export default function MessageItem(props: MessageItemProps) {
                         />
                       </svg>
                     }>
-                      <img src={attachment.url} alt={name} class="h-5 w-5 object-cover" />
+                      <img src={attachmentSource(attachment, true)} alt={name} class="h-5 w-5 object-cover" />
                     </Show>
                     <span class="truncate max-w-[180px]">{name}</span>
-                    <Show when={!attachment.url?.startsWith("file://")}>
+                    <Show when={attachmentSource(attachment)} fallback={<span role="status">{t("messageItem.attachment.unavailable")}</span>}>
                       <button
                         type="button"
                         onClick={() => void handleAttachmentDownload(attachment)}
@@ -821,7 +866,8 @@ export default function MessageItem(props: MessageItemProps) {
           </div>
         </Show>
 
-        <Show when={imagePreview()}>
+        <Show when={attachmentFailed()}><p role="status">{t("messageItem.attachment.unavailable")}</p></Show>
+        <Show when={imagePreview() && attachmentSource(imagePreview()!.part, true) === imagePreview()!.url && imagePreview()}>
           {(stateAccessor) => {
             const state = stateAccessor()
             const pos = () => getImagePreviewPosition()

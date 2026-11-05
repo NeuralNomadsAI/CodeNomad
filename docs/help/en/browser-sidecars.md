@@ -1,5 +1,7 @@
 # Browser previews and SideCars
 
+Links in internal explicit-server chat remain external links opened by your action, including loopback URLs. They retain the address as written and use your browser's network context. This chat leaves host previews unavailable; it provides no tunnel to the execution server.
+
 ## Open a session browser {#session-browser}
 
 1. In a conversation's toolbar, choose **Open web preview**.

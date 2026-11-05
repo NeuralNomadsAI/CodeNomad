@@ -83,4 +83,18 @@ describe("attachEventSourceHandlers", () => {
 
     assert.equal(reconnects, 1)
   })
+
+  it("delivers private grants separately and ignores retired or oversized callbacks without logging their data", () => {
+    const source = new FakeEventSource(), grants: unknown[] = [], logs: unknown[] = []
+    attachEventSourceHandlers(source as unknown as EventSource, { onEvent() { assert.fail("grant must not enter the broadcast dispatcher") },
+      onParticipation: value => grants.push(value), logger: { warn: value => logs.push(value), error: value => logs.push(value) } })
+    const emit = (data: string) => source.dispatchEvent(new MessageEvent("codenomad.project.participation", { data }))
+    emit('{"token":"private"}')
+    emit("PRIVATE_INVALID_JSON")
+    emit("PRIVATE_TOO_LARGE".repeat(256))
+    source.onerror?.()
+    emit('{"token":"retired"}')
+    assert.deepEqual(grants, [{ token: "private" }])
+    assert.doesNotMatch(JSON.stringify(logs), /private|retired|PRIVATE/)
+  })
 })

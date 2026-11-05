@@ -49,7 +49,8 @@ import SpeechActionButton from "./speech-action-button"
 import { ToolOutputImages } from "./tool-call/output-images"
 import { PartDuration } from "./part-duration"
 import { getPartEndedAt, getPartStartedAt } from "../lib/message-timing"
-import { isToolImageContent } from "../lib/tool-content"
+import { isToolFileContent } from "../lib/tool-content"
+import { createContentMediaPolicy } from "../lib/content-media-policy"
 
 const log = getLogger("session")
 
@@ -152,6 +153,7 @@ function ToolCallDetails(props: {
   setScrollTopSnapshot: (next: number) => void
 }) {
   const messageVersionAccessor = createMemo(() => props.messageVersion)
+  const mediaPolicy = createContentMediaPolicy(() => props.instanceId, () => props.sessionId)
   const partVersionAccessor = createMemo(() => props.partVersion)
 
   const cacheContext = createMemo(() => ({
@@ -222,6 +224,7 @@ function ToolCallDetails(props: {
 
   const { renderDiffContent } = createDiffContentRenderer({
     toolState: props.toolState,
+    mediaPolicy,
     preferences: props.preferences,
     setDiffViewMode: props.setDiffViewMode,
     isDark: props.isDark,
@@ -238,8 +241,8 @@ function ToolCallDetails(props: {
     toolState: props.toolState,
     partId: props.toolCallIdentifier,
     partVersion: partVersionAccessor,
-    instanceId: props.instanceId,
-    sessionId: props.sessionId,
+    get instanceId() { return props.instanceId },
+    get sessionId() { return props.sessionId },
     textRevealTarget,
     isDark: props.isDark,
     scrollHelpers,
@@ -254,8 +257,8 @@ function ToolCallDetails(props: {
     toolCall: props.toolCallMemo,
     toolState: props.toolState,
     toolName: props.toolName,
-    instanceId: props.instanceId,
-    sessionId: props.sessionId,
+    get instanceId() { return props.instanceId },
+    get sessionId() { return props.sessionId },
     isActive: () => props.isActive?.() ?? true,
     t: props.t,
     messageVersion: messageVersionAccessor,
@@ -307,8 +310,8 @@ function ToolCallDetails(props: {
   const renderToolBody = () => {
     const body = renderer().renderBody(rendererContext)
     const state = props.toolState()
-    if (state?.status !== "completed" || !state.content?.some(isToolImageContent)) return body
-    return <>{body}<ToolOutputImages state={props.toolState()} onContentRendered={() => {
+    if (state?.status !== "completed" || !state.content?.some(isToolFileContent)) return body
+    return <>{body}<ToolOutputImages state={props.toolState()} instanceId={props.instanceId} sessionId={props.sessionId} onContentRendered={() => {
       scrollHelpers.restoreAfterRender()
       props.onContentRendered?.()
     }} /></>
@@ -711,8 +714,8 @@ export default function ToolCall(props: ToolCallProps) {
     toolCall: toolCallMemo,
     toolState,
     toolName,
-    instanceId: props.instanceId,
-    sessionId: props.sessionId,
+    get instanceId() { return props.instanceId },
+    get sessionId() { return props.sessionId },
     t,
     messageVersion: () => props.messageVersion,
     partVersion: () => props.partVersion,

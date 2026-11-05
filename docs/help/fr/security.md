@@ -1,5 +1,9 @@
 # Authentification et sécurité
 
+Choisir une pièce jointe la lit sur votre appareil ; envoyer le message transfère ses octets au serveur OpenCode du projet. Le service local partagé appartient à l’hôte d’exécution CodeNomad, qui peut différer de votre appareil. La lecture des médias différés borne la réponse serveur décompressée entière à 16 MiB avant analyse, erreurs comprises. Un dépassement, une annulation ou le retrait du projet/de la connexion fait échouer la lecture. Les dimensions d’image et la mémoire de décodage sont gérées par le navigateur ; les envois depuis l’appareil conservent leurs budgets propres.
+
+Le chat interne des serveurs explicites autorise les médias avant affichage ou téléchargement. Les URL d’images externes, images SVG/HTML actives et médias HTML intégrés sont refusés ; télécharger exige votre action et une lecture échouée reste en échec. La limite de 8 Mio par URI de données borne l’entrée encodée, séparément des dimensions décodées et des limites d’upload appareil.
+
 L’accès à CodeNomad peut exécuter du travail sur l’hôte du backend via OpenCode. Traitez les mots de passe serveur, sessions navigateur et appareils appairés comme des identifiants puissants. CodeNomad n’est pas un bac à sable d’exécution multilocataire.
 
 ## Choisir l’authentification du serveur {#authentication}

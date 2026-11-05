@@ -19,6 +19,20 @@ Structured tool values (an object input or output) larger than about 10 KB are
 never serialized for display: they show the explicit "Structured output omitted
 from rendering" message, without a reveal; copy returns them whole.
 
+Embedded media has its own complete data-URI ceiling of 8 MiB in
+`server/src/opencode/embedded-asset.ts`, applied before base64 validation or decoding.
+Explicit image display qualifies passive raster MIME types and held native references
+through `lib/media-policy.ts`. Image bytes remain excluded from tool text projections
+even when display is refused. Encoded-byte limits and decoded image dimensions have
+independent meanings; decoded dimensions remain browser-managed.
+
+The deferred-media route separately caps the **whole decompressed HTTP envelope**
+at 16 MiB (`MESSAGE_LIMIT` in `session-media-contract.ts`), including success/error
+bodies and unrelated metadata. Chunks are counted before retention or concatenation,
+then the official SDK parses only an accepted bounded body. `Content-Length` remains
+advisory. The 32 KiB inline deferral threshold controls presentation; the 8 MiB URI
+limit controls encoded assets. Pixel dimensions and total decode heap remain separate.
+
 Because prose parsing grows faster than linearly and highlighting costs about 5 µs
 per character:
 

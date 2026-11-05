@@ -10,6 +10,7 @@ import { getLogger } from "../../../lib/logger"
 import { withHotkey } from "../../../lib/hotkeys"
 import { shouldMountSessionList } from "../../session-list-visibility"
 import { isCreatingSession } from "../../../stores/session-api"
+import { getProjectAvailability } from "../../../stores/project-capability"
 
 const log = getLogger("session")
 
@@ -77,17 +78,17 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => {
             >
               <Search class="w-4 h-4" />
             </IconButton>
-            <IconButton
+            <Show when={getProjectAvailability(props.instanceId, "serviceManagement").allowed}><IconButton
               class="icon-toggle"
               size="small"
               color="inherit"
               aria-label={props.t("instanceShell.leftPanel.instanceInfo")}
               title={withHotkey(props.t("instanceShell.leftPanel.instanceInfo"), "switch-to-info")}
               aria-pressed={props.activeSessionId() === "info"}
-              onClick={() => props.onSelectSession("info")}
+              onClick={() => { if (getProjectAvailability(props.instanceId, "serviceManagement").allowed) props.onSelectSession("info") }}
             >
               <Info size={20} aria-hidden="true" />
-            </IconButton>
+            </IconButton></Show>
             <IconButton
               class="session-history-button"
               size="small"

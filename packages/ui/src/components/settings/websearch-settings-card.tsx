@@ -10,7 +10,7 @@ const encode = (value: WebSearchSelection) => value === null ? "default" : value
 const decode = (value: string): WebSearchSelection => value === "default" ? null : value === "off" ? false : value.slice(9)
 
 /** `embedded`: Settings → Providers titles and folds this group itself. */
-export function WebSearchSettingsCard(props: { instanceId: string; location?: LocationRef; embedded?: boolean }) {
+export function WebSearchSettingsCard(props: { instanceId: string; location?: LocationRef; embedded?: boolean; active?: () => boolean }) {
   const { t } = useI18n()
   const settings = useWebSearchSettings(props)
   const label = (value: WebSearchSelection) => value === null ? t("settings.websearch.default")

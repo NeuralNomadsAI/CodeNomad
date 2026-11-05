@@ -1,5 +1,9 @@
 # Authentifizierung und Sicherheit
 
+Die Dateiauswahl liest den Anhang auf deinem Gerät; das Senden überträgt seine Bytes an den OpenCode-Server des Projekts. Der gemeinsame lokale Dienst gehört zum CodeNomad-Ausführungshost, der ein anderes Gerät sein kann. Medienabrufe begrenzen die gesamte dekomprimierte Serverantwort einschließlich Fehlern vor dem Parsen auf 16 MiB. Überschreitung, Abbruch oder ein entzogenes Projekt bzw. eine entzogene Verbindung lassen den Abruf scheitern. Bildabmessungen und der Speicher für dekodierte Bilder werden vom Browser verwaltet; Uploads vom Gerät behalten ihre eigenen Budgets.
+
+Der interne Chat expliziter Server prüft Medien vor Anzeige oder Download. Externe Bild-URLs, aktive SVG-/HTML-Bilder und HTML-Medieneinbettungen werden abgelehnt; Downloads erfordern Ihre Aktion und fehlgeschlagene Lesezugriffe bleiben fehlgeschlagen. Die Grenze von 8 MiB je Daten-URI begrenzt die kodierte Eingabe getrennt von dekodierten Bildmaßen und Geräte-Uploadgrenzen.
+
 Zugriff auf CodeNomad kann über OpenCode Arbeit auf dem Backend-Host ausführen. Behandeln Sie Serverpasswörter, Browsersitzungen und gekoppelte Geräte als mächtige Zugangsdaten. CodeNomad ist keine mandantenfähige Ausführungs-Sandbox.
 
 ## Serverauthentifizierung wählen {#authentication}

@@ -37,6 +37,7 @@ export type NormalizedMessagePart =
   | CompactionMessagePart
 
 export interface RenderCache {
+  mediaOwnerKey?: string
   /** Source the HTML was rendered from, for caches that compare it (Markdown keys on its version instead). */
   text?: string
   html: string

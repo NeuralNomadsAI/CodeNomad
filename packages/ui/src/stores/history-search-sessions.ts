@@ -8,6 +8,7 @@ import { showSessionChatFor } from "./session-previews"
 import { getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "./sessions"
 import { setSessionSearchDestination } from "./session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
+import { isExplicitHistory, requireHistoryEnrichment } from "./session-history-capability"
 
 export interface HistorySessionLabel {
   title: string
@@ -32,6 +33,7 @@ export function createHistorySessionLabels(instanceId: () => string) {
 
   function pump() {
     const current = owner
+    if (isExplicitHistory(current.instanceId)) return
     while (running < CONCURRENT_READS && queue.length) {
       const sessionID = queue.shift()!
       running += 1
@@ -109,6 +111,7 @@ export function createHistorySessionLabels(instanceId: () => string) {
  */
 export async function openHistoryMatchSession(instanceId: string, sessionId: string, messageId: string, current: () => boolean,
   highlight?: { query: string; match: SessionSearchMatch }): Promise<boolean> {
+  requireHistoryEnrichment(instanceId)
   const client = instances().get(instanceId)?.client
   const generation = getOpenCodeInstanceGeneration(instanceId)
   const admitted = () => current() && instances().get(instanceId)?.client === client

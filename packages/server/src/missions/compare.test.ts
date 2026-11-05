@@ -95,13 +95,14 @@ test("unknown creation model leaves judge on the native default, including creat
 
 test("Compare refuses missing or identical models before HTTP/recurring admission; variants do not distinguish models", async () => {
   const app = Fastify()
-  registerMissionRecurrenceCreate(app, { workspaceManager: {} as never, bridgeToken: "private-fixture", auth: {
+  const manager = { get: () => ({ id: "fixture" }), requireWorkspaceCapability: () => new AbortController().signal }
+  registerMissionRecurrenceCreate(app, { workspaceManager: manager as never, bridgeToken: "private-fixture", auth: {
     isAuthEnabled: () => true, getSessionFromRequest: () => ({ sessionId: "fixture" }) } as never })
   try {
     for (const [value, code] of [[undefined, "compare-models-required"], [{ roles: { "model-a": a } }, "compare-models-required"],
       [{ roles: { "model-a": a, "model-b": { model: { ...a.model, variant: "high" } } } }, "compare-models-identical"]] as const) {
       assert.equal(compareModelError(value), code)
-      await assert.rejects(prepareMissionCreation({ manager: {} as never, workspaceID: "fixture", signal: new AbortController().signal,
+      await assert.rejects(prepareMissionCreation({ manager: manager as never, workspaceID: "fixture", signal: new AbortController().signal,
         request: { requestId: "compare", objective: "Compare", template: "compare", profiles: value } }), { status: 400, message: code })
       const reply = await app.inject({ method: "POST", url: "/api/workspaces/fixture/missions/recurrence", payload: {
         requestID: "compare", instructions: "Compare", template: "compare", clock: { time: "09:00", zone: "UTC" },

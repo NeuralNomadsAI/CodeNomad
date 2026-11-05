@@ -9,7 +9,7 @@ import {
   onInstanceTabCloseRequested,
   openInstanceTabIds,
 } from "./app-tab-membership"
-import { normalizeWorkspacePath } from "./app-session-reconciliation"
+import { projectIdentity } from "../lib/project-identity"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 
 export interface InstanceAppTab {
@@ -137,11 +137,11 @@ function selectInstanceTab(instanceId: string) {
 function publishLocalInstanceTabLifecycle(type: "opened" | "removed", instanceId: string): void {
   const instance = instances().get(instanceId)
   if (!instance) return
-  const folder = normalizeWorkspacePath(instance.folder)
+  const folder = projectIdentity(instance.folder, instance.binding?.serverId)
   const occurrence = Array.from(instances().values())
-    .filter((candidate) => normalizeWorkspacePath(candidate.folder) === folder)
+    .filter((candidate) => projectIdentity(candidate.folder, candidate.binding?.serverId) === folder)
     .findIndex((candidate) => candidate.id === instanceId)
-  if (occurrence >= 0) publishInstanceLifecycleAuthority({ type, instanceId, folder: instance.folder, occurrence })
+  if (occurrence >= 0) publishInstanceLifecycleAuthority({ type, instanceId, folder: instance.folder, serverId: instance.binding?.serverId, occurrence })
 }
 
 function attachInstanceTab(instanceId: string, options?: { source?: "restore" }): void {
@@ -162,15 +162,16 @@ function detachInstanceTab(instanceId: string, options?: { forceFallbackSelectio
   const tabId = getInstanceAppTabId(instanceId)
   const fallbackTabId = activeAppTabId() === tabId ? getAdjacentAppTabId(tabId) : activeAppTabId()
   detachInstanceTabMembership(instanceId)
-  publishLocalInstanceTabLifecycle("removed", instanceId)
   setTabOrder((previous) => previous.filter((id) => id !== tabId))
   setAppTabSelectionRevision((revision) => revision + 1)
   setAppTabOrderRevision((revision) => revision + 1)
-  if (activeAppTabId() !== tabId) return
-  setActiveAppTabId(null)
-  setActiveInstanceId(null)
-  if (options?.forceFallbackSelection) selectAppTab(fallbackTabId)
-  else ensureActiveAppTab(fallbackTabId)
+  if (activeAppTabId() === tabId) {
+    setActiveAppTabId(null)
+    setActiveInstanceId(null)
+    if (options?.forceFallbackSelection) selectAppTab(fallbackTabId)
+    else ensureActiveAppTab(fallbackTabId)
+  }
+  publishLocalInstanceTabLifecycle("removed", instanceId)
 }
 
 onInstanceTabCloseRequested((instanceId) => detachInstanceTab(instanceId, { forceFallbackSelection: true }))

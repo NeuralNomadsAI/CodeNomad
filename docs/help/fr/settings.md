@@ -2,6 +2,8 @@
 
 ## Ouvrir les paramètres et identifier leur portée {#open-settings}
 
+**Serveur OpenCode sélectionné** identifie le contexte du projet (`local-shared` pour le service local partagé) ; les préférences CodeNomad restent communes. Un projet indisponible garde ses contrôles OpenCode inactifs. Les fichiers de configuration, variables d’environnement et opérations de maintenance OpenCode indiquent le **backend CodeNomad local** : fichiers HOME, environnement du profil et service partagé lui appartiennent. Lorsque **Gérer le backend local** est proposé, cette action ouvre explicitement ces contrôles locaux séparément du projet sélectionné.
+
 1. Ouvrez **Paramètres** avec l’engrenage **Ouvrir les paramètres** de la barre d’onglets (de la barre de titre dans l’application de bureau macOS) ou de l’accueil. Des raccourcis comme **Gérer les fournisseurs** dans le sélecteur de modèle, l’engrenage du panneau Missions ou l’engrenage **Paramètres** de l’historique des notifications ouvrent directement la section correspondante.
 2. Sélectionnez une section. Les fenêtres locales Electron et Tauri ouvrent ou focalisent une unique fenêtre native Preferences ; les vues navigateur et distantes utilisent l’écran de paramètres intégré.
 3. Vérifiez la portée du réglage et toute action **Enregistrer** avant de quitter.
@@ -15,7 +17,9 @@ La plupart des choix s’appliquent immédiatement, y compris les préférences 
 | Paramètres OpenCode Global/Projet | Changements de plugins/configuration natifs à la portée affichée. Les commandes Projet nécessitent un projet/une Location actif. |
 | Profil de données de bureau | Fenêtres natives, état de restauration et stockage navigateur, indépendamment du fichier de configuration et du service OpenCode partagé. Voir [Fenêtres de bureau et données](desktop.md). |
 
-**Stats** couvre tout le service OpenCode connecté (tous les projets, clones indépendants et sous-sessions), pas seulement le dossier ouvert, sur les 7, 30, 90 ou 365 derniers jours. Il nécessite un projet ouvert et affiche les tokens et coûts enregistrés par OpenCode, pas les factures des fournisseurs ni les allocations d’abonnement ; les derniers totaux enregistrés peuvent s’afficher pendant l’actualisation. Les quotas de forfait relèvent de la section Statut **Utilisation**.
+Les serveurs explicitement indiqués et qualifiés proposent un catalogue de fournisseurs et de modèles en lecture seule. Les sections différées restent sélectionnables et expliquent leur limitation ; gérez ces paramètres directement sur le serveur.
+
+**Stats** couvre tout le service OpenCode local partagé (tous les projets, clones indépendants et sous-sessions), pas seulement le dossier ouvert, sur les 7, 30, 90 ou 365 derniers jours. Il nécessite un projet ouvert et affiche les tokens et coûts enregistrés par OpenCode, pas les factures des fournisseurs ni les allocations d’abonnement ; les derniers totaux enregistrés peuvent s’afficher pendant l’actualisation. Les quotas de forfait relèvent de la section Statut **Utilisation**. **Stats** est indisponible pour les serveurs explicitement indiqués ; sa section en explique la raison.
 
 Changer les préférences d’affichage ne redémarre pas OpenCode et ne rejoue pas de prompt. Configuration native, maintenance du service et identifiants ont des effets distincts : voir [Configuration d’OpenCode](opencode.md), [Fournisseurs](providers.md) et [Intégrations](integrations.md).
 
@@ -41,6 +45,8 @@ Faites glisser le bord intérieur d’un panneau ancré pour le redimensionner. 
 Les [intégrations](integrations.md#integration-sections) reconnues ont aussi leurs sections Statut. Masquez-les avec les mêmes cases ; réordonnez toute section Statut par glisser-déposer ou avec les touches Haut/Bas. Le masquage et l’ordre persistent aux rechargements et à l’absence temporaire d’une intégration.
 
 Statut inclut les informations de tokens, le mode Yolo, l’utilisation fournisseur, les shells en arrière-plan, MCP et Plugins. Tant que la conversation a un [objectif](conversations.md#goal), une ligne d’objectif au-dessus de ces sections l’affiche ; cette ligne n’est pas une section et ne peut être ni masquée ni déplacée. Masquer une section ne désactive pas son service et ne révoque pas de permissions. Les dispositions étroites ferment les panneaux qui ne tiennent plus au lieu de comprimer la conversation ; un panneau ouvert alors flotte au-dessus d’elle, et ouvrir un panneau flottant ferme l’autre.
+
+Pour un projet sur un serveur OpenCode configuré, ces sections lisent ce serveur. **Utilisation** affiche les quotas natifs OpenCode Go et l’estimation Zen sans identifiants décrite dans [Fournisseurs](providers.md#usage) ; les autres fournisseurs n’affichent aucun quota. **Plugins** liste les plugins du serveur avec leur état ; leurs interrupteurs restent en lecture seule, car OpenCode n’offre aucune API pour modifier la configuration des plugins du serveur. Les serveurs MCP peuvent toujours être connectés ou déconnectés. **Shells en arrière-plan** liste et arrête les shells du serveur pour le dossier ouvert.
 
 La disposition intégrée est propre à la fenêtre, pas une modification du projet. Les cases d’extension sont différentes : elles activent du code dans tous les projets utilisant la configuration. **Réinitialiser** ne change pas le consentement aux extensions. Voir [Extensions de panneau](extensions.md).
 

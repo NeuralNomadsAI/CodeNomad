@@ -2,6 +2,7 @@ import { keyboardRegistry } from "../keyboard-registry"
 import { activeInstanceId } from "../../stores/instances"
 import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
 import { activeSessionId, getVisibleSessionIds, setActiveSession, setActiveSessionFromList } from "../../stores/sessions"
+import { getProjectAvailability } from "../../stores/project-capability"
 
 export function registerNavigationShortcuts(isMainView: () => boolean = () => true) {
   const hasInstance = () => isMainView() && Boolean(activeInstanceId())
@@ -76,7 +77,7 @@ export function registerNavigationShortcuts(isMainView: () => boolean = () => tr
     condition: hasInstance,
     handler: () => {
       const instanceId = activeInstanceId()
-      if (instanceId) setActiveSession(instanceId, "info")
+      if (instanceId && getProjectAvailability(instanceId, "serviceManagement").allowed) setActiveSession(instanceId, "info")
     },
     description: "info tab",
     context: "global",

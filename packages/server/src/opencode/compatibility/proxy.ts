@@ -10,6 +10,8 @@ export async function forwardRuntimeRequest(args: {
   fetch: typeof fetch
   release?: () => void
   invalidate: () => void
+  /** Execution owner fences publication after the fetch's asynchronous completion. */
+  assertCurrent?: () => void
   /** Rewrites a successful JSON response in place before it is relayed whole. */
   transform?: (body: unknown) => void
 }) {
@@ -40,6 +42,7 @@ export async function forwardRuntimeRequest(args: {
       : typeof args.body === "string" ? args.body : Buffer.isBuffer(args.body) ? Uint8Array.from(args.body).buffer : JSON.stringify(args.body)
     if (body === undefined) headers.delete("content-type")
     const response = await args.fetch(args.url, { method: args.request.method, headers, body, signal: controller.signal })
+    args.assertCurrent?.()
     unauthorized = response.status === 401
     args.reply.code(response.status)
     // Fetch has decompressed the body. Do not relay its original framing,
@@ -57,6 +60,7 @@ export async function forwardRuntimeRequest(args: {
         return args.reply.code(502).send({ error: "OpenCode response was interrupted" })
       }
       release()
+      args.assertCurrent?.()
       let value: unknown
       try { value = JSON.parse(text) } catch { return args.reply.send(text) }
       args.transform(value)

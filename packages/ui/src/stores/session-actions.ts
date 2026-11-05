@@ -7,6 +7,7 @@ import { tGlobal } from "../lib/i18n"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { pruneMessageContent } from "./session-pruning"
+import { requireHistoryEnrichment } from "./session-history-capability"
 import { planSessionTechnicalPartDeletion, executeSessionTechnicalPartDeletion } from "./session-history"
 export type { SessionTechnicalPartDeletionPlan } from "./session-history"
 import { canonicalContent } from "../../../server/src/opencode/session-pruning/revision"
@@ -14,7 +15,7 @@ import type { ClientPart } from "../types/message"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
 import { beginSessionGenerationAdmission, providers, sessions, setActiveParentSession, withSession } from "./session-state"
-import { createSession } from "./session-api"
+import { captureInstanceRequestAuthority, captureSessionRequestAuthority, createSession } from "./session-api"
 import { showAlertDialog } from "./alerts"
 import type { Session } from "../types/session"
 import { isSessionBusy } from "./session-status"
@@ -26,7 +27,9 @@ import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { getLogger } from "../lib/logger"
 import { clearConversationPlaybackForSession } from "./conversation-speech"
 import { syncSessionInstructions } from "./session-instructions"
-import { serializeSessionAction } from "./session-action-queue"
+import { serializeSessionAction, sessionActionSuperseded } from "./session-action-queue"
+import { explicitSessionDirectory } from "./session-inventory-scope"
+import { requestConnectionOptions } from "./request-locations"
 
 const log = getLogger("actions")
 const technicalPartUpdates = new Map<string, Promise<void>>()
@@ -37,10 +40,12 @@ function admitSessionAction<T>(
   action: () => Promise<T>,
   options?: { optimisticGeneration?: boolean },
 ): Promise<T> {
+  const current = captureSessionRequestAuthority(instanceId, sessionId)
   return serializeSessionAction(instanceId, sessionId, async () => {
+    if (!current()) throw sessionActionSuperseded(tGlobal("session.actions.superseded"))
     const admission = options?.optimisticGeneration === false
       ? undefined
-      : beginSessionGenerationAdmission(instanceId, sessionId)
+      : beginSessionGenerationAdmission(instanceId, sessionId, current)
     try {
       const result = await action()
       admission?.complete()
@@ -50,6 +55,18 @@ function admitSessionAction<T>(
       throw error
     }
   })
+}
+
+function captureAction(instanceId: string, sessionId: string, admissionCurrent?: () => boolean) {
+  const current = captureSessionRequestAuthority(instanceId, sessionId)
+  const client = getRootClient(instanceId)
+  const requestOptions = requestConnectionOptions(instances().get(instanceId))
+  const assertCurrent = () => {
+    if (!current()) throw sessionActionSuperseded(tGlobal("session.actions.superseded"))
+    if (admissionCurrent && !admissionCurrent()) throw sessionActionSuperseded("Session action view changed")
+  }
+  assertCurrent()
+  return { client, current, assertCurrent, requestOptions }
 }
 
 // One creation at a time per instance for user-triggered entries (sidebar
@@ -70,9 +87,11 @@ const pendingNewSessions = new Map<string, Promise<Session | null>>()
 function startNewSession(instanceId: string, agent?: string): Promise<Session | null> {
   const pending = pendingNewSessions.get(instanceId)
   if (pending) return pending
+  const current = captureInstanceRequestAuthority(instanceId)
   const attempt = (async () => {
     try {
       const session = await createSession(instanceId, agent)
+      if (!current()) return null
       setActiveParentSession(instanceId, session.id)
       return session
     } catch (error) {
@@ -91,17 +110,11 @@ function startNewSession(instanceId: string, agent?: string): Promise<Session | 
 }
 
 export function stageSessionRevert(instanceId: string, sessionId: string, messageId: string): Promise<void> {
-  const owner = instances().get(instanceId)?.client
+  const { client, assertCurrent, requestOptions } = captureAction(instanceId, sessionId)
   return serializeSessionAction(instanceId, sessionId, async () => {
-    const assertCurrent = () => {
-      if (!owner || instances().get(instanceId)?.client !== owner || !sessions().get(instanceId)?.has(sessionId)) {
-        throw new Error("Instance not ready")
-      }
-    }
     assertCurrent()
-    const client = getRootClient(instanceId)
     const input = { sessionID: sessionId, messageID: messageId }
-    const options = { signal: AbortSignal.timeout(15_000) }
+    const options = { ...requestOptions, signal: AbortSignal.timeout(15_000) }
     try {
       await client.session.revert.stage(input, options)
     } catch (error) {
@@ -225,6 +238,12 @@ async function sendMessage(
   const session = instanceSessions?.get(sessionId)
   if (!session) {
     throw new Error("Session not found")
+  }
+  const { client, current, assertCurrent, requestOptions } = captureAction(instanceId, sessionId, options.admissionCurrent)
+  if (explicitSessionDirectory(instance) !== undefined && attachments.some(attachment =>
+    attachment.source.type === "file" && !attachment.url.startsWith("data:")
+    || attachment.source.type === "text" && attachment.display?.startsWith("path:"))) {
+    throw new Error(tGlobal("unifiedPicker.filesUnavailable"))
   }
 
   const messageId = createId("msg")
@@ -363,27 +382,30 @@ async function sendMessage(
   try {
     log.info("session.prompt", { instanceId, sessionId, requestBody })
     await admitSessionAction(instanceId, sessionId, async () => {
-      const currentInstance = instances().get(instanceId)
+      assertCurrent()
       const currentSession = sessions().get(instanceId)?.get(sessionId)
-      if (options.admissionCurrent && !options.admissionCurrent()) throw new Error("Session action view changed")
-      if (!currentInstance?.client) throw new Error("Instance not ready")
       if (!currentSession) throw new Error("Session not found")
-      const client = getRootClient(instanceId)
-      await syncSessionInstructions(client, instanceId, sessionId)
+      await syncSessionInstructions(client, instanceId, sessionId, assertCurrent, requestOptions)
+      assertCurrent()
       if (options.delivery !== "queue" && !options.preserveNativeProfile) {
-        if (currentSession.agent) await client.session.switchAgent({ sessionID: sessionId, agent: currentSession.agent })
+        if (currentSession.agent) {
+          await client.session.switchAgent({ sessionID: sessionId, agent: currentSession.agent }, requestOptions)
+          assertCurrent()
+        }
         if (currentSession.model.providerId && currentSession.model.modelId) {
-          await client.session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, currentSession.model) })
+          await client.session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, currentSession.model) }, requestOptions)
+          assertCurrent()
         }
       }
-      if (options.admissionCurrent && !options.admissionCurrent()) throw new Error("Session action view changed")
-      const result = await client.session.prompt({ sessionID: sessionId, ...requestBody })
+      assertCurrent()
+      const result = await client.session.prompt({ sessionID: sessionId, ...requestBody }, requestOptions)
+      assertCurrent()
       confirmedId = result?.id || messageId
       if (projectOptimistically && confirmedId !== messageId) store.replaceMessageId({ oldId: messageId, newId: confirmedId })
       if (projectOptimistically) store.acceptSend(confirmedId)
     })
   } catch (error) {
-    if (projectOptimistically) store.failSend(messageId)
+    if (projectOptimistically && current()) store.failSend(messageId)
     log.error("Failed to send prompt", error)
     throw error
   }
@@ -406,13 +428,14 @@ async function executeCustomCommand(
   if (!session) {
     throw new Error("Session not found")
   }
+  const { client, assertCurrent, requestOptions } = captureAction(instanceId, sessionId)
 
   await admitSessionAction(instanceId, sessionId, async () => {
-    if (!instances().get(instanceId)?.client) throw new Error("Instance not ready")
-    if (!sessions().get(instanceId)?.has(sessionId)) throw new Error("Session not found")
-    const client = getRootClient(instanceId)
-    await syncSessionInstructions(client, instanceId, sessionId)
-    await client.session.command({ sessionID: sessionId, name: commandName, text: args, delivery: "steer" })
+    assertCurrent()
+    await syncSessionInstructions(client, instanceId, sessionId, assertCurrent, requestOptions)
+    assertCurrent()
+    await client.session.command({ sessionID: sessionId, name: commandName, text: args, delivery: "steer" }, requestOptions)
+    assertCurrent()
   }, { optimisticGeneration: false })
 }
 
@@ -426,13 +449,14 @@ async function runShellCommand(instanceId: string, sessionId: string, command: s
   if (!session) {
     throw new Error("Session not found")
   }
+  const { client, assertCurrent, requestOptions } = captureAction(instanceId, sessionId)
 
   await admitSessionAction(instanceId, sessionId, async () => {
-    if (!instances().get(instanceId)?.client) throw new Error("Instance not ready")
-    if (!sessions().get(instanceId)?.has(sessionId)) throw new Error("Session not found")
-    const client = getRootClient(instanceId)
-    await syncSessionInstructions(client, instanceId, sessionId)
-    await client.session.shell({ sessionID: sessionId, command })
+    assertCurrent()
+    await syncSessionInstructions(client, instanceId, sessionId, assertCurrent, requestOptions)
+    assertCurrent()
+    await client.session.shell({ sessionID: sessionId, command }, requestOptions)
+    assertCurrent()
   })
 }
 
@@ -442,7 +466,7 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
     throw new Error("Instance not ready")
   }
 
-  const client = getRootClient(instanceId)
+  const { client, assertCurrent, requestOptions } = captureAction(instanceId, sessionId)
 
   log.info("abortSession", { instanceId, sessionId })
 
@@ -451,7 +475,8 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
     // Cancelling background children can publish completion notifications that
     // wake this parent again after its interruption has already settled.
     log.info("session.interrupt", { instanceId, sessionId })
-    await client.session.interrupt({ sessionID: sessionId, resume: true })
+    await client.session.interrupt({ sessionID: sessionId, resume: true }, requestOptions)
+    assertCurrent()
     log.info("abortSession complete", { instanceId, sessionId })
   } catch (error) {
     log.error("Failed to abort session", error)
@@ -463,17 +488,20 @@ async function abortSession(instanceId: string, sessionId: string): Promise<void
 // entire operation (including its local snapshot/rollback) with admissions so
 // a prompt waiting on instructions cannot later overwrite a successful choice.
 function updateSessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
-  return serializeSessionAction(instanceId, sessionId, () => applySessionAgent(instanceId, sessionId, agent))
+  const authority = captureAction(instanceId, sessionId)
+  return serializeSessionAction(instanceId, sessionId, () => applySessionAgent(instanceId, sessionId, agent, authority))
 }
 
-async function applySessionAgent(instanceId: string, sessionId: string, agent: string): Promise<void> {
+async function applySessionAgent(instanceId: string, sessionId: string, agent: string, { client, current, assertCurrent, requestOptions }: ReturnType<typeof captureAction>): Promise<void> {
+  assertCurrent()
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
   if (!session) {
     throw new Error("Session not found")
   }
 
-  const nextModel = await getDefaultModel(instanceId, agent)
+  const nextModel = await getDefaultModel(instanceId, agent, session.location)
+  assertCurrent()
   const shouldApplyModel = isModelValid(instanceId, nextModel)
   const previousAgent = session.agent
   const previousModel = session.model
@@ -487,13 +515,15 @@ async function applySessionAgent(instanceId: string, sessionId: string, agent: s
 
   try {
     if (!isSessionBusy(instanceId, sessionId)) {
-      await getRootClient(instanceId).session.switchAgent({ sessionID: sessionId, agent })
+      await client.session.switchAgent({ sessionID: sessionId, agent }, requestOptions)
+      assertCurrent()
       if (shouldApplyModel) {
-        await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, nextModel) })
+        await client.session.switchModel({ sessionID: sessionId, model: getNativeModel(instanceId, nextModel) }, requestOptions)
+        assertCurrent()
       }
     }
   } catch (error) {
-    withSession(instanceId, sessionId, (current) => {
+    if (current()) withSession(instanceId, sessionId, (current) => {
       if (current.agent !== agent) return false
       current.agent = previousAgent
       if (
@@ -508,7 +538,8 @@ async function applySessionAgent(instanceId: string, sessionId: string, agent: s
   }
 
   if (agent && shouldApplyModel) {
-    await setAgentModelPreference(instanceId, agent, nextModel)
+    await setAgentModelPreference(instanceId, agent, nextModel, current)
+    assertCurrent()
   }
 
   if (shouldApplyModel) {
@@ -521,14 +552,17 @@ function updateSessionModel(
   sessionId: string,
   model: { providerId: string; modelId: string },
 ): Promise<void> {
-  return serializeSessionAction(instanceId, sessionId, () => applySessionModel(instanceId, sessionId, model))
+  const authority = captureAction(instanceId, sessionId)
+  return serializeSessionAction(instanceId, sessionId, () => applySessionModel(instanceId, sessionId, model, authority))
 }
 
 async function applySessionModel(
   instanceId: string,
   sessionId: string,
   model: { providerId: string; modelId: string },
+  { client, current, assertCurrent, requestOptions }: ReturnType<typeof captureAction>,
 ): Promise<void> {
+  assertCurrent()
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionId)
   if (!session) {
@@ -549,7 +583,8 @@ async function applySessionModel(
   try {
     // Native model selection is supported during execution too. Keeping this
     // local until the next prompt lets a session refresh restore the old model.
-    await getRootClient(instanceId).session.switchModel({ sessionID: sessionId, model: nativeModel })
+    await client.session.switchModel({ sessionID: sessionId, model: nativeModel }, requestOptions)
+    assertCurrent()
     withSession(instanceId, sessionId, (current) => {
       // Confirmation is a new selection revision even if its values match the
       // optimistic choice. Catalog reads started during the write captured that
@@ -558,7 +593,7 @@ async function applySessionModel(
       delete current.modelSelectionPending
     })
   } catch (error) {
-    withSession(instanceId, sessionId, (current) => {
+    if (current()) withSession(instanceId, sessionId, (current) => {
       delete current.modelSelectionPending
       if (current.model.providerId !== model.providerId || current.model.modelId !== model.modelId) return
       current.model = session.model
@@ -567,9 +602,10 @@ async function applySessionModel(
   }
 
   if (session.agent) {
-    await setAgentModelPreference(instanceId, session.agent, model)
+    await setAgentModelPreference(instanceId, session.agent, model, current)
+    assertCurrent()
   }
-  addRecentModelPreference(model)
+  addRecentModelPreference({ ...model, serverId: instances().get(instanceId)?.binding?.serverId })
 
   updateSessionInfo(instanceId, sessionId)
 }
@@ -580,7 +616,7 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
     throw new Error("Instance not ready")
   }
 
-  const client = getRootClient(instanceId)
+  const { client, assertCurrent, requestOptions } = captureAction(instanceId, sessionId)
 
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) {
@@ -592,7 +628,8 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
     throw new Error("Session title is required")
   }
 
-  await client.session.update({ sessionID: sessionId, title: trimmedTitle })
+  await client.session.update({ sessionID: sessionId, title: trimmedTitle }, requestOptions)
+  assertCurrent()
 
   withSession(instanceId, sessionId, (current) => {
     current.title = trimmedTitle
@@ -603,10 +640,11 @@ async function renameSession(instanceId: string, sessionId: string, nextTitle: s
 }
 
 async function compactSession(instanceId: string, sessionId: string): Promise<void> {
+  const { client, assertCurrent, requestOptions } = captureAction(instanceId, sessionId)
   await admitSessionAction(instanceId, sessionId, async () => {
-    if (!instances().get(instanceId)?.client) throw new Error("Instance not ready")
-    if (!sessions().get(instanceId)?.has(sessionId)) throw new Error("Session not found")
-    await getRootClient(instanceId).session.compact({ sessionID: sessionId })
+    assertCurrent()
+    await client.session.compact({ sessionID: sessionId }, requestOptions)
+    assertCurrent()
   })
 }
 
@@ -641,6 +679,7 @@ async function deleteSelectedMessageTechnicalParts(
   messageId: string,
   partIds: string[],
 ): Promise<void> {
+  requireHistoryEnrichment(instanceId)
   const record = messageStoreBus.getOrCreate(instanceId).getMessage(messageId)
   const targets = Array.from(new Set(partIds)).map((partId) => ({
     partId,
@@ -662,6 +701,7 @@ async function deleteSelectedMessageTechnicalParts(
   }
 
   return serializeTechnicalPartUpdate(instanceId, sessionId, messageId, async () => {
+    requireHistoryEnrichment(instanceId)
     const client = getRootClient(instanceId)
     const message = await client.session.message.get({ sessionID: sessionId, messageID: messageId })
     if (message.type !== "assistant" || !message.time.completed) {
@@ -687,11 +727,13 @@ async function deleteMessagePart(instanceId: string, sessionId: string, messageI
 }
 
 async function deleteMessageTechnicalParts(instanceId: string, sessionId: string, messageId: string, partIds?: string[]): Promise<void> {
+  requireHistoryEnrichment(instanceId)
   if (partIds) {
     await deleteSelectedMessageTechnicalParts(instanceId, sessionId, messageId, partIds)
     return
   }
   await serializeTechnicalPartUpdate(instanceId, sessionId, messageId, async () => {
+    requireHistoryEnrichment(instanceId)
     const client = getRootClient(instanceId)
     const message = await client.session.message.get({ sessionID: sessionId, messageID: messageId })
     if (message.type !== "assistant" || !message.time.completed) throw new Error(tGlobal("session.pruning.not_deletable"))
@@ -719,7 +761,9 @@ async function deleteTechnicalPartGroup(
 }
 
 async function backgroundSession(instanceId: string, sessionId: string): Promise<void> {
-  await getRootClient(instanceId).session.background({ sessionID: sessionId })
+  const { client, assertCurrent, requestOptions } = captureAction(instanceId, sessionId)
+  await client.session.background({ sessionID: sessionId }, requestOptions)
+  assertCurrent()
 }
 
 export {

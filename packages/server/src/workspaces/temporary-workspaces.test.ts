@@ -6,12 +6,13 @@ import { test } from "node:test"
 import { TemporaryFolderRegistry, TemporaryWorkspaceError, TemporaryWorkspaces } from "./temporary-workspaces"
 import { WorktreeDeletionFence } from "./worktree-session-evacuation"
 import type { WorkspaceManager } from "./manager"
+import { WorkspaceCapabilityError } from "../opencode/servers/capabilities"
 
 async function harness() {
   const base = await mkdtemp(path.join(os.tmpdir(), "codenomad-temporary-"))
   const file = path.join(base, "temporary-workspaces.json")
   const registry = await TemporaryFolderRegistry.open(path.join(base, "temporary-workspaces"), file)
-  const workspaces = new Map<string, { id: string; path: string }>()
+  const workspaces = new Map<string, { id: string; path: string; binding?: { serverId: string; directory: string } }>()
   const removed: string[] = []
   const cleared: string[] = []
   let sessions: Array<{ id: string; parentID?: string; location: { directory: string } }> = []
@@ -29,13 +30,17 @@ async function harness() {
     },
   }
   const manager = {
+    requireWorkspaceCapability(id: string, capability: "worktrees") {
+      if (workspaces.get(id)?.binding) throw new WorkspaceCapabilityError(capability, { code: "deferred" })
+      return new AbortController().signal
+    },
     get: (id: string) => workspaces.get(id),
     list: () => [...workspaces.values()],
     getServiceDirectory: (id: string) => workspaces.get(id)?.path,
     getSharedServiceClient: async () => client,
     delete: async (id: string) => { workspaces.delete(id) },
     reserveWorktreeDeletion: async (folder: string) => {
-      if ([...workspaces.values()].some((workspace) => workspace.path.toLowerCase() === folder.toLowerCase())) {
+      if ([...workspaces.values()].some((workspace) => !workspace.binding && workspace.path.toLowerCase() === folder.toLowerCase())) {
         throw new Error("Worktree is open as another workspace")
       }
       return () => {}
@@ -73,6 +78,28 @@ test("temporary folders are created under the root and survive a restart only wh
     assert.equal(reopened.has(kept), true)
     assert.equal(reopened.has(deleted), false)
     assert.deepEqual(JSON.parse(await readFile(h.file, "utf8")).folders, [kept])
+  } finally { await h.cleanup() }
+})
+
+test("explicit bindings cannot keep or discard a colliding host temporary folder", async () => {
+  const h = await harness()
+  try {
+    const folder = await h.temporary.createFolder()
+    await writeFile(path.join(folder, "sentinel"), "local")
+    h.workspaces.set("local", { id: "local", path: folder })
+    h.setSessions([{ id: "same-session", location: { directory: folder } }])
+    for (const serverId of ["A", "B"]) {
+      h.workspaces.set(serverId, { id: serverId, path: folder, binding: { serverId, directory: folder } })
+      for (const operation of [() => h.temporary.keep(serverId), () => h.temporary.discard(serverId)]) {
+        await assert.rejects(operation(), (error: unknown) => error instanceof WorkspaceCapabilityError && error.capability === "worktrees")
+      }
+      assert.equal(h.registry.has(folder), true)
+      assert.equal(await readFile(path.join(folder, "sentinel"), "utf8"), "local")
+      assert.deepEqual(h.removed, [])
+      assert.deepEqual(h.cleared, [])
+    }
+    await h.temporary.discard("local")
+    assert.deepEqual(h.removed, ["same-session"])
   } finally { await h.cleanup() }
 })
 

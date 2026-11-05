@@ -1,7 +1,8 @@
 import { getLogger } from "../lib/logger"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
-import { getOpenCodeInstanceGeneration } from "./opencode-data"
+import { captureInstanceRequestAuthority } from "./session-api"
+import { sessionMatchesInventory } from "./session-inventory-scope"
 import { serializeSessionAction } from "./session-action-queue"
 import { sessions, withSession } from "./session-state"
 
@@ -18,18 +19,18 @@ export function reconcileSessionModel(instanceId: string, sessionId: string): Pr
     previous.dirty = true
     return previous.promise
   }
-  const owner = instances().get(instanceId)?.client
-  const generation = getOpenCodeInstanceGeneration(instanceId)
-  const current = () => Boolean(owner && instances().get(instanceId)?.client === owner &&
-    getOpenCodeInstanceGeneration(instanceId) === generation)
+  const instance = instances().get(instanceId)
+  if (!instance?.client) return Promise.resolve()
+  const client = getRootClient(instanceId)
+  const current = captureInstanceRequestAuthority(instanceId)
   const state = { dirty: false, current, promise: Promise.resolve() }
   state.promise = serializeSessionAction(instanceId, sessionId, async () => {
     do {
       state.dirty = false
       const captured = sessions().get(instanceId)?.get(sessionId)
       if (!current() || !captured) return
-      const info = await getRootClient(instanceId).session.get({ sessionID: sessionId }, { signal: AbortSignal.timeout(8000) })
-      if (!current()) return
+      const info = await client.session.get({ sessionID: sessionId }, { signal: AbortSignal.timeout(8000) })
+      if (!current() || info.id !== sessionId || !sessionMatchesInventory(instance, info)) return
       if (state.dirty) continue
       withSession(instanceId, sessionId, session => {
         // Session replacement or another authoritative refresh owns its newer

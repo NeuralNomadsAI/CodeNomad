@@ -11,6 +11,7 @@ export interface Command {
   keywords?: Resolvable<string[]>
   shortcutId?: string
   disabled?: Resolvable<boolean>
+  hidden?: Resolvable<boolean>
   action: () => void | Promise<void>
   category?: Resolvable<string>
 }
@@ -36,16 +37,17 @@ export function createCommandRegistry() {
 
   function execute(id: string) {
     const command = commands.get(id)
-    if (command) {
+    if (command && !(command.disabled && resolveResolvable(command.disabled)) && !(command.hidden && resolveResolvable(command.hidden))) {
       return command.action()
     }
   }
 
   function search(query: string) {
-    if (!query) return getAll()
+    if (!query) return getAll().filter(command => !command.hidden || !resolveResolvable(command.hidden))
 
     const lowerQuery = query.toLowerCase()
     return getAll().filter((cmd) => {
+      if (cmd.hidden && resolveResolvable(cmd.hidden)) return false
       const label = resolveResolvable(cmd.label)
       const description = resolveResolvable(cmd.description)
       const keywords = cmd.keywords ? resolveResolvable(cmd.keywords) : undefined

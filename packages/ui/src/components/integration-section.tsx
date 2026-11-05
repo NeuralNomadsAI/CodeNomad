@@ -23,8 +23,8 @@ export interface IntegrationSectionContext {
   location: Accessor<PluginControlLocation>
   session: Accessor<{ id: string } | undefined>
   active: Accessor<boolean>
-  attachment: ReturnType<typeof createIntegrationAttachment>
-  installation: ReturnType<typeof createIntegrationHostInstallation>
+  attachment?: ReturnType<typeof createIntegrationAttachment>
+  installation?: ReturnType<typeof createIntegrationHostInstallation>
   /** The Plugins accordion trigger, focus fallback of controls that disappear. */
   pluginsTrigger: () => HTMLElement | null | undefined
 }
@@ -34,17 +34,17 @@ export function integrationSectionFacts(context: IntegrationSectionContext, entr
   const snapshot = pluginControlsCache.state(context.instanceId, context.location()).snapshot
   const plugin = integrationPlugin(snapshot, entry)
   const read = integrations.state(context.instanceId, context.location().directory)
-  const binding = context.attachment.binding(entry.id)
+  const binding = context.attachment?.binding(entry.id) ?? { state: "unknown" as const }
   const fresh = read.status === "ready" && !read.stale
   const state = deriveIntegrationSectionState({
     entry,
     installation: pluginSourcesStore.installation(context.instanceId, context.location(), entry),
     disabled: plugin.control?.effective === "disabled",
     conversation: {
-      present: Boolean(context.session()),
+      present: Boolean(context.attachment && context.session()),
       binding: binding.state === "none" && !fresh ? { state: "unknown" } : binding,
-      uncertain: context.attachment.uncertain(entry.id),
-      hint: context.attachment.matchedHintLabel(entry.id),
+      uncertain: context.attachment?.uncertain(entry.id) ?? false,
+      hint: context.attachment?.matchedHintLabel(entry.id),
     },
   })
   return { snapshot, plugin, state }
@@ -128,13 +128,13 @@ function IntegrationSectionBody(props: { t: Translate; entry: Accessor<Integrati
 
   const conversationAction = () => {
     const row = state().conversation
-    if (!row) return undefined
+    if (!row || !context.attachment) return undefined
     const integrationId = props.entry().id
     if (row.state === "noConversation") return { label: t("integrations.attach"), disabled: true, title: t("integrations.conversation.openOne") }
-    if (row.state === "available") return { label: t("integrations.attach"), run: () => void context.attachment.open(integrationId) }
-    if (row.state === "reattach") return { label: t("integrations.reattach", { label: row.label }), run: () => void context.attachment.open(integrationId) }
-    if (row.state === "attached") return { label: t("integrations.detach"), run: () => void context.attachment.detach(integrationId) }
-    if (row.state === "unknown" || row.state === "uncertain") return { label: t("integrations.refresh"), run: () => context.attachment.refresh(integrationId) }
+    if (row.state === "available") return { label: t("integrations.attach"), run: () => void context.attachment?.open(integrationId) }
+    if (row.state === "reattach") return { label: t("integrations.reattach", { label: row.label }), run: () => void context.attachment?.open(integrationId) }
+    if (row.state === "attached") return { label: t("integrations.detach"), run: () => void context.attachment?.detach(integrationId) }
+    if (row.state === "unknown" || row.state === "uncertain") return { label: t("integrations.refresh"), run: () => context.attachment?.refresh(integrationId) }
     return undefined
   }
   const conversationText = () => {
@@ -175,9 +175,9 @@ function IntegrationSectionBody(props: { t: Translate; entry: Accessor<Integrati
       <Show when={state().application}>{application => (
         <Line name="application" label={t("integrations.section.application")}>
           <span data-application-state={application().state}>{t(`integrations.application.${application().state}`)}</span>
-          <Show when={context.installation.action(props.entry().id)}>{action => (
-            <button type="button" class="window-text-button" disabled={context.installation.pending()}
-              onClick={() => void context.installation.open(props.entry().id)}>{t(`integrations.installHost.${action()}`)}</button>
+          <Show when={context.installation?.action(props.entry().id)}>{action => (
+            <button type="button" class="window-text-button" disabled={context.installation?.pending()}
+              onClick={() => void context.installation?.open(props.entry().id)}>{t(`integrations.installHost.${action()}`)}</button>
           )}</Show>
           <InfoPopoverButton label={t("integrations.installHost.machine")}>
             <p>{t("integrations.installHost.machine")}</p>
@@ -185,14 +185,14 @@ function IntegrationSectionBody(props: { t: Translate; entry: Accessor<Integrati
           </InfoPopoverButton>
         </Line>
       )}</Show>
-      <Show when={state().conversation}>{row => (
+      <Show when={context.attachment && state().conversation}>{row => (
         <Line name="conversation" label={t("integrations.section.conversation")}>
           <span data-conversation-state={row().state}><bdi>{conversationText()}</bdi></span>
           <Show when={actionIdentity()} keyed>{identity => <Show when={conversationAction()}>{action => (
             <button type="button" class="window-text-button" data-conversation-action
-              aria-disabled={action().disabled || context.attachment.busy(props.entry().id) ? "true" : undefined}
-              aria-busy={context.attachment.busy(props.entry().id)} title={action().title}
-              onClick={event => { if (event.currentTarget.isConnected && identity === actionIdentity() && !action().disabled && !context.attachment.busy(props.entry().id)) action().run?.() }}>
+              aria-disabled={action().disabled || context.attachment?.busy(props.entry().id) ? "true" : undefined}
+              aria-busy={context.attachment?.busy(props.entry().id)} title={action().title}
+              onClick={event => { if (context.attachment && event.currentTarget.isConnected && identity === actionIdentity() && !action().disabled && !context.attachment.busy(props.entry().id)) action().run?.() }}>
               {action().label}
             </button>
           )}</Show>}</Show>

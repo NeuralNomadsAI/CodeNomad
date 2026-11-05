@@ -54,6 +54,109 @@ when known. Receipts are read-only transcript annotations. A source message
 anchors the receipt; requests without one remain available as session receipts.
 Reads are bounded and ownership-checked.
 
+Explicit-server E1 message and session receipt readers stay unmounted; direct cache acquisition
+and queued dispatch also require local history enrichment. The server's receipt
+gate remains closed. Native request coverage stays live-only, with unknown
+coverage after a disconnection. Loaded native question/tool text remains readable.
+
+Manual replies retain the exact request, metadata, source client, execution binding,
+native/connection generation and native Location before dispatch. Permission callers
+must supply the queued session owner. Global Forms retain their encoded native
+directory, including Unicode and percent signs. Replacement, close, disconnect and
+backend restoration retire admissions while keeping current editors and drafts.
+Current live events admit only their own request. Late acknowledgements leave newer
+requests and settlement markers untouched; already observed settlement needs no
+second publication. Ambiguous explicit replies retire their admission and preserve
+the editor. Local replies retain their authorized settlement reconciliation.
+
+Explicit live-only coverage is unknown even when the local queue is empty. A
+disconnect or backend restoration retires known requests' reply authority without
+any project notification. A live request grants only that request's
+reply authority; project coverage remains unknown. The dock's native disclosure
+provides the server label plus stable ID (or ID alone), direction-isolated directory
+and live-only reason. Equal display labels remain distinguishable in notices and details.
+Stale fields remain editable and their guarded reply/cancel controls share an
+accessible explanation. Opening views and explicit mutation errors schedule zero
+pending discovery reads. A held explicit-server Form offers its own explicit status
+check in the source editor. Permissions retain live-event-only admission.
+
+`stores/form-verification.ts` captures the held Form object and its registered source
+before entering the shared two-slot secondary budget. One gesture dispatches one
+native Form GET; session placement is checked before and after it at the backend.
+Global Forms use one GET with the captured once-encoded directory header. The whole
+operation has a ten-second deadline, including queue/acquisition/profile waits, and
+each native success/error response has a four-MiB decompressed ceiling before SDK
+parsing. Native status, JSON envelope, field families/codecs, exact IDs and placement
+are validated on the wire; extensions outside the consumed schema are stripped.
+An answered payload and cancellation message are validated transiently and discarded
+before the renderer receives Form info plus status.
+
+Verified pending state admits only that captured Form with matching editor fields.
+Changed fields, absence, authentication, transport, malformed data and exhausted
+bounds leave the result indeterminate. Answered/cancelled states retain the editor
+and draft for consultation with response actions inert. The source has one polite
+status region and an explicit retry; checking leaves its fields editable. Replies
+remain separate user gestures. The check control stays mounted and focusable while
+checking and after pending verification, with guarded `aria-disabled` state and the
+source status as its description. Keyboard focus therefore keeps its source owner;
+user focus moved elsewhere stays there. The Form editor owns the single polite
+region composing verification with retained uncertainty from an earlier reply.
+Pending native state leaves that earlier attempt uncertain. Ordinary errors keep
+their separate alert treatment. Connection/backend-transport lifetime, immutable
+binding, native-data generation, source registry, current metadata, local request
+revision and check attempt fence dispatch/publication. A newer native event wins,
+including an equal payload. General coverage remains unknown/live-only.
+The actual deferred SDK callback rechecks capture and monotone deadline immediately
+before dispatch. Accepted session placement publications retire captured owners on
+each exact directory/workspaceID transition, including an A→B→A within one turn.
+Equal placement hydration preserves them. Live session Forms share this retirement;
+global Forms keep their captured directory owner.
+
+Dock selection/editor keys include occurrence, server/directory, kind, session and
+request. Unchanged Form fields retain their DOM identity through metadata refresh,
+and DOM labels/controls have unique mounted-editor identities. Cross-project dock
+placement compares server, request/session owner and exact source directory.
+The human-answer gesture hint is scoped to the shared local service; confirmed
+Mission marks remain owned by the authenticated local backend path.
+
+Status and native-delivery envelopes carry the relay attempt, its captured
+`source.connectionGeneration` and an occurrence's `liveGeneration` boundary.
+CodeNomad owns these independent counters. The backend advances the live boundary
+on status transitions, including ownership error/connected pulses on one attempt.
+Recipient snapshots retain that boundary at ingestion through queued ownership
+work; byte reservations include the complete envelope. Cached statuses retain their
+boundary. The UI captures the accepted correlation and backend-transport lifetime
+before native dispatch, fencing old creation/settlement events and stale markers.
+Transcript deltas keep their existing ordering and membership rules.
+
+A current live request may remain provisional while its matching capability
+snapshot arrives. Matching server/connection metadata qualifies only that held
+candidate, with its client, native-data, binding, Location and request identity
+still current. Newer incompatible connection metadata retires the older handshake;
+different-generation metadata retires incompatible candidates. Retired requests
+remain stale through repeated old statuses. Metadata publication performs zero
+pending discovery or queue re-admission. Client-wrapper attachment preserves the
+same connection proof while each request captures its actual client/native owner.
+Capability snapshots retain their originating backend-transport owner, captured
+before HTTP dispatch or workspace-event deferral. Restore selection and descriptor
+clones keep the selected snapshot's owner; missing capabilities keep the displayed
+snapshot. Unattributed values remain display-only. Cached
+snapshots from a retired transport stay display-only until fresh publication.
+Current-transport metadata supersedes older native handshakes, including a first
+delayed handshake. Occurrence close retains the retired status boundary across
+same-ID reuse; a genuinely newer boundary establishes the replacement's admission.
+Equal-boundary contradictory statuses or connection identities are rejected before
+and after binding hydration.
+Source rebinding clears that occurrence's settlement tombstones. A definitively
+refused close restores only its exact, still-current request admissions; newer
+events and intervening gaps retain precedence.
+Uncertain or superseded replies carry structured interrupted-action identity and
+render one polite status in the request editor. Ordinary failures retain their
+alert treatment. Reply drafts, caret and other-target focus keep their owners.
+UI and backend SSE diagnostics log event kinds, fixed failure categories and existing
+numeric client identity. Parser, malformed-native-event and subscriber failures keep
+answer and permission-feedback payloads and raw exceptions outside their entries.
+
 Native permission events are ephemeral and replies omit the reason. CodeNomad
 therefore captures confirmed replies and observed native settlements separately,
 since a native settlement can come from another client or a cascade. Yolo
@@ -61,6 +164,14 @@ decisions are identified as automatic. A failed or ambiguous reply never becomes
 a fabricated decision and is never replayed automatically. Decisions made while
 CodeNomad was offline have no receipt; never reconstruct one from a tool's
 success/error or from saved permission rules.
+
+Yolo also runs for explicit OpenCode servers (capability `yolo`), replying on the
+project's server connection without receipts. Their event stream is live-only, so
+on each `connected` status `AutoAcceptManager.recoverPending` re-reads
+`GET /api/session/{id}/permission` for the Yolo-enabled sessions it already knows
+(at most 50), after an ownership check, and feeds them to the ordinary auto-accept
+path. It publishes nothing to the dock and is not general recovery: local projects
+and non-Yolo sessions keep the rules above.
 
 Permission snapshots and receipts live under the CodeNomad profile's
 `permission-receipts` directory, in atomic per-request files. The namespace uses
@@ -75,6 +186,13 @@ includes descendant directories inside the project and its worktrees; it never
 uses the daemon's default directory as a substitute or triggers strategy discovery.
 
 ## Validation
+
+The pending snapshot broker requires `pendingRecovery` before acquiring a native
+connection or reading host paths. Explicit targets have the E1 `liveOnly` policy:
+snapshot requests return a structured capability refusal. Native manual replies
+keep their separate live-request admission path. Receipt reconnect enumeration
+uses the same recovery admission before connection acquisition or loaded-location
+and permission-list reads.
 
 `tests/browser/interruption-dock.test.ts` exercises real Solid session, transcript,
 composer and panel components, the native event dispatcher and isolated HTTP fixtures:

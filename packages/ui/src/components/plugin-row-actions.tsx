@@ -9,6 +9,7 @@ import { isPluginPackagePending, runPluginPackageAction } from "../stores/plugin
 import { pluginSourcesStore } from "../stores/plugin-sources"
 import { confirmIntegrationAction } from "./integration-confirmation"
 import { serverEvents } from "../lib/server-events"
+import { ProjectCapabilityBoundary } from "./project-capability-gate"
 
 type RemovableSource = PluginConfiguredSource & { scope: PluginControlScope }
 type Item =
@@ -20,7 +21,7 @@ export const PLUGIN_SOURCE_CONFIRM_EXPIRY_MS = 120_000
 
 /** One compact menu per Plugins row: the native package check/update, removal of each removable
  * declaration from its scope's own document, and Refresh for sources the inventory never confirmed. */
-export function PluginRowActions(props: {
+interface PluginRowActionsProps {
   instanceId: string
   location: PluginControlLocation
   name: string
@@ -34,7 +35,13 @@ export function PluginRowActions(props: {
   hidePaths?: boolean
   /** Receives focus when the menu's trigger is gone or disabled; the surface's Refresh button otherwise. */
   focusFallback?: () => HTMLElement | null | undefined
-}) {
+}
+
+export function PluginRowActions(props: PluginRowActionsProps) {
+  return <ProjectCapabilityBoundary instanceId={props.instanceId} feature="pluginWrite"><AdmittedPluginRowActions {...props} /></ProjectCapabilityBoundary>
+}
+
+function AdmittedPluginRowActions(props: PluginRowActionsProps) {
   const { t } = useI18n()
   let afterClose: (() => void | Promise<void>) | undefined
   let generation = 0

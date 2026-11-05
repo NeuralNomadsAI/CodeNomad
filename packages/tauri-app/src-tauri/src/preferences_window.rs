@@ -41,6 +41,8 @@ pub(crate) struct PreferencesLocation {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct PreferencesRequest {
     pub(crate) section: String,
+    #[serde(default, deserialize_with = "deserialize_server_id", skip_serializing_if = "Option::is_none")]
+    pub(crate) server_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) scroll_top: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -49,6 +51,20 @@ pub(crate) struct PreferencesRequest {
     pub(crate) workspace_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) location: Option<PreferencesLocation>,
+}
+
+fn valid_server_id(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 128
+        && value.as_bytes()[0].is_ascii_alphanumeric()
+        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
+fn deserialize_server_id<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    let value = String::deserialize(deserializer)?;
+    if !valid_server_id(&value) {
+        return Err(serde::de::Error::custom("Invalid Preferences server ID"));
+    }
+    Ok(Some(value))
 }
 
 /// Host-observed local window label that opened Preferences, never renderer-supplied.
@@ -100,6 +116,7 @@ impl Default for PreferencesWindow {
             state: Mutex::new(PreferencesState {
                 request: PreferencesRequest {
                     section: DEFAULT_SECTION.to_string(),
+                    server_id: None,
                     scroll_top: None,
                     instance_id: None,
                     workspace_path: None,
@@ -168,6 +185,9 @@ fn validate_section(section: &str) -> Result<(), String> {
 
 pub(crate) fn validate_request(request: PreferencesRequest) -> Result<PreferencesRequest, String> {
     validate_section(&request.section)?;
+    if request.server_id.as_deref().is_some_and(|value| !valid_server_id(value)) {
+        return Err("Invalid Preferences server ID".to_string());
+    }
     if request.scroll_top.is_some_and(|top| top > 10_000_000) {
         return Err("Invalid Preferences scroll position".to_string());
     }
@@ -186,7 +206,7 @@ pub(crate) fn validate_request(request: PreferencesRequest) -> Result<Preference
         return Err("Invalid Preferences workspace path".to_string());
     }
     if let Some(location) = &request.location {
-        if location.directory.is_empty() || location.directory.len() > 32768 {
+        if location.directory.is_empty() || location.directory.len() > 32768 || location.directory.contains('\0') {
             return Err("Invalid Preferences directory".to_string());
         }
         if location
@@ -706,6 +726,29 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn preferences_server_identity_is_strict_opaque_and_survives_reuse() {
+        let value = json!({ "section": "providers", "serverId": "unknown-A", "instanceId": "same",
+            "workspacePath": "C:\\App/", "location": { "directory": "/App//" }, "scrollTop": 123 });
+        let request = validate_request(serde_json::from_value(value.clone()).unwrap()).unwrap();
+        let preferences = PreferencesWindow::default();
+        preferences.set_request(request.clone());
+        assert_eq!(serde_json::to_value(preferences.request()).unwrap(), value);
+        preferences.set_request(PreferencesRequest { server_id: Some("B".into()), ..request });
+        assert_eq!(preferences.request().server_id.as_deref(), Some("B"));
+        for server_id in [json!(null), json!(""), json!("a/b"), json!(42), json!("a".repeat(129))] {
+            let mut invalid = value.clone();
+            invalid["serverId"] = server_id;
+            assert!(serde_json::from_value::<PreferencesRequest>(invalid).is_err());
+        }
+        let legacy: PreferencesRequest = serde_json::from_value(json!({ "section": "general" })).unwrap();
+        assert!(legacy.server_id.is_none());
+        assert_eq!(serde_json::to_value(legacy).unwrap(), json!({ "section": "general" }));
+        let mut invalid = value;
+        invalid["token"] = json!("forbidden");
+        assert!(serde_json::from_value::<PreferencesRequest>(invalid).is_err());
+    }
+
+    #[test]
     fn validates_sections_and_builds_an_explicit_preferences_target() {
         assert!(validate_section("general").is_ok());
         assert!(validate_section("speech").is_ok());
@@ -718,6 +761,7 @@ mod tests {
             .any(|(key, value)| key == "preferences" && value == "chat"));
         assert!(target_url("file:///tmp/preferences", "chat").is_err());
         let request = validate_request(PreferencesRequest {
+            server_id: None,
             scroll_top: None,
             section: "providers".into(),
             instance_id: Some("workspace-1".into()),
@@ -741,9 +785,18 @@ mod tests {
         );
         assert!(validate_request(PreferencesRequest {
             workspace_path: Some("bad\0path".into()),
-            ..request
+            ..request.clone()
         })
         .is_err());
+        for path in [String::new(), "x".repeat(32769)] {
+            assert!(validate_request(PreferencesRequest {
+                workspace_path: Some(path),
+                ..request.clone()
+            }).is_err());
+        }
+        let mut invalid = serde_json::to_value(&request).unwrap();
+        invalid["workspacePath"] = json!(42);
+        assert!(serde_json::from_value::<PreferencesRequest>(invalid).is_err());
     }
 
     #[test]

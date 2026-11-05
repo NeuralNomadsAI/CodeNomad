@@ -7,6 +7,7 @@ import { popupTitlebarMenu, setWorkspaceMenuEnabled, type TitlebarMenu } from ".
 import { requireHttpUrl } from "./navigation-security"
 import { validateMainFrame } from "./ipc-security"
 import type { BrowserController } from "./browser-controller"
+import { resolveLocalWorkspaceFolder } from "./workspace-folder"
 
 interface LocalSender {
   id: string
@@ -45,23 +46,17 @@ interface DialogOpenResult {
   paths: string[]
 }
 
-async function resolveLocalWorkspaceFolder(window: BrowserWindow, cliManager: CliProcessManager, instanceId: string, worktreeSlug: string): Promise<string> {
+async function resolveWindowWorkspaceFolder(window: BrowserWindow, cliManager: CliProcessManager, instanceId: string, worktreeSlug: string): Promise<string> {
   const baseUrl = cliManager.getStatus().url
   if (!baseUrl) throw new Error("Local CodeNomad server is unavailable")
   const cookieName = cliManager.getAuthCookieName()
   const cookie = (await window.webContents.session.cookies.get({ url: baseUrl, name: cookieName }))[0]
   const headers = cookie ? { Cookie: `${cookie.name}=${cookie.value}` } : undefined
-  const workspaceResponse = await fetch(`${baseUrl.replace(/\/$/, "")}/api/workspaces/${encodeURIComponent(instanceId)}`, { headers, signal: AbortSignal.timeout(5_000) })
-  if (!workspaceResponse.ok) throw new Error("Workspace is not active")
-  const workspace = await workspaceResponse.json() as { path?: unknown }
-  if (typeof workspace.path !== "string") throw new Error("Workspace path is unavailable")
-  if (worktreeSlug === "root") return workspace.path
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/api/workspaces/${encodeURIComponent(instanceId)}/worktrees`, { headers, signal: AbortSignal.timeout(5_000) })
-  if (!response.ok) throw new Error("Workspace worktrees are unavailable")
-  const payload = await response.json() as { worktrees?: Array<{ slug?: unknown; directory?: unknown }> }
-  const worktree = payload.worktrees?.find((candidate) => candidate.slug === worktreeSlug)
-  if (!worktree || typeof worktree.directory !== "string") throw new Error("Selected worktree is unavailable")
-  return worktree.directory
+  return resolveLocalWorkspaceFolder(instanceId, worktreeSlug, async (path) => {
+    const response = await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, { headers, signal: AbortSignal.timeout(5_000) })
+    if (!response.ok) throw new Error("Workspace is not active")
+    return response.json()
+  })
 }
 
 export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCDependencies) {
@@ -194,7 +189,7 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
       || (editor !== undefined && editor !== "vscode" && editor !== "cursor" && editor !== "zed" && editor !== "vscodium")) {
       throw new Error("Invalid workspace open request")
     }
-    const folder = await resolveLocalWorkspaceFolder(window, cliManager, instanceId, worktreeSlug)
+    const folder = await resolveWindowWorkspaceFolder(window, cliManager, instanceId, worktreeSlug)
     await openWorkspaceTarget(target as WorkspaceOpenTarget, folder, payload?.path as string | undefined, editor as WorkspaceEditor | undefined, {
       openPath: (path) => shell.openPath(path), revealPath: (path) => shell.showItemInFolder(path),
     })

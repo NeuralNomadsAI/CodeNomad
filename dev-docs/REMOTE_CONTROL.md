@@ -58,7 +58,7 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   or fragment, which the router would reinterpret) and judges the path the
   router routes (`server/routed-path.ts`). It denies host-only paths: login and token
   bootstrap, Remote Control management, remote windows/proxy, SideCars,
-  previews and the automation bridge. A live `/previews/<token>/…` capability
+   previews, execution-server administration (`/api/opencode-servers`) and the automation bridge. A live `/previews/<token>/…` capability
   is admitted without a device cookie or public `Origin` (its sandboxed document
   sends neither) while the host's **Web previews** switch is on, the default:
   `devices.ts` stores only the opt-out, `PUT /api/remote-control/previews` is
@@ -95,6 +95,78 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   never travels on a command line; pair from Add server instead.
 
 ## Validation
+
+The internal server-attachment reader retains unknown browser and paired-device
+participation coverage. Native window registration and saved state contribute
+their own bounded observations. Browser applications can opt into a dedicated
+`codenomad.project.participation` SSE event. Its backend-issued memory-only capability
+belongs to that exact authenticated response, independently of supplied connection
+IDs. `POST /api/project-participation` admits that capability and its current
+cookie/device principal before body parsing, under strict Host/Origin/Fetch Metadata
+guards. Raw `?` and `;` query delimiters, including empty queries, are rejected before
+body parsing or capability admission. It accepts bounded metadata declarations only; profile/config selectors
+remain backend-owned. Errors and request logs use fixed diagnostics and redact
+the complete target and body. The response uses `no-store`.
+
+Transport replacement, backpressure closure, revocation and shutdown retire the
+capability and its receipts. Paired authorization is checked again during publication
+and observation-current checks. Uncertain closed streams retain their bounded
+metadata and unknown coverage without TTL removal. Each participant declares its
+own occurrences; global coverage additionally requires owner-enforced admission on
+all project-use paths and qualified native live-window linkage. Cookie logout uses
+the existing browser session lifecycle, so stream closure remains the participant
+revocation boundary for cookie sessions. Host removal closes known tabs and forgets
+the registered server; global participation coverage retains its own unknown state. Attachment reads use
+the backend's private native-parent channel within its current profile/config
+scope, leaving the host-only administrative HTTP prefix unchanged.
+The attachment pipe bounds the serialized result to 8 MiB plus its canonical
+envelope before body retention or JSON parsing, including expired/replayed IDs.
+Overflow drains the rejected line while preserving later responses and shutdown.
+Read and current each use a five-second settlement deadline; conservative unknown
+coverage persists through timeout or uncertain native publication.
+
+The internal explicit OpenCode transport accepts a backend-owned origin and
+optional Basic credentials. It resolves and admits the target before injecting
+authentication, pins the dial address and keeps TLS verification enabled.
+Incoming Authorization, Cookie, Host, Forwarded, forwarding and hop-by-hop
+headers are stripped; native directory headers remain. Response cookies,
+authentication challenges/info and hop-by-hop headers are stripped. Transport
+errors expose stable codes with sanitized messages. Each request owns its Undici
+dispatcher until response completion/cancellation. Host execution-server administration
+uses `/api/opencode-servers` for a metadata-only GET and an ephemeral-candidate
+probe POST. Its early guard combines CodeNomad authentication, `isLocalRequest`,
+configured/listener Host validation and trusted Origin/Fetch Metadata, including
+authenticated host requests without browser headers. The ingress gate rejects
+this complete prefix through `routedPath`, including encoded spellings, before
+pairing admission. Paired project usage retains existing metadata summaries.
+Administrative request logging redacts the complete target, query and body;
+router-level malformed-URL diagnostics use fixed responses before request hooks.
+Privacy classification conservatively includes encoded reserved separators and
+nested encodings, with bounded decoding work. Routing authority uses its own
+`routedPath` contract; non-routable administrative spellings receive the same
+privacy protection. Ordinary valid routes retain their Fastify error semantics.
+
+Execution-server metadata at `server.opencodeServers` is reserved for the internal
+SettingsService registry. Both generic config PATCH routes apply the same
+patch/result protection to host and paired-device callers, including encoded
+routes and conditional patch modes. Refused direct writes, ancestor deletion or
+replacement and mixed patches leave persistence and events unchanged. Existing
+config reads/events return whitelisted metadata summaries. Explicit OpenCode
+credentials persist only in the private backend `opencode-server-pairings.json`
+(0600), scoped by profile/config, server ID and normalized origin; static summaries conservatively report
+`hasCredentials: false`, `needsCredentials: true`, while the owning service supplies
+live credential presence through `SettingsService.getOpenCodeServerSummaries()`.
+Saved name/URL and the private token or password survive restart. HTTP 401,
+expiry, origin replacement and removal clear the secret. Connection
+lifecycle integration aborts/fences captured old transports on rotation,
+deletion, disconnect and shutdown, including pending body preparation and returned streams.
+Registry changes clear credentials before URL retargeting, deletion or ID reuse;
+manager shutdown disposes the live owner. Host-only addition/removal use the
+administrative prefix; paired devices browse/open registered projects through
+the host backend. Explicit-source SSE follows
+admitted connection-owner membership.
+Schema preprocessing safely discards recognized development
+`credentialMode`/`credentialRef` fields; SettingsService normalizes valid metadata.
 
 - `remote-surface.test.ts` drives the real `createHttpServer` through the
   ingress. It covers unpaired access, pairing, `Origin`/`Host` checks,

@@ -48,7 +48,7 @@ test("a pasted pairing link saves only the server and pairs in the window it ope
   page.on("pageerror", error => errors.push(error.message))
   try {
     await page.goto(url)
-    await page.getByText("A server address, or a Remote Control pairing link created on that computer.", { exact: true }).waitFor()
+    await page.getByText("CodeNomad or OpenCode address or pairing link", { exact: true }).waitFor()
     // Skipping TLS checks would later route Tauri through the incognito proxy store and lose the pairing.
     await page.getByLabel("Skip TLS verification for self-signed certificates.").check()
     // Save, not Connect: the single-use code would otherwise be lost.

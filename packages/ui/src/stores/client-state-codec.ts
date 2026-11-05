@@ -1,4 +1,5 @@
 import type { ScrollSnapshot } from "./message-v2/types"
+import { isServerId } from "../lib/project-identity"
 import { normalizeSessionCatalog, type PersistedSessionCatalogEntry } from "./session-catalog-persistence"
 import { normalizeRestorableAttachmentRecord, type RestorableAttachment } from "./client-state-attachments-codec"
 import type { PersistedGenerationRecovery } from "./session-generation-recovery"
@@ -6,6 +7,7 @@ import { normalizeOutlineIndexes, outlineBudget, type OutlineBudget, type Persis
 
 export interface RestorableWorkspaceTabState {
   kind: "workspace"; folder: string; occurrence?: number; projectName?: string; binaryPath?: string
+  serverId?: string
   activeParentSessionId?: string; activeSessionId?: string
   drafts: Record<string, string>; attachments: Record<string, RestorableAttachment[]>
   scrollSnapshots: Record<string, ScrollSnapshot>; unseenIdleSince: Record<string, number>
@@ -187,6 +189,7 @@ function normalizeWorkspaceTab(
 
   const result: RestorableWorkspaceTabState = {
     kind: "workspace", folder: identity.folder,
+    ...(identity.serverId === undefined ? {} : { serverId: identity.serverId }),
     drafts: attachmentResult.drafts,
     attachments: { ...identity.priorityAttachments, ...attachmentResult.attachments },
     scrollSnapshots, unseenIdleSince, generationRecovery,
@@ -211,6 +214,7 @@ function normalizeWorkspaceTab(
 
 interface WorkspaceIdentity {
   kind: "workspace"; value: Record<string, unknown>; folder: string
+  serverId?: string
   activeParentSessionId?: string; activeSessionId?: string
   prioritySessionIds: string[]; priorityDrafts: Record<string, string>
   priorityAttachments: Record<string, RestorableAttachment[]>
@@ -229,6 +233,7 @@ function normalizeIdentity(value: unknown, budget: StringBudget): TabIdentity | 
     .every((key) => isRecord(value[key] ?? {}))) return null
   const folder = takeString(value.folder, MAX_PATH, budget)
   if (folder === undefined) return null
+  if (value.serverId !== undefined && !isServerId(value.serverId)) return null
   const activeParentSessionId = value.activeParentSessionId === undefined ? undefined
     : takeString(value.activeParentSessionId, MAX_ID, budget)
   const activeSessionId = value.activeSessionId === undefined ? undefined : takeString(value.activeSessionId, MAX_ID, budget)
@@ -236,6 +241,7 @@ function normalizeIdentity(value: unknown, budget: StringBudget): TabIdentity | 
     .filter((id): id is string => Boolean(id))
   return {
     kind: "workspace", value, folder, activeParentSessionId, activeSessionId,
+    ...(value.serverId === undefined ? {} : { serverId: value.serverId as string }),
     prioritySessionIds, priorityDrafts: Object.create(null), priorityAttachments: Object.create(null),
   }
 }

@@ -9,7 +9,10 @@ import type { ToolRendererContext } from "../components/tool-call/types"
 
 const file = { type: "file" as const, mime: "image/png", uri: "data:image/png;base64,c2VjcmV0LWltYWdlLWJ5dGVz" }
 test("native images survive normalization without entering copy, local search or speech text", () => {
-  const cases: Array<[ToolContent, ...ToolContent[]]> = [[file], [{ type: "text", text: "Generated image" }, file]]
+  const cases: Array<[ToolContent, ...ToolContent[]]> = [file,
+    { ...file, uri: "https://blocked.invalid/image" }, { ...file, uri: "data:image/png;base64,broken" },
+    { ...file, mime: "image/svg+xml", uri: "data:image/svg+xml;base64,PHN2Zz4=" },
+  ].flatMap(image => [[image], [{ type: "text" as const, text: "Generated image" }, image]] as Array<[ToolContent, ...ToolContent[]]>)
   for (const content of cases) {
     const source: SessionMessageInfo = { id: "m", type: "assistant", agent: "build", model: { providerID: "fixture", id: "fixture" }, time: { created: 1 },
       content: [{ id: "t", type: "tool", name: "mcp_image", time: { created: 1 },
@@ -31,6 +34,7 @@ test("native images survive normalization without entering copy, local search or
     for (const text of [copyText ?? "", search.join(" "), speech]) {
       assert.ok(!text.includes("base64"))
       assert.ok(!text.includes("c2VjcmV0LWltYWdlLWJ5dGVz"))
+      for (const image of content.filter(isToolImageContent)) assert.ok(!text.includes(image.uri))
     }
     assert.equal(copyText, content.length === 1 ? undefined : "Generated image")
     if (content.length === 1) assert.equal(chrome, undefined)
@@ -52,6 +56,18 @@ test("image loading permits image data and HTTP sources but rejects local/execut
     assert.equal(toolImageSource({ ...file, uri }), undefined)
   }
   assert.equal(isToolImageContent({ type: "text", text: file.uri }), false)
+})
+
+test("non-image native file bytes remain files, outside normalized text output", () => {
+  const source: SessionMessageInfo = { id: "m", type: "assistant", agent: "build", model: { providerID: "fixture", id: "fixture" }, time: { created: 1 },
+    content: [{ id: "t", type: "tool", name: "mcp_file", time: { created: 1 }, state: { status: "completed", input: {},
+      content: [{ type: "file", mime: "application/pdf", uri: "data:application/pdf;base64,AA==" }] } }] }
+  const part = normalizeSessionMessage("s", source).message.parts[0]
+  assert.equal(part.type, "tool")
+  if (part.type === "tool" && part.state?.status === "completed") {
+    assert.equal(part.state.content?.length, 1)
+    assert.deepEqual(part.state.output, [])
+  }
 })
 
 test("a deferred tool image loads from CodeNomad's session-media route on the API base", () => {

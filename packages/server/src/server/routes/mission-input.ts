@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { localMissionWorkspaces } from "../../missions/workspace-capability"
 import { isDeepStrictEqual } from "node:util"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import type { MissionSnapshot } from "../../missions/model"
@@ -50,7 +51,7 @@ export async function admitMissionInput(manager: Manager, fence: WorktreeDeletio
     return cleanupMissionSession(manager, fence, coordinatorID, command, signal)
   }
   const { kind, input } = inputSchema.parse(command)
-  const owner = await Promise.any(manager.list().map(async workspace => {
+  const owner = await Promise.any(localMissionWorkspaces(manager).map(async workspace => {
     const connection = await manager.getSharedServiceConnection(workspace.id)
     if (!connection) throw new Error("Workspace is not ready")
     const coordinator = await connection.client.session.get({ sessionID: coordinatorID })

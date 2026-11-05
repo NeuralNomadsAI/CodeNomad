@@ -12,6 +12,7 @@ const fixture = {
   mutationGate: null as Promise<void> | null,
   statusGate: null as Promise<void> | null,
   statusOptions: [] as Array<{ hideWhitespace?: boolean } | undefined>,
+  sourceAllowed: true,
   preferences: () => ({}) as { hideDiffWhitespaceChanges?: boolean },
 }
 ;(globalThis as any).__filesGitFixture = fixture
@@ -21,6 +22,7 @@ const hooks = registerHooks({
     const sources: Record<string, string> = {
       "../../../../stores/opencode-client": "export const getRootClient = () => ({ vcs: { status: async () => ({ data: [] }) } })",
       "../../../../stores/instances": "export const instances = () => new Map()",
+      "../../../../stores/session-api": "export const captureInstanceRequestAuthority = () => () => globalThis.__filesGitFixture.sourceAllowed",
       "../../../../stores/worktrees": "export const getWorktrees = () => [{ slug: 'root', directory: '/repo' }, { slug: 'other', directory: '/other' }]",
       "../../../../lib/notifications": "export const showToastNotification = () => {}",
       "../../../../stores/preferences": "export const preferences = () => globalThis.__filesGitFixture.preferences()",
@@ -63,6 +65,7 @@ fixture.preferences = () => ({ hideDiffWhitespaceChanges: hideWhitespace() })
 const { useGitChanges } = await import("./useGitChanges")
 const { buildGitChangeListItems } = await import("./git-changes-model")
 const { getFilePreview, openFilePreview, closeFilePreview } = await import("../../../../stores/files-preview")
+const { filesystemInvalidationVersion } = await import("../../../../lib/filesystem-events")
 const { invalidateFilesystemCaches } = await import("../../../../lib/filesystem-events")
 
 const entry = (path: string, staged = false): WorktreeGitStatusEntry => ({
@@ -87,6 +90,7 @@ async function setup(entries = [entry("a.ts"), entry("b.ts"), entry("c.ts")], wo
   fixture.mutationGate = null
   fixture.statusGate = null
   fixture.statusOptions = []
+  fixture.sourceAllowed = true
   let dispose!: () => void
   const git = createRoot(cleanup => {
     dispose = cleanup
@@ -132,6 +136,23 @@ test("stage and unstage move the central local preview with its sidebar selectio
     await until(() => getFilePreview("test")?.scope === "unstaged")
     assert.equal(h.git.gitSelectedItemId(), "unstaged:a.ts")
   } finally { h.close() }
+})
+
+test("a retired source cannot invalidate a replacement cache or dispatch retained Git handlers", async () => {
+  const h = await setup(), gate = deferred()
+  try {
+    const version = filesystemInvalidationVersion("test"), reads = fixture.statusOptions.length
+    fixture.mutationGate = gate.promise
+    h.git.stageGitFile(h.item("unstaged:a.ts"))
+    assert.equal(fixture.requests.length, 1)
+    fixture.sourceAllowed = false
+    gate.resolve()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(filesystemInvalidationVersion("test"), version)
+    assert.equal(fixture.statusOptions.length, reads)
+    h.git.stageGitFile(h.item("unstaged:b.ts"))
+    assert.equal(fixture.requests.length, 1)
+  } finally { gate.resolve(); fixture.sourceAllowed = true; h.close() }
 })
 
 test("commit closes a vanished preview instead of opening another file; partial commits retain the remaining scope", async () => {

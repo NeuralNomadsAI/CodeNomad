@@ -175,7 +175,7 @@ it("coalesces event bursts into one trailing read without publishing stale snaps
   const reading = reconcileSessionModel(instanceId, sessionId)
   await started.promise
   for (let i = 0; i < 20; i++) fixture.external(i % 2 ? "new" : "old")
-  held.resolve({ model: { providerID: "provider", id: "base" } })
+  held.resolve({ ...fixture.info(), model: { providerID: "provider", id: "base" } })
   await reading
   assert.equal(reads, 2)
   assert.equal(displayed(), "new")
@@ -187,7 +187,7 @@ it("keeps a later local selection ordered after a pending read", async () => {
   const reading = reconcileSessionModel(instanceId, sessionId)
   await started.promise
   const selection = select("new")
-  held.resolve({ model: { providerID: "provider", id: "old" } })
+  held.resolve({ ...fixture.info(), model: { providerID: "provider", id: "old" } })
   await Promise.all([reading, selection])
   assert.equal(displayed(), "new")
   assert.equal(fixture.native(), "new")
@@ -214,7 +214,7 @@ for (const supersede of ["client", "selection", "deletion"] as const) {
     if (supersede === "client") updateInstance(instanceId, { client: {} as any })
     if (supersede === "selection") withSession(instanceId, sessionId, session => { session.model = { providerId: "provider", modelId: "new" } })
     if (supersede === "deletion") setSessions(new Map())
-    held.resolve({ model: { providerID: "provider", id: "old" } })
+    held.resolve({ ...fixture.info(), model: { providerID: "provider", id: "old" } })
     await reading
     assert.equal(displayed(), supersede === "deletion" ? undefined : supersede === "selection" ? "new" : "base")
   })

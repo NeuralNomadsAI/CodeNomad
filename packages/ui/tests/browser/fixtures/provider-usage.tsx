@@ -4,9 +4,13 @@ import ProviderUsagePanel from "../../../src/components/session/provider-usage-p
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { serverEvents } from "../../../src/lib/server-events"
+import { addInstance } from "../../../src/stores/instances"
 import "../../../src/index.css"
 
 const [scope, setScope] = createSignal({ instanceId: "first", sessionId: "session-a", directory: "/repo", providerId: "openai", modelId: "gpt-5" })
+for (const [id, folder] of [["first", "/repo"], ["second", "/worktree"]]) {
+  addInstance({ id, folder, status: "ready", client: null, port: 0, pid: 0, proxyPath: "" })
+}
 const [active, setActive] = createSignal(true)
 const [mounted, setMounted] = createSignal(true)
 ;(window as any).usageFixture = {

@@ -1,12 +1,15 @@
-import { createSignal, type Component } from "solid-js"
+import { createSignal, onCleanup, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
 import { openSessionPreview, showSessionChat, updateSessionPreviewLocation, updateSessionPreviewHistory, cancelSessionPreviewNavigation, type SessionPreviewRecord } from "../stores/session-previews"
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
 import { getPreviewFrameSource } from "./browser-frame-security"
 import { runtimeEnv } from "../lib/runtime-env"
+import { captureInstanceRequestAuthority } from "../stores/session-api"
+import { getProjectAvailability } from "../stores/project-capability"
 
 interface SessionPreviewViewProps {
+  instanceId: string
   preview: SessionPreviewRecord
   active?: boolean
   onInsertComment: (markdown: string) => void
@@ -32,8 +35,13 @@ function buildCommentMarkdown(target: BrowserFrameElementTarget, comment: string
 
 export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
   const { t } = useI18n()
+  const current = captureInstanceRequestAuthority(props.instanceId)
+  let disposed = false
+  onCleanup(() => { disposed = true })
+  const admitted = () => !disposed && current() && getProjectAvailability(props.instanceId, "automation").allowed
   const [commentMode, setCommentMode] = createSignal(false)
   function showNavigationError(error: unknown) {
+    if (!admitted()) return
     showAlertDialog(t("sessionPreview.open.title"), {
       title: t("sessionPreview.open.title"),
       detail: error instanceof Error ? error.message : String(error),
@@ -45,6 +53,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
     getPreviewFrameSource(runtimeEnv, preview, window.location.href)
 
   async function handleCommentTarget(elementTarget: BrowserFrameElementTarget) {
+    if (!admitted()) return
     const comment = await showPromptDialog(t("sessionPreview.comment.prompt"), {
       title: t("sessionPreview.comment.title"),
       inputLabel: t("sessionPreview.comment.label"),
@@ -52,7 +61,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
       cancelLabel: t("sessionPreview.comment.cancel"),
     })
     const normalized = comment?.trim()
-    if (!normalized) return
+    if (!normalized || !admitted()) return
     props.onInsertComment(buildCommentMarkdown(elementTarget, normalized))
   }
 
@@ -70,7 +79,12 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
         onCancelNavigation={() => cancelSessionPreviewNavigation(props.preview.storageKey)}
         proxyBasePath={`/previews/${encodeURIComponent(props.preview.token)}`}
         addressMode="url"
-        onNavigate={async (address) => frameSource(await openSessionPreview(props.preview.sessionId, address, props.preview.instanceFolder))}
+         onNavigate={async (address) => {
+           if (!admitted()) throw new DOMException("", "AbortError")
+           const preview = await openSessionPreview(props.preview.sessionId, address, props.preview.instanceFolder)
+           if (!admitted()) throw new DOMException("", "AbortError")
+           return frameSource(preview)
+         }}
         onNavigationError={showNavigationError}
         onFrameLocation={(path) => {
           const target = new URL(path, props.preview.targetUrl)

@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply } from "fastify"
 import { z } from "zod"
 import { PluginControlsError } from "../../opencode/plugin-controls"
 import type { WebSearchSettings } from "../../opencode/websearch-settings"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 
 const Location = z.object({ directory: z.string().trim().min(1).max(32_768) }).strict()
 const Mutation = z.object({ location: Location, scope: z.enum(["global", "project"]),
@@ -26,6 +27,7 @@ export function registerWebSearchSettingsRoutes(app: FastifyInstance, settings: 
 }
 
 function fail(error: unknown, reply: FastifyReply) {
+  if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
   if (error instanceof PluginControlsError) {
     const code = { "not-found": 404, forbidden: 403, invalid: 422, conflict: 409, unavailable: 503 }[error.kind]
     return reply.code(code).send({ error: error.message })

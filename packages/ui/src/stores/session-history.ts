@@ -5,8 +5,10 @@ import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { refreshSessionContent } from "./session-pruning-events"
 import type { RankedHistoryResult } from "../../../server/src/server/routes/session-history-ranked-contract"
 import { HttpResponseError } from "../lib/retryable-file-search"
+import { requireHistoryEnrichment } from "./session-history-capability"
 
 export async function findRankedHistoryMatches(instanceId: string, query: string, includeTechnical: boolean, signal: AbortSignal, cursor?: string) {
+  requireHistoryEnrichment(instanceId)
   signal.throwIfAborted()
   const generation = getOpenCodeInstanceGeneration(instanceId)
   const result = await serverApi.queryRankedHistory(instanceId, { version: 1, query, includeTechnical, limit: 40, ...(cursor ? { cursor } : {}) }, signal)
@@ -15,6 +17,7 @@ export async function findRankedHistoryMatches(instanceId: string, query: string
       throw error
     })
   signal.throwIfAborted()
+  requireHistoryEnrichment(instanceId)
   if (generation !== getOpenCodeInstanceGeneration(instanceId)) throw new Error(tGlobal("session.pruning.conflict"))
   if (cursor && (result.status === "unsupported" || result.status === "blocked" && result.reason === "unsupported_storage")) return { status: "restart_required" as const }
   if (result.status === "blocked") throw new Error(tGlobal(`session.pruning.${result.reason}`))
@@ -30,9 +33,11 @@ export function rankedHistoryNoticeKeys(result: RankedHistoryResult | undefined)
 }
 
 export async function readHistoryPage(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryPage> {
+  requireHistoryEnrichment(instanceId)
   signal?.throwIfAborted()
   const result = await serverApi.querySessionHistory(instanceId, input, signal)
   signal?.throwIfAborted()
+  requireHistoryEnrichment(instanceId)
   if (result.status !== "page") throw new Error(tGlobal(`session.pruning.${result.reason}`))
   return result
 }
@@ -101,10 +106,12 @@ export async function planSessionTechnicalPartDeletion(instanceId: string, sessi
 
 export async function executeSessionTechnicalPartDeletion(plan: SessionTechnicalPartDeletionPlan,
   options?: { signal?: AbortSignal; progress?: (completed: number, total: number) => void }): Promise<string[]> {
+  requireHistoryEnrichment(plan.instanceId)
   const failures: string[] = []
   try {
     for (let offset = 0; offset < plan.candidates.length; offset += 16) {
       options?.signal?.throwIfAborted()
+      requireHistoryEnrichment(plan.instanceId)
       if (plan.generation !== getOpenCodeInstanceGeneration(plan.instanceId)) throw new Error(tGlobal("session.pruning.conflict"))
       const candidates = plan.candidates.slice(offset, offset + 16)
       const response = await serverApi.pruneSessionHistory(plan.instanceId, { sessionID: plan.sessionId, candidates }, options?.signal)

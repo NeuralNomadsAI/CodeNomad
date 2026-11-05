@@ -1,5 +1,9 @@
 # Troubleshooting
 
+For same-name execution servers, use the stable ID shown with the name in request details and project notifications. An uncertain reply stays in its original editor without stealing focus or being resent automatically.
+
+**Explicit OpenCode servers:** after a disconnection or backend restart, waiting request coverage is unknown, including when the dock is empty. Keep known drafts; stale permissions wait for a current live request. For a known Form, use **Check this form’s status** in its source editor; an inconclusive result leaves responses blocked and permits another deliberate check. The check is limited to 10 seconds and 4 MiB per response; coverage stays unknown. Opening a conversation reviews content without automatically finding missing requests. A response sent before the gap may have succeeded: nothing is replayed automatically. The automatic pending-recovery steps below concern the shared local service. See [Questions and permissions](permissions.md).
+
 Recover by checking the owner of the failing operation first: browser, CodeNomad backend, OpenCode service or provider. A lost reply does not prove a mutation failed; reread current state before repeating it.
 
 ## Desktop launch problems {#desktop-launch}

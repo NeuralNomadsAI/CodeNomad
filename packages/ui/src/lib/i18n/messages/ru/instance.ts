@@ -155,6 +155,7 @@ export const instanceMessages = {
   "filesPanel.viewer": "Просмотр файла",
   "filesPanel.readOnly": "Только чтение",
   "filesPanel.binary": "Предпросмотр этого двоичного файла недоступен.",
+  "filesPanel.contentUnavailable": "Содержимое недоступно или неполно.",
   "filesPanel.image.before": "До",
   "filesPanel.image.after": "После",
   "gitPanel.changes": "Изменения",

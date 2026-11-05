@@ -49,7 +49,7 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
   type ProcessedCommands = { groups: CommandGroup[]; ordered: Command[] }
 
   const processedCommands = createMemo<ProcessedCommands>(() => {
-    const source = props.commands ?? []
+    const source = (props.commands ?? []).filter(command => !command.hidden || !resolveResolvable(command.hidden))
     const q = query().trim().toLowerCase()
 
     const filtered = q
@@ -262,13 +262,13 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                       <For each={group.commands}>
                         {(command, localIndex) => {
                           const commandIndex = group.startIndex + localIndex()
-                          const disabled = isCommandDisabled(command)
+                          const disabled = () => isCommandDisabled(command)
                           return (
                             <button
                               type="button"
                               data-command-index={commandIndex}
                               onClick={() => handleCommandClick(command)}
-                              disabled={disabled}
+                              disabled={disabled()}
                               title={command.shortcutId ? withHotkey(resolveResolvable(command.label), command.shortcutId) : resolveResolvable(command.label)}
                               class={`modal-item ${selectedCommandId() === command.id ? "modal-item-highlight" : ""}`}
                               onPointerMove={(event) => {

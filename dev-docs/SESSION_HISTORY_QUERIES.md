@@ -2,6 +2,21 @@
 
 ## Entry points
 
+Sidebar title search uses native `session.list`, independently of these body-query
+routes. For an explicit binding it reads one page in the exact native Location;
+`cursor.next` marks the result incomplete and the sidebar invites query refinement.
+It performs no project/worktree discovery or exhaustive cursor traversal. Enriched
+history queries remain governed by `historyEnrichment` capability admission.
+
+The internal explicit-server transcript offers a localized explanation when its
+search shortcut opens. Native sidebar title search stays available; text-body
+search, ranked queries, cross-session previews, structural outlines and technical
+cleanup require the shared local enriched reader. Direct query, preview and
+pruning handlers enforce this scope before native/RPC reads. Explicit timeline
+navigation covers resident rows and native pages only
+([SESSION_HISTORY_NAVIGATION.md](SESSION_HISTORY_NAVIGATION.md)). Projects open
+through the shared Remotes disclosure on the home page and launcher.
+
 The non-modal transcript search window (Ctrl/Cmd+F or the header toggle) can
 query the entire session or workspace. Conversation scope uses a literal phrase
 and chronological result pages. Workspace scope sends one debounced ranked request

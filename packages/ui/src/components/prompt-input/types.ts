@@ -1,6 +1,7 @@
 import type { SessionInboxUserPayload } from "@opencode/client"
 import type { JSX } from "solid-js"
 import type { Attachment } from "../../types/attachment"
+import type { QueuedPromptDraft } from "./usePromptRecovery"
 
 export type PromptMode = "normal" | "shell"
 export type PickerMode = "mention" | "command"
@@ -13,7 +14,10 @@ export interface PromptInputApi {
   expandTextAttachment(attachmentId: string): void
   removeAttachment(attachmentId: string): void
   setPromptText(text: string, opts?: { focus?: boolean }): void
-  restoreQueuedPrompt(text: string, payload: SessionInboxUserPayload): void
+  restoreQueuedPrompt(text: string, payload: SessionInboxUserPayload, opts?: { focus?: boolean }): void
+  captureDraft(): () => boolean
+  recoverQueuedPrompt(draft: QueuedPromptDraft): void
+  showActionFeedback(): void
   getPromptText(): string
   getMode(): PromptMode
   focus(): void

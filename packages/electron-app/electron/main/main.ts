@@ -17,6 +17,7 @@ import { abandonLaunchWindow, acknowledgeLaunchConnection, CONNECT_LAUNCH_TIMEOU
 import { setupCliIPC } from "./ipc"
 import { notificationBadgeBitmap, setupNotificationBadgeIPC } from "./notification-badge"
 import { LocalWindowRegistry, type LocalWindowRecord } from "./local-window-registry"
+import { DesktopAttachments } from "./desktop-attachments"
 import { clearWorkspaceMenuWindow, createApplicationMenu, setWorkspaceMenuEnabled } from "./menu"
 import { resolveApplicationTarget, resolveFocusedLocalTarget, resolveWindowTarget } from "./menu-target"
 import { MultiwindowLifecycle } from "./multiwindow-lifecycle"
@@ -146,6 +147,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     ? { crossHostElectionDirectory: storageScope.clientStateElectionDirectory }
     : undefined)
   const registry = new LocalWindowRegistry(async (id) => { await clientState.setActiveWindow(id) })
+  const attachments = new DesktopAttachments(clientState, registry)
   let lifecycle: MultiwindowLifecycle
   const developerMode = new DeveloperMode({
     devtoolsDataPath: sessionDataPath,
@@ -163,7 +165,9 @@ function runPrimary(firstIntent: LaunchIntent) {
       if (!record.window.isDestroyed()) record.window.webContents.send("browser-target:open", { sessionID, url, requestID })
     }
   })
-  const cli = new CliProcessManager((method, params, deadline) => method.startsWith("browser.")
+  const cli = new CliProcessManager((method, params, deadline, owner) => method.startsWith("projects.attachments.")
+    ? attachments.handle(method, params, owner)
+    : method.startsWith("browser.")
     ? handleNativeBrowserRequest(browserController, method, params, deadline)
     : developerMode.handleNativeRequest(method))
   const remoteOrigins = new Map<number, Set<string>>()

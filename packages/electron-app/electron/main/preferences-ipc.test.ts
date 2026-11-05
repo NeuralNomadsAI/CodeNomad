@@ -89,3 +89,12 @@ test("Preferences IPC rejects unregistered, subframe, and cross-origin senders",
   h.frame.url = "https://outside.example/preferences"
   assert.throws(() => minimize(h.event(h.preferencesContents)), /allowed renderer origin/)
 })
+
+test("Preferences IPC rejects malformed binding before opening or accepting", async () => {
+  const h = harness()
+  for (const serverId of [null, "", "a/b", 42]) {
+    await assert.rejects(h.handlers.get("preferences:open")!(h.event(h.localContents), "providers", { serverId }), /server ID/)
+    await assert.rejects(h.handlers.get("preferences:acceptRequest")!(h.event(h.preferencesContents), { section: "providers", serverId }), /server ID/)
+  }
+  assert.deepEqual(h.calls, [])
+})

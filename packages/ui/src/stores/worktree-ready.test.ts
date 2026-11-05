@@ -6,6 +6,14 @@ import { captureWorktreeMoveReconciliation, clearPendingWorktreeMoves, getPendin
 import type { Session } from "../types/session.ts"
 import { sessions, setSessions } from "./session-state.ts"
 import { serverEvents } from "../lib/server-events.ts"
+import { addInstance } from "./instances.ts"
+
+// Inventory tests exercise known local occurrences; missing owners are unavailable.
+for (const id of ["fresh-failure-cached-trailing", "fresh-pending-recovery", "fresh-success", "initial-fallback",
+  "display-failure-fresh-recovery", "initial-behind-fresh", "changed-during-fresh-failure", "failed-trailing-read",
+  "instance-initial-reload", "queued-move-reconciliation", "family-move"]) {
+  addInstance({ id, folder: "/repo", client: null, port: 0, pid: 0, proxyPath: "", status: "ready" })
+}
 
 describe("handleWorktreeReady", () => {
   it("rejects both failed fresh callers but runs queued display demand without leaking freshness", async () => {

@@ -14,6 +14,7 @@ import { showConfirmDialog } from "../stores/alerts"
 import { MissionModelLibrary } from "./mission-model-library"
 import { ConfigOwnerReconciliationPendingError } from "../lib/storage"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
+import type { LocationRef } from "@opencode/client"
 
 /** The next document, or undefined when the stored value this edit was made from has changed. */
 type DefaultsEdit = (defaults: MissionProfileDefault[]) => MissionProfileDefault[] | undefined
@@ -47,7 +48,7 @@ const [queued, setQueued] = createSignal<DefaultsEdit[]>([])
 const [failed, setFailed] = createSignal(false), [reloading, setReloading] = createSignal(false)
 let writes = Promise.resolve()
 
-export function MissionPreferences(props: { instanceId: string; directory?: string; active: () => boolean }) {
+export function MissionPreferences(props: { instanceId: string; directory?: string; location?: LocationRef; active: () => boolean; catalogueActive?: () => boolean; executionActive?: () => boolean; authority?: string }) {
   const { t } = useI18n(), config = useConfig()
   /** Every choice is written at once. Edits still queued show immediately, on top of the saved value. */
   const shown = () => queued().reduce((defaults, edit) => edit(defaults) ?? defaults, normalizeMissionDefaults(config.preferences().missionProfileDefaults))
@@ -125,9 +126,10 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
         <MissionProfileSummary inline instanceId={props.instanceId} directory={props.directory} template={exception() ?? "custom"} profiles={exception() ? missionDefaultsFor(shown(), exception()!) : entry()?.profiles} /></summary>
       {/* A mission type shows the global choices its roles inherit until one is customized. */}
       <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template={exception() ?? "custom"}
+        authority={props.authority} location={props.location}
         inherited={exception() ? missionDefaultsFor(shown(), exception()!, false) ?? {} : undefined}
         taskMode={exception() ? missionTaskModeFor(shown(), exception()!) : globalMissionTaskMode(shown())}
-        profiles={entry()?.profiles} disabled={disabled() || !props.instanceId} active={props.active}
+        profiles={entry()?.profiles} disabled={disabled() || !props.instanceId || props.catalogueActive?.() === false} active={props.active}
         onRoleChange={(role, execution) => commit(withRole(template(), role, roleChoice(entry()?.profiles, role), execution))} />
       <div class="mission-preferences-actions">
         <button type="button" class="window-action" aria-label={t("missions.defaults.resetProfiles")} title={t("missions.defaults.resetProfiles")}
@@ -136,7 +138,9 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
     </details>
     <Show when={failed()}><p role="alert">{t("missions.defaults.error")}</p></Show>
     {/* Location depth writes OpenCode configuration; it is a separate group, not part of these defaults. */}
-    <MissionSubagentDepth instanceId={props.instanceId} directory={props.directory} active={props.active} />
+    <Show when={props.executionActive?.() !== false} fallback={<p class="settings-card-message" role="status">{t("missions.depth.title")}: {t("settings.execution.deferred")}</p>}>
+      <MissionSubagentDepth instanceId={props.instanceId} directory={props.directory} active={() => props.active() && props.executionActive?.() !== false} />
+    </Show>
     <MissionModelLibrary active={props.active} />
   </div>
 }

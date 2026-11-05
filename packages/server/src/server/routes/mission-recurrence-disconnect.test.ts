@@ -51,6 +51,7 @@ for (const neverResolved of [false, true]) test(`HTTP disconnect retains native 
     let connection = originalConnection
     const manager = { get: () => workspace, getServiceLocation: () => location, getServiceDirectoryForPath: async () => directory,
       getSharedServiceConnection: async () => connection, ownsLocation: async () => true,
+      requireWorkspaceCapability: () => new AbortController().signal,
       getServiceWslDistro: () => undefined, getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",
       getWorktreeIdentityForPath: async () => canonicalWorktreeIdentity(directory), getHostPathForServicePath: async () => directory }
     app.addHook("onRequest", (request, reply, done) => {

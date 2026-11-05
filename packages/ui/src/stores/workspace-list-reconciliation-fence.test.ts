@@ -12,7 +12,7 @@ describe("workspace list reconciliation fence", () => {
     const events = source.slice(source.indexOf("function handleWorkspaceEvent"), source.indexOf("function handleWorkspaceLog"))
     assert.ok(events.indexOf("workspaceListReconciliationFence.markMutation(workspaceId)")
       < events.indexOf("restoreCreationCommitGates.deferWorkspace(event.workspace)"))
-    const create = source.slice(source.indexOf("async function createInstance"), source.indexOf("function normalizeInstanceFolderPath"))
+    const create = source.slice(source.indexOf("async function createInstance"), source.indexOf("function getExistingInstanceForFolder"))
     assert.ok(create.indexOf("workspaceListReconciliationFence.markMutation(workspace.id)")
       < create.indexOf("upsertWorkspace(committedWorkspace"))
     const close = source.slice(source.indexOf("function closeWorkspace"), source.indexOf("function getActiveInstance"))

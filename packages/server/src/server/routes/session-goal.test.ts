@@ -12,6 +12,7 @@ function fixture() {
     answer: (): unknown => ({ output: goal }) }
   const calls: any[] = [], ownership: any[] = []
   registerSessionGoalRoute(app, { workspaceManager: {
+    requireWorkspaceCapability: () => new AbortController().signal,
     ownsLocation: async (id: string, location: unknown) => { ownership.push({ id, location }); return state.owned },
     getSharedServiceClient: async () => ({
       session: { get: async () => { if (state.missing) throw new Error("not found"); return structuredClone(state.session) } },

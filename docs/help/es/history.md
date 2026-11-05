@@ -2,6 +2,8 @@
 
 El historial almacenado, lo que muestra actualmente la transcripción y el contexto compactado del modelo son cosas distintas. Elige navegar o filtrar antes de eliminar nada.
 
+Estos flujos de historial enriquecido se aplican al servicio OpenCode local compartido. Los proyectos en servidores explícitos usan páginas nativas y una cronología de mensajes cargados, conservan la posición de lectura cuando un pasaje no está disponible y ofrecen volver explícitamente a la última página. La búsqueda de texto, las vistas previas de mensajes no cargados y la limpieza técnica siguen sin estar disponibles allí; las vistas previas del texto ya cargado siguen disponibles.
+
 ## Buscar en todo el historial {#full-history-search}
 
 1. Abre **Buscar en el historial del chat** en la cabecera de la conversación o usa su atajo configurado (por defecto **Ctrl/Cmd+F**).

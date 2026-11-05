@@ -24,6 +24,7 @@ async function fixture(run: (value: any) => Promise<void>) {
   const connection: any = { endpoint: { url: "http://127.0.0.1:1234" }, assertCurrent() { if (!current) throw Error("replaced") },
     fetch: async () => Response.json(nativeScheduleContractFixture()), client: { config: { get: entries }, plugin: { list: async () => ({ data: [] }) } } }
   const manager: any = { get: () => ({}), getSharedServiceConnection: async () => connection,
+    requireWorkspaceCapability: () => new AbortController().signal,
     getServiceDirectoryForPath: async (_id: string, directory: string) => directory === project ? directory : undefined,
     ownsLocation: async () => true, getWorktreeIdentityForPath: async () => "owned",
     getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",

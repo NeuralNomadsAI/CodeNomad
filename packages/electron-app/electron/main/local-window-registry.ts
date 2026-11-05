@@ -1,6 +1,7 @@
 import type { BrowserWindow, WebContents } from "electron"
 import type { ClientStateNavigationController } from "./client-state-navigation"
 import type { WindowStateTracker } from "./window-state"
+import { randomUUID } from "node:crypto"
 
 export interface LocalWindowRecord {
   id: string
@@ -39,6 +40,9 @@ export class LocalWindowRegistry {
   private readonly records = new Map<string, LocalWindowRecord>()
   private readonly webContentsIds = new Map<number, string>()
   private mru: string[] = []
+  private attachmentEpoch = randomUUID()
+
+  get attachmentReceipt(): string { return this.attachmentEpoch }
 
   constructor(private readonly setActiveWindow: (id: string) => void | Promise<void>) {}
 
@@ -48,6 +52,7 @@ export class LocalWindowRegistry {
     if (!record.connectOnly && this.userWindowCount() >= MAX_LOCAL_WINDOWS) throw new RangeError("Too many local windows")
     record.id = id
     this.records.set(id, record)
+    this.attachmentEpoch = randomUUID()
     this.webContentsIds.set(record.window.webContents.id, id)
     if (!record.connectOnly) this.mru = [id, ...this.mru.filter((candidate) => candidate !== id)]
   }
@@ -187,6 +192,7 @@ export class LocalWindowRegistry {
     const record = this.get(id)
     if (!record) return undefined
     this.records.delete(record.id)
+    this.attachmentEpoch = randomUUID()
     for (const [webContentsId, windowId] of this.webContentsIds) {
       if (windowId === record.id) this.webContentsIds.delete(webContentsId)
     }

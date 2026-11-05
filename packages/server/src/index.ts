@@ -734,7 +734,7 @@ async function main() {
   })
 
   installShutdownSignalHandlers(process, shutdown)
-  installShutdownStdinHandler(process.stdin, shutdown, (line) => nativeParent.handleLine(line))
+  installShutdownStdinHandler(process.stdin, shutdown, (line) => nativeParent.handleLine(line), id => nativeParent.rejectResponse(id))
 }
 
 if (path.resolve(process.argv[1] ?? "") === __filename) {

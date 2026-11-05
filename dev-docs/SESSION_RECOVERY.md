@@ -2,6 +2,54 @@
 
 ## Contract
 
+Restored workspace state is keyed by execution server and directory. A missing
+server ID selects `local-shared`; an explicit unknown ID retains its own saved
+data. Seeding into a live occurrence checks that durable identity. Asynchronous
+hydration additionally captures the client and native data generation and checks
+the caller's removal/binding fence before publication. Replaced sources and closed
+occurrences leave the preserved snapshot available for an authorized reopening.
+
+Explicit occurrences absent from the backend reopen on their saved server and
+directory. Their saved drafts, attachments, catalogs and selected tab remain in the
+window graph across capture/reload. Recovery uses the existing capability guards
+for pending requests and worktree inventories. The backend connection owner reuses
+the profile's privately persisted pairing token or password across restarts.
+
+Pending request display and reply admission have separate lifetimes. Known drafts
+remain mounted through connection gaps; explicit live-only projects retain unknown
+coverage after disconnect and backend restoration, including empty local queues.
+Current live events restore their exact request's response admission. A held Form
+also supports an explicit source-editor check of its native state; pending state
+with matching editor fields admits only that captured Form, while terminal and
+indeterminate states retain drafts with response actions blocked. One check uses
+the shared secondary budget, a ten-second total deadline and four-MiB native
+responses. Newer events and source/transport/placement retirement fence its result.
+Placement retirement follows every accepted publication, so a move away and back
+retains the retired result and reply admission until a new valid check or current
+Form event. Matching initial hydration and same-placement metadata keep the owner.
+The Form editor composes its check result and earlier uncertain reply into one
+polite region; a pending read retains the earlier attempt's uncertainty. Its check
+control keeps source keyboard focus while guarded and after pending completion.
+Permissions await a current live event. Overall coverage remains unknown. Opening
+a conversation reads its supported conversation state while leaving pending
+discovery inactive. The dock's source details retain the server, stable ID and
+opaque native directory. Current live candidates retain the captured connection and status boundary
+while compatible metadata arrives, independently of HTTP/status publication order.
+Matching metadata qualifies only those held candidates; older queues stay stale.
+Backend transport, client, native-data, binding and session placement retain their
+own fences. See [Native interruptions](NATIVE_INTERRUPTION_UX.md).
+Capability snapshots also retain their backend-transport publication owner. A
+fresh matching snapshot can qualify a current event after backend restoration,
+including a reset connection counter; prior-transport display values stay stale.
+
+Explicit catalog seeding retains only rows whose native Location exactly matches
+the occurrence binding. Targeted hydration rereads requested native identities,
+checks Location and current request authority, and follows at most 200 ancestor
+IDs. A missing or foreign ancestor leaves the in-directory child as a display root;
+selection restoration uses that same truncated-chain projection while preserving
+native parent metadata. Inventory pages arrive on demand, and only a qualified
+terminal exact inventory reconciles absent rows with concurrent-update fences.
+
 `scripts/test-missions-native.mjs` also runs this reconciliation against a private
 native session: `succeeded` clears a saved working marker; a queued `resume:false`
 synthetic keeps the historical outcome and does not resolve pending admission;
@@ -45,6 +93,16 @@ The merge preserves activity/recovery/admission/outcome as an authority group
 when newer SSE/local authority supersedes the captured baseline. Deletion,
 instance/client-generation and abort fences apply. Recovery never prompts,
 interrupts, updates a session or replays anything automatically.
+
+Metadata merges share inventory request ordering and retain a weakly held HTTP
+row baseline through native/local edits and pending/status projections. Fields
+from an earlier HTTP snapshot can be refreshed by a current targeted read;
+concurrent metadata changes retain precedence field by field. Runtime merges
+continue using the row captured before the read for their authority group, and
+runtime-only reads retain the metadata snapshot's provenance.
+Transcript-derived agent/model fallback and partial native creation updates inherit
+the held row's baseline through `withSession`; native changes keep their field-level
+precedence while untouched fields remain refreshable from that HTTP snapshot.
 
 ## Display acknowledgement
 

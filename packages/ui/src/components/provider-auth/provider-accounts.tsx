@@ -14,6 +14,7 @@ export function ProviderAccounts(props: {
   client: OpenCodeClient
   location: LocationRef
   disabled?: boolean
+  active?: () => boolean
   initialConnections?: ConnectionInfo[]
   onChanged?: () => Promise<void>
   onAdd?: () => void
@@ -27,20 +28,25 @@ export function ProviderAccounts(props: {
   let setAutomatic: (enabled: boolean) => Promise<void> = async () => {}
   let refresh = () => {}
   let run: (id: string, action: "activate" | "remove" | "rename", label?: string) => Promise<boolean> = async () => false
+  let mounted = true
+  onCleanup(() => { mounted = false })
+  const active = () => mounted && props.active?.() !== false
   createEffect(() => {
+    if (!active()) return
     const client = props.client, instanceId = props.instanceId, integrationID = props.integrationId, location = { ...props.location }
     let disposed = false, reading = false, writing = false, trailing = false
     // Cache-first: keep the catalog snapshot while the authoritative read
     // revalidates behind it.
     setConnections(props.initialConnections ?? []); setError(false); setBusy(false); setSelection(emptySnapshot())
     const read = async () => {
-      if (disposed) return
+      if (disposed || !active()) return
       if (reading || writing) { trailing = true; return }
       reading = true; setBusy(true)
       do {
         trailing = false
         try {
           const catalog = await client.integration.list({ location: toRequestLocation(location) }, requestLocationOptions(location))
+          if (disposed || !active()) return
           const current = catalog.data.find(item => item.id === integrationID)?.connections ?? []
           // The server decides which integrations support automatic selection;
           // only saved credentials can carry logins or become candidates.
@@ -59,7 +65,7 @@ export function ProviderAccounts(props: {
     }
     refresh = () => { void read() }
     setAutomatic = async enabled => {
-      if (disposed || reading || writing || props.disabled) return
+      if (disposed || !active() || reading || writing || props.disabled) return
       writing = true; setBusy(true); setError(false)
       let failed = false
       try {
@@ -67,12 +73,12 @@ export function ProviderAccounts(props: {
         if (!disposed) setSelection(snapshot)
       } catch { failed = true }
       finally { writing = false }
-      if (disposed) return
+      if (disposed || !active()) return
       await read()
       if (failed && !disposed) setError(true)
     }
     run = async (credentialID, action, label) => {
-      if (disposed || reading || writing || props.disabled) return false
+      if (disposed || !active() || reading || writing || props.disabled) return false
       if (!connections().some(item => item.type === "credential" && item.id === credentialID)) return false
       writing = true; setBusy(true); setError(false)
       let failed = false
@@ -83,7 +89,7 @@ export function ProviderAccounts(props: {
         else await client.credential.update({ credentialID, label: label!.trim() }, options)
       } catch { failed = true }
       finally { writing = false }
-      if (disposed) return false
+      if (disposed || !active()) return false
       await read()
       if (failed) { if (!disposed) setError(true); return false }
       if (!disposed) await props.onChanged?.()
@@ -108,7 +114,7 @@ export function ProviderAccounts(props: {
     ? (item.label === "default" ? selection().logins?.[item.id] ?? item.label : item.label) : item.name
   const addAccountControl = () => <Show when={props.onAdd}>
     <button type="button" class="icon-button-compact" disabled={busy() || props.disabled}
-      title={t("settings.accounts.add")} aria-label={t("settings.accounts.add")} onClick={() => props.onAdd?.()}><Plus size={14} /></button>
+      title={t("settings.accounts.add")} aria-label={t("settings.accounts.add")} onClick={() => { if (active() && !busy() && !props.disabled) props.onAdd?.() }}><Plus size={14} /></button>
   </Show>
   return <div class="provider-accounts" role="group" aria-label={t("settings.accounts.title")}>
       <Show when={error()}><p role="alert">{t("settings.accounts.error")}</p></Show>
@@ -140,7 +146,7 @@ export function ProviderAccounts(props: {
              {addAccountControl()}
             <button type="button" class="icon-button-compact" disabled={busy() || props.disabled}
               title={t("settings.accounts.rename")} aria-label={t("settings.accounts.rename")}
-              onClick={() => { setEditing(true); queueMicrotask(() => { input?.focus(); input?.select() }) }}><Pencil size={14} /></button>
+              onClick={() => { if (!active() || busy() || props.disabled) return; setEditing(true); queueMicrotask(() => { if (active()) { input?.focus(); input?.select() } }) }}><Pencil size={14} /></button>
             <button type="button" class="icon-button-compact" disabled={busy() || props.disabled}
               title={t("settings.accounts.remove")} aria-label={t("settings.accounts.remove")}
               onClick={() => void run(id.slice(11), "remove")}><Trash2 size={14} /></button>

@@ -33,6 +33,9 @@ test("real Git history routes and bounded file previews use the requested owned 
     // Exercise the actual manager fileBrowserRoot + previewFile boundary. Native
     // discovery is isolated to an explicit inventory, with no shared daemon.
     const manager = Object.assign(Object.create(WorkspaceManager.prototype), {
+      requireWorkspaceCapability: () => new AbortController().signal,
+      assertLocalWorkspace: () => {},
+      isExplicitWorkspace: () => false,
       get: (requested: string) => requested === id ? workspace : undefined,
       getWorktreeIdentityForPath: async (_id: string, directory: string) => directory === root || directory === linked ? directory : undefined,
       requireWorkspace: (requested: string) => { if (requested !== id) throw new Error("Workspace not found"); return workspace },
@@ -87,6 +90,9 @@ test("file preview remains available for an explicitly opened directory without 
   try {
     await writeFile(path.join(root, "readme.md"), "# Directory only")
     const manager = Object.assign(Object.create(WorkspaceManager.prototype), {
+      requireWorkspaceCapability: () => new AbortController().signal,
+      assertLocalWorkspace: () => {},
+      isExplicitWorkspace: () => false,
       requireWorkspace: () => ({ path: root }),
       resolveOwnedWorktree: async (_workspace: unknown, directory: string) => directory === root ? { directory } : null,
     }) as WorkspaceManager

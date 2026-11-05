@@ -34,6 +34,7 @@ test("project damage the hints have not seen refuses the coordinator request: no
   }
   const app = Fastify({ logger: false })
   registerMissionRoutes(app, { workspaceManager: { get: () => ({ id: "fixture" }), getServiceLocation: () => ({ directory: "/repo" }),
+    requireWorkspaceCapability: () => new AbortController().signal,
     getSharedServiceConnection: async () => ({ client, assertCurrent() {} }) } as never })
   // The navigation fixture's project, coordinator and Location identities.
   const local = <T extends { projectID?: string; mission?: any }>(body: T): T => {

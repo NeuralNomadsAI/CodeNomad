@@ -1,5 +1,9 @@
 # Dépannage
 
+Pour des serveurs d’exécution homonymes, utilisez l’ID stable affiché avec le nom dans les détails de demande et les notifications de projet. Une réponse incertaine reste dans son éditeur d’origine, sans déplacement du focus ni renvoi automatique.
+
+**Serveurs OpenCode explicites :** après une coupure ou un redémarrage du backend, la couverture des demandes en attente est inconnue, même si le dock est vide. Conservez les brouillons connus ; les permissions obsolètes attendent une demande live courante. Pour une Form connue, utilisez **Vérifier l’état de ce formulaire** dans son éditeur source ; un résultat indéterminé garde les réponses bloquées et permet une nouvelle vérification explicite. La vérification est bornée à 10 secondes et 4 MiB par réponse ; la couverture reste inconnue. Ouvrir la conversation permet de consulter son contenu sans retrouver automatiquement les demandes manquantes. Une réponse envoyée avant la coupure peut avoir abouti : aucun rejeu automatique. Les étapes de récupération automatique ci-dessous concernent le service local partagé. Voir [Questions et autorisations](permissions.md).
+
 Pour récupérer, vérifiez d’abord le propriétaire de l’opération défaillante : navigateur, backend CodeNomad, service OpenCode ou fournisseur. Une réponse perdue ne prouve pas l’échec d’une modification ; relisez l’état actuel avant de la répéter.
 
 ## Problèmes de lancement sur ordinateur {#desktop-launch}

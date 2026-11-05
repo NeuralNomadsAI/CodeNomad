@@ -21,6 +21,16 @@ Las entradas recientes son accesos directos. **Renombrar workspace** cambia su n
 
 Un clic normal sigue abriendo la página de inicio completa. El lanzador es un acceso directo, no la superficie de gestión: renombra/elimina proyectos recientes y gestiona los marcadores de servidores en la página de inicio. Escape cierra el lanzador y devuelve el foco a `+`.
 
+## Abrir un proyecto en un servidor OpenCode {#remote-project}
+
+1. En la página de inicio o en el lanzador, despliegue **REMOTOS** y elija **+ Proyecto** en un servidor. Su nombre permanece visible junto a la ruta de la carpeta.
+2. Elija un servidor, explore sus carpetas y elija **Abrir**. **Retroceso** sube a la carpeta superior; **Esc** vuelve a los servidores.
+3. Para añadir un servidor, pegue su enlace `opencode pair`, o `https://opencode:<contraseña>@host:puerto`, en **Enlace de emparejamiento o dirección**. Haga clic derecho en un servidor (o **Mayús+F10**) para **Eliminar servidor guardado**.
+
+La pestaña muestra un icono de servidor y la carpeta se une a los proyectos recientes. **Buscar carpetas**, **Clonar repo Git** y las instancias temporales siguen en este equipo.
+
+El backend anfitrión conserva tokens de emparejamiento y contraseñas manuales entre inicios en su archivo privado `opencode-server-pairings.json` (0600), junto a `config.yaml`. La caducidad, HTTP 401, un cambio de origen o eliminar el servidor borran el secreto. Los proyectos guardados se restauran en su propio servidor; solo el anfitrión añade o elimina servidores.
+
 ## Cerrar una pestaña de proyecto {#close-stop}
 
 1. Usa el botón de cierre de la pestaña o **Cerrar pestaña** en la paleta de comandos (`Ctrl/Cmd+W` en el renderer).

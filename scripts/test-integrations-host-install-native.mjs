@@ -152,6 +152,7 @@ export default { id: marker.plugin, async setup(ctx) {
       return client.rpc.call(request, options)
     } } } }
     const manager = {
+      requireWorkspaceCapability: () => new AbortController().signal,
       get: id => id === "w" ? { id, path: location } : undefined,
       getSharedServiceConnection: async () => connection,
       ownsLocation: async (id, candidate) => id === "w" && candidate.directory === location && candidate.workspaceID === undefined,

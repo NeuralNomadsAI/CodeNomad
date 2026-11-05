@@ -3,7 +3,7 @@ import type {
   RestorableTabState,
   RestorableWorkspaceTabState,
 } from "./client-state-codec"
-import { normalizeWorkspacePath } from "./app-session-reconciliation"
+import { projectIdentity } from "../lib/project-identity"
 export interface RestoreTabResult {
   status: "pending" | "restored" | "removed"
   runtimeTabId?: string | null
@@ -35,7 +35,7 @@ function mapTabIdentities(tabs: readonly RestorableTabState[]): TabIdentity[] {
   const nextOccurrences = new Map<string, number>()
   return tabs.map((tab) => {
     const key = tab.kind === "workspace"
-      ? `workspace:${normalizeWorkspacePath(tab.folder)}`
+      ? `workspace:${projectIdentity(tab.folder, tab.serverId)}`
       : `sidecar:${tab.sidecarId}`
     const inferred = nextOccurrences.get(key) ?? 0
     const occurrence = tab.kind === "workspace" ? tab.occurrence ?? inferred : inferred
@@ -66,7 +66,7 @@ export function recordRestoredTab(
   runtimeTabId: string | null,
   unavailableSessionIds?: ReadonlySet<string>,
 ): void {
-  if (!preservation.sourceTabs[sourceIndex]) return
+  if (!preservation.sourceTabs[sourceIndex] || preservation.results[sourceIndex]?.status === "removed") return
   preservation.results[sourceIndex] = unavailableSessionIds
     ? { status: "restored", runtimeTabId, unavailableSessionIds }
     : { status: "pending", ...(runtimeTabId ? { runtimeTabId } : {}) }
@@ -92,11 +92,15 @@ export function settleRestoredTab(
 }
 function findWorkspaceSourceIndex(
   preservation: RestorableSessionPreservation,
-  workspace: { runtimeTabId: string; folder: string; occurrence: number },
+  workspace: { runtimeTabId: string; folder: string; serverId?: string; occurrence: number },
 ): number | undefined {
   const runtimeIndex = preservation.results.findIndex((result) => result.runtimeTabId === workspace.runtimeTabId)
-  if (runtimeIndex >= 0) return runtimeIndex
-  const identity = `workspace:${normalizeWorkspacePath(workspace.folder)}:${workspace.occurrence}`
+  if (runtimeIndex >= 0) {
+    const source = preservation.sourceTabs[runtimeIndex]
+    return source?.kind === "workspace" && projectIdentity(source.folder, source.serverId) === projectIdentity(workspace.folder, workspace.serverId)
+      ? runtimeIndex : undefined
+  }
+  const identity = `workspace:${projectIdentity(workspace.folder, workspace.serverId)}:${workspace.occurrence}`
   const index = mapTabIdentities(preservation.sourceTabs).findIndex((candidate) => candidate.value === identity)
   if (index < 0) return undefined
   const result = preservation.results[index]
@@ -107,15 +111,15 @@ function findWorkspaceSourceIndex(
 }
 export function getPreservedWorkspaceState(
   preservation: RestorableSessionPreservation,
-  workspace: { runtimeTabId: string; folder: string; occurrence: number },
+  workspace: { runtimeTabId: string; folder: string; serverId?: string; occurrence: number },
 ): RestorableWorkspaceTabState | null {
   const index = preservation.results.findIndex((result) => result.runtimeTabId === workspace.runtimeTabId)
   const source = preservation.sourceTabs[index]
-  return source?.kind === "workspace" ? source : null
+  return source?.kind === "workspace" && projectIdentity(source.folder, source.serverId) === projectIdentity(workspace.folder, workspace.serverId) ? source : null
 }
 export function getPreservedWorkspaceReopenTarget(
   preservation: RestorableSessionPreservation,
-  workspace: { runtimeTabId: string; folder: string; occurrence: number },
+  workspace: { runtimeTabId: string; folder: string; serverId?: string; occurrence: number },
 ): { sourceIndex: number; snapshot: RestorableWorkspaceTabState } | null {
   const sourceIndex = findWorkspaceSourceIndex(preservation, workspace)
   if (sourceIndex === undefined) return null
@@ -126,7 +130,7 @@ export function getPreservedWorkspaceReopenTarget(
 }
 export function markPreservedWorkspaceRemoved(
   preservation: RestorableSessionPreservation,
-  workspace: { runtimeTabId: string; folder: string; occurrence: number },
+  workspace: { runtimeTabId: string; folder: string; serverId?: string; occurrence: number },
 ): RestorableSessionPreservation {
   const index = findWorkspaceSourceIndex(preservation, workspace)
   if (index !== undefined && preservation.results[index]?.status !== "removed") {
@@ -137,7 +141,7 @@ export function markPreservedWorkspaceRemoved(
 }
 export function markPreservedWorkspaceReopened(
   preservation: RestorableSessionPreservation,
-  workspace: { runtimeTabId: string; folder: string; occurrence: number },
+  workspace: { runtimeTabId: string; folder: string; serverId?: string; occurrence: number },
 ): RestorableSessionPreservation {
   const index = findWorkspaceSourceIndex(preservation, workspace)
   if (index === undefined) return preservation
@@ -158,6 +162,7 @@ function getPreservedTab(source: RestorableTabState, result: RestoreTabResult): 
   const tab: RestorableWorkspaceTabState = {
     kind: "workspace",
     folder: source.folder,
+    ...(source.serverId === undefined ? {} : { serverId: source.serverId }),
     drafts: keep(source.drafts),
     attachments: keep(source.attachments),
     scrollSnapshots: keep(source.scrollSnapshots),
@@ -247,6 +252,7 @@ export function mergeRestorableSessionState(
   const claimed = new Set<number>()
   const claim = (sourceIndex: number, currentIndex: number | undefined) => {
     if (currentIndex === undefined || !current.tabs[currentIndex] || claimed.has(currentIndex)) return
+    if (sourceIdentities[sourceIndex]?.key !== currentIdentities[currentIndex]?.key) return
     matches[sourceIndex] = currentIndex
     claimed.add(currentIndex)
   }
@@ -313,7 +319,7 @@ export function mergeRestorableSessionState(
 }
 export function markPreservedWorkspaceUnavailable(
   preservation: RestorableSessionPreservation,
-  workspace: { runtimeTabId: string; folder: string; occurrence: number },
+  workspace: { runtimeTabId: string; folder: string; serverId?: string; occurrence: number },
   current?: RestorableWorkspaceTabState,
   authority?: RestorableWorkspaceRuntimeAuthority,
 ): RestorableSessionPreservation {

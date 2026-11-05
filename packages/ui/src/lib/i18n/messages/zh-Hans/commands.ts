@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openWorkspace.localOnly": "原生文件、编辑器和终端操作需要使用共享本地 OpenCode 服务的项目。",
   "commands.openHelp.failed": "无法在浏览器中打开帮助。请手动访问 https://neuralnomadsai.github.io/CodeNomad/。",
   "commands.openSponsor.failed": "无法在浏览器中打开“赞助 CodeNomad”页面。请手动访问 {url}。",
   "commandPalette.title": "命令面板",

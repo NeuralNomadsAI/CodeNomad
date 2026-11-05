@@ -17,7 +17,7 @@ describe("worktree routes", () => {
 it("keeps ordinary worktree reads cached and exposes explicit fresh recovery validation", async () => {
   const app = Fastify({ logger: false })
   const modes: string[] = []
-  const manager = { get: () => ({ id: "workspace" }), getWorktrees: async (_id: string, mode: string) => {
+  const manager = { requireWorkspaceCapability: () => new AbortController().signal, get: () => ({ id: "workspace" }), getWorktrees: async (_id: string, mode: string) => {
     modes.push(mode)
     return { worktrees: [] }
   } } as unknown as WorkspaceManager
@@ -93,6 +93,7 @@ it("reserves the physical worktree and rejects a same-HEAD replacement before de
     let reserved = ""
     let released = false
     const manager = {
+      requireWorkspaceCapability: () => new AbortController().signal,
       getWorktrees: () => fixtureCatalogue(workspacePath),
       get: () => ({
         id: "workspace",
@@ -183,6 +184,7 @@ it("fails a direct delete call closed when session evacuation fails", async () =
         },
       } as unknown as OpenCodeClient
       const manager = {
+        requireWorkspaceCapability: () => new AbortController().signal,
         getWorktrees: () => fixtureCatalogue(temp),
         get: () => workspace,
         getSharedServiceClient: async () => client,

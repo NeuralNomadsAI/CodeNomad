@@ -5,6 +5,18 @@ export type GenerationRecoveryState = "pending" | "interrupted"
 export type PersistedGenerationRecovery = "working" | "interrupted"
 type NativeOutcome = Session["outcome"]
 
+// Inventory and targeted reads share request order. Weak row provenance retains
+// the HTTP snapshot separately from native/local edits applied to that row.
+let nextSessionReadId = 0
+const readBaselines = new WeakMap<Session, { requestId: number; session: Session }>()
+export function nextSessionReadRequestId(): number { return ++nextSessionReadId }
+export function inheritSessionReadBaseline(source: Session, target: Session): void {
+  const baseline = readBaselines.get(source)
+  if (baseline) readBaselines.set(target, baseline)
+}
+const authorityKeys = ["status", "runtimeStatusKnown", "generationRecovery", "generationAdmissionToken", "generationAdmissionEpoch", "generationAdmissionIdleBoundary"] as const
+const runtimeKeys: readonly (keyof Session)[] = [...authorityKeys, "outcome", "retry", "idleSince"]
+
 export function resolveHydratedGenerationRecovery(
   _persisted: PersistedGenerationRecovery,
   runtimeStatus: SessionStatus,
@@ -73,8 +85,9 @@ export function mergeFetchedSessionRuntimeState(
   captured: Session | undefined,
   latest: Session | undefined,
   deleted = false,
+  requestId?: number,
 ): Session | null {
-  const merged = mergeRuntimeState(fetched, captured, latest, deleted)
+  const merged = mergeRuntimeState(fetched, captured, latest, deleted, requestId)
   if (merged) reconcileSessionInterruptionBoundary(merged.instanceId, merged)
   return merged
 }
@@ -84,20 +97,37 @@ function mergeRuntimeState(
   captured: Session | undefined,
   latest: Session | undefined,
   deleted = false,
+  requestId?: number,
 ): Session | null {
   if (deleted) return null
   if (captured && !latest) return null
-  if (!latest) return fetched
-  if (latest === captured) {
-    return latest.generationAdmissionToken === undefined ? preservePendingModel(fetched, latest) : { ...fetched, ...latest }
+  const previousRead = latest && readBaselines.get(latest)
+  const publish = (session: Session): Session => {
+    const baseline = requestId === undefined || (previousRead && previousRead.requestId > requestId)
+      ? previousRead : { requestId, session: fetched }
+    if (baseline) readBaselines.set(session, baseline)
+    return session
   }
+  if (!latest) return publish(fetched)
+  if (latest === captured) {
+    return publish(latest.generationAdmissionToken === undefined ? preservePendingModel(fetched, latest) : { ...fetched, ...latest })
+  }
+  // An earlier HTTP row supplies a metadata baseline, not a blanket concurrent
+  // edit. Runtime authority keeps its original pre-read baseline independently.
+  const metadataCaptured = requestId !== undefined && previousRead
+    ? previousRead.requestId > requestId ? undefined : previousRead.session
+    : captured
   const merged = { ...fetched }
   const keys = new Set<keyof Session>([
     ...(Object.keys(captured ?? {}) as (keyof Session)[]),
+    ...(Object.keys(metadataCaptured ?? {}) as (keyof Session)[]),
     ...(Object.keys(latest) as (keyof Session)[]),
   ])
   for (const key of keys) {
-    if (captured && Object.is(captured[key], latest[key])) continue
+    const runtime = runtimeKeys.includes(key)
+    const baseline = runtime ? captured : metadataCaptured
+    if (baseline && Object.is(baseline[key], latest[key])) continue
+    if (!runtime && metadataCaptured && captured && Object.is(captured[key], latest[key])) continue
     if (Object.prototype.hasOwnProperty.call(latest, key)) (merged as any)[key] = latest[key]
     else delete (merged as any)[key]
   }
@@ -105,8 +135,6 @@ function mergeRuntimeState(
   // Treat activity and its last outcome as one authority group. A newer idle
   // event can have the same status as the baseline yet clear recovery/token;
   // a stale fetch must not graft an old interruption onto that newer state.
-  const authorityKeys = ["status", "runtimeStatusKnown", "generationRecovery", "generationAdmissionToken", "generationAdmissionEpoch", "generationAdmissionIdleBoundary"] as const
-  const runtimeKeys = [...authorityKeys, "outcome", "retry", "idleSince"] as const
   if (authorityKeys.some(key => !captured || !Object.is(captured[key], latest[key]))) {
     for (const key of runtimeKeys) {
       if (Object.prototype.hasOwnProperty.call(latest, key)) (merged as any)[key] = latest[key]
@@ -122,7 +150,7 @@ function mergeRuntimeState(
       (merged as any)[key] = fetched[key]
     }
   }
-  return preservePendingModel(merged, latest)
+  return publish(preservePendingModel(merged, latest))
 }
 
 function preservePendingModel(fetched: Session, latest: Session): Session {

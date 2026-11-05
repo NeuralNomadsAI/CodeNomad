@@ -6,8 +6,9 @@ import { useConfig } from "../../stores/preferences"
 import EnvironmentVariablesEditor from "../environment-variables-editor"
 import { BehaviorSettingRows } from "./behavior-setting-rows"
 import { SettingsInfoTip } from "./settings-info-tip"
+import { LocalBackendSettings } from "./local-backend-settings"
 
-export const AdvancedSettingsSection: Component = () => {
+export const AdvancedSettingsSection: Component<{ local?: boolean; target?: string }> = (props) => {
   const { t } = useI18n()
   const config = useConfig()
   const advancedSettings = createMemo<BehaviorSetting[]>(() => [
@@ -40,6 +41,7 @@ export const AdvancedSettingsSection: Component = () => {
 
       {/* One folded group after the setting list: title, count and an "i" instead of explanatory text. */}
       <div class="settings-card">
+        <LocalBackendSettings local={props.local !== false} target={props.target ?? "local-shared"}>{active =>
         <details class="settings-disclosure settings-env-disclosure">
           <summary>
             {t("advancedSettings.environmentVariables.title")}
@@ -47,8 +49,9 @@ export const AdvancedSettingsSection: Component = () => {
             <SettingsInfoTip text={t("advancedSettings.environmentVariables.subtitle")} />
             <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
           </summary>
-          <EnvironmentVariablesEditor bare />
+          <EnvironmentVariablesEditor bare disabled={!active()} />
         </details>
+        }</LocalBackendSettings>
       </div>
     </div>
   )

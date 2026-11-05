@@ -4,6 +4,7 @@ import { locationRequestOptions, readLocationRef } from "../../opencode/compatib
 import { registerSessionHistoryRoutes, type HistoryRouteDeps } from "./session-history"
 import { registerSessionNavigationRoutes } from "./session-navigation"
 import { assertOrdinaryMissionScheduleSession } from "../mission-schedule-input-guard"
+import { WorkspaceCapabilityError } from "../../opencode/servers/capabilities"
 
 export function registerSessionPruningRoutes(app: FastifyInstance, deps: HistoryRouteDeps): void {
   registerSessionHistoryRoutes(app, deps)
@@ -12,6 +13,11 @@ export function registerSessionPruningRoutes(app: FastifyInstance, deps: History
     app.post<{ Params: { id: string } }>(`/api/workspaces/:id/session-pruning/${method}`, { bodyLimit: 1024 * 1024 }, async (request, reply) => {
       const input = (method === "prune" ? pruneRequestSchema : messageTargetSchema).safeParse(request.body)
       if (!input.success) return reply.code(400).send({ error: "Invalid pruning request" })
+      try { deps.workspaceManager.requireWorkspaceCapability(request.params.id, "sessionPruning") }
+      catch (error) {
+        if (error instanceof WorkspaceCapabilityError) return reply.code(403).send({ error: error.code, code: error.code, capability: error.capability, reason: error.reason })
+        throw error
+      }
       const client = await deps.workspaceManager.getSharedServiceClient()
       // Before authorization: ownership checks and fence entry must stay adjacent.
       await deps.workspaceManager.desktopPluginsReady()
