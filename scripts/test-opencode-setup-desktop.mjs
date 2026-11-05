@@ -240,6 +240,9 @@ for (const [host, sourceExecutable] of Object.entries(artifacts)) {
       record.backend = await page.evaluate(() => window.electronAPI.getCliStatus())
       assert.equal(record.backend.state, "ready")
       await page.evaluate(() => { void window.electronAPI.closeWindow() })
+      // Disconnect while the native shutdown still owns a live CDP endpoint.
+      await boundedFixtureOperation(() => browser.close(), Date.now() + 5_000, "CDP disconnect before shutdown")
+      browser = undefined
       await until(() => child.exitCode !== null, "Electron graceful shutdown did not complete", 30_000)
       assert.equal(child.exitCode, 0)
       assert.throws(() => process.kill(record.backend.pid, 0), { code: "ESRCH" })
