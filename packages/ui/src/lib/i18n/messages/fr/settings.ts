@@ -263,6 +263,8 @@ export const settingsMessages = {
   "providerUsage.unsupported": "L'utilisation n'est pas disponible pour ce fournisseur.",
   "providerUsage.notConfigured": "Aucun identifiant d'abonnement compatible n'a été trouvé.",
   "providerUsage.unavailable": "L'utilisation est temporairement indisponible.",
+  "providerUsage.providerErrorCode": "Erreur du fournisseur ({code}).",
+  "providerUsage.viewChatGPTUsage": "Consulter l’utilisation ChatGPT",
   "providerUsage.unavailableValue": "--",
   "providerUsage.usedPercent": "{percent} % utilisé",
   "providerUsage.resets": "Réinitialisation {time}",

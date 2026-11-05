@@ -263,6 +263,8 @@ export const settingsMessages = {
   "providerUsage.unsupported": "此提供商不支持用量查询。",
   "providerUsage.notConfigured": "未找到兼容的订阅凭据。",
   "providerUsage.unavailable": "用量暂时不可用。",
+  "providerUsage.providerErrorCode": "提供商错误（{code}）。",
+  "providerUsage.viewChatGPTUsage": "查看 ChatGPT 用量",
   "providerUsage.unavailableValue": "--",
   "providerUsage.usedPercent": "已使用 {percent}%",
   "providerUsage.resets": "重置时间 {time}",

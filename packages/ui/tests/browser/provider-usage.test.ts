@@ -163,6 +163,8 @@ for (const [locale, message] of [
       configured: true, ok: false, fetchedAt: Date.now(), windows: {}, unavailableReason: "openai-token-sharing-unsupported",
     } })
     await page.getByText(message, { exact: true }).waitFor()
+    assert.equal(await page.getByRole("status").textContent(), message)
+    assert.equal(await page.getByRole("status").evaluate(el => el.classList.contains("right-panel-empty-text")), false)
     assert.equal(await page.getByRole("progressbar").count(), 0)
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
     if (process.env.CODENOMAD_USAGE_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_USAGE_CAPTURE.replace(/\.png$/, `-${locale}.png`) })
@@ -171,6 +173,43 @@ for (const [locale, message] of [
     await page.getByRole("progressbar").waitFor()
     assert.equal(await page.getByText(message, { exact: true }).count(), 0)
     assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "20")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("public reason cards replace stale quota and open only their fixed accessible destination", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  try {
+    const { requests, errors } = await prepare(page)
+    await page.evaluate(() => {
+      ;(window as any).openedUsageLinks = []
+      window.open = ((...args: unknown[]) => { (window as any).openedUsageLinks.push(args); return null }) as typeof window.open
+    })
+    await waitRequests(requests, 1); await fulfill(requests[0], 10)
+    await page.getByRole("progressbar").waitFor()
+    await page.evaluate(() => (window as any).usageFixture.event("provider.updated"))
+    await waitRequests(requests, 2)
+    const failed = { requestedProviderId: "openai", providerId: "codex", providerName: "Codex", supported: true,
+      configured: true, ok: false, fetchedAt: Date.now(), windows: {} }
+    await requests[1].fulfill({ json: { ...failed, unavailableReason: "openai-token-sharing-unsupported", unavailableAction: "chatgpt-usage" } })
+    const link = page.getByRole("link", { name: "View ChatGPT usage" })
+    await link.waitFor()
+    assert.equal(await page.getByRole("progressbar").count(), 0)
+    assert.equal(await page.getByText("10% used", { exact: true }).count(), 0)
+    assert.equal(await link.getAttribute("href"), "https://chatgpt.com/settings/usage")
+    assert.equal(await link.getAttribute("target"), "_blank")
+    assert.equal(await link.getAttribute("rel"), "noopener noreferrer")
+    await page.keyboard.press("Tab")
+    assert.equal(await link.evaluate(el => document.activeElement === el), true)
+    assert.notEqual(await link.evaluate(el => getComputedStyle(el).outlineStyle), "none")
+    await page.keyboard.press("Enter")
+    assert.deepEqual(await page.evaluate(() => (window as any).openedUsageLinks), [["https://chatgpt.com/settings/usage", "_blank", "noopener,noreferrer"]])
+    await page.evaluate(() => (window as any).usageFixture.event("provider.updated"))
+    await waitRequests(requests, 3)
+    await requests[2].fulfill({ json: { ...failed, unavailableReason: "provider-error", providerErrorCode: "1001", unavailableAction: "chatgpt-usage" } })
+    await page.getByRole("status").getByText("Provider error (1001).", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("link").count(), 0, "a different reason cannot inherit an unrelated action")
+    assert.equal(await page.getByRole("progressbar").count(), 0)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

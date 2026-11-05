@@ -263,6 +263,8 @@ export const settingsMessages = {
   "providerUsage.unsupported": "Für diesen Anbieter sind keine Nutzungsdaten verfügbar.",
   "providerUsage.notConfigured": "Keine kompatiblen Abonnement-Zugangsdaten gefunden.",
   "providerUsage.unavailable": "Nutzungsdaten sind vorübergehend nicht verfügbar.",
+  "providerUsage.providerErrorCode": "Anbieterfehler ({code}).",
+  "providerUsage.viewChatGPTUsage": "ChatGPT-Nutzung anzeigen",
   "providerUsage.unavailableValue": "--",
   "providerUsage.usedPercent": "{percent} % verwendet",
   "providerUsage.resets": "Zurücksetzung {time}",

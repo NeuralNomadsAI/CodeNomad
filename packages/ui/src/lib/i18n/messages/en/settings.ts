@@ -263,6 +263,8 @@ export const settingsMessages = {
   "providerUsage.unsupported": "Usage is not available for this provider.",
   "providerUsage.notConfigured": "No compatible subscription credential was found.",
   "providerUsage.unavailable": "Usage is temporarily unavailable.",
+  "providerUsage.providerErrorCode": "Provider error ({code}).",
+  "providerUsage.viewChatGPTUsage": "View ChatGPT usage",
   "providerUsage.openaiTokenSharingUnsupported": "OpenAI does not provide usage for this ChatGPT sign-in method. You can still chat.",
   "providerUsage.unavailableValue": "--",
   "providerUsage.usedPercent": "{percent}% used",

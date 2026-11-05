@@ -263,6 +263,8 @@ export const settingsMessages = {
   "providerUsage.unsupported": "यो प्रदायकका लागि प्रयोग विवरण उपलब्ध छैन।",
   "providerUsage.notConfigured": "मिल्दो सदस्यता प्रमाण फेला परेन।",
   "providerUsage.unavailable": "प्रयोग विवरण अस्थायी रूपमा उपलब्ध छैन।",
+  "providerUsage.providerErrorCode": "प्रदायक त्रुटि ({code})।",
+  "providerUsage.viewChatGPTUsage": "ChatGPT को प्रयोग हेर्नुहोस्",
   "providerUsage.unavailableValue": "--",
   "providerUsage.usedPercent": "{percent}% प्रयोग भयो",
   "providerUsage.resets": "रिसेट {time}",

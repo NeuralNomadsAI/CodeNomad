@@ -5,7 +5,7 @@ import path from "node:path"
 import test from "node:test"
 
 import { clearProviderUsageCache, getProviderUsage, resolveUsageProvider, selectModelWindows } from "./service"
-import type { ProviderResult } from "./types"
+import type { ProviderReadContext, ProviderResult } from "./types"
 
 const providerIds = [
   "codex",
@@ -288,4 +288,78 @@ test("deduplicates simultaneous canonical and alias provider requests", async ()
     clearProviderUsageCache()
     globalThis.fetch = previousFetch
   }
+})
+
+test("effective native settings fence snapshots while signals stay outside cache identity", async () => {
+  const provider = resolveUsageProvider("openrouter")!
+  const original = provider.fetchQuota
+  const contexts: Array<ProviderReadContext | undefined> = []
+  provider.fetchQuota = async (_auth, context) => {
+    contexts.push(context)
+    return { providerId: provider.id, providerName: provider.name, configured: true, ok: true, fetchedAt: 1,
+      usage: { windows: { credits: { usedPercent: null, remainingPercent: null, resetAt: null, windowSeconds: null, valueLabel: String(contexts.length) } } } }
+  }
+  clearProviderUsageCache()
+  try {
+    const context: ProviderReadContext = { signal: new AbortController().signal, settingsStatus: "available",
+      settings: { baseURL: "https://quota.example/v1", apiKey: "synthetic-setting" } }
+    const read = (context?: ProviderReadContext) => getProviderUsage("openrouter", { auth: { openrouter: { key: "synthetic-stored" } }, context })
+    assert.equal((await read(context)).windows.credits.valueLabel, "1")
+    assert.equal(contexts[0], context)
+    assert.equal((await read({ ...context, signal: new AbortController().signal })).windows.credits.valueLabel, "1")
+    assert.equal((await read({ ...context, settings: { ...context.settings, baseURL: "https://other.example/prefix" } })).windows.credits.valueLabel, "2")
+    assert.equal((await read({ ...context, settings: { ...context.settings, apiKey: "synthetic-other" } })).windows.credits.valueLabel, "3")
+    assert.equal((await read({ ...context, settingsStatus: "unresolved", settings: {} })).windows.credits.valueLabel, "4")
+    const aborted = new AbortController(); aborted.abort()
+    await assert.rejects(read({ ...context, signal: aborted.signal }))
+    assert.equal(contexts.length, 4)
+    assert.equal(JSON.stringify(await read(context)).includes("synthetic"), false)
+  } finally { provider.fetchQuota = original; clearProviderUsageCache() }
+})
+
+test("only enumerated public reasons, bounded numeric codes and associated fixed actions leave a reader", async () => {
+  const provider = resolveUsageProvider("openrouter")!
+  const original = provider.fetchQuota
+  const base: ProviderResult = { providerId: provider.id, providerName: provider.name, configured: true, ok: false,
+    fetchedAt: 1, error: "secret-token upstream body", status: 401,
+    usage: { windows: { stale: { usedPercent: 99, remainingPercent: 1, windowSeconds: null, resetAt: null } } } }
+  const read = async (extra: Partial<ProviderResult>) => {
+    clearProviderUsageCache()
+    provider.fetchQuota = async () => ({ ...base, ...extra })
+    const response = await getProviderUsage("openrouter")
+    assert.deepEqual(response.windows, {})
+    assert.equal(JSON.stringify(response).includes("secret"), false)
+    assert.equal("error" in response || "status" in response, false)
+    return response
+  }
+  try {
+    const valid = await read({ unavailableReason: "provider-error", providerErrorCode: "1001", unavailableAction: "chatgpt-usage" })
+    assert.equal(valid.unavailableReason, "provider-error")
+    assert.equal(valid.providerErrorCode, "1001")
+    assert.equal(valid.unavailableAction, undefined)
+    for (const code of ["secret-token", "1001\n", "123456789", "<script>"]) {
+      assert.equal((await read({ unavailableReason: "provider-error", providerErrorCode: code })).providerErrorCode, undefined)
+    }
+    assert.equal((await read({ unavailableReason: "secret-token" as never })).unavailableReason, undefined)
+    const linked = await read({ unavailableReason: "openai-token-sharing-unsupported", unavailableAction: "chatgpt-usage" })
+    assert.equal(linked.unavailableAction, "chatgpt-usage")
+    assert.equal((await read({ unavailableAction: "chatgpt-usage" })).unavailableAction, undefined)
+  } finally { provider.fetchQuota = original; clearProviderUsageCache() }
+})
+
+test("cancellation during a reader prevents publication and warming its cache", async () => {
+  const provider = resolveUsageProvider("openrouter")!
+  const original = provider.fetchQuota
+  const controller = new AbortController()
+  let calls = 0
+  provider.fetchQuota = async () => {
+    if (++calls === 1) controller.abort()
+    return { providerId: provider.id, providerName: provider.name, ok: true, configured: true, usage: null, fetchedAt: 1 }
+  }
+  clearProviderUsageCache()
+  try {
+    await assert.rejects(getProviderUsage("openrouter", { context: { signal: controller.signal } }))
+    assert.equal((await getProviderUsage("openrouter")).ok, true)
+    assert.equal(calls, 2)
+  } finally { provider.fetchQuota = original; clearProviderUsageCache() }
 })

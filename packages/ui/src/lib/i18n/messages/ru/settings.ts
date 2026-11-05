@@ -263,6 +263,8 @@ export const settingsMessages = {
   "providerUsage.unsupported": "Данные об использовании недоступны для этого провайдера.",
   "providerUsage.notConfigured": "Совместимые данные подписки не найдены.",
   "providerUsage.unavailable": "Данные об использовании временно недоступны.",
+  "providerUsage.providerErrorCode": "Ошибка провайдера ({code}).",
+  "providerUsage.viewChatGPTUsage": "Посмотреть использование ChatGPT",
   "providerUsage.unavailableValue": "--",
   "providerUsage.usedPercent": "Использовано {percent}%",
   "providerUsage.resets": "Сброс {time}",

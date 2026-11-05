@@ -3,6 +3,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, type Comp
 import type { ProviderUsageResponse, ProviderUsageWindow } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
+import { openExternalUrl } from "../../lib/external-url"
 import { useConfig } from "../../stores/preferences"
 import { serverEvents } from "../../lib/server-events"
 import { createProviderUsageState, providerUsageKey, shouldShowProviderUsageWindow, type ProviderUsageSource } from "./provider-usage-state"
@@ -19,7 +20,7 @@ interface ProviderUsagePanelProps {
 const REFRESH_INTERVAL_MS = 60_000
 
 const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const { preferences } = useConfig()
   const source = createMemo<ProviderUsageSource | null>(() => {
     if (!props.active) return null
@@ -79,6 +80,17 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   const displayedLabels = createMemo(() =>
     entries().map(([label]) => label).filter(label => shouldShowProviderUsageWindow(label, preferences().showProviderUsageCreditBalance)),
   )
+  const unavailableMessage = createMemo(() => {
+    const data = usage()
+    if (data?.unavailableReason === "openai-token-sharing-unsupported") return t("providerUsage.openaiTokenSharingUnsupported")
+    if (data?.unavailableReason === "provider-error") return data.providerErrorCode && /^\d{1,8}$/.test(data.providerErrorCode) && data.providerErrorCode.trim() === data.providerErrorCode
+      ? t("providerUsage.providerErrorCode", { code: data.providerErrorCode }) : t("providerUsage.unavailable")
+    return null
+  })
+  // Destinations and labels belong to the UI, never to upstream response text.
+  const unavailableLink = createMemo(() => usage()?.unavailableReason === "openai-token-sharing-unsupported"
+    && usage()?.unavailableAction === "chatgpt-usage"
+    ? { href: "https://chatgpt.com/settings/usage", label: t("providerUsage.viewChatGPTUsage") } : null)
 
   const windowLabel = (label: string): string => {
     // Model-scoped limits arrive as `window:Model`, e.g. `7d:Opus`.
@@ -107,14 +119,14 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   const displayValue = (window: ProviderUsageWindow) => {
     if (window.valueLabel) return window.valueLabel
     if (window.usedPercent === null) return t("providerUsage.unavailableValue")
-    return t("providerUsage.usedPercent", { percent: Math.round(window.usedPercent) })
+    return t("providerUsage.usedPercent", { percent: new Intl.NumberFormat(locale()).format(Math.round(window.usedPercent)) })
   }
 
   const resetLabel = (resetAt: number | null) => {
     if (!resetAt) return null
     const date = new Date(resetAt)
     if (!Number.isFinite(date.getTime())) return null
-    return t(usage()?.estimated ? "providerUsage.estimatedReset" : "providerUsage.resets", { time: date.toLocaleString([], { dateStyle: "short", timeStyle: "short" }) })
+    return t(usage()?.estimated ? "providerUsage.estimatedReset" : "providerUsage.resets", { time: date.toLocaleString(locale(), { dateStyle: "short", timeStyle: "short" }) })
   }
 
   const barColor = (percent: number | null) => {
@@ -129,19 +141,26 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
         <Show when={usage()} fallback={<div class="right-panel-empty-text">{t("providerUsage.unavailable")}</div>}>
           {(data) => (
             <Show
-              when={data().supported && data().configured && data().ok && entries().length > 0}
+              when={data().supported && data().configured && data().ok && !unavailableMessage() && entries().length > 0}
               fallback={
-                <div class="right-panel-empty-text">
+                <Show when={unavailableMessage()} fallback={<div class="right-panel-empty-text">
                   {t(
                     !data().supported
                       ? "providerUsage.unsupported"
                       : !data().configured
                         ? "providerUsage.notConfigured"
-                        : data().unavailableReason === "openai-token-sharing-unsupported"
-                          ? "providerUsage.openaiTokenSharingUnsupported"
-                          : "providerUsage.unavailable",
+                        : "providerUsage.unavailable",
                   )}
-                </div>
+                </div>}>
+                  {message => <div role="status" class="space-y-2 border border-base bg-surface-inset p-2 text-xs text-primary">
+                    <div>{message()}</div>
+                    <Show when={unavailableLink()}>{link => <a href={link().href} target="_blank" rel="noopener noreferrer"
+                      class="text-accent underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-primary)]"
+                      onClick={event => { event.preventDefault(); void openExternalUrl(link().href, "provider-usage") }}>
+                      {link().label}
+                    </a>}</Show>
+                  </div>}
+                </Show>
               }
             >
               <div class="space-y-2">

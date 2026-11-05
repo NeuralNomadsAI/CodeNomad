@@ -256,6 +256,8 @@ export const settingsMessages = {
   "providerUsage.unsupported": "Bu provider için kullanım bilgisi mevcut değil.",
   "providerUsage.notConfigured": "Uyumlu abonelik kimlik bilgisi bulunamadı.",
   "providerUsage.unavailable": "Kullanım bilgisi geçici olarak kullanılamıyor.",
+  "providerUsage.providerErrorCode": "Sağlayıcı hatası ({code}).",
+  "providerUsage.viewChatGPTUsage": "ChatGPT kullanımını görüntüle",
   "providerUsage.unavailableValue": "--",
   "providerUsage.usedPercent": "%{percent} kullanıldı",
   "providerUsage.resets": "Sıfırlanma: {time}",

@@ -115,7 +115,8 @@ export function resolveWindowLabel(windowSeconds: number | null): string {
 export function result(
   providerId: string,
   providerName: string,
-  input: { ok: boolean; configured: boolean; usage?: ProviderUsage; error?: string; status?: number },
+  input: { ok: boolean; configured: boolean; usage?: ProviderUsage; error?: string; status?: number }
+    & Pick<ProviderResult, "unavailableReason" | "providerErrorCode" | "unavailableAction">,
 ): ProviderResult {
   return {
     providerId,
@@ -126,6 +127,9 @@ export function result(
     fetchedAt: Date.now(),
     ...(input.error ? { error: input.error } : {}),
     ...(input.status !== undefined ? { status: input.status } : {}),
+    ...(input.unavailableReason ? { unavailableReason: input.unavailableReason } : {}),
+    ...(input.providerErrorCode ? { providerErrorCode: input.providerErrorCode } : {}),
+    ...(input.unavailableAction ? { unavailableAction: input.unavailableAction } : {}),
   }
 }
 

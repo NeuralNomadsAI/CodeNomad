@@ -263,6 +263,8 @@ export const settingsMessages = {
   "providerUsage.unsupported": "El uso no está disponible para este proveedor.",
   "providerUsage.notConfigured": "No se encontraron credenciales de suscripción compatibles.",
   "providerUsage.unavailable": "El uso no está disponible temporalmente.",
+  "providerUsage.providerErrorCode": "Error del proveedor ({code}).",
+  "providerUsage.viewChatGPTUsage": "Ver uso de ChatGPT",
   "providerUsage.unavailableValue": "--",
   "providerUsage.usedPercent": "{percent} % usado",
   "providerUsage.resets": "Se restablece {time}",

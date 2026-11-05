@@ -263,6 +263,8 @@ export const settingsMessages = {
   "providerUsage.unsupported": "このプロバイダーの使用量は利用できません。",
   "providerUsage.notConfigured": "対応するサブスクリプション認証情報が見つかりません。",
   "providerUsage.unavailable": "使用量は一時的に利用できません。",
+  "providerUsage.providerErrorCode": "プロバイダーエラー（{code}）。",
+  "providerUsage.viewChatGPTUsage": "ChatGPT の使用状況を確認",
   "providerUsage.unavailableValue": "--",
   "providerUsage.usedPercent": "{percent}% 使用",
   "providerUsage.resets": "リセット {time}",

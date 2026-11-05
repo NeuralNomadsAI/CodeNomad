@@ -263,6 +263,8 @@ export const settingsMessages = {
   "providerUsage.unsupported": "נתוני שימוש אינם זמינים לספק זה.",
   "providerUsage.notConfigured": "לא נמצאו פרטי מנוי תואמים.",
   "providerUsage.unavailable": "נתוני השימוש אינם זמינים כרגע.",
+  "providerUsage.providerErrorCode": "שגיאת ספק ({code}).",
+  "providerUsage.viewChatGPTUsage": "הצגת השימוש ב-ChatGPT",
   "providerUsage.unavailableValue": "--",
   "providerUsage.usedPercent": "{percent}% בשימוש",
   "providerUsage.resets": "איפוס {time}",

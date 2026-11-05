@@ -7,14 +7,16 @@ import Fastify from "fastify"
 import { OpenCode } from "@opencode/client"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
 import { registerUsageRoutes, type UsageRouteDeps } from "./usage"
-import { clearProviderUsageCache } from "../../usage/service"
+import { clearProviderUsageCache, resolveUsageProvider } from "../../usage/service"
+import type { ProviderReadContext } from "../../usage/types"
 
 function harness() {
   const expires = Date.now() + 3600000
   const state = { nativeCalls: [] as string[], quotaCalls: 0, directory: "/wsl/repo", switched: false, oldEndpoint: false, fail: false,
     stale: false, statsMissing: false, freeSteps: 42, statsQuery: undefined as URLSearchParams | undefined, statsGate: undefined as (() => Promise<void>) | undefined,
     daemonEnvironment: { HOME: "/home/dev" } as Record<string, string>, hostFiles: new Map<string, { path: string }>(),
-    integrations: {} as Record<string, string> }
+    integrations: {} as Record<string, string>, settings: {} as Record<string, unknown>, providerMissing: false,
+    providerDirectory: undefined as string | undefined, providerQuery: undefined as URLSearchParams | undefined }
   const logs: string[] = []
   const app = Fastify({ logger: { stream: { write: (text: string) => { logs.push(text) } } } })
   const workspace = {} as NonNullable<ReturnType<UsageRouteDeps["workspaceManager"]["get"]>>
@@ -37,9 +39,12 @@ function harness() {
     if (url.pathname === "/api/session/missing") return Response.json({ _tag: "SessionNotFoundError", sessionID: "missing" }, { status: 404 })
     if (url.pathname.startsWith("/api/session/")) return Response.json({ data: { id: "session", location: { directory: state.directory } } })
     if (url.pathname.startsWith("/api/provider/")) {
+      state.providerQuery = url.searchParams
+      if (state.providerMissing) return Response.json({}, { status: 404 })
       const id = decodeURIComponent(url.pathname.split("/")[3])
-      return Response.json({ location: { directory: state.directory }, data: {
+      return Response.json({ location: { directory: state.providerDirectory ?? state.directory }, data: {
         id, name: id, activation: "auto", package: id, ...(state.integrations[id] ? { integrationID: state.integrations[id] } : {}),
+        settings: state.settings,
       } })
     }
     if (url.pathname === "/api/integration/openai") return Response.json({ location: { directory: state.directory }, data: {
@@ -224,6 +229,51 @@ test("other providers use the daemon's selected native credential, never returni
     assert.equal(response.json().windows.credits_balance.valueLabel, "$4.00")
     assert.equal([response.body, ...logs].join("").includes("secret-"), false)
   } finally { globalThis.fetch = previousFetch; await app.close() }
+})
+
+test("usage readers receive only native effective settings from the authorized session Location", async () => {
+  const { app, state, logs } = harness()
+  const provider = resolveUsageProvider("deepinfra")!
+  const original = provider.fetchQuota
+  const contexts: Array<ProviderReadContext | undefined> = []
+  provider.fetchQuota = async (auth, context) => {
+    assert.equal((auth.deepinfra as { key: string }).key, "secret-deepinfra")
+    contexts.push(context)
+    return { providerId: provider.id, providerName: provider.name, ok: false, configured: true, usage: null, fetchedAt: 1 }
+  }
+  const read = () => app.inject(url.replace("/usage/openai", "/usage/deepinfra"))
+  clearProviderUsageCache()
+  try {
+    state.directory = "/foreign"
+    assert.equal((await read()).statusCode, 403)
+    assert.equal(Boolean(state.providerQuery), false)
+    state.directory = "/wsl/repo"
+    state.settings = { baseURL: "https://quota.example/v1", apiKey: "secret-effective-key", headers: { Authorization: "secret-header" } }
+    const resolved = await read()
+    assert.equal(resolved.statusCode, 200)
+    assert.deepEqual(contexts[0]?.settings, { baseURL: "https://quota.example/v1", apiKey: "secret-effective-key" })
+    assert.equal(contexts[0]?.settingsStatus, "available")
+    assert.ok(contexts[0]?.signal instanceof AbortSignal)
+    assert.equal(contexts[0]?.signal?.aborted, false)
+    assert.equal(state.providerQuery?.get("location[directory]"), "/wsl/repo")
+    state.settings.apiKey = "{env:SYNTHETIC_NOT_RESOLVED}"
+    const unresolved = await read()
+    assert.deepEqual(contexts[1]?.settings, { baseURL: "https://quota.example/v1" })
+    assert.equal(contexts[1]?.settingsStatus, "unresolved")
+    state.settings = { baseURL: "{file:./endpoint}", apiKey: "{file:./key}" }
+    await read()
+    assert.deepEqual(contexts[2]?.settings, {})
+    state.providerMissing = true
+    const missing = await read()
+    assert.equal(missing.statusCode, 200)
+    assert.equal(contexts[3]?.settingsStatus, "unavailable")
+    assert.equal(contexts[3]?.settings, undefined)
+    state.providerMissing = false; state.providerDirectory = "/foreign"
+    clearProviderUsageCache()
+    await read()
+    assert.equal(contexts[4]?.settingsStatus, "unavailable")
+    assert.equal([resolved.body, unresolved.body, missing.body, ...logs].join("").includes("secret-"), false)
+  } finally { provider.fetchQuota = original; clearProviderUsageCache(); await app.close() }
 })
 
 test("OpenCode Go reads the session provider's own native login, without env cookies", async () => {

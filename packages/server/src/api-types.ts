@@ -208,6 +208,9 @@ export interface ProviderUsageWindow {
   valueLabel?: string
 }
 
+export type ProviderUsageUnavailableReason = "openai-token-sharing-unsupported" | "provider-error"
+export type ProviderUsageUnavailableAction = "chatgpt-usage"
+
 export interface ProviderUsageResponse {
   requestedProviderId: string
   providerId: string | null
@@ -218,7 +221,11 @@ export interface ProviderUsageResponse {
   ok: boolean
   windows: Record<string, ProviderUsageWindow>
   fetchedAt: number
-  unavailableReason?: "openai-token-sharing-unsupported"
+  unavailableReason?: ProviderUsageUnavailableReason
+  /** Public numeric business code, at most eight digits; never an upstream message. */
+  providerErrorCode?: string
+  /** UI-owned fixed destination, admitted only for its associated reason. */
+  unavailableAction?: ProviderUsageUnavailableAction
   /** Computed locally from recorded activity because the provider publishes no counter. */
   estimated?: true
 }
