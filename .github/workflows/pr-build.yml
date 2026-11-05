@@ -816,7 +816,7 @@ jobs:
           minimum=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$plist")
           test "$minimum" = '14.0'
           executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")
-          lipo -verify_arch "$EXPECTED_ARCH" "${apps[0]}/Contents/MacOS/$executable"
+          lipo "${apps[0]}/Contents/MacOS/$executable" -verify_arch "$EXPECTED_ARCH"
           echo "Verified $EXPECTED_ARCH bundle: LSMinimumSystemVersion=$minimum" >> "$GITHUB_STEP_SUMMARY"
       - name: Bundle unsigned Linux AppImage
         if: runner.os == 'Linux'
