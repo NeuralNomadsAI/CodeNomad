@@ -29,7 +29,7 @@ La inicialización se acepta solo desde el listener loopback del propio anfitri�
 
 ## Sesiones de navegador y revocación {#sessions}
 
-El inicio de sesión directo crea una sesión opaca en memoria del backend y una cookie `codenomad_session` (o el nombre de cookie configurado). Las cookies son `HttpOnly`, `SameSite=Lax`, tienen ámbito `/` y se marcan `Secure` al emitirse por HTTPS. Son cookies de sesión del navegador; reiniciar el backend invalida las sesiones en memoria. Vuelve a autenticarte sin abandonar la vista cuando se solicite, en lugar de reenviar modificaciones fallidas.
+El inicio de sesión directo crea una sesión opaca en memoria del backend y una cookie `codenomad_session` (o el nombre de cookie configurado). Las cookies son `HttpOnly`, `SameSite=Lax`, tienen ámbito `/` y se marcan `Secure` al emitirse por HTTPS. Un inicio de sesión dura siete días, también tras reiniciar el navegador o la aplicación de escritorio; cerrar sesión lo termina en el backend, y reiniciar el backend invalida todas las sesiones directas. Vuelve a autenticarte sin abandonar la vista cuando se solicite, en lugar de reenviar modificaciones fallidas.
 
 Cambiar una contraseña cambia las comprobaciones de credenciales posteriores; **no** invalida las sesiones directas ya emitidas ni los dispositivos de Control remoto. Si sospechas una intrusión:
 

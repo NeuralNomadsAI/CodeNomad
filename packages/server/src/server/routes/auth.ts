@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify"
 import fs from "fs"
 import { z } from "zod"
-import type { AuthManager } from "../../auth/manager"
+import { PASSWORD_SESSION_TTL_MS, type AuthManager } from "../../auth/manager"
 import { isRemoteRequest } from "../../remote-control/request-origin"
 
 interface RouteDeps {
@@ -105,7 +105,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
       return
     }
 
-    const session = deps.authManager.createSession(body.username)
+    // A password login survives browser and desktop restarts for a bounded time.
+    const session = deps.authManager.createSession(body.username, { ttlMs: PASSWORD_SESSION_TTL_MS })
     deps.authManager.setSessionCookieWithOptions(reply, session.id, { secure: isSecureRequest(request) })
     reply.send({ ok: true })
   })
@@ -135,6 +136,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
   })
 
   app.post("/api/auth/logout", async (request, reply) => {
+    deps.authManager.revokeSessionFromRequest(request)
     deps.authManager.clearSessionCookieWithOptions(reply, { secure: isSecureRequest(request) })
     reply.send({ ok: true })
   })

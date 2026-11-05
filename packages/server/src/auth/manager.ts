@@ -4,6 +4,7 @@ import type { Logger } from "../logger"
 import { AuthStore } from "./auth-store"
 import { TokenManager } from "./token-manager"
 import { SessionManager } from "./session-manager"
+export { PASSWORD_SESSION_TTL_MS } from "./session-manager"
 import { parseCookies } from "./http-auth"
 import { isLocalRequest, isRemoteRequest, remoteDeviceOf } from "../remote-control/request-origin"
 
@@ -79,11 +80,19 @@ export class AuthManager {
     return this.requireAuthStore().validateCredentials(username, password)
   }
 
-  createSession(username: string) {
+  /** `ttlMs` makes the session (and its cookie) expire; without it, it ends with the server. */
+  createSession(username: string, options: { ttlMs?: number } = {}) {
     if (!this.authEnabled) {
       return { id: "auth-disabled", createdAt: Date.now(), username: this.init.username }
     }
-    return this.sessionManager.createSession(username)
+    return this.sessionManager.createSession(username, options)
+  }
+
+  /** Logout ends the server-side session too, not only the browser's cookie. */
+  revokeSessionFromRequest(request: FastifyRequest): void {
+    if (!this.authEnabled || isRemoteRequest(request)) return
+    const cookieHeader = Array.isArray(request.headers.cookie) ? request.headers.cookie.join("; ") : request.headers.cookie
+    this.sessionManager.revokeSession(parseCookies(cookieHeader)[this.cookieName])
   }
 
   getStatus() {
@@ -133,8 +142,10 @@ export class AuthManager {
     reply.header("Set-Cookie", buildSessionCookie(this.cookieName, sessionId))
   }
 
+  /** An expiring session's cookie lasts exactly as long as the session. */
   setSessionCookieWithOptions(reply: FastifyReply, sessionId: string, options?: { secure?: boolean }) {
-    reply.header("Set-Cookie", buildSessionCookie(this.cookieName, sessionId, options))
+    const maxAgeSeconds = this.authEnabled ? this.sessionManager.remainingSeconds(sessionId) : undefined
+    reply.header("Set-Cookie", buildSessionCookie(this.cookieName, sessionId, { ...options, maxAgeSeconds }))
   }
 
   clearSessionCookie(reply: FastifyReply) {

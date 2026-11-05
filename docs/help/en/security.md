@@ -29,7 +29,7 @@ Bootstrap is accepted only from the host's own loopback listener, not from a LAN
 
 ## Browser sessions and revocation {#sessions}
 
-Direct sign-in creates an opaque in-memory backend session and a `codenomad_session` cookie (or the configured cookie name). Cookies are `HttpOnly`, `SameSite=Lax`, scoped to `/`, and marked `Secure` when issued over HTTPS. They are browser-session cookies; backend restart invalidates the in-memory sessions. Reauthenticate in place when asked rather than resending failed mutations.
+Direct sign-in creates an opaque in-memory backend session and a `codenomad_session` cookie (or the configured cookie name). Cookies are `HttpOnly`, `SameSite=Lax`, scoped to `/`, and marked `Secure` when issued over HTTPS. A sign-in lasts seven days, also across browser and desktop restarts; signing out ends it on the backend, and a backend restart invalidates every direct session. Reauthenticate in place when asked rather than resending failed mutations.
 
 Changing a password changes subsequent credential checks; it does **not** invalidate already issued direct sessions or Remote Control devices. For suspected compromise:
 
