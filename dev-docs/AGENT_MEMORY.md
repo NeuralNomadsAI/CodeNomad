@@ -65,8 +65,9 @@ choose `{ kind: "save", entry, result }`, `{ kind: "delete", id, result }` or
 and preservation of entry identity/provenance. Its decision and the resulting
 commit share one repository-wide interprocess lock. `list` and `read` use the
 same lock for existing storage; pristine empty reads leave the filesystem
-unchanged. `read` resolves an exact ID first, then an exact title. Session-facing
-consumers apply the safety projection to every returned entry.
+unchanged. `read` resolves an exact ID first, then an exact title among safe entries.
+`list` and `read` expose the agent-safe projection. `listForUI` returns every
+entry with a freshly computed `flagged` boolean for human review.
 
 Writes fsync a uniquely named temporary in the destination directory, then
 rename over the target. A failed replacement preserves the target and removes
@@ -95,6 +96,43 @@ fsmonitor and content filters are bypassed. Per-transaction indexes and Git
 plumbing write exact bytes, commit and compare-and-swap the local branch;
 the ordinary index is published after the commit. Unrecoverable Git metadata
 or filesystem errors leave memory unavailable until the storage is repaired.
+
+## Duplicate, capacity and safety rules
+
+`memory/rules.ts` applies duplicate and capacity decisions inside the store's
+locked mutation callback. `MemoryStore.save(namespace, content, sessionId,
+enabled, id?)` checks the current enablement through the supplied synchronous
+callback under that same lock. Successful saves return only `{ id, flagged }`
+after the local commit. The lower-level `mutate` callback remains available to
+owned policy consumers; it receives all stored entries, including flagged ones.
+
+Titles compare after Unicode NFKC normalization, lowercasing, trimming and
+whitespace collapsing. Exact title matches take priority. Otherwise distinct
+significant text words use Jaccard similarity at a threshold of 0.75, requiring
+at least four words on each side. `Intl.Segmenter` performs word segmentation
+with a fixed `en` locale; its Unicode segmentation covers mixed-language text.
+Stopwords from all ten UI languages apply together. Tokens must contain a Unicode
+letter, excluding numbers while preserving names such as `node22`. The highest score wins; ties
+resolve by ascending portable entry ID. Each save replaces at most one entry,
+preserving its ID and creation time while updating content, time and session.
+
+Explicit-ID edits preserve the selected entry and report `conflict` when
+duplicate selection resolves to another entry. New entries at the exact 60/200 limits
+produce `full`, with titles and a merge-or-delete instruction. Replacements
+remain available at capacity. Flagged entries count toward capacity; the safe
+save API includes only safe titles in its capacity diagnostics. Human clients
+can inspect all titles through `listForUI`.
+
+`memory/language-data.ts` contains stopwords and suspicious override,
+safety-bypass and credential-exfiltration patterns for en, fr, de, es, he, ja,
+ne, ru, tr and zh-Hans, plus role-spoofing markers. Both title and text are
+checked after NFKC/case normalization and removal of invisible format controls.
+Every read recomputes the flag from current file contents, so external edits
+take effect immediately. Agent reads omit flagged entries entirely; human
+review retains their content. Patterns are conservative heuristics: consumers
+must continue treating all memory as untrusted data. Reference entries are
+stored, compared and reviewed as literal text. Never resolve their URLs or
+filesystem targets.
 
 ## Optional native instructions capability
 

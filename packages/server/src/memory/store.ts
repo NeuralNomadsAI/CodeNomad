@@ -5,6 +5,7 @@ import { isMap, parseDocument, stringify } from "yaml"
 import { MemoryError, validateMemoryEntry, type MemoryEntry } from "./model"
 import { MemoryGit } from "./git"
 import { lockMemoryRepository } from "./lock"
+import { decideMemorySave, memoryForAgent, reviewMemoryEntry, type MemoryReviewEntry } from "./rules"
 
 export type MemoryNamespace = { scope: "global" } | { scope: "project"; projectId: string }
 export type MemoryMutation<T> = { kind: "save"; entry: MemoryEntry; result: T }
@@ -83,6 +84,14 @@ export class MemoryStore {
   }
 
   async list(namespace: MemoryNamespace): Promise<MemoryEntry[]> {
+    return memoryForAgent(await this.listStored(namespace))
+  }
+
+  async listForUI(namespace: MemoryNamespace): Promise<MemoryReviewEntry[]> {
+    return (await this.listStored(namespace)).map(reviewMemoryEntry)
+  }
+
+  private async listStored(namespace: MemoryNamespace): Promise<MemoryEntry[]> {
     this.scopePath(namespace)
     // The config directory and repository stay absent for a pristine empty read.
     if (!await regularDirectory(this.configBaseDir)) return []
@@ -93,6 +102,19 @@ export class MemoryStore {
   async read(namespace: MemoryNamespace, idOrTitle: string): Promise<MemoryEntry | undefined> {
     const entries = await this.list(namespace)
     return entries.find(entry => entry.id === idOrTitle) ?? entries.find(entry => entry.title === idOrTitle)
+  }
+
+  async save(namespace: MemoryNamespace, content: unknown, sessionId: string, enabled: () => boolean, id?: string): Promise<{ id: string; flagged: boolean }> {
+    const saved = await this.mutate(namespace, entries => {
+      if (!enabled()) throw new MemoryError("disabled", "Memory is disabled")
+      try { return decideMemorySave(namespace.scope, entries, content, sessionId, id) }
+      catch (error) {
+        if (error instanceof MemoryError && error.code === "full")
+          throw new MemoryError("full", error.message, memoryForAgent(entries).map(entry => entry.title))
+        throw error
+      }
+    })
+    return { id: saved.id, flagged: reviewMemoryEntry(saved).flagged }
   }
 
   /** Policy decisions (including duplicate replacement/capacity) run inside the repository lock. */
