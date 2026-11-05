@@ -4,7 +4,7 @@ Un onglet de projet relie CodeNomad à un dossier sur l’ordinateur du backend.
 
 ## Ouvrir un projet {#open-project}
 
-1. Cliquez sur **Nouvelle instance** (`+`) pour ouvrir l’accueil.
+1. Cliquez sur **Nouvelle instance** (`+`) pour ouvrir un **Nouvel onglet** vide, avec le focus dans la recherche. **Récents** et **Parcourir** apparaissent côte à côte, empilés dans une fenêtre étroite, avec leur nombre d'éléments. Choisir un projet, un serveur ou un SideCar remplit cet onglet sur place. Un onglet vide se ferme sans laisser de projet et dure jusqu'au rechargement de la fenêtre. Cliquez sur le logo CodeNomad dans la barre de titre ou d'onglets pour ouvrir l'accueil ; son bouton **Sponsor** avec un cœur ouvre [Soutenir CodeNomad](sponsor.md).
 2. Dans **Récents**, choisissez un projet ; ou ouvrez **Parcourir**, choisissez **Cet ordinateur**, puis sélectionnez le dossier du backend et ouvrez-le. **Parcourir** liste aussi les serveurs CodeNomad enregistrés ([onglets de projets distants](remote-access.md#remote-project-tabs)) et les SideCars ([SideCars](browser-sidecars.md#register-sidecar)).
 3. Pour une copie de dépôt, choisissez **Cloner un depot Git**, saisissez **URL du depot** et **Dossier de destination**, puis **Cloner**. **Dossier de destination** est prérempli avec le nom du dépôt, dans le dossier qui contient votre dernier clone, sinon à côté de votre projet le plus récent. **Parcourir** choisit le dossier qui contiendra le clone ; vous pouvez aussi modifier le chemin, y compris le nom du dossier du clone.
 
@@ -19,7 +19,7 @@ Les entrées récentes sont des raccourcis. **Renommer l'espace de travail** cha
 1. Appuyez longuement ou faites un clic droit sur `+` ; lorsque ce bouton a le focus clavier, utilisez **Alt+Down**, **Shift+F10** ou la touche Menu.
 2. Dans **Ouvrir un onglet**, recherchez parmi les **Récents** (projets, projets distants et SideCars), ouvrez **Parcourir**, ou choisissez **Cloner un dépôt Git** ou **Nouvel onglet temporaire**.
 
-Un clic normal ouvre toujours l’accueil complet, qui propose les mêmes choix. Renommez ou retirez-y les onglets récents ; gérez les serveurs dans **Paramètres → Serveurs** et les SideCars dans **Paramètres → SideCars**. Échap ferme le lanceur et rend le focus à `+`.
+Un clic normal ouvre un onglet vide. L'accueil, ouvert depuis le logo CodeNomad, propose les mêmes choix et les compteurs dans **Récents** et **Parcourir**. Renommez ou retirez-y les onglets récents ; gérez les serveurs dans **Paramètres → Serveurs** et les SideCars dans **Paramètres → SideCars**. Échap ferme le lanceur et rend le focus à `+`.
 
 ## Fermer un onglet de projet {#close-stop}
 

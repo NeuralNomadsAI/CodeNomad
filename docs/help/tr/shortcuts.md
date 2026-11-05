@@ -26,7 +26,7 @@ Kaydetme başarısız olursa eski kısayolu kullanılabilir durumda tutun ve gö
 | Eylem | Varsayılan |
 | --- | --- |
 | Komut paletini aç | `Mod+Shift+P` |
-| Yeni örnek / Ana sayfada bir klasöre göz atın | `Mod+N` |
+| Yeni örnek / Boş sekme açın | `Mod+N` |
 | Uygulama sekmesini kapat | `Mod+W` |
 | Önceki / sonraki uygulama sekmesi | `Mod+[` / `Mod+]` |
 | Uygulama sekmesi 1-9 | `Mod+1`'den `Mod+9`'ye kadar |

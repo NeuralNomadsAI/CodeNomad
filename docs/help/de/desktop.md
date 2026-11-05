@@ -2,7 +2,7 @@
 
 ## Fenster, Tabs und gemeinsamer Dienst {#windows-tabs}
 
-1. Verwenden Sie **Neue Instanz**, um einen weiteren Projekt-/Startseiten-Tab im aktuellen Fenster zu öffnen.
+1. Öffnen Sie mit **Neue Instanz** einen leeren Tab im aktuellen Fenster und wählen Sie ein Projekt. Das CodeNomad-Logo öffnet die Startseite.
 2. Verwenden Sie das native **Fenster → Neues Fenster** (`Ctrl+Shift+N` oder `Cmd+Shift+N`) für ein separates Anwendungsfenster.
 3. Aktivieren Sie unter **Einstellungen → Erweitert** die Option **Vorhandenes Fenster beim zweiten Start fokussieren**, wenn ein weiterer Start das zuletzt verwendete Fenster fokussieren statt ein neues öffnen soll.
 

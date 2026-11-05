@@ -4,7 +4,7 @@ Una pestaña de proyecto conecta CodeNomad a una carpeta del equipo del backend.
 
 ## Abrir un proyecto {#open-project}
 
-1. Haz clic en **Nueva instancia** (`+`) para abrir la página de inicio.
+1. Haz clic en **Nueva instancia** (`+`) para abrir una **Nueva pestaña** vacía con el foco en la búsqueda. **Recientes** y **Explorar** aparecen lado a lado, apilados en ventanas estrechas, con sus cantidades de elementos. Elegir un proyecto, servidor o SideCar llena esa pestaña en su posición. Una pestaña vacía se cierra sin dejar un proyecto y dura hasta recargar la ventana. El logotipo CodeNomad de la barra de título o de pestañas abre Inicio; su botón **Patrocinar** con un corazón abre [Apoyar CodeNomad](sponsor.md).
 2. En **Recientes**, elige un proyecto; o abre **Explorar**, elige **Este equipo** y luego selecciona la carpeta del backend y ábrela. **Explorar** también lista los servidores CodeNomad guardados ([pestañas de proyectos remotos](remote-access.md#remote-project-tabs)) y los SideCars ([SideCars](browser-sidecars.md#register-sidecar)).
 3. Para obtener una copia de un repositorio, elige **Clonar repo Git**, introduce la **URL del repositorio** y la **Carpeta de destino** y pulsa **Clonar**. La **Carpeta de destino** se rellena con el nombre del repositorio en la carpeta que contiene tu último clon, o junto a tu proyecto más reciente. **Buscar** elige la carpeta que contendrá el clon; también puedes editar la ruta, incluido el nombre de la carpeta del clon.
 
@@ -19,7 +19,7 @@ Las entradas recientes son accesos directos. **Renombrar workspace** cambia su n
 1. Mantén pulsado `+` o haz clic derecho; con el foco del teclado allí, usa **Alt+Down**, **Shift+F10** o la tecla Menú.
 2. En **Abrir una pestaña**, busca en **Recientes** (proyectos, proyectos remotos y SideCars), abre **Explorar** o elige **Clonar repo Git** o **Nueva pestaña temporal**.
 
-Un clic normal sigue abriendo la página de inicio completa, que ofrece las mismas opciones. Cambia el nombre o quita pestañas recientes allí; gestiona los servidores en **Configuración → Servidores** y los SideCars en **Configuración → SideCars**. Escape cierra el lanzador y devuelve el foco a `+`.
+Un clic normal abre una pestaña vacía. Inicio, desde el logotipo CodeNomad, ofrece las mismas opciones y cantidades en **Recientes** y **Explorar**. Cambia el nombre o quita pestañas recientes allí; gestiona los servidores en **Configuración → Servidores** y los SideCars en **Configuración → SideCars**. Escape cierra el lanzador y devuelve el foco a `+`.
 
 ## Cerrar una pestaña de proyecto {#close-stop}
 

@@ -26,7 +26,7 @@ Schlägt Speichern fehl, behalten Sie das alte Kürzel verfügbar und prüfen Si
 | Aktion | Standard |
 | --- | --- |
 | Befehlspalette öffnen | `Mod+Shift+P` |
-| Neue Instanz / Ordner auf der Startseite durchsuchen | `Mod+N` |
+| Neue Instanz / Leeren Tab öffnen | `Mod+N` |
 | App-Tab schließen | `Mod+W` |
 | Vorheriger / nächster App-Tab | `Mod+[` / `Mod+]` |
 | App-Tab 1–9 | `Mod+1` bis `Mod+9` |

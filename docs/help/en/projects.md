@@ -4,7 +4,7 @@ A project tab connects CodeNomad to a folder on the backend computer. Opening a 
 
 ## Open a project {#open-project}
 
-1. Click **New instance** (`+`) to open the home page.
+1. Click **New instance** (`+`) to open an empty **New tab**, focused on search. **Recent** and **Browse** appear side by side, stacked in a narrow window, with their item counts. Choosing a project, server or SideCar fills that tab in place. An empty tab closes without leaving a project and lasts only until the window reloads. Click the CodeNomad logo in the title bar or tab bar to open Home; its heart **Sponsor** button opens [Support CodeNomad](sponsor.md).
 2. In **Recent**, choose a project; or open **Browse**, choose **This computer**, then select the backend folder and open it. **Browse** also lists saved CodeNomad servers ([remote project tabs](remote-access.md#remote-project-tabs)) and SideCars ([SideCars](browser-sidecars.md#register-sidecar)).
 3. For a repository copy, choose **Clone Git Repo**, enter **Repository URL** and **Destination folder**, then **Clone**. **Destination folder** is prefilled with the repository name in the folder that holds your last clone, or next to your most recent project. **Browse** chooses the folder that contains the clone; you can also edit the path, including the clone's folder name.
 
@@ -19,7 +19,7 @@ Recent entries are shortcuts. **Rename workspace** changes its displayed name; *
 1. Long-press or right-click `+`; with keyboard focus there, use **Alt+Down**, **Shift+F10** or the Menu key.
 2. In **Open a tab**, search **Recent** (projects, remote projects and SideCars), open **Browse**, or choose **Clone Git Repo** or **New temporary tab**.
 
-A normal click still opens the full home page, which offers the same choices. Rename or remove recent tabs there; manage servers in **Settings → Servers** and SideCars in **Settings → SideCars**. Escape dismisses the launcher and returns focus to `+`.
+A normal click opens an empty tab. Home, opened from the CodeNomad logo, offers the same choices and item counts in **Recent** and **Browse**. Rename or remove recent tabs there; manage servers in **Settings → Servers** and SideCars in **Settings → SideCars**. Escape dismisses the launcher and returns focus to `+`.
 
 ## Close a project tab {#close-stop}
 

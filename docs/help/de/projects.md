@@ -4,7 +4,7 @@ Ein Projekt-Tab verbindet CodeNomad mit einem Ordner auf dem Backend-Rechner. Da
 
 ## Projekt öffnen {#open-project}
 
-1. Klicken Sie auf **Neue Instanz** (`+`), um die Startseite zu öffnen.
+1. Klicken Sie auf **Neue Instanz** (`+`), um einen leeren **Neuer Tab** mit Fokus im Suchfeld zu öffnen. **Zuletzt verwendet** und **Durchsuchen** stehen mit ihrer Eintragszahl nebeneinander, in schmalen Fenstern untereinander. Die Auswahl eines Projekts, Servers oder SideCars füllt diesen Tab an seiner Position. Ein leerer Tab schließt ohne verbleibendes Projekt und besteht bis zum Neuladen des Fensters. Das CodeNomad-Logo in der Titel- oder Tableiste öffnet die Startseite; ihre Herz-Schaltfläche **Sponsor** öffnet [CodeNomad unterstützen](sponsor.md).
 2. Wählen Sie unter **Zuletzt verwendet** ein Projekt; oder öffnen Sie **Durchsuchen**, wählen Sie **Dieser Computer**, dann den Backend-Ordner, und öffnen Sie ihn. **Durchsuchen** listet auch gespeicherte CodeNomad-Server ([Remote-Projekt-Tabs](remote-access.md#remote-project-tabs)) und SideCars ([SideCars](browser-sidecars.md#register-sidecar)) auf.
 3. Für eine Repository-Kopie wählen Sie **Git-Repo klonen**, geben **Repository-URL** und **Zielordner** ein und wählen **Klonen**. **Zielordner** wird mit dem Repository-Namen im Ordner, der Ihren letzten Klon enthält vorbelegt, sonst neben Ihrem zuletzt geöffneten Projekt. **Durchsuchen** wählt den Ordner, der den Klon enthält; Sie können den Pfad auch bearbeiten, einschließlich des Ordnernamens des Klons.
 
@@ -19,7 +19,7 @@ Zuletzt verwendete Einträge sind Verknüpfungen. **Arbeitsbereich umbenennen** 
 1. Halten Sie `+` gedrückt oder klicken Sie mit der rechten Maustaste darauf; bei Tastaturfokus dort verwenden Sie **Alt+Down**, **Shift+F10** oder die Menütaste.
 2. Durchsuchen Sie in **Tab öffnen** die Liste **Zuletzt verwendet** (Projekte, Remote-Projekte und SideCars), öffnen Sie **Durchsuchen**, oder wählen Sie **Git-Repo klonen** oder **Neuer temporärer Tab**.
 
-Ein normaler Klick öffnet weiterhin die vollständige Startseite mit denselben Möglichkeiten. Benennen Sie zuletzt geöffnete Tabs dort um oder entfernen Sie sie; verwalten Sie Server unter **Einstellungen → Server** und SideCars unter **Einstellungen → SideCars**. Escape schließt den Starter und gibt den Fokus an `+` zurück.
+Ein normaler Klick öffnet einen leeren Tab. Die Startseite über das CodeNomad-Logo bietet dieselben Möglichkeiten und Eintragszahlen in **Zuletzt verwendet** und **Durchsuchen**. Benennen Sie zuletzt geöffnete Tabs dort um oder entfernen Sie sie; verwalten Sie Server unter **Einstellungen → Server** und SideCars unter **Einstellungen → SideCars**. Escape schließt den Starter und gibt den Fokus an `+` zurück.
 
 ## Projekt-Tab schließen {#close-stop}
 

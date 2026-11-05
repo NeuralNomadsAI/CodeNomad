@@ -26,7 +26,7 @@ save असफल भए पुरानो shortcut उपलब्ध रा�
 | कार्य | Default |
 | --- | --- |
 | command palette खोल्ने | `Mod+Shift+P` |
-| नयाँ instance / गृह पृष्ठमा फोल्डर browse | `Mod+N` |
+| नयाँ instance / खाली ट्याब खोल्नुहोस् | `Mod+N` |
 | app ट्याब बन्द | `Mod+W` |
 | अघिल्लो / अर्को app ट्याब | `Mod+[` / `Mod+]` |
 | app ट्याब 1–9 | `Mod+1` देखि `Mod+9` |

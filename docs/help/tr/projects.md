@@ -4,7 +4,7 @@ Bir proje sekmesi CodeNomad'i arka uç bilgisayarındaki bir klasöre bağlar. S
 
 ## Bir proje açın {#open-project}
 
-1. Ana sayfayı açmak için **Yeni instance** (`+`) öğesine tıklayın.
+1. Arama alanına odaklanan boş bir **Yeni sekme** açmak için **Yeni instance** (`+`) öğesine tıklayın. **Son kullanılanlar** ve **Gözat**, öğe sayılarıyla yan yana, dar pencerede alt alta görünür. Proje, sunucu veya SideCar seçimi bu sekmeyi yerinde doldurur. Boş sekme proje bırakmadan kapanır ve pencere yeniden yüklenene kadar yaşar. Başlık veya sekme çubuğundaki CodeNomad logosu ana sayfayı açar; kalpli **Sponsor** düğmesi [CodeNomad'i destekleyin](sponsor.md) sayfasını açar.
 2. **Son kullanılanlar** içinde bir proje seçin; ya da **Gözat** bölümünü açıp **Bu bilgisayar** seçin, ardından arka uç klasörünü seçip açın. **Gözat** kayıtlı CodeNomad sunucularını ([uzak proje sekmeleri](remote-access.md#remote-project-tabs)) ve SideCar'ları ([SideCar'lar](browser-sidecars.md#register-sidecar)) da listeler.
 3. Depoyu kopyalamak için **Git Deposunu Klonla** eylemini seçin; **Depo URL'si** ve **Hedef klasör** alanlarını doldurup **Klonla** eylemini seçin. **Hedef klasör**, son klonunuzun bulunduğu klasörde (yoksa en son projenizin yanında) depo adıyla önceden doldurulur. **Göz At** klonu içerecek klasörü seçer; klon klasörünün adı dahil yolu elle de düzenleyebilirsiniz.
 
@@ -19,7 +19,7 @@ Son kullanılan kayıtlar birer kısayoldur. **Workspace'i yeniden adlandır** g
 1. `+`'ye uzun basın veya sağ tıklayın; Klavye odağı oradayken **Alt+Down**, **Shift+F10** veya Menü tuşunu kullanın.
 2. **Sekme aç** içinde **Son kullanılanlar** arasında arayın (projeler, uzak projeler ve SideCar'lar), **Gözat** bölümünü açın ya da **Git Deposunu Klonla** veya **Yeni geçici sekme** seçin.
 
-Normal bir tıklama yine aynı seçenekleri sunan tam ana sayfayı açar. Son sekmeleri orada yeniden adlandırın veya kaldırın; sunucuları **Ayarlar → Sunucular**, SideCar'ları ise **Ayarlar → SideCars** bölümünde yönetin. Escape başlatıcıyı kapatır ve odağı `+` düğmesine döndürür.
+Normal tıklama boş bir sekme açar. CodeNomad logosundan açılan ana sayfa aynı seçenekleri ve **Son kullanılanlar** ile **Gözat** öğe sayılarını sunar. Son sekmeleri orada yeniden adlandırın veya kaldırın; sunucuları **Ayarlar → Sunucular**, SideCar'ları ise **Ayarlar → SideCars** bölümünde yönetin. Escape başlatıcıyı kapatır ve odağı `+` düğmesine döndürür.
 
 ## Bir projeyi kapatın {#close-stop}
 
