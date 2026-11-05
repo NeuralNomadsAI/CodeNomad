@@ -50,13 +50,17 @@ Sichtbarkeit und Favoriten ordnen CodeNomads Auswahlfelder; sie deinstallieren k
 
 Verwenden Sie **Nutzung** im rechten Panel für die Anbieter-Planfenster, Rücksetzzeiten und unterstützten Guthaben der aktiven Unterhaltung. Diese Anbieterwerte unterscheiden sich von **Tokens** und Kostenschätzungen pro Nachricht: Ein Abonnementkontingent ist keine aus dem sichtbaren Verlauf berechnete Rechnung. Ein fehlender, veralteter oder unbekannter Wert bedeutet weder Nullnutzung noch nachgewiesene Restkapazität. **Anbieterguthaben** unter **Einstellungen → Erweitert** steuert ergänzende Guthabenanzeigen.
 
+Für über Gemini CLI gespeicherte Google-Verbindungen zeigt **Nutzung** modellbezogene Limits; für Antigravity-Verbindungen die Limits **5 Stunden** und **Wöchentlich**, mit getrennten Kontingenten je Modellfamilie, sofern bereitgestellt. Nicht verfügbare Kontingente erscheinen als unbekannt. Die Kontoauswahl für diese Verbindungen bleibt manuell.
+
+Googles [Antigravity-FAQ](https://antigravity.google/docs/faq/) erklärt, dass die Nutzung von Drittanbietersoftware mit einer Antigravity-Anmeldung gegen die Nutzungsbedingungen verstößt und zur Sperrung oder Kündigung des Kontos führen kann.
+
 Für kostenlose OpenCode-Zen-Modelle schätzt **Nutzung** den Verbrauch anhand der seit 00:00 UTC aufgezeichneten Schritte dieses Dienstes bei angenommenen 200 Anfragen/Tag und einer geschätzten Rücksetzung zur nächsten UTC-Mitternacht. Schritte nähern Anfragen an; anderer Datenverkehr und variable IP-Limits können die tatsächliche Kontingentnutzung abweichen lassen.
 
 Für eine ChatGPT-Anmeldemethode stellt OpenAI keine Nutzungsdaten bereit: Nutzung weist darauf hin, statt Kontingentfenster anzuzeigen. Chatten funktioniert weiterhin, und eine erneute Verbindung derselben Anmeldung stellt den Wert nicht wieder her.
 
 Nutzung folgt den ausgewählten nativen Zugangsdaten. Claude über `anthropic`/`claude` verwendet OpenCodes Anthropic-OAuth. OpenCodes Anbieter **Claude Agent** (`claude-agent`) und der Anbieter `claude-code` verwenden die Claude-Code-Anmeldung auf dem Daemon-Host einschließlich dessen WSL-Distribution: zuerst `CLAUDE_CODE_OAUTH_TOKEN`, dann die gespeicherte Anmeldung, wobei `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` oder `~/.claude` den Dateispeicher bestimmen; lokales macOS kann den Schlüsselbund verwenden. CodeNomad ersetzt keine Claude-Anmeldung durch die andere.
 
-Aktualisieren/melden Sie sich bei abgelaufener Anbieteranmeldung über deren Eigentümer an – OpenCode, Claude Code oder Codex CLI – und aktualisieren Sie dann CodeNomad. CodeNomad tauscht keine extern verwalteten Refresh-Tokens aus. Eine abgelaufene CodeNomad-Serveranmeldung ist davon getrennt: Verbinden/melden Sie sich bei CodeNomad neu an, ohne die Wiederholung einer fehlgeschlagenen Anbieteranfrage anzunehmen. Siehe [Fehlerbehebung](troubleshooting.md).
+Nutzungsleser dürfen Zugriffstokens ausschließlich im Serverspeicher erneuern und nur bei Anbietern, deren Refresh-Token bei jeder Verwendung unverändert bleibt, darunter Gemini CLI und Antigravity. OpenCode verwaltet weiterhin die gespeicherte Verbindung. Aktualisieren/melden Sie sich bei anderen abgelaufenen Anbieteranmeldungen über deren Eigentümer an – OpenCode, Claude Code oder Codex CLI – und aktualisieren Sie dann CodeNomad. Eine abgelaufene CodeNomad-Serveranmeldung ist davon getrennt: Verbinden/melden Sie sich bei CodeNomad neu an, ohne die Wiederholung einer fehlgeschlagenen Anbieteranfrage anzunehmen. Siehe [Fehlerbehebung](troubleshooting.md).
 
 ### Optionale Umgebungsvariablen für Nutzung {#usage-environment}
 

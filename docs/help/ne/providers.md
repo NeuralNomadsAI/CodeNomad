@@ -50,13 +50,17 @@ authorization विन्डो रोकिए प्रवाहबाट **�
 
 सक्रिय कुराकानीको provider-plan window, reset समय र समर्थित balance का लागि दायाँ प्यानलको **प्रयोग** प्रयोग गर्नुहोस्। यी reading प्रति-सन्देश **टोकनहरू** र लागत अनुमानभन्दा फरक हुन्: subscription quota देखिएको transcript बाट गणना भएको बिल होइन। हराएको, पुरानो वा unknown reading शून्य usage वा बाँकी क्षमताको प्रमाण होइन। **सेटिङहरू → उन्नत** को **प्रदायक क्रेडिट मौज्दात** ले थप balance प्रदर्शन नियन्त्रण गर्छ।
 
+Gemini CLI मार्फत सुरक्षित गरिएका Google जडानका लागि **प्रयोग** ले प्रति-मोडेल सीमा देखाउँछ; Antigravity जडानका लागि **५ घण्टा** र **साप्ताहिक** सीमा देखाउँछ, र उपलब्ध भए मोडेल परिवारका कोटा अलग राख्छ। उपलब्ध नभएको कोटा अज्ञात रूपमा देखाइन्छ। यी जडानमा खाता चयन म्यानुअल रहन्छ।
+
+Google को [Antigravity FAQ](https://antigravity.google/docs/faq/) अनुसार Antigravity लगइनसँग तेस्रो-पक्ष सफ्टवेयर प्रयोग गर्दा यसको सेवा सर्त उल्लङ्घन हुन्छ र खाता निलम्बन वा बन्द हुन सक्छ।
+
 निःशुल्क OpenCode Zen मोडेलका लागि **प्रयोग** ले यस सेवामा 00:00 UTC देखि रेकर्ड भएका चरणबाट, दैनिक 200 अनुरोधको मानिएको आधार र अर्को UTC मध्यरातमा अनुमानित रिसेट प्रयोग गरी खपत अनुमान गर्छ। चरणले अनुरोधको अनुमान दिन्छ; अन्य ट्राफिक र बदलिने IP सीमाका कारण वास्तविक कोटा प्रयोग फरक हुन सक्छ।
 
 OpenAI ले एउटा ChatGPT sign-in विधिका लागि usage दिँदैन: त्यसमा **प्रयोग** ले quota window देखाउनुको सट्टा त्यही बताउँछ। च्याट भने चलिरहन्छ, र उही login फेरि जोड्दा reading फर्किँदैन।
 
 Usage ले चयनित नेटिभ credential पछ्याउँछ। `anthropic`/`claude` मार्फत Claude ले OpenCode को Anthropic OAuth प्रयोग गर्छ। OpenCode को **Claude Agent** provider (`claude-agent`) र `claude-code` provider ले daemon होस्टको Claude Code login, त्यसको WSL वितरणसमेत, प्रयोग गर्छ: `CLAUDE_CODE_OAUTH_TOKEN`, त्यसपछि सुरक्षित login; `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` वा `~/.claude` ले फाइल भण्डारण निर्धारण गर्छन्; स्थानीय macOS ले Keychain प्रयोग गर्न सक्छ। CodeNomad ले एउटा Claude login को सट्टा अर्को राख्दैन।
 
-प्रदायक login म्याद सकिए यसको स्वामी—OpenCode, Claude Code वा Codex CLI—मार्फत refresh/sign in गरी CodeNomad रिफ्रेस गर्नुहोस्। CodeNomad ले बाह्य स्वामित्वका refresh token साट्दैन। CodeNomad सर्भर-login expiry छुट्टै हो: असफल प्रदायक अनुरोध फेरि पठाइन्छ नठानी CodeNomad reconnect/sign in गर्नुहोस्। [समस्या समाधान](troubleshooting.md) हेर्नुहोस्।
+प्रयोग रिडरले पहुँच टोकन सर्भर मेमोरीमा मात्र र प्रत्येक प्रयोगमा रिफ्रेस टोकन स्थिर रहने प्रदायकका लागि मात्र नवीकरण गर्न सक्छन्; यसमा Gemini CLI र Antigravity पर्छन्। सुरक्षित जडानको व्यवस्थापन OpenCode कै अधीनमा रहन्छ। अन्य प्रदायक login म्याद सकिए यसको स्वामी—OpenCode, Claude Code वा Codex CLI—मार्फत refresh/sign in गरी CodeNomad रिफ्रेस गर्नुहोस्। CodeNomad सर्भर-login expiry छुट्टै हो: असफल प्रदायक अनुरोध फेरि पठाइन्छ नठानी CodeNomad reconnect/sign in गर्नुहोस्। [समस्या समाधान](troubleshooting.md) हेर्नुहोस्।
 
 ### ऐच्छिक usage वातावरण variable {#usage-environment}
 

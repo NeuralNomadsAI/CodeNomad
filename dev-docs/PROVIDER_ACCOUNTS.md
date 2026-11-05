@@ -71,6 +71,29 @@ unversioned and only partly verified: the parser accepts the current
 `usage.{rolling,weekly,monthly}` and older `*Usage` shapes, and treats anything
 else as unknown. Console OAuth usage with `x-org-id` is unverified upstream.
 
+## Google usage
+
+`usage/providers/google.ts` reads the active native `google` credential. The
+native method selects the installed-application OAuth client: `gemini-cli` or
+`antigravity`; other methods yield unknown quota. Project context comes from the
+refresh token's `|`-separated suffix, preferring the managed project. Gemini CLI
+can read existing Code Assist setup when that context is absent; Antigravity
+requires saved project context. Never onboard a project for quota display.
+
+`usage/google-credential.ts` uses OpenCode's access token until its actual expiry,
+then refreshes it with the matching application's public desktop client at the
+fixed `https://oauth2.googleapis.com/token` endpoint. Requests reject redirects,
+share the route's 15-second budget and cap responses at 64 KiB. The refreshed
+access token and expiry stay only in a server-memory cache bounded to 32
+credential identities, with coalesced concurrent refreshes and expiry eviction.
+Never persist these tokens, send them to the browser, log them or retain a refresh
+token returned by Google. Credential changes select a distinct cache identity.
+Any refresh or quota failure yields unknown quota.
+
+Gemini CLI exposes exact per-model limits; Antigravity exposes explicit 5-hour
+and weekly windows, keeping model-family pools separate. Both stay manual,
+outside automatic account selection.
+
 ## Auto-select account
 
 - Opt-in per integration, persisted under CodeNomad's
@@ -155,5 +178,5 @@ exhausts the current mock account. Never add a simulation action to production.
 ## Agent conventions
 
 - Provider accounts use a native dropdown like Web search defaults; never add an Accounts disclosure or selectable account rows. Provider headers keep the name and text Manage models button on one row; a faint separator distinguishes the account controls below. Account actions are always visible. The `provider-account` container stacks the label above the dropdown/actions at narrow card widths. Native account ordering supplies the current account; rename/remove drafts stay keyed by credential. Environment connections are read-only. The browser never reads credential secrets. Native labels win; only `default` may display a sanitized login email from the owned server adapter. Opt-in rotation is per integration (`providerAccounts.autoSelect.<integrationID>`) through the selection-adapter registry in `provider-accounts/adapters.ts`, for subscription accounts with quota windows only: Codex, OpenCode Go (Go key and Console sign-in, Go provider only), Claude Pro/Max (OpenCode Anthropic OAuth, never the Claude Code login), GitHub Copilot and key-based coding plans; pay-as-you-go keys/credits stay manual. It runs before prompt/command admission, reading each explicit credential's fresh quota (reusing Usage readers) without activating candidates or refreshing tokens, with local manual-change fences and no mutation/prompt replay; the only switch condition is a full current account. Native `provider.quota` failures add bounded in-memory per-connection marks (`quota-observer.ts`); reactive adapters (Go, Console, Claude) accept unknown-but-unmarked candidates, others need "available". Account styling lives in `styles/components/provider-accounts.css`, backend policy in `provider-accounts/`. Browser preview percentages are simulated.
-- Provider usage providers receive credentials explicitly: the route projects each integration's active native `credential.list` entry through `usage/native-credentials.ts` (never host auth.json; a missing endpoint is unavailability) and caches snapshots per provider credential identity. Codex uses its selected-connection adapter. Claude quotas follow the session's login (`usage/claude-credential.ts`): `anthropic`/`claude` use only OpenCode's Anthropic OAuth; the providers that run Claude Code inside the daemon, opencode-claude's `claude-code` and OpenCode's Claude Agent `claude-agent` (native method `claude-login`, external), resolve to one `claude-code` reader (shared snapshot and rate-limit backoff) and use only the Claude Code login the route resolves on the daemon host (session environment, WSL path translation, Claude Code's token/Keychain/file order) and injects as the `claude-code` entry, so it joins the cache identity; never cross-fall back between them. Never exchange refresh tokens or embed OAuth client secrets; Google stays unsupported for that reason. Model-scoped limits add `window:Model` rows beside the plan windows.
+- Provider usage providers receive credentials explicitly: the route projects each integration's active native `credential.list` entry through `usage/native-credentials.ts` (never host auth.json; a missing endpoint is unavailability) and caches snapshots per provider credential identity. Codex uses its selected-connection adapter. Claude quotas follow the session's login (`usage/claude-credential.ts`): `anthropic`/`claude` use only OpenCode's Anthropic OAuth; the providers that run Claude Code inside the daemon, opencode-claude's `claude-code` and OpenCode's Claude Agent `claude-agent` (native method `claude-login`, external), resolve to one `claude-code` reader (shared snapshot and rate-limit backoff) and use only the Claude Code login the route resolves on the daemon host (session environment, WSL path translation, Claude Code's token/Keychain/file order) and injects as the `claude-code` entry, so it joins the cache identity; never cross-fall back between them. Never rewrite an OpenCode connection to read usage. Allow an in-memory access-token refresh only for providers whose refresh token stays stable on each use, including Google's Gemini CLI and Antigravity connections; use their matching public installed-application clients as described under Google usage. Model-scoped limits add `window:Model` rows beside the plan windows.
 - OpenCode Zen free models (`opencode` provider, `big-pickle` or a `-free` model ID) use the local display estimate in `usage/opencode-free-estimate.ts`: native `session.stats` since 00:00 UTC (`tools: "none"`), summing every identified free model's steps against an assumed 200 requests per day. The next UTC midnight is the estimated reset. The `estimated` response flag enables a localized caveat and reset label; steps approximate requests, other clients' traffic is unseen, and actual IP-based limits vary. This credential-free path keeps the existing session ownership and connection publication fences. Never present the estimate as an upstream reading or feed it to account selection.

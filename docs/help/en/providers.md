@@ -50,13 +50,17 @@ Visibility and favorites organize CodeNomad's selectors; they do not uninstall m
 
 Use **Usage** in the right panel for the active conversation's provider-plan windows, reset times and supported balances. These provider readings are different from per-message **Tokens** and cost estimates: a subscription quota is not a bill calculated from the visible transcript. A missing, stale or unknown reading is not zero usage or proof of remaining capacity. **Provider credit balance** in **Settings → Advanced** controls supplemental balance display.
 
+For Google connections saved through Gemini CLI, **Usage** shows per-model limits; for Antigravity connections, it shows **5 hours** and **Weekly** limits, with separate model-family pools where supplied. Unavailable quota appears as unknown. These connections stay under manual account selection.
+
+Google's [Antigravity FAQ](https://antigravity.google/docs/faq/) states that using third-party software with an Antigravity login violates its terms and may lead to account suspension or termination.
+
 For free OpenCode Zen models, **Usage** estimates consumption from this service's recorded steps since 00:00 UTC, using an assumed reference of 200 requests/day and the next UTC midnight as an estimated reset. Steps approximate requests; other traffic and changing IP-based limits can make the estimate differ from actual quota usage.
 
 OpenAI does not provide usage for one ChatGPT sign-in method: Usage says so instead of showing quota windows. Chatting still works, and reconnecting the same login does not restore the reading.
 
 Usage follows the selected native credential. Claude through `anthropic`/`claude` uses OpenCode's Anthropic OAuth. OpenCode's **Claude Agent** provider (`claude-agent`) and the `claude-code` provider use the Claude Code login on the daemon's host, including its WSL distribution: `CLAUDE_CODE_OAUTH_TOKEN`, then the stored login, with `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` or `~/.claude` determining file storage; local macOS can use Keychain. CodeNomad does not substitute one Claude login for the other.
 
-For an expired provider login, refresh/sign in through its owner—OpenCode, Claude Code or Codex CLI—then refresh CodeNomad. CodeNomad does not exchange externally owned refresh tokens. A CodeNomad server-login expiry is separate: reconnect/sign in to CodeNomad without assuming a failed provider request will be resent. See [Troubleshooting](troubleshooting.md).
+Usage readers may refresh access tokens only in server memory and only for providers whose refresh token stays stable on each use, including Gemini CLI and Antigravity. OpenCode retains ownership of the saved connection. For other expired provider logins, refresh/sign in through their owner—OpenCode, Claude Code or Codex CLI—then refresh CodeNomad. A CodeNomad server-login expiry is separate: reconnect/sign in to CodeNomad without assuming a failed provider request will be resent. See [Troubleshooting](troubleshooting.md).
 
 ### Optional usage environment variables {#usage-environment}
 

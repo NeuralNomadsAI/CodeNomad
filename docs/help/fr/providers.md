@@ -50,13 +50,17 @@ La visibilité et les favoris organisent les sélecteurs de CodeNomad ; ils ne d
 
 Utilisez **Utilisation** dans le panneau droit pour les fenêtres de quota du fournisseur de la conversation active, leurs réinitialisations et les soldes pris en charge. Ces lectures diffèrent des **Tokens** par message et des estimations de coût : un quota d’abonnement n’est pas une facture calculée sur la transcription visible. Une lecture manquante, périmée ou inconnue n’est ni une utilisation nulle ni une preuve de capacité restante. **Solde de crédits du fournisseur** dans **Paramètres → Avancé** contrôle l’affichage complémentaire du solde.
 
+Pour les connexions Google enregistrées via Gemini CLI, **Utilisation** affiche les limites par modèle ; pour les connexions Antigravity, les limites **5 heures** et **Hebdomadaire**, avec des quotas distincts par famille de modèles lorsqu’ils sont fournis. Un quota indisponible apparaît comme inconnu. La sélection de ces comptes reste manuelle.
+
+La [FAQ Antigravity](https://antigravity.google/docs/faq/) de Google indique que l’utilisation de logiciels tiers avec une connexion Antigravity enfreint ses conditions et peut entraîner la suspension ou la clôture du compte.
+
 Pour les modèles gratuits OpenCode Zen, **Utilisation** estime la consommation à partir des étapes enregistrées par ce service depuis 00 h UTC, sur une base indicative de 200 requêtes/jour et avec une réinitialisation estimée au prochain minuit UTC. Les étapes approchent les requêtes ; le trafic externe et les limites variables par IP peuvent faire diverger l’estimation du quota réel.
 
 OpenAI ne fournit pas l’utilisation pour l’une des méthodes de connexion ChatGPT : Utilisation l’indique au lieu d’afficher les fenêtres de quota. Le chat fonctionne toujours, et reconnecter la même connexion ne rétablit pas la lecture.
 
 L’utilisation suit l’identifiant natif sélectionné. Claude via `anthropic`/`claude` utilise l’OAuth Anthropic d’OpenCode. Le fournisseur **Claude Agent** d’OpenCode (`claude-agent`) et le fournisseur `claude-code` utilisent la connexion Claude Code sur l’hôte du démon, y compris sa distribution WSL : `CLAUDE_CODE_OAUTH_TOKEN`, puis la connexion enregistrée, avec `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` ou `~/.claude` déterminant le stockage fichier ; macOS local peut utiliser le Trousseau. CodeNomad ne remplace pas une connexion Claude par l’autre.
 
-Pour une connexion fournisseur expirée, actualisez/reconnectez-vous via son propriétaire — OpenCode, Claude Code ou Codex CLI — puis actualisez CodeNomad. CodeNomad n’échange pas de jetons de rafraîchissement externes. L’expiration de connexion au serveur CodeNomad est distincte : reconnectez-vous à CodeNomad sans supposer qu’une requête fournisseur échouée sera renvoyée. Voir [Dépannage](troubleshooting.md).
+Les lecteurs d’utilisation peuvent rafraîchir les jetons d’accès uniquement en mémoire serveur et uniquement pour les fournisseurs dont le jeton de rafraîchissement reste stable à chaque utilisation, dont Gemini CLI et Antigravity. OpenCode garde la maîtrise de la connexion enregistrée. Pour les autres connexions fournisseur expirées, actualisez/reconnectez-vous via leur propriétaire — OpenCode, Claude Code ou Codex CLI — puis actualisez CodeNomad. L’expiration de connexion au serveur CodeNomad est distincte : reconnectez-vous à CodeNomad sans supposer qu’une requête fournisseur échouée sera renvoyée. Voir [Dépannage](troubleshooting.md).
 
 ### Variables d’environnement d’utilisation facultatives {#usage-environment}
 
