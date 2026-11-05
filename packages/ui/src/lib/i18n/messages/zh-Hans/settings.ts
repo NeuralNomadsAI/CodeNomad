@@ -580,6 +580,7 @@ export const settingsMessages = {
   "settings.behavior.thinkingDefault.title": "思考默认状态",
   "settings.behavior.thinkingDefault.subtitle": "选择思考区块默认是展开还是折叠。",
   "settings.behavior.messageTimeline.title": "显示消息时间线",
+  "settings.behavior.scrollControlsInTimelineCorner.title": "将首条/最新消息箭头放在时间线下方",
   "settings.behavior.diffView.title": "拆分显示工具调用的差异",
   "settings.behavior.toolOutputsDefault.title": "工具输出默认状态",
   "settings.behavior.toolOutputsDefault.subtitle": "选择工具输出默认是展开还是折叠。",

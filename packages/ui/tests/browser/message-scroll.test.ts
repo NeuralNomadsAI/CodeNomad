@@ -1049,7 +1049,8 @@ test("first/latest controls stay in the composer corner and dim the reached end"
     const reached = () => page.locator(".session-scroll-corner-button").evaluateAll(buttons =>
       buttons.map(button => button.classList.contains("session-scroll-corner-button--reached")))
     assert.deepEqual(await reached(), [false, true])
-    assert.equal(await page.locator(".message-scroll-button").count(), 0)
+    // The floating controls stay mounted as the narrow-layout fallback, hidden here.
+    assert.equal(await page.locator(".message-scroll-controls").isVisible(), false)
     const geometry = await page.evaluate(() => {
       const view = document.querySelector(".session-view")!.getBoundingClientRect()
       const corner = document.querySelector(".session-scroll-corner")!.getBoundingClientRect()
@@ -1065,15 +1066,20 @@ test("first/latest controls stay in the composer corner and dim the reached end"
   })
 })
 
-// The footer and the corner share one width: Send is never covered, with or
-// without the rail, and a touch layout gives each control a compact touch target.
-for (const hasTouch of [false, true]) for (const timeline of [true, false]) {
-  test(`the composer corner never covers Send (${hasTouch ? "touch" : "mouse"}, timeline ${timeline ? "on" : "off"})`, async () => {
+async function applySettings(page: Page, settings: Record<string, unknown>) {
+  await page.evaluate(`(async () => { const { applyUiSettings } = await import('/tests/browser/fixtures/ui-settings.ts'); await applyUiSettings(${JSON.stringify({ ...settings, locale: "en" })}) })()`)
+  await frames(page)
+}
+
+// The footer's right edge, measured from the view's: the rail plus any corner reservation.
+const footerInset = (page: Page) => page.evaluate(() =>
+  Math.round(document.querySelector(".session-view")!.getBoundingClientRect().right - document.querySelector(".prompt-input-footer")!.getBoundingClientRect().right))
+
+// The footer and the corner share one width: Send is never covered, and a touch
+// layout gives each control a compact touch target.
+for (const hasTouch of [false, true]) {
+  test(`the composer corner never covers Send (${hasTouch ? "touch" : "mouse"})`, async () => {
     await open(async page => {
-      if (!timeline) {
-        await page.evaluate(`(async () => { const { applyUiSettings } = await import('/tests/browser/fixtures/ui-settings.ts'); await applyUiSettings({ showMessageTimeline: false, locale: 'en' }) })()`)
-        await frames(page)
-      }
       const layout = await page.evaluate(() => {
         const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect()
         const corner = box(".session-scroll-corner"), footer = box(".prompt-input-footer"), send = box(".prompt-input-footer .send-button")
@@ -1090,31 +1096,38 @@ for (const hasTouch of [false, true]) for (const timeline of [true, false]) {
         }
       })
       assert.deepEqual(layout, {
-        coarse: hasTouch, rail: timeline, gap: 0, widths: hasTouch ? [32, 32] : [19.5, 19.5], send: true,
+        coarse: hasTouch, rail: true, gap: 0, widths: hasTouch ? [32, 32] : [19.5, 19.5], send: true,
         first: "Scroll to first message", latest: "Scroll to latest message",
       }, JSON.stringify(layout))
+      assert.equal(await footerInset(page), hasTouch ? 65 : 40)
+      // A Mission reader hides the rail and the corner: the footer reserves nothing.
+      await page.locator(".session-view").evaluate(view => view.classList.add("mission-reading"))
+      assert.equal(await footerInset(page), 0)
+      assert.equal(await page.locator(".session-scroll-corner").isVisible(), false)
     }, { hasTouch })
   })
 }
 
-// Only a view showing the corner reserves it: not while a Mission is read, nor
-// in a view without the corner mount (the no-session draft).
-test("the footer reserves the corner only where the view shows one", async () => {
-  await open(async page => {
-    const reserved = () => page.evaluate(() => {
-      const view = document.querySelector(".session-view")!, footer = document.querySelector(".prompt-input-footer")!
-      return Math.round(view.getBoundingClientRect().right - footer.getBoundingClientRect().right)
+// Without a shown rail, or with the option off, the controls float over the
+// transcript as before and the footer reserves no corner.
+for (const [name, settings, inset] of [
+  ["the timeline is hidden", { showMessageTimeline: false }, 0],
+  ["the corner option is off", { scrollControlsInTimelineCorner: false }, 40],
+] as const) {
+  test(`the floating controls return when ${name}`, async () => {
+    await open(async page => {
+      await applySettings(page, settings)
+      assert.equal(await page.locator(".session-scroll-corner-button").count(), 0)
+      assert.equal(await page.locator(".session-scroll-corner").isVisible(), false)
+      const floating = page.locator(".message-scroll-controls:not(.message-scroll-controls--corner-fallback)")
+      assert.equal(await floating.getByRole("button", { name: "Scroll to first message", exact: true }).count(), 1)
+      assert.equal(await footerInset(page), inset)
+      await applySettings(page, { showMessageTimeline: true, scrollControlsInTimelineCorner: true })
+      assert.equal(await page.locator(".session-scroll-corner-button").count(), 2)
+      assert.equal(await page.locator(".message-scroll-controls").isVisible(), false)
     })
-    await page.evaluate(`(async () => { const { applyUiSettings } = await import('/tests/browser/fixtures/ui-settings.ts'); await applyUiSettings({ showMessageTimeline: false, locale: 'en' }) })()`)
-    await frames(page)
-    assert.equal(await reserved(), 40)
-    await page.locator(".session-view").evaluate(view => view.classList.add("mission-reading"))
-    assert.equal(await reserved(), 0)
-    assert.equal(await page.locator(".session-scroll-corner").isVisible(), false)
-    await page.locator(".session-view").evaluate(view => { view.classList.remove("mission-reading"); view.querySelector(":scope > .session-scroll-corner")!.remove() })
-    assert.equal(await reserved(), 0)
   })
-})
+}
 
 // A following list hidden by display:none (still mounted), whose streaming
 // tail grows while hidden, paints its first frame shown again at the bottom.

@@ -580,6 +580,7 @@ export const settingsMessages = {
   "settings.behavior.thinkingDefault.title": "ברירת מחדל לחשיבה",
   "settings.behavior.thinkingDefault.subtitle": "בחר האם קטעי חשיבה מתחילים פרוסים או מכווצים.",
   "settings.behavior.messageTimeline.title": "הצגת ציר הזמן של ההודעות",
+  "settings.behavior.scrollControlsInTimelineCorner.title": "הצבת חיצי ההודעה הראשונה/האחרונה מתחת לציר הזמן",
   "settings.behavior.diffView.title": "פיצול diffs של קריאות כלים",
   "settings.behavior.toolOutputsDefault.title": "ברירת מחדל לפלטי כלים",
   "settings.behavior.toolOutputsDefault.subtitle": "בחר האם פלטי כלים מתחילים פרוסים או מכווצים.",

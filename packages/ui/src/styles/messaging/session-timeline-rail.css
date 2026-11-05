@@ -30,13 +30,18 @@
   min-height: 0;
 }
 
-/* The footer leaves the corner cell, with or without the timeline, wherever the view has one. */
-.session-view:not(.mission-reading):has(> .session-scroll-corner) .prompt-input-footer {
-  margin-inline-end: var(--session-corner-width);
+/* The corner under a shown rail holds the first/latest controls; beyond the rail the footer leaves it the rest. */
+.session-scroll-corner:empty {
+  display: none;
 }
 
-.session-view:not(.mission-reading):has(> .session-scroll-corner):has(> .session-timeline-slot .message-timeline-sidebar) .prompt-input-footer {
+.session-view:not(.mission-reading) .prompt-input-footer:has(> .session-scroll-corner:not(:empty)) {
   margin-inline-end: calc(var(--session-corner-width) - var(--session-rail-width));
+}
+
+/* The floating controls stand in only where the rail, and with it the corner, hides. */
+.message-scroll-controls.message-scroll-controls--corner-fallback {
+  display: none;
 }
 
 @media (pointer: coarse) {
@@ -54,12 +59,17 @@
   }
 
   .session-timeline-slot,
-  .message-timeline-sidebar {
+  .message-timeline-sidebar,
+  .session-scroll-corner {
     display: none;
   }
 
-  .session-view:not(.mission-reading):has(> .session-scroll-corner):has(> .session-timeline-slot .message-timeline-sidebar) .prompt-input-footer {
-    margin-inline-end: var(--session-corner-width);
+  .session-view:not(.mission-reading) .prompt-input-footer:has(> .session-scroll-corner:not(:empty)) {
+    margin-inline-end: 0;
+  }
+
+  .message-scroll-controls.message-scroll-controls--corner-fallback {
+    display: flex;
   }
 
   .message-layout--with-timeline {
@@ -71,12 +81,12 @@
 .session-view.mission-reading .session-timeline-slot,
 .session-view.mission-reading .session-scroll-corner { display: none; }
 
+/* Inside the footer, it follows the composer wherever the session stack scrolls. */
 .session-scroll-corner {
   position: absolute;
-  inset-block-end: 0;
-  inset-inline-end: 0;
+  inset-block: -1px 0;
+  inset-inline-start: 100%;
   width: var(--session-corner-width);
-  block-size: var(--composer-footer-block-size, 30px);
   border-block-start: 1px solid var(--border-divider);
   border-inline-start: 1px solid var(--border-divider);
   background-color: var(--surface-chrome);

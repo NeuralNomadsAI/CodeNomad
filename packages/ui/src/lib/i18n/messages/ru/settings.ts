@@ -580,6 +580,7 @@ export const settingsMessages = {
   "settings.behavior.thinkingDefault.title": "Размышления по умолчанию",
   "settings.behavior.thinkingDefault.subtitle": "Выберите, начинать ли разделы размышлений развернутыми или свернутыми.",
   "settings.behavior.messageTimeline.title": "Показывать хронологию сообщений",
+  "settings.behavior.scrollControlsInTimelineCorner.title": "Размещать стрелки первого/последнего сообщения под хронологией",
   "settings.behavior.diffView.title": "Разделять diff вызовов инструментов",
   "settings.behavior.toolOutputsDefault.title": "Выводы инструментов по умолчанию",
   "settings.behavior.toolOutputsDefault.subtitle": "Выберите, начинать ли выводы инструментов развернутыми или свернутыми.",

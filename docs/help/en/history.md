@@ -23,7 +23,7 @@ If a search window expires or its history changes, **Start fresh search** restar
 
 1. Choose a current-session search result to jump to its surrounding passage.
 2. Choose a result from another session to open a separate preview of that message; use **Open in session** to go to that conversation at the hit.
-3. In **Message timeline**, hover or focus a marker for an excerpt, then select it to navigate: its block moves to the top and the marker stays highlighted until you scroll, after which the highlight follows the block at the top of the conversation. Use the first/latest message arrows in the corner to the right of **Send message** to return to the ends of stored history; the arrow for the end you are at is dimmed.
+3. In **Message timeline**, hover or focus a marker for an excerpt, then select it to navigate: its block moves to the top and the marker stays highlighted until you scroll, after which the highlight follows the block at the top of the conversation. Use the first/latest message arrows to return to the ends of stored history: under the timeline they sit in the corner to the right of **Send message**, with the arrow for the end you are at dimmed; otherwise they float over the conversation.
 
 The timeline represents full session structure even when the transcript holds only a bounded passage. Jumps load the destination rather than fetching every intervening message. Other-session search previews do not load that session's entire transcript or select it; only **Open in session** switches conversations.
 

@@ -132,6 +132,13 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
     },
     {
       kind: "toggle",
+      id: "behavior.scrollControlsInTimelineCorner",
+      titleKey: "settings.behavior.scrollControlsInTimelineCorner.title",
+      get: (p) => Boolean(p.scrollControlsInTimelineCorner ?? true),
+      set: (next) => updatePreferences?.({ scrollControlsInTimelineCorner: next }),
+    },
+    {
+      kind: "toggle",
       id: "behavior.diffViewMode",
       titleKey: "settings.behavior.diffView.title",
       // Checked shows split diffs; unchecked shows the unified view.

@@ -721,9 +721,9 @@ export const SessionView: Component<SessionViewProps> = (props) => {
             />
           }
           registerPromptInputApi={registerPromptInputApi}
+          footerCornerRef={setScrollCornerMount}
         />
         <div class="session-timeline-slot" inert={readingMission()} ref={setTimelineMount} />
-        <div class="session-scroll-corner" inert={readingMission()} ref={setScrollCornerMount} />
         </Show>
       </div>
     </Show>

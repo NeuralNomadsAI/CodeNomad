@@ -81,7 +81,7 @@ function TimelinePlacement(props: { mount?: HTMLElement; children: JSX.Element }
 
 export interface MessageSectionProps {
   timelineMount?: HTMLElement
-  /** The composer corner cell; the first/latest controls render there instead of over the transcript. */
+  /** The composer corner cell under the rail; the first/latest controls render there while the rail shows. */
   scrollCornerMount?: HTMLElement
   instanceId: string
   sessionId: string
@@ -1438,6 +1438,9 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   const showTimeline = createMemo(() => showMessageTimelinePreference() && hasTimelineSegments())
+  // The corner exists only under a shown rail; otherwise the controls float over the transcript.
+  const scrollCornerMount = () =>
+    showTimeline() && (preferences().scrollControlsInTimelineCorner ?? true) ? props.scrollCornerMount : undefined
 
   createEffect(on(isSearchOpen, open => { if (!open) closeSearch() }, { defer: true }))
   createEffect(() => { if (!isActive()) setIsSearchOpen(false) })
@@ -1520,8 +1523,9 @@ export default function MessageSection(props: MessageSectionProps) {
           scrollToBottomAriaLabel={() => t("messageSection.scroll.toLatestAriaLabel")}
           registerApi={registerListApi}
           registerState={(state) => setListState(state)}
-          renderControls={() => props.scrollCornerMount ? undefined : (
-            <div class="message-scroll-controls">
+          renderControls={() => (
+            // While the corner holds the controls, these only show where the rail hides (narrow conversations).
+            <div class="message-scroll-controls" classList={{ "message-scroll-controls--corner-fallback": Boolean(scrollCornerMount()) }}>
               <Show when={showFirstButton()}>
                 <button
                   type="button"
@@ -1836,7 +1840,7 @@ export default function MessageSection(props: MessageSectionProps) {
           </div>
           </TimelinePlacement>
         </Show>
-        <Show when={props.scrollCornerMount}>
+        <Show when={scrollCornerMount()}>
           {(mount) => (
             <Portal mount={mount()}>
               {/* Both stay in place; the end the reader is already at is dimmed. */}
