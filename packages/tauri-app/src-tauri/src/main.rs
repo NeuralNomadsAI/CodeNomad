@@ -874,6 +874,13 @@ fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
     {
         return allowed;
     }
+    if let Some(allowed) = webview
+        .app_handle()
+        .state::<remote_view::RemoteViews>()
+        .navigation_allowed(&window_label, url)
+    {
+        return allowed;
+    }
     if should_allow_window_origin(&webview.app_handle(), &window_label, url) {
         return true;
     }

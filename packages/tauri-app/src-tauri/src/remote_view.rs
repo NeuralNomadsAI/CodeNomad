@@ -144,6 +144,17 @@ impl RemoteViews {
         }
     }
 
+    /// The app-wide navigation guard runs after a view's own handler: it admits
+    /// exactly what that handler allows (its server's origin). `None` for any
+    /// webview that is not a registered view: the window rules then apply.
+    pub(crate) fn navigation_allowed(&self, label: &str, url: &Url) -> Option<bool> {
+        if !label.starts_with(LABEL_PREFIX) {
+            return None;
+        }
+        self.record(label)
+            .map(|record| decide(url, &record.origin) == Navigation::Allow)
+    }
+
     /// A page that loads again in the owning window reopens its tabs' views.
     pub(crate) fn renderer_page_started<R: Runtime>(&self, webview: &tauri::Webview<R>) {
         if webview.label() == webview.window().label()
@@ -422,6 +433,50 @@ mod tests {
         assert!(authority
             .resolve_access("remote_view_open", owner, owner, &local)
             .is_some());
+    }
+
+    #[test]
+    fn the_app_wide_navigation_guard_admits_a_views_server_pages() {
+        // Tauri runs the `external-link-guard` plugin after the view's own handler.
+        // Its window-origin fallback knows only local, Preferences and remote
+        // windows: alone, it cancels the view's first load, leaving it on about:blank.
+        let initial = url("http://127.0.0.1:9911/?codenomadEmbed=project");
+        assert!(!crate::should_allow_registered_origin(None, &initial));
+
+        let views = RemoteViews::default();
+        let owner = "local-11111111-1111-4111-8111-111111111111";
+        let label = view_label(owner, "mw3j1qg1-0").unwrap();
+        views.records.lock().unwrap().insert(
+            label.clone(),
+            Record {
+                owner: owner.into(),
+                origin: "http://127.0.0.1:9911".into(),
+                entry: initial.to_string(),
+            },
+        );
+        for allowed in [
+            "http://127.0.0.1:9911/?codenomadEmbed=project",
+            "http://127.0.0.1:9911/login",
+            "http://127.0.0.1:9911/remote-pair",
+            "about:blank",
+        ] {
+            assert_eq!(views.navigation_allowed(&label, &url(allowed)), Some(true), "{allowed}");
+        }
+        for refused in [
+            "http://127.0.0.1:9898/",
+            "https://evil.example/",
+            // The view's own handler sends these to the entry or the system browser.
+            "http://127.0.0.1:9911/",
+            "https://neuralnomadsai.github.io/CodeNomad/en/",
+        ] {
+            assert_eq!(views.navigation_allowed(&label, &url(refused)), Some(false), "{refused}");
+        }
+        // A closed view and every other webview fall back to the window rules,
+        // which refuse a remote page.
+        let closed = view_label(owner, "closed").unwrap();
+        assert_eq!(views.navigation_allowed(&closed, &initial), None);
+        assert_eq!(views.navigation_allowed(owner, &initial), None);
+        assert_eq!(views.navigation_allowed("remote-profile", &initial), None);
     }
 
     #[test]

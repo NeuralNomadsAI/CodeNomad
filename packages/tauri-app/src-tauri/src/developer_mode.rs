@@ -249,14 +249,25 @@ mod tests {
         // windows use a distinct profile without additional debugging arguments.
         let setup = source.split(".setup(move |app| {").nth(1).unwrap();
         assert!(setup.contains("developer_mode.prepare_profile()?"));
+        let profile = source
+            .split("fn remote_profile_data_directory(")
+            .nth(1)
+            .unwrap()
+            .split("\n}")
+            .next()
+            .unwrap();
+        assert!(profile.contains(".join(\"remote\")"));
         let remote = source
-            .split("let data_directory = app")
+            .split("let data_directory = remote_profile_data_directory(")
             .nth(1)
             .unwrap()
             .split("let window = match builder.build()")
             .next()
             .unwrap();
-        assert!(remote.contains(".join(\"remote\")"));
         assert!(!remote.contains("additional_browser_args"));
+        // Remote project tabs share that storage: same default WebView2 options.
+        let view = include_str!("remote_view.rs");
+        assert!(view.contains(".data_directory(crate::remote_profile_data_directory("));
+        assert!(!view.contains("additional_browser_args"));
     }
 }
