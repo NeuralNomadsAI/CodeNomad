@@ -36,7 +36,7 @@ function mapTabIdentities(tabs: readonly RestorableTabState[]): TabIdentity[] {
   return tabs.map((tab) => {
     const key = tab.kind === "workspace"
       ? `workspace:${normalizeWorkspacePath(tab.folder)}`
-      : `sidecar:${tab.sidecarId}`
+      : tab.kind === "remote-project" ? `remote-project:${tab.profileId}:${tab.folder ?? ""}` : `sidecar:${tab.sidecarId}`
     const inferred = nextOccurrences.get(key) ?? 0
     const occurrence = tab.kind === "workspace" ? tab.occurrence ?? inferred : inferred
     nextOccurrences.set(key, Math.max(inferred, occurrence) + 1)

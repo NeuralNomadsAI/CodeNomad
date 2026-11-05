@@ -15,6 +15,7 @@ interface NativeTitlebarProps {
   /** Hold the app actions on macOS (see `appActionsInTitlebar`). */
   actions?: boolean
   onClose?: () => void | Promise<void>
+  onHome?: () => void
 }
 
 const menus: NativeTitlebarMenu[] = ["file", "edit", "view", "window", "help"]
@@ -63,7 +64,12 @@ export const NativeTitlebar: Component<NativeTitlebarProps> = (props) => {
     >
       <div class="native-titlebar-brand">
         <Show when={props.logo} fallback={<span class="native-titlebar-title">{props.title}</span>}>
-          <BrandLogo alt={props.title} class="native-titlebar-logo" />
+          <Show when={props.onHome} fallback={<BrandLogo alt={props.title} class="native-titlebar-logo" />}>
+            <button type="button" class="window-icon-button native-titlebar-home" data-titlebar-interactive
+              aria-label={t("newTab.home")} title={t("newTab.home")} onClick={() => props.onHome?.()}>
+              <BrandLogo alt={props.title} class="native-titlebar-logo" />
+            </button>
+          </Show>
         </Show>
       </div>
       <Show when={props.menus && !macOS}>

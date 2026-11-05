@@ -1126,10 +1126,6 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
 
-  const instanceAgents = agents().get(instanceId) || []
-  const primaryAgents = instanceAgents.filter(isSelectablePrimaryAgent)
-  const selectedAgent = agent || primaryAgents[0]?.id || ""
-
   // Pending spans the whole flow — catalog/config reads included — so a slow
   // network shows feedback from the first click instead of silence. There is
   // deliberately no client-side timeout and no coalescing here: session.create
@@ -1141,6 +1137,14 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   trackCreation(instanceId, 1)
 
   try {
+    // A session created as its project opens waits for the agent and model
+    // catalogue instead of starting without an agent or model.
+    if (!agents().get(instanceId)?.length || !providers().get(instanceId)?.length) {
+      await refreshSessionCatalog(instanceId).catch((error) => log.warn("Failed to load the catalogue before session creation", { instanceId, error }))
+      if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
+    }
+    const primaryAgents = (agents().get(instanceId) || []).filter(isSelectablePrimaryAgent)
+    const selectedAgent = agent || primaryAgents[0]?.id || ""
     const defaultModel = await getDefaultModel(instanceId, selectedAgent)
     if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
 

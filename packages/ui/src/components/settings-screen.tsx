@@ -2,7 +2,7 @@ import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import type { LocationRef } from "@opencode/client"
-import { Settings, Bell, ChevronDown, FileCog, Flag, Globe, Info, Keyboard, MessageSquare, MonitorUp, PlugZap, SlidersHorizontal, Terminal, Volume2, X } from "lucide-solid"
+import { Settings, Bell, ChevronDown, FileCog, Flag, Globe, Info, Keyboard, MessageSquare, MonitorUp, PlugZap, Server, SlidersHorizontal, Terminal, Volume2, X } from "lucide-solid"
 import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import {
@@ -27,7 +27,7 @@ import { AdvancedSettingsSection } from "./settings/advanced-settings-section"
 import { ConfigFilesSettingsSection } from "./settings/config-files-settings-section"
 import { RemoteAccessSettingsSection } from "./settings/remote-access-settings-section"
 import { RemoteControlSettingsSection } from "./settings/remote-control-settings-section"
-import { SavedRemoteServersCard } from "./settings/saved-remote-servers-card"
+import { ServersSettingsSection } from "./settings/servers-settings-section"
 import { SideCarsSettingsSection } from "./settings/sidecars-settings-section"
 import { MissionsSettingsSection } from "./settings/missions-settings-section"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
@@ -71,6 +71,8 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       { id: "info", icon: Info, label: t("settings.nav.info") },
     ]
     items.splice(5, 0, { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") })
+    // Saved CodeNomad servers open only from host windows.
+    if (canOpenRemoteWindows()) items.splice(6, 0, { id: "servers", icon: Server, label: t("settings.nav.servers") })
     return items
   })
 
@@ -91,11 +93,10 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
           <div class="settings-section-stack">
             <RemoteControlSettingsSection />
             <RemoteAccessSettingsSection />
-            <Show when={canOpenRemoteWindows()}>
-              <SavedRemoteServersCard />
-            </Show>
           </div>
         )
+      case "servers":
+        return <ServersSettingsSection />
       case "opencode":
         return <OpenCodeSettingsSection />
       case "providers":

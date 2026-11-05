@@ -1,4 +1,6 @@
 /* Compact new-instance launcher anchored to the tab-bar button (`new-instance-launcher.tsx`). */
+.recent-tabs-menu { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+
 .new-instance-launcher {
   background-color: var(--surface-overlay);
   color: var(--text-secondary);
@@ -33,12 +35,9 @@
   font-size: var(--font-size-sm);
 }
 
-.new-instance-launcher-section-title {
+/* Recent, a folded section styled like Browse (`.browse-menu-toggle`). */
+.new-instance-launcher-recents-toggle {
   padding: var(--space-xs) var(--window-inline-padding) 0;
-  font-size: var(--font-size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
 }
 
 /* About eight rows stay visible; the rest scroll. */
@@ -120,7 +119,7 @@
 
 .new-instance-launcher-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-xs);
   padding: var(--space-xs) var(--window-inline-padding);
   border-top: 1px solid color-mix(in srgb, var(--border-base) 50%, transparent);

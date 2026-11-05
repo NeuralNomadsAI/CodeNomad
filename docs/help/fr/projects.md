@@ -4,8 +4,8 @@ Un onglet de projet relie CodeNomad à un dossier sur l’ordinateur du backend.
 
 ## Ouvrir un projet {#open-project}
 
-1. Cliquez sur **Nouvelle instance** (`+`) pour ouvrir l’accueil.
-2. Choisissez **Parcourir les dossiers**, sélectionnez le dossier du backend et ouvrez-le ; ou choisissez une entrée sous **Dossiers récents**.
+1. Cliquez sur **Nouvelle instance** (`+`) pour ouvrir un **Nouvel onglet** vide, avec le focus dans la recherche. Il reprend le fond de l'accueil, le logo et le nom CodeNomad centrés, les grands boutons **Cloner un dépôt Git**, **Nouvel onglet temporaire** et **Nouveau SideCar**, et le sélecteur **Récents | Parcourir** avec compteurs. La recherche est sous le sélecteur dans **Récents**. Choisir un projet, un serveur enregistré ou un SideCar remplit cet onglet sur place. Un onglet vide dure jusqu'au rechargement de la fenêtre et se ferme sans laisser de projet. Le logo CodeNomad de la barre de titre ou d'onglets ouvre l'accueil, qui propose aussi les réglages, la langue et le bouton cœur **Sponsor** ([Soutenir CodeNomad](sponsor.md)).
+2. Dans **Récents**, choisissez un projet ; ou ouvrez **Parcourir**, choisissez **Cet ordinateur**, puis sélectionnez le dossier du backend et ouvrez-le. **Parcourir** liste aussi les serveurs CodeNomad enregistrés ([onglets de projets distants](remote-access.md#remote-project-tabs)) et les SideCars ([SideCars](browser-sidecars.md#register-sidecar)).
 3. Pour une copie de dépôt, choisissez **Cloner un depot Git**, saisissez **URL du depot** et **Dossier de destination**, puis **Cloner**. **Dossier de destination** est prérempli avec le nom du dépôt, dans le dossier qui contient votre dernier clone, sinon à côté de votre projet le plus récent. **Parcourir** choisit le dossier qui contiendra le clone ; vous pouvez aussi modifier le chemin, y compris le nom du dossier du clone.
 
 Parcourir un serveur distant signifie parcourir son système de fichiers, pas votre téléphone ou ordinateur portable. Ouvrir un projet ne crée pas un démon OpenCode distinct par onglet. Les conversations sont des sessions natives OpenCode ; leur durée de vie n’est pas celle de l’onglet.
@@ -17,9 +17,9 @@ Les entrées récentes sont des raccourcis. **Renommer l'espace de travail** cha
 ## Utiliser le lanceur de nouvelle instance {#new-instance-launcher}
 
 1. Appuyez longuement ou faites un clic droit sur `+` ; lorsque ce bouton a le focus clavier, utilisez **Alt+Down**, **Shift+F10** ou la touche Menu.
-2. Recherchez les projets récents ou sélectionnez **Parcourir…**, **Temporaire** ou **Cloner…**.
+2. Dans **Ouvrir un onglet**, recherchez parmi les **Récents** (projets, projets distants et SideCars), ouvrez **Parcourir**, ou choisissez **Cloner un dépôt Git** ou **Nouvel onglet temporaire**.
 
-Un clic normal ouvre toujours l’accueil complet. Le lanceur est un raccourci, pas l’interface de gestion : renommez/retirez les projets récents et gérez les serveurs enregistrés depuis l’accueil. Échap ferme le lanceur et rend le focus à `+`.
+Un clic normal ouvre un onglet vide. L'accueil, ouvert depuis le logo CodeNomad, propose les mêmes choix et les compteurs dans **Récents** et **Parcourir**. Renommez ou retirez-y les onglets récents ; gérez les serveurs dans **Paramètres → Serveurs** et les SideCars dans **Paramètres → SideCars**. Échap ferme le lanceur et rend le focus à `+`.
 
 ## Fermer un onglet de projet {#close-stop}
 
@@ -38,7 +38,7 @@ Fermer une fenêtre entière, quitter ou recharger ne ferme pas ses connexions d
 
 ## Espaces de travail temporaires {#temporary-workspaces}
 
-1. Choisissez **Temporaire** dans le lanceur ou **Nouvelle instance temporaire** sur l’accueil.
+1. Choisissez **Nouvel onglet temporaire** sur l’accueil ou dans le lanceur.
 2. Travaillez dans le dossier vide géré par CodeNomad ; Git n’est pas initialisé automatiquement.
 3. À la fermeture de l’onglet, choisissez **Garder**, **Jeter** ou **Annuler**. Le menu de l’onglet propose aussi **Garder comme projet**.
 

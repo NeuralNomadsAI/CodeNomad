@@ -142,6 +142,35 @@ test("native titlebar controls remain local and obsolete automation toggles are 
   }
 })
 
+test("remote project tabs are managed only from local windows, never from the remote pages they show", () => {
+  const source = readFileSync(new URL("./index.cjs", import.meta.url), "utf8")
+  const expose = (argv: string[], calls: unknown[][] = []) => {
+    let api: Record<string, Function> | undefined
+    vm.runInNewContext(source, {
+      require: () => ({
+        contextBridge: { exposeInMainWorld(name: string, value: Record<string, Function>) { if (name === "electronAPI") api = value } },
+        ipcRenderer: { invoke: (...args: unknown[]) => calls.push(args), on() {}, removeListener() {} }, webUtils: {},
+      }),
+      process: { argv },
+    })
+    return api!
+  }
+  const operations = ["openRemoteView", "updateRemoteView", "closeRemoteView", "onRemoteViewUpdated"]
+  for (const context of ["remote", "preferences"]) {
+    for (const operation of operations) assert.equal(expose([`--codenomad-window-context=${context}`])[operation], undefined, `${context}:${operation}`)
+  }
+  // The page inside a tab has the remote windows' bridge: notifications, badge, microphone, wake lock, recovery.
+  assert.deepEqual(Object.keys(expose(["--codenomad-window-context=remote"])).sort(), [
+    "openLocalWindow", "requestMicrophoneAccess", "retryRemoteWindow", "setNotificationBadge", "setWakeLock", "showNotification",
+  ])
+  const calls: unknown[][] = []
+  const local = expose([], calls)
+  local.openRemoteView({ viewId: "v" })
+  local.updateRemoteView({ viewId: "v", visible: false })
+  local.closeRemoteView("v")
+  assert.deepEqual(calls, [["remote-view:open", { viewId: "v" }], ["remote-view:update", { viewId: "v", visible: false }], ["remote-view:close", "v"]])
+})
+
 test("local windows choose the next launch's profile and relaunch through fixed channels", () => {
   const calls: unknown[][] = []
   let api: Record<string, Function> | undefined

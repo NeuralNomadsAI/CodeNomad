@@ -38,6 +38,9 @@ async function prepare(width = 1100, home = false) {
   await page.waitForFunction(() => Boolean((window as any).launcherFixture))
   return { page, errors, remoteRequests, calls: () => page.evaluate(() => [...(window as any).launcherFixture.calls]) }
 }
+// The home page's creation buttons; the launcher keeps the first two.
+const CREATE = ["Clone Git Repo", "New temporary tab", "New SideCar"]
+const LAUNCHER_CREATE = CREATE.slice(0, 2)
 const plus = (page: Page) => page.locator(".new-instance-button")
 const launcher = (page: Page) => page.locator(".new-instance-launcher")
 const options = (page: Page) => launcher(page).getByRole("option")
@@ -69,8 +72,14 @@ test("a click keeps the full home page while a long press opens the launcher", a
     assert.match(await options(page).first().innerText(), /CodeNomad[\s\S]*open/)
     assert.match(await options(page).nth(2).innerText(), /Blender tools/)
     assert.equal(await launcher(page).locator("footer, .new-instance-launcher-servers").count(), 0)
-    assert.equal(await launcher(page).getByRole("button", { name: /Remote servers|SideCar|Full home page|Add a server/ }).count(), 0)
-    assert.deepEqual(await launcher(page).getByRole("button").allTextContents(), ["Browse…", "Temporary", "Clone…"])
+    assert.equal(await launcher(page).getByRole("button", { name: /Remote servers|Open SideCar|Full home page|Add a server/ }).count(), 0)
+    // Browse stays folded: listing saved CodeNomad servers reads and probes nothing.
+    assert.equal(await launcher(page).getByRole("heading").innerText(), "Open a tab")
+    const recentToggle = launcher(page).getByRole("button", { name: "Recent", exact: true })
+    assert.equal(await recentToggle.innerText(), "RECENT")
+    assert.equal(await recentToggle.getAttribute("aria-expanded"), "true")
+    assert.deepEqual(await launcher(page).getByRole("button").allTextContents(), ["Recent", "Browse", ...LAUNCHER_CREATE])
+    assert.equal(await launcher(page).getByRole("button", { name: "Browse", exact: true }).getAttribute("aria-expanded"), "false")
     assert.deepEqual(remoteRequests, [], "saved profiles do not trigger launcher remote reads or probes")
     if (process.env.CODENOMAD_LAUNCHER_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_LAUNCHER_CAPTURE })
     assert.deepEqual(errors, [])
@@ -115,18 +124,20 @@ test("project actions stay available in a narrow launcher and close it before ru
   try {
     // Exercise the real browser folder picker rather than a native OS dialog.
     await page.evaluate(() => { (window as any).__CODENOMAD_RUNTIME_HOST__ = "web" })
-    for (const name of ["Browse…", "Temporary", "Clone…"]) {
+    for (const name of ["This computer", "New temporary tab", "Clone Git Repo"]) {
       await plus(page).click({ button: "right" })
       await launcher(page).waitFor()
       const width = await launcher(page).evaluate(el => el.getBoundingClientRect().width)
       assert.ok(width <= 390, `launcher fits a narrow window (${width}px)`)
       assert.equal(await launcher(page).locator("footer").count(), 0)
-      if (name === "Temporary" && process.env.CODENOMAD_LAUNCHER_NARROW_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_LAUNCHER_NARROW_CAPTURE })
+      if (name === "New temporary tab" && process.env.CODENOMAD_LAUNCHER_NARROW_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_LAUNCHER_NARROW_CAPTURE })
+      // This computer's folders are browsed from the Browse section.
+      if (name === "This computer") await launcher(page).getByRole("button", { name: "Browse", exact: true }).click()
       await launcher(page).getByRole("button", { name, exact: true }).click()
       await launcher(page).waitFor({ state: "detached" })
-      if (name === "Temporary") assert.equal((await calls()).at(-1), "temporary")
+      if (name === "New temporary tab") assert.equal((await calls()).at(-1), "temporary")
       else {
-        await page.getByRole("dialog").getByRole("heading", { name: name === "Browse…" ? "Select Workspace" : "Clone Git Repository", exact: true }).waitFor()
+        await page.getByRole("dialog").getByRole("heading", { name: name === "This computer" ? "Select Workspace" : "Clone Git Repository", exact: true }).waitFor()
         await page.keyboard.press("Escape")
         await page.getByRole("dialog").waitFor({ state: "detached" })
       }
@@ -286,16 +297,102 @@ test("the new-instance button follows the last tab like a browser", async () => 
   } finally { await page.close() }
 })
 
-test("the full home page keeps saved servers, server setup and SideCar actions", async () => {
-  const { page, errors, calls } = await prepare(1100, true)
+// Browse's rows, in order, once unfolded with the keyboard; focus walks them and Escape folds it back.
+async function browseByKeyboard(page: Page, scope: ReturnType<Page["locator"]>) {
+  const toggle = scope.getByRole("button", { name: "Browse", exact: true })
+  assert.equal(await toggle.getAttribute("aria-expanded"), "false")
+  // The chevron sits before the title.
+  assert.equal(await toggle.evaluate(el => el.firstElementChild?.classList.contains("disclosure-chevron")), true)
+  await toggle.focus()
+  await page.keyboard.press("Enter")
+  await page.waitForFunction(() => document.activeElement?.textContent === "This computer")
+  const rows = await scope.locator(".browse-menu-row").allTextContents()
+  await page.keyboard.press("ArrowDown")
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Open a project on Saved remote")
+  await page.keyboard.press("ArrowDown")
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Server address or link", "the address field comes last")
+  await page.keyboard.press("ArrowDown")
+  assert.equal(await page.evaluate(() => document.activeElement?.textContent), "This computer", "the rows wrap around")
+  await page.keyboard.press("Escape")
+  await page.waitForFunction(() => document.activeElement?.textContent === "Browse")
+  assert.equal(await toggle.getAttribute("aria-expanded"), "false")
+  return rows
+}
+
+test("the home page's Recent and Browse tabs match the launcher's sections, which keeps two creation buttons", async () => {
+  const home = await prepare(1100, true)
+  const tabs = await prepare()
   try {
-    await page.getByRole("button", { name: "Servers 1 Servers", exact: true }).click()
-    await page.getByRole("button", { name: /^Saved remote/ }).waitFor()
-    await page.getByRole("button", { name: "Connect CodeNomad Server", exact: true }).click()
-    await page.getByRole("dialog", { name: "Connect to Server", exact: true }).waitFor()
-    await page.getByRole("button", { name: "Cancel", exact: true }).click()
-    await page.getByRole("button", { name: "Open SideCar", exact: true }).click()
-    assert.deepEqual(await calls(), ["sidecar"])
+    const { page, errors } = home
+    // The old framed Browse button, Servers tab, Connect and Open SideCar buttons are gone.
+    assert.equal(await page.getByRole("button", { name: /^(Browse Folders|Servers|Remotes|Connect CodeNomad Server|Open SideCar)/ }).count(), 0)
+    // Left: only the creation buttons, then the OpenCode settings.
+    const actions = page.locator(".folder-home-actions-column")
+    const order = await actions.locator("button").evaluateAll(buttons => buttons.map(button => button.textContent?.trim()))
+    assert.deepEqual(order.slice(0, 5), [...CREATE, "OpenCode"])
+
+    // Right: two tabs, Recent tabs first, with the launcher's search.
+    const tabList = page.getByRole("tablist")
+    assert.deepEqual(await tabList.locator(".panel-title").allTextContents(), ["Recent", "Browse"])
+    const recentTab = tabList.getByRole("tab", { name: "Recent" })
+    assert.equal(await recentTab.getAttribute("aria-selected"), "true")
+    const search = page.getByRole("textbox", { name: "Search recent projects" })
+    await search.fill("blend")
+    await page.waitForFunction(() => document.querySelectorAll(".folder-home-recent-item").length === 1)
+    await search.fill("")
+    // Arrow keys move between the tabs; Browse is a list without a disclosure.
+    await recentTab.focus()
+    await page.keyboard.press("ArrowRight")
+    const browseTab = tabList.getByRole("tab", { name: "Browse" })
+    assert.equal(await browseTab.getAttribute("aria-selected"), "true")
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Browse")
+    const panel = page.getByRole("tabpanel", { name: "Browse" })
+    assert.equal(await panel.locator(".browse-menu-toggle").count(), 0)
+    const homeRows = await panel.locator(".browse-menu-row").allTextContents()
+    assert.deepEqual(homeRows, ["This computer", "Saved remote"])
+    await panel.getByRole("textbox", { name: "Server address or link" }).waitFor()
+    await panel.getByRole("button", { name: "This computer" }).focus()
+    await page.keyboard.press("ArrowDown")
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Open a project on Saved remote")
+
+    await plus(tabs.page).click({ button: "right" })
+    await openedWithFocus(tabs.page)
+    assert.deepEqual(await launcher(tabs.page).locator(".new-instance-launcher-actions button").allTextContents(), LAUNCHER_CREATE)
+    const launcherRows = await browseByKeyboard(tabs.page, launcher(tabs.page))
+    assert.equal(await launcher(tabs.page).count(), 1, "Escape folds Browse without closing the launcher")
+    assert.deepEqual(launcherRows, homeRows)
+    assert.deepEqual([...errors, ...tabs.errors], [])
+  } finally { await home.page.close(); await tabs.page.close() }
+})
+
+test("the launcher's Recent section folds like Browse: Escape folds it without closing, typing or an arrow unfolds it", async () => {
+  const { page, errors } = await prepare()
+  try {
+    await plus(page).click({ button: "right" })
+    await openedWithFocus(page)
+    const toggle = launcher(page).getByRole("button", { name: "Recent", exact: true })
+    // The chevron sits before the title, as in Browse.
+    assert.equal(await toggle.evaluate(el => el.firstElementChild?.classList.contains("disclosure-chevron")), true)
+    await toggle.focus()
+    await page.keyboard.press("Escape")
+    assert.equal(await toggle.getAttribute("aria-expanded"), "false")
+    assert.equal(await options(page).count(), 0)
+    assert.equal(await launcher(page).count(), 1, "Escape folds Recent without closing the launcher")
+    // Escape on a folded section closes the launcher as usual.
+    await page.keyboard.press("Escape")
+    await launcher(page).waitFor({ state: "detached" })
+
+    // The section stays folded in this window; the search's first arrow unfolds it.
+    await plus(page).click({ button: "right" })
+    await openedWithFocus(page)
+    assert.equal(await toggle.getAttribute("aria-expanded"), "false")
+    await page.keyboard.press("ArrowDown")
+    assert.equal(await toggle.getAttribute("aria-expanded"), "true")
+    await page.waitForFunction(() => document.querySelectorAll(".new-instance-launcher [role=option]").length > 0)
+    await toggle.click()
+    await page.getByRole("combobox").fill("blend")
+    assert.equal(await toggle.getAttribute("aria-expanded"), "true", "typing unfolds it")
+    await page.waitForFunction(() => document.querySelectorAll(".new-instance-launcher [role=option]").length === 1)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

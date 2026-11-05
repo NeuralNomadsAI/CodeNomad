@@ -19,6 +19,7 @@ const SECTIONS: &[&str] = &[
     "notifications",
     "speech",
     "remote",
+    "servers",
     "opencode",
     "providers",
     "missions",
@@ -709,6 +710,7 @@ mod tests {
     fn validates_sections_and_builds_an_explicit_preferences_target() {
         assert!(validate_section("general").is_ok());
         assert!(validate_section("speech").is_ok());
+        assert!(validate_section("servers").is_ok());
         assert!(validate_section("workspace").is_err());
 
         let target = target_url("http://127.0.0.1:3000/", "chat").unwrap();

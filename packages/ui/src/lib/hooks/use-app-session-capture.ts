@@ -69,7 +69,7 @@ function captureRuntimeState(
   return { unseenIdleSince, generationRecovery, ...(Object.keys(seenInterruptions).length ? { seenInterruptions } : {}) }
 }
 function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>) {
-  const tabs = appTabs()
+  const tabs = appTabs().filter((tab) => tab.kind !== "blank")
   const nextOccurrence = new Map<string, number>()
   const occurrenceByInstance = new Map<string, number>()
   for (const instance of instances().values()) {
@@ -80,6 +80,10 @@ function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>)
   }
   const restorableTabs: RestorableTabState[] = tabs.map((tab) => {
     if (tab.kind === "sidecar") return { kind: "sidecar", sidecarId: tab.sidecarTab.sidecarId }
+    if (tab.kind === "remote-project") {
+      const { profileId, folder } = tab.remoteProjectTab
+      return { kind: "remote-project", profileId, ...(folder ? { folder } : {}) }
+    }
     const id = tab.instance.id
     const parentId = activeParentSessionId().get(id)
     const sessionId = activeSessionId().get(id)

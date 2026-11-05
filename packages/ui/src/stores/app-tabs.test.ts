@@ -13,6 +13,7 @@ import {
   detachInstanceTab,
   setAppTabOrder,
   selectInstanceTab,
+  openBlankTab, closeBlankTab, replaceBlankTab,
 } from "./app-tabs.ts"
 import {
   createRestorableSessionPreservation,
@@ -60,9 +61,9 @@ function workspace(folder: string): RestorableWorkspaceTabState {
 }
 
 function captureTabs(): RestorableSessionState {
-  const tabs = appTabs().map((tab) => tab.kind === "instance"
-    ? workspace(tab.instance.folder)
-    : { kind: "sidecar" as const, sidecarId: tab.sidecarTab.sidecarId })
+  const tabs = appTabs().flatMap((tab): RestorableSessionState["tabs"] => tab.kind === "instance"
+    ? [workspace(tab.instance.folder)]
+    : tab.kind === "sidecar" ? [{ kind: "sidecar", sidecarId: tab.sidecarTab.sidecarId }] : [])
   return { tabs, activeTabIndex: appTabs().findIndex((tab) => tab.id === activeAppTabId()) }
 }
 
@@ -76,6 +77,32 @@ describe("renderer-local workspace tabs", () => {
     toast.custom = () => "test-toast"
   })
   afterEach(() => { serverApi.deleteWorkspace = originalDelete; toast.custom = originalToast })
+  it("closes empty tabs without a backend request and replaces a chosen blank slot without removing other blanks", () => {
+    const chosen = instance('blank-choice')
+    let deletes = 0
+    serverApi.deleteWorkspace = async () => { deletes++ }
+    addInstance(chosen)
+    openBlankTab()
+    const first = activeAppTabId()!
+    openBlankTab()
+    const second = activeAppTabId()!
+    try {
+      selectInstanceTab(chosen.id)
+      replaceBlankTab(first, `instance:${chosen.id}`)
+      assert.deepEqual(appTabs().map(tab => tab.id), [`instance:${chosen.id}`, second])
+      closeBlankTab(second)
+      assert.deepEqual(appTabs().map(tab => tab.id), [`instance:${chosen.id}`])
+      openBlankTab()
+      const survivor = activeAppTabId()!
+      replaceBlankTab(second, `instance:${chosen.id}`)
+      assert.deepEqual(appTabs().map(tab => tab.id), [`instance:${chosen.id}`, survivor], "a closed origin cannot consume another blank")
+      closeBlankTab(survivor)
+      assert.equal(deletes, 0)
+    } finally {
+      closeBlankTab(first); closeBlankTab(second)
+      removeInstance(chosen.id, { authoritative: false })
+    }
+  })
   it("keeps catalog additions and updates closed until explicitly attached", () => {
     const first = instance("catalog-first")
     const second = instance("catalog-second")

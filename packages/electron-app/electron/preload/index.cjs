@@ -96,6 +96,14 @@ const localElectronAPI = {
     ipcRenderer.on("browser-target:open", handler)
     return () => ipcRenderer.removeListener("browser-target:open", handler)
   },
+  openRemoteView: (payload) => ipcRenderer.invoke("remote-view:open", payload),
+  updateRemoteView: (payload) => ipcRenderer.invoke("remote-view:update", payload),
+  closeRemoteView: (viewId) => ipcRenderer.invoke("remote-view:close", viewId),
+  onRemoteViewUpdated: (callback) => {
+    const handler = (_event, payload) => callback(payload)
+    ipcRenderer.on("remote-view:updated", handler)
+    return () => ipcRenderer.removeListener("remote-view:updated", handler)
+  },
 }
 
 const remoteElectronAPI = {

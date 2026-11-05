@@ -29,7 +29,7 @@
 
 ## 浏览器会话与撤销 {#sessions}
 
-直接登录会创建不透明的后端内存会话和 `codenomad_session` cookie（或配置的 cookie 名）。cookie 为 `HttpOnly`、`SameSite=Lax`，作用域为 `/`，通过 HTTPS 签发时标记为 `Secure`。它们是浏览器会话 cookie；后端重启使内存会话失效。收到提示时请就地重新认证，而非重发失败的修改操作。
+直接登录会创建不透明的后端内存会话和 `codenomad_session` cookie（或配置的 cookie 名）。cookie 为 `HttpOnly`、`SameSite=Lax`，作用域为 `/`，通过 HTTPS 签发时标记为 `Secure`。登录有效期为七天，浏览器或桌面应用重启后依然有效；退出登录会在后端结束该会话，后端重启会使所有直接会话失效。收到提示时请就地重新认证，而非重发失败的修改操作。
 
 更改密码会改变后续凭据检查；**不会**使已签发的直接会话或远程控制设备失效。怀疑被入侵时：
 

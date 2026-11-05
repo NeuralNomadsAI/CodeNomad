@@ -85,6 +85,10 @@ declare global {
     claimBrowserOpen?: (requestID: string) => Promise<boolean>
     releaseBrowserOpen?: (requestID: string) => Promise<boolean>
     onBrowserOpenRequest?: (callback: (payload: { sessionID: string; url: string; requestID: string }) => void) => () => void
+  openRemoteView?: (payload: import("../lib/native/remote-view").RemoteViewOpenPayload & { bounds: import("../lib/native/browser").BrowserTargetBounds }) => Promise<void>
+  updateRemoteView?: (payload: { viewId: string; bounds?: import("../lib/native/browser").BrowserTargetBounds; visible: boolean }) => Promise<void>
+  closeRemoteView?: (viewId: string) => Promise<void>
+  onRemoteViewUpdated?: (callback: (update: import("../lib/native/remote-view").RemoteViewUpdate) => void) => () => void
 
     showNotification?: (payload: { title: string; body: string }) => Promise<{ ok: boolean; reason?: string }>
     openRemoteWindow?: (payload: {

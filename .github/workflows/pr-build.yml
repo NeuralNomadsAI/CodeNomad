@@ -370,6 +370,9 @@ jobs:
           packages/ui/src/lib/retained-size.test.ts
           packages/ui/src/lib/provider-auth.test.ts
           packages/ui/src/lib/remote-pairing-link.test.ts
+          packages/ui/src/lib/codenomad-link.test.ts
+          packages/ui/src/lib/embed-mode.test.ts
+          packages/ui/src/lib/remote-project-recents.test.ts
           packages/ui/src/lib/native/browser.test.ts
           packages/ui/src/lib/runtime-env.test.ts
           packages/ui/src/lib/session-transcript-lru.test.ts
@@ -485,6 +488,7 @@ jobs:
           packages/ui/src/stores/instance-startup-priority.test.ts
           packages/ui/src/stores/session-list-startup.test.ts
           packages/ui/src/stores/app-tabs.test.ts
+          packages/ui/src/stores/remote-project-tabs.test.ts
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/preferences-favorites-mode.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts

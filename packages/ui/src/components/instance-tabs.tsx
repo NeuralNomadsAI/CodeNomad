@@ -12,10 +12,13 @@ import {
 import InstanceTab from "./instance-tab"
 import TabScroll from "./tab-scroll"
 import AppActions from "./app-actions"
-import { appActionsInTitlebar } from "./native-titlebar"
+import { appActionsInTitlebar, hasNativeTitlebar } from "./native-titlebar"
+import { BrandLogo } from "./brand-logo"
+import { setShowFolderSelection } from "../stores/ui"
 import ProjectRenameDialog from "./project-rename-dialog"
 import { renameProject } from "../stores/project-names"
-import { Plus } from "lucide-solid"
+import { Plus, Server } from "lucide-solid"
+import { remoteProjectTabLabel } from "../stores/remote-project-open"
 import { withHotkey } from "../lib/hotkeys"
 import { createLongPressHandlers } from "../lib/long-press"
 import { useI18n } from "../lib/i18n"
@@ -43,6 +46,10 @@ interface SortableAppTabProps {
 
 const AppTabContent: Component<SortableAppTabProps> = (props) => {
   const { t } = useI18n()
+  const label = () => props.tab.kind === "sidecar"
+    ? props.tab.sidecarTab.name
+    : props.tab.kind === "remote-project" ? remoteProjectTabLabel(props.tab.remoteProjectTab)
+      : props.tab.kind === "blank" ? t("newTab.title") : ""
   return (
     <>
       {props.tab.kind === "instance" ? (
@@ -66,8 +73,11 @@ const AppTabContent: Component<SortableAppTabProps> = (props) => {
             props.onSelect(props.tab.id)
           }}
         >
-          <span class="tab-pill-button">
-            <span class="truncate max-w-[180px]">{props.tab.sidecarTab.name}</span>
+          <span class="tab-pill-button inline-flex items-center gap-1.5 min-w-0">
+            <Show when={props.tab.kind === "remote-project"}>
+              <Server class="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+            </Show>
+            <bdi class="truncate max-w-[180px]" dir="auto">{label()}</bdi>
           </span>
           <button
             class="tab-pill-close"
@@ -76,7 +86,7 @@ const AppTabContent: Component<SortableAppTabProps> = (props) => {
               event.stopPropagation()
               props.onClose(props.tab.id)
             }}
-            aria-label={props.tab.sidecarTab.name}
+            aria-label={label()}
             title={props.tab.id === props.activeTabId ? withHotkey(t("instanceTab.actions.close.ariaLabel"), "close-instance") : t("instanceTab.actions.close.ariaLabel")}
           >
             ×
@@ -217,6 +227,12 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
   return (
     <>
       <div class="tab-bar tab-bar-instance">
+        <Show when={!hasNativeTitlebar}>
+          <button type="button" class="window-icon-button tab-bar-home" aria-label={t("newTab.home")} title={t("newTab.home")}
+            onClick={() => setShowFolderSelection(true)}>
+            <BrandLogo alt={t("folderSelection.logoAlt")} class="native-titlebar-logo" />
+          </button>
+        </Show>
         <div class="tab-container">
           <TabScroll>
               <div class="tab-strip-tabs" role="tablist" ref={tabList}>

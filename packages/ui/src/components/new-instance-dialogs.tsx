@@ -1,8 +1,7 @@
 import { Dialog } from "@kobalte/core/dialog"
-import { createSignal, Show, type ComponentProps } from "solid-js"
+import { createSignal, Show } from "solid-js"
 import { Loader2 } from "lucide-solid"
 import DirectoryBrowserDialog from "./directory-browser-dialog"
-import { RemoteServerDialog } from "./remote-server-dialog"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { openNativeFolderDialog, supportsNativeDialogsInCurrentWindow } from "../lib/native/native-functions"
@@ -14,13 +13,11 @@ interface NewInstanceDialogsOptions {
   defaultPath: () => string | undefined
   isLoading: () => boolean
   onSelectFolder: (path: string) => void
-  /** Only the home page offers remote-server setup. */
-  onSaveServer?: ComponentProps<typeof RemoteServerDialog>["onSubmit"]
 }
 
 /**
  * Browse and clone flows shared by the home page and the new-instance
- * launcher, plus optional home-page server setup. Mount `Dialogs` where it outlives the trigger.
+ * launcher. Mount `Dialogs` where it outlives the trigger.
  */
 export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
   const { t } = useI18n()
@@ -36,7 +33,6 @@ export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
   const [cleanupCloneDestination, setCleanupCloneDestination] = createSignal(false)
   const [cloneDialogError, setCloneDialogError] = createSignal<string | null>(null)
   const [isCloningRepository, setIsCloningRepository] = createSignal(false)
-  const [isServerDialogOpen, setIsServerDialogOpen] = createSignal(false)
 
   function resetCloneDialog() {
     setCloneRepositoryUrl("")
@@ -158,7 +154,7 @@ export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
     setIsCloneDestinationBrowserOpen(true)
   }
 
-  const isOpen = () => isFolderBrowserOpen() || isCloneDialogOpen() || isCloneDestinationBrowserOpen() || isServerDialogOpen()
+  const isOpen = () => isFolderBrowserOpen() || isCloneDialogOpen() || isCloneDestinationBrowserOpen()
 
   function Dialogs() {
     return (
@@ -276,12 +272,9 @@ export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
           </Dialog.Portal>
         </Dialog>
 
-        <Show when={options.onSaveServer}>
-          {(onSubmit) => <RemoteServerDialog open={isServerDialogOpen()} onOpenChange={setIsServerDialogOpen} onSubmit={onSubmit()} />}
-        </Show>
       </>
     )
   }
 
-  return { browse, clone, addServer: () => setIsServerDialogOpen(true), isOpen, isFolderBrowserOpen, Dialogs }
+  return { browse, clone, isOpen, isFolderBrowserOpen, Dialogs }
 }

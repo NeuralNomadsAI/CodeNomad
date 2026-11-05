@@ -16,10 +16,14 @@ import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
 import { SettingsScreen } from "./components/settings-screen"
 import { NativeTitlebar, hasNativeTitlebar } from "./components/native-titlebar"
-import { SideCarPickerDialog } from "./components/sidecar-picker-dialog"
+import { activeBlankTabId, openBlankTab, closeBlankTab, replaceBlankTab, getInstanceAppTabId } from "./stores/app-tabs"
 import { SideCarView } from "./components/sidecar-view"
+import { RemoteProjectView } from "./components/remote-project-view"
+import { EmbeddedProjectPicker } from "./components/embedded-project-picker"
+import { embeddedProject, publishEmbeddedProject, rememberEmbeddedSession, rememberedEmbeddedSession } from "./lib/embed-mode"
+import { restoreEmbeddedSession } from "./stores/embedded-project-session"
+import { closeRemoteProjectTab } from "./stores/remote-project-tabs"
 import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
-import { showAlertDialog } from "./stores/alerts"
 import { initGithubStars } from "./stores/github-stars"
 import { reloadWorktrees } from "./stores/worktrees"
 
@@ -64,6 +68,7 @@ import {
   refreshVolatileInstanceState,
   syncLoadedSessionInboxes,
   syncPendingRequests,
+  waitForInitialWorkspaceLoad,
 } from "./stores/instances"
 import {
   getSessions,
@@ -84,11 +89,7 @@ import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-s
 import { hasWakeLockEligibleWork, getSessionStatus } from "./stores/session-status"
 import { openSettings } from "./stores/settings-screen"
 import { showCommandPalette } from "./stores/command-palette"
-import {
-  closeSidecarTab,
-  ensureSidecarsLoaded,
-  openSidecarTab,
-} from "./stores/sidecars"
+import { closeSidecarTab } from "./stores/sidecars"
 import {
   activeAppTab,
   activeAppTabId,
@@ -102,7 +103,6 @@ import {
   moveAppTab,
   selectAppTab,
   selectInstanceTab,
-  selectSidecarTab,
 } from "./stores/app-tabs"
 const log = getLogger("actions")
 const FOREGROUND_REFRESH_TIMEOUT_MS = 10_000
@@ -150,7 +150,6 @@ const App: Component = () => {
   } = useConfig()
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
   const [instanceTabBarHeight, setInstanceTabBarHeight] = createSignal(0)
-  const [sidecarPickerOpen, setSidecarPickerOpen] = createSignal(false)
   const phoneQuery = useMediaQuery("(max-width: 767px)")
   const isPhoneLayout = createMemo(() => phoneQuery())
 
@@ -459,7 +458,7 @@ const App: Component = () => {
     return recent?.projectName?.trim() || getPathBasename(folderPath)
   }
 
-  async function handleSelectFolder(folderPath: string): Promise<boolean> {
+  async function handleSelectFolder(folderPath: string, blankId = activeBlankTabId()): Promise<boolean> {
     if (!folderPath) {
       return false
     }
@@ -474,12 +473,14 @@ const App: Component = () => {
       recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, folderPath)
       if (result.reused) {
         selectInstanceTab(result.instanceId)
+        replaceBlankTab(blankId, getInstanceAppTabId(result.instanceId))
         setShowFolderSelection(false)
         log.info("Selected reused instance", { instanceId: result.instanceId, folderPath })
         return true
       }
 
       selectInstanceTab(result.instanceId)
+      replaceBlankTab(blankId, getInstanceAppTabId(result.instanceId))
       setShowFolderSelection(false)
 
       log.info("Created instance", {
@@ -496,7 +497,7 @@ const App: Component = () => {
       )
       const missingBinary = isMissingBinaryMessage(message)
       if (missingBinary || message.includes("opencode_update_required")) {
-        openOpenCodeSetup(() => handleSelectFolder(folderPath))
+        openOpenCodeSetup(() => handleSelectFolder(folderPath, blankId))
         return false
       }
       showLaunchError({ source: "create", message, binaryPath: selectedBinary, missingBinary })
@@ -510,11 +511,45 @@ const App: Component = () => {
   useDesktopFolderLaunch(handleSelectFolder)
   useDesktopConnectionLaunch()
 
-  async function handleNewTemporaryInstance(): Promise<void> {
+  // The embedded single-project page opens its folder once workspaces are known,
+  // then publishes the project it shows for its host tab.
+  if (embeddedProject) {
+    const folder = embeddedProject.folder
+    // Until the remembered session is restored, the empty startup selection is not the user's choice.
+    const [sessionRestorePending, setSessionRestorePending] = createSignal(Boolean(folder))
+    if (folder) onMount(() => void (async () => {
+      try {
+        await waitForInitialWorkspaceLoad().catch(() => {})
+        if (!await handleSelectFolder(folder)) return
+        const instance = activeInstance()
+        const remembered = instance ? rememberedEmbeddedSession(instance.folder) : undefined
+        if (instance && remembered) await restoreEmbeddedSession(instance.id, instance.folder, remembered)
+      } catch (error) {
+        log.warn("Failed to restore the embedded project's session", error)
+      } finally {
+        setSessionRestorePending(false)
+      }
+    })())
+    createEffect(() => {
+      const instance = activeInstance()
+      if (instance && !instance.temporary) publishEmbeddedProject(instance.folder, getProjectNameForFolder(instance.folder))
+    })
+    createEffect(() => {
+      const instance = activeInstance()
+      const sessionId = activeSessionIdForInstance()
+      if (instance && !instance.temporary && sessionId && sessionId !== "info" && !sessionRestorePending()) {
+        rememberEmbeddedSession(instance.folder, sessionId)
+      }
+    })
+  }
+
+  async function handleNewTemporaryInstance(blankId = activeBlankTabId()): Promise<void> {
     clearLaunchError()
     setIsSelectingFolder(true)
     try {
-      selectInstanceTab(await openTemporaryInstance())
+      const id = await openTemporaryInstance()
+      selectInstanceTab(id)
+      replaceBlankTab(blankId, getInstanceAppTabId(id))
       setShowFolderSelection(false)
     } catch (error) {
       const message = formatLaunchErrorMessage(
@@ -525,7 +560,7 @@ const App: Component = () => {
       )
       const missingBinary = isMissingBinaryMessage(message)
       if (missingBinary || message.includes("opencode_update_required")) {
-        openOpenCodeSetup(() => handleNewTemporaryInstance())
+        openOpenCodeSetup(() => handleNewTemporaryInstance(blankId))
         return
       }
       showLaunchError({ source: "create", message, binaryPath: serverSettings().opencodeBinary || "opencode2", missingBinary })
@@ -536,10 +571,12 @@ const App: Component = () => {
   }
 
   function handleSelectExistingInstance(instanceId: string, recentPath: string) {
+    const blankId = activeBlankTabId()
     const instance = instances().get(instanceId)
     if (!instance) return
     recordWorkspaceLaunch(instance.folder, recentPath)
     selectInstanceTab(instanceId)
+    replaceBlankTab(blankId, getInstanceAppTabId(instanceId))
     setShowFolderSelection(false)
     log.info("Selected existing instance", { instanceId, folderPath: instance.folder })
   }
@@ -554,7 +591,8 @@ const App: Component = () => {
   }
 
   function handleNewInstanceRequest() {
-    setShowFolderSelection(true)
+    openBlankTab()
+    setShowFolderSelection(false)
   }
 
   const [launcherOpen, setLauncherOpen] = createSignal(false)
@@ -563,27 +601,6 @@ const App: Component = () => {
   createEffect(() => {
     if (showFolderSelection() || appTabs().length === 0) setLauncherOpen(false)
   })
-
-  function handleOpenSidecarPicker() {
-    setSidecarPickerOpen(true)
-    void ensureSidecarsLoaded()
-  }
-
-  async function handleOpenSidecar(sidecarId: string) {
-    try {
-      const tab = await openSidecarTab(sidecarId)
-      selectSidecarTab(tab.token)
-      setShowFolderSelection(false)
-      setSidecarPickerOpen(false)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      showAlertDialog(message, {
-        variant: "error",
-        title: t("sidecars.open.errorTitle"),
-      })
-      log.error("Failed to open SideCar", error)
-    }
-  }
 
   async function handleDisconnectedInstanceClose() {
     const instanceId = disconnectedInstance()?.id
@@ -634,6 +651,10 @@ const App: Component = () => {
 
     if (tab.kind === "instance") {
       closeInstanceTab(tab.instance.id)
+    } else if (tab.kind === "remote-project") {
+      closeRemoteProjectTab(tab.remoteProjectTab.token)
+    } else if (tab.kind === "blank") {
+      closeBlankTab(tab.id)
     } else {
       closeSidecarTab(tab.sidecarTab.token)
     }
@@ -766,8 +787,8 @@ const App: Component = () => {
         </Dialog.Portal>
       </Dialog>
       <div class="h-screen w-screen flex flex-col" style={{ height: "100dvh", "padding-bottom": "var(--keyboard-offset, 0px)" }}>
-        <Show when={hasNativeTitlebar}>
-          <NativeTitlebar title={t("window.title.main")} logo menus actions />
+        <Show when={hasNativeTitlebar && !embeddedProject}>
+          <NativeTitlebar title={t("window.title.main")} logo menus actions onHome={() => setShowFolderSelection(true)} />
         </Show>
         <Show when={mobileFullscreenMode()}>
           <div class="mobile-fullscreen-exit-wrapper">
@@ -786,7 +807,8 @@ const App: Component = () => {
           when={appTabs().length === 0}
           fallback={
             <>
-              <Show when={!mobileFullscreenMode()}>
+              {/* The embedded single-project page shows its project only, never the tab bar. */}
+              <Show when={!mobileFullscreenMode() && !embeddedProject}>
                 <InstanceTabs
                   tabs={appTabs()}
                   activeTabId={activeAppTabId()}
@@ -806,7 +828,7 @@ const App: Component = () => {
 
               <For each={appTabs()}>
                 {(tab) => {
-                  const isVisible = () => activeAppTabId() === tab.id && !showFolderSelection()
+                  const isVisible = () => activeAppTabId() === tab.id && (!showFolderSelection() || Boolean(embeddedProject))
                   return tab.kind === "instance" ? (
                     <div
                       class="flex-1 min-h-0 overflow-hidden"
@@ -834,6 +856,23 @@ const App: Component = () => {
                         />
                       </InstanceMetadataProvider>
                     </div>
+                  ) : tab.kind === "remote-project" ? (
+                    <div
+                      class="flex-1 min-h-0 overflow-hidden"
+                      style={{ display: isVisible() ? "flex" : "none" }}
+                      data-tab-id={tab.id}
+                      data-tab-kind={tab.kind}
+                      data-tab-visible={isVisible() ? "true" : "false"}
+                    >
+                      <RemoteProjectView tab={tab.remoteProjectTab} active={isVisible()} />
+                    </div>
+                  ) : tab.kind === "blank" ? (
+                    <div class="flex-1 min-h-0 overflow-auto" style={{ display: isVisible() ? "flex" : "none" }}
+                      data-tab-id={tab.id} data-tab-kind="blank" data-tab-visible={isVisible() ? "true" : "false"}>
+                      <FolderSelectionView blank active={isVisible()} isLoading={isSelectingFolder()}
+                        onSelectFolder={(path) => void handleSelectFolder(path, tab.id)} onSelectExistingInstance={handleSelectExistingInstance}
+                        onNewTemporaryInstance={() => void handleNewTemporaryInstance(tab.id)} />
+                    </div>
                   ) : (
                     <div
                       class="flex-1 min-h-0 overflow-hidden"
@@ -851,16 +890,19 @@ const App: Component = () => {
             </>
           }
         >
-          <FolderSelectionView
-            onSelectFolder={handleSelectFolder}
-            onSelectExistingInstance={handleSelectExistingInstance}
-            onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
-            isLoading={isSelectingFolder() || shouldShowAppRestoreLoading(loadedRestorableSession())}
-            onOpenSidecar={handleOpenSidecarPicker}
-          />
+          <Show when={!embeddedProject} fallback={
+            <EmbeddedProjectPicker isLoading={isSelectingFolder()} onSelectFolder={(path) => void handleSelectFolder(path)} />
+          }>
+            <FolderSelectionView
+              onSelectFolder={handleSelectFolder}
+              onSelectExistingInstance={handleSelectExistingInstance}
+              onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
+              isLoading={isSelectingFolder() || shouldShowAppRestoreLoading(loadedRestorableSession())}
+            />
+          </Show>
         </Show>
 
-        <Show when={shouldShowAppHomeOverlay(showFolderSelection(), appTabs().length)}>
+        <Show when={!embeddedProject && shouldShowAppHomeOverlay(showFolderSelection(), appTabs().length)}>
           <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
             <div class="w-full h-full relative">
               <FolderSelectionView
@@ -868,8 +910,7 @@ const App: Component = () => {
                 onSelectExistingInstance={handleSelectExistingInstance}
                 onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
                 isLoading={isSelectingFolder()}
-                onOpenSidecar={handleOpenSidecarPicker}
-                onClose={() => {
+                  onClose={() => {
                   setShowFolderSelection(false)
                   clearLaunchError()
                 }}
@@ -888,7 +929,6 @@ const App: Component = () => {
           onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
         />
         <SettingsScreen />
-        <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
         <AlertDialog />
         <AuthRecoveryDialog />
 

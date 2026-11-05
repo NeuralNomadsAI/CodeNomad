@@ -4,8 +4,8 @@ Ein Projekt-Tab verbindet CodeNomad mit einem Ordner auf dem Backend-Rechner. Da
 
 ## Projekt öffnen {#open-project}
 
-1. Klicken Sie auf **Neue Instanz** (`+`), um die Startseite zu öffnen.
-2. Wählen Sie **Ordner durchsuchen**, wählen und öffnen Sie den Backend-Ordner; oder wählen Sie einen Eintrag unter **Letzte Ordner**.
+1. **Neue Instanz** (`+`) öffnet einen leeren **Neuer Tab** mit Fokus in der Suche. Er nutzt Hintergrund, zentriertes CodeNomad-Logo und Namen sowie die großen Erstellungsbuttons der Startseite: **Git-Repo klonen**, **Neuer temporärer Tab**, **Neuer SideCar**. Rechts steht der Umschalter **Zuletzt verwendet | Durchsuchen** mit Eintragszahlen; die Suche liegt darunter in **Zuletzt verwendet**. Die Auswahl eines Projekts, gespeicherten Servers oder SideCars füllt diesen Tab an seiner Position. Ein leerer Tab besteht bis zum Neuladen und schließt ohne verbleibendes Projekt. Das CodeNomad-Logo in der Titel- oder Tableiste öffnet die Startseite mit Einstellungen, Sprache und der Herz-Schaltfläche **Sponsor** ([CodeNomad unterstützen](sponsor.md)).
+2. Wählen Sie unter **Zuletzt verwendet** ein Projekt; oder öffnen Sie **Durchsuchen**, wählen Sie **Dieser Computer**, dann den Backend-Ordner, und öffnen Sie ihn. **Durchsuchen** listet auch gespeicherte CodeNomad-Server ([Remote-Projekt-Tabs](remote-access.md#remote-project-tabs)) und SideCars ([SideCars](browser-sidecars.md#register-sidecar)) auf.
 3. Für eine Repository-Kopie wählen Sie **Git-Repo klonen**, geben **Repository-URL** und **Zielordner** ein und wählen **Klonen**. **Zielordner** wird mit dem Repository-Namen im Ordner, der Ihren letzten Klon enthält vorbelegt, sonst neben Ihrem zuletzt geöffneten Projekt. **Durchsuchen** wählt den Ordner, der den Klon enthält; Sie können den Pfad auch bearbeiten, einschließlich des Ordnernamens des Klons.
 
 Einen Remote-Server zu durchsuchen bedeutet, dessen Dateisystem zu durchsuchen, nicht Ihr Telefon oder Notebook. Das Öffnen eines Projekts erzeugt keinen separaten OpenCode-Daemon pro Tab. Unterhaltungen sind native OpenCode-Sitzungen; ihre Lebensdauer entspricht nicht der des Tabs.
@@ -17,9 +17,9 @@ Zuletzt verwendete Einträge sind Verknüpfungen. **Arbeitsbereich umbenennen** 
 ## Schnellstarter für neue Instanzen verwenden {#new-instance-launcher}
 
 1. Halten Sie `+` gedrückt oder klicken Sie mit der rechten Maustaste darauf; bei Tastaturfokus dort verwenden Sie **Alt+Down**, **Shift+F10** oder die Menütaste.
-2. Suchen Sie zuletzt verwendete Projekte oder wählen Sie **Durchsuchen…**, **Temporär** oder **Klonen…**.
+2. Durchsuchen Sie in **Tab öffnen** die Liste **Zuletzt verwendet** (Projekte, Remote-Projekte und SideCars), öffnen Sie **Durchsuchen**, oder wählen Sie **Git-Repo klonen** oder **Neuer temporärer Tab**.
 
-Ein normaler Klick öffnet weiterhin die vollständige Startseite. Der Schnellstarter ist ein Direktzugriff, keine Verwaltungsoberfläche: Benennen/entfernen Sie zuletzt verwendete Projekte und verwalten Sie Server-Lesezeichen auf der Startseite. Escape schließt den Schnellstarter und setzt den Fokus auf `+` zurück.
+Ein normaler Klick öffnet einen leeren Tab. Die Startseite über das CodeNomad-Logo bietet dieselben Möglichkeiten und Eintragszahlen in **Zuletzt verwendet** und **Durchsuchen**. Benennen Sie zuletzt geöffnete Tabs dort um oder entfernen Sie sie; verwalten Sie Server unter **Einstellungen → Server** und SideCars unter **Einstellungen → SideCars**. Escape schließt den Starter und gibt den Fokus an `+` zurück.
 
 ## Projekt-Tab schließen {#close-stop}
 
@@ -38,7 +38,7 @@ Das Schließen eines ganzen Fensters, Beenden oder Neuladen schließt dessen Pro
 
 ## Temporäre Arbeitsbereiche {#temporary-workspaces}
 
-1. Wählen Sie **Temporär** im Schnellstarter oder **Neue temporäre Instanz** auf der Startseite.
+1. Wählen Sie **Neuer temporärer Tab** auf der Startseite oder im Starter.
 2. Arbeiten Sie im leeren, von CodeNomad verwalteten Ordner; Git wird nicht automatisch initialisiert.
 3. Wählen Sie beim Schließen des Tabs **Behalten**, **Verwerfen** oder **Abbrechen**. Das Tab-Menü bietet auch **Als Projekt behalten**.
 

@@ -3,6 +3,7 @@ import { Globe, Loader2, Plus, Trash2 } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import { serverApi } from "../../lib/api-client"
 import { ensureSidecarsLoaded, sidecars, sidecarsLoading } from "../../stores/sidecars"
+import { useSettingsRowTarget } from "./settings-row-target"
 
 function deriveSidecarId(value: string): string {
   return value
@@ -27,6 +28,10 @@ export const SideCarsSettingsSection: Component = () => {
   onMount(() => {
     void ensureSidecarsLoaded()
   })
+
+  // New SideCar (home page, launcher) lands on this form's first field.
+  let nameInput: HTMLInputElement | undefined
+  useSettingsRowTarget("sidecar-add", () => nameInput, () => true)
 
   const orderedSidecars = createMemo(() => Array.from(sidecars().values()).sort((a, b) => a.name.localeCompare(b.name)))
   const derivedId = createMemo(() => deriveSidecarId(name()) || "your-sidecar")
@@ -93,6 +98,9 @@ export const SideCarsSettingsSection: Component = () => {
               <div class="settings-toggle-caption">{t("sidecars.basePath")}: <code>/sidecars/{derivedId()}</code></div>
             </div>
             <input
+              id="sidecar-add"
+              ref={nameInput}
+              aria-label={t("sidecars.form.name")}
               class="selector-input w-full max-w-xs"
               value={name()}
               onInput={(event) => {

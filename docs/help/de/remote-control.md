@@ -11,7 +11,7 @@ Fernsteuerung ermöglicht einem gekoppelten Browser- oder Desktop-Client die Nut
 
 Der Link gilt **fünf Minuten** und funktioniert **einmal**. Behandeln Sie ihn als Zugangsdaten: Wer ihn einlöst, kann ein gekoppeltes Gerät werden. Der Code steht im URL-Fragment, nicht in der Abfragezeichenfolge. **Neuen Kopplungslink erstellen** macht den vorherigen ungenutzten Link sofort ungültig. Stop, Backend-Ende und Tunnelfehler stornieren offene Kopplungslinks.
 
-Um einen weiteren CodeNomad-Desktop zu koppeln, wählen Sie auf dessen Startseite **CodeNomad-Server verbinden**, fügen den Link in **Server-URL** ein und wählen **Verbinden**. Ein Kopplungslink öffnet sein Fenster auch über **Speichern**, weil das Öffnen den Code einlöst. Nur die Tunnel-Origin wird als Lesezeichen gespeichert; der Code bleibt nicht erhalten. TLS-Prüfung bleibt für Kopplungslinks aktiviert.
+Um einen weiteren CodeNomad-Desktop zu koppeln, öffnen Sie auf der Startseite oder einem leeren Tab **Durchsuchen** und fügen den Link in **Serveradresse oder -link** ein. Das fügt nur den Server hinzu; klicken Sie zum Öffnen und Koppeln auf seine gespeicherte Zeile. Der Einmallink wartet im Speicher dieses Fensters bis zum Öffnen oder Neuladen; nutzen Sie ihn innerhalb seiner fünf Minuten Gültigkeit. Nur die Tunnel-Origin wird als Lesezeichen gespeichert. Die TLS-Prüfung bleibt für Kopplungslinks aktiviert.
 
 ## Gekoppelte Geräte verwalten {#paired-devices}
 

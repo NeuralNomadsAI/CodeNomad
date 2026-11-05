@@ -1,0 +1,9 @@
+/* The embedded single-project page, before a project is chosen. */
+.embedded-project-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: min(32rem, 100%);
+  margin: auto;
+  padding: var(--space-lg);
+}

@@ -11,7 +11,7 @@ Le Contrôle à distance permet à un navigateur ou client de bureau appairé d�
 
 Le lien est valable **cinq minutes** et réussit **une seule fois**. Traitez-le comme un identifiant : quiconque le consomme peut devenir un appareil appairé. Le code se trouve dans le fragment d’URL, pas dans la chaîne de requête. **Créer un nouveau lien d’appairage** invalide immédiatement le lien inutilisé précédent. L’arrêt, la fermeture du backend et une panne du tunnel annulent les liens d’appairage en attente.
 
-Pour appairer un autre CodeNomad de bureau, choisissez **Se connecter au serveur CodeNomad** sur son accueil, collez le lien dans **URL du serveur**, puis choisissez **Se connecter**. Un lien d’appairage ouvre sa fenêtre même depuis **Enregistrer**, car l’ouvrir consomme le code. Seule l’origine du tunnel est enregistrée comme favori ; le code n’est pas conservé. La vérification TLS reste activée pour les liens d’appairage.
+Pour appairer un autre CodeNomad de bureau, ouvrez **Parcourir** sur l’accueil ou un onglet vide et collez le lien dans **Adresse ou lien du serveur**. Cela ajoute seulement le serveur ; cliquez sur sa ligne enregistrée pour l’ouvrir et l’appairer. Le lien à usage unique attend en mémoire dans cette fenêtre jusqu’à son ouverture ou au rechargement ; utilisez-le pendant ses cinq minutes de validité. Seule l’origine du tunnel est enregistrée comme favori. La vérification TLS reste activée pour les liens d’appairage.
 
 ## Gérer les appareils appairés {#paired-devices}
 

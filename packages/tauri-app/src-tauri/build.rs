@@ -95,6 +95,9 @@ fn main() {
             "browser_target_unregister",
             "browser_target_claim_open",
             "browser_target_release_open",
+            "remote_view_open",
+            "remote_view_update",
+            "remote_view_close",
         ]),
     ))
     .expect("build Tauri application and command ACL")

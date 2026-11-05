@@ -29,7 +29,7 @@ L’initialisation n’est acceptée que depuis l’écoute de boucle locale de 
 
 ## Sessions navigateur et révocation {#sessions}
 
-La connexion directe crée une session opaque en mémoire du backend et un cookie `codenomad_session` (ou le nom configuré). Les cookies sont `HttpOnly`, `SameSite=Lax`, limités à `/` et marqués `Secure` s’ils sont émis en HTTPS. Ce sont des cookies de session navigateur ; le redémarrage du backend invalide les sessions en mémoire. Réauthentifiez-vous sur place si demandé plutôt que de renvoyer les modifications échouées.
+La connexion directe crée une session opaque en mémoire du backend et un cookie `codenomad_session` (ou le nom configuré). Les cookies sont `HttpOnly`, `SameSite=Lax`, limités à `/` et marqués `Secure` s’ils sont émis en HTTPS. Une connexion dure sept jours, y compris après un redémarrage du navigateur ou de l’application de bureau ; la déconnexion y met fin côté backend, et le redémarrage du backend invalide toutes les sessions directes. Réauthentifiez-vous sur place si demandé plutôt que de renvoyer les modifications échouées.
 
 Changer un mot de passe change les vérifications futures ; cela n’invalide **pas** les sessions directes déjà émises ni les appareils de Contrôle à distance. En cas de compromission suspectée :
 

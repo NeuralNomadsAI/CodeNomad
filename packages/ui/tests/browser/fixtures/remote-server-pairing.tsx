@@ -1,20 +1,20 @@
 import "./remote-server-pairing-api"
 import { render } from "solid-js/web"
 import { For } from "solid-js"
-import { RemoteServerDialog } from "../../../src/components/remote-server-dialog"
+import ServerAddField from "../../../src/components/server-add-field"
 import { useRemoteServerProfiles } from "../../../src/lib/hooks/use-remote-server-profiles"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import "../../../src/index.css"
 
-// The page's inline script declares a local Electron window that records opened remote windows.
+// The page's inline script declares a native Preferences window (no project tabs) that records opened remote windows.
 const Harness = () => {
-  const { remoteServers, saveServer } = useRemoteServerProfiles()
+  const { remoteServers, openServer } = useRemoteServerProfiles()
   return (
     <main style={{ width: "min(900px, 100%)" }}>
-      <ul data-testid="servers"><For each={remoteServers()}>{(server) => <li>{server.id} {server.baseUrl}</li>}</For></ul>
-      <RemoteServerDialog open onOpenChange={() => undefined} onSubmit={saveServer} />
+      <ul data-testid="servers"><For each={remoteServers()}>{(server) => <li><button onClick={() => openServer(server)}>{server.id} {server.baseUrl}</button></li>}</For></ul>
+      <ServerAddField />
     </main>
   )
 }

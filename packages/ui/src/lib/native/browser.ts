@@ -30,6 +30,11 @@ export function nativeBrowserHost(
   return undefined
 }
 
+/** Native views sit above the page: they hide while a local dialog, menu or list is open. */
+export function localOverlayOpen(root: ParentNode = document): boolean {
+  return Boolean(root.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]'))
+}
+
 export function physicalBrowserBounds(rect: Pick<DOMRect, "x" | "y" | "width" | "height">, scale: number): BrowserTargetBounds {
   return {
     x: Math.round(rect.x * scale),
