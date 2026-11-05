@@ -36,6 +36,59 @@ const cases = [
 ]
 
 describe("session-api running-session open", () => {
+  it("keeps a page ahead of SSE in order while the live reducer catches up", async () => {
+    const instanceId = "session-api-page-ahead-of-events"
+    const originalFetchWorktrees = serverApi.fetchWorktrees
+    serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/work", kind: "root" }] }) as any
+    // Deliberately use IDs and timestamps whose sort order differs from native
+    // sequence: only the page and event order establish transcript positions.
+    const user = { id: "msg_z_user", type: "user", text: "First prompt", time: { created: 200 } }
+    const first = { ...streaming("msg_a_first", "First step"), time: { created: 100 } }
+    const later = { ...streaming("msg_b_later", "Later step"), time: { created: 50 } }
+    const page = [user, first, later]
+    const client: any = { session: { active: async () => ({ [sessionId]: {} }) },
+      message: { list: async () => ({ data: [...page].reverse(), cursor: {} }) } }
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId)]])))
+    setActiveSession(instanceId, sessionId)
+    let sequence = 0
+    const native = (type: string, payload: Record<string, unknown>) => handleInstanceInvalidation(instanceId, {
+      id: `evt_${++sequence}`, type, created: sequence, location: { directory: "/work" }, data: { sessionID: sessionId, ...payload },
+    } as any)
+    const store = messageStoreBus.getOrCreate(instanceId)
+    const expected = page.map(row => row.id)
+    try {
+      native("session.inbox.enqueued", { inboxID: user.id, item: { type: "user", payload: { text: user.text }, delivery: "steer" } })
+      native("session.inbox.delivered", { inboxID: user.id })
+      native("session.step.started", { assistantMessageID: first.id, agent: "build", model, started: 100 })
+      native("session.text.started", { assistantMessageID: first.id })
+      native("session.text.delta", { assistantMessageID: first.id, ordinal: 0, delta: "First step" })
+      await loadMessages(instanceId, sessionId)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), expected)
+
+      // HTTP already includes the later step; SSE still carries the first one's
+      // final events. Reprojection must keep the later step after its prompt.
+      native("session.text.ended", { assistantMessageID: first.id, ordinal: 0, text: "First step" })
+      assert.deepEqual(store.getSessionMessageIds(sessionId), expected)
+      native("session.step.started", { assistantMessageID: later.id, agent: "build", model, started: 50 })
+      native("session.text.started", { assistantMessageID: later.id })
+      native("session.text.ended", { assistantMessageID: later.id, ordinal: 0, text: "Later step" })
+      assert.deepEqual(store.getSessionMessageIds(sessionId), expected)
+      assert.equal(displayedText(instanceId, later.id), "Later step")
+
+      native("session.step.started", { assistantMessageID: "msg_new", agent: "build", model, started: 300 })
+      assert.deepEqual(store.getSessionMessageIds(sessionId), [...expected, "msg_new"])
+    } finally {
+      serverApi.fetchWorktrees = originalFetchWorktrees
+      destroyOpenCodeData(instanceId)
+      messageStoreBus.unregisterInstance(instanceId)
+      setSessions(previous => { const next = new Map(previous); next.delete(instanceId); return next })
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
   for (const { name, arm, created } of cases) {
     it(`loads the latest window of a streaming session (${name})`, async () => {
       const instanceId = `session-api-running-open-${arm ? "warm" : created ? "created" : "cold"}`
