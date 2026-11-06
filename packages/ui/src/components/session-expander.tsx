@@ -20,9 +20,19 @@ interface SessionExpanderProps {
 
 /** A parent row's chevron; its context menu marks the whole hierarchy as read. */
 export default function SessionExpander(props: SessionExpanderProps) {
+  let trigger: HTMLButtonElement | undefined
+  // The row stays pinned until focus is back on the chevron (the list then keeps
+  // the focused row mounted), so closing never unmounts an offscreen row first.
+  const closeAutoFocus = (event: Event) => {
+    event.preventDefault()
+    const active = document.activeElement
+    if (!active || active === document.body || (event.currentTarget as Element | null)?.contains(active)) trigger?.focus({ preventScroll: true })
+    props.onOpenChange(false)
+  }
   return (
-    <ContextMenu onOpenChange={(open) => props.onOpenChange(open)}>
+    <ContextMenu onOpenChange={(open) => { if (open) props.onOpenChange(true) }}>
       <ContextMenu.Trigger
+        ref={trigger}
         as="button"
         type="button"
         class={props.class}
@@ -35,7 +45,7 @@ export default function SessionExpander(props: SessionExpanderProps) {
         <ChevronRight class="disclosure-chevron w-3.5 h-3.5" />
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
-        <ContextMenu.Content class="action-overflow-content">
+        <ContextMenu.Content class="action-overflow-content" onCloseAutoFocus={closeAutoFocus}>
           <ContextMenu.Item class="action-overflow-item" disabled={props.markReadDisabled} onSelect={() => props.onMarkRead()}>
             <span class="action-overflow-item-icon" aria-hidden="true"><CheckCheck class="w-3.5 h-3.5" /></span>
             <span class="action-overflow-item-label">{props.markReadLabel}</span>

@@ -208,7 +208,18 @@ test("an open chevron menu keeps its row mounted while rows above push it out of
     assert.equal(await menu.isVisible(), true, "the menu stays open")
     assert.equal(await page.evaluate(() => Boolean(document.activeElement?.closest("[role=menu]"))), true, "focus stays in the menu")
     assert.equal(await chevron("other").count(), 1, "the menu's row stays mounted")
+    const chevronFocused = () => page.waitForFunction(() => document.activeElement?.matches('[data-session-id="other"] .session-item-expander') ?? false)
+    // Closing returns focus to the offscreen chevron before releasing the row.
     await page.keyboard.press("Escape")
+    await chevronFocused()
+    await page.evaluate(() => (window as any).fixture.idle("other-child", Date.now()))
+    await page.keyboard.press("Shift+F10")
+    const markRead = page.getByRole("menuitem", { name: "Mark as read", exact: true })
+    await page.waitForFunction(() => document.querySelector("[role=menuitem]")?.getAttribute("aria-disabled") !== "true")
+    await markRead.focus()
+    await page.keyboard.press("Enter")
+    await chevronFocused()
+    assert.equal(await menu.count(), 0)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
