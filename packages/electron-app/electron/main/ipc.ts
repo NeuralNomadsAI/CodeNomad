@@ -1,5 +1,6 @@
 import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from "electron"
 import fs from "node:fs"
+import path from "node:path"
 import { requestMicrophoneAccess } from "./permissions"
 import type { CliProcessManager } from "./process-manager"
 import { openWorkspaceTarget, type WorkspaceEditor, type WorkspaceOpenTarget } from "./workspace-open"
@@ -68,6 +69,8 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
   let wakeLockId: number | null = null
   const wakeLockWindows = new Set<number>()
   const wakeCleanupInstalled = new Set<number>()
+  // Electron opens dialogs without a default path in Downloads, so a request without one starts where the last selection was.
+  let lastDialogDirectory: string | undefined
   const local = (event: IpcMainInvokeEvent): LocalSender => {
     const record = dependencies.resolveLocal(event.sender)
     if (!record) throw new Error("Native operation is limited to local windows")
@@ -169,10 +172,11 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     if (request.mode === "file" && request.multiple) properties.push("multiSelections")
     const result = await dialog.showOpenDialog(window, {
       title: request.title,
-      defaultPath: request.defaultPath,
+      defaultPath: request.defaultPath || lastDialogDirectory,
       properties,
       filters: request.filters?.map((filter) => ({ name: filter.name ?? "Files", extensions: filter.extensions })),
     })
+    if (!result.canceled && result.filePaths[0]) lastDialogDirectory = path.dirname(result.filePaths[0])
     return { canceled: result.canceled, paths: result.filePaths }
   })
 

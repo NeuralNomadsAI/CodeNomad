@@ -44,6 +44,10 @@
 - Dependabot checks GitHub Actions weekly and proposes updates against `dev`;
   merges are manual. Composite actions that follow their upstream
   `stable`/latest major stay on those supported references.
+- The `electron` package downloads its binary on first use rather than at
+  install. CI jobs that run Electron fetch it right after `npm ci` with
+  `npx --no install-electron`, before parallel tests or command substitutions
+  read its path.
 - **Bundled Runtime Maintenance** runs daily (07:23 UTC, subject to GitHub's
   scheduling delays) and on manual dispatch, on the default branch only.
   It selects newer LTS releases within the pinned Node major only. It never

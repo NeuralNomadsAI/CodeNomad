@@ -48,7 +48,7 @@
     "7zip-bin": "^5.2.0",
     "app-builder-bin": "^4.2.0",
     "cross-env": "^7.0.3",
-    "electron": "39.0.0",
+    "electron": "45.2.3",
     "electron-builder": "^24.0.0",
     "electron-vite": "4.0.1",
     "tsx": "^4.20.6",
