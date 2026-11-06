@@ -1,6 +1,6 @@
 export const settingsMessages = {
   "settings.behavior.keepComputerAwake.title": "CodeNomad चलिरहेको बेलासम्म कम्प्युटर जागा राख्नुहोस्",
-  "settings.behavior.keepComputerAwake.info": "CodeNomad खुला रहँदा कम्प्युटरलाई स्लीप मोडमा जानबाट रोक्छ; स्क्रिन भने बन्द हुन सक्छ। यो विकल्प बन्द हुँदा, सत्रले काम गरिरहेको बेला मात्र CodeNomad ले कम्प्युटर जागा राख्छ।",
+  "settings.behavior.keepComputerAwake.info": "स्थानीय CodeNomad सञ्झ्याल खुला रहँदा (मिनिमाइज गरिएको अवस्थामा पनि) कम्प्युटरलाई स्लीप मोडमा जानबाट रोक्छ; स्क्रिन भने बन्द हुन सक्छ। यो विकल्प बन्द हुँदा, सत्रले काम गरिरहेको बेला मात्र CodeNomad ले कम्प्युटर जागा राख्छ।",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "अनुमानित रिसेट {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "उप-सत्रहरू स्वतः विस्तार गर्नुहोस्",

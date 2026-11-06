@@ -32,7 +32,7 @@ If colors become hard to read, select a built-in palette or reset the edited one
 
 ## Keep the computer awake {#keep-computer-awake}
 
-In **Settings → General**, **Keep the computer awake while CodeNomad is running** is off by default. Turn it on to prevent system sleep while CodeNomad is open, even when no session is working; the screen can still turn off. When off, CodeNomad keeps the computer awake only while a session is working. The **i** beside the title explains this behavior. This option appears only in local desktop-app windows and Preferences; it is hidden in browser and remote views.
+In **Settings → General**, **Keep the computer awake while CodeNomad is running** is off by default. Turn it on to prevent system sleep while a local CodeNomad window is open (including minimized), even when no session is working; the screen can still turn off. When off, CodeNomad keeps the computer awake only while a session is working. The **i** beside the title explains this behavior. This option appears only in local desktop-app windows and Preferences; it is hidden in browser and remote views.
 
 ## Panels and Status sections {#panels-status}
 

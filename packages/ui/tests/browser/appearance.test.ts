@@ -30,7 +30,7 @@ function merge(target: any, patch: any): any {
 }
 
 const keepAwakeTitle = "Keep the computer awake while CodeNomad is running"
-const keepAwakeInfo = "Prevents system sleep while CodeNomad is open; the screen can still turn off. When off, CodeNomad keeps the computer awake only while a session is working."
+const keepAwakeInfo = "Prevents system sleep while a local CodeNomad window is open (including minimized); the screen can still turn off. When off, CodeNomad keeps the computer awake only while a session is working."
 
 test("General hides keep-awake in a plain web browser and remote desktop views", async () => {
   for (const host of ["web", "electron", "tauri"]) {

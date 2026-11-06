@@ -32,7 +32,7 @@ Si los colores se vuelven difíciles de leer, selecciona una paleta integrada o 
 
 ## Mantener el ordenador activo {#keep-computer-awake}
 
-En **Configuración → General**, **Mantener el ordenador activo mientras CodeNomad esté en ejecución** está desactivado por defecto. Actívalo para impedir la suspensión del sistema mientras CodeNomad esté abierto, incluso si ninguna sesión está trabajando; la pantalla puede seguir apagándose. Si se desactiva, CodeNomad mantiene el ordenador activo solo mientras una sesión está trabajando. La **i** junto al título explica este comportamiento. La opción aparece solo en las ventanas locales de la aplicación de escritorio y en Preferencias; está oculta en las vistas de navegador y remotas.
+En **Configuración → General**, **Mantener el ordenador activo mientras CodeNomad esté en ejecución** está desactivado por defecto. Actívalo para impedir la suspensión del sistema mientras haya una ventana local de CodeNomad abierta (aunque esté minimizada), incluso si ninguna sesión está trabajando; la pantalla puede seguir apagándose. Si se desactiva, CodeNomad mantiene el ordenador activo solo mientras una sesión está trabajando. La **i** junto al título explica este comportamiento. La opción aparece solo en las ventanas locales de la aplicación de escritorio y en Preferencias; está oculta en las vistas de navegador y remotas.
 
 ## Paneles y secciones de Estado {#panels-status}
 

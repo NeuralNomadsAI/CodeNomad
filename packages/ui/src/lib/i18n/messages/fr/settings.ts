@@ -1,6 +1,6 @@
 export const settingsMessages = {
   "settings.behavior.keepComputerAwake.title": "Garder l’ordinateur éveillé tant que CodeNomad tourne",
-  "settings.behavior.keepComputerAwake.info": "Empêche la mise en veille de l’ordinateur tant que CodeNomad est ouvert ; l’écran peut toujours s’éteindre. Lorsque cette option est désactivée, CodeNomad garde l’ordinateur éveillé uniquement pendant qu’une session travaille.",
+  "settings.behavior.keepComputerAwake.info": "Empêche la mise en veille de l’ordinateur tant qu’une fenêtre locale CodeNomad est ouverte (même minimisée) ; l’écran peut toujours s’éteindre. Lorsque cette option est désactivée, CodeNomad garde l’ordinateur éveillé uniquement pendant qu’une session travaille.",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "Réinitialisation estimée {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "Déplier automatiquement les sous-sessions",

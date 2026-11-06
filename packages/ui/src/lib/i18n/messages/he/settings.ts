@@ -1,6 +1,6 @@
 export const settingsMessages = {
   "settings.behavior.keepComputerAwake.title": "השארת המחשב ער כל עוד CodeNomad פועל",
-  "settings.behavior.keepComputerAwake.info": "מונע מהמחשב לעבור למצב שינה כל עוד CodeNomad פתוח; המסך עדיין יכול להיכבות. כשהאפשרות כבויה, CodeNomad משאיר את המחשב ער רק בזמן שסשן עובד.",
+  "settings.behavior.keepComputerAwake.info": "מונע מהמחשב לעבור למצב שינה כל עוד חלון מקומי של CodeNomad פתוח (גם כשהוא ממוזער); המסך עדיין יכול להיכבות. כשהאפשרות כבויה, CodeNomad משאיר את המחשב ער רק בזמן שסשן עובד.",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "איפוס משוער {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "הרחבה אוטומטית של תת־סשנים",
