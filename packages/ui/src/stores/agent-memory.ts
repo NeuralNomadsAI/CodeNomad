@@ -114,8 +114,11 @@ export function createAgentMemoryReview(context: () => MemoryContext | undefined
         ? { action: "delete", scope: targetScope, id: selected.entry.id, revision: selected.entry.revision }
         : { action: "save", scope: targetScope, id: selected.entry.id, revision: selected.entry.revision,
           content: { title: selected.title, type: selected.type, text: selected.text } }, target)
-      drafts.delete(key)
       if (disposed || current !== generation) return
+      const latest = drafts.get(key)
+      if (!latest || latest.entry.id !== selected.entry.id || latest.entry.revision !== selected.entry.revision ||
+        latest.title !== selected.title || latest.type !== selected.type || latest.text !== selected.text) { await load(); return }
+      drafts.delete(key)
       setError(undefined)
       if (remove) setDraft(undefined)
       else {

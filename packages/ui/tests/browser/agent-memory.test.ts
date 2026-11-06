@@ -36,6 +36,7 @@ const save = (page: Page) => page.getByRole("button", { name: en["settings.memor
 async function setup(page: Page, initial = true) {
   let enabled = initial, writeError: string | undefined, listError: string | undefined, settingFailure = false, frontier = observedAt, cleanupWritable = true
   let hold: ((route: Route) => Promise<void>) | undefined
+  let holdWrite: (() => Promise<void>) | undefined
   let inventory = [
     { id: "project-a", path: "C:/project-a", status: "ready" },
     { id: "project-b", path: "C:/project-b", status: "ready" },
@@ -63,6 +64,7 @@ async function setup(page: Page, initial = true) {
       return listError ? route.fulfill({ status: 503, json: { code: listError } }) : route.fulfill({ json: { entries: data[key] ?? [], scopeKey: key, observedAt: frontier, cleanupWritable } })
     }
     if (writeError) return route.fulfill({ status: 409, json: { code: writeError, titles: writeError === "full" ? ["Stored title"] : undefined } })
+    if (holdWrite) { const handler = holdWrite; holdWrite = undefined; await handler() }
     const current = data[key].find(value => value.id === operation.id)!
     assert.equal(operation.revision, current.revision)
     if (operation.action === "delete") { data[key] = data[key].filter(value => value.id !== operation.id); return route.fulfill({ json: { deleted: true } }) }
@@ -72,7 +74,8 @@ async function setup(page: Page, initial = true) {
   await events.route(page)
   return { data, requests, errors, writeError: (value?: string) => { writeError = value }, listError: (value?: string) => { listError = value },
     settingFailure: (value: boolean) => { settingFailure = value }, frontier: (value: string) => { frontier = value },
-    hold: (value: (route: Route) => Promise<void>) => { hold = value }, inventory: (value: typeof inventory) => { inventory = value }, writable: (value: boolean) => { cleanupWritable = value } }
+    hold: (value: (route: Route) => Promise<void>) => { hold = value }, holdWrite: (value: () => Promise<void>) => { holdWrite = value },
+    inventory: (value: typeof inventory) => { inventory = value }, writable: (value: boolean) => { cleanupWritable = value } }
 }
 async function open(page: Page) {
   await page.goto(url)
@@ -80,6 +83,27 @@ async function open(page: Page) {
   assert.equal(await scope(page).inputValue(), "project")
 }
 const tidy = (page: Page) => card(page).getByRole("button", { name: en["settings.memory.tidy"], exact: true })
+test("embedded Settings resolves the active project and worktree; standalone Preferences keeps its explicit context", async () => {
+  for (const mode of ["embedded", "standalone"] as const) {
+    const page = await browser.newPage(), f = await setup(page)
+    try {
+      await open(page)
+      await page.evaluate(async mode => { await (window as any).fixture.enableCleanup(); await (window as any).fixture.settings(mode) }, mode)
+      await card(page).getByRole("button", { name: /Project A/ }).waitFor()
+      assert.equal(await scope(page).inputValue(), "project")
+      assert.equal(await scope(page).locator('option[value="project"]').isDisabled(), false)
+      const expectedDirectory = mode === "embedded" ? "/another-worktree" : "/repo-a"
+      assert.ok(f.requests.some(value => value.operation?.action === "list" && value.operation.scope === "project" && value.context?.directory === expectedDirectory))
+      await tidy(page).click()
+      const confirmation = page.getByRole("dialog").filter({ has: page.getByRole("button", { name: en["settings.memory.cancel"], exact: true }) })
+      await confirmation.getByRole("button", { name: en["settings.memory.tidy"], exact: true }).click()
+      await page.waitForFunction(() => (window as any).cleanupCalls.some((value: any) => value.action === "prompt"))
+      const calls = await page.evaluate(() => (window as any).cleanupCalls)
+      assert.deepEqual(calls[0].input.location, { directory: expectedDirectory })
+      assert.deepEqual(f.errors, [])
+    } finally { await page.close() }
+  }
+})
 test("cleanup creates, activates and prompts a new session in the captured project even for global memory", async () => {
   const page = await browser.newPage(), f = await setup(page)
   try {
@@ -290,6 +314,33 @@ test("replaced/deleted contexts fence late memory replies and preserve their own
     assert.equal(await title(page).count(), 0)
     assert.equal(await page.getByRole("button", { name: /Project B/ }).count(), 0)
     assert.equal(f.requests.filter(value => value.operation?.scope === "project").every(value => value.context.workspaceId && value.context.directory), true)
+    assert.deepEqual(f.errors, [])
+  } finally { release?.(); await page.close() }
+})
+test("a late save cannot erase a newer draft across missing and restored reconnect context", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  let release!: () => void, reached!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { reached = resolve })
+  try {
+    await open(page); await page.getByRole("button", { name: /Project A/ }).click(); await text(page).fill("Saving old draft")
+    f.holdWrite(async () => { reached(); await gate })
+    await save(page).click(); await started
+    f.inventory([])
+    await page.evaluate(() => (window as any).fixture.reconnect())
+    await page.getByText(en["settings.memory.noProject"], { exact: true }).waitFor()
+    assert.equal(await text(page).count(), 0)
+    f.inventory([{ id: "project-a", path: "C:/project-a", status: "ready" }])
+    await page.evaluate(() => (window as any).fixture.reconnect())
+    await text(page).waitFor()
+    await text(page).fill("Newer unsaved draft")
+    const response = page.waitForResponse(response => response.url().endsWith("/api/memory") && response.request().postDataJSON().operation.action === "save")
+    release(); await (await response).finished()
+    // Wait for the actual mutation continuation, then invalidate the display owner again.
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    await page.evaluate(() => (window as any).fixture.reconnect())
+    await card(page).locator(".agent-memory-entry").filter({ hasText: "Project A" }).waitFor()
+    assert.equal(await text(page).inputValue(), "Newer unsaved draft")
+    assert.equal(f.requests.filter(value => value.operation?.action === "save").length, 1)
     assert.deepEqual(f.errors, [])
   } finally { release?.(); await page.close() }
 })
