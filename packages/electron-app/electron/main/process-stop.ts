@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process"
 import { getProcessStartIdentityAsync, type AsyncProcessStartIdentityLookup } from "./client-state-process-identity"
 import { windowsProcessTreeScript, windowsTerminateProcessTreeScript } from "./windows-process-tree"
+import { windowsCimProcessTreeScript, windowsManagedTerminateScript } from "./windows-process-fallback"
 
 export const CLI_SHUTDOWN_COMMAND = "codenomad:shutdown\n"
 export const CLI_STOP_DEADLINE_MS = 30_000
@@ -49,7 +50,8 @@ interface AsyncCommandResult {
 export type AsyncCommandRunner = (
   command: string,
   args: readonly string[],
-  options: { encoding: "utf8"; timeout: number; windowsHide?: boolean; env?: NodeJS.ProcessEnv },
+  options: { encoding: "utf8"; timeout: number; windowsHide?: boolean; env?: NodeJS.ProcessEnv;
+    windowsFallbackScript?: string; windowsNativeReadyOnly?: boolean },
 ) => Promise<AsyncCommandResult> | AsyncCommandResult
 
 interface ForceCapturedProcessTreeOptions {
@@ -79,7 +81,7 @@ export function mergeCapturedProcessTrees(
   return { platform: captured.platform, members: [...members.values()] }
 }
 
-function runCommand(
+export function runCommand(
   command: string,
   args: readonly string[],
   options: { encoding: "utf8"; timeout: number; windowsHide?: boolean; env?: NodeJS.ProcessEnv },
@@ -96,12 +98,15 @@ async function captureProcessRows(
   platform: NodeJS.Platform,
   runList: AsyncCommandRunner,
   timeoutMs: number,
+  allowWindowsFallback: boolean,
 ): Promise<ProcessRow[] | undefined> {
   if (timeoutMs <= 0) return undefined
   const result = platform === "win32"
     ? await runList("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
         windowsProcessTreeScript(rootPid)],
-        { encoding: "utf8", timeout: timeoutMs, windowsHide: true })
+        { encoding: "utf8", timeout: timeoutMs, windowsHide: true,
+          windowsNativeReadyOnly: !allowWindowsFallback,
+          windowsFallbackScript: allowWindowsFallback ? windowsCimProcessTreeScript(rootPid) : undefined })
     : platform === "linux"
       // Keep the bounded /proc scan in one shell: per-PID cat/cut/sed forks
       // can exhaust the capture deadline on a busy host.
@@ -161,9 +166,10 @@ export async function captureProcessTree(
   platform: NodeJS.Platform = process.platform,
   runList: AsyncCommandRunner = runCommand,
   timeoutMs = 1_500,
+  allowWindowsFallback = true,
 ): Promise<CapturedProcessTree | undefined> {
   if (!Number.isInteger(rootPid) || rootPid <= 0) return undefined
-  const rows = await captureProcessRows(rootPid, platform, runList, timeoutMs)
+  const rows = await captureProcessRows(rootPid, platform, runList, timeoutMs, allowWindowsFallback)
   return rows ? processTreeFromRows(rootPid, platform, rows) : undefined
 }
 
@@ -175,7 +181,7 @@ export async function captureInitialProcessTree(
   deadlineAt = Date.now() + 3_000,
 ): Promise<{ tree?: CapturedProcessTree; rootStartIdentity?: string }> {
   const fallbackIdentity = Promise.resolve(lookup(rootPid, Math.min(1_500, deadlineAt - Date.now())))
-  const captured = await captureProcessTree(rootPid, platform, runList, Math.min(1_500, deadlineAt - Date.now()))
+  const captured = await captureProcessTree(rootPid, platform, runList, Math.min(1_500, deadlineAt - Date.now()), false)
   const rootStartIdentity = await fallbackIdentity
   const tree = rootStartIdentity
     ? mergeCapturedProcessTrees(undefined, captured, rootPid, rootStartIdentity)
@@ -208,7 +214,8 @@ export async function forceCapturedProcessTree(
     const timeout = Math.min(3_000, remainingMs())
     if (!script || timeout <= 0) return false
     const result = await runTerminate("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-      encoding: "utf8", timeout, windowsHide: true,
+      encoding: "utf8", timeout, windowsHide: true, windowsNativeReadyOnly: true,
+      windowsFallbackScript: windowsManagedTerminateScript(tree.members),
     })
     // The batch waits on the same handles it checked and terminated. A separate
     // Get-Process per member costs another shell startup and races PID reuse.

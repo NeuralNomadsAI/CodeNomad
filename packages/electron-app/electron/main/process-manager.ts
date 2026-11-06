@@ -158,6 +158,8 @@ export class CliProcessManager extends EventEmitter {
   private childStartIdentity?: Promise<string | undefined>
   private processWorker?: WindowsProcessWorker
   private initialProcessTree?: Promise<CapturedProcessTree | undefined>
+  private capturedProcessTree?: CapturedProcessTree
+  private processTreeRefresh?: ReturnType<typeof setTimeout>
   private status: CliStatus = { state: "stopped" }
   private stdoutBuffer = ""
   private stderrBuffer = ""
@@ -217,6 +219,8 @@ export class CliProcessManager extends EventEmitter {
     this.processWorker?.dispose()
     this.processWorker = undefined
     this.initialProcessTree = undefined
+    this.capturedProcessTree = undefined
+    clearTimeout(this.processTreeRefresh)
     this.updateStatus({ state: "starting", port: undefined, pid: undefined, url: undefined, error: undefined })
 
     const listeningMode = this.resolveListeningMode()
@@ -269,8 +273,17 @@ export class CliProcessManager extends EventEmitter {
       const worker = this.processWorker = new WindowsProcessWorker()
       // PowerShell/compiler startup runs alongside the CLI, outside shutdown's
       // enforcement reserve. Subsequent snapshots reuse this native helper.
-      this.initialProcessTree = captureProcessTree(child.pid, "win32", worker.run, 15_000)
-        .then((tree) => child.exitCode === null && child.signalCode === null ? tree : undefined)
+      const capture = async (): Promise<CapturedProcessTree | undefined> => {
+        const tree = await captureProcessTree(child.pid!, "win32", worker.run, 15_000)
+        if (this.child !== child || child.exitCode !== null || child.signalCode !== null) return undefined
+        const rootIdentity = tree?.members.find(({ pid }) => pid === child.pid)?.startIdentity
+        this.capturedProcessTree = mergeCapturedProcessTrees(this.capturedProcessTree, tree, child.pid!, rootIdentity)
+        // CIM inventories run only at startup/in the background. Final enforcement
+        // uses the retained identities, without spending its reserve on WMI.
+        if (!this.requestedStop) this.processTreeRefresh = setTimeout(() => { void capture() }, 5_000)
+        return this.capturedProcessTree
+      }
+      this.initialProcessTree = capture()
       this.childStartIdentity = this.initialProcessTree.then((tree) => tree?.members.find(({ pid }) => pid === child.pid)?.startIdentity)
     } else {
       this.childStartIdentity = child.pid ? getProcessStartIdentityAsync(child.pid, 1_500) : Promise.resolve(undefined)
@@ -313,6 +326,7 @@ export class CliProcessManager extends EventEmitter {
       this.emit("exit", this.status)
       this.child = undefined
       this.childStartIdentity = undefined
+      clearTimeout(this.processTreeRefresh)
       if (!this.requestedStop) this.processWorker?.dispose()
     })
 
@@ -348,6 +362,7 @@ export class CliProcessManager extends EventEmitter {
     const spawnedChild = child
 
     this.requestedStop = true
+    clearTimeout(this.processTreeRefresh)
 
     const pid = spawnedChild.pid
     if (!pid) {
@@ -368,12 +383,12 @@ export class CliProcessManager extends EventEmitter {
       () => spawnedIdentity,
       deadlineAt,
     )
-    let processTree = mergeCapturedProcessTrees(await this.initialProcessTree, initialCapture, pid, rootStartIdentity)
+    let processTree = mergeCapturedProcessTrees(this.capturedProcessTree ?? await this.initialProcessTree, initialCapture, pid, rootStartIdentity)
     let enforcement: Promise<boolean> | null = null
     const forceProcessTree = (enforcementDeadline = deadlineAt) => {
       if (enforcement) return enforcement
       enforcement = (async () => {
-        const latest = await captureProcessTree(pid, process.platform, worker?.run, Math.min(1_500, enforcementDeadline - Date.now()))
+        const latest = await captureProcessTree(pid, process.platform, worker?.run, Math.min(1_500, enforcementDeadline - Date.now()), false)
         processTree = mergeCapturedProcessTrees(processTree, latest, pid, rootStartIdentity)
         return processTree ? forceCapturedProcessTree(processTree, undefined, worker?.run, process.kill, { deadlineAt: enforcementDeadline }) : false
       })().finally(() => { enforcement = null })
@@ -455,8 +470,8 @@ export class CliProcessManager extends EventEmitter {
         const worker = this.processWorker
         const spawnedIdentity = this.childStartIdentity ?? Promise.resolve(undefined)
         void captureInitialProcessTree(pid, process.platform, worker?.run, () => spawnedIdentity, deadlineAt).then(async ({ tree, rootStartIdentity }) => {
-          const baseline = mergeCapturedProcessTrees(await this.initialProcessTree, tree, pid, rootStartIdentity)
-          const latest = await captureProcessTree(pid, process.platform, worker?.run, Math.min(1_500, deadlineAt - Date.now()))
+          const baseline = mergeCapturedProcessTrees(this.capturedProcessTree ?? await this.initialProcessTree, tree, pid, rootStartIdentity)
+          const latest = await captureProcessTree(pid, process.platform, worker?.run, Math.min(1_500, deadlineAt - Date.now()), false)
           const processTree = mergeCapturedProcessTrees(baseline, latest, pid, rootStartIdentity)
           const forced = processTree ? await forceCapturedProcessTree(processTree, undefined, worker?.run, process.kill, { deadlineAt }) : false
           if (!forced) console.warn(`[cli] startup-timeout process tree cleanup was not confirmed (pid=${pid})`)
