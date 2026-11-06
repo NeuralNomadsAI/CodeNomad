@@ -165,7 +165,7 @@ test("a second launch forwards its own parsed intent, which Chromium's reordered
   const folder = join(root, "workspace")
   mkdirSync(folder, { recursive: true })
   try {
-    // The argv Electron 39 forwards on Windows for `--connect-server https://server.example.com` (unpackaged).
+    // The argv Electron forwards on Windows for `--connect-server https://server.example.com` (unpackaged).
     const reordered = ["electron.exe", "--connect-server", "--allow-file-access-from-files", "app.cjs", "https://server.example.com"]
     assert.equal(parseLaunchIntent(reordered.slice(2), root).connectServer, undefined, "the reordered argv loses the value")
     const sent = parseLaunchIntent(["--connect-server", "https://server.example.com", "workspace"], root)

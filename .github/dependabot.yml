@@ -15,7 +15,7 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 5
     allow:
       - dependency-name: electron
       - dependency-name: electron-builder
