@@ -34,7 +34,7 @@ test("Google parser selects only the declared client and separates refresh/proje
   }
   const parsed = googleCredential(login())!
   assert.equal(parsed.refresh, "fake-refresh")
-  assert.equal(parsed.project, "fake-managed")
+  assert.equal(parsed.project, "fake-project")
   assert.match(parsed.identity, /^[0-9a-f]{64}$/)
   assert.equal(googleCredential(login({ refresh: "fake-refresh|fake-project" }))!.project, "fake-project")
   assert.equal(googleCredential(login({ refresh: "fake-refresh||fake-managed" }))!.project, "fake-managed")

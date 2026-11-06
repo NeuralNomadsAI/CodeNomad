@@ -11,7 +11,7 @@ test("Gemini remaining fractions become separate exact per-model limits, never s
     assert.equal(String(input), quota)
     assert.equal(init?.method, "POST")
     assert.equal(init?.redirect, "error")
-    assert.equal(init?.body, '{"project":"fake-managed"}')
+    assert.equal(init?.body, '{"project":"fake-project"}')
     assert.equal(new Headers(init?.headers).get("authorization"), "Bearer fake-reader-native")
     return Response.json({ buckets: [
       { modelId: "models/gemini-2.5-pro", tokenType: "REQUESTS", remainingFraction: 0.75, remainingAmount: "300", resetTime: "2026-11-06T00:00:00Z" },
@@ -37,6 +37,24 @@ test("Gemini remaining fractions become separate exact per-model limits, never s
   assert.deepEqual(selectGoogleModelWindows(reading, "gemini-2.5"), {})
   reading.usage!.windows.weekly = { usedPercent: 10, remainingPercent: 90, windowSeconds: 604_800, resetAt: null }
   assert.deepEqual(Object.keys(selectGoogleModelWindows(reading, "gemini-2.5-flash")), ["weekly", "usage:gemini-2.5-flash"])
+})
+
+test("each Google method sends its preferred saved project to its own quota endpoint", async t => {
+  const requests: Array<{ url: string; body: unknown }> = []
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({ url: String(input), body: init?.body })
+    return String(input) === quota
+      ? Response.json({ buckets: [{ modelId: "gemini-2.5-pro", remainingFraction: 0.5 }] })
+      : Response.json({ groups: [{ buckets: [{ window: "5h", remainingFraction: 0.5 }] }] })
+  })
+  for (const methodID of ["gemini-cli", "antigravity"]) {
+    assert.equal((await googleUsage.fetchQuota(auth({ methodID,
+      refresh: "fake-refresh|fake-billing-project|fake-managed-project" }))).ok, true)
+  }
+  assert.deepEqual(requests, [
+    { url: quota, body: '{"project":"fake-billing-project"}' },
+    { url: "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", body: '{"project":"fake-managed-project"}' },
+  ])
 })
 
 test("discovers an existing project only when packed context is absent; never onboards", async t => {

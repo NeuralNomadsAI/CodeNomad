@@ -45,8 +45,10 @@ export function googleCredential(auth: AuthFile): GoogleCredential | null {
     access,
     refresh: getString(refresh),
     expires: typeof entry.expires === "number" && Number.isFinite(entry.expires) ? entry.expires : 0,
-    // Saved-context priority: opencode-antigravity-auth/src/plugin/project.ts.
-    project: getString(managedProject) ?? getString(project),
+    // Match the declared client's saved-project priority.
+    project: entry.methodID === "gemini-cli"
+      ? getString(project) ?? getString(managedProject)
+      : getString(managedProject) ?? getString(project),
   }
 }
 

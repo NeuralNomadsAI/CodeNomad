@@ -76,9 +76,11 @@ else as unknown. Console OAuth usage with `x-org-id` is unverified upstream.
 `usage/providers/google.ts` reads the active native `google` credential. The
 native method selects the installed-application OAuth client: `gemini-cli` or
 `antigravity`; other methods yield unknown quota. Project context comes from the
-refresh token's `|`-separated suffix, preferring the managed project. Gemini CLI
-can read existing Code Assist setup when that context is absent; Antigravity
-requires saved project context. Never onboard a project for quota display.
+refresh token's `|`-separated suffix: Gemini CLI prefers the saved project, then
+the managed project; Antigravity prefers the managed project, then the saved
+project. Gemini CLI can read existing Code Assist setup when that context is
+absent; Antigravity requires saved project context. Never onboard a project for
+quota display.
 
 `usage/google-credential.ts` uses OpenCode's access token until its actual expiry,
 then refreshes it with the matching application's public desktop client at the
