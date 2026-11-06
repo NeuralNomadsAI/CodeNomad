@@ -6,7 +6,7 @@ project र tool भएको ठाउँमा CodeNomad चलाएर स�
 
 ## host तयार गर्नुहोस् {#prerequisites}
 
-1. Node.js 24 LTS र npm स्थापना गर्नुहोस्; repository को pinned build runtime 24.20.0 हो। desktop package ले आफ्नै runtime दिन्छ: Electron ले यसको integrated Node प्रयोग गर्छ, Tauri ले Node समावेश गर्छ र दुवैमा npm हुन्छ।
+1. Node.js 24 LTS र npm स्थापना गर्नुहोस्; repository को build runtime `.node-version` मा pinned छ। desktop package ले आफ्नै runtime दिन्छ: Electron ले यसको integrated Node प्रयोग गर्छ, Tauri ले Node समावेश गर्छ र दुवैमा npm हुन्छ।
 2. Git लाई **backend प्रक्रियाको PATH** मा राख्नुहोस्। WSL भित्रको Git मात्र Windows backend का लागि पुग्दैन।
 3. OpenCode स्थापना वा चयन गर्नुहोस्: आवश्यक न्यूनतम **2.2.3**, सिफारिस qualification लक्ष्य **2.2.5**। नयाँ/custom build मा compatibility जाँच हुन्छ, tested-version allowlist होइन। [OpenCode सेटअप](opencode.md) हेर्नुहोस्।
 4. server सुरु गर्ने फोल्डर रोज्नुहोस्, वा `--workspace-root` स्पष्ट दिनुहोस्।

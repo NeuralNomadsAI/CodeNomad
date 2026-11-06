@@ -31,7 +31,7 @@ CodeNomad の操作ではなく、OpenCode ネイティブ設定の問題は、[
 
 ## ソースからビルドする {#build-from-source}
 
-`.node-version` に固定された Node.js **24.20.0**、npm、Git、互換性のある OpenCode CLI を使用します。開発用チェックアウトから実行します。
+`.node-version` に固定されたバージョンの Node.js、npm、Git、互換性のある OpenCode CLI を使用します。開発用チェックアウトから実行します。
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git

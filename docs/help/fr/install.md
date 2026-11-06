@@ -47,7 +47,7 @@ L’installation Debian d’Electron configure le bac à sable Chromium. Ne dés
 | --- | --- | --- |
 | CLI OpenCode | Hôte d’exécution sélectionné, y compris la distribution WSL choisie le cas échéant | Minimum **2.2.3** ; **2.2.5** est la cible recommandée/qualifiée. Les versions plus récentes ou personnalisées passent une validation des contrats plutôt qu’une interdiction des versions non testées. |
 | Git | `PATH` du compte du backend CodeNomad | Requis pour l’identité des dépôts, les opérations Git et les worktrees. |
-| Node.js/npm | Hôte du serveur autonome et de compilation depuis les sources | Node.js 24 LTS ; les compilations reproductibles utilisent `.node-version` (**24.20.0**). Les versions de bureau fournissent le leur : le Node intégré d’Electron ou le Node embarqué par Tauri, avec npm. |
+| Node.js/npm | Hôte du serveur autonome et de compilation depuis les sources | Node.js 24 LTS ; les compilations reproductibles utilisent la version épinglée dans `.node-version`. Les versions de bureau fournissent le leur : le Node intégré d’Electron ou le Node embarqué par Tauri, avec npm. |
 | Dossier de travail | Disque accessible au backend | Dossier physique explicitement ouvert, pas un dossier local à l’appareil déduit par un navigateur distant. |
 
 Sous Windows, installez [Git for Windows](https://gitforwindows.org/) avec l’accès en ligne de commande/par les logiciels tiers activé. Une installation par utilisateur, modifiable par celui-ci, suffit. Sous macOS/Linux, suivez les [instructions Git pour votre plateforme](https://git-scm.com/downloads).

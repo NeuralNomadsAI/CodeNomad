@@ -31,7 +31,7 @@
 
 ## בנייה מקוד מקור {#build-from-source}
 
-השתמשו ב־Node.js **24.20.0**, כפי שמקובע ב־`.node-version`, ב־npm, ב־Git וב־OpenCode CLI תואם. הריצו את הפקודות מעותק פיתוח:
+השתמשו בגרסת Node.js המקובעת ב־`.node-version`, ב־npm, ב־Git וב־OpenCode CLI תואם. הריצו את הפקודות מעותק פיתוח:
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git
