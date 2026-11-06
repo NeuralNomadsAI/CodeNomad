@@ -355,6 +355,7 @@ async function main() {
   const nativeParent = new NativeParent()
   const automationLifecycle = new DesktopPluginLifecycle("automation")
   const missionsLifecycle = new DesktopPluginLifecycle("missions")
+  const memoryLifecycle = new DesktopPluginLifecycle("memory")
   // Missions dispatch through the loopback bridge of the owning backend, desktop or
   // standalone; window/browser automation needs a desktop host. Settles once
   // publication has been attempted, so early connections never skip Missions.
@@ -374,6 +375,7 @@ async function main() {
           pruning: pruningLifecycle,
           automation: nativeParent.available ? automationLifecycle : undefined,
           missions: missions ? missionsLifecycle : undefined,
+          memory: missions ? memoryLifecycle : undefined,
         })
       },
     })
@@ -715,7 +717,7 @@ async function main() {
             await yoloManager.stop()
             await permissionReceipts.stop()
             const results = await Promise.allSettled([
-              workspaceManager.shutdown(), pruningLifecycle.stop(), automationLifecycle.stop(), missionsLifecycle.stop(),
+              workspaceManager.shutdown(), pruningLifecycle.stop(), automationLifecycle.stop(), missionsLifecycle.stop(), memoryLifecycle.stop(),
               removeAutomationBridge?.(),
             ])
             nativeParent.close()

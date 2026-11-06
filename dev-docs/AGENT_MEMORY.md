@@ -191,6 +191,22 @@ authentication; native admission grants access only to the private bridge path.
 After successful commits/settings changes, `memory.changed` invalidates readers
 without carrying entry content, titles, IDs or directory information.
 
+## Bundled native tool
+
+`opencode/memory/desktop-plugin.ts` supplies `codenomad_memory` while a backend
+presence lease is live. Its four actions require `scope`; `read` takes `query`
+(exact ID or title), `save` takes `title`, `type`, `text`, and an explicit edit
+additionally takes `id` and `revision`; `delete` requires `id` and `revision`
+from a fresh read. The plugin derives provenance from `tool.sessionID` and
+delegates every operation to `sendMemoryInput`. Safe capacity titles reach the
+agent with a merge-or-delete instruction. An unconfirmed write instructs a
+list/read verification before another decision to write.
+
+`build:memory` uses the common native bundle settings. The desktop and standalone
+server provision its content-addressed payload through `DesktopPluginLifecycle`
+once their loopback bridge publication succeeds. Leases keep the tool's
+registration aligned with backend presence, including withdrawal and reopening.
+
 ## Optional native instructions capability
 
 `memory/instructions-capability.ts` reads the authenticated `/openapi.json`
@@ -245,6 +261,9 @@ node --import tsx --test packages/server/src/memory/*.test.ts packages/server/sr
 node --import tsx --test packages/server/src/server/routes/memory.test.ts packages/server/src/server/standalone-bridge.test.ts
 npm run typecheck --workspace @neuralnomads/codenomad
 node --import tsx scripts/test-memory-instructions-native.mjs <absolute-opencode-executable>
+node --import tsx --test packages/server/src/opencode/memory/*.test.ts
+npm run build:memory --workspace @neuralnomads/codenomad
+node --import tsx scripts/test-memory-tool-native.mjs <absolute-opencode-executable>
 ```
 
 Set `CODENOMAD_MEMORY_TEST_WSL_DISTRO` to a disposable-test-capable local distro
