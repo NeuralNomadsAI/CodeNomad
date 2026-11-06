@@ -15,7 +15,6 @@ import { RECOMMENDED_OPENCODE_VERSION } from "../packages/server/src/opencode/ru
 const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-native-upgrade-"))
 const selected = await fixtureRuntime(root)
 const { node, npm } = selected
-assert.ok(npm, "npm must be bundled beside the selected Node")
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
   !/^(OPENCODE_|CODENOMAD_|CLI_|XDG_|npm_|PATH$|NODE_|ELECTRON_|WEBVIEW2_)/i.test(key)))
 Object.assign(env, {

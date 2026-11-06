@@ -18,7 +18,6 @@ const LEGACY_VERSION = process.env.CODENOMAD_FIXTURE_LEGACY_VERSION || "1.18.10"
 const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-legacy-replacement-"))
 const selected = await fixtureRuntime(root)
 const { node, npm } = selected
-assert.ok(npm, "npm must be bundled beside the selected Node")
 const prefix = path.join(root, "npm prefix")
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
   !/^(OPENCODE_|CODENOMAD_|CLI_|XDG_|npm_|PATH$|NODE_|ELECTRON_|WEBVIEW2_)/i.test(key)))

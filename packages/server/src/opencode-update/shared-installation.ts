@@ -266,7 +266,7 @@ export async function installSharedOpenCode(version: string, options: Installati
   if (plan.legacy && !matchesConsent(plan.legacy, options.replaceLegacy)) throw consentRequired()
   const node = options.node ?? process.execPath
   const bundled = options.npm ?? bundledNpm(node)
-  if (!bundled) throw new Error("npm is unavailable beside the CodeNomad Node runtime")
+  if (!bundled) throw new Error("npm is unavailable in the CodeNomad runtime (Electron resources or beside its Node)")
   const npm: string = bundled
   const binary = npmExecutable(prefix, platform)
   const probe = options.probe ?? probeBinaryVersionAsync
