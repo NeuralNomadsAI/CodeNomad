@@ -514,10 +514,11 @@ test("tree enforcement stops launching commands when its deadline is spent", asy
   ] }
   const timeouts: number[] = []
   let now = 0
-  const runTaskkill = ((_command: string, _args: readonly string[], options: { timeout?: number }) => {
+  const runTaskkill = ((_command: string, _args: readonly string[], options: { timeout?: number; windowsFallbackScript?: string }) => {
+    assert.match(options.windowsFallbackScript!, /Get-CimInstance/)
     timeouts.push(options.timeout ?? 0)
     now += options.timeout ?? 0
-    return { status: 0, stdout: "terminated\n", stderr: "", pid: 1, signal: null, output: [] }
+    return { status: 0, stdout: "confirmed\n", stderr: "", pid: 1, signal: null, output: [] }
   })
 
   assert.equal(await forceCapturedProcessTree(tree, undefined, runTaskkill, process.kill, {
@@ -525,6 +526,10 @@ test("tree enforcement stops launching commands when its deadline is spent", asy
     now: () => now,
   }), false)
   assert.deepEqual(timeouts, [2_500])
+  assert.equal(await forceCapturedProcessTree(tree, undefined, () => assert.fail("no command after the deadline"), process.kill, {
+    deadlineAt: 2_500,
+    now: () => now,
+  }), false)
 })
 
 test("later captures preserve root ownership and add every descendant identity", async () => {

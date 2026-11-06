@@ -7,6 +7,7 @@ import { captureProcessTree, forceCapturedProcessTree, runCommand } from "./proc
 import { windowsCimProcessTreeScript, windowsManagedTerminateScript } from "./windows-process-fallback"
 import { windowsNativeProcesses } from "./windows-process-tree"
 import { WindowsProcessWorker } from "./windows-process-worker"
+import { getProcessStartIdentityAsync } from "./client-state-process-identity"
 
 const windows = { skip: process.platform !== "win32", timeout: 45_000 }
 
@@ -26,7 +27,7 @@ for (const constrained of [false, true]) {
       if (command === "powershell.exe") {
         args = constrained ? constrain(args!) : [...args!.slice(0, -1), "[Console]::ReadLine() | Out-Null;\n" + args!.at(-1)]
       }
-      return originalSpawn(command, args!, options!)
+      return originalSpawn(command, args!, { ...options, windowsHide: true })
     }) as typeof spawn
     // Enforce CLM in the fallback too, as an actual system policy would.
     childProcess.execFile = ((command: string, args: string[], ...rest: any[]) =>
@@ -36,9 +37,20 @@ for (const constrained of [false, true]) {
     const manager = new CliProcessManager() as any
     manager.on("error", () => {})
     manager.resolveCliEntry = async () => ({ entry: "worker-failure-fixture", runner: "node", nodeBinaryPath: process.execPath })
-    manager.buildDirectSpawn = () => ({ command: process.execPath, args: ["-e", "console.log('Local Connection URL : http://127.0.0.1:54321');process.stdin.resume();setInterval(()=>{},1000)"] })
+    manager.buildDirectSpawn = () => ({ command: process.execPath, args: ["-e", `
+      console.log('Local Connection URL : http://127.0.0.1:54321');
+      process.stdin.on('data', data => {
+        if (!String(data).includes('fixture:spawn')) return;
+        const nested = require('child_process').spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'],
+          {windowsHide:true,detached:true,stdio:'ignore'});
+        console.log('FIXTURE_NESTED:'+nested.pid);
+      });
+      setInterval(()=>{},1000);
+    `] })
     let child: childProcess.ChildProcess | undefined
     let exited: Promise<unknown> | undefined
+    let nestedPid: number | undefined
+    let nestedIdentity: string | undefined
     try {
       assert.equal((await manager.start({ dev: false })).state, "ready")
       child = manager.child
@@ -50,6 +62,19 @@ for (const constrained of [false, true]) {
       }
       const tree = await manager.initialProcessTree
       assert.ok(tree, "startup/background capture must retain a usable baseline")
+      const nested = new Promise<number>(resolve => {
+        const onLog = ({ message }: { message: string }) => {
+          const match = message.match(/^FIXTURE_NESTED:(\d+)$/)
+          if (match) { manager.off("log", onLog); resolve(Number(match[1])) }
+        }
+        manager.on("log", onLog)
+      })
+      child.stdin!.write("fixture:spawn\n")
+      nestedPid = await nested
+      nestedIdentity = await getProcessStartIdentityAsync(nestedPid, 10_000)
+      assert.ok(nestedIdentity)
+      assert.ok(!manager.capturedProcessTree.members.some(({ pid }: { pid: number }) => pid === nestedPid),
+        "the detached descendant must postdate the retained snapshot")
       if (!constrained) {
         const workerExited = once(manager.processWorker.child, "exit")
         manager.processWorker.child.kill()
@@ -63,9 +88,13 @@ for (const constrained of [false, true]) {
       await exited
       assert.ok(Date.now() - started < 30_000, "confirmation must fit the original absolute deadline")
       for (const { pid } of tree.members) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" })
+      assert.throws(() => process.kill(nestedPid!, 0), { code: "ESRCH" }, "successful shutdown must stop the late detached descendant")
     } finally {
       manager.processWorker?.dispose()
       clearTimeout(manager.processTreeRefresh)
+      if (nestedPid && nestedIdentity && await getProcessStartIdentityAsync(nestedPid, 10_000) === nestedIdentity) {
+        try { process.kill(nestedPid, "SIGKILL") } catch {}
+      }
       if (child && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL")
       await exited
       childProcess.spawn = originalSpawn
@@ -152,11 +181,17 @@ test("CLM fallback retains exact identities, rejects a one-tick mismatch and con
     const mismatch = await clm(windowsManagedTerminateScript([{ ...root, startIdentity: `win32:${BigInt(root.startIdentity.slice(6)) + 1n}` }]))
     assert.equal(mismatch.stdout.trim(), "confirmed", mismatch.stderr)
     assert.doesNotThrow(() => process.kill(child.pid!, 0))
+    assert.doesNotThrow(() => process.kill(nestedPid!, 0), "a reused root cannot authorize fresh descendants")
+    const unavailable = await clm("function Get-CimInstance { throw 'inventory unavailable' };\n" + windowsManagedTerminateScript(tree.members))
+    assert.notEqual(unavailable.status, 0)
+    assert.doesNotMatch(unavailable.stdout, /confirmed/)
+    for (const { pid } of tree.members) assert.doesNotThrow(() => process.kill(pid, 0), "a failed refresh must precede any termination")
     // A native capture can be enforced by the fallback inside the same reserve.
     const deadlineAt = Date.now() + 5_000
     assert.equal(await forceCapturedProcessTree(tree, undefined, (_command, _args, options) => {
       assert.ok(options.windowsFallbackScript)
-      assert.doesNotMatch(options.windowsFallbackScript, /Add-Type|Get-CimInstance|Stop-Process -Id/)
+      assert.match(options.windowsFallbackScript, /Get-CimInstance/)
+      assert.doesNotMatch(options.windowsFallbackScript, /Add-Type|Stop-Process -Id/)
       return clm(options.windowsFallbackScript, options.timeout)
     }, process.kill, { deadlineAt }), true)
     await exited

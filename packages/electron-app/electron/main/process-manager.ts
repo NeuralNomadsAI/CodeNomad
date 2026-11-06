@@ -278,8 +278,8 @@ export class CliProcessManager extends EventEmitter {
         if (this.child !== child || child.exitCode !== null || child.signalCode !== null) return undefined
         const rootIdentity = tree?.members.find(({ pid }) => pid === child.pid)?.startIdentity
         this.capturedProcessTree = mergeCapturedProcessTrees(this.capturedProcessTree, tree, child.pid!, rootIdentity)
-        // CIM inventories run only at startup/in the background. Final enforcement
-        // uses the retained identities, without spending its reserve on WMI.
+        // Retain identities across root exit. Final enforcement refreshes membership
+        // again, using the native helper or the fallback termination batch.
         if (!this.requestedStop) this.processTreeRefresh = setTimeout(() => { void capture() }, 5_000)
         return this.capturedProcessTree
       }

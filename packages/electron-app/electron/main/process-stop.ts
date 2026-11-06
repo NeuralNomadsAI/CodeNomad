@@ -211,14 +211,14 @@ export async function forceCapturedProcessTree(
   }
   if (tree.platform === "win32") {
     const script = windowsTerminateProcessTreeScript(tree.members)
-    const timeout = Math.min(3_000, remainingMs())
+    const timeout = Math.min(5_000, remainingMs())
     if (!script || timeout <= 0) return false
     const result = await runTerminate("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
       encoding: "utf8", timeout, windowsHide: true, windowsNativeReadyOnly: true,
       windowsFallbackScript: windowsManagedTerminateScript(tree.members),
     })
-    // The batch waits on the same handles it checked and terminated. A separate
-    // Get-Process per member costs another shell startup and races PID reuse.
+    // Both batches retain the handles they check, stop and confirm. The cmdlet
+    // fallback also refreshes membership inside this same remaining budget.
     return remainingMs() > 0 && result.status === 0 && !result.error && result.stdout.trim() === "confirmed"
   }
   for (const member of [...tree.members].reverse()) {
