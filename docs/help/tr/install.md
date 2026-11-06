@@ -47,7 +47,7 @@ Electron Debian kurulumu, Chromium'un korumalı alanını yapılandırır. Kurul
 | --- | --- | --- |
 | OpenCode CLI | Geçerli olduğu yerde seçilen WSL dağıtımı da dahil olmak üzere seçilen yürütme ana bilgisayarı | Minimum **2.2.3**; **2.2.5** önerilen/uygun hedeftir. Daha yeni veya özel sürümler, test edilmemiş sürüm yasağı yerine sözleşme doğrulamasından geçer. |
 | Git | CodeNomad arka uç hesabının `PATH`'si | Depo kimliği, Git işlemleri ve çalışma ağaçları için gereklidir. |
-| Node.js/npm | Bağımsız sunucu ve kaynak derleme ana bilgisayarı | Node.js 24 LTS; tekrarlanabilir kaynak derlemeleri `.node-version` (**24.20.0**) kullanır. Masaüstü sürümleri kendi çalışma zamanlarını içerir: Electron'un yerleşik Node'u veya Tauri'nin paketlediği Node, npm ile. |
+| Node.js/npm | Bağımsız sunucu ve kaynak derleme ana bilgisayarı | Node.js 24 LTS; tekrarlanabilir kaynak derlemeleri `.node-version` dosyasında sabitlenen sürümü kullanır. Masaüstü sürümleri kendi çalışma zamanlarını içerir: Electron'un yerleşik Node'u veya Tauri'nin paketlediği Node, npm ile. |
 | Çalışma alanı klasörü | Arka uçtan erişilebilen disk | Uzak bir tarayıcı tarafından çıkarılan yerel cihaz klasörü değil, açıkça açılmış bir fiziksel klasör. |
 
 Windows'ta, komut satırı/üçüncü taraf erişimi etkinleştirilmiş olarak [Windows için Git](https://gitforwindows.org/)'yi yükleyin. Kullanıcı tarafından yazılabilen, kullanıcı başına kurulum yeterlidir. MacOS/Linux'ta [Git'in platform talimatlarını](https://git-scm.com/downloads) kullanın.

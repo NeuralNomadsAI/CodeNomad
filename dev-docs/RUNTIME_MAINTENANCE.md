@@ -74,3 +74,4 @@ Run `npm run check:runtime` locally for the same read-only assessment.
 ## Agent conventions
 
 - Bundled runtime maintenance keeps `.node-version` exact and proposes only same-major LTS upgrades as regular, non-draft PRs without automatic merge. The scheduled npm CLI/dependency audit is warning-only: never independently replace bundled npm, auto-fix dependencies, merge or publish from that check, and never report a failed audit as clean. Application runtime changes require reviewed builds/releases.
+- Documents reference `.node-version` and never restate the pinned Node or bundled npm version: maintenance updates only that file.
