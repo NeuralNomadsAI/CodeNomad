@@ -17,6 +17,12 @@ interface BrowserControllerElectron {
 // start. Until its first frame the renderer keeps deferring commits and drops key and click input.
 const COMPOSITOR_POLL_MS = 50
 
+/** Chromium hosts the display compositor in a separate GPU process, even with GPU acceleration
+ * disabled, unless these switches move it into the browser process, where no GPU process appears. */
+export function compositorRunsInBrowserProcess(hasSwitch: (name: string) => boolean): boolean {
+  return hasSwitch("in-process-gpu") || hasSwitch("single-process")
+}
+
 interface RegistrationInput {
   sessionId: string
   registrationId: string
@@ -407,14 +413,18 @@ export class BrowserController {
   /** Holds trusted key and pointer input until the display compositor runs, or refuses it at the deadline. */
   private async awaitCompositor(deadline: number): Promise<void> {
     while (!this.compositorRunning()) {
-      if (Date.now() + COMPOSITOR_POLL_MS >= deadline) throw new Error("The browser preview is not rendering yet, so input was not sent; try again")
+      if (Date.now() + COMPOSITOR_POLL_MS >= deadline) {
+        throw new Error("The browser preview is not rendering yet (its GPU process has not started), so input was not sent; try again")
+      }
       await new Promise(resolve => setTimeout(resolve, COMPOSITOR_POLL_MS))
     }
   }
 
   private compositorRunning(): boolean {
     if (this.electronApi.compositorRunning) return this.electronApi.compositorRunning()
-    return electron().app.getAppMetrics().some(metric => metric.type === "GPU")
+    const { app } = electron()
+    return compositorRunsInBrowserProcess(name => app.commandLine.hasSwitch(name))
+      || app.getAppMetrics().some(metric => metric.type === "GPU")
   }
 
   private pageGeneration(registration: Registration): string {

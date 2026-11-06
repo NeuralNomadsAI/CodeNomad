@@ -52,8 +52,8 @@
   `@tauri-apps/api` and the plugin JavaScript packages (`packages/ui/package.json`)
   on the crates' major/minor: the CLI's version check runs from
   `packages/tauri-app` and does not see them. Dependabot's npm entry proposes the
-  `@tauri-apps/*` packages in a separate grouped PR, so a crate update and its
-  JavaScript counterpart are merged together. The vendored Tao and updater are
+  `@tauri-apps/*` packages in their own grouped PR (`tauri-js`); merge it with
+  the matching cargo `tauri` PR so the packages never trail the crates' minor. The vendored Tao and updater are
   path patches, which Dependabot does not update;
   `packages/tauri-app/scripts/vendored-patches.test.mjs` fails a PR whose
   lockfile stops resolving them. Platform crates shared with Wry (`webview2-com`,

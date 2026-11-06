@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { describe, it, mock } from "node:test"
 import type { BrowserWindow, WebContents } from "electron"
-import { BrowserController, handleNativeBrowserRequest } from "./browser-controller"
+import { BrowserController, compositorRunsInBrowserProcess, handleNativeBrowserRequest } from "./browser-controller"
 
 interface GuestOptions {
   id: number
@@ -89,7 +89,7 @@ describe("BrowserController private page channel", () => {
     await page(h.controller, "send", { ...lease, method: "Runtime.evaluate", params: { expression: "1" } })
     assert.equal(methods.at(-1), "Runtime.evaluate", "page reads do not wait for the compositor")
     await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.dispatchKeyEvent", params: { type: "keyDown", key: "a", text: "a" } },
-      Date.now() + 120), /not rendering yet, so input was not sent/)
+      Date.now() + 120), /not rendering yet \(its GPU process has not started\), so input was not sent/)
     assert.equal(events.length, 0, "input refused at the deadline is never sent")
     const next = await begin(h.controller)
     const key = page(h.controller, "send", { ...next, method: "Input.dispatchKeyEvent", params: { type: "keyDown", key: "b", text: "b" } })
@@ -102,6 +102,13 @@ describe("BrowserController private page channel", () => {
     await click
     assert.deepEqual(events.map(event => `${event.type}:${(event as Electron.KeyboardInputEvent).keyCode}`), ["keyDown:b", "char:b"])
     assert.equal(methods.at(-1), "Input.dispatchMouseEvent")
+  })
+  it("treats an in-process compositor as running, since no GPU process ever appears", () => {
+    const switches = (...names: string[]) => (name: string) => names.includes(name)
+    assert.equal(compositorRunsInBrowserProcess(switches()), false)
+    assert.equal(compositorRunsInBrowserProcess(switches("disable-gpu")), false, "disabled acceleration still uses a GPU process")
+    assert.equal(compositorRunsInBrowserProcess(switches("in-process-gpu")), true)
+    assert.equal(compositorRunsInBrowserProcess(switches("single-process")), true)
   })
   it("refuses unsupported ContextMenu instead of emitting an unknown native key", async () => {
     const h = createHarness(), events: Electron.InputEvent[] = []
