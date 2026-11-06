@@ -223,7 +223,7 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
         return { ...worktree, worktreeDirectory, normalizedDirectory: await realpath(worktree.directory) }
       } catch (error) {
         // A nested project folder may exist in only some registered checkouts.
-        if ((error as NodeJS.ErrnoException).code === "ENOENT" && worktree.slug !== "root" && worktree.directory !== worktree.worktreeDirectory) return null
+        if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "") && worktree.slug !== "root" && worktree.directory !== worktree.worktreeDirectory) return null
         throw error
       }
     }))).filter((worktree): worktree is NonNullable<typeof worktree> => worktree !== null))
