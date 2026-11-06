@@ -67,6 +67,7 @@ File size is a refactoring signal, never by itself a reason to refactor. When a 
 
 ## Pull Requests
 - A PR that changes user-visible behavior (labels, controls, steps, defaults, limitations) updates the affected help pages in the same PR: English first, then the nine translations using each locale's UI labels (`dev-docs/USER_HELP.md`). Help publishes from `dev`, and CI checks only its structure and links. Answer the non-blocking `help-update-reminder.yml` comment (English UI messages changed without `docs/help`) before merging: update the help, or confirm nothing user-facing is documented there.
+- After a PR merges, remove its local worktree and branch; GitHub deletes the merged head branch (repository setting). Delete remote branches you created that have no open PR.
 
 ## Commit Message Guidelines
 - Commit messages: a concise conventional-style subject, then body paragraphs explaining why the change exists, the user-visible behavior change, the implementation approach, important edge cases or platform considerations, and the validation or tests that prevent regressions.
