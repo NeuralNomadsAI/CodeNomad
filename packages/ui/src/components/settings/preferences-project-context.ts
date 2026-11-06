@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, onCleanup, untrack, type Accessor } from "solid-js"
 import type { NativePreferencesRequest } from "../../lib/native/preferences-window"
 import { serverApi } from "../../lib/api-client"
-import { serverEvents } from "../../lib/server-events"
+import { backendEvents as serverEvents } from "../../lib/server-events"
 import { createEventRefreshScheduler } from "../../lib/event-refresh-scheduler"
 import { normalizeWorkspacePath } from "../../stores/app-session-reconciliation"
 
@@ -79,7 +79,7 @@ export function createPreferencesProjectContext(
       if (revoke) setResolved(undefined)
       if (untrack(active)) scheduler.schedule("project", "urgent")
     }
-    const events = serverEvents.on("*", event => {
+    const events = serverEvents.forInstance(() => source.instanceId).on("*", event => {
       if (event.type === "workspace.created" || event.type === "workspace.started" || event.type === "workspace.error") {
         if (event.workspace.id === source.instanceId || event.workspace.id === boundId || !boundId && sameFolder(event.workspace.path)) {
           invalidate(event.workspace.status !== "ready")
@@ -93,8 +93,8 @@ export function createPreferencesProjectContext(
         } else if (candidateIds.has(event.workspaceId)) invalidate()
       }
     })
-    const reconnect = serverEvents.onOpen(() => invalidate(true))
-    const transport = serverEvents.onTransportStatus(status => {
+    const reconnect = serverEvents.forInstance(() => source.instanceId).onOpen(() => invalidate(true))
+    const transport = serverEvents.forInstance(() => source.instanceId).onTransportStatus(status => {
       if (status !== "disconnected") return
       revision++; setResolved(undefined); controller?.abort(); scheduler.cancel("project")
     })

@@ -1,4 +1,4 @@
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { getRootClient } from "./opencode-client"
 import { createShellApi, createShellStore, type ShellRefreshEvent } from "./shell-store"
 

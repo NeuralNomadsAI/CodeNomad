@@ -2,7 +2,7 @@ import { z } from "zod"
 import { onCleanup } from "solid-js"
 import { openExternalUrl } from "../../lib/external-url"
 import { panelExtensionsApi } from "../../lib/panel-extensions-api"
-import { serverEvents } from "../../lib/server-events"
+import { backendEvents as serverEvents } from "../../lib/server-events"
 
 const kind = z.enum(["issue", "pullRequest"])
 const requestSchema = z.object({ type: z.literal("workItems:request"), id: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
@@ -21,7 +21,7 @@ export function useWorkItemsChannel(props: { instanceId: string; id: string; dig
   const pending = new Set<AbortController>()
   let disposed = false, connected = true, lastOpen = 0, opening = false
   const abort = () => { for (const request of pending) request.abort() }
-  onCleanup(serverEvents.onTransportStatus(status => {
+  onCleanup(serverEvents.forInstance(() => props.instanceId).onTransportStatus(status => {
     connected = status === "connected"
     if (!connected) abort()
   }))

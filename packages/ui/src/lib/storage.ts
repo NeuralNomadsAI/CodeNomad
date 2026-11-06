@@ -1,6 +1,6 @@
 import type { InstanceData, WorkspaceEventPayload } from "../../../server/src/api-types"
 import { serverApi, type ServerApi } from "./api-client"
-import { serverEvents, type ServerEvents } from "./server-events"
+import { backendEvents, type ServerEvents } from "./server-events"
 import { getLogger } from "./logger"
 import type { MissionPreferenceExpectation } from "./mission-preferences-document"
 
@@ -53,7 +53,7 @@ export class ServerStorage {
   private readonly api: ServerApi
 
   /** Defaults to the local backend; another backend passes its own API and events. */
-  constructor(options: { api: ServerApi; events: Pick<ServerEvents, "on"> } = { api: serverApi, events: serverEvents }) {
+  constructor(options: { api: ServerApi; events: Pick<ServerEvents, "on"> } = { api: serverApi, events: backendEvents.forInstance(() => undefined) }) {
     this.api = options.api
     const events = options.events
     events.on("storage.configChanged", (event: WorkspaceEventPayload) => {

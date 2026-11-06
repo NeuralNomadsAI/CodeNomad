@@ -4,7 +4,7 @@ import type { CommandInfo, SkillInfo } from "@opencode/client"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { getRootClient } from "../stores/opencode-client"
 import { splitDisplayPath } from "./unified-picker-path"
 const log = getLogger("actions")
@@ -350,7 +350,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     const status = serverEvents.on("instance.eventStatus", payload => {
       if (payload.type === "instance.eventStatus" && payload.instanceId === workspaceId && payload.status === "connected") load()
     })
-    const reconnect = serverEvents.onOpen(() => load())
+    const reconnect = serverEvents.forInstance(() => workspaceId).onOpen(() => load())
     onCleanup(() => { disposed = true; unsubscribe(); status(); reconnect() })
     load()
   })

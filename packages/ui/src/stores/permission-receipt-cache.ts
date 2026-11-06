@@ -1,7 +1,8 @@
 import type { PermissionReceipt } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { receiptReads } from "../lib/background-read-queue"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
+import { parseInstanceKey } from "../lib/backend-identity"
 
 export type PermissionReceiptScope = { messageId: string } | { unanchored: true }
 export interface PermissionReceiptSnapshot { receipts: PermissionReceipt[]; next?: string; pages: number }
@@ -30,8 +31,10 @@ serverEvents.on("permission.receiptsChanged", event => {
   invalidatePermissionReceipts(permissionReceiptKey(event.instanceId, event.sessionId,
     event.messageId ? { messageId: event.messageId } : { unanchored: true }))
 })
-serverEvents.onOpen(() => {
-  for (const key of [...snapshots.keys(), ...reads.keys()]) invalidatePermissionReceipts(key)
+serverEvents.onOpen(backendId => {
+  for (const key of [...snapshots.keys(), ...reads.keys()]) {
+    if (parseInstanceKey(key).backendId === backendId) invalidatePermissionReceipts(key)
+  }
 })
 
 export function permissionReceiptKey(instanceId: string, sessionId: string, scope: PermissionReceiptScope): string {

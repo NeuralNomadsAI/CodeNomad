@@ -11,6 +11,7 @@ import { getLogger } from "./logger"
 import { retryWithBackoff, isRetryableError } from "./retry-utils"
 import { createStreamStalenessWatchdog } from "./stream-staleness"
 import { authRecovery, type AuthRecovery } from "./auth-recovery"
+import { BackendEvents } from "./backend-events"
 
 const RETRY_BASE_DELAY = 1000
 const RETRY_MAX_DELAY = 10000
@@ -34,6 +35,8 @@ export class ServerEvents {
   private readonly api: ServerEventsOptions["api"]
   private readonly auth: ServerEventsOptions["auth"]
   private started = false
+  private disposed = false
+  private cleanup: (() => void)[] = []
   private handlers = new Map<WorkspaceEventType | "*", Set<(event: WorkspaceEventPayload) => void>>()
   private openHandlers = new Set<() => void>()
   private statusHandlers = new Set<(status: WorkspaceEventTransportStatus) => void>()
@@ -51,19 +54,25 @@ export class ServerEvents {
   }
 
   start(): void {
-    if (this.started) return
+    if (this.started || this.disposed) return
     this.started = true
-    this.auth.onRestored(() => this.restart("authentication restored"))
+    this.cleanup.push(this.auth.onRestored(() => this.restart("authentication restored")))
     if (typeof window !== "undefined") {
+      const rendererWindow = window
       // Minimal renderer globals (tests, embedded previews) may define window
       // without event APIs; the probes are enhancements, never requirements.
-      window.addEventListener?.("online", () => this.probeStale("network online"))
+      const online = () => this.probeStale("network online")
+      window.addEventListener?.("online", online)
+      this.cleanup.push(() => rendererWindow.removeEventListener?.("online", online))
       if (typeof document !== "undefined") {
-        document.addEventListener?.("visibilitychange", () => {
+        const rendererDocument = document
+        const visible = () => {
           if (document.visibilityState === "visible") {
             this.probeStale("visibility restored")
           }
-        })
+        }
+        document.addEventListener?.("visibilitychange", visible)
+        this.cleanup.push(() => rendererDocument.removeEventListener?.("visibilitychange", visible))
       }
       void this.connect()
     }
@@ -254,6 +263,7 @@ export class ServerEvents {
   }
 
   restart(reason = "manual restart"): void {
+    if (this.disposed) return
     this.retryDelay = RETRY_BASE_DELAY
     this.clearReconnectTimer()
     this.watchdog.setConnected(false)
@@ -267,7 +277,21 @@ export class ServerEvents {
     logSse("Restarting backend events stream", { reason })
     void this.connect()
   }
+
+  dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
+    this.connectGeneration++
+    this.clearReconnectTimer()
+    this.connection?.disconnect()
+    this.connection = null
+    this.watchdog.dispose()
+    this.cleanup.forEach(cleanup => cleanup())
+    this.cleanup = []
+  }
 }
 
 export const serverEvents = new ServerEvents({ api: serverApi, auth: authRecovery })
+export const backendEvents = new BackendEvents()
+backendEvents.attach("local", serverEvents)
 serverEvents.start()

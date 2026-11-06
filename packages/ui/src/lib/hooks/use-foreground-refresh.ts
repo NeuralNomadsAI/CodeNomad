@@ -1,12 +1,12 @@
 import { onCleanup, onMount } from "solid-js"
 import { getLogger } from "../logger"
-import { serverEvents } from "../server-events"
+import { backendEvents as serverEvents } from "../server-events"
 import { createForegroundRefreshController } from "./foreground-refresh-controller"
 
 const log = getLogger("foreground-refresh")
 
 interface ForegroundRefreshOptions {
-  onRefresh: () => void | Promise<void>
+  onRefresh: (backendId: string) => void | Promise<void>
 }
 
 // On mobile, backgrounding the app suspends JS execution and the SSE
@@ -25,24 +25,31 @@ interface ForegroundRefreshOptions {
 // disconnected.
 export function useForegroundRefresh(options: ForegroundRefreshOptions): void {
   onMount(() => {
-    const controller = createForegroundRefreshController(
-      async () => {
-        log.info("SSE transport reconnected — refreshing session state")
-        await options.onRefresh()
-        log.info("Foreground refresh complete")
-      },
-      {
-        onError: (error) => log.error("Foreground refresh failed — retrying while connected", error),
-      },
-    )
-    const unsubscribe = serverEvents.onTransportStatus((status) => {
+    const controllers = new Map<string, ReturnType<typeof createForegroundRefreshController>>()
+    const controllerFor = (backendId: string) => {
+      let controller = controllers.get(backendId)
+      if (controller) return controller
+      controller = createForegroundRefreshController(
+        async () => {
+          log.info("SSE transport reconnected - refreshing session state")
+          await options.onRefresh(backendId)
+          log.info("Foreground refresh complete")
+        },
+        {
+          onError: (error) => log.error("Foreground refresh failed - retrying while connected", error),
+        },
+      )
+      controllers.set(backendId, controller)
+      return controller
+    }
+    const unsubscribe = serverEvents.onTransportStatus((status, backendId) => {
       if (status === "disconnected") {
         log.info("SSE transport disconnected — will refresh on reconnect")
       }
-      controller.handle(status)
+      controllerFor(backendId).handle(status)
     })
     onCleanup(() => {
-      controller.dispose()
+      controllers.forEach(controller => controller.dispose())
       unsubscribe()
     })
   })

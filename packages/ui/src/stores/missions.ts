@@ -1,9 +1,9 @@
 import { serverApi } from "../lib/api-client"
 import { createEventRefreshScheduler, type RefreshUrgency } from "../lib/event-refresh-scheduler"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { createMissionPanelInventory } from "./mission-panel-inventory"
 import { instances } from "./instances"
-import { projectScope } from "../lib/backend-identity"
+import { projectScope, parseInstanceKey } from "../lib/backend-identity"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { createRoot, createComputed, untrack } from "solid-js"
 
@@ -82,9 +82,9 @@ serverEvents.on("instance.eventStatus", (event) => {
   scheduleRefresh(event.instanceId, "urgent")
 })
 
-serverEvents.onOpen(() => {
-  for (const instanceId of missionStore.trackedInstanceIds()) missionStore.invalidateTasks(instanceId)
-  for (const instanceId of missionStore.demandedInstanceIds()) scheduleRefresh(instanceId, "urgent")
+serverEvents.onOpen(backendId => {
+  for (const instanceId of missionStore.trackedInstanceIds()) if (parseInstanceKey(instanceId).backendId === backendId) missionStore.invalidateTasks(instanceId)
+  for (const instanceId of missionStore.demandedInstanceIds()) if (parseInstanceKey(instanceId).backendId === backendId) scheduleRefresh(instanceId, "urgent")
 })
 
 serverEvents.on("workspace.stopped", (event) => {

@@ -1,7 +1,7 @@
 import { createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
 import type { PanelExtensionSummary } from "../../../../server/src/api-types"
 import { panelExtensionsApi } from "../../lib/panel-extensions-api"
-import { serverEvents } from "../../lib/server-events"
+import { backendEvents as serverEvents } from "../../lib/server-events"
 
 export function usePanelExtensions(instanceId: Accessor<string>, active: Accessor<boolean>) {
   const [entries, setEntries] = createSignal<PanelExtensionSummary[]>([])
@@ -34,10 +34,10 @@ export function usePanelExtensions(instanceId: Accessor<string>, active: Accesso
     finally { if (!disposed) setActivating(false) }
   }
   createEffect(() => { instanceId(); active(); setEntries([]); void refresh() })
-  onCleanup(serverEvents.on("storage.stateChanged", event => {
+  onCleanup(serverEvents.forInstance(instanceId).on("storage.stateChanged", event => {
     if ("owner" in event && event.owner === "panelExtensions") void refresh()
   }))
-  onCleanup(serverEvents.onTransportStatus(status => {
+  onCleanup(serverEvents.forInstance(instanceId).onTransportStatus(status => {
     connected = status === "connected"
     if (!connected) clear(); else void refresh()
   }))

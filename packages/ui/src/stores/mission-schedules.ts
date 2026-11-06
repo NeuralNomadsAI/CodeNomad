@@ -3,7 +3,7 @@ import type { MissionScheduleRead } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { partialMissionScheduleReceipt } from "../lib/mission-schedule-receipt"
 import { createEventRefreshScheduler } from "../lib/event-refresh-scheduler"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { instances } from "./instances"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { sessionListRestored } from "./session-list-restoration"
@@ -128,7 +128,7 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
   const reconnect = serverEvents.on("instance.eventStatus", value => {
     if (value.type === "instance.eventStatus" && value.instanceId === props.instanceId() && value.status === "connected") scheduler.schedule("list", "urgent")
   })
-  const opened = serverEvents.onOpen(() => scheduler.schedule("list", "urgent"))
+  const opened = serverEvents.forInstance(props.instanceId).onOpen(() => scheduler.schedule("list", "urgent"))
   onCleanup(() => { epoch++; controller?.abort(); scheduler.cancel("list"); event(); reconnect(); opened() })
   return { rows, error, selectionError, fresh: (id: string) => fresh().has(id), loading, next, refresh: () => scheduler.schedule("list", "urgent"),
     more: () => { if (next() && !loading()) { pages++; scheduler.schedule("list", "urgent") } } }

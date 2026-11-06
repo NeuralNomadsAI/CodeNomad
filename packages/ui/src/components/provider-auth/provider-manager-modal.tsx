@@ -5,7 +5,7 @@ import { Check, ChevronDown, ExternalLink, KeyRound, Loader2, PlugZap, X } from 
 import type { ConnectionInfo, FormAnswer, FormValue, IntegrationMethod, LocationRef, ModelInfo, OpenCodeClient, ProviderInfo } from "@opencode/client"
 import { openExternalUrl } from "../../lib/external-url"
 import { useI18n } from "../../lib/i18n"
-import { serverEvents } from "../../lib/server-events"
+import { backendEvents as serverEvents } from "../../lib/server-events"
 import { isLocalTauriHost } from "../../lib/runtime-env"
 import { isFormFieldVisible, isHttpFormUrl } from "../../lib/form-schema"
 import {
@@ -337,7 +337,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
     const status = serverEvents.on("instance.eventStatus", payload => {
       if (payload.type === "instance.eventStatus" && payload.instanceId === instanceId && payload.status === "connected") refresh()
     })
-    const reconnect = serverEvents.onOpen(() => refresh())
+    const reconnect = serverEvents.forInstance(() => instanceId).onOpen(() => refresh())
     onCleanup(() => { events(); status(); reconnect() })
   })
 

@@ -4,7 +4,7 @@ import { assetTargetSchema } from "../../../../server/src/opencode/session-pruni
 import { generationTargetSchema } from "../../../../server/src/opencode/session-pruning/assets-gallery-contract"
 import { PANEL_EXTENSION_LIMITS } from "../../../../server/src/panel-extensions/contract"
 import { panelExtensionsApi4 } from "../../lib/panel-extensions-api"
-import { serverEvents } from "../../lib/server-events"
+import { backendEvents as serverEvents } from "../../lib/server-events"
 import { getActiveCatalogLocation } from "../../stores/session-api"
 import { requestComposerFocus } from "../../stores/composer-focus"
 import { resolveImagesConversation, showImagesConversation } from "../../stores/images-conversation"
@@ -89,7 +89,7 @@ export function useApi4Channel(props: {
     nativeGeneration = event.generation
     if (nativeConnected) invalidate(true, true)
   }))
-  onCleanup(serverEvents.onTransportStatus(status => {
+  onCleanup(serverEvents.forInstance(() => props.instanceId).onTransportStatus(status => {
     connected = status === "connected"
     if (!connected) abort()
     else invalidate(true, true)

@@ -2,7 +2,7 @@ import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import type { ConnectionInfo, LocationRef, OpenCodeClient } from "@opencode/client"
 import { Plus, Pencil, Trash2, LockKeyhole } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
-import { serverEvents } from "../../lib/server-events"
+import { backendEvents as serverEvents } from "../../lib/server-events"
 import { requestLocationOptions, toRequestLocation } from "../../stores/request-locations"
 import { serverApi } from "../../lib/api-client"
 import { SettingsSwitch } from "../settings/settings-switch"
@@ -96,8 +96,8 @@ export function ProviderAccounts(props: {
     const status = serverEvents.on("instance.eventStatus", payload => {
       if (payload.type === "instance.eventStatus" && payload.instanceId === instanceId && payload.status === "connected") refresh()
     })
-    const reconnect = serverEvents.onOpen(() => refresh())
-    const policy = serverEvents.on("storage.configChanged", payload => {
+    const reconnect = serverEvents.forInstance(() => instanceId).onOpen(() => refresh())
+    const policy = serverEvents.forInstance(() => instanceId).on("storage.configChanged", payload => {
       if (payload.type === "storage.configChanged" && ["providerAccounts", "*"].includes(payload.owner)) refresh()
     })
     onCleanup(() => { disposed = true; events(); status(); reconnect(); policy() })

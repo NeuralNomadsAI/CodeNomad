@@ -4,7 +4,7 @@ import { createEventRefreshScheduler } from "../lib/event-refresh-scheduler"
 import { tGlobal } from "../lib/i18n"
 import { showToastNotification } from "../lib/notifications"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { executeCustomCommand } from "./session-actions"
 import { createSessionGoalStore } from "./session-goal-store"
 
@@ -26,7 +26,7 @@ serverEvents.on("instance.eventStatus", (event) => {
   if (event.type === "instance.eventStatus" && event.status === "connected") reconnects.schedule(event.instanceId, "urgent")
 })
 
-serverEvents.onOpen(() => void sessionGoals.refreshDemanded())
+serverEvents.onOpen(backendId => void sessionGoals.refreshDemanded(undefined, backendId))
 
 serverEvents.on("workspace.stopped", (event) => {
   if (event.type !== "workspace.stopped") return

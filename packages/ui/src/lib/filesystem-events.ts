@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js"
 import type { WorkspaceDirectoryChange } from "../../../server/src/api-types"
 import { normalizeSessionDirectory } from "../stores/session-list-options"
-import { serverEvents } from "./server-events"
+import { backendEvents as serverEvents } from "./server-events"
 
 interface Snapshot { version: number; full: number; roots: Map<string, number>; paths: Map<string, number> }
 interface Pending { timer: ReturnType<typeof setTimeout>; all: boolean; changes: Map<string, WorkspaceDirectoryChange> }

@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js"
+import { parseInstanceKey, LOCAL_BACKEND_ID } from "../lib/backend-identity"
 import type { IntegrationBindingResponse } from "../../../server/src/integration-types"
 import { INTEGRATION_EVENT_COALESCE_MS, isIntegrationRefreshEvent } from "./integrations-store"
 
@@ -22,8 +23,8 @@ export function createIntegrationBindingsStore(
   const clearTimer = clock.clearTimer ?? (timer => clearTimeout(timer as ReturnType<typeof setTimeout>))
   const entries = new Map<string, Entry>()
   const disconnected = new Set<string>()
-  let transportConnected = true
-  const connected = (entry: Entry) => transportConnected && !disconnected.has(entry.target.instanceId)
+  const disconnectedBackends = new Set<string>()
+  const connected = (entry: Entry) => !disconnectedBackends.has(parseInstanceKey(entry.target.instanceId).backendId) && !disconnected.has(entry.target.instanceId)
   const [snapshots, setSnapshots] = createSignal<ReadonlyMap<string, IntegrationBindingResponse>>(new Map())
   const [busy, setBusy] = createSignal<ReadonlySet<string>>(new Set())
   const publish = (id: string, value: IntegrationBindingResponse) => setSnapshots(current => new Map(current).set(id, value))
@@ -93,12 +94,16 @@ export function createIntegrationBindingsStore(
         reconcile(id, entry, false)
       }
     },
-    reconnect(instanceId?: string, isConnected = true): void {
-      if (instanceId === undefined) transportConnected = isConnected
+    reconnect(instanceId?: string, isConnected = true, backendId = LOCAL_BACKEND_ID): void {
+      if (instanceId === undefined) {
+        if (isConnected) disconnectedBackends.delete(backendId)
+        else disconnectedBackends.add(backendId)
+      }
       else if (isConnected) disconnected.delete(instanceId)
       else disconnected.add(instanceId)
       for (const [id, entry] of entries) {
         if (instanceId !== undefined && entry.target.instanceId !== instanceId) continue
+        if (instanceId === undefined && parseInstanceKey(entry.target.instanceId).backendId !== backendId) continue
         if (connected(entry)) void reconcile(id, entry, true)
         else {
           cancelTimer(entry); invalidate(id, entry)

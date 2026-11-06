@@ -6,8 +6,10 @@ import { sdkManager } from "../lib/sdk-manager"
 import { consumeFormAnswerInteraction, type FormAnswerInteraction } from "../lib/form-answer-interaction"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
-import { serverEvents } from "../lib/server-events"
-import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry } from "../../../server/src/api-types"
+import { backendEvents as serverEvents } from "../lib/server-events"
+import type { BackendEventPayload } from "../lib/backend-events"
+import { backends } from "../lib/backend-client"
+import type { WorkspaceDescriptor, WorkspaceLogEntry } from "../../../server/src/api-types"
 import { PENDING_RECONCILIATION_HEADER, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS } from "../../../server/src/api-types"
 import { ensureInstanceConfigLoaded } from "./instance-config"
 import {
@@ -117,7 +119,7 @@ import {
   RestoreWorkspaceCommitGates, type RestoreWorkspaceCommitGate, type RestoreWorkspaceTerminal,
 } from "./restore-workspace-commit-gates"
 import { BackendWorkspaceListReconciliationFence } from "./workspace-list-reconciliation-fence"
-import { backendIdOf, instanceKey, LOCAL_BACKEND_ID } from "../lib/backend-identity"
+import { backendIdOf, instanceKey, LOCAL_BACKEND_ID, parseInstanceKey } from "../lib/backend-identity"
 import type { BackendId } from "../lib/backend-transport"
 import { usesClientState } from "../lib/runtime-env"
 
@@ -1320,8 +1322,10 @@ function waitForWorkspaceLoadChange(
   })
 }
 
-serverEvents.onOpen(() => {
-  publishLatestWorkspaceLoad(refreshWorkspaceList().then(
+serverEvents.onOpen((backendId) => {
+  const backend = backends.get(backendId)
+  if (!backend) return
+  publishLatestWorkspaceLoad(refreshWorkspaceList(backendId, backend.api).then(
     () => ({}),
     (error) => {
       log.warn("Failed to reconcile workspaces after event reconnect", error)
@@ -1342,7 +1346,7 @@ async function waitForInitialWorkspaceLoad(signal?: AbortSignal): Promise<void> 
 
 serverEvents.on("*", (event) => handleWorkspaceEvent(event))
 
-function handleWorkspaceEvent(event: WorkspaceEventPayload) {
+function handleWorkspaceEvent(event: BackendEventPayload) {
   if (!usesClientState()) return
   const workspaceId = event.type === "workspace.log"
     ? event.entry.workspaceId
@@ -1368,13 +1372,13 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
 
   switch (event.type) {
     case "workspace.created":
-      upsertWorkspace(event.workspace)
+      upsertWorkspace(event.workspace, undefined, event.backendId)
       break
     case "workspace.started":
-      upsertWorkspace(event.workspace)
+      upsertWorkspace(event.workspace, undefined, event.backendId)
       break
     case "workspace.error":
-      upsertWorkspace(event.workspace)
+      upsertWorkspace(event.workspace, undefined, event.backendId)
       showWorkspaceLaunchError(event.workspace)
       clearPermissionAutoAcceptForInstance(event.workspace.id)
       clearSyncedYoloSessionsForInstance(event.workspace.id)
@@ -2119,8 +2123,10 @@ export function ensureYoloStateSynced(instanceId: string, sessionId: string): vo
     })
 }
 
-serverEvents.onOpen(() => {
-  syncedYoloSessions.clear()
+serverEvents.onOpen((backendId) => {
+  for (const key of syncedYoloSessions) {
+    if (parseInstanceKey(key).backendId === backendId) syncedYoloSessions.delete(key)
+  }
 })
 
 function clearSyncedYoloSessionsForInstance(instanceId: string): void {

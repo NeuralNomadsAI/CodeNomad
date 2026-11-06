@@ -1,4 +1,5 @@
 import { createSignal, untrack } from "solid-js"
+import { parseInstanceKey } from "../lib/backend-identity"
 import type { IntegrationsResponse } from "../../../server/src/integration-types"
 
 /** Native events after which shown integrations are read again: integration RPC events, plugin and configuration changes. */
@@ -70,12 +71,14 @@ export function createIntegrationsStore(
     return reading.promise
   }
 
-  const refreshDemanded = (instanceId?: string): Promise<void> => Promise.all([...entries].map(([stateKey, entry]) =>
-    instanceId === undefined || entry.instanceId === instanceId ? refreshEntry(stateKey, entry) : undefined)).then(() => undefined)
+  const refreshDemanded = (instanceId?: string, backendId?: string): Promise<void> => Promise.all([...entries].map(([stateKey, entry]) =>
+    (instanceId === undefined || entry.instanceId === instanceId) && (backendId === undefined || parseInstanceKey(entry.instanceId).backendId === backendId)
+      ? refreshEntry(stateKey, entry) : undefined)).then(() => undefined)
 
-  const invalidate = (instanceId?: string): void => {
+  const invalidate = (instanceId?: string, backendId?: string): void => {
     for (const [stateKey, entry] of entries) {
       if (instanceId !== undefined && entry.instanceId !== instanceId) continue
+      if (backendId !== undefined && parseInstanceKey(entry.instanceId).backendId !== backendId) continue
       entry.generation++
       const previous = snapshots().get(stateKey)
       if (previous?.status === "ready") publish(stateKey, { ...previous, stale: true })

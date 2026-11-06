@@ -8,7 +8,7 @@ import { HttpResponseError } from "../lib/retryable-file-search"
 import { isPluginPackagePending, runPluginPackageAction } from "../stores/plugin-package-actions"
 import { pluginSourcesStore } from "../stores/plugin-sources"
 import { confirmIntegrationAction } from "./integration-confirmation"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 
 type RemovableSource = PluginConfiguredSource & { scope: PluginControlScope }
 type Item =
@@ -54,7 +54,7 @@ export function PluginRowActions(props: {
     props.sessionId, props.source?.type === "package" ? props.source.target : null, props.active !== false,
     props.consentEpoch, props.removable]))
   createEffect(() => { ownership(); generation++; cancel() })
-  onCleanup(serverEvents.onTransportStatus(status => { if (status === "disconnected") cancel() }))
+  onCleanup(serverEvents.forInstance(() => props.instanceId).onTransportStatus(status => { if (status === "disconnected") cancel() }))
   onCleanup(serverEvents.on("instance.eventStatus", event => { if (event.type === "instance.eventStatus" && event.instanceId === props.instanceId) cancel() }))
   onCleanup(() => {
     disposed = true; generation++; cancel()

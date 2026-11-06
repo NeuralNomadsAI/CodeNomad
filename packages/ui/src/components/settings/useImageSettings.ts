@@ -2,7 +2,7 @@ import { createEffect, createSignal, onCleanup } from "solid-js"
 import type { LocationRef } from "@opencode/client"
 import type { ImageGenerationSelection, ImageSettingsSnapshot } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
-import { serverEvents } from "../../lib/server-events"
+import { backendEvents as serverEvents } from "../../lib/server-events"
 import { getActiveCatalogLocation } from "../../stores/sessions"
 
 /** Reads while mounted; config, model-catalog and connection events coalesce into one trailing reread. */
@@ -50,7 +50,7 @@ export function useImageSettings(props: { instanceId: string; location?: Locatio
     const status = serverEvents.on("instance.eventStatus", payload => {
       if (payload.type === "instance.eventStatus" && payload.instanceId === instanceId && payload.status === "connected") void load()
     })
-    const reconnect = serverEvents.onOpen(() => void load())
+    const reconnect = serverEvents.forInstance(() => instanceId).onOpen(() => void load())
     onCleanup(() => { disposed = true; events(); status(); reconnect() })
     void load()
   })

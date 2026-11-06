@@ -3,7 +3,7 @@ import { RefreshCw } from "lucide-solid"
 import type { ServiceUsageSnapshot } from "../../../../server/src/api-types"
 import { useI18n } from "../../lib/i18n"
 import { serverApi } from "../../lib/api-client"
-import { serverEvents } from "../../lib/server-events"
+import { backendEvents as serverEvents } from "../../lib/server-events"
 import { isExecutionTerminalEvent } from "../../lib/native-execution-events"
 import { activeInstanceId } from "../../stores/instances"
 import { createEventRefreshScheduler, type RefreshUrgency } from "../../lib/event-refresh-scheduler"
@@ -117,8 +117,8 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
       connectionStatus = key; connected = payload.status === "connected"; revoke()
       if (payload.status === "connected") invalidate()
     })
-    const reconnect = serverEvents.onOpen(() => { connected = true; revoke(); invalidate() })
-    const transport = serverEvents.onTransportStatus(status => { if (status === "disconnected") { connected = false; revoke() } })
+    const reconnect = serverEvents.forInstance(() => id).onOpen(() => { connected = true; revoke(); invalidate() })
+    const transport = serverEvents.forInstance(() => id).onTransportStatus(status => { if (status === "disconnected") { connected = false; revoke() } })
     createEffect(() => {
       if (visible()) invalidate()
       else { revision++; controller?.abort(); scheduler.cancel("stats"); setBusy(false); setStale(true) }

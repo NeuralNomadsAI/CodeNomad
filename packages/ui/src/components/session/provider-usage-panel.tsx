@@ -4,7 +4,7 @@ import type { ProviderUsageResponse, ProviderUsageWindow } from "../../../../ser
 import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
 import { useConfig } from "../../stores/preferences"
-import { serverEvents } from "../../lib/server-events"
+import { backendEvents as serverEvents } from "../../lib/server-events"
 import { createProviderUsageState, providerUsageKey, shouldShowProviderUsageWindow, type ProviderUsageSource } from "./provider-usage-state"
 
 interface ProviderUsagePanelProps {
@@ -60,7 +60,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
     state.invalidate()
     if (event.status === "connected" && source()) void state.refresh()
   })
-  const unsubscribeTransport = serverEvents.onTransportStatus(status => {
+  const unsubscribeTransport = serverEvents.forInstance(() => props.instanceId).onTransportStatus(status => {
     if (status === lastTransportStatus) return
     lastTransportStatus = status
     state.invalidate()

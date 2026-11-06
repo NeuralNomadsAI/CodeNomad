@@ -89,7 +89,7 @@ import {
   ensureSidecarsLoaded,
   openSidecarTab,
 } from "./stores/sidecars"
-import { projectScope } from "./lib/backend-identity"
+import { projectScope, parseInstanceKey, backendIdOf } from "./lib/backend-identity"
 import {
   activeAppTab,
   activeAppTabId,
@@ -332,9 +332,8 @@ const App: Component = () => {
   })
 
   useForegroundRefresh({
-    onRefresh: async () => {
-      // The SSE transport is global: a reconnect can mean missed events for
-      // EVERY loaded workspace/session, not just the one on screen. So we:
+    onRefresh: async (backendId) => {
+      // A reconnect reconciles every loaded workspace/session of its backend:
       //  1. Re-fetch the session list for every instance (status/titles).
       //  2. Force-reload whatever session is active AFTER the fetch settles
       //     (so a session switch during the await still lands on the right
@@ -343,7 +342,7 @@ const App: Component = () => {
       //     re-fetches lazily on next activation instead of returning stale
       //     content (a non-forced load short-circuits once "loaded").
       const instanceIds = Array.from(instances().values())
-        .filter((instance) => instance.status === "ready" && Boolean(instance.client))
+        .filter((instance) => backendIdOf(instance) === backendId && instance.status === "ready" && Boolean(instance.client))
         .map((instance) => instance.id)
       const sessionListResults = await Promise.allSettled(
         instanceIds.map((id) => {
@@ -388,13 +387,14 @@ const App: Component = () => {
       const activeInst = activeInstance()
       const activeSession = activeSessionIdForInstance()
       const hasActive = Boolean(
-        activeInst?.status === "ready" && activeInst.client && activeSession && activeSession !== "info",
+        activeInst?.status === "ready" && backendIdOf(activeInst) === backendId && activeInst.client && activeSession && activeSession !== "info",
       )
       const canReloadActive = hasActive && !failedInstanceIds.includes(activeInst!.id)
 
       // Invalidate every loaded session except the active one (force-reloaded
       // below). Snapshot the map first; invalidate mutates it via setState.
       for (const [instId, sessionSet] of messagesLoaded().entries()) {
+        if (parseInstanceKey(instId).backendId !== backendId) continue
         for (const sId of sessionSet) {
           if (canReloadActive && instId === activeInst!.id && sId === activeSession) continue
           invalidateSessionMessageLoad(instId, sId)

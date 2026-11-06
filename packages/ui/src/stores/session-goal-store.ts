@@ -1,4 +1,5 @@
 import { createSignal, untrack } from "solid-js"
+import { parseInstanceKey } from "../lib/backend-identity"
 import { goalChangedSchema, goalStateSchema, type SessionGoalResponse } from "../../../server/src/opencode/goal-contract"
 
 /** A Session's `/goal` as last heard: `loading` until the first answer. */
@@ -91,10 +92,11 @@ export function createSessionGoalStore(read: (instanceId: string, sessionId: str
     },
     refresh,
     /** Re-reads the demanded Sessions (of one instance), after a reconnect missed changes. */
-    refreshDemanded(instanceId?: string): Promise<void> {
+    refreshDemanded(instanceId?: string, backendId?: string): Promise<void> {
       return Promise.all(Array.from(entries, ([stateKey, entry]) => {
         const [owner, sessionId] = stateKey.split("\0") as [string, string]
-        return entry.demand > 0 && (instanceId === undefined || owner === instanceId) ? refresh(owner, sessionId) : undefined
+        return entry.demand > 0 && (instanceId === undefined || owner === instanceId)
+          && (backendId === undefined || parseInstanceKey(owner).backendId === backendId) ? refresh(owner, sessionId) : undefined
       })).then(() => undefined)
     },
     /** `rpc.opencode.goal.changed`: the new value of a tracked Session's goal. */

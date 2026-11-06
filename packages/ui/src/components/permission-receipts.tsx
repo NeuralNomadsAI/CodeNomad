@@ -2,7 +2,7 @@ import { For, Show, createEffect, createSignal, onCleanup, untrack } from "solid
 import { createStore, reconcile } from "solid-js/store"
 import type { PermissionReceipt } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { useI18n } from "../lib/i18n"
 import {
   acquirePermissionReceipts, cachedPermissionReceipts, invalidatePermissionReceipts, ownsPermissionReceipt,
@@ -108,7 +108,7 @@ export default function PermissionReceipts(props: PermissionReceiptsProps) {
       // A missing messageId denotes an unanchored receipt, not a session-wide change.
       if ((event.messageId || undefined) === messageId) refresh()
     })
-    const offOpen = serverEvents.onOpen(refresh)
+    const offOpen = serverEvents.forInstance(() => instanceId).onOpen(refresh)
     const cached = cachedPermissionReceipts(key)
     if (cached) show(cached)
     else void load()

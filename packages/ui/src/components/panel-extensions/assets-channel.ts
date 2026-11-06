@@ -2,7 +2,7 @@ import { z } from "zod"
 import { onCleanup } from "solid-js"
 import { assetTargetSchema } from "../../../../server/src/opencode/session-pruning/assets-contract"
 import { panelExtensionsApi } from "../../lib/panel-extensions-api"
-import { serverEvents } from "../../lib/server-events"
+import { backendEvents as serverEvents } from "../../lib/server-events"
 import { assertThumbnailBounds } from "./image-bounds"
 
 const requestSchema = z.object({ type: z.literal("assets:request"), id: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
@@ -36,7 +36,7 @@ export function useAssetsChannel(props: {
     nativeGeneration = event.generation
     if (nativeConnected) invalidate()
   }))
-  onCleanup(serverEvents.onTransportStatus(status => {
+  onCleanup(serverEvents.forInstance(() => props.instanceId).onTransportStatus(status => {
     connected = status === "connected"
     if (!connected) abort()
     else invalidate()

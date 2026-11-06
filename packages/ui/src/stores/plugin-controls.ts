@@ -7,6 +7,7 @@ import type {
   PluginControlsSnapshot,
 } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
+import { parseInstanceKey } from "../lib/backend-identity"
 
 export interface PluginControlsState {
   invalidationRevision?: number
@@ -134,8 +135,8 @@ export class PluginControlsCache {
     this.invalidate(instanceId)
   }
 
-  invalidateAll(): void {
-    this.invalidateRecords([...new Set(this.records.values())])
+  invalidateAll(backendId?: string): void {
+    this.invalidateRecords([...new Set(this.records.values())].filter(record => backendId === undefined || parseInstanceKey(record.instanceId).backendId === backendId))
   }
 
   invalidateLocation(instanceId: string, location: PluginControlLocation): void {

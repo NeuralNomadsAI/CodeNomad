@@ -1,4 +1,5 @@
 import { createSignal, type Accessor, type Setter } from "solid-js"
+import { parseInstanceKey } from "../lib/backend-identity"
 import type { MissionBodyDescriptor, MissionContentResponse, MissionContentSelector } from "../../../server/src/missions/mission-content-wire"
 import { validMissionContentSlice } from "../lib/mission-content-slice"
 import { MissionTaskWindowBudget } from "../lib/mission-task-window-budget"
@@ -356,8 +357,9 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     /** Every body of `instanceId` (or all) is read again when shown: a plugin reload, a
      * reconnect or a new event stream. A read already running is superseded: its answer
      * neither settles nor parks the body, and one fresh read follows it. */
-    invalidate(instanceId?: string) {
-      for (const entry of entries.values()) if (instanceId === undefined || entry.ref.instanceId === instanceId) {
+    invalidate(instanceId?: string, backendId?: string) {
+      for (const entry of entries.values()) if ((instanceId === undefined || entry.ref.instanceId === instanceId)
+        && (backendId === undefined || parseInstanceKey(entry.ref.instanceId).backendId === backendId)) {
         entry.epoch++
         entry.stale = true
         entry.parked = false

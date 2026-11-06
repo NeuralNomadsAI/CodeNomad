@@ -6,7 +6,8 @@ export type RecurrenceAction = RecurrenceSchedule["actions"][number]
 export type RecurrenceHistoryItem = RecurrenceSchedule["history"][number]
 import { readRecurrenceScheduleChanged } from "../../../server/src/missions/recurrence-events"
 import { serverApi } from "../lib/api-client"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
+import { parseInstanceKey } from "../lib/backend-identity"
 import { instances } from "./instances"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { isMissionActivityEvent, isMissionChangedEvent } from "./missions"
@@ -243,7 +244,9 @@ serverEvents.on("instance.eventStatus", event => {
     scheduleRefresh(entry)
   }
 })
-serverEvents.onOpen(() => { for (const entry of cache.values()) scheduleRefresh(entry) })
+serverEvents.onOpen(backendId => {
+  for (const entry of cache.values()) if (parseInstanceKey(entry.instanceId).backendId === backendId) scheduleRefresh(entry)
+})
 serverEvents.on("workspace.stopped", event => {
   if (event.type !== "workspace.stopped") return
   stoppedInstances.add(event.workspaceId)

@@ -4,7 +4,7 @@ import { refusedMissionScheduleReceipt } from "../lib/mission-schedule-receipt"
 import { serverApi } from "../lib/api-client"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { MissionMutationError } from "../lib/mission-mutation"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { instances } from "../stores/instances"
 import type { MissionEditorAction, MissionEditorDraft } from "../stores/mission-editor-state"
@@ -121,7 +121,7 @@ export function createMissionEditorScheduling(props: {
     serverEvents.on("instance.eventStatus", event => {
       if (event.type === "instance.eventStatus" && event.instanceId === props.instanceId && event.status === "connected") readCapability()
     }),
-    serverEvents.onOpen(readCapability),
+    serverEvents.forInstance(() => props.instanceId).onOpen(readCapability),
   ]
   onCleanup(() => { stopEvents.forEach(stop => stop()); stopCapability(); documentRead?.abort(); documentRead = undefined })
   const held = () => missionScheduleEditorHold(props.scope())

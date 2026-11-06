@@ -2,7 +2,7 @@ import { createEffect, createSignal, onCleanup } from "solid-js"
 import type { IntegrationInfo, LocationRef, WebSearchProvider } from "@opencode/client"
 import type { PluginControlScope, WebSearchSelection, WebSearchSettingsSnapshot } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
-import { serverEvents } from "../../lib/server-events"
+import { backendEvents as serverEvents } from "../../lib/server-events"
 import { getRootClient } from "../../stores/opencode-client"
 import { getActiveCatalogLocation } from "../../stores/sessions"
 import { requestLocationOptions, toRequestLocation } from "../../stores/request-locations"
@@ -65,7 +65,7 @@ export function useWebSearchSettings(props: { instanceId: string; location?: Loc
     const status = serverEvents.on("instance.eventStatus", payload => {
       if (payload.type === "instance.eventStatus" && payload.instanceId === instanceId && payload.status === "connected") refresh()
     })
-    const reconnect = serverEvents.onOpen(() => refresh())
+    const reconnect = serverEvents.forInstance(() => instanceId).onOpen(() => refresh())
     onCleanup(() => { disposed = true; events(); status(); reconnect() })
     void load()
   })

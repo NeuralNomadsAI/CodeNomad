@@ -6,7 +6,7 @@ import { createMissionViewFence } from "../lib/mission-view-fence"
 import { instances } from "../stores/instances"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { showConfirmDialog } from "../stores/alerts"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 
 type SubagentDepthSnapshot = Awaited<ReturnType<typeof serverApi.getSubagentDepth>>
@@ -43,7 +43,7 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
     if (event.type === "instance.event" && event.instanceId === props.instanceId
       && ["config.updated", "server.connected"].includes(event.event.type)) invalidate()
   })
-  const reconnect = serverEvents.onOpen(invalidate)
+  const reconnect = serverEvents.forInstance(() => props.instanceId).onOpen(invalidate)
   let controller: AbortController | undefined, field: HTMLInputElement | undefined
   onCleanup(() => { controller?.abort(); events(); reconnect() })
   const read = async (explicit: boolean) => {

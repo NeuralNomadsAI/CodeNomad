@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, onCleanup, untrack } from "soli
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import { missionBodyDescriptor, type MissionBodyDescriptor, type MissionContentSelector } from "../../../server/src/missions/mission-content-wire"
 import { serverApi } from "../lib/api-client"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { instances } from "./instances"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { createMissionContentStore, type MissionBodyConsumer, type MissionBodyRef, type MissionBodyState } from "./mission-content-store"
@@ -91,7 +91,7 @@ serverEvents.on("instance.event", event => {
 serverEvents.on("instance.eventStatus", event => {
   if (event.type === "instance.eventStatus" && event.status === "connected") missionContent.invalidate(event.instanceId)
 })
-serverEvents.onOpen(() => missionContent.invalidate())
+serverEvents.onOpen(backendId => missionContent.invalidate(undefined, backendId))
 serverEvents.on("workspace.stopped", event => {
   if (event.type === "workspace.stopped") missionContent.clear(event.workspaceId)
 })

@@ -4,7 +4,7 @@ import { missionRoleProfile, type MissionProfiles } from "../../../server/src/mi
 import type { MissionTemplateId } from "../../../server/src/missions/model"
 import type { MissionTaskMode } from "../lib/mission-defaults"
 import { useI18n } from "../lib/i18n"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { runtimeEnv } from "../lib/runtime-env"
 import { instances } from "../stores/instances"
 import { getRootClient } from "../stores/opencode-client"
@@ -43,7 +43,7 @@ export function MissionProfileControls(props: {
     if (event.type === "instance.event" && event.instanceId === props.instanceId
       && ["config.updated", "plugin.updated", "server.connected"].includes(event.event.type)) invalidate()
   })
-  const reconnect = serverEvents.onOpen(invalidate)
+  const reconnect = serverEvents.forInstance(() => props.instanceId).onOpen(invalidate)
   onCleanup(() => { events(); reconnect() })
 
   createEffect(() => {
