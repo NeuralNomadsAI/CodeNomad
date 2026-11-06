@@ -30,6 +30,24 @@ app.whenReady().then(async () => {
     navigate: url => controller.execute("fixture-session", { action: "navigate", url }),
     visible: value => { visible = value },
     ready: async () => { await guestLoaded; return Boolean(guest && !guest.isLoading()) },
+    // TEMPORARY runner probe (removed before merge).
+    probe: {
+      browserKeys: [],
+      watch() { guest.on("before-input-event", (_event, input) => this.browserKeys.push(`${input.type}:${input.key}`)) },
+      async prepare(variant) {
+        if (variant === "focus") guest.focus()
+        if (variant === "shift") for (const type of ["keyDown", "keyUp"]) guest.sendInputEvent({ type, keyCode: "Shift" })
+        if (variant === "delay") await new Promise(resolve => setTimeout(resolve, 1000))
+        if (variant === "mousemove") guest.sendInputEvent({ type: "mouseMove", x: 5, y: 5 })
+      },
+      async state() {
+        const { BrowserWindow: Windows } = require("electron")
+        return { guestFocused: guest.isFocused(), windowFocused: window.isFocused(), focusedWindow: Windows.getFocusedWindow()?.id ?? null,
+          windowVisible: window.isVisible(), browserKeys: this.browserKeys,
+          page: await guest.executeJavaScript(`({ events: window.__probeEvents || [], hasFocus: document.hasFocus(),
+            active: document.activeElement && document.activeElement.tagName, result: document.getElementById("result").textContent })`) }
+      },
+    },
   }
   const html = `<html><body style="margin:0"><webview src="${process.env.CODENOMAD_TEST_GUEST_URL}" style="width:850px;height:650px;display:flex"></webview></body></html>`
   await window.loadURL(`data:text/html,${encodeURIComponent(html)}`)
