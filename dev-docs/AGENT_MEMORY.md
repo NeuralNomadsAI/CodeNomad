@@ -398,10 +398,18 @@ these native update semantics.
 
 ## Validation
 
+`memory/integration.test.ts` owns the serial real-Git/process suites in
+`memory/*.integration.ts` and `server/routes/memory.integration.ts`. The full
+server glob runs these cases in one process, with two explicitly ready workers
+for cross-process contention. The five committed entries, fresh locked decisions,
+Windows sharing failures and crash-recovery history remain asserted. Readiness
+and lock-candidate publication coordinate handoffs; test polling deadlines bound
+missing signals independently of the unchanged product lock deadline.
+
 ```text
 node --import tsx --test packages/ui/tests/contracts/agent-memory-types.test.ts
 node --import tsx --test packages/server/src/memory/*.test.ts packages/server/src/forge/forge.test.ts
-node --import tsx --test packages/server/src/server/routes/memory.test.ts packages/server/src/server/standalone-bridge.test.ts
+node --import tsx --test packages/server/src/memory/integration.test.ts packages/server/src/server/standalone-bridge.test.ts
 npm run typecheck --workspace @neuralnomads/codenomad
 node --import tsx scripts/test-memory-instructions-native.mjs <absolute-opencode-executable>
 node --import tsx --test packages/server/src/opencode/memory/*.test.ts
@@ -414,7 +422,7 @@ npm run build:help
 ```
 
 Set `CODENOMAD_MEMORY_TEST_WSL_DISTRO` to a disposable-test-capable local distro
-and run `node --import tsx --test --test-name-pattern="real WSL" packages/server/src/memory/project-identity.test.ts`
+and run `node --import tsx --test --test-name-pattern="real WSL" packages/server/src/memory/integration.test.ts`
 separately to include the real WSL Git/worktree test. The native instructions regression
 uses a private authenticated daemon, private home/configuration/database and a
 loopback synthetic provider. It checks session-local parent entries, first-call

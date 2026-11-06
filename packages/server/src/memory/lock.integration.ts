@@ -78,6 +78,20 @@ test("an unavailable own start identity publishes no lock", async t => {
   assert.deepEqual(await readdir(path.dirname(target)), [])
 })
 
+test("the thirty-second contention deadline is retryable and preserves the live owner", async t => {
+  const target = await directory(t)
+  const lookup = async () => ({ state: "live" as const, startIdentity: "same-process" })
+  const release = await lockMemoryRepository(target, lookup)
+  const owner = await readFile(`${target}.lock/owner`, "utf8")
+  let calls = 0
+  const clock = t.mock.method(Date, "now", () => calls++ === 0 ? 0 : 30_000)
+  try {
+    await assert.rejects(lockMemoryRepository(target, lookup), { code: "conflict", message: "Memory repository is busy" })
+    assert.equal(await readFile(`${target}.lock/owner`, "utf8"), owner)
+  } finally { clock.mock.restore(); await release() }
+  await (await lockMemoryRepository(target, lookup))()
+})
+
 test("an owner that releases and exits during the death probe cannot authorize retiring its live successor", async t => {
   const target = await directory(t)
   const original = { pid: 123456789, nonce: randomUUID(), startIdentity: "exiting", host: hostname(), platform: process.platform }

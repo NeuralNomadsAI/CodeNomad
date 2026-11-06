@@ -55,16 +55,16 @@ test("cleanup writability probes leave entry bytes and Git history unchanged and
   assert.equal(await store.cleanupWritable(project), false)
 })
 
-function child(code: string, env: NodeJS.ProcessEnv = {}) {
+function child(code: string, env: NodeJS.ProcessEnv = {}, ipc = false) {
   const process = spawn(globalThis.process.execPath, ["--import", "tsx", "--input-type=module", "-e", code], {
-    windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { ...globalThis.process.env, ...env },
+    windowsHide: true, stdio: ipc ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"], env: { ...globalThis.process.env, ...env },
     cwd: fileURLToPath(new URL("../../../../", import.meta.url)),
   })
   let stdout = "", stderr = ""
-  process.stdout.on("data", data => { stdout += data })
-  process.stderr.on("data", data => { stderr += data })
+  process.stdout!.on("data", data => { stdout += data })
+  process.stderr!.on("data", data => { stderr += data })
   const completed = once(process, "close").then(([code]) => ({ code, stdout, stderr }))
-  return { process, completed }
+  return { process, completed, ready: ipc ? once(process, "message") : undefined }
 }
 
 test("strict Markdown round-trip preserves text and rejects malformed headers and encodings", () => {
@@ -218,28 +218,49 @@ test("durable journals recover before file publication and reject malformed reco
 
 test("cross-process decisions are serialized and do not lose concurrent entries", async t => {
   const config = await temporary(t)
-  const jobs = Array.from({ length: 5 }, (_, i) => child(`
+  // Two ready workers contend for the same lock, then write all five entries.
+  // Startup and contention are observed explicitly; no hold-time guess or retry loop.
+  const jobs = Array.from({ length: 2 }, (_, i) => child(`
     import { MemoryStore } from ${JSON.stringify(storeModule)};
+    import { once } from 'node:events';
     const store = new MemoryStore(${JSON.stringify(config)});
-    // Busy is an explicit, retryable result when another real Git operation
-    // exceeds the bounded lock wait on a heavily loaded Windows host.
-    for(let attempt=0; ; attempt++) {
-      try {
-        await store.mutate({scope:'global'}, async entries => {
-          await new Promise(resolve => setTimeout(resolve, 30));
-          if(entries.some(e => e.id === ${JSON.stringify(`child${i}`)})) throw Error('duplicate');
-          const entry=${JSON.stringify(entry(`child${i}`))}; entry.text=String(entries.length);
-          return {kind:'save', entry, result:true};
-        });
-        break;
-      } catch(error) { if(error.code !== 'conflict' || attempt >= 2) throw error; }
+    const start = once(process, 'message');
+    process.send('ready');
+    await start;
+    for(let n=${i}; n<5; n+=2) {
+      await store.mutate({scope:'global'}, async entries => {
+        if(n===0) {
+          const release=once(process, 'message');
+          process.send('locked');
+          await release;
+        }
+        const id='child'+n;
+        if(entries.some(e => e.id === id)) throw Error('duplicate');
+        const value=${JSON.stringify(entry())}; value.id=id; value.title='Title '+id; value.text=String(entries.length);
+        return {kind:'save', entry:value, result:true};
+      });
     }
-  `))
+    process.disconnect();
+  `, {}, true))
   t.after(() => jobs.forEach(job => { if (job.process.exitCode === null) job.process.kill() }))
+  await Promise.all(jobs.map(job => job.ready))
+  const locked = once(jobs[0]!.process, "message")
+  jobs[0]!.process.send("start")
+  assert.deepEqual(await locked, ["locked", undefined])
+  jobs[1]!.process.send("start")
+  await t.waitFor(async () => {
+    for (const name of await readdir(config)) {
+      if (!/^memory\.lock\.[a-f0-9-]{36}$/.test(name)) continue
+      const owner = await readFile(path.join(config, name, "owner"), "utf8").catch(() => "{}")
+      if (JSON.parse(owner).pid === jobs[1]!.process.pid) return true
+    }
+    assert.fail("the second worker has not published its lock candidate")
+  }, { timeout: 60_000, interval: 20 })
+  jobs[0]!.process.send("release")
   const results = await Promise.all(jobs.map(job => job.completed))
   for (const result of results) assert.equal(result.code, 0, result.stderr)
   const store = new MemoryStore(config)
-  assert.equal((await store.list(global)).length, jobs.length)
+  assert.equal((await store.list(global)).length, 5)
   assert.deepEqual((await store.list(global)).map(entry => entry.text).sort(), ["0", "1", "2", "3", "4"])
   assert.equal((await new MemoryGit(store.directory).run(["rev-list", "--count", "HEAD"])).trim(), "5")
 })
@@ -259,15 +280,11 @@ test("old locks remain owned while the owner lives", async t => {
   `)
   t.after(() => { if (owner.process.exitCode === null) owner.process.kill() })
   // A filesystem signal coordinates the actual subprocess rather than a timing guess.
-  for (let i = 0; ; i++) {
-    if (await readFile(ready).then(() => true, () => false)) break
-    assert.ok(i < 1000, "owner did not acquire lock")
-    await new Promise(resolve => setTimeout(resolve, 10))
-  }
+  await t.waitFor(() => readFile(ready), { timeout: 60_000, interval: 20 })
   await utimes(path.join(config, "memory.lock"), 1, 1)
   let completed = false
   const pending = save(new MemoryStore(config), entry("waiter"), project).then(() => { completed = true })
-  await new Promise(resolve => setTimeout(resolve, 100))
+  await t.waitFor(async () => assert.ok((await readdir(config)).some(name => /^memory\.lock\.[a-f0-9-]{36}$/.test(name))), { timeout: 60_000, interval: 20 })
   assert.equal(completed, false)
   await writeFile(release, "go")
   assert.equal((await owner.completed).code, 0)
