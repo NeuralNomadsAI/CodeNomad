@@ -101,6 +101,7 @@ function resolveWslWindowsLocalAppData(): string | undefined {
       timeout: 2_000,
       windowsHide: true,
     }).trim()
+    // console-window: runs inside WSL (Linux).
     const translated = execFileSync("wslpath", ["-u", windowsPath], {
       encoding: "utf8",
       timeout: 2_000,

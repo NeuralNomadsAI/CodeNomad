@@ -55,14 +55,21 @@ test("Electron lifecycle node command lives in the prefix, is cleaned, and is re
       let directory = ""
       const pending = executeNpm("/application/CodeNomad", ["npm-cli.js"], env, platform, prefix, async (file, args, childEnv, options) => {
         assert.equal(file, "/application/CodeNomad")
-        assert.deepEqual(args, ["npm-cli.js"])
         directory = options?.cwd ?? ""
         assert.equal(path.dirname(directory), prefix)
         assert.match(path.basename(directory), /^\.codenomad-npm-/)
+        // Windows: npm and lifecycle `node` load the preload hiding their children's consoles.
+        const preload = path.join(directory, "hide-child-windows.cjs")
+        assert.deepEqual(args, platform === "win32" ? ["--require", preload, "npm-cli.js"] : ["npm-cli.js"])
+        assert.equal(childEnv.CODENOMAD_NPM_PRELOAD, platform === "win32" ? preload : undefined)
+        if (platform === "win32") assert.match(await readFile(preload, "utf8"), /windowsHide: true/)
+        else await assert.rejects(access(preload), { code: "ENOENT" })
         assert.ok(childEnv.Path!.startsWith(directory + (platform === "win32" ? ";" : ":")))
         assert.equal(childEnv.ELECTRON_RUN_AS_NODE, "1")
         assert.equal(childEnv.CODENOMAD_NPM_NODE, file)
-        assert.match(await readFile(path.join(directory, platform === "win32" ? "node.cmd" : "node"), "utf8"), /CODENOMAD_NPM_NODE/)
+        assert.equal(await readFile(path.join(directory, platform === "win32" ? "node.cmd" : "node"), "utf8"), platform === "win32"
+          ? '@echo off\r\n"%CODENOMAD_NPM_NODE%" --require "%CODENOMAD_NPM_PRELOAD%" %*\r\n'
+          : '#!/bin/sh\nexec "$CODENOMAD_NPM_NODE" "$@"\n')
         if (outcome === "interrupted") throw new InstallationInterruptedError()
         if (outcome === "failure") throw new Error("failed")
       })

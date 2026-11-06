@@ -19,12 +19,14 @@ export async function upgradeSharedOpenCode(options: {
   let retain = false
   try {
     const windows = options.platform === "win32"
+    const env = { ...options.env }
+    const runtimeArgs = npmNeedsNodeCommand(options.node, options.platform)
+      ? await writeNpmNodeCommand(directory, options.node, env, options.platform) : []
+    // Electron's npm on Windows loads the preload that hides its children's consoles.
     const shim = windows
-      ? '@echo off\r\n"%CODENOMAD_UPGRADE_NODE%" "%CODENOMAD_UPGRADE_NPM%" %*\r\n'
+      ? `@echo off\r\n"%CODENOMAD_UPGRADE_NODE%" ${runtimeArgs.length ? '--require "%CODENOMAD_NPM_PRELOAD%" ' : ""}"%CODENOMAD_UPGRADE_NPM%" %*\r\n`
       : '#!/bin/sh\nexec "$CODENOMAD_UPGRADE_NODE" "$CODENOMAD_UPGRADE_NPM" "$@"\n'
     await writeFile(path.join(directory, windows ? "npm.cmd" : "npm"), shim, { mode: 0o700 })
-    const env = { ...options.env }
-    if (npmNeedsNodeCommand(options.node, options.platform)) await writeNpmNodeCommand(directory, options.node, env, options.platform)
     // npm config keys are case-insensitive, even on POSIX. Do not allow an
     // inherited prefix or registry to redirect this verified installation.
     for (const key of Object.keys(env)) {

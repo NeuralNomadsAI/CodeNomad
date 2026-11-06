@@ -309,6 +309,7 @@ function isServiceHealthResponse(value: unknown): boolean {
 
 function executeFile(file: string, args: string[], options: ServiceExecOptions): Promise<ServiceExecResult> {
   return new Promise((resolve, reject) => {
+    // console-window: ServiceExecOptions requires windowsHide: true.
     nodeExecFile(file, args, options, (error, stdout, stderr) => {
       if (error) {
         Object.assign(error, { stdout, stderr })

@@ -47,7 +47,12 @@ test("native upgrade scopes bundled npm and prefix in the prefix, cleans its shi
             await assert.rejects(access(command), { code: "ENOENT" })
           }
           shim = path.join(directory, platform === "win32" ? "npm.cmd" : "npm")
-          assert.match(await readFile(shim, "utf8"), /CODENOMAD_UPGRADE_NODE/)
+          // Only Electron's Windows npm loads the console-hiding preload; Tauri's shim is unchanged.
+          const preload = electron && platform === "win32"
+          assert.equal(childEnv.CODENOMAD_NPM_PRELOAD, preload ? path.join(directory, "hide-child-windows.cjs") : undefined)
+          assert.equal(await readFile(shim, "utf8"), platform === "win32"
+            ? `@echo off\r\n"%CODENOMAD_UPGRADE_NODE%" ${preload ? '--require "%CODENOMAD_NPM_PRELOAD%" ' : ""}"%CODENOMAD_UPGRADE_NPM%" %*\r\n`
+            : '#!/bin/sh\nexec "$CODENOMAD_UPGRADE_NODE" "$CODENOMAD_UPGRADE_NPM" "$@"\n')
           if (outcome === "interrupted") throw new InstallationInterruptedError()
           if (outcome === "failure") throw new Error("native failure")
         },

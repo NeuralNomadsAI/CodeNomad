@@ -22,6 +22,19 @@
   installer directory inside the npm prefix (`.codenomad-npm-*` for direct npm,
   `.codenomad-upgrade-*` beside the native upgrade's npm shim), never the system
   temporary directory, which may be mounted noexec.
+- On Windows the Electron backend (a GUI-subsystem executable started with
+  piped stdio) has no console, so each console program it starts without
+  `windowsHide` opens its own visible console window. Every server child process
+  that may start a console program sets `windowsHide: true`; a call that must not
+  (a browser launch, the standalone CLI's terminal, POSIX-only commands) carries a
+  `console-window: <reason>` comment, and `child-process-windows-hide.test.ts`
+  enforces both. npm offers no such option for its lifecycle shell, so Electron's
+  npm on Windows, and every lifecycle `node` command it runs, loads
+  `hide-child-windows.cjs` from the installer directory with `--require`. That
+  preload makes every asynchronous spawn hide its window: the lifecycle shell then
+  gets a console without a window, which its own console children share.
+  Synchronous spawns inside npm or lifecycle scripts are outside the preload and
+  keep their own options.
 - The packaged-resources smoke (`scripts/smoke-packaged-resources.cjs`, run by
   every Electron build and the release Linux package checks) fails unless the
   bundled npm's `engines.node` accepts the Node version the server runtime
