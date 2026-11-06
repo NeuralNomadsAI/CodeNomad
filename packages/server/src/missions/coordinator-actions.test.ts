@@ -53,6 +53,40 @@ function fixture(options: { transport?: Partial<MissionInputTransport>; humanGat
   return { control, sessions, storage, start, declare, current }
 }
 
+test("a stalled inspect-start preference read never holds the project's mutation lock", async () => {
+  let started!: () => void, release!: (value: ReturnType<typeof resolveMissionCreationDefaults>) => void
+  const reading = new Promise<void>(resolve => { started = resolve })
+  const preferences = new Promise<ReturnType<typeof resolveMissionCreationDefaults>>(resolve => { release = resolve })
+  const f = fixture({ transport: { resolveCreationDefaults: async () => { started(); return preferences } } })
+  const source = (await f.control.create({ requestID: "source", objective: "Source", template: "custom", coordinatorSessionID: coordinator })).mission
+  f.sessions.set("ses_waiting", { id: "ses_waiting", projectID: "project-1", location: { directory: "/repo" } })
+  const inspect = f.control.inspect("ses_waiting", { start: { objective: "Waiting", template: "custom" } }, "waiting")
+  await reading
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const changed = await Promise.race([
+      f.control.update({ missionID: source.id, requestID: "unrelated-edit", expectedRevision: source.revision, objective: "Still responsive" }),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Preference I/O held the project mutation lock")), 2_000) }),
+    ])
+    assert.equal(changed.mission.objective, "Still responsive")
+  } finally {
+    clearTimeout(timer)
+    release(resolveMissionCreationDefaults({ template: "custom", preferences: [] }))
+    await inspect
+  }
+})
+
+test("explicit prepare capability refusals release newly recorded choices", async () => {
+  const f = fixture({ transport: { prepare: async () => { throw new MissionControlError("Update CodeNomad", "mission-preferences-update-required") } } })
+  await f.control.create({ requestID: "source", objective: "Source", template: "custom", coordinatorSessionID: coordinator })
+  for (let i = 0; i < 2; i++) {
+    await assert.rejects(f.control.prepare(coordinator, { requestID: "old-backend", objective: "Hand-off", template: "custom",
+      profiles: { coordinator: {}, roles: { specialist: {} } }, taskMode: "native" }),
+    (error: unknown) => error instanceof MissionControlError && error.code === "mission-preferences-update-required")
+    assert.equal([...f.storage.values.keys()].some(key => key.includes("/creation-intents/")), false)
+  }
+})
+
 test("one replacement may merge several retired tasks; it names one of them as its lineage head", async () => {
   const f = fixture()
   await f.start()

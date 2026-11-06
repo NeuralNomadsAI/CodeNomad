@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto"
-import { execFileSync, spawn } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 import { mkdir, open, opendir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -26,7 +26,9 @@ const MAX_BRIDGE_RESPONSE_BYTES = 8 * 1024 * 1024
 const PROBE_CONCURRENCY = 4
 const REGISTRATION_NAME = /^(\d+)-(\d+)-[A-Za-z0-9_-]+\.json$/
 const WINDOWS_INTEROP = Symbol("windowsInterop")
-let cachedWslWindowsLocalAppData: string | null | undefined
+type WindowsDiscovery = string | false | null
+let cachedWslWindowsLocalAppData: { key: string; value: WindowsDiscovery; expiresAt: number } | undefined
+let pendingWslWindowsLocalAppData: { key: string; promise: Promise<WindowsDiscovery> } | undefined
 
 export type DeveloperAction =
   | { action: "inspect"; ref?: string; query?: string }
@@ -70,52 +72,61 @@ interface ProbedBridge {
 
 type DiscoveredBridgeRegistration = AutomationBridgeRegistration & { [WINDOWS_INTEROP]?: true }
 
-export function automationBridgeDirectory(): string {
-  return automationBridgeDirectories()[0]
-}
-
-export function automationBridgeDirectories(options: {
+type BridgeDirectoryOptions = {
   platform?: NodeJS.Platform
   env?: NodeJS.ProcessEnv
   home?: string
   windowsLocalAppData?: string | null
   strict?: boolean
-} = {}): string[] {
+}
+
+export function automationBridgeDirectory(options: BridgeDirectoryOptions = {}): string {
   const platform = options.platform ?? process.platform
   const env = options.env ?? process.env
   const paths = platform === "win32" ? path.win32 : path.posix
   const home = options.home ?? os.homedir()
-  const primary = platform === "win32" && env.LOCALAPPDATA
+  return platform === "win32" && env.LOCALAPPDATA
     ? paths.join(env.LOCALAPPDATA, "CodeNomad", "automation-bridges")
     : env.XDG_RUNTIME_DIR
       ? paths.join(env.XDG_RUNTIME_DIR, "codenomad", "automation-bridges")
       : paths.join(home, ".config", "codenomad", "automation-bridges")
+}
+
+export async function automationBridgeDirectories(options: BridgeDirectoryOptions = {}): Promise<string[]> {
+  const platform = options.platform ?? process.platform
+  const env = options.env ?? process.env
+  const primary = automationBridgeDirectory(options)
   if (platform !== "linux" || !env.WSL_DISTRO_NAME) return [primary]
-  const windowsLocalAppData = options.windowsLocalAppData !== undefined ? options.windowsLocalAppData : resolveWslWindowsLocalAppData(options.strict)
+  const windowsLocalAppData = options.windowsLocalAppData !== undefined ? options.windowsLocalAppData : await resolveWslWindowsLocalAppData(env.WSL_DISTRO_NAME)
   if (options.strict && !windowsLocalAppData && windowsLocalAppData !== false) throw new Error("Windows mission backend discovery is unavailable")
   return windowsLocalAppData
     ? [...new Set([primary, path.posix.join(windowsLocalAppData, "CodeNomad", "automation-bridges")])]
     : [primary]
 }
 
-function resolveWslWindowsLocalAppData(strict = false): string | false | undefined {
-  if (cachedWslWindowsLocalAppData !== undefined && (!strict || cachedWslWindowsLocalAppData !== null)) return cachedWslWindowsLocalAppData ?? undefined
-  try {
-    const windowsPath = execFileSync("cmd.exe", ["/d", "/s", "/c", "echo %LOCALAPPDATA%"], {
-      encoding: "utf8",
-      timeout: 2_000,
-      windowsHide: true,
-    }).trim()
-    const translated = execFileSync("wslpath", ["-u", windowsPath], {
-      encoding: "utf8",
-      timeout: 2_000,
-    }).trim()
-    cachedWslWindowsLocalAppData = path.posix.isAbsolute(translated) ? translated : null
-  } catch (error) {
-    cachedWslWindowsLocalAppData = null
-    if (["ENOENT", "ENOEXEC"].includes((error as NodeJS.ErrnoException).code ?? "")) return false
-  }
-  return cachedWslWindowsLocalAppData ?? undefined
+function windowsDiscoveryOutput(file: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => execFile(file, args, { encoding: "utf8", timeout: 2_000, windowsHide: true },
+    (error, stdout) => error ? reject(error) : resolve(stdout.trim())))
+}
+
+function resolveWslWindowsLocalAppData(distro: string): Promise<WindowsDiscovery> {
+  const key = `${distro}\0${process.env.PATH}`
+  if (cachedWslWindowsLocalAppData?.key === key && cachedWslWindowsLocalAppData.expiresAt > Date.now()) return Promise.resolve(cachedWslWindowsLocalAppData.value)
+  if (pendingWslWindowsLocalAppData?.key === key) return pendingWslWindowsLocalAppData.promise
+  const promise = (async (): Promise<WindowsDiscovery> => {
+    try {
+      const windowsPath = await windowsDiscoveryOutput("cmd.exe", ["/d", "/s", "/c", "echo %LOCALAPPDATA%"])
+      const translated = await windowsDiscoveryOutput("wslpath", ["-u", windowsPath])
+      return path.posix.isAbsolute(translated) ? translated : null
+    } catch (error) {
+      return ["ENOENT", "ENOEXEC"].includes((error as NodeJS.ErrnoException).code ?? "") ? false : null
+    }
+  })().then(value => {
+    cachedWslWindowsLocalAppData = { key, value, expiresAt: typeof value === "string" ? Infinity : Date.now() + 2_000 }
+    return value
+  }).finally(() => { if (pendingWslWindowsLocalAppData?.promise === promise) pendingWslWindowsLocalAppData = undefined })
+  pendingWslWindowsLocalAppData = { key, promise }
+  return promise
 }
 
 export function createAutomationBridgeRegistration(url: string): AutomationBridgeRegistration {
@@ -313,7 +324,7 @@ export async function verifyHumanAnswerBridge(body: import("../missions/human-an
 
 async function registrations({ pruneStale = true, strict = false } = {}): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
-  const directories = automationBridgeDirectories({ strict })
+  const directories = await automationBridgeDirectories({ strict })
   for (const [directoryIndex, directory] of directories.entries()) {
     let entries: RegistrationFile[] = []
     const entryLimit = directoryIndex === 0 ? MAX_LOCAL_REGISTRY_FILES : MAX_REGISTRATIONS
@@ -565,15 +576,19 @@ async function probeBrowserBridges(
   sessionID: string,
   mode: "browser-claim" | "browser-probe",
   timeoutMs = PROBE_TIMEOUT_MS,
-  purpose?: "mission" | "mission-preferences",
+  purpose?: "mission" | "mission-preferences" | "mission-prepare",
 ): Promise<DiscoveredBridgeRegistration[]> {
-  const strict = purpose === "mission-preferences"
+  const strict = purpose === "mission-preferences" || purpose === "mission-prepare"
   const found: DiscoveredBridgeRegistration[] = []
   for (let index = 0; index < active.length && found.length < 2; index += PROBE_CONCURRENCY) {
     const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async (registration) => {
       try {
         const response = await callBridge(registration, { mode, sessionID, ...(purpose ? { purpose } : {}) }, timeoutMs)
-        if (response.status === 200 && (!strict || (response.body.result as { available?: unknown } | undefined)?.available === true)) return registration
+        const result = response.body.result as { available?: unknown; missionCreationDefaults?: unknown } | undefined
+        if (response.status === 200 && (!strict || result?.available === true)) {
+          if (purpose === "mission-prepare" && result?.missionCreationDefaults !== true) throw missionRecoveryControlError("mission-preferences-update-required")
+          return registration
+        }
         if (strict && response.status === 404 && response.body.code === undefined) throw missionRecoveryControlError("mission-preferences-update-required")
         if (strict && !(response.status === 404 && response.body.code === "mission-not-owner")) throw new Error("Mission backend ownership is unavailable")
         return undefined
@@ -595,6 +610,7 @@ async function callMissionInput(target: DiscoveredBridgeRegistration, sessionID:
   if (response.status !== 200) {
     const recovery = missionRecoveryError(response.body.code, response.body.error)
     if (recovery && recovery.status === response.status) throw missionRecoveryControlError(recovery.code, response.body.error)
+    if (kind === "profile-defaults" && response.body.code === "mission-not-owner") throw missionRecoveryControlError("mission-preferences-unavailable")
     if (kind === "profile-defaults" && [400, 404, 405, 501, 502].includes(response.status)) {
       throw missionRecoveryControlError("mission-preferences-update-required")
     }
@@ -622,11 +638,14 @@ export async function resolveMissionProfileDefaults(sessionID: string, input: un
 export async function sendMissionInput(sessionID: string,
   kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root" | "prepare" | "task-sessions" | "interrupt", input: unknown): Promise<unknown> {
   let targets: DiscoveredBridgeRegistration[]
+  const requiresDefaults = kind === "prepare" && Boolean(input && typeof input === "object" && "creationDefaults" in input && input.creationDefaults !== undefined)
   try {
     // A backend without native browsers can still claim the session for dispatch.
-    targets = await probeBrowserBridges(await registrations(), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS, "mission")
+    targets = await probeBrowserBridges(await registrations({ strict: requiresDefaults }), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS,
+      requiresDefaults ? "mission-prepare" : "mission")
     if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
   } catch (error) {
+    if (error instanceof MissionControlError && error.code === "mission-preferences-update-required") throw error
     if (kind === "prepare") {
       throw missionRecoveryControlError("prepare-refused")
     }

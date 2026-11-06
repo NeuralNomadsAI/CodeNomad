@@ -409,23 +409,26 @@ export class MissionControl {
     return this.mutate(() => this.createCurrent(request))
   }
 
-  private compareCreationProfiles(template: MissionMap["template"], profiles?: MissionProfiles, coordinatorModel?: NativeMissionSession["model"], freeze = true): MissionProfiles | undefined {
+  private assertCompareCreation(template: MissionMap["template"], profiles?: MissionProfiles): void {
     const error = template === "compare" && compareModelError(profiles)
     if (error) throw new MissionControlError(error, "invalid-execution")
-    return freeze ? freezeCompareProfiles(template, profiles, coordinatorModel) : profiles
   }
 
-  private async resolveCreationInput<T extends MissionStartInput>(sessionID: string, input: T, missionID: string, conflict = "request-conflict",
-    coordinatorModel?: NativeMissionSession["model"], fromDocument?: () => void): Promise<T & { creationDefaults?: MissionCreationMetadata }> {
+  private async savedCreationInput<T extends MissionStartInput>(input: T, missionID: string, conflict: string) {
     const frozen = await this.options.documents?.(async store => {
       const doc = await store.read(missionID)
       return doc && !("deletedAt" in doc) ? doc.oneTime?.creationDefaults : undefined
     })
     if (frozen) {
       if (!sameMissionCreationChoices(frozen.request, input)) throw new MissionControlError("Creation request ID was already used with a different mission", conflict)
-      fromDocument?.()
-      return { ...input, profiles: frozen.profiles, taskMode: frozen.taskMode, creationDefaults: frozen }
+      return { input: { ...input, profiles: frozen.profiles, taskMode: frozen.taskMode, creationDefaults: frozen }, fromDocument: true }
     }
+  }
+
+  private async resolveCreationInput<T extends MissionStartInput>(sessionID: string, input: T, missionID: string, conflict = "request-conflict",
+    coordinatorModel?: NativeMissionSession["model"]): Promise<{ input: T & { creationDefaults?: MissionCreationMetadata }; fromDocument: boolean }> {
+    const saved = await this.savedCreationInput(input, missionID, conflict)
+    if (saved) return saved
     const resolve = this.options.transport?.resolveCreationDefaults
     const request = missionCreationChoices(input)
     let selection: MissionCreationSelection
@@ -436,9 +439,9 @@ export class MissionControl {
         ...(coordinatorModel === undefined ? {} : { coordinatorModel }) }))
     } else {
       // Internal journal-only consumers supply their own frozen profiles.
-      return input
+      return { input, fromDocument: false }
     }
-    return { ...input, profiles: selection.profiles, taskMode: selection.taskMode, creationDefaults: { request, ...selection } }
+    return { input: { ...input, profiles: selection.profiles, taskMode: selection.taskMode, creationDefaults: { request, ...selection } }, fromDocument: false }
   }
 
   private async retainCreationInput<T extends MissionStartInput & { creationDefaults?: MissionCreationMetadata }>(input: T, missionID: string, conflict = "request-conflict"): Promise<T> {
@@ -464,7 +467,8 @@ export class MissionControl {
     }
     try { input.profiles = parseMissionProfiles(input.profiles); validateMissionProfiles(input.template, input.profiles) }
     catch { throw new MissionControlError("Invalid Mission profile selection", "invalid-execution") }
-    input.profiles = this.compareCreationProfiles(input.template, input.profiles, undefined, !input.creationDefaults)
+    this.assertCompareCreation(input.template, input.profiles)
+    if (!input.creationDefaults) input.profiles = freezeCompareProfiles(input.template, input.profiles)
     const missionID = `msn_${stableToken(`${this.options.project.id}\0${input.requestID}`, 24)}`
     const eventID = this.eventID(missionID, "created")
     const existingEvent = await this.journal.event(missionID, eventID)
@@ -956,9 +960,31 @@ export class MissionControl {
     })
   }
 
-  inspect(sessionID: string, input: MissionInspectInput, operationID: string): Promise<MissionInspection> {
+  private async inspectCreationIdentity(sessionID: string, operationID: string) {
+    const requestID = `native_${stableToken(`${sessionID}\0${operationID}`, 48)}`
+    const journalID = `msn_${stableToken(`${this.options.project.id}\0${sessionID}\0${operationID}`, 24)}`
+    const journalCreated = await this.journal.event(journalID, this.eventID(journalID, "created"))
+    const journalDeleted = !journalCreated && await this.journal.deletionRecord(journalID)
+    const missionID = this.options.documents && !journalCreated && !journalDeleted
+      ? `msn_${stableToken(`${this.options.project.id}\0${requestID}`, 24)}` : journalID
+    const created = missionID === journalID ? journalCreated : await this.journal.event(missionID, this.eventID(missionID, "created"))
+    return { requestID, missionID, created }
+  }
+
+  async inspect(sessionID: string, input: MissionInspectInput, operationID: string): Promise<MissionInspection> {
+    input = structuredClone(input)
     if (!input.start) return this.inspectCurrent(sessionID, input, operationID)
-    return this.mutate(() => this.inspectCurrent(sessionID, input, operationID))
+    try { input.start.profiles = parseMissionProfiles(input.start.profiles); validateMissionProfiles(input.start.template, input.start.profiles) }
+    catch { throw new MissionControlError("Invalid Mission profile selection", "invalid-execution") }
+    const caller = await this.ownedRootSession(sessionID)
+    const { missionID, created } = await this.inspectCreationIdentity(sessionID, operationID)
+    await this.assertNotPurged(missionID)
+    // Preference discovery can wait on another backend; it never owns the project's mutation lane.
+    let selected: (MissionStartInput & { creationDefaults?: MissionCreationMetadata }) | undefined, preferenceError: unknown
+    try { if (!created) selected = (await this.resolveCreationInput(sessionID, input.start, missionID, "request-conflict", caller.model)).input }
+    catch (error) { preferenceError = error }
+    return this.mutate(() => this.inspectCurrent(sessionID, input, operationID,
+      { input: selected, preferenceError, location: caller.location }))
   }
 
   /** The caller's owned root, read afresh with the root and project checks of every
@@ -967,7 +993,8 @@ export class MissionControl {
     return this.ownedRootSession(sessionID)
   }
 
-  private async inspectCurrent(sessionID: string, input: MissionInspectInput, operationID: string): Promise<MissionInspection> {
+  private async inspectCurrent(sessionID: string, input: MissionInspectInput, operationID: string,
+    selected?: { input?: MissionStartInput & { creationDefaults?: MissionCreationMetadata }; preferenceError?: unknown; location: NativeMissionSession["location"] }): Promise<MissionInspection> {
     input = structuredClone(input)
     const caller = await this.ownedRootSession(sessionID)
     if (input.start) {
@@ -975,23 +1002,25 @@ export class MissionControl {
       let snapshot = await this.snapshot()
       try { input.start.profiles = parseMissionProfiles(input.start.profiles); validateMissionProfiles(input.start.template, input.start.profiles) }
       catch { throw new MissionControlError("Invalid Mission profile selection", "invalid-execution") }
-      const requestID = `native_${stableToken(`${sessionID}\0${operationID}`, 48)}`
-      const journalID = `msn_${stableToken(`${this.options.project.id}\0${sessionID}\0${operationID}`, 24)}`
-      const journalCreated = await this.journal.event(journalID, this.eventID(journalID, "created"))
-      const journalDeleted = !journalCreated && await this.journal.deletionRecord(journalID)
-      const missionID = this.options.documents && !journalCreated && !journalDeleted
-        ? `msn_${stableToken(`${this.options.project.id}\0${requestID}`, 24)}` : journalID
-      const created = missionID === journalID ? journalCreated : await this.journal.event(missionID, this.eventID(missionID, "created"))
+      const { requestID, missionID, created } = await this.inspectCreationIdentity(sessionID, operationID)
       const replay = snapshot.missions.find((mission) => mission.id === missionID)
       if (replay) {
         const original = created?.type === "mission.created" && created.creationDefaults ? created : replay
         const sameChoices = created?.type === "mission.created" && created.creationDefaults
           ? sameMissionCreationChoices(created.creationDefaults.request, input.start)
-          : sameMissionProfiles(replay.profiles, this.compareCreationProfiles(input.start.template, input.start.profiles, replay.profiles?.roles?.comparator?.model))
+          : sameMissionProfiles(replay.profiles, freezeCompareProfiles(input.start.template, input.start.profiles, replay.profiles?.roles?.comparator?.model))
             && (replay.taskMode ?? "native") === parseMissionTaskMode(input.start.taskMode)
         if (original.template !== input.start.template || original.objective !== input.start.objective
           || original.notes !== input.start.notes || !sameChoices) {
           throw new MissionControlError("Creation request ID was already used with a different mission", "request-conflict")
+        }
+        if (this.options.documents && created?.type === "mission.created") {
+          if (!sameLocation(created.coordinator.location, caller.location)) throw new MissionControlError("Coordinator moved from its admitted creation location", "foreign-session")
+          await requireMissionOneTimeDocument(this.options.documents, missionID, sessionID, {
+            ...input.start, requestID, prepared: true, coordinatorSessionID: sessionID, expectedCoordinatorLocation: caller.location,
+            profiles: created.profiles, taskMode: created.taskMode ?? "native",
+            ...(created.creationDefaults ? { creationDefaults: created.creationDefaults } : {}),
+          })
         }
         if (created?.type === "mission.created" && created.creationDefaults) await this.creationIntents.settled(missionID)
         return this.inspection(replay, sessionID)
@@ -1000,9 +1029,16 @@ export class MissionControl {
       await this.assertNotPurged(missionID)
       const active = this.membership(snapshot, sessionID)
       if (active?.status === "active" || active?.control?.pending.includes(sessionID)) throw new MissionControlError("This session already belongs to an active mission", "already-member")
-      let resolved = await this.resolveCreationInput(sessionID, input.start, missionID, "request-conflict", caller.model)
+      const saved = await this.savedCreationInput(input.start, missionID, "request-conflict")
+      let resolved = saved?.input ?? selected?.input
+      if (!resolved) {
+        if (selected?.preferenceError !== undefined) throw selected.preferenceError
+        throw new MissionControlError("Creation choices changed; retry the same request", "request-conflict")
+      }
+      if (selected && !sameLocation(selected.location, caller.location)) throw new MissionControlError("Coordinator moved from its admitted creation location", "foreign-session")
       const taskMode = parseMissionTaskMode(resolved.taskMode)
-      resolved.profiles = this.compareCreationProfiles(resolved.template, resolved.profiles, caller.model, !resolved.creationDefaults)
+      this.assertCompareCreation(resolved.template, resolved.profiles)
+      if (!resolved.creationDefaults) resolved.profiles = freezeCompareProfiles(resolved.template, resolved.profiles, caller.model)
       input.start = { ...resolved, taskMode }
       if (this.options.documents) {
         const result = await this.createCurrent({ ...resolved, taskMode, requestID, prepared: true,
@@ -1085,7 +1121,7 @@ export class MissionControl {
       const sameChoices = created.type === "mission.created" && created.creationDefaults
         ? sameMissionCreationChoices(created.creationDefaults.request, input)
         : created.type === "mission.created" && (created.taskMode ?? "native") === (input.taskMode ?? "native")
-          && sameMissionProfiles(created.profiles, this.compareCreationProfiles(input.template, input.profiles))
+          && sameMissionProfiles(created.profiles, freezeCompareProfiles(input.template, input.profiles))
       if (created.type !== "mission.created" || created.prepared !== true || created.objective !== input.objective
         || created.title !== input.title || created.notes !== input.notes || created.template !== input.template
         || !sameChoices
@@ -1100,10 +1136,12 @@ export class MissionControl {
     await this.assertNotPurged(missionID)
     let retained = await this.creationIntents.read(missionID, input,
       () => this.journal.event(missionID, this.eventID(missionID, "created")), "prepare-conflict")
-    let retainedDocument = false
-    input = retained ? { ...input, profiles: retained.profiles, taskMode: retained.taskMode, creationDefaults: retained }
-      : await this.resolveCreationInput(sessionID, input, missionID, "prepare-conflict", undefined, () => { retainedDocument = true })
-    input = { ...input, profiles: this.compareCreationProfiles(input.template, input.profiles, undefined, !input.creationDefaults) }
+    const resolved = retained ? { input: { ...input, profiles: retained.profiles, taskMode: retained.taskMode, creationDefaults: retained }, fromDocument: false }
+      : await this.resolveCreationInput(sessionID, input, missionID, "prepare-conflict")
+    const retainedDocument = resolved.fromDocument
+    input = resolved.input
+    this.assertCompareCreation(input.template, input.profiles)
+    if (!input.creationDefaults) input.profiles = freezeCompareProfiles(input.template, input.profiles)
     // Native effects for one request stay single-flight; independent preference
     // reads can complete concurrently before the first choice is reserved.
     return runMissionExclusive(`prepare:${this.journal.projectToken}:${sessionID}:${originalInput.requestID}`, async () => {
@@ -1128,7 +1166,7 @@ export class MissionControl {
           && !(error instanceof MissionCreateNoEffectError)) throw error
         const originalNoEffect = error instanceof MissionCreateNoEffectError && error.noEffect.requestID === requestID && error.noEffect.missionID === missionID
           || error instanceof MissionControlError && error.code === "prepare-no-effect"
-        const refused = error instanceof MissionControlError && error.code === "prepare-refused"
+        const refused = error instanceof MissionControlError && ["prepare-refused", "mission-preferences-update-required"].includes(error.code)
         if (originalNoEffect || !retained && !retainedDocument && (!dispatched || refused)) {
           await this.creationIntents.settled(missionID)
           throw error

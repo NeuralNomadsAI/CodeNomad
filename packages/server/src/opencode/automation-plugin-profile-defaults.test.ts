@@ -39,6 +39,7 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
   let inventoryFailure = false
   let failureCode: string | undefined
   let bridgeError = "secret backend detail", legacy = false
+  let postOwnership: "lost" | "failed" | undefined
   registerAutomationPluginRoute(app, {
     authManager: { isLoopbackRequest: () => true }, bridgeToken: registration.token, nativeParent: {}, developerCdp: {},
     settings: { getRawConfigOwner: () => {
@@ -78,6 +79,10 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
       if (denied) return new Response(JSON.stringify({ error: "secret backend refusal" }), { status: 403 })
       if (legacy) return new Response(JSON.stringify({ error: "Unknown mission command" }), { status: 400 })
       if (failureCode) return new Response(JSON.stringify({ code: failureCode, error: bridgeError }), { status: 409 })
+    }
+    if (body.mode === "mission-input" && postOwnership) {
+      owned = postOwnership !== "lost"
+      ownershipFailure = postOwnership === "failed"
     }
     const response = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
       headers: { "x-codenomad-automation-token": token! }, payload: body })
@@ -145,7 +150,7 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
   assert.equal((await handlers.snapshot()).missions.length, 2, "backend-less hand-offs remain unavailable")
   assert.equal([...values.keys()].some(key => key.includes("/creation-intents/")), false)
 
-  const registry = automationBridgeDirectories()[0]
+  const registry = (await automationBridgeDirectories())[0]
   await mkdir(registry, { recursive: true })
   const deadFile = path.join(registry, `${Date.now()}-2147483647-dead.json`)
   await writeFile(deadFile, "{unreadable")
@@ -163,6 +168,13 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
   const resolved = await request() as { taskMode: string }
   assert.equal(resolved.taskMode, "native")
   assert.equal("preferences" in resolved, false, "readable owner preferences need no unavailable warning")
+  const beforeRace = reads
+  for (postOwnership of ["lost", "failed"] as const) {
+    await assert.rejects(request(), unavailable, "ownership changing after the strict claim is not an old-backend error")
+    owned = true; ownershipFailure = false
+  }
+  postOwnership = undefined
+  assert.equal(reads, beforeRace, "failed command authorization never reads settings")
   const beforeNegative = reads
   owned = false
   assert.deepEqual(await request(), fallback, "clean non-ownership remains negative proof while unrelated workspaces are open")
@@ -235,48 +247,105 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
   assert.equal(posts, before, "the saved creation is returned without another preference request")
 })
 
-test("strict WSL discovery cannot omit an unobserved Windows registry", () => {
+test("prepare never dispatches creation provenance to either legacy backend path", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-prepare-capability-"))
+  const previous = { LOCALAPPDATA: process.env.LOCALAPPDATA, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR, WSL_DISTRO_NAME: process.env.WSL_DISTRO_NAME }
+  process.env.LOCALAPPDATA = root; process.env.XDG_RUNTIME_DIR = root; delete process.env.WSL_DISTRO_NAME
+  const remove = await publishAutomationBridge(createAutomationBridgeRegistration("http://127.0.0.1:54329"))
+  t.after(async () => {
+    await remove()
+    for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value }
+    await rm(root, { recursive: true, force: true })
+  })
+  let mode: "old-desktop" | "old-host" | "current" = "old-desktop", posts = 0
+  t.mock.method(globalThis, "fetch", async (_url: unknown, options: RequestInit) => {
+    const body = JSON.parse(String(options.body))
+    if (body.mode === "browser-claim") {
+      assert.equal(body.purpose, "mission-prepare")
+      return mode === "old-host" ? new Response(JSON.stringify({ error: "Browser automation is unavailable in this host" }), { status: 404 })
+        : new Response(JSON.stringify({ result: { available: true, ...(mode === "current" ? { missionCreationDefaults: true } : {}) } }))
+    }
+    posts++
+    return new Response(JSON.stringify({ result: { admitted: true } }))
+  })
+  for (mode of ["old-desktop", "old-host"] as const) {
+    await assert.rejects(sendMissionInput("ses_prepare", "prepare", { creationDefaults: {} }),
+      (error: unknown) => error instanceof MissionControlError && error.code === "mission-preferences-update-required")
+    assert.equal(posts, 0, "no old strict prepare schema can observe the unknown field")
+  }
+  mode = "current"
+  assert.deepEqual(await sendMissionInput("ses_prepare", "prepare", { creationDefaults: {} }), { admitted: true })
+  assert.equal(posts, 1)
+})
+
+test("strict WSL discovery cannot omit an unobserved Windows registry", async () => {
   const options = { platform: "linux" as const, env: { WSL_DISTRO_NAME: "fixture" }, home: "/fixture", windowsLocalAppData: null }
-  assert.deepEqual(automationBridgeDirectories(options), ["/fixture/.config/codenomad/automation-bridges"])
-  assert.throws(() => automationBridgeDirectories({ ...options, strict: true }), /Windows mission backend discovery is unavailable/)
-  assert.deepEqual(automationBridgeDirectories({ ...options, windowsLocalAppData: "/mnt/c/fixture", strict: true }), [
+  assert.deepEqual(await automationBridgeDirectories(options), ["/fixture/.config/codenomad/automation-bridges"])
+  await assert.rejects(automationBridgeDirectories({ ...options, strict: true }), /Windows mission backend discovery is unavailable/)
+  assert.deepEqual(await automationBridgeDirectories({ ...options, windowsLocalAppData: "/mnt/c/fixture", strict: true }), [
     "/fixture/.config/codenomad/automation-bridges", "/mnt/c/fixture/CodeNomad/automation-bridges",
   ])
 })
 
-test("strict WSL discovery retries a failed cached Windows registry lookup", t => {
-  let attempts = 0
-  const mocked = t.mock.method(childProcess, "execFileSync", () => { attempts++; throw new Error("Host lookup failed") })
+test("strict WSL discovery caches a failed lookup briefly, then retries", async t => {
+  let attempts = 0, now = 10_000
+  t.mock.method(Date, "now", () => now)
+  t.mock.method(childProcess, "execFile", (_file: string, _args: string[], _options: unknown, callback: (error: Error) => void) => { attempts++; callback(new Error("Host lookup failed")) })
   syncBuiltinESMExports()
-  t.after(() => { mocked.mock.restore(); syncBuiltinESMExports() })
-  const options = { platform: "linux" as const, env: { WSL_DISTRO_NAME: "fixture" }, home: "/fixture" }
-  assert.deepEqual(automationBridgeDirectories(options), ["/fixture/.config/codenomad/automation-bridges"])
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports() })
+  const options = { platform: "linux" as const, env: { WSL_DISTRO_NAME: "fixture-cache" }, home: "/fixture" }
+  assert.deepEqual(await automationBridgeDirectories(options), ["/fixture/.config/codenomad/automation-bridges"])
   assert.equal(attempts, 1)
-  assert.throws(() => automationBridgeDirectories({ ...options, strict: true }), /Windows mission backend discovery is unavailable/)
-  assert.equal(attempts, 2, "an old failed lookup is not reused as negative ownership evidence")
+  await assert.rejects(automationBridgeDirectories({ ...options, strict: true }), /Windows mission backend discovery is unavailable/)
+  assert.equal(attempts, 1, "uncertainty stays a refusal without repeated launches")
+  now += 2_001
+  await assert.rejects(automationBridgeDirectories({ ...options, strict: true }), /Windows mission backend discovery is unavailable/)
+  assert.equal(attempts, 2)
 })
 
-test("unavailable Windows interop proves absence, while uncertain launches still refuse", t => {
-  const options = { platform: "linux" as const, env: { WSL_DISTRO_NAME: "fixture" }, home: "/fixture" }
-  let missing = "cmd.exe", code = "ENOENT"
-  t.mock.method(childProcess, "execFileSync", (command: string) => {
-    if (command === missing) throw Object.assign(new Error("fixture launch failure"), { code })
-    return "C:/fixture"
+test("parallel Windows discovery yields the event loop and shares one asynchronous lookup", async t => {
+  let calls = 0, release!: () => void
+  t.mock.method(childProcess, "execFile", (file: string, _args: string[], _options: unknown, callback: (error: null, stdout: string) => void) => {
+    calls++
+    if (file === "cmd.exe") release = () => callback(null, "C:/fixture")
+    else callback(null, "/fixture-windows")
+  })
+  syncBuiltinESMExports()
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports() })
+  const options = { platform: "linux" as const, env: { WSL_DISTRO_NAME: "fixture-coalesced" }, home: "/fixture", strict: true }
+  const first = automationBridgeDirectories(options), second = automationBridgeDirectories(options)
+  assert.equal(calls, 1)
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.equal(calls, 1, "other event-loop work runs before the slow command returns")
+  release()
+  assert.deepEqual(await first, await second)
+  assert.equal(calls, 2, "one cmd lookup and one translation serve both callers")
+})
+
+test("unavailable Windows interop proves absence, while uncertain launches still refuse", async t => {
+  const options = { platform: "linux" as const, env: { WSL_DISTRO_NAME: "fixture-launch" }, home: "/fixture" }
+  let missing = "cmd.exe", code = "ENOENT", now = 20_000
+  t.mock.method(Date, "now", () => now)
+  t.mock.method(childProcess, "execFile", (command: string, _args: string[], _options: unknown, callback: (error: Error | null, stdout?: string) => void) => {
+    if (command === missing) callback(Object.assign(new Error("fixture launch failure"), { code }))
+    else callback(null, "C:/fixture")
   })
   syncBuiltinESMExports()
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports() })
   for (missing of ["cmd.exe", "wslpath"]) for (code of ["ENOENT", "ENOEXEC"]) {
-    assert.deepEqual(automationBridgeDirectories({ ...options, strict: true }), ["/fixture/.config/codenomad/automation-bridges"])
+    now += 2_001
+    assert.deepEqual(await automationBridgeDirectories({ ...options, strict: true }), ["/fixture/.config/codenomad/automation-bridges"])
   }
   code = "ETIMEDOUT"
-  assert.throws(() => automationBridgeDirectories({ ...options, strict: true }), /Windows mission backend discovery is unavailable/)
+  now += 2_001
+  await assert.rejects(automationBridgeDirectories({ ...options, strict: true }), /Windows mission backend discovery is unavailable/)
 })
 
 test("WSL Windows discovery skips unusable advertisements and refused endpoints, retaining live failures", async t => {
   const platform = Object.getOwnPropertyDescriptor(process, "platform")!
   const previous = { WSL_DISTRO_NAME: process.env.WSL_DISTRO_NAME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR }
   Object.defineProperty(process, "platform", { value: "linux", configurable: true })
-  process.env.WSL_DISTRO_NAME = "fixture"
+  process.env.WSL_DISTRO_NAME = "fixture-advertisements"
   process.env.XDG_RUNTIME_DIR = "/fixture-linux"
   t.after(() => {
     Object.defineProperty(process, "platform", platform)
@@ -294,7 +363,7 @@ test("WSL Windows discovery skips unusable advertisements and refused endpoints,
     return true
   })
   t.mock.method(fs, "rm", async () => { assert.ok(local, "WSL leaves foreign advertisements to their publisher"); pruned++ })
-  t.mock.method(childProcess, "execFileSync", () => "/fixture-windows")
+  t.mock.method(childProcess, "execFile", (_file: string, _args: string[], _options: unknown, callback: (error: null, stdout: string) => void) => callback(null, "/fixture-windows"))
   t.mock.method(fs, "opendir", async (directory: string) => (async function* () {
     if (directory.startsWith(local ? "/fixture-linux/" : "/fixture-windows/")) yield {
       name: `${registration.startedAt}-${filePID}-windows.json`, isFile: () => true,

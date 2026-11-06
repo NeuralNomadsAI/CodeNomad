@@ -214,8 +214,8 @@ test("registers developer tools while execution remains session-gated", async ()
   assert.deepEqual(tools, ["inspect", "act", "screenshot"])
 })
 
-test("discovers the Windows bridge registry from a WSL plugin", () => {
-  assert.deepEqual(automationBridgeDirectories({
+test("discovers the Windows bridge registry from a WSL plugin", async () => {
+  assert.deepEqual(await automationBridgeDirectories({
     platform: "linux",
     env: { WSL_DISTRO_NAME: "Ubuntu", XDG_RUNTIME_DIR: "/run/user/1000" },
     home: "/home/dev",

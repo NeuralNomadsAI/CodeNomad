@@ -108,7 +108,7 @@ test("settled choices release capacity on adapters without key removal", async (
   assert.equal([...f.values.values()].filter(value => value !== null).length, 1)
 })
 
-test("direct reads and capacity scans reject malformed intentions without changing retained bytes", async () => {
+test("capacity scans skip damaged intentions while their exact IDs retain uncertainty", async () => {
   for (const invalid of [
     { version: 1, request, defaults },
     { version: 1, request, defaults, createdAt: -1 },
@@ -118,12 +118,19 @@ test("direct reads and capacity scans reject malformed intentions without changi
   ]) {
     const f = fixture()
     f.values.set("codenomad-missions/v2/creation-intents/project/msn_invalid", invalid as unknown as MissionJsonValue)
-    const before = structuredClone([...f.values])
     await assert.rejects(f.intents.read("msn_invalid", request, missing, "request-conflict"),
       (error: any) => error.code === "invalid-journal")
-    await assert.rejects(f.intents.save("msn_new", request, defaults, missing, () => {}, "request-conflict"),
+    assert.deepEqual(await f.intents.save("msn_new", request, defaults, missing, () => {}, "request-conflict"), defaults)
+    await assert.rejects(f.intents.save("msn_invalid", request, defaults, missing, () => {}, "request-conflict"),
       (error: any) => error.code === "invalid-journal")
-    assert.deepEqual([...f.values], before)
+    assert.deepEqual(f.values.get("codenomad-missions/v2/creation-intents/project/msn_invalid"), invalid,
+      "a damaged reservation is neither expired, discarded nor overwritten")
+    for (let index = 1; index < MISSION_CREATION_INTENT_LIMIT; index++) {
+      await f.intents.save(`msn_valid_${index}`, request, defaults, missing, () => {}, "request-conflict")
+    }
+    await assert.rejects(f.intents.save("msn_over", request, defaults, missing, () => {}, "request-conflict"),
+      (error: any) => error.code === "creation-capacity")
+    assert.equal(f.values.size, MISSION_CREATION_INTENT_LIMIT + 1, "only usable reservations spend capacity")
   }
 })
 

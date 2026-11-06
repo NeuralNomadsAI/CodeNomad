@@ -87,7 +87,8 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     // Lifecycle Pause/Stop and a retired task's interrupt walk and interrupt whole native
     // subagent families; they stay below the plugin's 95 s bridge timeout.
     const commandKind = body?.command && typeof body.command === "object" && "kind" in body.command ? body.command.kind : undefined
-    const preferenceProbe = body.mode === "browser-claim" && body.purpose === "mission-preferences"
+    const preferenceProbe = body.mode === "browser-claim" && (body.purpose === "mission-preferences" || body.purpose === "mission-prepare")
+      || body.mode === "mission-input" && commandKind === "profile-defaults"
     const preferenceUnavailable = () => {
       const failure = missionRecoveryControlError("mission-preferences-unavailable")
       return reply.code(503).send({ error: failure.message, code: failure.code })
@@ -156,7 +157,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       if (!deps.nativeParent.available && body.purpose !== "mission" && !preferenceProbe) {
         return reply.code(404).send({ error: "Browser automation is unavailable in this host" })
       }
-      return reply.send({ result: { available: true } })
+      return reply.send({ result: { available: true, ...(preferenceProbe ? { missionCreationDefaults: true } : {}) } })
     }
     if (body.mode === "browser-probe") {
       try {

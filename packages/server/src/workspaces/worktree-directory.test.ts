@@ -270,11 +270,44 @@ test("ordinary ownership preserves trailing reloads beyond four invalidations", 
   let reads = 0
   const result = await resolveOwnedWorktreePath({ workspaceId: temp, workspacePath: temp, directory: temp,
     loadWorktrees: async () => {
+      await Promise.resolve()
       if (++reads <= 4) invalidateWorktreeCache(temp)
       return [{ slug: "root", directory: temp, kind: "root" }]
     } })
   assert.equal(result?.slug, "root")
   assert.equal(reads, 5)
+})
+
+test("ordinary synchronous loader invalidation preserves the baseline successive-call load counts", async t => {
+  const temp = mkdtempSync(path.join(tmpdir(), "codenomad-ordinary-sync-invalidation-"))
+  t.after(() => { invalidateWorktreeCache(temp); rmSync(temp, { recursive: true, force: true }) })
+  const refreshes: boolean[] = []
+  const params = { workspaceId: temp, workspacePath: temp, directory: temp,
+    loadWorktrees: async (refresh = false) => {
+      refreshes.push(refresh)
+      if (refreshes.length <= 6) invalidateWorktreeCache(temp)
+      return [{ slug: "root", directory: temp, kind: "root" as const }]
+    } }
+  const loads: number[] = []
+  for (let i = 0; i < 3; i++) {
+    assert.equal((await resolveOwnedWorktreePath(params))?.slug, "root")
+    loads.push(refreshes.length)
+  }
+  assert.deepEqual(loads, [1, 1, 1])
+  assert.deepEqual(refreshes, [false])
+})
+
+test("strict synchronous loader invalidation remains fenced and bounded", async t => {
+  const temp = mkdtempSync(path.join(tmpdir(), "codenomad-strict-sync-invalidation-"))
+  t.after(() => { invalidateWorktreeCache(temp); rmSync(temp, { recursive: true, force: true }) })
+  const refreshes: boolean[] = []
+  await assert.rejects(resolveOwnedWorktreePath({ workspaceId: temp, workspacePath: temp, directory: temp, strict: true,
+    loadWorktrees: async (refresh = false) => {
+      refreshes.push(refresh)
+      invalidateWorktreeCache(temp)
+      return [{ slug: "root", directory: temp, kind: "root" }]
+    } }), /inventory changed repeatedly/)
+  assert.deepEqual(refreshes, [false, false, false, true])
 })
 
 test("strict ownership stays bounded while an ordinary demand keeps trailing native scans", async t => {

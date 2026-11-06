@@ -25,19 +25,15 @@ async function sameDirectory(left: string, right: string): Promise<boolean> {
 
 export async function listNativeWorktrees(context: NativeWorktreeContext, options: { refresh?: boolean } = {}): Promise<WorktreeListResponse> {
   const { client, location, workspacePath, toHost } = context
-  let isGitRepo = false
-  let gitUnavailable: GitRequiredError | undefined
+  let isGitRepo: boolean
   try {
     ;({ isGitRepo } = await resolveRepoRoot(workspacePath))
   } catch (error) {
     if (!(error instanceof GitRequiredError)) throw error
-    gitUnavailable = error
+    // No repository claim or discovered sibling checkouts without Git.
+    return { gitAvailable: false, worktrees: [{ slug: "root", directory: workspacePath, serviceDirectory: location.directory, kind: "root", directoryOnly: true }] }
   }
-  if (!isGitRepo) {
-    return { ...(gitUnavailable ? { gitAvailable: false } : { isGitRepo }),
-      worktrees: [{ slug: "root", directory: workspacePath, serviceDirectory: location.directory, kind: "root",
-        ...(gitUnavailable ? { directoryOnly: true } : {}) }] }
-  }
+  if (!isGitRepo) return { isGitRepo, worktrees: [{ slug: "root", directory: workspacePath, serviceDirectory: location.directory, kind: "root" }] }
   const local = await readCheckout(workspacePath)
   const current = await client.location.get({ location: { directory: location.directory } }, locationRequestOptions(location))
   const checkoutHost = await toHost(current.project.directory)

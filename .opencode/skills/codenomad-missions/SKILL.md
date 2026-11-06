@@ -16,54 +16,26 @@ Prefer ordinary native delegation for bounded work. Use a mission only when the 
 7. Finish through `mission.report({ final: true, ... })` only when the objective is actually met. Retired work never counts as success; retiring does not interrupt admitted native execution, which can finish on its own or be stopped with `mission.interrupt` when eligible; playbook proof requirements still apply. A retired native task takes no coordinator readout; record what it returned under its replacement or in the final report. Admitted retired work settles through its actor's terminal report or an observed native end.
 
 Use `mission.inspect({ catalog: true })` before selecting a native execution profile.
-For `mission.prepare` and `mission.inspect({ start })`, omitted coordinator/role
-slots and `taskMode` inherit the user's Missions preferences: playbook exception,
-then global defaults (the global specialist supplies task roles; the Compare judge
-defaults to the coordinator's model). Each explicit profile slot wins whole:
-`{}` selects OpenCode defaults for that slot, and an agent-only slot keeps its
-native model default, except for the Compare judge: after slot selection, any
-missing judge model inherits the known coordinator model, including explicit or
-preference `{}` and agent-only slots; a judge's own model stays unchanged.
-`profiles: {}` inherits all slots. Supplying the coordinator, every exact role of
-the selected template and `taskMode` skips backend preferences entirely; `{}` counts
-as an explicit profile slot; all origins are `explicit`. Partial or omitted
-selections read the owning CodeNomad backend's preferences. With absent preferences,
-profiles use OpenCode defaults and task mode uses `native`.
-Read the creation response's `selection.profiles`, `selection.taskMode` and
-`selection.origins` to check the saved coordinator and every playbook role:
-`explicit`, `preference` or `opencode-default`. A chosen judge slot keeps its
-explicit/preference origin even with an inherited model; an absent judge slot
-inherits the coordinator's origin. When preferences are needed and no owning
-CodeNomad backend is present, `inspect({ start })` uses explicit inputs and OpenCode defaults for omitted
-choices (`native` task-mode fallback), returning `selection.preferences: "unavailable"` and only `explicit`
-or `opencode-default` origins. Saved `creationDefaults.preferences: "unavailable"`
-retains the warning on retries even after a backend appears. Ambiguous ownership
-or unreadable/invalid preferences block inheritance: recover preferences or supply
-the coordinator, every exact template role and `taskMode` explicitly.
-If the reply requires a CodeNomad update, update the backend before inheriting
-preferences, or supply every choice explicitly.
-`mission.prepare` requires an owning backend even with fully explicit choices.
-`inspect({ start })` requires the caller's existing coordinator profile to match
-the resolved selection. When a coordinator preference differs, pass
-`profiles.coordinator` (for example `{}`) to override that preference; the existing
-profile is still checked against the resolved selection. An explicit-profile
-mismatch receives the generic native-profile error.
+For `mission.prepare` and `mission.inspect({ start })`:
 
-For `prepare`, reuse the same requestID and original inputs; same-requestID
-preparations are serialized. Its standalone intent retains choices for an unknown
-outcome, releasing them on a positive result or a definitive no-effect refusal.
-A retry's prevalidation refusal leaves an earlier attempt's uncertainty intact.
-The project retains at most 128 unknown choices for 24 hours from first
-reservation; retries preserve that deadline. A clock rollback keeps recorded
-choices fresh until their saved timestamp ages through retention. At capacity, retry original
-requestIDs to recover receipts and release slots, or wait for expiry. After expiry,
-preferences may be read anew only with both creation event and document absent;
-a positive receipt or saved document keeps its choices frozen. `inspect({ start })`
-retains choices through its journal/document receipt under its native invocation
-identity. Native holds and authorization keep their own settlement rules after
-choice expiry. Check the mission and original conversation before using a new
-requestID; never duplicate uncertain work or resume automatically after expiry.
+- Omit profile slots and `taskMode` to inherit Missions preferences. To bypass
+  preferences, supply the coordinator, every exact template role and `taskMode`;
+  `{}` explicitly selects OpenCode defaults for a slot. Compare fills a missing
+  judge model from the known coordinator model.
+- Read `selection.profiles`, `selection.taskMode` and `selection.origins` in
+  inspections with creation metadata to check saved requested choices and their
+  `explicit`, `preference` or `opencode-default` origins. Check
+  `selection.preferences: "unavailable"` for fallback to OpenCode defaults.
+- Recover unreadable/invalid preferences or ambiguous ownership, or supply every
+  choice explicitly. Update CodeNomad when the reply requires it.
+- Match the starting session's existing profile to the resolved coordinator.
+  Pass `profiles.coordinator` (for example `{}`) to override a differing preference.
+- For `prepare`, keep CodeNomad available and reuse the same `requestID` and
+  original inputs on retry. Check the mission and original conversation before
+  choosing a new identity; never duplicate uncertain work or resume automatically.
 
+The full selection, discovery and recovery contract is in
+[Mission profile selection and creation recovery](../../../dev-docs/MISSIONS.md#mission-profile-selection-and-creation-recovery).
 Outside an active mission, use the Missions editor in CodeNomad; never create an
 intermediate mission merely to gain access to `mission.prepare`.
 

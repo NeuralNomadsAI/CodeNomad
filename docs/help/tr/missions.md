@@ -139,7 +139,6 @@ Derinliği kaydetmek, proje yapılandırmasında etkin yerel zamanlamaları koru
 
 Ajanların hazırladığı görevler, ajanın belirtmediği seçenekler için yeni görev varsayılanlarınızı kullanır. Ajanın açıkça belirttiği seçimler önceliklidir. Varsayılanları değiştirseniz bile yeniden denemeler ilk seçimleri korur. Gerekli varsayılanlar okunamıyor veya geçersizse bunları düzeltene kadar oluşturma reddedilir.
 
-
 Her **Model** listesi, konuşmanın **Model** seçicisinin gösterdiklerini aynı adlarla ve sağlayıcıya göre gruplanmış olarak gösterir: gizlenen modeller yer almaz ve yalnızca favorilere yönelik filtreleme açıkken diğer modeller de yer almaz (bkz. [Model görünürlüğü, favoriler ve Düşünme](providers.md#models)). Araç desteği olmayan modeller de yer almaz. Liste dışındaki kayıtlı bir model seçili kalır. **Kullanılamıyor**, seçicinin şu anda sunamadığı kayıtlı bir modeli işaretler: model projenin güncel kataloğunda yoktur, kullanımdan kaldırılmıştır veya araç desteği yoktur.
 
 Reddedilen veya doğrulanmayan bir seçim asla yeniden gönderilmez: kayıtlı değerler yeniden gösterilir ve **Yeniden yükle** yalnızca bu değerler okunamadığında görünür. Bir derinlik değişikliği doğrulanmadıysa değeriniz korunur; başka bir değişiklik yapmadan önce **Proje derinliğini yenile** eylemini kullanın. **Etkin OpenCode derinliği bilinmiyor** durumunu sıfır veya devre dışı olarak yorumlamayın.

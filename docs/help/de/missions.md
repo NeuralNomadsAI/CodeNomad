@@ -139,7 +139,6 @@ Das Speichern einer Tiefe erhält aktivierte native Zeitpläne in der Projektkon
 
 Von Agenten vorbereitete Missionen verwenden Ihre Vorgaben für neue Missionen für alles, was der Agent auslässt. Ausdrückliche Angaben des Agenten haben Vorrang. Wiederholungen behalten die ursprüngliche Auswahl auch nach Änderungen der Vorgaben bei. Sind benötigte Vorgaben unlesbar oder ungültig, wird die Erstellung bis zu ihrer Korrektur verweigert.
 
-
 Jede **Modell**-Liste zeigt, was die **Modell**-Auswahl der Unterhaltung zeigt, unter denselben Namen und nach Anbieter gruppiert: Ausgeblendete Modelle fehlen und, solange der Nur-Favoriten-Filter aktiv ist, auch die übrigen Modelle (siehe [Modellsichtbarkeit, Favoriten und Denken](providers.md#models)). Modelle ohne Werkzeugunterstützung fehlen ebenfalls. Ein gespeichertes Modell außerhalb der Liste bleibt ausgewählt. **Nicht verfügbar** kennzeichnet ein gespeichertes Modell, das die Auswahl derzeit nicht anbieten kann: Es fehlt im aktuellen Katalog des Projekts, ist veraltet oder unterstützt keine Werkzeuge.
 
 Eine abgelehnte oder unbestätigte Auswahl wird nie erneut gesendet: Die gespeicherten Werte werden wieder angezeigt, und **Neu laden** erscheint nur, wenn sie nicht gelesen werden können. Ist eine Tiefenänderung unbestätigt, bleibt Ihr Wert erhalten; verwenden Sie vor einer weiteren Änderung **Tiefe dieses Projekts aktualisieren**. Interpretieren Sie **Effektive OpenCode-Tiefe unbekannt** nicht als null oder deaktiviert.

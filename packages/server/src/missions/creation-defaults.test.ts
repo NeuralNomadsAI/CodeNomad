@@ -3,7 +3,7 @@ import test from "node:test"
 import Ajv from "ajv"
 import { MissionControl, MissionControlError } from "./control"
 import type { MissionInputTransport, NativeMissionSession } from "./control-types"
-import { missionCreationDefaultsSchema, missionCreationDefaultsWire, missionCreationSelection, parseMissionCreationDefaults, parseMissionCreationDefaultsInput } from "./creation-defaults"
+import { missionCreationDefaultsSchema, missionCreationDefaultsWire, missionCreationSelection, parseMissionCreationDefaults, parseMissionCreationDefaultsInput, parseMissionCreationSelection } from "./creation-defaults"
 import type { MissionStorage } from "./journal"
 import type { MissionJsonValue } from "./model"
 import { NativeMissionDocumentStore, type MissionDocumentStorage } from "./mission-document-store"
@@ -63,7 +63,7 @@ function fixture() {
   }
   let control = new MissionControl(options)
   return { get control() { return control }, coordinator, documents, values, sessions, get reads() { return reads }, get created() { return created },
-    fail: () => { failJournal = true }, failBeforeDocument: () => { failDocument = true },
+    transport, fail: () => { failJournal = true }, failBeforeDocument: () => { failDocument = true },
     refusePreparation: () => { refusePreparation = true },
     setPreferences: (value: unknown) => { preferences = value }, invalidate: () => { preferences = null }, restart: () => { control = new MissionControl(options) } }
 }
@@ -127,6 +127,47 @@ test("inspect start recovers frozen preferences from its document before a missi
   assert.equal(f.reads, 1)
 })
 
+test("inspect preflight races retain the first published event or frozen document choices", async () => {
+  for (const journalFails of [false, true]) for (const preferencesFail of [false, true]) {
+    const f = fixture()
+    const gates: Array<() => void> = []
+    let started!: () => void
+    const both = new Promise<void>(resolve => { started = resolve })
+    f.transport.resolveCreationDefaults = async (_id, input) => {
+      const agent = gates.length === 0 ? "first" : "second"
+      await new Promise<void>(resolve => { gates.push(resolve); if (gates.length === 2) started() })
+      if (agent === "second" && preferencesFail) throw new Error("Preferences became unavailable")
+      return resolveMissionCreationDefaults({ ...input, preferences: [{ template: "all", profiles: {
+        coordinator: { agent: "lead" }, roles: { specialist: { agent } },
+      } }] })
+    }
+    const request = { start: { objective: "Concurrent", template: "custom" as const } }
+    if (journalFails) f.fail()
+    const first = f.control.inspect(f.coordinator, request, "same-operation")
+    const firstOutcome = first.catch(error => error)
+    const second = f.control.inspect(f.coordinator, request, "same-operation")
+    await both
+    gates[0]()
+    if (journalFails) assert.match(String(await firstOutcome), /Journal write unavailable/)
+    else await first
+    gates[1]()
+    assert.equal((await second).selection?.profiles.roles.specialist.agent, "first")
+  }
+})
+
+test("document-mode inspect replay rejects moved coordinators and altered creation digests", async () => {
+  const f = fixture(), request = { start: { objective: "Replay", template: "custom" as const } }
+  await f.control.inspect(f.coordinator, request, "replay")
+  f.sessions.get(f.coordinator)!.location = { directory: "/repo/other" }
+  await assert.rejects(f.control.inspect(f.coordinator, request, "replay"), (error: any) => error.code === "foreign-session")
+  f.sessions.get(f.coordinator)!.location = { directory: "/repo" }
+  const entry = [...f.values].find(([, value]) => value && typeof value === "object" && "oneTime" in value)!
+  const damaged = structuredClone(entry[1]) as any
+  damaged.oneTime.creationDigest = "0".repeat(64)
+  f.values.set(entry[0], damaged)
+  await assert.rejects(f.control.inspect(f.coordinator, request, "replay"), (error: any) => error.code === "request-conflict")
+})
+
 test("prepare recovers its frozen document before journal publication without rereading preferences", async () => {
   const f = fixture()
   await f.control.create({ requestID: "source", objective: "Source", template: "custom", coordinatorSessionID: f.coordinator })
@@ -159,6 +200,25 @@ test("the pre-dispatch creation intention survives a failure before the first do
   assert.equal(f.created, 1)
 })
 
+test("a damaged retained preparation leaves other requests usable and its own ID blocked", async () => {
+  const f = fixture()
+  await f.control.create({ requestID: "source", objective: "Source", template: "custom", coordinatorSessionID: f.coordinator })
+  const damagedRequest = { requestID: "damaged", objective: "Uncertain preparation", template: "custom" as const }
+  f.failBeforeDocument()
+  await assert.rejects(f.control.prepare(f.coordinator, damagedRequest), (error: any) => error.code === "prepare-uncertain")
+  const key = [...f.values.keys()].find(key => key.includes("/creation-intents/"))!
+  assert.ok(key)
+  const damaged = { version: 1 }
+  f.values.set(key, damaged)
+  const unaffected = await f.control.prepare(f.coordinator, { requestID: "unaffected", objective: "Other preparation", template: "custom" })
+  assert.equal(unaffected.mission.runState, "prepared")
+  const reads = f.reads, roots = f.created
+  await assert.rejects(f.control.prepare(f.coordinator, damagedRequest), (error: any) => error.code === "invalid-journal")
+  assert.equal(f.reads, reads)
+  assert.equal(f.created, roots)
+  assert.deepEqual(f.values.get(key), damaged)
+})
+
 test("creation provenance validates its exact roles and leaves historical missions absent", () => {
   const selected = resolveMissionCreationDefaults({ template: "custom", preferences: [] })
   const metadata = { request: {}, ...selected }
@@ -166,6 +226,26 @@ test("creation provenance validates its exact roles and leaves historical missio
   assert.throws(() => parseMissionCreationDefaults("debug", metadata))
   assert.throws(() => parseMissionCreationDefaults("custom", { ...metadata, origins: { ...metadata.origins, coordinator: "guessed" } }))
   assert.equal(missionCreationSelection({ profiles: {}, taskMode: "native" }), undefined)
+})
+
+test("transport selections and durable defaults require complete profiles and exact playbook roles", () => {
+  for (const template of Object.keys(missionProfileRoles) as (keyof typeof missionProfileRoles)[]) {
+    const selected = resolveMissionCreationDefaults({ template, preferences: [] })
+    assert.deepEqual(parseMissionCreationSelection(template, selected), selected)
+    for (const profiles of [undefined, {}, { coordinator: {} }, { roles: selected.profiles.roles },
+      { ...selected.profiles, roles: {} }, { ...selected.profiles, roles: { ...selected.profiles.roles, unknown: {} } },
+      ...missionProfileRoles[template].map(removed => ({ ...selected.profiles,
+        roles: Object.fromEntries(Object.entries(selected.profiles.roles).filter(([role]) => role !== removed)) }))]) {
+      const partial = { ...selected, profiles }
+      assert.throws(() => parseMissionCreationSelection(template, partial))
+      assert.throws(() => parseMissionCreationDefaults(template, { request: {}, ...partial }))
+    }
+    const foreign = template === "custom" ? "developer" : "specialist"
+    assert.throws(() => parseMissionCreationSelection(template, { ...selected,
+      profiles: { ...selected.profiles, roles: { ...selected.profiles.roles, [foreign]: {} } } }))
+    assert.throws(() => parseMissionCreationSelection(template, { ...selected,
+      origins: { ...selected.origins, roles: {} } }))
+  }
 })
 
 test("inspect start creates no standalone intention on mismatch, document refusal or journal failure", async () => {

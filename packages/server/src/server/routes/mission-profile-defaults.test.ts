@@ -4,7 +4,7 @@ import Fastify from "fastify"
 import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
 import { registerAutomationPluginRoute } from "./automation-plugin"
 import { readMissionProfileDefaults } from "./mission-profile-defaults"
-import { MISSION_DEFAULTS_REQUEST_INVALID } from "../../missions/creation-defaults"
+import { MISSION_DEFAULTS_REQUEST_INVALID } from "../../missions/recovery-error"
 
 function fixture(t: TestContext, read?: () => unknown) {
   const app = Fastify()

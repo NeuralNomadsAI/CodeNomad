@@ -1,4 +1,5 @@
-import { parseMissionProfiles, missionProfileRoles, freezeCompareProfiles, validateMissionProfiles, type MissionProfiles } from "./playbook-profiles"
+import { z } from "zod"
+import { parseMissionProfiles, missionProfilesInputSchema, missionProfileRoles, freezeCompareProfiles, validateMissionProfiles, type MissionProfiles } from "./playbook-profiles"
 import type { MissionTemplateId } from "./model"
 import type { MissionExecution } from "./execution"
 import { missionTaskModeInputSchema, parseMissionTaskMode, type MissionTaskMode } from "./task-execution-mode"
@@ -87,20 +88,19 @@ export class MissionPreferencesError extends Error {
   }
 }
 
-/** Shared draft selection and creation-time Compare model composition. */
-export function effectiveMissionProfiles(template: MissionTemplateId,
-  input: { defaults: readonly MissionProfileDefault[] } | { profiles: MissionProfiles | undefined },
-  coordinatorModel?: MissionExecution["model"]) {
-  const draft = "defaults" in input ? missionDefaultsFor(input.defaults, template) : input.profiles
-  return { draft, payload: freezeCompareProfiles(template, draft, coordinatorModel) }
-}
-
-export interface MissionCreationSelection {
-  preferences?: typeof MISSION_PREFERENCES_UNAVAILABLE
-  profiles: Required<MissionProfiles>
-  taskMode: MissionTaskMode
-  origins: { coordinator: MissionDefaultOrigin; roles: Record<string, MissionDefaultOrigin>; taskMode: MissionDefaultOrigin }
-}
+const origin = z.enum(MISSION_DEFAULT_ORIGINS)
+export const missionCreationSelectionSchema = z.object({
+  profiles: missionProfilesInputSchema.transform((profiles, context) => {
+    if (profiles?.coordinator === undefined || profiles.roles === undefined) {
+      context.addIssue({ code: "custom", message: "Incomplete Mission profile selection" }); return z.NEVER
+    }
+    return { coordinator: profiles.coordinator, roles: profiles.roles }
+  }),
+  taskMode: missionTaskModeInputSchema,
+  origins: z.object({ coordinator: origin, roles: z.record(z.string(), origin), taskMode: origin }).strict(),
+  preferences: z.literal(MISSION_PREFERENCES_UNAVAILABLE).optional(),
+}).strict()
+export type MissionCreationSelection = z.infer<typeof missionCreationSelectionSchema>
 
 /** Whole explicit slots and an explicit policy leave nothing for preferences to supply. */
 export function hasExplicitMissionCreationChoices(input: {
@@ -120,7 +120,7 @@ export function resolveMissionCreationDefaults(input: {
 }): MissionCreationSelection {
   if (!validMissionDefaults(input.preferences)) throw new MissionPreferencesError()
   const preferences = normalizeMissionDefaults(input.preferences)
-  const { draft: defaults } = effectiveMissionProfiles(input.template, { defaults: preferences })
+  const defaults = missionDefaultsFor(preferences, input.template)
   const explicit = parseMissionProfiles(input.profiles)
   validateMissionProfiles(input.template, explicit)
   const slot = (requested?: MissionExecution, preferred?: MissionExecution): { execution: MissionExecution; origin: MissionDefaultOrigin } => ({
@@ -139,8 +139,8 @@ export function resolveMissionCreationDefaults(input: {
     origins[role] = selected.origin
   }
   const taskMode = resolveTaskMode(preferences, input.template, input.taskMode)
-  return structuredClone({
-    profiles: effectiveMissionProfiles(input.template, { profiles: { coordinator: coordinator.execution, roles } }, input.coordinatorModel).payload as Required<MissionProfiles>,
+  return missionCreationSelectionSchema.parse({
+    profiles: freezeCompareProfiles(input.template, { coordinator: coordinator.execution, roles }, input.coordinatorModel),
     taskMode: taskMode.taskMode,
     origins: { coordinator: coordinator.origin, roles: origins, taskMode: taskMode.origin },
   })

@@ -138,11 +138,12 @@ refuse otherwise. Only one-time coordinators are offered and told about
   receives `mission-not-found` with guidance to use the Missions editor. Never
   create an intermediate mission solely to prepare others.
 
+### Mission profile selection and creation recovery
+
   Both `mission.prepare` and `mission.inspect({ start })` resolve omitted
   coordinator/role profiles and `taskMode` from the owning CodeNomad backend's
   `ui.settings.missionProfileDefaults`. The editor and server share
-  `missions/profile-defaults.ts`, including `effectiveMissionProfiles` for editable
-  drafts and frozen creation payloads: a playbook's slot overrides the global `all`
+  `missions/profile-defaults.ts` and `freezeCompareProfiles`: a playbook's slot overrides the global `all`
   slot; the global `specialist` supplies task roles, with the Compare judge using
   the coordinator's model by default. Each supplied profile slot wins whole,
   including `{}` (OpenCode defaults) or an agent-only profile; `profiles: {}`
@@ -154,11 +155,11 @@ refuse otherwise. Only one-time coordinators are offered and told about
   `native`. Missing profile preferences fall back to OpenCode defaults. Supplying
   the coordinator, every exact role of the selected template and `taskMode` skips
   backend preferences entirely; `{}` counts as an explicit profile slot. All
-  origins are `explicit`, and preference availability stays unobserved. Unused
-  unreadable or invalid preferences are irrelevant. Partial or omitted selections
-  read the owning backend's preferences.
+  origins are `explicit`, and preference availability stays unobserved. Partial or
+  omitted selections read the owning backend's preferences.
 
-  Creation responses include `selection: { profiles, taskMode, origins }`:
+  Preparation responses and inspections with creation metadata include
+  `selection: { profiles, taskMode, origins }`:
   the saved coordinator and every role of the selected playbook, plus origins
   `explicit`, `preference` or `opencode-default` for the coordinator, each role
   and task mode. A chosen Compare judge slot retains its explicit/preference origin
@@ -172,6 +173,11 @@ refuse otherwise. Only one-time coordinators are offered and told about
   check still applies. An explicit-profile mismatch keeps the generic
   native-profile error.
 
+  `inspect({ start })` reads preferences before entering the project mutation
+  lane. Admission rereads creation events and document defaults under that lane;
+  already recorded choices win over concurrent preference results. Document-mode
+  replay rechecks the coordinator Location and original creation digest.
+
   When preferences are needed, with no bridge presence or zero proven owning backends, `inspect({ start })`
   uses explicit inputs and OpenCode defaults for omitted choices (`native` task-mode
   fallback), with origins `explicit` or `opencode-default` and
@@ -182,9 +188,14 @@ refuse otherwise. Only one-time coordinators are offered and told about
   `mission-preferences-unavailable`; invalid preferences return
   `mission-preferences-invalid`. These failures refuse creation and ask for
   recovery or fully explicit choices. Discovery includes the Windows registration
-  directory under WSL. A local registration whose filename's publishing PID is
-  proven dead is absent even when its contents are unreadable; unreadable state
-  with a live or indeterminate local publisher refuses resolution. A registration
+  directory under WSL. Local discovery checks the filename's publishing PID before
+  reading the file: PIDs outside 1–2³¹−1 and `ESRCH` establish absence; other
+  process-probe errors retain liveness conservatively. Best-effort pruning removes
+  recognized local registrations whose filename or parsed PID establishes absence.
+  A file removed between enumeration and open is absent. Other file-I/O failures
+  retain indeterminate ownership in strict discovery. A local registration whose
+  publishing PID is proven dead is absent even when its contents are unreadable;
+  unreadable state with a live or indeterminate local publisher refuses resolution. A registration
   whose endpoint refuses the connection is known absent. WSL skips unparseable
   registrations in the Windows directory (including unsupported schemas, oversized
   files and invalid URLs): they offer no usable authenticated bridge endpoint or
@@ -197,12 +208,18 @@ refuse otherwise. Only one-time coordinators are offered and told about
   Git/WSL ownership-read failures remain indeterminate and refuse resolution.
   `mission.prepare` requires an owning backend for fenced creation even when
   profile resolution can use the no-owner fallback. Fully explicit choices make
-  no preference request; preparation still requires its owning backend.
+  no preference request; preparation still requires its owning backend. Before
+  sending creation provenance, preparation requires the backend's positive
+  `missionCreationDefaults` capability. Missing support returns the update-required
+  refusal before dispatch and releases only newly reserved choices; previous
+  uncertain outcomes remain retained.
 
   Missing Windows interop executables (`ENOENT`/`ENOEXEC` from `cmd.exe` or
   `wslpath`) establish absence of reachable Windows backends for that WSL process;
-  local discovery continues. Uncertain launch failures refuse resolution. Legacy
-  backends without negative ownership proof or preference-command support return
+  local discovery continues. Timeouts, failed commands and uncertain path results
+  refuse strict discovery. Path discovery is asynchronous and concurrent requests
+  share its pending lookup. Failed results are cached for two seconds, then retried
+  so restored interop can become available to a later creation. Legacy backends without negative ownership proof or preference-command support return
   `mission-preferences-update-required`: update CodeNomad before inheriting defaults.
   A live backend's preferences stay protected by this refusal.
 
@@ -223,6 +240,10 @@ refuse otherwise. Only one-time coordinators are offered and told about
   capacity, retry the original requestIDs to
   recover completed preparations and release their slots, or wait for their
   24-hour retention to expire.
+
+  Capacity scans skip unreadable intent entries while preserving their bytes.
+  Retrying that exact requestID still refuses unreadable evidence, preventing
+  replay of a possibly dispatched preparation; unrelated requests remain usable.
 
   A clock rollback keeps future-dated intents fresh until their stored creation
   time has aged through the retention window; retries reuse their saved choices.

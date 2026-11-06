@@ -79,7 +79,9 @@ export class MissionCreationIntents {
       for (const entry of page.entries) {
         if (!entry.key.startsWith(this.prefix) || after !== undefined && entry.key <= after) throw new MissionControlError("Mission preparation storage is unreadable", "invalid-journal")
         if (entry.value === null) continue
-        const saved = parseIntent(entry.value)
+        let saved: ReturnType<typeof parseIntent>
+        try { saved = parseIntent(entry.value) }
+        catch { continue } // Keep damaged evidence intact; a direct read of its ID still refuses.
         if (this.expired(saved.createdAt)) await this.clear(entry.key.slice(this.prefix.length))
         else if (++count >= MISSION_CREATION_INTENT_LIMIT) return count
       }
