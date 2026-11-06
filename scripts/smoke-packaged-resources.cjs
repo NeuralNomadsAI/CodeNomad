@@ -25,6 +25,7 @@ function parseArgs(argv) {
     if (arg === "--resources") options.resources = argv[++index]
     else if (arg === "--loading") options.loading = argv[++index]
     else if (arg === "--target") options.target = argv[++index]
+    else if (arg === "--electron") options.electron = argv[++index] || require("electron")
     else throw new Error(`Unknown argument: ${arg}`)
   }
   if (!options.resources) throw new Error("Missing --resources <path>")
@@ -63,16 +64,18 @@ function run(command, args, options = {}) {
   return result
 }
 
-function smokeServer(resourcesRoot, target) {
+function smokeServer(resourcesRoot, target, electron) {
   const serverRoot = path.join(resourcesRoot, "server")
   const entrypoint = path.join(serverRoot, "dist", "bin.js")
   // Remote Control's self-contained OpenTunnel bundle, loaded on demand.
   const remoteTunnel = path.join(serverRoot, "dist", "remote-control", "tunnel-runtime.js")
   // The web app's icon, which also names Tauri's notifications on Windows.
   const appIcon = path.join(serverRoot, "public", "pwa-192x192.png")
-  const node = nodeBinary(resourcesRoot, target)
+  const node = electron ? path.resolve(electron) : nodeBinary(resourcesRoot, target)
+  const npm = electron ? path.join(resourcesRoot, "node", target, "npm", "bin", "npm-cli.js")
+    : path.join(resourcesRoot, "node", target, target.startsWith("win32-") ? "node_modules" : "lib/node_modules", "npm", "bin", "npm-cli.js")
 
-  for (const requiredPath of [node, entrypoint, remoteTunnel, appIcon, path.join(serverRoot, "node_modules")]) {
+  for (const requiredPath of [npm, node, entrypoint, remoteTunnel, appIcon, path.join(serverRoot, "node_modules")]) {
     if (!fs.existsSync(requiredPath)) throw new Error(`Missing packaged runtime path: ${requiredPath}`)
   }
 
@@ -82,18 +85,30 @@ function smokeServer(resourcesRoot, target) {
   }
 
   console.log(`packaged server static checks ok for ${target}`)
+  if (electron && fs.existsSync(nodeBinary(resourcesRoot, target))) throw new Error("Electron resources contain a redundant Node executable")
 
   if (!canExecuteTarget(target)) {
     console.log(`skipping executable smoke for ${target} on host ${platformDirName()}`)
     return
   }
 
-  const version = run(node, ["--version"], { stdio: "pipe", encoding: "utf8" }).stdout.trim()
-  if (version !== MANAGED_NODE_VERSION) {
+  // The Electron backend's runtime variables: the server must load without app.asar.
+  const env = electron ? { ...process.env, ELECTRON_RUN_AS_NODE: "1", ELECTRON_NO_ASAR: "1" } : process.env
+  const version = run(node, ["--version"], { stdio: "pipe", encoding: "utf8", env }).stdout.trim()
+  if (!electron && version !== MANAGED_NODE_VERSION) {
     throw new Error(`Packaged Node version ${version} does not match ${MANAGED_NODE_VERSION}`)
   }
-  console.log(`packaged Node version ok: ${version}`)
-  run(node, [entrypoint, "--version"])
+  console.log(`${electron ? "Electron's integrated" : "packaged"} Node version ok: ${version}`)
+  // npm only warns about an unsupported engine; Electron's Node must satisfy it.
+  const npmRoot = path.dirname(path.dirname(npm))
+  const engine = JSON.parse(fs.readFileSync(path.join(npmRoot, "package.json"), "utf8")).engines?.node
+  const semver = require(path.join(npmRoot, "node_modules", "semver"))
+  if (!engine || !semver.satisfies(version, engine)) {
+    throw new Error(`Bundled npm requires Node ${engine ?? "(undeclared)"}, but the server runtime reports ${version}`)
+  }
+  console.log(`bundled npm engine ok: ${version} satisfies ${engine}`)
+  run(node, [npm, "--version"], { env })
+  run(node, [entrypoint, "--version"], { env })
 
   const importScript = [
     `for (const name of ${JSON.stringify(requiredPackages)}) await import(name);`,
@@ -103,7 +118,7 @@ function smokeServer(resourcesRoot, target) {
   ].join(" ")
 
   // Resolve from the packaged server, not the build checkout. The V2 client is ESM-only.
-  run(node, ["--input-type=module", "-e", importScript], { cwd: serverRoot })
+  run(node, ["--input-type=module", "-e", importScript], { cwd: serverRoot, env })
 }
 
 function smokeLoadingAssets(loadingRoot) {
@@ -130,7 +145,7 @@ try {
   const options = parseArgs(process.argv.slice(2))
   const resourcesRoot = path.resolve(options.resources)
   const target = options.target ?? platformDirName()
-  smokeServer(resourcesRoot, target)
+  smokeServer(resourcesRoot, target, options.electron)
   smokeLoadingAssets(options.loading ? path.resolve(options.loading) : null)
 } catch (error) {
   console.error("[smoke-packaged-resources] failed:", error)

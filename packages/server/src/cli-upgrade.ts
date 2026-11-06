@@ -47,6 +47,7 @@ export function runCliUpgrade(version?: string, env: NodeJS.ProcessEnv = process
   console.log(`Upgrading CodeNomad with: ${formatUpgradeCommand(upgrade)}`)
 
   return new Promise((resolve) => {
+    // console-window: the standalone CLI's package manager runs in the user's terminal.
     const child = spawn(upgrade.command, upgrade.args, {
       env,
       shell: process.platform === "win32",

@@ -54,6 +54,6 @@ Ein bereits laufender Prozess übernimmt neuen Code nicht allein durch npm-Insta
 
 CodeNomad zu aktualisieren aktualisiert nicht die ausgewählte OpenCode-CLI. Diese CLI zu aktualisieren startet nicht den laufenden gemeinsamen Daemon neu. Native Konfiguration neu zu laden ist ein weiterer expliziter Vorgang mit eigenen Auswirkungen auf geladene Locations und Anfragen.
 
-Desktop-Node-/npm-Ressourcen werden mit der Anwendung ausgeliefert; ein Anwendungsrelease liefert ihre Updates. Dies ersetzt weder System-Node/npm, Electrons interne Laufzeit, Plattform-Webview noch den unabhängig verwalteten OpenCode-Dienst.
+Desktop-Laufzeiten werden mit der Anwendung aktualisiert: Electron nutzt sein integriertes Node, Tauri bündelt Node, und beide enthalten npm. System-Node/npm, Plattform-Webview und OpenCode-Dienst werden unabhängig verwaltet.
 
 Verwenden Sie **Einstellungen → OpenCode** für Laufzeitauswahl, Installation/Update und explizite Dienststeuerung. Prüfen Sie vor Neustart/Neuladen die [OpenCode-Einrichtung](opencode.md), besonders bei geteiltem Daemon mit anderen Fenstern/Nutzern oder Missionen. Wiederholen Sie niemals einen ungewissen Prompt/eine Änderung allein wegen abgeschlossenem Update/Wiederverbinden.

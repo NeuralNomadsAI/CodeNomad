@@ -10,7 +10,7 @@
 
 | プラットフォーム | Electron リリース | Tauri リリース | 注意事項 |
 | --- | --- | --- | --- |
-| macOS | ZIP、Intel または Apple Silicon | ZIP、Intel または Apple Silicon | 同梱ランタイムには macOS 13.5 以降が必要です。 |
+| macOS | ZIP、Intel または Apple Silicon | ZIP、Intel または Apple Silicon | macOS 13.5 以降（Tauri 同梱の Node に必要。Electron も同じ最小バージョンを指定）。 |
 | Windows | ZIP、x64 | インストーラー、x64 | Windows 10 以降。Tauri は WebView2 を使用します。 |
 | Linux | Debian パッケージ、x64 | AppImage、x64 | Ubuntu 24.04 でビルド・テスト済み。古いディストリビューションとの互換性は保証されません。 |
 
@@ -47,7 +47,7 @@ Electron の Debian インストールでは Chromium のサンドボックス�
 | --- | --- | --- |
 | OpenCode CLI | 該当する場合は選択した WSL ディストリビューションを含む、選択した実行ホスト | 最低 **2.2.3**。推奨／検証済みの対象は **2.2.5**。新しいバージョンやカスタム版は、未テストという理由で禁止せず、契約を検証します。 |
 | Git | CodeNomad バックエンドのアカウントの `PATH` | リポジトリの識別、Git 操作、ワークツリーに必要です。 |
-| Node.js/npm | スタンドアロンサーバーおよびソースビルドのホスト | Node.js 24 LTS。再現可能なソースビルドは `.node-version`（**24.20.0**）を使用します。デスクトップのランタイム／インストールリソースに同梱されています。 |
+| Node.js/npm | スタンドアロンサーバーおよびソースビルドのホスト | Node.js 24 LTS。再現可能なソースビルドは `.node-version`（**24.20.0**）を使用します。デスクトップリリースは独自のものを含みます（Electron 内蔵の Node または Tauri 同梱の Node、いずれも npm 付き）。 |
 | ワークスペースフォルダー | バックエンドからアクセスできるディスク | 明示的に開いた物理フォルダー。リモートブラウザーから推測した端末ローカルのフォルダーではありません。 |
 
 Windows では、コマンドライン／サードパーティーからのアクセスを有効にして [Git for Windows](https://gitforwindows.org/) をインストールしてください。ユーザーが書き込めるユーザー単位のインストールで十分です。macOS/Linux では、[Git のプラットフォーム別手順](https://git-scm.com/downloads)を使用してください。

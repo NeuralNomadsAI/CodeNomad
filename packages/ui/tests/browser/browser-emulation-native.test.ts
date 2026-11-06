@@ -23,6 +23,7 @@ test("native Chromium emulation applies mobile media, UA, density and orientatio
     const env = { ...process.env, CODENOMAD_TEST_PROFILE: join(temp, "profile"), CODENOMAD_EMULATION_MODULE: modulePath,
       CODENOMAD_EMULATION_URL: `http://127.0.0.1:${(server.address() as any).port}/` }
     delete env.ELECTRON_RUN_AS_NODE
+    delete env.ELECTRON_NO_ASAR
     app = await _electron.launch({ executablePath: process.env.CODENOMAD_TEST_ELECTRON || electronPath,
       args: ["--no-sandbox", fileURLToPath(new URL("fixtures/browser-emulation-electron.cjs", import.meta.url))], env })
     const page = await app.firstWindow()

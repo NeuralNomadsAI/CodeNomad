@@ -52,6 +52,7 @@ function runGitClone(repositoryUrl: string, destinationPath: string): Promise<vo
     const child = spawn("git", ["clone", "--", repositoryUrl, destinationPath], {
       cwd: parentPath,
       stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
     })
 
     let stderr = ""

@@ -10,7 +10,7 @@
 
 | 平台 | Electron 发行包 | Tauri 发行包 | 平台说明 |
 | --- | --- | --- | --- |
-| macOS | ZIP，Intel 或 Apple Silicon | ZIP，Intel 或 Apple Silicon | 随附运行时要求 macOS 13.5 或更高版本。 |
+| macOS | ZIP，Intel 或 Apple Silicon | ZIP，Intel 或 Apple Silicon | macOS 13.5 或更高版本（Tauri 附带的 Node 需要；Electron 声明相同的最低版本）。 |
 | Windows | ZIP，x64 | 安装程序，x64 | Windows 10 或更高版本；Tauri 使用 WebView2。 |
 | Linux | Debian 软件包，x64 | AppImage，x64 | 在 Ubuntu 24.04 上构建和测试；不保证兼容更早的发行版。 |
 
@@ -47,7 +47,7 @@ Electron Debian 安装过程会配置 Chromium 沙箱。不要通过禁用沙箱
 | --- | --- | --- |
 | OpenCode CLI | 所选执行主机，适用时包括所选 WSL 发行版 | 最低 **2.2.3**；建议/已验证目标为 **2.2.5**。更新版本或自定义版本会接受契约验证，而非因未经测试就被禁止。 |
 | Git | CodeNomad 后端账户的 `PATH` | 仓库身份识别、Git 操作和工作树必需。 |
-| Node.js/npm | 独立服务器和源码构建主机 | Node.js 24 LTS；可重现的源码构建使用 `.node-version`（**24.20.0**）。桌面运行时/安装资源已随附。 |
+| Node.js/npm | 独立服务器和源码构建主机 | Node.js 24 LTS；可重现的源码构建使用 `.node-version`（**24.20.0**）。桌面发行包自带：Electron 内置 Node 或 Tauri 附带 Node，均含 npm。 |
 | 工作区文件夹 | 后端可访问的磁盘 | 显式打开的物理文件夹，而非远程浏览器推断出的设备本地文件夹。 |
 
 Windows 上，请安装 [Git for Windows](https://gitforwindows.org/)，并启用命令行/第三方访问。用户可写的按用户安装即可。macOS/Linux 上，请使用 [Git 平台说明](https://git-scm.com/downloads)。
