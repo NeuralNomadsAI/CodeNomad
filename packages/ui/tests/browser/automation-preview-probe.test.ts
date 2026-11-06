@@ -41,7 +41,7 @@ test("PROBE first key: real-test sequence with one difference at a time", { time
     outfile: shared, bundle: true, platform: "node", format: "cjs", external: ["electron"],
     define: { "import.meta.url": JSON.stringify(pathToFileURL(shared).href) } })
   try {
-    for (const variant of [...VARIANTS, ...VARIANTS]) {
+    for (const variant of [VARIANTS[0], VARIANTS[0], VARIANTS[0], VARIANTS[0], VARIANTS[0]]) {
       // Like the real test: a fresh directory holding the engine bundle is the Electron profile.
       const profile = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-engine-"))
       const bundle = path.join(profile, "engine.cjs")
@@ -63,12 +63,19 @@ test("PROBE first key: real-test sequence with one difference at a time", { time
         const title = /textbox "Title"[^\n]*?\[(b\d+e\d+)\]/.exec(outline)![1]
         await execute({ action: "type", ref: title, text: "Pilot", clear: true })
         if (variant.stateBefore) await app.evaluate(() => (globalThis as any).automationPreview.probe.state())
+        await app.evaluate(() => (globalThis as any).automationPreview.probe.mark("press a"))
         const pressed = Date.now()
         const press = await execute({ action: "press", key: "a", ref: title })
         const pressMs = Date.now() - pressed
         const wait = await execute({ action: "wait", text: "Key:a", gone: false, timeout: 3000 }).then(result => result, error => ({ found: false, error: String(error).slice(0, 120) }))
+        let second: unknown
+        if (!wait.found) {
+          await execute({ action: "press", key: "b", ref: title })
+          second = await execute({ action: "wait", text: "Key:b", gone: false, timeout: 1000 }).then(result => result.found, () => false)
+        }
+        const timeline = await app.evaluate(() => (globalThis as any).automationPreview.probe.timeline())
         const after = await app.evaluate(() => (globalThis as any).automationPreview.probe.state())
-        console.log("PROBE " + JSON.stringify({ variant: variant.name, found: wait.found, waitedMs: wait.waitedMs, pressMs, focused: press.focused,
+        console.log("PROBE " + JSON.stringify({ variant: variant.name, found: wait.found, waitedMs: wait.waitedMs, pressMs, second, timeline,
           after: { result: after.page.result, active: after.page.active, hasFocus: after.page.hasFocus, guestFocused: after.guestFocused } }))
       } catch (error) {
         console.log("PROBE " + JSON.stringify({ variant: variant.name, error: String(error).slice(0, 300) }))

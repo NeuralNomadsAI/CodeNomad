@@ -64,11 +64,18 @@ test("the shared engine drives a real Electron preview through the guarded nativ
   const ref = (pattern: RegExp) => new RegExp(`${pattern.source}[^\\n]*?\\[(b\\d+e\\d+)\\]`).exec(outline)![1]
   const title = ref(/textbox "Title"/), plan = ref(/combobox "Plan"/), confirm = ref(/button "Confirm"/)
   assert.deepEqual((await execute({ action: "type", ref: title, text: "Pilot", clear: true })).value, "Pilot")
+  await running.evaluate(() => (globalThis as any).automationPreview.probe.mark("press a"))
   await execute({ action: "press", key: "a", ref: title })
-  // TEMPORARY runner probe (removed before merge): late or lost.
+  // TEMPORARY runner probe (removed before merge): is only the first key lost, and when.
   await execute({ action: "wait", text: "Key:a", gone: false, timeout: 500 }).catch(async error => {
-    const later = await execute({ action: "wait", text: "Key:a", gone: false, timeout: 3000 }).catch(late => ({ found: false, error: String(late).slice(0, 80) }))
-    console.log("PROBE real-test " + JSON.stringify(later))
+    const found = (text: string) => execute({ action: "wait", text, gone: false, timeout: 1000 }).then(result => result.found, () => false)
+    await running.evaluate(() => (globalThis as any).automationPreview.probe.mark("press b (engine, no focus)"))
+    await execute({ action: "press", key: "b", ref: title })
+    const b = await found("Key:b")
+    await running.evaluate(() => (globalThis as any).automationPreview.probe.mark("sendInputEvent c"))
+    await running.evaluate(() => (globalThis as any).automationPreview.probe.sendKey("c"))
+    const c = await found("Key:c")
+    console.log("PROBE real-test " + JSON.stringify({ b, c, ...(await running.evaluate(() => (globalThis as any).automationPreview.probe.timeline())) }))
     throw error
   })
   assert.equal((await execute({ action: "wait", text: "Key:a", gone: false, timeout: 500 })).found, true,

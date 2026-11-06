@@ -2,6 +2,17 @@
 // ownership/registration checks still run; visibility is supplied by this fixture explicitly.
 const { app, BrowserWindow } = require("electron")
 app.setPath("userData", process.env.CODENOMAD_TEST_PROFILE)
+// TEMPORARY runner probe (removed before merge): process and GPU timeline from launch.
+const launched = Date.now()
+const timeline = []
+const mark = (what, detail) => timeline.push(`${Date.now() - launched}ms ${what}${detail ? " " + JSON.stringify(detail) : ""}`)
+app.on("child-process-gone", (_event, details) => mark("child-process-gone", details))
+app.on("render-process-gone", (_event, _contents, details) => mark("render-process-gone", details))
+app.on("gpu-info-update", () => mark("gpu-info-update"))
+app.on("web-contents-created", (_event, contents) => {
+  contents.on("did-finish-load", () => mark(`did-finish-load ${contents.getType()}`))
+  contents.on("render-process-gone", (_e, details) => mark(`render-gone ${contents.getType()}`, details))
+})
 app.whenReady().then(async () => {
   const { BrowserController, BrowserPage, handleNativeBrowserRequest } = require(process.env.CODENOMAD_TEST_AUTOMATION_BUNDLE)
   const window = new BrowserWindow({ show: false, width: 900, height: 700,
@@ -33,6 +44,10 @@ app.whenReady().then(async () => {
     // TEMPORARY runner probe (removed before merge).
     probe: {
       browserKeys: [],
+      mark: what => mark(what),
+      timeline: async () => ({ timeline, gpu: app.getGPUFeatureStatus().gpu_compositing,
+        metrics: app.getAppMetrics().map(metric => `${metric.type}:${metric.pid}`) }),
+      sendKey: key => { for (const type of ["keyDown", "char", "keyUp"]) guest.sendInputEvent({ type, keyCode: key }) },
       watch() { guest.on("before-input-event", (_event, input) => this.browserKeys.push(`${input.type}:${input.key}`)) },
       async prepare(variant) {
         if (variant === "focus") guest.focus()
