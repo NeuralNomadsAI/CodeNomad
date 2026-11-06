@@ -42,23 +42,24 @@
   of the PR OpenCode compatibility matrix run real npm lifecycle scripts through
   the development Electron executable on Windows, Linux and macOS.
 - Dependabot proposes Tauri crate updates weekly against `dev` from the Cargo
-  workspace `packages/tauri-app` (`tauri`, `tauri-build`, `tauri-plugin-*`, and
-  lockfile-only `tauri-runtime*` and `wry` updates; no other crate): minor and
-  patch updates in one grouped PR, each major in its own PR; merges are manual.
-  Before merging, the maintainer reviews the Tauri, runtime, Wry, Tao and plugin
-  release notes of every version crossed, re-qualifies the vendored crates
-  (`packages/tauri-app/vendor/README.md`) and keeps `@tauri-apps/api` and the
-  plugin JavaScript packages (`packages/ui/package.json`) on the crates'
-  major/minor: the CLI's version check runs from `packages/tauri-app` and does
-  not see them. The vendored Tao and updater are path patches, which Dependabot
-  does not update; `packages/tauri-app/scripts/vendored-patches.test.mjs` fails a
-  PR whose lockfile stops resolving them. Platform crates shared with Wry
-  (`webview2-com`, `windows-core`, `webkit2gtk`, `gtk`, `rfd`) are direct
-  dependencies on the versions Tauri resolves; an update that moves them needs a
-  manual manifest change.
+  workspace `packages/tauri-app`, limited to `tauri`, `tauri-build`,
+  `tauri-plugin-*`, `tauri-runtime*` (also the requirements of the runtime
+  regression fixture, `tests/windows-runner-refcount`) and lockfile-only `wry`
+  updates: minor and patch updates in one grouped PR, each major in its own PR;
+  merges are manual. Before merging, the maintainer reviews the Tauri, runtime,
+  Wry, Tao and plugin release notes of every version crossed, re-qualifies the
+  vendored crates (`packages/tauri-app/vendor/README.md`) and keeps
+  `@tauri-apps/api` and the plugin JavaScript packages (`packages/ui/package.json`)
+  on the crates' major/minor: the CLI's version check runs from
+  `packages/tauri-app` and does not see them. The vendored Tao and updater are
+  path patches, which Dependabot does not update;
+  `packages/tauri-app/scripts/vendored-patches.test.mjs` fails a PR whose
+  lockfile stops resolving them. Platform crates shared with Wry (`webview2-com`,
+  `windows-core`, `webkit2gtk`, `gtk`) and with the dialog plugin (`rfd`) are
+  direct dependencies on the versions Tauri and its plugins resolve; an update
+  that moves them needs a manual manifest change.
 - WebView2 (Evergreen runtime on Windows), WKWebView (macOS) and WebKitGTK
-  (Linux) are system-managed: the Tauri application ships no web engine, and
-  none of this maintenance updates them.
+  (Linux) are system components updated by the operating system.
 - Dependabot checks GitHub Actions weekly and proposes updates against `dev`;
   merges are manual. Composite actions that follow their upstream
   `stable`/latest major stay on those supported references.
@@ -93,4 +94,4 @@ Run `npm run check:runtime` locally for the same read-only assessment.
 
 - Bundled runtime maintenance keeps `.node-version` exact and proposes only same-major LTS upgrades as regular, non-draft PRs without automatic merge. The scheduled npm CLI/dependency audit is warning-only: never independently replace bundled npm, auto-fix dependencies, merge or publish from that check, and never report a failed audit as clean. Application runtime changes require reviewed builds/releases.
 - Documents reference `.node-version` and never restate the pinned Node or bundled npm version: maintenance updates only that file.
-- Documents never restate Tauri crate or CLI versions: they point to `packages/tauri-app/Cargo.toml`/`Cargo.lock` and the `package.json` files Dependabot updates. Never merge a Tauri update whose vendored crates fail re-qualification or whose `@tauri-apps/*` packages trail the crates' minor.
+- Documents never restate Tauri crate or CLI versions: they point to `packages/tauri-app/Cargo.toml`/`Cargo.lock` and the `@tauri-apps/*` entries of `packages/tauri-app/package.json` and `packages/ui/package.json`. Never merge a Tauri update whose vendored crates fail re-qualification or whose `@tauri-apps/*` packages trail the crates' minor.
