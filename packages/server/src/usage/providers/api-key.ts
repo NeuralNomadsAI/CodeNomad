@@ -24,21 +24,26 @@ const kimi: UsageProvider = {
     const seen = new Set<string>()
     const credentials = aliases.flatMap(alias => {
       const key = getCredential(auth, [alias], ["key", "token"])
-      if (!key || seen.has(key)) return []
-      seen.add(key)
-      return [{ alias, key }]
+      const host = alias === "kimi-code-plan-global" ? "api.kimi.ai" : "api.kimi.com"
+      const identity = JSON.stringify([host, key])
+      if (!key || seen.has(identity)) return []
+      seen.add(identity)
+      return [{ host, key }]
     })
     if (!credentials.length) return notConfigured(this.id, this.name)
     // One deadline for every selected integration, also cancelled by the route/selection owner.
     const deadline = AbortSignal.timeout(12_000)
+    const expiresAt = performance.now() + 12_000
     const signal = context?.signal ? AbortSignal.any([context.signal, deadline]) : deadline
     let failure = result(this.id, this.name, { ok: false, configured: true })
-    for (const { alias, key } of credentials) {
+    for (const [index, { host, key }] of credentials.entries()) {
+      // Reserve an equal share of the remaining budget for every later destination/key.
+      const attemptSignal = AbortSignal.any([signal, AbortSignal.timeout(Math.max(1,
+        Math.ceil((expiresAt - performance.now()) / (credentials.length - index))))])
       failure = await safeFetch(this.id, this.name, async () => {
-        const host = alias === "kimi-code-plan-global" ? "api.kimi.ai" : "api.kimi.com"
         const payload = asObject(await fetchBoundedJson(`https://${host}/coding/v1/usages`, {
           Authorization: `Bearer ${key}`, Accept: "application/json",
-        }, signal))
+        }, attemptSignal))
         const windows: Record<string, ReturnType<typeof toUsageWindow>> = {}
         const usage = payload?.usage
         if (usage) {
@@ -75,7 +80,7 @@ const kimi: UsageProvider = {
             resetAt: typeof source?.reset_time === "string" ? toTimestamp(source.reset_time) : null })
         }
         if (!Object.values(windows).some(window => window.usedPercent !== null)) throw new Error("Quota unavailable")
-        signal.throwIfAborted()
+        attemptSignal.throwIfAborted()
         return { windows }
       })
       if (failure.ok || signal.aborted) break

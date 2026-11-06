@@ -185,7 +185,9 @@ at `https://api.kimi.com/coding/v1` and `kimi-code-plan-global` at
 `https://api.kimi.ai/coding/v1`; `kimi-for-coding` and `kimi` use the China host.
 The reader sends Bearer-authenticated GET `/usages` through the bounded transport.
 It tries the active projected credentials only, session integration first, with
-duplicate keys removed and one 12-second deadline combined with the caller's signal.
+duplicate host/key pairs removed and one 12-second deadline combined with the caller's signal.
+Each attempt receives an equal share of the remaining time, reserving a bounded
+opportunity for later credentials when an earlier destination stalls.
 Selection adapters supply only their explicit candidate. The session integration
 from native provider settings participates in display-cache identity.
 The official [managed usage parser](https://github.com/MoonshotAI/kimi-code/blob/main/packages/oauth/src/managed-usage.ts)

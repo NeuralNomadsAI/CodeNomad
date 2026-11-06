@@ -30,7 +30,7 @@ for (const alias of kimiAliases) test(`Kimi alias ${alias} uses its official hos
   assert.deepEqual(calls, [`https://${alias === "kimi-code-plan-global" ? "api.kimi.ai" : "api.kimi.com"}/coding/v1/usages`])
 })
 
-test("Kimi tries selected credentials in session-integration order, deduplicates keys and ignores inactive accounts", async t => {
+test("Kimi tries selected credentials in session-integration order, deduplicates host/key pairs and ignores inactive accounts", async t => {
   const calls: string[] = []
   t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
     const key = new Headers(init.headers).get("Authorization")!
@@ -40,11 +40,12 @@ test("Kimi tries selected credentials in session-integration order, deduplicates
   const auth = projectCredentials([
     { id: "global", integrationID: "kimi-code-plan-global", active: true, label: "global", value: { type: "key", key: "synthetic-failure" } },
     { id: "legacy", integrationID: "kimi-for-coding", active: true, label: "legacy", value: { type: "key", key: "synthetic-failure" } },
+    { id: "duplicate", integrationID: "kimi", active: true, label: "duplicate", value: { type: "key", key: "synthetic-failure" } },
     { id: "cn", integrationID: "kimi-code-plan-cn", active: true, label: "cn", value: { type: "key", key: "synthetic-success" } },
     { id: "inactive", integrationID: "kimi", active: false, label: "inactive", value: { type: "key", key: "synthetic-inactive" } },
   ])
   assert.equal((await kimi.fetchQuota(auth, { integrationID: "kimi-code-plan-global" })).ok, true)
-  assert.deepEqual(calls, ["Bearer synthetic-failure", "Bearer synthetic-success"])
+  assert.deepEqual(calls, ["Bearer synthetic-failure", "Bearer synthetic-failure", "Bearer synthetic-success"])
 })
 
 test("Kimi uses the session provider's verified native integration and skips missing keys", async t => {
@@ -63,6 +64,47 @@ test("Kimi uses the session provider's verified native integration and skips mis
   assert.deepEqual(requests, ["https://api.kimi.ai/coding/v1/usages"])
 })
 
+test("Kimi tries the same key at both China and global hosts", async t => {
+  const requests: string[] = []
+  t.mock.method(globalThis, "fetch", async (url: unknown) => {
+    requests.push(String(url))
+    return String(url).includes("api.kimi.ai/") ? respondWith(kimiPayload) : new Response(null, { status: 401 })
+  })
+  const response = await kimi.fetchQuota({
+    "kimi-code-plan-cn": "synthetic-shared-key", "kimi-code-plan-global": "synthetic-shared-key",
+  }, { integrationID: "kimi-code-plan-cn" })
+  assert.equal(response.ok, true)
+  assert.deepEqual(requests, ["https://api.kimi.com/coding/v1/usages", "https://api.kimi.ai/coding/v1/usages"])
+})
+
+test("Kimi reserves budget for global credentials when the China host stalls until cancellation", async t => {
+  const timeout = AbortSignal.timeout.bind(AbortSignal)
+  let globalDeadline: AbortSignal | undefined
+  t.mock.method(AbortSignal, "timeout", (ms: number) => {
+    const signal = timeout(Math.ceil(ms / 100))
+    if (ms === 12_000) globalDeadline = signal
+    return signal
+  })
+  const requests: string[] = []
+  let firstSignal: AbortSignal | undefined
+  t.mock.method(globalThis, "fetch", async (url: unknown, init: RequestInit) => {
+    requests.push(String(url))
+    if (String(url).includes("api.kimi.ai/")) return respondWith(kimiPayload)
+    firstSignal = init.signal!
+    return await new Promise<Response>((_resolve, reject) => {
+      init.signal!.addEventListener("abort", () => reject(new Error("Synthetic stalled host")), { once: true })
+    })
+  })
+  const keepAlive = setTimeout(() => {}, 1000)
+  try {
+    const response = await kimi.fetchQuota({ "kimi-code-plan-cn": "synthetic-cn", "kimi-code-plan-global": "synthetic-global" })
+    assert.equal(response.ok, true)
+    assert.equal(firstSignal?.aborted, true)
+    assert.equal(globalDeadline?.aborted, false, "the global attempt finishes before the shared deadline")
+    assert.deepEqual(requests, ["https://api.kimi.com/coding/v1/usages", "https://api.kimi.ai/coding/v1/usages"])
+  } finally { clearTimeout(keepAlive) }
+})
+
 test("Kimi keeps the final HTTP failure and exposes no windows when all selected keys fail", async t => {
   let requests = 0
   t.mock.method(globalThis, "fetch", async () => new Response("synthetic-secret", { status: ++requests === 1 ? 401 : 403 }))
@@ -78,7 +120,7 @@ test("Kimi keeps the final HTTP failure and exposes no windows when all selected
 test("Kimi shares one sub-route deadline across attempts and stops on global timeout", async t => {
   const timeout = AbortSignal.timeout.bind(AbortSignal)
   const deadlines: number[] = []
-  t.mock.method(AbortSignal, "timeout", (ms: number) => { deadlines.push(ms); return timeout(30) })
+  t.mock.method(AbortSignal, "timeout", (ms: number) => { deadlines.push(ms); return timeout(ms === 12_000 ? 30 : 100) })
   const signals: AbortSignal[] = []
   t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
     signals.push(init.signal!)
@@ -91,9 +133,12 @@ test("Kimi shares one sub-route deadline across attempts and stops on global tim
   const keepAlive = setTimeout(() => {}, 1000)
   try {
     const response = await kimi.fetchQuota({ kimi: "synthetic-first", "kimi-code-plan-cn": "synthetic-second", "kimi-code-plan-global": "synthetic-third" })
-    assert.deepEqual(deadlines, [12_000])
+    assert.equal(deadlines[0], 12_000)
+    assert.equal(deadlines.length, 3)
+    assert.ok(deadlines[1] > 0 && deadlines[1] <= 4000)
+    assert.ok(deadlines[2] > 0 && deadlines[2] <= 6000)
     assert.equal(signals.length, 2)
-    assert.equal(signals[0], signals[1])
+    assert.notEqual(signals[0], signals[1], "each attempt has its own sub-deadline")
     assert.equal(signals[0].aborted, true)
     assert.equal(response.ok, false)
     assert.equal(response.usage, null)
