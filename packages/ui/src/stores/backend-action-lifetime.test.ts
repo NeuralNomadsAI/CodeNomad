@@ -7,6 +7,7 @@ import { BackendEvents } from "../lib/backend-events.ts"
 // Execute production module ASTs with bounded I/O dependencies. No application,
 // SDK connection, UI mount or replacement action implementation runs here.
 function production(path: string, bindings: Record<string, unknown>, expose: string[] = []) {
+  if (bindings.serverApi) bindings = { ...bindings, backendOf: () => ({ api: bindings.serverApi }) }
   const source = readFileSync(new URL(path, import.meta.url), "utf8")
   const parsed = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true)
   const stripped = ts.factory.updateSourceFile(parsed, parsed.statements.filter(node => !ts.isImportDeclaration(node)))

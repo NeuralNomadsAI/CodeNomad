@@ -79,6 +79,7 @@ import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
 import { attachEventSourceHandlers } from "./event-source-handlers"
 import { captureBackendOperation } from "./backend-operation"
+import { parseInstanceKey } from "./backend-identity"
 import { HttpResponseError, retryFileSearch } from "./retryable-file-search"
 import { deleteMissionRequest, type MissionDeletionRequest } from "./mission-cleanup"
 import { missionMutationRequest } from "./mission-mutation"
@@ -247,39 +248,39 @@ export function createServerApi(ctx: BackendHttp) {
     fetchPermissionReceipts(instanceId: string, sessionId: string, scope: { messageId: string } | { unanchored: true }, cursor?: string, signal?: AbortSignal): Promise<PermissionReceiptPage> {
       const params = new URLSearchParams("messageId" in scope ? { messageId: scope.messageId } : { unanchored: "true" })
       if (cursor) params.set("cursor", cursor)
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/sessions/${encodeURIComponent(sessionId)}/permission-receipts?${params}`, { signal })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/sessions/${encodeURIComponent(sessionId)}/permission-receipts?${params}`, { signal })
     },
     fetchHistoryWindow(instanceId: string, sessionID: string, target: NavigationTarget, signal?: AbortSignal): Promise<NavigationWindowResult> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/window`, {
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/session-history/window`, {
         method: "POST", body: JSON.stringify({ sessionID, target }), signal,
         // A transcript page, like the native message list: large tool images load on demand.
         headers: { [DEFERRED_MEDIA_HEADER]: DEFERRED_MEDIA_VALUE },
       })
     },
     fetchSessionOutline(instanceId: string, sessionID: string, cursor?: { after: number; through: number }, signal?: AbortSignal, after?: number, known?: OutlineCheckpoint[]): Promise<OutlineResult> {
-      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outline`, {
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/session-history/outline`, {
         method: "POST", body: JSON.stringify({ sessionID, cursor, after, known }), signal,
       }))
     },
     fetchOutlinePreviews(instanceId: string, sessionID: string, messageIDs: string[], signal?: AbortSignal): Promise<OutlinePreviewResult> {
-      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outlinePreview`, {
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/session-history/outlinePreview`, {
         method: "POST", body: JSON.stringify({ sessionID, messageIDs }), signal,
       }))
     },
     querySessionHistory(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryResult> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/query`, {
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/session-history/query`, {
         method: "POST", body: JSON.stringify(input), signal,
       })
     },
     queryRankedHistory(instanceId: string, input: HistoryRankedInput, signal?: AbortSignal): Promise<RankedHistoryResult> {
       const attachment = captureBackendOperation(instanceId, signal)
       signal = attachment.signal
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/ranked`, {
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/session-history/ranked`, {
         method: "POST", body: JSON.stringify(input), signal,
       })
     },
     pruneSessionHistory(instanceId: string, input: PruneBatch, signal?: AbortSignal): Promise<PruneBatchResult> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/prune`, {
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/session-history/prune`, {
         method: "POST", body: JSON.stringify(input), signal,
       })
     },
@@ -289,10 +290,10 @@ export function createServerApi(ctx: BackendHttp) {
       })
     },
     fetchSessionGoal(instanceId: string, sessionId: string, signal?: AbortSignal): Promise<SessionGoalResponse> {
-      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/sessions/${encodeURIComponent(sessionId)}/goal`, { signal }))
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/sessions/${encodeURIComponent(sessionId)}/goal`, { signal }))
     },
     pruneSessionMessage(instanceId: string, input: PruneRequest): Promise<PruneResult> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-pruning/prune`, {
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/session-pruning/prune`, {
         method: "POST", body: JSON.stringify(input),
       })
     },
@@ -518,7 +519,7 @@ export function createServerApi(ctx: BackendHttp) {
     getPendingRequests(id: string, directories: string[], signal?: AbortSignal, optionalDirectories: string[] = []): Promise<WorkspacePendingRequestsResponse> {
       const query = new URLSearchParams(directories.map((directory) => ["directories", directory]))
       for (const directory of optionalDirectories) query.append("optionalDirectories", directory)
-      return request(`/api/workspaces/${encodeURIComponent(id)}/pending-requests?${query}`, { signal })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(id).workspaceId)}/pending-requests?${query}`, { signal })
     },
     cloneWorkspaceRepository(payload: WorkspaceCloneRequest): Promise<WorkspaceCloneResponse> {
       return request<WorkspaceCloneResponse>("/api/workspaces/clone", {
@@ -955,12 +956,12 @@ export function createServerApi(ctx: BackendHttp) {
     },
     getYoloState(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
       return request<YoloStateResponse>(
-        `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}`,
+        `/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/yolo/sessions/${encodeURIComponent(sessionId)}`,
       )
     },
     toggleYolo(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
       return request<YoloStateResponse>(
-        `/workspaces/${encodeURIComponent(instanceId)}/yolo/sessions/${encodeURIComponent(sessionId)}/toggle`,
+        `/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/yolo/sessions/${encodeURIComponent(sessionId)}/toggle`,
         { method: "POST" },
       )
     },

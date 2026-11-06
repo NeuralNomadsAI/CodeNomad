@@ -1,5 +1,5 @@
 import { GOAL_CHANGED_EVENT, GOAL_COMMAND, type GoalCommandAction } from "../../../server/src/opencode/goal-contract"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { createEventRefreshScheduler } from "../lib/event-refresh-scheduler"
 import { tGlobal } from "../lib/i18n"
 import { showToastNotification } from "../lib/notifications"
@@ -9,7 +9,7 @@ import { executeCustomCommand } from "./session-actions"
 import { createSessionGoalStore } from "./session-goal-store"
 
 // The signal leaves the shared background budget's queue or aborts the request once the Session is hidden.
-export const sessionGoals = createSessionGoalStore((instanceId, sessionId, signal) => serverApi.fetchSessionGoal(instanceId, sessionId, signal), { signal: id => serverEvents.signalForInstance(id) })
+export const sessionGoals = createSessionGoalStore((instanceId, sessionId, signal) => backendOf(instanceId).api.fetchSessionGoal(instanceId, sessionId, signal), { signal: id => serverEvents.signalForInstance(id) })
 
 // Changes published while the stream was down are lost: re-read what is shown.
 const reconnects = createEventRefreshScheduler((instanceId, signal) => signal.aborted ? undefined : sessionGoals.refreshDemanded(instanceId))

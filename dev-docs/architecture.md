@@ -320,6 +320,8 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 
 #### Transport method families and IO authority
 
+Session and chat consumers resolve `backendOf(instanceId)` from the global instance key. Missing owners fail at admission. Root and attached OpenCode clients use that owner's SDK cache; the root proxy path and CodeNomad conversation, history, pruning, goal, pending-request and permission/Yolo routes strip the backend prefix only at the HTTP boundary. Native session/message, prompt, interruption, compact and revert operations share this SDK transport. Existing A/P attachment and request authority fences queue dispatch, continuation and publication; dispatched C mutations retain their selected client. Instance teardown clears the owning registered SDK cache; an absent owner permits local view cleanup. The registered production backend is local.
+
 `createServerApi` methods below retain their `BackendHttp`. **S** passes the supplied signal into HTTP/queued work; **scope** also carries `current()`/deadline for each transfer; **C** uses that captured client's request lifetime. **S+C** accepts request cancellation while retaining the admitted mutation's durable server-side outcome. Feature rows above separately specify admission/publication authority. Native SDK methods pass caller request options through `createInstanceFetch`, which composes any active attachment signal with Request/init cancellation. A dispatched mutation can commit server-side; durable receipts/resource cleanup retain client/request ownership, while runtime projection and rereads check the captured A.
 
 | Adapter family | Exact methods | IO authority |

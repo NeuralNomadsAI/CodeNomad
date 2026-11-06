@@ -1,7 +1,7 @@
 import type { SessionMessageInfo } from "@opencode/client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { contentRevision } from "../../../server/src/opencode/session-pruning/revision"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { tGlobal } from "../lib/i18n"
 import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision, invalidateOpenCodeSessionContent } from "./opencode-data"
@@ -21,7 +21,7 @@ export async function pruneMessageContent(
   const revision = await contentRevision(message.content)
   signal.throwIfAborted()
   if (generation !== getOpenCodeInstanceGeneration(instanceId) || client !== getRootClient(instanceId)) throw new Error(tGlobal("session.pruning.conflict"))
-  const result = await serverApi.pruneSessionMessage(instanceId, {
+  const result = await backendOf(instanceId).api.pruneSessionMessage(instanceId, {
     sessionID: sessionId, messageID: message.id, indexes,
     revision,
   })

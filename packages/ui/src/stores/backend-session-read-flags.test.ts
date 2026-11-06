@@ -8,6 +8,7 @@ import { fetchSessions, searchSessions } from "./session-api"
 import { loading, sessions, setSessions, beginSessionSearch, setSessionSearchResults, getSessionSearchResultIds,
   getSessionSearchQuery, isSessionSearchLoading } from "./session-state"
 import type { Session } from "../types/session"
+import { registerLocalBackendFixture } from "../../tests/contracts/local-backend-fixture"
 
 const source = { on: () => () => {}, onOpen: () => () => {}, onTransportStatus: () => () => {}, onDispose: () => () => {} }
 const tick = () => new Promise<void>(resolve => setImmediate(resolve))
@@ -24,10 +25,11 @@ async function until(condition: () => boolean) {
 for (const kind of ["list", "search"] as const) for (const outcome of ["success", "failure"] as const) {
   for (const replacement of [false, true]) test(`${kind} ${outcome}, replacement=${replacement}: settled A releases only its own read indicator`, async t => {
     const backend = `read_flags_${kind}_${outcome}_${replacement}`, id = `${backend}~ws`
+    registerLocalBackendFixture(t, backend)
     const requests: ReturnType<typeof deferred>[] = [], pending: Promise<unknown>[] = []
     const client = { session: { list: async () => { const gate = deferred(); requests.push(gate); return gate.promise }, active: async () => ({}) } }
     let detach = backendEvents.attach(backend, source)
-    ;(Reflect.get(sdkManager, "clients") as Map<string, unknown>).set(`${id}:/workspaces/${id}/instance`, client)
+    ;(Reflect.get(sdkManager, "clients") as Map<string, unknown>).set(`${id}:/workspaces/ws/instance`, client)
     addInstance({ id, backendId: backend, folder: "/repo", port: 0, pid: 0, proxyPath: "", status: "ready", client: client as never })
     const retained = { id: "kept", instanceId: id, title: "Retained", parentId: null, location: { directory: "/repo" }, status: "idle" } as Session
     setSessions(previous => new Map(previous).set(id, new Map([[retained.id, retained]])))

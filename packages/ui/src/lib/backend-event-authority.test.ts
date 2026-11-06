@@ -17,6 +17,7 @@ import { serverApi } from "./api-client"
 import type { Instance } from "../types/instance"
 import { handleNativeSessionEvent } from "../stores/session-events"
 import { sdkManager } from "./sdk-manager"
+import { registerLocalBackendFixture } from "../../tests/contracts/local-backend-fixture"
 import { sessions, setSessions } from "../stores/session-state"
 import type { Session } from "../types/session"
 import { reconcileSessionModel } from "../stores/session-model-reconciliation"
@@ -271,12 +272,13 @@ test("a detached worktree read neither publishes nor starts its queued follow-up
 })
 
 test("a detached terminal-session activity read cannot settle or notify the retained session", async t => {
+  registerLocalBackendFixture(t, "terminal_owner")
   const a = owner(t), instanceId = "terminal_owner~ws", instance = workspace(instanceId)
   const detach = backendEvents.attach("terminal_owner", a.events)
   t.after(detach)
   let release!: (value: Record<string, unknown>) => void
   const client = { session: { active: async () => new Promise<Record<string, unknown>>(resolve => { release = resolve }) } }
-  ;(Reflect.get(sdkManager, "clients") as Map<string, unknown>).set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+  ;(Reflect.get(sdkManager, "clients") as Map<string, unknown>).set(`${instanceId}:/workspaces/ws/instance`, client)
   addInstance({ ...instance, status: "ready", client: client as unknown as NonNullable<Instance["client"]> })
   const session = { id: "s", instanceId, status: "working", location: { directory: "/repo" }, parentId: null } as Session
   setSessions(current => new Map(current).set(instanceId, new Map([["s", session]])))
@@ -377,12 +379,13 @@ test("reattachment during status delivery cannot inherit the same transport even
 })
 
 test("a detached native model refresh cannot publish its old selection", async t => {
+  registerLocalBackendFixture(t, "model_owner")
   const a = owner(t), instanceId = "model_owner~ws", instance = workspace(instanceId)
   const detach = backendEvents.attach("model_owner", a.events)
   t.after(detach)
   let release!: (value: { model: { providerID: string; id: string } }) => void
   const client = { session: { get: async () => new Promise<{ model: { providerID: string; id: string } }>(resolve => { release = resolve }) } }
-  ;(Reflect.get(sdkManager, "clients") as Map<string, unknown>).set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+  ;(Reflect.get(sdkManager, "clients") as Map<string, unknown>).set(`${instanceId}:/workspaces/ws/instance`, client)
   addInstance({ ...instance, status: "ready", client: client as unknown as NonNullable<Instance["client"]> })
   const model = { providerId: "p", modelId: "current" }
   setSessions(current => new Map(current).set(instanceId, new Map([["s", { id: "s", instanceId, model } as Session]])))

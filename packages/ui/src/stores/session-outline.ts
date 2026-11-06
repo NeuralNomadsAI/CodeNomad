@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js"
 import type { OutlineEntry, OutlineCheckpoint } from "../../../server/src/opencode/session-pruning/navigation-contract"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { tGlobal } from "../lib/i18n"
 import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision } from "./opencode-data"
@@ -127,7 +127,7 @@ export function createSessionOutline(props: { instanceId: Accessor<string>; sess
         do {
           if (!current()) return
           const cursor = work.cursor
-          const page = await serverApi.fetchSessionOutline(instanceId, sessionID, cursor, operation.signal, -1,
+          const page = await backendOf(instanceId).api.fetchSessionOutline(instanceId, sessionID, cursor, operation.signal, -1,
             owner.checkpoints.length <= 512 ? owner.checkpoints : [])
           if (!current()) return
           if (page.status !== "outline") throw new Error(tGlobal(`session.pruning.${page.reason}`))

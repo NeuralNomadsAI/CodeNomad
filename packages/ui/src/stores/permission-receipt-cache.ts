@@ -1,5 +1,5 @@
 import type { PermissionReceipt } from "../../../server/src/api-types"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { receiptReads } from "../lib/background-read-queue"
 import { backendEvents as serverEvents } from "../lib/server-events"
 import { parseInstanceKey } from "../lib/backend-identity"
@@ -99,7 +99,7 @@ function startRead(key: string, instanceId: string, sessionId: string, scope: Pe
     let cursor: string | undefined
     let fetched = 0
     do {
-      const page = await receiptReads.run(signal, () => serverApi.fetchPermissionReceipts(instanceId, sessionId, scope, cursor, signal))
+        const page = await receiptReads.run(signal, () => backendOf(instanceId).api.fetchPermissionReceipts(instanceId, sessionId, scope, cursor, signal))
       signal.throwIfAborted()
       receipts.push(...page.receipts.filter(receipt => ownsPermissionReceipt(receipt, sessionId, scope)))
       cursor = page.next

@@ -1,6 +1,6 @@
 import type { SessionMessageInfo, SessionMessagesResponse } from "@opencode/client"
 import { navigationTargetSchema, type NavigationTarget } from "../../../server/src/opencode/session-pruning/navigation-contract"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { tGlobal } from "../lib/i18n"
 import type { MessageWindowState } from "./message-v2/message-window"
 
@@ -19,7 +19,7 @@ export function historyWindowTarget(cursor: string | undefined): NavigationTarge
 }
 
 export async function readHistoryWindow(instanceId: string, sessionId: string, target: NavigationTarget, signal?: AbortSignal): Promise<{ response: SessionMessagesResponse; window: MessageWindowState }> {
-  const result = await serverApi.fetchHistoryWindow(instanceId, sessionId, target, signal)
+  const result = await backendOf(instanceId).api.fetchHistoryWindow(instanceId, sessionId, target, signal)
   signal?.throwIfAborted()
   if (result.status !== "window") {
     if (result.reason === "anchor_missing") throw new MissingHistoryAnchorError()

@@ -4,6 +4,7 @@ import { createRoot, createSignal } from "solid-js"
 import { backendEvents } from "../lib/backend-events"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { serverApi } from "../lib/api-client"
+import { registerLocalBackendFixture } from "../../tests/contracts/local-backend-fixture"
 import { PluginControlsCache } from "./plugin-controls"
 import { createShellStore } from "./shell-store"
 import { createSessionGoalStore } from "./session-goal-store"
@@ -233,6 +234,7 @@ for (const failure of [false, true]) for (const replacement of [false, true]) {
 
   test(`outline pending: revoked ${failure ? "failure" : "success"}, B=${replacement}`, async t => {
     const backendId = `indicator_outline_${failure}_${replacement}`, instanceId = `${backendId}~ws`
+    registerLocalBackendFixture(t, backendId)
     let detach = backendEvents.attach(backendId, source)
     const original = serverApi.fetchSessionOutline
     const requests: ReturnType<typeof deferred<any>>[] = []
