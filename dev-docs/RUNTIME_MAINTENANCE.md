@@ -12,7 +12,15 @@
   executable not named `node` (Electron's) receives a temporary `node` command
   pointing to it instead. Installation and native upgrade scope it to their
   child environment and clean it after completion; interrupted installers retain
-  their adapter and prefix lock for safe manual recovery.
+  their adapter and prefix lock for safe manual recovery. The command lives in a
+  `.codenomad-npm-*` directory inside the npm prefix, never the system temporary
+  directory, which may be mounted noexec.
+- The packaged-resources smoke (`scripts/smoke-packaged-resources.cjs`, run by
+  every Electron build and the release Linux package checks) fails unless the
+  bundled npm's `engines.node` accepts the Node version the server runtime
+  reports; npm itself only warns. `npm-lifecycle.test.ts` and the Electron step
+  of the PR OpenCode compatibility matrix run real npm lifecycle scripts through
+  the development Electron executable on Windows, Linux and macOS.
 - Dependabot checks GitHub Actions weekly and proposes updates against `dev`;
   merges are manual. Composite actions that follow their upstream
   `stable`/latest major stay on those supported references.

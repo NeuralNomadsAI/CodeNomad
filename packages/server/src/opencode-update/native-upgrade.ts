@@ -1,8 +1,7 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
-import os from "node:os"
+import { rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { executeInstaller, npmNeedsNodeCommand, writeNpmNodeCommand } from "./npm-runtime"
-import { InstallationInterruptedError } from "./installation-lock"
+import { createInstallerDirectory, InstallationInterruptedError } from "./installation-lock"
 
 /** Let OpenCode retain its running Windows image while using our bundled npm
  * and the already verified shared prefix, not an unrelated system installation. */
@@ -16,7 +15,7 @@ export async function upgradeSharedOpenCode(options: {
   platform: NodeJS.Platform
   execute?: typeof executeInstaller
 }): Promise<void> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-upgrade-"))
+  const directory = await createInstallerDirectory(options.prefix, "upgrade")
   let retain = false
   try {
     const windows = options.platform === "win32"

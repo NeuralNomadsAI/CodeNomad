@@ -1,9 +1,8 @@
 import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
-import os from "node:os"
+import { rm, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { InstallationInterruptedError } from "./installation-lock"
+import { createInstallerDirectory, InstallationInterruptedError } from "./installation-lock"
 
 /** npm from the pinned Node archive, in Electron resources or beside Tauri's Node. */
 export function bundledNpm(execPath = process.execPath,
@@ -30,9 +29,10 @@ export async function writeNpmNodeCommand(directory: string, node: string, env: 
     : '#!/bin/sh\nexec "$CODENOMAD_NPM_NODE" "$@"\n', { mode: 0o700 })
 }
 
+/** Runs npm for the locked `prefix`; Electron's `node` command lives in that prefix. */
 export async function executeNpm(node: string, args: string[], env: NodeJS.ProcessEnv, platform: NodeJS.Platform,
-  execute = executeInstaller): Promise<void> {
-  const directory = npmNeedsNodeCommand(node, platform) ? await mkdtemp(path.join(os.tmpdir(), "codenomad-npm-")) : undefined
+  prefix: string, execute = executeInstaller): Promise<void> {
+  const directory = npmNeedsNodeCommand(node, platform) ? await createInstallerDirectory(prefix, "npm") : undefined
   let retain = false
   try {
     const childEnv = { ...env }

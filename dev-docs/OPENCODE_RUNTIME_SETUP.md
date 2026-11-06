@@ -150,10 +150,16 @@ temporary npm command adapter supplies the backend's Node runtime (Tauri's bundl
 Node or Electron's integrated Node) with bundled npm and pins the verified prefix
 and registry, including when the desktop runtime has no npm launcher on PATH. It is
 also the command's working directory, preventing cwd from shadowing npm on Windows.
+Installer commands live in directories beside the lock inside the npm prefix:
+`.codenomad-upgrade-*` for this adapter and `.codenomad-npm-*` for Electron's
+lifecycle `node` command during direct npm. The prefix must allow execution for its
+installed commands, unlike a temporary directory that may be mounted noexec, and
+npm and the OpenCode command lookup ignore these dot directories.
 If the outer supervisor is terminated by timeout, signal or output limit, descendant
-exit cannot be established: retain the prefix lock and temporary npm adapter rather
-than allowing a competing installation. The server error includes the lock path;
-manual recovery must first verify installer processes have exited. Temporary cleanup
+exit cannot be established: retain the prefix lock and these installer directories
+rather than allowing a competing installation. The server error includes the lock
+path; manual recovery must first verify installer processes have exited. The next
+backend that acquires a fresh lock removes retained installer directories. Cleanup
 never masks the execution error. Native upgrade and direct npm both verify version
 and launcher after installation.
 

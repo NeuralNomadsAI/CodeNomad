@@ -98,6 +98,14 @@ function smokeServer(resourcesRoot, target, electron) {
     throw new Error(`Packaged Node version ${version} does not match ${MANAGED_NODE_VERSION}`)
   }
   console.log(`packaged Node version ok: ${version}`)
+  // npm only warns about an unsupported engine; Electron's Node must satisfy it.
+  const npmRoot = path.dirname(path.dirname(npm))
+  const engine = JSON.parse(fs.readFileSync(path.join(npmRoot, "package.json"), "utf8")).engines?.node
+  const semver = require(path.join(npmRoot, "node_modules", "semver"))
+  if (!engine || !semver.satisfies(version, engine)) {
+    throw new Error(`Bundled npm requires Node ${engine ?? "(undeclared)"}, but the server runtime reports ${version}`)
+  }
+  console.log(`bundled npm engine ok: ${version} satisfies ${engine}`)
   run(node, [npm, "--version"], { env })
   run(node, [entrypoint, "--version"], { env })
 

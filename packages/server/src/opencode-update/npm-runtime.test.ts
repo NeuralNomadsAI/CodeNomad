@@ -26,38 +26,61 @@ test("discovers Electron npm resources on each platform and preserves Node layou
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
-test("Electron lifecycle node command is scoped, cleaned, and retained on interruption", async () => {
-  for (const platform of ["win32", "linux"] as const) for (const outcome of ["success", "failure", "interrupted"]) {
-    const env = { ELECTRON_RUN_AS_NODE: "1", Path: "/original" }
-    let directory = ""
-    const pending = executeNpm("/application/CodeNomad", ["npm-cli.js"], env, platform, async (file, args, childEnv, options) => {
-      assert.equal(file, "/application/CodeNomad")
-      assert.deepEqual(args, ["npm-cli.js"])
-      directory = options?.cwd ?? ""
-      assert.ok(childEnv.Path!.startsWith(directory + (platform === "win32" ? ";" : ":")))
-      assert.equal(childEnv.ELECTRON_RUN_AS_NODE, "1")
-      assert.equal(childEnv.CODENOMAD_NPM_NODE, file)
-      assert.match(await readFile(path.join(directory, platform === "win32" ? "node.cmd" : "node"), "utf8"), /CODENOMAD_NPM_NODE/)
-      if (outcome === "interrupted") throw new InstallationInterruptedError()
-      if (outcome === "failure") throw new Error("failed")
-    })
-    if (outcome === "success") await pending
-    else await assert.rejects(pending)
-    assert.deepEqual(env, { ELECTRON_RUN_AS_NODE: "1", Path: "/original" })
-    if (outcome === "interrupted") {
-      await access(directory)
-      await rm(directory, { recursive: true, force: true })
-    } else await assert.rejects(access(directory), { code: "ENOENT" })
-  }
-})
-
-test("Tauri's Node runs npm with its own directory on PATH and no adapter, even with ELECTRON_RUN_AS_NODE", async () => {
-  // A private temporary root proves that no adapter directory is created.
-  const temporary = await mkdtemp(path.join(os.tmpdir(), "npm-tauri-"))
+/** Runs `body` with a private, initially empty system temporary directory and
+ * a separate npm prefix, so a test can prove which of them the installer used. */
+async function withPrivateTemporary(body: (temporary: string, prefix: string) => Promise<void>) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "npm-runtime-"))
+  const temporary = path.join(root, "tmp")
+  const prefix = path.join(root, "npm prefix")
+  await mkdir(temporary)
+  await mkdir(prefix)
   const saved = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP }
   Object.assign(process.env, { TMPDIR: temporary, TEMP: temporary, TMP: temporary })
   try {
     assert.equal(os.tmpdir(), temporary)
+    await body(temporary, prefix)
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+test("Electron lifecycle node command lives in the prefix, is cleaned, and is retained on interruption", async () => {
+  await withPrivateTemporary(async (temporary, prefix) => {
+    for (const platform of ["win32", "linux"] as const) for (const outcome of ["success", "failure", "interrupted"]) {
+      const env = { ELECTRON_RUN_AS_NODE: "1", Path: "/original" }
+      let directory = ""
+      const pending = executeNpm("/application/CodeNomad", ["npm-cli.js"], env, platform, prefix, async (file, args, childEnv, options) => {
+        assert.equal(file, "/application/CodeNomad")
+        assert.deepEqual(args, ["npm-cli.js"])
+        directory = options?.cwd ?? ""
+        assert.equal(path.dirname(directory), prefix)
+        assert.match(path.basename(directory), /^\.codenomad-npm-/)
+        assert.ok(childEnv.Path!.startsWith(directory + (platform === "win32" ? ";" : ":")))
+        assert.equal(childEnv.ELECTRON_RUN_AS_NODE, "1")
+        assert.equal(childEnv.CODENOMAD_NPM_NODE, file)
+        assert.match(await readFile(path.join(directory, platform === "win32" ? "node.cmd" : "node"), "utf8"), /CODENOMAD_NPM_NODE/)
+        if (outcome === "interrupted") throw new InstallationInterruptedError()
+        if (outcome === "failure") throw new Error("failed")
+      })
+      if (outcome === "success") await pending
+      else await assert.rejects(pending)
+      assert.deepEqual(env, { ELECTRON_RUN_AS_NODE: "1", Path: "/original" })
+      if (outcome === "interrupted") {
+        await access(directory)
+        await rm(directory, { recursive: true, force: true })
+      } else await assert.rejects(access(directory), { code: "ENOENT" })
+    }
+    assert.deepEqual(await readdir(prefix), [])
+    assert.deepEqual(await readdir(temporary), [], "nothing executable is written to the system temporary directory")
+  })
+})
+
+test("Tauri's Node runs npm with its own directory on PATH and no adapter, even with ELECTRON_RUN_AS_NODE", async () => {
+  await withPrivateTemporary(async (temporary, prefix) => {
     for (const [platform, node, directory] of [["win32", "C:/CodeNomad/resources/node/node.exe", "C:/CodeNomad/resources/node"],
       ["win32", "C:/CodeNomad/resources/node/NODE.EXE", "C:/CodeNomad/resources/node"],
       ["linux", "/opt/CodeNomad/node/bin/node", "/opt/CodeNomad/node/bin"],
@@ -65,7 +88,7 @@ test("Tauri's Node runs npm with its own directory on PATH and no adapter, even 
       assert.equal(npmNeedsNodeCommand(node, platform), false)
       const env = { ELECTRON_RUN_AS_NODE: "1", Path: "/original" }
       let called = false
-      await executeNpm(node, ["npm-cli.js"], env, platform, async (file, args, childEnv, options) => {
+      await executeNpm(node, ["npm-cli.js"], env, platform, prefix, async (file, args, childEnv, options) => {
         called = true
         assert.equal(file, node)
         assert.deepEqual(args, ["npm-cli.js"])
@@ -77,13 +100,8 @@ test("Tauri's Node runs npm with its own directory on PATH and no adapter, even 
       assert.deepEqual(env, { ELECTRON_RUN_AS_NODE: "1", Path: "/original" })
     }
     assert.deepEqual(await readdir(temporary), [])
-  } finally {
-    for (const [key, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[key]
-      else process.env[key] = value
-    }
-    await rm(temporary, { recursive: true, force: true })
-  }
+    assert.deepEqual(await readdir(prefix), [])
+  })
   for (const [platform, node] of [["win32", "C:\\CodeNomad\\CodeNomad.exe"], ["linux", "/opt/CodeNomad/CodeNomad"],
     ["darwin", "/Applications/CodeNomad.app/Contents/MacOS/CodeNomad"], ["linux", "/usr/bin/node.exe"]] as const) {
     assert.equal(npmNeedsNodeCommand(node, platform), true)

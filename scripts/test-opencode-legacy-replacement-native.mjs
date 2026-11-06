@@ -31,7 +31,7 @@ Object.assign(env, {
   ...selected.env, PATH: [npmCommandDirectory(prefix), selected.path].join(path.delimiter),
 })
 for (const key of ["APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) await mkdir(env[key], { recursive: true })
-const run = (args) => executeNpm(node, [npm, ...args], env, process.platform, async (file, args, env, options) => {
+const run = (args) => executeNpm(node, [npm, ...args], env, process.platform, prefix, async (file, args, env, options) => {
   await promisify(execFile)(file, args, { ...options, env, timeout: 300_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true })
 })
 const options = { home: root, env, node, npm, registerPath: async () => {} }
