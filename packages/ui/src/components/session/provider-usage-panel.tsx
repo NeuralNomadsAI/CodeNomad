@@ -102,7 +102,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
       ? { href: "https://opencode.ai/console/login", label: t("providerUsage.createOpenCodeGoKey") } : null)
 
   const windowLabel = (label: string): string => {
-    // Model-scoped limits arrive as `window:Model`, e.g. `7d:Opus`.
+    // Model-scoped limits arrive as `window:Model`, e.g. `requests:gemini-2.5-pro` or `7d:Opus`.
     const scope = label.indexOf(":")
     if (scope > 0) return `${windowLabel(label.slice(0, scope))} · ${label.slice(scope + 1)}`
     const key = ({
@@ -113,6 +113,10 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
       weekly: "weekly",
       daily: "daily",
       monthly: "monthly",
+      tokens: "tokens",
+      input_tokens: "inputTokens",
+      output_tokens: "outputTokens",
+      usage: "usage",
       "monthly-code": "monthlyCode",
       credits: "credits",
       key_limit: "keyLimit",

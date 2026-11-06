@@ -51,6 +51,11 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 15_000)
       const signal = controller.signal
+      // Google refresh/quota reads share a deadline from route entry, including
+      // native credential reads, leaving 3 seconds for publication revalidation.
+      const googleController = resolveUsageProvider(params.data.providerId)?.id === "google" ? new AbortController() : null
+      const googleTimeout = googleController ? setTimeout(() => googleController.abort(), 12_000) : undefined
+      const quotaSignal = googleController ? AbortSignal.any([signal, googleController.signal]) : signal
       try {
         return await boundedRead(async () => {
           const connection = await manager.getSharedServiceConnection(instanceId)
@@ -75,7 +80,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
               providerId: params.data.providerId, modelId }, signal)
             : null
           const auth = !native && provider ? await readUsageCredentials(connection, signal) : {}
-          const settings = !native && provider
+          const settings = !native && provider && provider.id !== "google"
             ? await readUsageProviderSettings(connection, params.data.providerId, location.directory, signal) : undefined
           signal.throwIfAborted()
           if (provider?.id === "opencode-go") {
@@ -95,7 +100,8 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
             auth["claude-code"] = claudeCodeAuthEntry(await claudeCodeCredential(await claudeCodeHost(manager, instanceId, signal), signal))
             signal.throwIfAborted()
           }
-          const usage = native ?? await getProviderUsage(params.data.providerId, { modelId, auth, context: settings?.context })
+          const usage = native ?? await getProviderUsage(params.data.providerId, { modelId, auth,
+            context: { ...settings?.context, signal: quotaSignal } })
           // Session movement, workspace eviction and reconnect fence publication too.
           const current = await connection.client.session.get({ sessionID: sessionId }, { signal })
           const currentLocation = readLocationRef(current.location)
@@ -117,6 +123,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
         const missing = error && typeof error === "object" && "_tag" in error && error._tag === "SessionNotFoundError"
         return reply.code(missing ? 404 : 503).send({ error: missing ? "Session not found" : "Provider usage unavailable" })
       } finally {
+        clearTimeout(googleTimeout)
         clearTimeout(timeout)
       }
     },

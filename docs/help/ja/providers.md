@@ -50,13 +50,17 @@
 
 右パネルの **使用量** で、アクティブな会話のプロバイダープランの期間、リセット時刻、対応する残高を確認します。これらのプロバイダー測定値は、メッセージごとの **トークン** や費用見積もりとは異なります。サブスクリプションの割り当て量は、表示中の会話から計算した請求額ではありません。欠落、古い、不明な測定値は、使用量ゼロや残容量の証拠ではありません。**設定 → 詳細設定** の **プロバイダーのクレジット残高** は、補足残高の表示を制御します。
 
+OpenCode の Gemini CLI 認証方式を使用する Google 接続では、**使用量** にモデル別の上限を表示します。Antigravity 接続では **5時間** と **週間** の上限を表示し、提供される場合はモデルファミリーごとの枠を分けて表示します。割り当て量を取得できない場合は「使用量は一時的に利用できません。」と表示します。これらの接続のアカウント選択は手動です。
+
+Google の [Antigravity FAQ](https://antigravity.google/docs/faq/) は、Antigravity のログインでサードパーティ製ソフトウェアを使用すると利用規約に違反し、アカウントの停止または終了につながる可能性があると説明しています。
+
 OpenCode Zenの無料モデルでは、**使用量** はこのサービスの00:00 UTC以降の記録ステップ数を、仮定した1日200件と比較し、次のUTC午前0時を推定リセット時刻とします。ステップ数はリクエスト数の近似です。他の通信や変動するIP制限により、実際の使用枠とは異なる場合があります。
 
 OpenAI は、ChatGPT のサインイン方式の 1 つについて使用量を提供していません。その場合、**使用量** は割り当て量の期間を表示する代わりにその旨を示します。[ChatGPT の使用状況を確認](https://chatgpt.com/settings/usage) を選ぶと、ChatGPT でアプリの使用状況を確認し、プランやクレジットへのアクセスを管理できます。チャットは引き続き利用でき、同じログインで再接続しても測定値は戻りません。
 
-使用量は選択されたネイティブ認証情報に従います。`anthropic`／`claude` 経由の Claude は OpenCode の Anthropic OAuth を使用します。OpenCode の **Claude Agent** プロバイダー（`claude-agent`）と `claude-code` プロバイダーは、WSL ディストリビューションを含むデーモンホストの Claude Code ログインを使用します。`CLAUDE_CODE_OAUTH_TOKEN`、次に保存済みログインの順で、`CLAUDE_SECURESTORAGE_CONFIG_DIR`／`CLAUDE_CONFIG_DIR` または `~/.claude` がファイル保存場所を決めます。ローカル macOS では Keychain を使用できます。CodeNomad は、一方の Claude ログインを他方の代わりにしません。
+使用量の認証情報の取得元はプロバイダーによって異なります。`anthropic`／`claude` 経由の Claude は OpenCode の Anthropic OAuth を使用します。OpenCode の **Claude Agent** プロバイダー（`claude-agent`）と `claude-code` プロバイダーは、WSL ディストリビューションを含むデーモンホストの Claude Code ログインを使用します。`CLAUDE_CODE_OAUTH_TOKEN`、次に保存済みログインの順で、`CLAUDE_SECURESTORAGE_CONFIG_DIR`／`CLAUDE_CONFIG_DIR` または `~/.claude` がファイル保存場所を決めます。ローカル macOS では Keychain を使用できます。CodeNomad は、一方の Claude ログインを他方の代わりにしません。
 
-プロバイダーログインの期限が切れたら、管理元である OpenCode、Claude Code、Codex CLI で更新／ログインし、その後 CodeNomad を更新します。CodeNomad は外部管理の更新トークンを交換しません。CodeNomad のサーバーログイン期限切れは別です。失敗したプロバイダーリクエストが再送されると思わず、CodeNomad へ再接続／ログインしてください。[トラブルシューティング](troubleshooting.md)を参照してください。
+使用量リーダーがアクセストークンを更新できるのは、使用のたびに更新トークンが変わらないプロバイダーに限り、サーバーメモリ内だけです。Gemini CLI と Antigravity が該当します。保存済み接続の管理は OpenCode が担います。その他のプロバイダーログインの期限が切れたら、管理元である OpenCode、Claude Code、Codex CLI で更新／ログインし、その後 CodeNomad を更新します。CodeNomad のサーバーログイン期限切れは別です。失敗したプロバイダーリクエストが再送されると思わず、CodeNomad へ再接続／ログインしてください。[トラブルシューティング](troubleshooting.md)を参照してください。
 
 MiniMax が正常に応答しても上限を返さない場合、**使用量**にはクォータ値の代わりに **MiniMax は上限を公開していません** と表示されます。
 

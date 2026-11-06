@@ -7,12 +7,13 @@ import { miniMaxProviders } from "./providers/minimax"
 import { oauthProviders } from "./providers/oauth"
 import { specialProviders } from "./providers/special"
 import { xaiProviders } from "./providers/xai"
+import { googleUsage, selectGoogleModelWindows, unknownGoogleUsage } from "./providers/google"
 import type { AuthFile, ProviderReadContext, ProviderResult, UsageProvider } from "./types"
 
 const CACHE_TTL_MS = 60_000
 const FAILURE_CACHE_TTL_MS = 5_000
 const providers = [
-  ...oauthProviders, ...apiKeyProviders, ...miniMaxProviders, ...specialProviders, ...xaiProviders, ...extraProviders, ...creditProviders,
+  ...oauthProviders, ...apiKeyProviders, ...miniMaxProviders, ...specialProviders, ...xaiProviders, ...extraProviders, ...creditProviders, googleUsage,
 ]
 const registry = new Map<string, UsageProvider>()
 
@@ -54,7 +55,9 @@ export function selectModelWindows(result: ProviderResult, modelId?: string): Re
 }
 
 async function fetchProvider(provider: UsageProvider, auth: AuthFile, context?: ProviderReadContext): Promise<ProviderResult> {
-  context?.signal?.throwIfAborted()
+  const signal = context?.signal
+  if (signal?.aborted && provider.id === "google") return unknownGoogleUsage(auth)
+  signal?.throwIfAborted()
   const identity = createHash("sha256").update(JSON.stringify([
     provider.aliases.map(alias => auth[alias] ?? null),
     context?.integrationID ?? null,
@@ -64,9 +67,21 @@ async function fetchProvider(provider: UsageProvider, auth: AuthFile, context?: 
   if (cached?.identity === identity && cached.expiresAt > Date.now()) return cached.result
   const key = `${provider.id}\0${identity}`
   const inFlight = pending.get(key)
-  if (inFlight) return inFlight
+  if (inFlight) {
+    if (provider.id !== "google" || !signal) return inFlight
+    // A slower native prelude can join a newer request with a later deadline.
+    if (signal.aborted) return unknownGoogleUsage(auth)
+    let abort!: () => void
+    try {
+      return await Promise.race([inFlight, new Promise<ProviderResult>(resolve => {
+        abort = () => resolve(unknownGoogleUsage(auth))
+        signal.addEventListener("abort", abort, { once: true })
+      })])
+    } finally { signal.removeEventListener("abort", abort) }
+  }
   const request = provider.fetchQuota(auth, context).then((result) => {
-    context?.signal?.throwIfAborted()
+    if (signal?.aborted && provider.id === "google") return unknownGoogleUsage(auth)
+    signal?.throwIfAborted()
     cache.set(provider.id, { identity, result, expiresAt: Date.now() + (result.ok ? CACHE_TTL_MS : FAILURE_CACHE_TTL_MS) })
     return result
   }).finally(() => pending.delete(key))
@@ -95,7 +110,7 @@ export async function getProviderUsage(
   const context = provider.id === "kimi-for-coding"
     ? { ...options.context, integrationID: options.context?.integrationID ?? requestedProviderId.trim().toLowerCase() } : options.context
   const result = await fetchProvider(provider, options.auth ?? {}, context)
-  options.context?.signal?.throwIfAborted()
+  if (provider.id !== "google") options.context?.signal?.throwIfAborted()
   const reason = !result.ok && (result.unavailableReason === "openai-token-sharing-unsupported" || result.unavailableReason === "provider-error" || result.unavailableReason === "minimax-limits-not-shared" || result.unavailableReason === "invalid-base-url"
     || result.unavailableReason === "cursor-token-expired" || result.unavailableReason === "cursor-team-unavailable"
     || result.unavailableReason === "cursor-access-denied" || result.unavailableReason === "cursor-usage-unavailable"
@@ -110,7 +125,7 @@ export async function getProviderUsage(
     supported: true,
     configured: result.configured,
     ok: result.ok,
-    windows: result.ok ? selectModelWindows(result, options.modelId) : {},
+    windows: !result.ok ? {} : provider.id === "google" ? selectGoogleModelWindows(result, options.modelId) : selectModelWindows(result, options.modelId),
     fetchedAt: result.fetchedAt,
     ...(reason ? { unavailableReason: reason } : {}),
     ...(reason === "provider-error" && typeof result.providerErrorCode === "string" && /^\d{1,8}$/.test(result.providerErrorCode) && result.providerErrorCode.trim() === result.providerErrorCode
