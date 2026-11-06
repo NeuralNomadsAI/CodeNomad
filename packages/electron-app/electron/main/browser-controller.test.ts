@@ -90,12 +90,12 @@ describe("BrowserController private page channel", () => {
     assert.equal(methods.at(-1), "Runtime.evaluate", "page reads do not wait for the compositor")
     await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.dispatchKeyEvent", params: { type: "keyDown", key: "a", text: "a" } },
       Date.now() + 120), /not rendering yet, so input was not sent/)
-    assert.deepEqual(events, [], "input refused at the deadline is never sent")
+    assert.equal(events.length, 0, "input refused at the deadline is never sent")
     const next = await begin(h.controller)
     const key = page(h.controller, "send", { ...next, method: "Input.dispatchKeyEvent", params: { type: "keyDown", key: "b", text: "b" } })
     const click = page(h.controller, "send", { ...next, method: "Input.dispatchMouseEvent", params: { type: "mousePressed", x: 1, y: 1 } })
     await new Promise(resolve => setTimeout(resolve, 120))
-    assert.deepEqual(events, [], "no input reaches a guest that cannot render yet")
+    assert.equal(events.length, 0, "no input reaches a guest that cannot render yet")
     assert.equal(methods.includes("Input.dispatchMouseEvent"), false)
     running = true
     await key
