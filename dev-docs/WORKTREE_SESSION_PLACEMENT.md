@@ -43,6 +43,13 @@ Implementation:
 - Opaque directory-derived identifiers remain stable when branches change; labels
   are separate. Main checkouts cannot be deleted. Nested workspace paths are mirrored
   over the same checkout roots, retaining host/service namespace separation for WSL.
+  A linked checkout lacking the mirrored folder (ignored, untracked or absent on its
+  branch) stays in the inventory with `nestedFolderMissing`: it keeps owning the
+  sessions placed there, but the selector offers it only while selected and it is no
+  inventory-derived pending-recovery location (selected, active and known-request
+  locations stay required). Creation refuses, before any native call, a source whose
+  starting revision does not track the opened folder (`nested_folder_unavailable`;
+  `__tests__/native-worktree-nested-workspace.test.ts`).
 - Creation carries the selected source worktree, an explicit starting revision and
   the local main checkout's `.codenomad/worktrees` parent. Native creation detaches HEAD;
   Git `switch -c` (or `switch` for an existing branch) establishes the requested branch

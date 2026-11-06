@@ -21,11 +21,13 @@ export function projectCredential(entry: CredentialEntry): AuthEntry | null {
   // OpenCode Console credentials scope requests by organization and server.
   const orgId = value.metadata?.orgID
   const server = value.metadata?.server
+  const enterprise = entry.integrationID === "github-copilot" && value.metadata && "enterpriseUrl" in value.metadata
+    ? { enterpriseUrl: value.metadata.enterpriseUrl } : {}
   const scope = { ...(typeof orgId === "string" ? { orgId } : {}), ...(typeof server === "string" ? { server } : {}) }
   return value.type === "key"
     ? { type: "api", key: value.key, ...scope }
     : { type: "oauth", access: value.access, refresh: value.refresh, expires: value.expires,
-      ...(typeof accountId === "string" ? { accountId } : {}), ...scope }
+      ...(typeof accountId === "string" ? { accountId } : {}), ...scope, ...enterprise }
 }
 
 /** Each integration's selected credential, as the running OpenCode uses it. */

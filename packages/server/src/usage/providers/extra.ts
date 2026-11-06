@@ -86,35 +86,6 @@ const commandCode: UsageProvider = {
   },
 }
 
-// --- crof ---
-const crofAliases = ["crof"] as const
-const crof: UsageProvider = {
-  id: "crof",
-  name: "CrofAI",
-  aliases: crofAliases,
-  async fetchQuota(auth) {
-    const key = getCredential(auth, crofAliases, ["key", "token"])
-    if (!key) return notConfigured(this.id, this.name)
-    return safeFetch(this.id, this.name, async () => {
-      const payload: any = await fetchJson("https://crof.ai/usage_api/", {
-        headers: { Authorization: `Bearer ${key}`, "Accept-Encoding": "identity" },
-      })
-      const credits = toNumber(payload?.credits)
-      if (credits === null) throw new Error("CrofAI usage response contained no quota data")
-      return {
-        windows: {
-          credits: toUsageWindow({
-            usedPercent: null,
-            windowSeconds: null,
-            resetAt: null,
-            valueLabel: `$${formatMoney(credits)}`,
-          }),
-        },
-      }
-    })
-  },
-}
-
 // --- deepseek ---
 const deepseekAliases = ["deepseek"] as const
 const deepseek: UsageProvider = {
@@ -385,4 +356,4 @@ const claudeCode = createClaudeProvider({
   reauthError: "Claude Code session expired. Use Claude Code to sign in again.",
 })
 
-export const extraProviders: UsageProvider[] = [commandCode, crof, deepseek, neuralwatt, claude, claudeCode]
+export const extraProviders: UsageProvider[] = [commandCode, deepseek, neuralwatt, claude, claudeCode]

@@ -1,6 +1,7 @@
 import { createMemo, lazy, Show, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
 import { getBehaviorSettings } from "../../lib/settings/behavior-registry"
+import { isDesktopHost, isNativeApplicationWindow } from "../../lib/runtime-env"
 import { useConfig } from "../../stores/preferences"
 import { LocaleSelector } from "../locale-selector"
 import { BehaviorSettingRows } from "./behavior-setting-rows"
@@ -25,7 +26,8 @@ export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (p
         setting.id === "behavior.scrollControlsInTimelineCorner" ||
         setting.id === "behavior.autoExpandActiveSubsessions" ||
         setting.id === "behavior.diffViewMode" ||
-        setting.id === "behavior.followUpBehavior",
+        setting.id === "behavior.followUpBehavior" ||
+        (setting.id === "behavior.keepComputerAwake" && isDesktopHost() && isNativeApplicationWindow()),
     ),
   )
 

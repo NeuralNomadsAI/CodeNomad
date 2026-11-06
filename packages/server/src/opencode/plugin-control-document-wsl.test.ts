@@ -11,6 +11,7 @@ import {
 import { removePluginSourceEntry } from "./plugin-source-document"
 import { PluginControls } from "./plugin-controls"
 import { PluginSources } from "./plugin-sources"
+import { resolveWslHostDirectory } from "../workspaces/spawn"
 
 describe("WSL plugin control documents", () => {
   it("keeps native paths and source permissions in WSL operations", async () => {
@@ -217,7 +218,11 @@ describe("WSL plugin control documents", () => {
         getServiceDirectoryForPath: async (_id: string, directory: string) => directory === project ? project : undefined,
         ownsLocation: async () => true, getWorktreeIdentityForPath: async () => "fixture",
         getServicePathStyle: () => "posix", getServiceWslDistro: () => distro,
-        getHostPathForServicePath: async () => { throw new Error("WSL uses its native filesystem") },
+        // Config documents use native WSL IO; managed payload discovery shares the installer's host mapping.
+        getHostPathForServicePath: async (_id: string, native: string) => {
+          assert.equal(native, `${global}/plugins`, "configuration document IO stays inside the distro")
+          return resolveWslHostDirectory(native, distro!)
+        },
       } as any, worktreeDeletionFence: { enter: () => () => {} }, logger: { info() {} } as any })
       const location = { directory: project }
       const revision = async () => (await controls.read("w", location)).targets.find(target => target.scope === "global")!.expectedRevision!

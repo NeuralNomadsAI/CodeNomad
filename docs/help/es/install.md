@@ -10,7 +10,7 @@ Elige un equipo de escritorio local o ejecuta el [servidor independiente](server
 
 | Plataforma | Versión Electron | Versión Tauri | Notas de la plataforma |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel o Apple Silicon | ZIP, Intel o Apple Silicon | El entorno de ejecución incluido requiere macOS 13.5 o posterior. |
+| macOS | ZIP, Intel o Apple Silicon | ZIP, Intel o Apple Silicon | macOS 13.5 o posterior (lo requiere el Node que incluye Tauri; Electron declara el mismo mínimo). |
 | Windows | ZIP, x64 | Instalador, x64 | Windows 10 o posterior; Tauri usa WebView2. |
 | Linux | Paquete Debian, x64 | AppImage, x64 | Compilado y probado en Ubuntu 24.04; no se garantiza la compatibilidad con distribuciones anteriores. |
 
@@ -47,7 +47,7 @@ La instalación Debian de Electron configura el aislamiento de Chromium. No desa
 | --- | --- | --- |
 | CLI de OpenCode | Equipo de ejecución seleccionado, incluida la distribución WSL seleccionada cuando corresponda | Mínimo **2.2.3**; **2.2.5** es la versión recomendada/verificada. Las versiones más nuevas o personalizadas pasan una validación de contratos en lugar de prohibirse por no haberse probado. |
 | Git | `PATH` de la cuenta del backend de CodeNomad | Necesario para la identidad del repositorio, las operaciones Git y los worktrees. |
-| Node.js/npm | Equipo del servidor independiente y de compilación desde el código fuente | Node.js 24 LTS; las compilaciones reproducibles desde el código fuente usan `.node-version` (**24.20.0**). Incluido con los recursos de ejecución/instalación de escritorio. |
+| Node.js/npm | Equipo del servidor independiente y de compilación desde el código fuente | Node.js 24 LTS; las compilaciones reproducibles desde el código fuente usan `.node-version` (**24.20.0**). Las versiones de escritorio incluyen el suyo: el Node integrado de Electron o el Node que incluye Tauri, con npm. |
 | Carpeta del espacio de trabajo | Disco accesible para el backend | Una carpeta física abierta explícitamente, no una carpeta local del dispositivo deducida por un navegador remoto. |
 
 En Windows, instala [Git for Windows](https://gitforwindows.org/) con el acceso desde la línea de comandos/aplicaciones de terceros activado. Basta con una instalación por usuario en la que este pueda escribir. En macOS/Linux, sigue las [instrucciones de Git para tu plataforma](https://git-scm.com/downloads).

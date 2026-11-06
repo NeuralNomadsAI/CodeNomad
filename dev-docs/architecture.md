@@ -90,6 +90,8 @@ Session Shell and conversation instructions are native features. Session Shell i
 
 CodeNomad configuration resolves through `packages/server/src/config/location.ts`: `config.yaml`, `state.yaml`, `remote-control-devices.json`, and `instances/` under `~/.config/codenomad/`. `config.json` is read only as migration input.
 
+Backend shutdown closes SSE and upgraded sockets in Fastify's `preClose` hook and drains accepted local HTTP handlers before releasing workspace and native-parent authority. Completing responses close their keep-alive connection, including streams whose headers preceded shutdown, through a shutdown-only response-finish idle sweep. Permission recovery reads are cancelled; queued receipt writes, dispatched Yolo replies and Yolo persistence settle before workspace cleanup. Plugin leases and workspace cleanup run concurrently, and the success handshake follows resource cleanup. Native-parent responses remain readable through this drain. Mission mutations persist through their native RPC handlers in the shared OpenCode service.
+
 ## Implementation Map
 
 Server entrypoints are `packages/server/src/index.ts` and `server/http-server.ts`; shared-service authority lives in `workspaces/opencode-service.ts` and `workspaces/manager.ts`, event routing in `workspaces/instance-events.ts`, and bundled automation provisioning in `opencode/automation-plugin.ts`. UI native calls use `stores/opencode-client.ts`, `session-api.ts` and `session-actions.ts`; CodeNomad routes use `lib/api-client.ts`. Current integration conventions are in [AGENTS.md](../AGENTS.md) and the area documents it indexes.

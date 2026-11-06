@@ -52,6 +52,7 @@ try {
       if (host === "electron") {
         const env = { ...process.env, CODENOMAD_TEST_PROFILE: profile, CODENOMAD_TEST_URL: url }
         delete env.ELECTRON_RUN_AS_NODE
+        delete env.ELECTRON_NO_ASAR
         app = await _electron.launch({ executablePath: createRequire(import.meta.url)("electron"),
           args: [path.join(workspace, "scripts/fixtures/attachment-picker-electron.cjs")], env })
         page = await app.firstWindow(); pid = app.process().pid

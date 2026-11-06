@@ -10,7 +10,7 @@ Choose a local desktop host or run the [standalone server](server.md). In both c
 
 | Platform | Electron release | Tauri release | Platform notes |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel or Apple Silicon | ZIP, Intel or Apple Silicon | macOS 13.5 or later is required by the bundled runtime. |
+| macOS | ZIP, Intel or Apple Silicon | ZIP, Intel or Apple Silicon | macOS 13.5 or later (required by Tauri's bundled Node; Electron declares the same minimum). |
 | Windows | ZIP, x64 | Installer, x64 | Windows 10 or later; Tauri uses WebView2. |
 | Linux | Debian package, x64 | AppImage, x64 | Built and tested on Ubuntu 24.04; compatibility with older distributions is not guaranteed. |
 
@@ -47,7 +47,7 @@ The Electron Debian installation configures Chromium's sandbox. Do not disable t
 | --- | --- | --- |
 | OpenCode CLI | Selected execution host, including the selected WSL distribution where applicable | Minimum **2.2.3**; **2.2.5** is the recommended/qualified target. Newer or custom versions undergo contract validation rather than an untested-version ban. |
 | Git | CodeNomad backend account's `PATH` | Required for repository identity, Git operations and worktrees. |
-| Node.js/npm | Standalone-server and source-build host | Node.js 24 LTS; reproducible source builds use `.node-version` (**24.20.0**). Bundled with desktop runtime/installation resources. |
+| Node.js/npm | Standalone-server and source-build host | Node.js 24 LTS; reproducible source builds use `.node-version` (**24.20.0**). Desktop releases include their own: Electron's integrated Node or Tauri's bundled Node, with npm. |
 | Workspace folder | Backend-accessible disk | An explicitly opened physical folder, not a device-local folder inferred by a remote browser. |
 
 On Windows, install [Git for Windows](https://gitforwindows.org/) with command-line/third-party access enabled. A user-writable, per-user installation is sufficient. On macOS/Linux, use [Git's platform instructions](https://git-scm.com/downloads).

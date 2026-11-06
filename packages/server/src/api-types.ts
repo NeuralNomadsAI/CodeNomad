@@ -206,19 +206,32 @@ export interface ProviderUsageWindow {
   windowSeconds: number | null
   resetAt: number | null
   valueLabel?: string
+  balanceUSD?: { remaining: number; total?: number }
+  limitUSD?: number
+  consumption?: { used: number; limit?: number } | { creditsUsed: number } | { unlimited: true }
 }
+
+export type ProviderUsageUnavailableReason = "openai-token-sharing-unsupported" | "provider-error" | "minimax-limits-not-shared" | "invalid-base-url"
+  | "cursor-token-expired" | "cursor-team-unavailable" | "cursor-access-denied" | "cursor-usage-unavailable"
+  | "opencode-go-key-expired"
+export type ProviderUsageUnavailableAction = "chatgpt-usage" | "opencode-go-new-key"
 
 export interface ProviderUsageResponse {
   requestedProviderId: string
   providerId: string | null
   providerName: string
+  copilotPlan?: "free" | "pro" | "proPlus" | "business" | "enterprise" | "student" | "max"
   modelId?: string
   supported: boolean
   configured: boolean
   ok: boolean
   windows: Record<string, ProviderUsageWindow>
   fetchedAt: number
-  unavailableReason?: "openai-token-sharing-unsupported"
+  unavailableReason?: ProviderUsageUnavailableReason
+  /** Public numeric business code, at most eight digits; never an upstream message. */
+  providerErrorCode?: string
+  /** UI-owned fixed destination, admitted only for its associated reason. */
+  unavailableAction?: ProviderUsageUnavailableAction
   /** Computed locally from recorded activity because the provider publishes no counter. */
   estimated?: true
 }
@@ -240,6 +253,9 @@ export interface WorktreeDescriptor {
   registeredDirectory?: string
   /** Degraded mode: only this exact physical directory authorizes sessions. */
   directoryOnly?: boolean
+  /** The opened nested folder is absent from this checkout: it still owns the
+   * sessions placed there, but is neither offered for selection nor recovered. */
+  nestedFolderMissing?: boolean
   kind: WorktreeKind
   /** False for the opened folder and Git's main checkout. */
   removable?: boolean
@@ -510,6 +526,8 @@ export type PluginRuntimeSource =
 
 export interface PluginRuntimeInventoryEntry {
   key: string
+  /** Proven local installation published by CodeNomad. */
+  managedBy?: "codenomad"
   id?: string
   source: PluginRuntimeSource
   /** `gui`: the package ships parts the OpenCode desktop app loads only from Global configuration. */
@@ -528,11 +546,12 @@ export interface PluginConfiguredRule {
 
 export interface PluginConfiguredSource {
   target: string
+  managedBy?: "codenomad"
   scope: PluginConfigScope
   path?: string
   entryIndex: number
   hasOptions: boolean
-  /** The runtime plugin this declaration loaded, when the inventory reports it. */
+  /** Plugin associated by runtime inventory or a verified managed installation. */
   pluginId?: string
   /** Opaque confirmed-document identity, present on writable removal descriptors. */
   expectedRevision?: string
@@ -542,6 +561,7 @@ export type PluginScopeRuleState = "default" | "enabled" | "disabled"
 
 export interface PluginActivationControl {
   id: string
+  managedBy?: "codenomad"
   runtime?: PluginRuntimeInventoryEntry
   /** True for OpenCode-owned plugins, including disabled builtins absent from runtime inventory. */
   builtin: boolean

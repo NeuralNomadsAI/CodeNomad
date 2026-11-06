@@ -109,7 +109,9 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   `CODENOMAD_REMOTE_CONTROL_LIVE=1`) repeats the flow through the hosted
   relay, using a throwaway profile and data directory, and deletes that tunnel
   afterwards. It creates a public, certificate-logged hostname.
-- The packaged smoke test imports the bundled runtime with the packaged Node.
+- The packaged smoke test imports the packaged server with each host's server
+  runtime: Tauri's bundled Node, or the Electron executable with
+  `ELECTRON_RUN_AS_NODE=1` and `ELECTRON_NO_ASAR=1`.
 
 ## Agent conventions
 

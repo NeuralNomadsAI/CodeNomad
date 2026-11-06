@@ -100,6 +100,14 @@ export async function prepareWorktreeBranch(directory: string, branch: string): 
   return { existing: Boolean(revision), revision: revision ?? await git(directory, ["rev-parse", "--verify", "HEAD"]) }
 }
 
+/** Whether `revision` tracks the folder `directory` (inside its checkout); a new
+ * checkout of it holds only tracked content. */
+export async function revisionContainsFolder(directory: string, revision: string): Promise<boolean> {
+  const prefix = (await git(directory, ["rev-parse", "--show-prefix"])).replace(/\/$/, "")
+  if (!prefix) return true
+  return git(directory, ["cat-file", "-t", `${revision}:${prefix}`]).then(type => type === "tree", () => false)
+}
+
 export async function attachWorktreeBranch(directory: string, branch: string, existing: boolean): Promise<void> {
   // Never -B/--force: preserve branch refs and Git's already-checked-out guard.
   await git(directory, ["switch", ...(existing ? [] : ["-c"]), branch])

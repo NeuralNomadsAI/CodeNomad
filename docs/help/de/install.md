@@ -10,7 +10,7 @@ Wählen Sie einen lokalen Desktop-Host oder betreiben Sie den [eigenständigen S
 
 | Plattform | Electron-Release | Tauri-Release | Plattformhinweise |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel oder Apple Silicon | ZIP, Intel oder Apple Silicon | Die gebündelte Laufzeit erfordert macOS 13.5 oder neuer. |
+| macOS | ZIP, Intel oder Apple Silicon | ZIP, Intel oder Apple Silicon | macOS 13.5 oder neuer (erforderlich für das gebündelte Node von Tauri; Electron gibt dasselbe Minimum an). |
 | Windows | ZIP, x64 | Installationsprogramm, x64 | Windows 10 oder neuer; Tauri verwendet WebView2. |
 | Linux | Debian-Paket, x64 | AppImage, x64 | Unter Ubuntu 24.04 gebaut und getestet; Kompatibilität mit älteren Distributionen ist nicht garantiert. |
 
@@ -47,7 +47,7 @@ Die Electron-Debian-Installation richtet die Chromium-Sandbox ein. Deaktivieren 
 | --- | --- | --- |
 | OpenCode-CLI | Ausgewählter Ausführungshost, gegebenenfalls einschließlich der ausgewählten WSL-Distribution | Mindestens **2.2.3**; **2.2.5** ist das empfohlene/qualifizierte Ziel. Neuere oder angepasste Versionen werden anhand der Schnittstellenverträge geprüft, nicht wegen fehlender Tests ausgeschlossen. |
 | Git | Im `PATH` des CodeNomad-Backend-Kontos | Erforderlich für Repository-Identität, Git-Vorgänge und Worktrees. |
-| Node.js/npm | Host für eigenständigen Server und Quellcode-Builds | Node.js 24 LTS; reproduzierbare Quellcode-Builds verwenden `.node-version` (**24.20.0**). In den Desktop-Laufzeit-/Installationsressourcen enthalten. |
+| Node.js/npm | Host für eigenständigen Server und Quellcode-Builds | Node.js 24 LTS; reproduzierbare Quellcode-Builds verwenden `.node-version` (**24.20.0**). Desktop-Releases bringen ihre eigene Laufzeit mit: das integrierte Node von Electron oder das gebündelte Node von Tauri, jeweils mit npm. |
 | Arbeitsbereichsordner | Für das Backend zugänglicher Datenträger | Ein ausdrücklich geöffneter physischer Ordner, kein von einem Remote-Browser angenommener gerätelokaler Ordner. |
 
 Installieren Sie unter Windows [Git for Windows](https://gitforwindows.org/) mit aktiviertem Zugriff über Befehlszeile/Drittsoftware. Eine vom Benutzer beschreibbare benutzerbezogene Installation genügt. Unter macOS/Linux folgen Sie [Gits Plattformanleitung](https://git-scm.com/downloads).

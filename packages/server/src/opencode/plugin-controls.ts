@@ -35,6 +35,7 @@ import {
 } from "./plugin-control-document"
 import { createWslPluginControlDocumentFileSystem } from "./plugin-control-document-wsl"
 import { nativeSettingExpectation } from "./native-experimental-settings"
+import { readManagedDesktopPlugins, managedDesktopPluginForSource, type ManagedDesktopPlugin } from "./desktop-plugin-managed"
 
 export interface NativeConfigEdit { scope: PluginControlScope; path: string; expectation: string; updated: string }
 export type NativeConfigDocuments = { location: PluginControlLocation; entries: ConfigEntry[];
@@ -67,6 +68,7 @@ interface ReadContext {
   globalDirectory: string
   targets: ResolvedTarget[]
   fileSystem: PluginControlDocumentFileSystem
+  managedPlugins: ManagedDesktopPlugin[]
 }
 
 interface ResolvedTarget extends PluginControlTarget {
@@ -371,8 +373,12 @@ export class PluginControls {
       ? createWslPluginControlDocumentFileSystem(distro)
       : hostPluginControlDocumentFileSystem
     const targets = await this.resolveTargets(workspaceId, paths, globalDirectory, location.directory, entries, fileSystem, Boolean(distro), strictDocuments)
+    const managedPlugins = await readManagedDesktopPlugins({ globalDirectory, paths,
+      hostPath: nativePath => this.options.workspaceManager.getHostPathForServicePath(workspaceId, nativePath),
+      assertCurrent: () => { assertCurrentConnection(connection); signal?.throwIfAborted() },
+    })
     assertCurrentConnection(connection)
-    return { connection, entries, runtime, location, paths, style, globalDirectory, targets, fileSystem }
+    return { connection, entries, runtime, location, paths, style, globalDirectory, targets, fileSystem, managedPlugins }
   }
 
   private async resolveTargets(
@@ -464,7 +470,9 @@ interface SnapshotBase {
 const controlIdCollator = new Intl.Collator("en", { sensitivity: "variant" })
 
 function snapshotBase(context: ReadContext): SnapshotBase {
-  const runtime = context.runtime.map(normalizeRuntimeEntry)
+  const runtime = context.runtime.map(normalizeRuntimeEntry).map(entry => entry.source.type === "local"
+    && managedDesktopPluginForSource(context.managedPlugins, entry.source.path, context.paths)
+    ? { ...entry, managedBy: "codenomad" as const } : entry)
   const runtimeIds = new Set<string>()
   const runtimeSourceIds = new Map<string, string>()
   const runtimeById = new Map<string, PluginRuntimeInventoryEntry>()
@@ -494,7 +502,11 @@ function controlsForDocuments(
 ): PluginControlsSnapshot {
   const { runtime, runtimeIds, runtimeSourceIds, runtimeById } = base
   const documents = overlay ? applyOverlay(base, context, overlay) : base.documents
-  const knownDefinitions = new Set(runtimeIds)
+  // IDs only associate rules after an installation has passed local provenance checks.
+  // A runtime homonym from another source retains its ordinary controls.
+  const managedIds = new Set(context.managedPlugins.flatMap(entry => entry.ids)
+    .filter(id => !runtimeById.has(id) || runtimeById.get(id)?.managedBy === "codenomad"))
+  const knownDefinitions = new Set([...runtimeIds, ...managedIds])
   const declaredTargets = new Set<string>()
   const rules: PluginConfiguredRule[] = []
   const sources: PluginConfiguredSource[] = []
@@ -546,16 +558,24 @@ function controlsForDocuments(
     })
   }
 
-  const ids = new Set<string>(runtimeIds)
+  for (const source of sources) {
+    const nativeSource = source.target.startsWith("./") || source.target.startsWith("../")
+      ? context.paths.resolve(source.path ? context.paths.dirname(source.path) : context.location.directory, source.target) : source.target
+    if (managedDesktopPluginForSource(context.managedPlugins, nativeSource, context.paths)) source.managedBy = "codenomad"
+  }
+  const ids = new Set<string>([...runtimeIds, ...managedIds])
   for (const rule of rules) {
     if (isExactSelector(rule.selector)) ids.add(rule.selector)
   }
   const controls = [...ids].filter(validPluginId).sort(controlIdCollator.compare).map((id) => {
     const matching = rules.filter((rule) => matchesSelector(rule.selector, id))
     const controllingRule = matching.at(-1)
-    const runtimeEntry = runtimeById.get(id)
+    const runtimeEntry = runtimeById.get(id) ?? runtime.find(entry => !entry.id && entry.managedBy === "codenomad"
+      && entry.source.type === "local"
+      && managedDesktopPluginForSource(context.managedPlugins, entry.source.path, context.paths)?.ids.includes(id))
     return {
       id,
+      ...(runtimeEntry?.managedBy === "codenomad" || managedIds.has(id) ? { managedBy: "codenomad" as const } : {}),
       ...(runtimeEntry ? { runtime: runtimeEntry } : {}),
       builtin: runtimeEntry?.source.type === "builtin" || id.startsWith("opencode."),
       effective: stateForRule(controllingRule),
@@ -829,6 +849,15 @@ function runtimeIdForConfiguredTarget(
     return undefined
   }
   if (!localTarget) return undefined
+  const installation = managedDesktopPluginForSource(context.managedPlugins, localTarget, context.paths)
+  if (installation) {
+    // The daemon may report the shim while configuration names its referenced bundle (or vice versa).
+    for (const entry of runtimeById.values()) {
+      if (entry.managedBy === "codenomad" && entry.source.type === "local"
+        && managedDesktopPluginForSource(context.managedPlugins, entry.source.path, context.paths) === installation) return entry.id
+    }
+    if (installation.ids.length === 1 && !runtimeById.has(installation.ids[0])) return installation.ids[0]
+  }
   for (const entry of runtimeById.values()) {
     if (!entry.id || entry.source.type !== "local") continue
     if (samePath(context.paths, localTarget, entry.source.path)

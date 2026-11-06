@@ -54,6 +54,6 @@ Halihazırda çalışan bir işlem, npm yüklediği için yeni kodu almaz. Aynı
 
 CodeNomad'in güncellenmesi, seçilen OpenCode CLI'nin güncellenmesi anlamına gelmez. CLI'nin güncellenmesi, çalışan paylaşılan arka plan programını yeniden başlatmıyor. Yerel yapılandırmanın yeniden yüklenmesi, yüklenen Konumlar ve istekler üzerinde kendi etkileri olan başka bir açık işlemdir.
 
-Masaüstü Node/npm kaynakları uygulamayla gelir; bunların güncellemeleri uygulama sürümüyle sunulur. Bu, sistem Node/npm kurulumunu, Electron dahili çalışma zamanını, platform web görünümünü veya bağımsız yönetilen OpenCode hizmetini değiştirmez.
+Masaüstü çalışma zamanları uygulamayla güncellenir: Electron yerleşik Node'unu kullanır, Tauri Node'u paketler ve ikisi de npm içerir. Sistem Node/npm kurulumu, platform web görünümü ve OpenCode hizmeti bağımsız yönetilir.
 
 Çalışma zamanı seçimi, kurulum/güncelleme ve açık hizmet kontrolleri için **Ayarlar → OpenCode** öğesini kullanın. Özellikle diğer pencereler/kullanıcılar veya Görevler arka plan programını paylaştığında, yeniden başlatmadan veya yeniden yüklemeden önce [OpenCode kurulumu](opencode.md)'yi kontrol edin. Bir güncelleme/yeniden bağlanma bitti diye belirsiz bir istemi veya değişiklik işlemini asla tekrarlamayın.

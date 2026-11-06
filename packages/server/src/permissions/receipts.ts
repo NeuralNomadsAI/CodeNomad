@@ -9,30 +9,38 @@ import { nativeEventConnections } from "../workspaces/opencode-service"
 import { locationRequestOptions, readLocationRef } from "../opencode/compatibility/location"
 import { PermissionReceiptStore, permissionSnapshot, receiptHash, type ReceiptQuery } from "./receipt-store"
 
-type Manager = Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "ownsLocation" | "getServiceWslDistro" | "getServicePathStyle">
+type Manager = Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "getExistingSharedServiceConnection" | "ownsLocation" | "getServiceWslDistro" | "getServicePathStyle">
 type InstanceEvent = Extract<WorkspaceEventPayload, { type: "instance.event" }>
 export class PermissionReceipts {
   private readonly scopes = new WeakMap<ServiceConnection, Promise<string>>()
   private readonly events = new Map<string, Promise<unknown>>()
   private readonly confirmations = new Set<Promise<unknown>>()
   private readonly observers = new Map<string, Set<string>>()
+  private recovery = new AbortController()
   constructor(private readonly store: PermissionReceiptStore, private readonly manager: Manager,
     private readonly bus: EventBus, private readonly logger: Logger) {}
 
-  start() { this.bus.on("instance.event", this.onEvent); this.bus.on("instance.eventStatus", this.onStatus) }
+  start() {
+    if (this.recovery.signal.aborted) this.recovery = new AbortController()
+    this.bus.on("instance.event", this.onEvent); this.bus.on("instance.eventStatus", this.onStatus)
+  }
   async stop() {
     this.bus.off("instance.event", this.onEvent); this.bus.off("instance.eventStatus", this.onStatus)
+    // Recovery reads can be retried on reconnect; observed events and confirmed
+    // decisions below must still reach their atomic files before shutdown.
+    this.recovery.abort()
     await Promise.allSettled(this.events.values())
     await Promise.allSettled(this.confirmations)
   }
-  private scope(instanceId: string, connection: ServiceConnection): Promise<string> {
-    let pending = this.scopes.get(connection)
+  private scope(instanceId: string, connection: ServiceConnection, signal?: AbortSignal): Promise<string> {
+    // A cancelled recovery must never poison a durable event's namespace read.
+    let pending = signal ? undefined : this.scopes.get(connection)
     if (!pending) {
       const distro = this.manager.getServiceWslDistro(instanceId)?.toLowerCase()
       const style = this.manager.getServicePathStyle(instanceId)
       if (!style) return Promise.reject(new Error("Workspace execution identity is unavailable"))
       const paths = style === "win32" ? path.win32 : path.posix
-      pending = connection.client.config.get(undefined, { signal: AbortSignal.timeout(10_000) }).then(entries => {
+      pending = connection.client.config.get(undefined, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000) }).then(entries => {
         connection.assertCurrent()
         const root = entries.find(entry => entry.type === "directory")?.path
         if (typeof root !== "string" || !paths.isAbsolute(root) || root.includes("\0")) throw new Error("Missing native discovery identity")
@@ -44,15 +52,27 @@ export class PermissionReceipts {
         const channel = auth ? receiptHash(JSON.stringify([auth.type, auth.username, auth.password])) : connection.endpoint.url
         return JSON.stringify([distro ? `wsl:${distro}` : `host:${process.platform}`, directory, channel])
       })
-      this.scopes.set(connection, pending)
+      if (!signal) this.scopes.set(connection, pending)
       void pending.catch(() => { if (this.scopes.get(connection) === pending) this.scopes.delete(connection) })
     }
     return pending
   }
-  private enqueue(instanceId: string, run: () => Promise<unknown>) {
+  private async recoveryRead<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {
+    signal.throwIfAborted()
+    let abort!: () => void
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(signal.reason)
+      signal.addEventListener("abort", abort, { once: true })
+    })
+    try { return await Promise.race([run(), cancelled]) }
+    finally { signal.removeEventListener("abort", abort) }
+  }
+  private enqueue(instanceId: string, run: () => Promise<unknown>, signal?: AbortSignal) {
     const task = (this.events.get(instanceId) ?? Promise.resolve()).catch(() => {}).then(run)
     this.events.set(instanceId, task)
-    void task.catch(() => this.logger.error({ instanceId }, "Failed to persist permission receipt"))
+    void task.catch(error => {
+      if (!signal?.aborted || error !== signal.reason) this.logger.error({ instanceId }, "Failed to persist permission receipt")
+    })
       .finally(() => { if (this.events.get(instanceId) === task) this.events.delete(instanceId) })
   }
   private observe(instanceId: string, scope: string, sessionId: string) {
@@ -100,41 +120,44 @@ export class PermissionReceipts {
     if (event.status !== "connected") return
     const workspace = this.manager.get(event.instanceId)
     if (!workspace) return
+    const signal = this.recovery.signal
+    const options = () => ({ signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]) })
     this.enqueue(event.instanceId, async () => {
-      const connection = await this.manager.getSharedServiceConnection(event.instanceId)
+      if (signal.aborted) return
+      const connection = this.manager.getExistingSharedServiceConnection(event.instanceId)
       if (!connection) return
       const current = () => {
         connection.assertCurrent()
-        return this.manager.get(event.instanceId) === workspace
+        return !signal.aborted && this.manager.get(event.instanceId) === workspace
       }
       if (!current()) return
-      const scope = await this.scope(event.instanceId, connection)
+      const scope = await this.recoveryRead(signal, () => this.scope(event.instanceId, connection, signal))
       if (!current()) return
-      const locations = await connection.client.debug.location.list({ signal: AbortSignal.timeout(10_000) })
+      const locations = await connection.client.debug.location.list(options())
       // Pending permissions live in loaded native Locations, including descendant
       // directories that neither the daemon cwd nor worktree-root lists cover.
       for (const value of locations) {
         if (!current()) return
         const location = readLocationRef(value)
-        if (!await this.manager.ownsLocation(event.instanceId, location, connection.client, { purpose: "event" })) continue
+        if (!await this.recoveryRead(signal, () => this.manager.ownsLocation(event.instanceId, location, connection.client, { signal, purpose: "event" }))) continue
         if (!current()) return
         const pending = await connection.client.permission.request.list({ location: { directory: location.directory } }, {
-          ...locationRequestOptions(location), signal: AbortSignal.timeout(10_000),
+          ...locationRequestOptions(location), ...options(),
         })
         for (const value of pending.data) {
           if (!current()) return
           const request = permissionSnapshot(value)
           if (!request) continue
           let session
-          try { session = await connection.client.session.get({ sessionID: request.sessionId }, { signal: AbortSignal.timeout(10_000) }) }
+          try { session = await connection.client.session.get({ sessionID: request.sessionId }, options()) }
           catch (error) { if (isSessionNotFoundError(error)) continue; throw error }
           if (!current()) return
-          if (!await this.manager.ownsLocation(event.instanceId, session.location, connection.client, { purpose: "event" })) continue
+          if (!await this.recoveryRead(signal, () => this.manager.ownsLocation(event.instanceId, session.location, connection.client, { signal, purpose: "event" }))) continue
           if (!current()) return
           await this.store.capture(scope, request)
         }
       }
-    })
+    }, signal)
   }
 
   /** Called after proxy/Yolo ownership checks, before the native mutation. */

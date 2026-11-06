@@ -22,17 +22,6 @@ async function withIsolatedFetch(run: () => Promise<void>): Promise<void> {
   }
 }
 
-test("rejects an empty CrofAI usage payload", async () => {
-  await withIsolatedFetch(async () => {
-    for (const payload of [{}, { credits: "invalid" }]) {
-      globalThis.fetch = async () => Response.json(payload)
-      const usage = await extraProviders.find((provider) => provider.id === "crof")!.fetchQuota({ crof: { key: "token" } })
-      assert.equal(usage.ok, false)
-      assert.match(usage.error ?? "", /no quota data/)
-    }
-  })
-})
-
 test("rejects an empty Claude usage payload", async () => {
   await withIsolatedFetch(async () => {
     for (const payload of [{}, { limits: [{ kind: "session", percent: "invalid" }] }]) {

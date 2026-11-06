@@ -106,6 +106,7 @@ test("native Electron zoom preserves CSS minimums across close/recreate, shared 
       outfile: module, bundle: true, platform: "node", format: "cjs", external: ["electron"] })
     const env = { ...process.env, CODENOMAD_TEST_PROFILE: join(sandbox, "profile"), CODENOMAD_TEST_ZOOM_MODULE: module, CODENOMAD_TEST_ZOOM_URL: url }
     delete env.ELECTRON_RUN_AS_NODE
+    delete env.ELECTRON_NO_ASAR
     app = await _electron.launch({ executablePath: process.env.CODENOMAD_TEST_ELECTRON || createRequire(import.meta.url)("electron"),
       args: [fileURLToPath(new URL("fixtures/window-zoom-electron.cjs", import.meta.url))], env })
     const page = await app.firstWindow()

@@ -10,7 +10,7 @@
 
 | प्लेटफर्म | Electron रिलिज | Tauri रिलिज | प्लेटफर्म टिप्पणी |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel वा Apple Silicon | ZIP, Intel वा Apple Silicon | समावेश गरिएको रनटाइमका लागि macOS 13.5 वा पछिको आवश्यक छ। |
+| macOS | ZIP, Intel वा Apple Silicon | ZIP, Intel वा Apple Silicon | macOS 13.5 वा पछिको (Tauri को bundled Node का लागि आवश्यक; Electron ले पनि त्यही न्यूनतम घोषणा गर्छ)। |
 | Windows | ZIP, x64 | Installer, x64 | Windows 10 वा पछिको; Tauri ले WebView2 प्रयोग गर्छ। |
 | Linux | Debian प्याकेज, x64 | AppImage, x64 | Ubuntu 24.04 मा build र परीक्षण गरिएको; पुराना वितरणसँग अनुकूलता सुनिश्चित छैन। |
 
@@ -47,7 +47,7 @@ Electron Debian स्थापनाले Chromium sandbox कन्फिग�
 | --- | --- | --- |
 | OpenCode CLI | चयन गरिएको कार्यान्वयन होस्ट, लागू भए चयन गरिएको WSL वितरणसमेत | न्यूनतम **2.2.3**; **2.2.5** सिफारिस/योग्यता जाँच गरिएको लक्ष्य हो। नयाँ वा अनुकूलित संस्करणलाई परीक्षण नभएको भन्दै निषेध नगरी contract जाँच गरिन्छ। |
 | Git | CodeNomad ब्याकएन्ड खाताको `PATH` | रिपोजिटरी पहिचान, Git कार्य र worktree का लागि आवश्यक। |
-| Node.js/npm | स्वतन्त्र सर्भर र स्रोत-build होस्ट | Node.js 24 LTS; पुनरुत्पादनयोग्य स्रोत build ले `.node-version` (**24.20.0**) प्रयोग गर्छन्। डेस्कटप रनटाइम/स्थापना स्रोतमा समावेश। |
+| Node.js/npm | स्वतन्त्र सर्भर र स्रोत-build होस्ट | Node.js 24 LTS; पुनरुत्पादनयोग्य स्रोत build ले `.node-version` (**24.20.0**) प्रयोग गर्छन्। डेस्कटप रिलिजमा आफ्नै हुन्छ: Electron को integrated Node वा Tauri को bundled Node, npm सहित। |
 | कार्यस्थान फोल्डर | ब्याकएन्डले पहुँच गर्न सक्ने डिस्क | स्पष्ट रूपमा खोलिएको भौतिक फोल्डर, रिमोट ब्राउजरले अनुमान गरेको उपकरण-स्थानीय फोल्डर होइन। |
 
 Windows मा command-line/third-party पहुँच सक्षम गरेर [Git for Windows](https://gitforwindows.org/) स्थापना गर्नुहोस्। प्रयोगकर्ताले लेख्न सक्ने per-user स्थापना पर्याप्त छ। macOS/Linux मा [Git का प्लेटफर्म निर्देशन](https://git-scm.com/downloads) प्रयोग गर्नुहोस्।

@@ -5,7 +5,7 @@ import { syncBuiltinESMExports } from "node:module"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
-import { installDesktopPluginArtifact } from "./desktop-plugin-artifact"
+import { installDesktopPluginArtifact, readDesktopPluginFile } from "./desktop-plugin-artifact"
 import { installDesktopPluginPresence } from "./desktop-plugin-installation"
 
 test("native filesystem identities allow intact runtime and provider payloads to install and reopen", async t => {
@@ -116,4 +116,66 @@ test("a hard-linked payload is replaced without modifying its other name", async
   assert.deepEqual(await fs.readFile(payload), bundle)
   assert.equal(await fs.readFile(other, "utf8"), "untrusted")
   assert.equal((await fs.lstat(payload)).nlink, 1)
+})
+
+test("zero-device WSL UNC reads keep independent inode, size, link and digest checks", async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-artifact-wsl-device-"))
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!
+  t.after(async () => {
+    t.mock.restoreAll(); syncBuiltinESMExports()
+    Object.defineProperty(process, "platform", platform)
+    await fs.rm(root, { recursive: true, force: true })
+  })
+  const bundle = Buffer.from("trusted"), hash = createHash("sha256").update(bundle).digest("hex")
+  const payload = path.join(root, `${hash}.mjs`)
+  await fs.writeFile(payload, bundle)
+  const wsl = `\\\\wsl.localhost\\Ubuntu\\tmp\\${hash}.mjs`, legacyWsl = `\\\\wsl$\\Ubuntu\\tmp\\${hash}.mjs`
+  const drive = `C:\\tmp\\${hash}.mjs`, unc = `\\\\server\\share\\${hash}.mjs`
+  const relative = ` ${wsl}`
+  const aliases = new Set([wsl, legacyWsl, drive, unc, relative])
+  const inode = 13792273859649052n
+  let mode = "valid", stats = 0, names = 0
+  const originalLstat = fs.lstat, originalOpen = fs.open
+  Object.defineProperty(process, "platform", { value: "win32" })
+  t.mock.method(fs, "lstat", async (...args: Parameters<typeof fs.lstat>) => {
+    if (!aliases.has(String(args[0]))) return originalLstat(...args)
+    const info = await originalLstat(payload, { bigint: true })
+    names++
+    info.dev = mode === "named device" ? 1n : 0n
+    info.ino = mode === "named inode" ? inode + 1n : mode === "missing inode" ? 0n : inode
+    if (mode === "hard link") info.nlink = 2n
+    if (mode === "size") info.size += 1n
+    if (mode === "symlink" || mode === "link during probe" && names === 2) info.isSymbolicLink = () => true
+    return info
+  })
+  t.mock.method(fs, "open", async (...args: Parameters<typeof fs.open>) => {
+    if (!aliases.has(String(args[0]))) return originalOpen(...args)
+    const handle = await originalOpen(payload, args[1])
+    const originalStat = handle.stat.bind(handle)
+    t.mock.method(handle, "stat", async () => {
+      const info = await originalStat({ bigint: true })
+      stats++
+      info.dev = mode === "probe device" && stats % 2 === 0 ? 1n : 0n
+      info.ino = mode === "missing inode" ? 0n : mode === "probe inode" && stats % 2 === 0 ? inode + 1n : inode
+      if (mode === "hard link") info.nlink = 2n
+      if (mode === "size during read" && stats === 3) info.size += 1n
+      return info
+    })
+    return handle
+  })
+  syncBuiltinESMExports()
+  for (const file of [wsl, legacyWsl]) {
+    assert.deepEqual(await readDesktopPluginFile(file, 100), bundle)
+    const recheck = await installDesktopPluginArtifact(file, bundle, hash)
+    await recheck()
+  }
+  for (const file of [drive, unc, relative]) assert.equal(await readDesktopPluginFile(file, 100), undefined, "other Windows storage keeps the nonzero handle-device requirement")
+  for (mode of ["named device", "named inode", "missing inode", "hard link", "symlink", "size", "probe device", "probe inode", "link during probe", "size during read"]) {
+    stats = 0; names = 0
+    assert.equal(await readDesktopPluginFile(wsl, 100), undefined, mode)
+  }
+  mode = "valid"
+  const recheck = await installDesktopPluginArtifact(wsl, bundle, hash)
+  await fs.writeFile(payload, "altered")
+  await assert.rejects(recheck(), /SHA-256 differs/, "zero-device publication rechecks the full digest even when inode and size match")
 })

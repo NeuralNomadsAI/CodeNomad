@@ -54,6 +54,6 @@ Tauri 只安装所选通道/目标已发布更新清单的版本。如果已宣�
 
 更新 CodeNomad 不等于更新所选 OpenCode CLI。更新 CLI 不等于重启运行中的共享守护进程。重新加载原生配置又是独立的显式操作，对已加载 Location 和请求有自身影响。
 
-桌面 Node/npm 资源随应用提供；应用发行版负责更新它们。不会替换系统 Node/npm、Electron 内部运行时、平台 WebView 或独立管理的 OpenCode 服务。
+桌面运行时随应用更新：Electron 使用内置 Node，Tauri 附带 Node，两者均包含 npm。系统 Node/npm、平台 WebView 和 OpenCode 服务各自独立管理。
 
 使用**设置 → OpenCode**选择运行时、安装/更新和显式控制服务。重启或重新加载前请检查 [OpenCode 设置](opencode.md)，尤其当其他窗口/用户或任务共享守护进程时。切勿仅因更新/重连完成而重复不确定的提示词或修改操作。

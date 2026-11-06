@@ -43,6 +43,7 @@ const DAEMON_EXCLUDED_ENVIRONMENT = [
   "CLI_CONFIG",
   "CODENOMAD_NATIVE_PARENT",
   "ELECTRON_RUN_AS_NODE",
+  "ELECTRON_NO_ASAR",
 ]
 
 export function daemonProcessEnvironment(overrides?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

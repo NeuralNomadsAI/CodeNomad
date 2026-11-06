@@ -3,9 +3,25 @@ const fs = require("node:fs")
 const os = require("node:os")
 const path = require("node:path")
 const test = require("node:test")
+const { spawnSync } = require("node:child_process")
 const { resolveNpmTarget, validateServerProductionLock } = require("./desktop-server-resources.cjs")
 const { resolveEsbuildExecutable } = require("../packages/tauri-app/scripts/prebuild.js")
 const { copyPackagedServerResources } = require("./desktop-server-resources.cjs")
+
+test("Electron resource verification requires npm only while Tauri requires Node", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-runtime-contract-"))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const target = "win32-x64"
+  const directory = path.join(root, "node", target)
+  fs.mkdirSync(path.join(directory, "npm/bin"), { recursive: true })
+  fs.writeFileSync(path.join(directory, "npm/bin/npm-cli.js"), "")
+  const verify = (...args) => spawnSync(process.execPath, [path.join(__dirname, "verify-bundled-node.cjs"), ...args, `${root}@${target}`])
+  assert.equal(verify("--npm-only").status, 0)
+  assert.notEqual(verify().status, 0)
+  fs.writeFileSync(path.join(directory, "node.exe"), "")
+  assert.notEqual(verify("--npm-only").status, 0)
+  assert.equal(verify().status, 0)
+})
 
 test("maps every supported desktop target to npm OS and CPU", () => {
   assert.deepEqual(resolveNpmTarget("darwin-x64"), { target: "darwin-x64", os: "darwin", cpu: "x64" })

@@ -307,6 +307,7 @@ export const instanceMessages = {
   "instanceShell.worktree.create.placeholder": "worktree-name",
   "instanceShell.worktree.create.success": "worktree {slug} を作成しました",
   "instanceShell.worktree.create.error": "worktree を作成できませんでした",
+  "instanceShell.worktree.create.nestedFolderUnavailable": "このブランチでは開いているフォルダーが Git で追跡されていないため、新しい worktree には含まれません。",
   "instanceShell.worktree.openInFileManager.action": "ファイルマネージャーで開く",
   "instanceShell.worktree.openInFileManager.error": "ファイルマネージャーで worktree を開けませんでした",
   "instanceShell.worktree.delete.action": "worktree を削除",
