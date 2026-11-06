@@ -54,6 +54,7 @@ async function fixture() {
   const manager = {
     get: () => workspace,
     getSharedServiceConnection: async () => connection,
+    getExistingSharedServiceConnection: () => connection,
     getServiceWslDistro: () => state.distro,
     getServicePathStyle: () => "posix",
     ownsLocation: async () => state.owned,
@@ -106,11 +107,60 @@ test("all decisions persist across reload, SSE-before-HTTP upgrades only the exa
   } finally { await f.close() }
 })
 
+test("stop cancels read-only recovery but drains queued events and confirmed writes", { timeout: 2_000 }, async t => {
+  const f = await fixture()
+  let began!: () => void
+  const reading = new Promise<void>(resolve => { began = resolve })
+  let releaseRead!: () => void
+  Object.assign(f.connection.client.permission.request, { list: (_input: unknown, options: { signal: AbortSignal }) => new Promise((resolve, reject) => {
+    releaseRead = () => resolve({ data: [] })
+    options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true })
+    began()
+  }) })
+  const confirm = await f.receipts.prepare("w", f.connection, "s", "confirmed", "reject", "codenomad", "kept")
+  let releaseWrite!: () => void
+  let writing!: () => void
+  const writingStarted = new Promise<void>(resolve => { writing = resolve })
+  const resolveReceipt = f.store.resolve.bind(f.store)
+  t.after(async () => { Object.assign(f.store, { resolve: resolveReceipt }); releaseWrite?.(); releaseRead?.(); await f.close() })
+  Object.assign(f.store, { resolve: async (...args: Parameters<typeof resolveReceipt>) => {
+    writing()
+    await new Promise<void>(resolve => { releaseWrite = resolve })
+    return resolveReceipt(...args)
+  } })
+  f.bus.publish({ type: "instance.eventStatus", instanceId: "w", status: "connected", generation: 1 })
+  await reading
+  f.emit("permission.asked", pending("queued"))
+  f.emit("permission.replied", { sessionID: "s", requestID: "queued", reply: "once" })
+  const confirmed = confirm()
+  await writingStarted
+  let stopped = false
+  const started = performance.now()
+  const stopping = f.receipts.stop().then(() => { stopped = true })
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.equal(stopped, false, "the confirmed disk writer must drain")
+  // Restore normal writes before releasing the held confirmation.
+  Object.assign(f.store, { resolve: resolveReceipt })
+  releaseWrite()
+  await Promise.all([stopping, confirmed])
+  assert.ok(performance.now() - started < 1_000)
+  const rows = (await f.receipts.list("w", "s", { messageId: "m" })).receipts
+  assert.deepEqual(rows.map(row => row.requestId).sort(), ["confirmed", "queued"])
+  assert.equal(rows.find(row => row.requestId === "confirmed")?.reason, "kept")
+})
+
 test("initial connection and reconnect recover every loaded owned Location, including descendants", async () => {
   const f = await fixture()
   const directories = ["/project", "/project/packages/app", "/project-worktree", "/project-worktree/packages/app"]
   const requested: string[] = []
   let generation = 1
+  let captured!: () => void
+  let captures = 0
+  const capture = f.store.capture.bind(f.store)
+  Object.assign(f.store, { capture: async (...args: Parameters<typeof capture>) => {
+    await capture(...args)
+    if (++captures % directories.length === 0) captured()
+  } })
   Object.assign(f.manager, {
     ownsLocation: async (_id: string, location: { directory: string }, _client: unknown, _signal: unknown, purpose?: string) => {
       if (purpose) assert.equal(purpose, "event")
@@ -127,7 +177,9 @@ test("initial connection and reconnect recover every loaded owned Location, incl
     location: { directory: sessionID === "foreign" ? "/foreign" : "/project" } }) })
   try {
     for (generation = 1; generation <= 2; generation++) {
+      const recovered = new Promise<void>(resolve => { captured = resolve })
       f.bus.publish({ type: "instance.eventStatus", instanceId: "w", status: "connected", generation })
+      await recovered
       await f.receipts.stop()
       f.receipts.start()
       for (const directory of directories) f.emit("permission.replied", { sessionID: "s", requestID: `${directory}-${generation}`, reply: "once" })
@@ -205,6 +257,67 @@ test("Yolo is confirmed only on success; a failed transport creates no receipt a
     await assert.rejects(replier({ instanceId: "w", sessionId: "s", permissionId: "foreign" }), /does not belong/)
     assert.equal(f.state.replies, 2)
   } finally { await f.close() }
+})
+
+test("shutdown cancels every recovery read and fences late ownership results", { timeout: 2_000 }, async t => {
+  for (const phase of ["scope", "locations", "ownership", "permissions", "session"] as const) {
+    const f = await fixture()
+    let began!: () => void
+    const reading = new Promise<void>(resolve => { began = resolve })
+    let release!: () => void
+    t.after(() => release?.())
+    const hold = (signal: AbortSignal | undefined, result: unknown) => new Promise((resolve, reject) => {
+      release = () => resolve(result)
+      signal?.addEventListener("abort", () => reject(signal.reason), { once: true })
+      began()
+    })
+    if (phase === "scope") Object.assign(f.connection.client.config, { get: (_input: unknown, options: { signal: AbortSignal }) => hold(options.signal, [{ type: "directory", path: "/native/config" }]) })
+    if (phase === "locations") Object.assign(f.connection.client.debug.location, { list: (options: { signal: AbortSignal }) => hold(options.signal, [{ directory: "/project" }]) })
+    // Ownership can be waiting on shared filesystem/catalogue work with no
+    // subscriber-local cancellation. Its late result must not resume recovery.
+    if (phase === "ownership") Object.assign(f.manager, { ownsLocation: () => hold(undefined, true) })
+    if (phase === "permissions") Object.assign(f.connection.client.permission.request, { list: (_input: unknown, options: { signal: AbortSignal }) => hold(options.signal, { data: [pending()] }) })
+    if (phase === "session") Object.assign(f.connection.client.session, { get: (_input: unknown, options: { signal: AbortSignal }) => hold(options.signal, { location: { directory: "/project" } }) })
+    try {
+      f.bus.publish({ type: "instance.eventStatus", instanceId: "w", status: "connected", generation: 1 })
+      await reading
+      const started = performance.now()
+      await f.receipts.stop()
+      if (t.signal.aborted) return
+      assert.ok(performance.now() - started < 1_000, phase)
+      release()
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.deepEqual(await readdir(f.root), [], phase)
+    } finally { release?.(); await f.close() }
+  }
+})
+
+test("Yolo stop drains dispatched replies before receipt and workspace shutdown", async () => {
+  const f = await fixture()
+  let dispatched!: () => void
+  let release!: () => void
+  const started = new Promise<void>(resolve => { dispatched = resolve })
+  Object.assign(f.connection.client.permission, { reply: async () => {
+    dispatched()
+    await new Promise<void>(resolve => { release = resolve })
+  } })
+  const yolo = new AutoAcceptManager({ eventBus: f.bus, logger,
+    replier: createOpencodePermissionReplier({ workspaceManager: f.manager, permissionReceipts: f.receipts }) })
+  try {
+    yolo.handleInstanceEvent("w", { type: "session.created", data: { id: "s" } })
+    yolo.toggle("w", "s")
+    yolo.handleInstanceEvent("w", { type: "permission.asked", data: pending() })
+    await started
+    let stopped = false
+    const stopping = yolo.stop().then(() => { stopped = true })
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(stopped, false)
+    release()
+    await stopping
+    await f.receipts.stop()
+    const rows = (await f.receipts.list("w", "s", { messageId: "m" })).receipts
+    assert.equal(rows[0]?.origin, "yolo")
+  } finally { release?.(); await yolo.stop(); await f.close() }
 })
 
 test("route validates queries and fresh session ownership, returns bounded continuation pages", async () => {
@@ -311,7 +424,7 @@ test("authenticated native channels and WSL hosts isolate identical session/requ
     await (await f.receipts.prepare("w", f.connection, "s", "p", "once", "codenomad"))()
     const otherConnection = { ...f.connection, endpoint: { ...f.connection.endpoint,
       auth: { type: "basic" as const, username: "opencode", password: "other-native-channel" } } }
-    const manager = { get: f.manager.get, ownsLocation: f.manager.ownsLocation,
+    const manager = { get: f.manager.get, ownsLocation: f.manager.ownsLocation, getExistingSharedServiceConnection: f.manager.getExistingSharedServiceConnection,
       getServiceWslDistro: f.manager.getServiceWslDistro, getServicePathStyle: f.manager.getServicePathStyle,
       getSharedServiceConnection: f.manager.getSharedServiceConnection }
     const otherManager = { ...manager, getSharedServiceConnection: async () => otherConnection }

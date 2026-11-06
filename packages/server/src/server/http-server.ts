@@ -188,6 +188,24 @@ export function createHttpServer(deps: HttpServerDeps) {
     }
     sseClients.clear()
   }
+  // Upgraded sockets leave Node's HTTP connection pool, including unmatched
+  // upgrades (for example Vite HMR). Server.close() cannot drain them itself.
+  const upgrades = new Set<Socket>()
+  let closing = false
+  app.server.on("upgrade", (_request, socket: Socket) => {
+    if (closing) { socket.destroy(); return }
+    upgrades.add(socket)
+    socket.once("close", () => upgrades.delete(socket))
+  })
+  app.addHook("preClose", async () => {
+    closing = true
+    closeSseClients()
+    for (const socket of upgrades) socket.destroy()
+  })
+  app.addHook("onSend", (_request, reply, payload, done) => {
+    if (closing) reply.header("Connection", "close")
+    done(null, payload)
+  })
 
   registerRequestLogging(app, apiLogger)
 
@@ -507,10 +525,7 @@ export function createHttpServer(deps: HttpServerDeps) {
 
       return { port: actualPort, url: serverUrl, displayHost }
     },
-    stop: () => {
-      closeSseClients()
-      return app.close()
-    },
+    stop: () => app.close(),
   }
 }
 
