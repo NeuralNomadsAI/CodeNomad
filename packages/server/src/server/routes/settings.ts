@@ -14,6 +14,7 @@ interface RouteDeps {
   logger: Logger
   /** An installed login start follows an explicit executable change; its failure never refuses the save. */
   refreshLoginStart?: () => Promise<void>
+  withConfigLock?: <T>(action: () => T) => Promise<T>
 }
 
 const ValidateBinarySchema = z.object({
@@ -59,6 +60,7 @@ async function refreshLoginStart(deps: RouteDeps) {
 }
 
 export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
+  const withConfigLock = deps.withConfigLock ?? (async <T>(action: () => T): Promise<T> => action())
   // Full-document access
   app.get("/api/storage/config", async () => sanitizeConfigDoc(deps.settings.getDoc("config")))
   app.patch("/api/storage/config", async (request, reply) => {
@@ -73,7 +75,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
         }
         body = bodyObj
       }
-      const saved = deps.settings.mergePatchDoc("config", body)
+      const saved = await withConfigLock(() => deps.settings.mergePatchDoc("config", body))
       if (body && typeof body === "object" && "server" in body && body.server && typeof body.server === "object"
         && "opencodeBinary" in body.server) await refreshLoginStart(deps)
       return sanitizeConfigDoc(saved)
@@ -102,7 +104,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
         if (request.query.conditional !== "missions-v1") throw new Error("Unknown conditional patch mode")
         return sanitizeConfigOwner(
           request.params.owner,
-          applyConditionalMissionPreferences(deps.settings, request.params.owner, request.body),
+          await withConfigLock(() => applyConditionalMissionPreferences(deps.settings, request.params.owner, request.body)),
         )
       }
       const currentOwner = request.params.owner === "server"
@@ -111,7 +113,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RouteDeps) {
       const processed = request.params.owner === "server"
         ? enforceSpeechCredentialPairing(request.body ?? {}, currentOwner)
         : request.body ?? {}
-      const saved = deps.settings.mergePatchOwner("config", request.params.owner, processed)
+      const saved = await withConfigLock(() => deps.settings.mergePatchOwner("config", request.params.owner, processed))
       if (request.params.owner === "server" && processed && typeof processed === "object" && "opencodeBinary" in processed)
         await refreshLoginStart(deps)
       return sanitizeConfigOwner(request.params.owner, saved)

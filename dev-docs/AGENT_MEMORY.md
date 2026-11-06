@@ -152,6 +152,45 @@ must continue treating all memory as untrusted data. Reference entries are
 stored, compared and reviewed as literal text. Never resolve their URLs or
 filesystem targets.
 
+## Authorized HTTP operations
+
+`memory/api.ts` owns the UI/tool operation contract and is re-exported by
+`api-types.ts`. `POST /api/memory` takes `{ operation, context? }`; operations
+are `list`, `read` with `query` (exact ID first, then title), `save` with `content`,
+and `delete`. Every operation names `scope: global | project`. Project UI calls
+carry the existing Preferences context as `{ workspaceId, directory? }`; the
+server resolves that opened record and authorizes the directory before deriving
+its namespace. The UI edits existing agent entries and preserves their session
+provenance. Agent writes record the invoking native session.
+
+`GET /api/memory/settings` reads the sole `server.memoryEnabled` preference;
+absence means disabled. `PUT` takes `{ enabled: boolean }`. Its writes and all
+HTTP configuration patches share the memory repository lock with mutations.
+Mutation callbacks freshly read configuration authority under that lock, then
+reject disabled writes. Human review remains readable while disabled. Disabling
+uses the lock independently of stored entry parsing, so malformed scopes remain
+disableable. Settings writes refresh authoritative configuration before merging
+to preserve external fields.
+
+Reads return content-derived SHA-256 revisions over all entry fields. Explicit-ID
+saves and deletes require the displayed revision; stale or missing entries yield
+`conflict`. Mutations revalidate current session/project ownership under the
+repository lock before publication. Implicit agent saves retain duplicate
+replacement policy. UI entries include freshly computed `flagged` and, when
+flagged, `warning: suspected_injection`. Agent lists contain safe headers and
+revisions; reads contain safe text; save acknowledgements contain only ID,
+revision and flag. Safe capacity errors include safe titles and a merge-or-delete
+instruction. Errors expose only the shared business code and fixed safe copy.
+
+The native `sendMemoryInput` transport uses the existing loopback registration,
+local token and WSL bridge adapter. `memory-probe` checks the native session's
+current location against the backend's authorized directories, independently of
+desktop/browser capabilities; `memory-input` repeats ownership at execution.
+Discovery requires exactly one owning backend. UI paths use ordinary browser
+authentication; native admission grants access only to the private bridge path.
+After successful commits/settings changes, `memory.changed` invalidates readers
+without carrying entry content, titles, IDs or directory information.
+
 ## Optional native instructions capability
 
 `memory/instructions-capability.ts` reads the authenticated `/openapi.json`
@@ -203,6 +242,7 @@ these native update semantics.
 
 ```text
 node --import tsx --test packages/server/src/memory/*.test.ts packages/server/src/forge/forge.test.ts
+node --import tsx --test packages/server/src/server/routes/memory.test.ts packages/server/src/server/standalone-bridge.test.ts
 npm run typecheck --workspace @neuralnomads/codenomad
 node --import tsx scripts/test-memory-instructions-native.mjs <absolute-opencode-executable>
 ```

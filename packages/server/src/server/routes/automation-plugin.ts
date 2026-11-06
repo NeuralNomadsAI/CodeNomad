@@ -20,6 +20,8 @@ import { verifyHumanRecurrenceRequest } from "./mission-recurrence-proof"
 import { BrowserPage } from "../../automation/browser-page"
 import type { SettingsService } from "../../settings/service"
 import type { RemoteControlManager } from "../../remote-control/manager"
+import type { MemoryService } from "../../memory/service"
+import { memoryErrorReply } from "./memory"
 
 interface AutomationPluginRouteDeps {
   authManager: AuthManager
@@ -30,6 +32,7 @@ interface AutomationPluginRouteDeps {
   worktreeDeletionFence?: WorktreeDeletionFence
   settings?: Pick<SettingsService, "getProfileScope">
   remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">
+  memory?: MemoryService
 }
 
 interface DeveloperNativeStatus {
@@ -78,9 +81,19 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         }, lifetime.signal) })
       } catch { return reply.code(403).send({ error: "Recurrence human admission unavailable" }) }
     }
-    if (!body || !["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute", "mission-input"].includes(String(body.mode))
+    if (!body || !["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute", "mission-input", "memory-probe", "memory-input"].includes(String(body.mode))
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {
       return reply.code(400).send({ error: "Invalid automation bridge request" })
+    }
+    if (body.mode === "memory-probe" || body.mode === "memory-input") {
+      if (!deps.memory) return reply.code(503).send({ code: "unreadable", error: "Memory is unavailable" })
+      try {
+        if (body.mode === "memory-probe") {
+          await deps.memory.probe(body.sessionID)
+          return reply.send({ result: { available: true } })
+        }
+        return reply.send({ result: await deps.memory.executeAgent(body.sessionID, body.command) })
+      } catch (error) { return memoryErrorReply(reply, error) }
     }
     // Lifecycle Pause/Stop and a retired task's interrupt walk and interrupt whole native
     // subagent families; they stay below the plugin's 95 s bridge timeout.

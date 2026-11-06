@@ -108,6 +108,9 @@ import { createOpenCodeUpdateService } from "../opencode-update/service"
 import { WorktreeDeletionFence } from "../workspaces/worktree-session-evacuation"
 import type { NativeParent } from "../native-parent"
 import { isAutomationPluginRequest, registerAutomationPluginRoute } from "./routes/automation-plugin"
+import type { MemoryStore } from "../memory/store"
+import { MemoryService } from "../memory/service"
+import { registerMemoryRoutes } from "./routes/memory"
 import { DeveloperCdp } from "../developer-cdp"
 import { formatHostForUrl, isLoopbackHost, isWildcardHost, stripHostBrackets } from "./network-host"
 import { validatePromptAttachmentBudget } from "./prompt-attachment-budget"
@@ -143,6 +146,7 @@ interface HttpServerDeps {
   logger: Logger
   nativeParent: NativeParent
   automationBridgeToken: string
+  memoryStore?: MemoryStore
   panelExtensions?: PanelExtensionStore
   /** Shared by every listener of one backend; a fresh one serves a lone server. */
   worktreeDeletionFence?: WorktreeDeletionFence
@@ -392,7 +396,10 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerServiceUsageRoutes(app, new ServiceUsage(deps.workspaceManager, deps.settings))
   const loginStart = createOpenCodeLoginStart(deps.settings, deps.workspaceManager)
   registerOpenCodeLoginStartRoutes(app, { loginStart, auth: deps.authManager, remoteDevices: deps.remoteControlManager })
-  registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, refreshLoginStart: () => loginStart.refresh() })
+  const memory = deps.memoryStore ? new MemoryService(deps.memoryStore, deps.settings, deps.workspaceManager, deps.eventBus) : undefined
+  if (memory) registerMemoryRoutes(app, memory)
+  registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, refreshLoginStart: () => loginStart.refresh(),
+    withConfigLock: memory ? action => memory.withSettingsLock(action) : undefined })
   const accounts = new ProviderAccountsService(deps.settings)
   const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts)
   app.addHook("onClose", async () => stopQuotaObserver())
@@ -426,6 +433,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerPreviewRoutes(app, { previewManager: deps.previewManager })
   const developerCdp = new DeveloperCdp()
   registerAutomationPluginRoute(app, {
+    memory,
     authManager: deps.authManager,
     settings: deps.settings,
     bridgeToken: deps.automationBridgeToken,
