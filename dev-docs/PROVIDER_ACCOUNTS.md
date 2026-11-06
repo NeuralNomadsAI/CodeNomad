@@ -37,7 +37,7 @@ exchanges tokens.
 | `anthropic` (Claude Pro/Max) | OpenCode Anthropic OAuth only, never Claude Code's `claude-code` login, even as fallback | Usage tab Claude reader | accepted unless marked |
 | `github-copilot` | OAuth; automatic selection: github.com only | Usage tab Copilot reader (premium requests and consumed credits; validated Enterprise destinations for display) | rejected |
 | `zai-coding-plan`, `zhipuai-coding-plan` | plan key | Usage tab credit/token-limit reader (MCP tool allowance ignored) | rejected |
-| `kimi-for-coding`, `kimi`, `kimi-code-plan-cn`, `kimi-code-plan-global` | plan key | Usage tab Kimi reader, including calendar-month caps | rejected |
+| `kimi-for-coding` | plan key | Usage tab Kimi reader, including calendar-month caps | rejected |
 | `minimax-coding-plan`, `minimax-cn-coding-plan` | plan key | Usage tab MiniMax reader | rejected |
 
 OpenAI's `chatgpt-token-sharing` grant cannot read Codex usage ([confirmed by

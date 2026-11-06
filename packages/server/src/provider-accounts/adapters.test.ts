@@ -6,6 +6,7 @@ import { quotaState } from "./service"
 import { ProviderHttpError } from "../usage/shared"
 import type { AuthFile, ProviderResult, ProviderUsage } from "../usage/types"
 import { openCodeGoAuth } from "../usage/providers/special"
+import { resolveUsageProvider } from "../usage/service"
 
 const hour = 3_600_000
 const window = (usedPercent: number | null, windowSeconds: number | null = 18_000) =>
@@ -32,7 +33,7 @@ const signal = () => AbortSignal.timeout(2000)
 
 test("registry covers subscription integrations only, with Go restricted to its provider", () => {
   const { adapters } = harness()
-  assert.deepEqual([...adapters.keys()].sort(), ["anthropic", "github-copilot", "kimi", "kimi-code-plan-cn", "kimi-code-plan-global", "kimi-for-coding", "minimax-cn-coding-plan",
+  assert.deepEqual([...adapters.keys()].sort(), ["anthropic", "github-copilot", "kimi-for-coding", "minimax-cn-coding-plan",
     "minimax-coding-plan", "openai", "opencode", "opencode-go", "zai-coding-plan", "zhipuai-coding-plan"])
   for (const payAsYouGo of ["openrouter", "deepinfra", "zai", "minimax", "deepseek", "kilo", "zenmux", "cursor"]) {
     assert.equal(adapterForProvider(adapters, { id: payAsYouGo }), undefined)
@@ -170,7 +171,18 @@ test("selection views preserve plan windows and ignore unrelated allowances", as
   assert.equal(quotaState({ windows: claude }), "available")
 })
 
-test("every Kimi adapter reads only its explicit candidate and monthly exhaustion blocks availability", async t => {
+test("Kimi display aliases stay outside automatic account selection", () => {
+  const { adapters } = harness()
+  for (const alias of ["kimi", "kimi-code-plan-cn", "kimi-code-plan-global"]) {
+    assert.equal(resolveUsageProvider(alias)?.id, "kimi-for-coding")
+    assert.equal(adapters.has(alias), false, `${alias} is display-only`)
+    assert.equal(adapterForProvider(adapters, { id: alias }), undefined)
+    assert.equal(adapterForProvider(adapters, { id: "custom-kimi", integrationID: alias, canonical: "kimi-for-coding" }), undefined)
+  }
+  assert.equal(adapterForProvider(adapters, { id: "kimi-for-coding" })?.integrationID, "kimi-for-coding")
+})
+
+test("Kimi selection reads only its explicit candidate and monthly exhaustion blocks availability", async t => {
   const calls: Array<{ url: string; key: string | null }> = []
   let monthly = 1
   t.mock.method(globalThis, "fetch", async (url: unknown, init: RequestInit) => {
@@ -182,19 +194,16 @@ test("every Kimi adapter reads only its explicit candidate and monthly exhaustio
     } })
   })
   const adapters = createSelectionAdapters()
-  for (const alias of ["kimi-for-coding", "kimi", "kimi-code-plan-cn", "kimi-code-plan-global"]) {
-    const candidate = adapters.get(alias)!.credential(key(alias, "candidate", `synthetic-${alias}`))!
-    monthly = 1
-    const exhausted = await candidate.read(signal())
-    assert.equal(exhausted.windows.monthly.windowSeconds, null)
-    assert.equal(quotaState(exhausted), "exhausted")
-    monthly = 0.3
-    assert.equal(quotaState(await candidate.read(signal())), "available")
-    assert.deepEqual(calls.splice(0), Array(2).fill({
-      url: `https://${alias === "kimi-code-plan-global" ? "api.kimi.ai" : "api.kimi.com"}/coding/v1/usages`,
-      key: `Bearer synthetic-${alias}`,
-    }))
-  }
+  const candidate = adapters.get("kimi-for-coding")!.credential(key("kimi-for-coding", "candidate", "synthetic-kimi-for-coding"))!
+  const exhausted = await candidate.read(signal())
+  assert.equal(exhausted.windows.monthly.windowSeconds, null)
+  assert.equal(quotaState(exhausted), "exhausted")
+  monthly = 0.3
+  assert.equal(quotaState(await candidate.read(signal())), "available")
+  assert.deepEqual(calls, Array(2).fill({
+    url: "https://api.kimi.com/coding/v1/usages",
+    key: "Bearer synthetic-kimi-for-coding",
+  }))
   assert.equal(quotaState({ windows: { "5h": window(10), "monthly-code": window(100, null) } }), "exhausted")
   assert.equal(quotaState({ windows: { monthly: window(100, null) } }), "exhausted", "monthly-only plans remain decisive")
 })

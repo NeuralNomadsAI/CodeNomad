@@ -31,7 +31,7 @@
 | OpenCode Go | Go キー、または **Go プロバイダーのみ** に使う OpenCode Console のログイン／キー。Zen の従量課金クレジットは対象外です。 |
 | Anthropic | OpenCode の Claude Pro/Max OAuth ログイン。Claude Code のログイン **ではありません**。 |
 | GitHub Copilot | プレミアムリクエストの割り当て量を読み取れる OAuth。エンタープライズエンドポイントの認証情報は読み取り可能な候補ではありません。 |
-| コーディングプラン | キー方式の `zai-coding-plan`、`zhipuai-coding-plan`、`kimi-for-coding`、`kimi`、`kimi-code-plan-cn`、`kimi-code-plan-global`、`minimax-coding-plan`、`minimax-cn-coding-plan`。 |
+| コーディングプラン | キー方式の `zai-coding-plan`、`zhipuai-coding-plan`、`kimi-for-coding`、`minimax-coding-plan`、`minimax-cn-coding-plan`。 |
 
 現在のアカウントが上限に達した場合にのみ切り替えます。別のアカウントの余裕が大きいだけでは切り替えません。候補を有効化したり更新トークンを交換したりせず、明示的な保存済み認証情報を読み取ります。Codex、Copilot、コーディングプランは、利用可能と実証された候補が必要です。Go、Console、Claude は、最近のネイティブな割り当て量エラーで使い切ったと記録されていない限り、割り当て量不明の候補を使用する場合があります。OpenCode Go の読み取りは利用可能な API と認証情報の権限に依存します。
 
@@ -66,7 +66,7 @@ z.ai と Zhipu では、使用量は設定された `apiKey` を優先します�
 
 GitHub Copilot の **使用量** は **使用済み量 / 上限 使用済み** の形式で消費量を表示します。無制限の枠について GitHub が消費クレジットを返す場合はその値を表示し、それ以外は **無制限** と表示します。プレミアムリクエストのラベルは維持されます。下部には認識されたプラン名が表示されます。Enterprise 接続では、保存された接続のホスト名または HTTPS ルート URL を使い、`https://api.<host>/copilot_internal/user` にアクセスします。認証情報、明示的なポート（`:443` も含む）、`/` 以外のパス、クエリ、フラグメントのない完全修飾ホスト名を使用してください。IP アドレスと localhost はトークン送信前に拒否されます。リダイレクトは拒否されます。無効な宛先やこの API のないサーバーでは使用量を取得できません。Enterprise 接続は引き続きアカウントの自動選択の対象外です。
 
-Kimi は `kimi-code-plan-cn`（kimi.com）、`kimi-code-plan-global`（kimi.ai）、`kimi-for-coding`、`kimi` に対応しています。**使用量**は会話のインテグレーションを優先し、各インテグレーションで有効な保存済みキーを共通の制限時間内で順に試します。利用可能な5時間、週間、**月間**、**月間コーディング**の上限は使用率で表示されます。月間上限はプロバイダーのリセット日時に従います。いずれかの月間上限を使い切ったアカウントは、短い期間の枠に余裕があっても自動選択の候補にはなりません。
+Kimi は `kimi-code-plan-cn`（kimi.com）、`kimi-code-plan-global`（kimi.ai）、`kimi-for-coding`、`kimi` に対応しています。**使用量**は会話のインテグレーションを優先し、各インテグレーションで有効な保存済みキーを共通の制限時間内で順に試します。利用可能な5時間、週間、**月間**、**月間コーディング**の上限は使用率で表示されます。月間上限はプロバイダーのリセット日時に従います。いずれかの月間上限を使い切った `kimi-for-coding` アカウントは、短い期間の枠に余裕があっても自動選択の候補にはなりません。
 
 OpenCode Go の API キーでは、取得できる使用率とリセット時刻を表示します。OpenCode Console ログインでは、請求の閲覧権限があればウォレット残高も USD で取得します。独立した残高を表示するには **プロバイダーのクレジット残高** を有効にします（既定はオフ）。Go の割り当て量と Extra Usage は別です。残高だけでは自動選択の割り当て量は不明のままです。**OpenCode Go キーの有効期限が切れています。** と表示されたら、[OpenCode Console で新しいキーを作成して置き換える](https://opencode.ai/console/login) を選びます。**Account → Personal API keys** でキーを作成し（または管理者にサービスアカウント用キーを依頼し）、プロバイダーの接続手順で保存済みキーを置き換えてください。期限切れキーは交換が必要です。
 

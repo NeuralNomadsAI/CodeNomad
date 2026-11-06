@@ -6,7 +6,6 @@ import { fetchCodexSelectionQuota } from "../usage/native-codex"
 import { projectCredential } from "../usage/native-credentials"
 import { fetchOpenCodeGoQuota, type OpenCodeGoAuth } from "../usage/opencode-go-quota"
 import { createAnthropicClaudeUsage } from "../usage/providers/extra"
-import { kimiAliases } from "../usage/providers/api-key"
 import { openCodeGoAuth } from "../usage/providers/special"
 import { resolveUsageProvider } from "../usage/service"
 import { getString, ProviderHttpError } from "../usage/shared"
@@ -109,8 +108,8 @@ export function createSelectionAdapters(options: { codexQuota?: CodexQuota; goQu
       integrationID, methods: ["key"], reactive: false,
       // MCP tool allowances do not block model requests.
       select: usage => windows(usage, { drop: ["mcp-tools"] }) })),
-    ...kimiAliases.map(integrationID => subscription({ integrationID, methods: ["key"], reactive: false,
-      select: usage => windows(usage, { defaults: { weekly: 7 * DAY_SECONDS } }) })),
+    subscription({ integrationID: "kimi-for-coding", methods: ["key"], reactive: false,
+      select: usage => windows(usage, { defaults: { weekly: 7 * DAY_SECONDS } }) }),
     ...(["minimax-coding-plan", "minimax-cn-coding-plan"] as const).map(integrationID => subscription({
       integrationID, methods: ["key"], reactive: false,
       select: usage => windows(usage, { defaults: { "5h": 5 * 3600, weekly: 7 * DAY_SECONDS } }) })),
