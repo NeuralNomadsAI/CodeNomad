@@ -309,7 +309,7 @@ jobs:
         run: npm run build:memory --workspace @neuralnomads/codenomad
 
       - name: Test desktop packaging invariants
-        run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs
+        run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs packages/tauri-app/scripts/vendored-patches.test.mjs
 
       - name: Test CI fixture diagnostics and artifact announcements
         run: node --test scripts/native-fixture-diagnostics.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/windows-signing.test.cjs .github/scripts/zip-entry.test.cjs .github/scripts/release-pr-notes.test.cjs
@@ -653,8 +653,7 @@ jobs:
         run: cargo test --locked -- --test-threads=1
 
       - name: Test updater installer launch handoff
-        working-directory: packages/tauri-app
-        run: cargo test --locked -p tauri-plugin-updater windows_launch_tests
+        run: node scripts/test-tauri-updater-handoff.mjs
 
       - name: Test owned Tauri zoom input script
         run: node --test packages/tauri-app/tests/window-zoom-script.test.mjs

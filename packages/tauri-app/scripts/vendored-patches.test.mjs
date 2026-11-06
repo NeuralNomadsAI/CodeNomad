@@ -1,0 +1,52 @@
+// Every vendored crate selected by [patch.crates-io] must be the one Cargo.lock
+// resolves. A dependency update past a vendored version leaves the patch unused
+// and silently builds the unpatched registry crate instead.
+import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import path from "node:path"
+import { test } from "node:test"
+import { fileURLToPath } from "node:url"
+
+const workspace = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const read = file => readFileSync(path.join(workspace, file), "utf8").replaceAll("\r\n", "\n")
+
+export function patchedCrates(manifest) {
+  const section = manifest.match(/^\[patch\.crates-io\]\n([\s\S]*?)(?=^\[|(?![\s\S]))/m)
+  assert.ok(section, "missing [patch.crates-io]")
+  return [...section[1].matchAll(/^([\w-]+)\s*=\s*\{\s*path\s*=\s*"([^"]+)"\s*\}/gm)].map(([, name, dir]) => ({ name, dir }))
+}
+
+export function packageIdentity(manifest) {
+  const section = manifest.match(/^\[package\]\n([\s\S]*?)(?=^\[)/m)?.[1] ?? ""
+  return { name: section.match(/^name = "([^"]+)"/m)?.[1], version: section.match(/^version = "([^"]+)"/m)?.[1] }
+}
+
+export function lockedPackages(lock, name) {
+  return lock.split("\n[[package]]\n").slice(1)
+    .map(entry => ({
+      name: entry.match(/^name = "([^"]+)"/m)?.[1],
+      version: entry.match(/^version = "([^"]+)"/m)?.[1],
+      source: entry.match(/^source = "([^"]+)"/m)?.[1],
+    }))
+    .filter(entry => entry.name === name)
+}
+
+test("vendored crates are the resolved implementations", () => {
+  const lock = read("Cargo.lock")
+  assert.doesNotMatch(lock, /^\[\[patch\.unused\]\]/m, "Cargo.lock records an unused vendored patch")
+  const patches = patchedCrates(read("Cargo.toml"))
+  assert.ok(patches.length > 0)
+  for (const { name, dir } of patches) {
+    const identity = packageIdentity(read(path.join(dir, "Cargo.toml")))
+    assert.equal(identity.name, name)
+    assert.equal(path.basename(dir), `${name}-${identity.version}`, `${dir} must be named after its crate version`)
+    assert.deepEqual(lockedPackages(lock, name), [{ name, version: identity.version, source: undefined }],
+      `${name} must resolve only to ${dir}; re-vendor it for the dependency update (vendor/README.md)`)
+  }
+})
+
+test("an update past the vendored version is detected", () => {
+  const lock = '\n[[package]]\nname = "tao"\nversion = "9.0.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n'
+  assert.deepEqual(lockedPackages(lock, "tao"), [{ name: "tao", version: "9.0.0", source: "registry+https://github.com/rust-lang/crates.io-index" }])
+  assert.deepEqual(patchedCrates('[patch.crates-io]\ntao = { path = "vendor/tao-1.0.0" }\n'), [{ name: "tao", dir: "vendor/tao-1.0.0" }])
+})

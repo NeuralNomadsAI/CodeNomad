@@ -60,8 +60,9 @@ pub(crate) fn bind(webview: &Webview, host: Weak<AppHandle>, binding: u64) {
             eprintln!("[notification-badge] failed to access renderer termination hook: {error}");
         }
     }
-    // Tauri 2.10.3 does not forward Wry's Darwin builder-only termination hook.
-    // Do not replace WKWebView's runtime-owned navigation delegate or poll it.
+    // Tauri forwards Darwin renderer termination only through an app-wide,
+    // label-keyed Builder hook without this physical-window binding. Do not
+    // replace WKWebView's runtime-owned navigation delegate or poll it.
     #[cfg(not(any(windows, target_os = "linux")))]
     let _ = (webview, host, binding);
 }

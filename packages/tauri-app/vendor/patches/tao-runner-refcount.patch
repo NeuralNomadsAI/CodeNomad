@@ -1,0 +1,46 @@
+diff --git a/src/platform_impl/windows/event_loop/runner.rs b/src/platform_impl/windows/event_loop/runner.rs
+index ff865de..fdd110a 100644
+--- a/src/platform_impl/windows/event_loop/runner.rs
++++ b/src/platform_impl/windows/event_loop/runner.rs
+@@ -7,7 +7,7 @@ use std::{
+   cell::{Cell, RefCell},
+   collections::{HashSet, VecDeque},
+   mem, panic,
+-  rc::Rc,
++  sync::Arc,
+   time::Instant,
+ };
+ 
+@@ -24,7 +24,10 @@ use crate::{
+   window::WindowId,
+ };
+ 
+-pub(crate) type EventLoopRunnerShared<T> = Rc<EventLoopRunner<T>>;
++// The pinned Tauri runtime clones/drops this handle through unsafe Send/Sync
++// contexts on worker threads. Only the reference count may cross threads;
++// the runner's interior remains confined to the event-loop thread.
++pub(crate) type EventLoopRunnerShared<T> = Arc<EventLoopRunner<T>>;
+ pub(crate) struct EventLoopRunner<T: 'static> {
+   // The event loop's win32 handles
+   thread_msg_target: HWND,
+diff --git a/src/platform_impl/windows/event_loop.rs b/src/platform_impl/windows/event_loop.rs
+index 6de7015..db03a6b 100644
+--- a/src/platform_impl/windows/event_loop.rs
++++ b/src/platform_impl/windows/event_loop.rs
+@@ -14,7 +14,6 @@ use std::{
+   ffi::c_void,
+   marker::PhantomData,
+   mem, panic,
+-  rc::Rc,
+   sync::{Arc, LazyLock},
+   thread,
+   time::{Duration, Instant},
+@@ -193,7 +192,7 @@ impl<T: 'static> EventLoop<T> {
+     thread::spawn(move || wait_thread(thread_id, HWND(send_thread_msg_target as _)));
+     let wait_thread_id = get_wait_thread_id();
+ 
+-    let runner_shared = Rc::new(EventLoopRunner::new(thread_msg_target, wait_thread_id));
++    let runner_shared = Arc::new(EventLoopRunner::new(thread_msg_target, wait_thread_id));
+ 
+     let thread_msg_sender =
+       insert_event_target_window_data::<T>(thread_msg_target, runner_shared.clone());
