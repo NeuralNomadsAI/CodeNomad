@@ -51,7 +51,9 @@
   vendored crates (`packages/tauri-app/vendor/README.md`) and keeps
   `@tauri-apps/api` and the plugin JavaScript packages (`packages/ui/package.json`)
   on the crates' major/minor: the CLI's version check runs from
-  `packages/tauri-app` and does not see them. The vendored Tao and updater are
+  `packages/tauri-app` and does not see them. Dependabot's npm entry proposes the
+  `@tauri-apps/*` packages in a separate grouped PR, so a crate update and its
+  JavaScript counterpart are merged together. The vendored Tao and updater are
   path patches, which Dependabot does not update;
   `packages/tauri-app/scripts/vendored-patches.test.mjs` fails a PR whose
   lockfile stops resolving them. Platform crates shared with Wry (`webview2-com`,
@@ -66,7 +68,7 @@
 - Electron's integrated Node is the Electron backend runtime, so the exact
   `electron` pin (`packages/electron-app/package.json`) selects it. Dependabot
   proposes Electron toolchain updates (`electron`, `electron-builder`,
-  `electron-vite`, no other npm dependency) weekly against
+  `electron-vite`) weekly against
   `dev`: minor and patch updates in one grouped PR, each major in its own PR.
   Keep the pin within Electron's supported majors (the latest three). Before
   merging, the maintainer qualifies the upstream breaking changes of every major
@@ -107,7 +109,7 @@ Run `npm run check:runtime` locally for the same read-only assessment.
 
 ## Agent conventions
 
-- Keep the `electron` devDependency an exact version; Dependabot's npm entry is limited to the Electron toolchain; adding other npm dependencies or ecosystems to Dependabot is a separate decision.
+- Keep the `electron` devDependency an exact version; Dependabot's npm entry is limited to the Electron toolchain and the `@tauri-apps/*` packages; adding other npm dependencies or ecosystems to Dependabot is a separate decision.
 - Bundled runtime maintenance keeps `.node-version` exact and proposes only same-major LTS upgrades as regular, non-draft PRs without automatic merge. The scheduled npm CLI/dependency audit is warning-only: never independently replace bundled npm, auto-fix dependencies, merge or publish from that check, and never report a failed audit as clean. Application runtime changes require reviewed builds/releases.
 - Documents reference `.node-version` and never restate the pinned Node or bundled npm version: maintenance updates only that file.
 - Documents never restate Tauri crate or CLI versions: they point to `packages/tauri-app/Cargo.toml`/`Cargo.lock` and the `@tauri-apps/*` entries of `packages/tauri-app/package.json` and `packages/ui/package.json`. Never merge a Tauri update whose vendored crates fail re-qualification or whose `@tauri-apps/*` packages trail the crates' minor.
