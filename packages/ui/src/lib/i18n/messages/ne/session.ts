@@ -47,6 +47,7 @@ export const sessionMessages = {
   "sessionList.expand.collapseTitle": "संकुचित गर्नुहोस्",
   "sessionList.expand.expandTitle": "विस्तार गर्नुहोस्",
   "sessionList.expand.withChildActivity": "{action} — {activity}",
+  "sessionList.expand.markRead": "पढिएको रूपमा चिन्ह लगाउनुहोस्",
   "sessionList.actions.newSession.ariaLabel": "नयाँ सत्र",
   "sessionList.actions.newSession.title": "नयाँ सत्र",
   "sessionList.actions.newSession.failedTitle": "सत्र सिर्जना गर्न सकिएन",
