@@ -218,7 +218,7 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
   const { t, locale } = useI18n()
   const [revision, setRevision] = createSignal(0)
   const { snapshot, error, loading } = useMissionRecurrence({ instanceId: () => props.instanceId,
-    projectID: () => props.projectID, directory: () => props.scope, refresh: () => props.refresh + revision(), active: props.active })
+    projectID: () => props.projectID, directory: () => instances().get(props.instanceId)?.folder ?? "", refresh: () => props.refresh + revision(), active: props.active })
   // An exact retry names its held identity, not the snapshot revision: the
   // explicit refresh's own in-flight row read must not silently skip it.
   const admissible = () => !error() && props.active() && snapshot()?.projectID === props.projectID && Boolean(props.projectID)
@@ -286,7 +286,7 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
       // Keyed by identity: a refreshed snapshot keeps the controls and their focus.
       const schedule = createMemo<RecurrenceSchedule>(previous => snapshot()?.schedules.find(item => item.id === id) ?? previous!)
       const controls = createRecurrenceControls({ get schedule() { return schedule() }, get identity() { return JSON.stringify([props.instanceId, props.projectID, props.scope]) },
-        get instanceId() { return props.instanceId }, get directory() { return props.scope }, active: props.active, enabled: valid, retryEnabled: admissible,
+        get instanceId() { return props.instanceId }, get directory() { return instances().get(props.instanceId)?.folder ?? "" }, active: props.active, enabled: valid, retryEnabled: admissible,
         refresh: () => setRevision(value => value + 1) })
       const unregister = props.registerRetry?.(controls.retry)
       onCleanup(() => unregister?.())

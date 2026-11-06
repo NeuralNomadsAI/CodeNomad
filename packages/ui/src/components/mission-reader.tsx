@@ -154,7 +154,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const target = () => missionProjectView(props.scope).reader
   const projectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? projectMissionStore.state(props.instanceId).projectID
   const currentPassage = useMissionCurrentPassage({ instanceId: () => props.instanceId, projectID,
-    directory: () => props.scope, scheduleID: () => target()?.recurrence?.scheduleID,
+    directory: () => instances().get(props.instanceId)?.folder ?? "", scheduleID: () => target()?.recurrence?.scheduleID,
     owner: () => target()?.recurrence?.owner ?? "daily",
     active: () => target()?.recurrence?.instanceId === props.instanceId && target()?.recurrence?.projectID === projectID() })
   const panel = () => currentPassage.inventory() ?? projectMissionStore
@@ -184,7 +184,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   }
   const recurrenceProjectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? missionStore.state(props.instanceId).projectID
   const recurrenceState = useMissionRecurrence({ instanceId: () => props.instanceId, projectID: recurrenceProjectID,
-    directory: () => props.scope, active: () => target()?.kind === "recurrence"
+    directory: () => instances().get(props.instanceId)?.folder ?? "", active: () => target()?.kind === "recurrence"
       && target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID() })
   const recurrence = () => target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID()
     ? recurrenceState.snapshot()?.schedules.find(schedule => schedule.id === target()?.missionId) : undefined

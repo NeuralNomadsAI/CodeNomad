@@ -146,7 +146,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const passageSchedule = () => selectedSchedule() ?? selectedScheduled()
   const [scheduledCurrent, setScheduledCurrent] = createSignal<string>()
   const currentPassage = useMissionCurrentPassage({ instanceId: () => props.instanceId, projectID,
-    directory: scope, scheduleID: () => selectedSchedule() ?? scheduledCurrent(), owner: () => selectedScheduled() ? "scheduled" : "daily", active: () => props.isActive?.() ?? true, refresh: recurrenceRefresh })
+    directory: () => directory() ?? "", scheduleID: () => selectedSchedule() ?? scheduledCurrent(), owner: () => selectedScheduled() ? "scheduled" : "daily", active: () => props.isActive?.() ?? true, refresh: recurrenceRefresh })
   const passageStore = () => currentPassage.inventory() ?? missionStore
   const mission = createMemo(() => passageSchedule() ? currentPassage.snapshot()?.scheduleID === passageSchedule() ? currentPassage.snapshot()?.mission : undefined
     : missions().find((candidate) => candidate.id === selectedMissionId()))
@@ -318,7 +318,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // The saved Mission ID survives ownership conversion in another window, including
   // cold restoration. Point-read that selection; absence never triggers an inventory scan.
   const unifiedSelection = () => selectedScheduled() ?? (selectedSchedule() ? undefined : selectedMissionId())
-  const scheduled = createMissionScheduleList({ get instanceId() { return props.instanceId }, get directory() { return scope() },
+  const scheduled = createMissionScheduleList({ get instanceId() { return props.instanceId }, get directory() { return directory() ?? "" },
     get selectedRequests() { return selectedScheduled() ? currentRequests() : undefined },
     onPassage: setScheduledCurrent,
     get tracking() { return selectedScheduled() ? tracking() : undefined },
