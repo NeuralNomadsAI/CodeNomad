@@ -33,7 +33,9 @@ function harness(methodID = "gemini-cli") {
       expires: Date.now() + 3600_000, metadata: { email: "fake-private-email@example.invalid" } } }
   const state = { credential, refreshCalls: 0, quotaCalls: 0, failRefresh: false, quotaStatus: 200, malformed: false,
     oversized: false, transportFailure: false, unknownWindow: false, quotaPayload: undefined as unknown,
-    gate: undefined as (() => Promise<void>) | undefined,
+     gate: undefined as (() => Promise<void>) | undefined,
+     nativeGate: undefined as (() => Promise<void>) | undefined,
+     revalidationGate: undefined as (() => Promise<void>) | undefined,
     native: [] as Array<{ path: string; method: string }>, outbound: [] as Array<{ url: string; init?: RequestInit }> }
   const logs: string[] = []
   const app = Fastify({ logger: { stream: { write(text: string) { logs.push(text) } } } })
@@ -46,6 +48,7 @@ function harness(methodID = "gemini-cli") {
     assert.equal(request.method, "GET", "quota display must never write an OpenCode connection")
     assert.ok(path === "/api/credential" || path === "/api/session/session", `unapproved native request: ${path}`)
     if (path === "/api/credential") return Response.json({ data: [state.credential] })
+    await (state.native.length === 1 ? state.nativeGate?.() : state.revalidationGate?.())
     return Response.json({ data: { id: "session", location: { directory: "/fake-owned" } } })
   } })
   const connection = { client, assertCurrent() {} } as ServiceConnection
@@ -287,6 +290,87 @@ for (const phase of ["refresh", "quota"]) test(`${methodID} hanging ${phase} ret
     assert.deepEqual(response.json().windows, {})
     assert.equal(response.body.includes("fake-private-timeout"), false)
     h.assertPrivate([response])
+  } finally { t.mock.timers.reset(); clearProviderUsageCache(); await h.app.close() }
+})
+
+for (const phase of ["refresh", "quota"]) test(`${methodID} slow native reads and hanging ${phase} reserve time for final revalidation`, async t => {
+  const h = harness(methodID)
+  h.state.credential.value = { ...h.state.credential.value, expires: phase === "refresh" ? 1 : Date.now() + 3600_000 } as typeof h.state.credential.value
+  let nativeEntered!: () => void, upstreamEntered!: () => void, revalidationEntered!: () => void
+  const native = new Promise<void>(resolve => { nativeEntered = resolve })
+  const upstream = new Promise<void>(resolve => { upstreamEntered = resolve })
+  const revalidation = new Promise<void>(resolve => { revalidationEntered = resolve })
+  h.state.nativeGate = async () => { nativeEntered(); await new Promise(resolve => setTimeout(resolve, 4_000)) }
+  h.state.revalidationGate = async () => { revalidationEntered(); await new Promise(resolve => setTimeout(resolve, 2_000)) }
+  let upstreamSignal: AbortSignal | null | undefined
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    assert.equal(String(input), phase === "refresh" ? TOKEN_URL : methodID === "antigravity" ? ANTIGRAVITY_QUOTA_URL : QUOTA_URL)
+    upstreamSignal = init?.signal
+    assert.ok(upstreamSignal)
+    upstreamEntered()
+    return new Promise<Response>((_resolve, reject) => upstreamSignal!.addEventListener("abort", () => reject(new Error("fake-private-timeout")), { once: true }))
+  })
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  try {
+    const responsePromise = h.app.inject(url)
+    await native
+    t.mock.timers.tick(4_000)
+    await upstream
+    t.mock.timers.tick(7_999)
+    assert.equal(upstreamSignal?.aborted, false)
+    t.mock.timers.tick(1)
+    await revalidation
+    assert.equal(upstreamSignal?.aborted, true, "Google's deadline includes the native prelude")
+    t.mock.timers.tick(2_000)
+    const response = await responsePromise
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.json().configured, true)
+    assert.equal(response.json().ok, false)
+    assert.equal(response.json().error, undefined)
+    assert.deepEqual(response.json().windows, {})
+    assert.equal(response.body.includes("fake-private-timeout"), false)
+    h.assertPrivate([response])
+  } finally { t.mock.timers.reset(); clearProviderUsageCache(); await h.app.close() }
+})
+
+test(`${methodID} coalesced quota waits respect each route's entry-time deadline`, async t => {
+  const h = harness(methodID)
+  let nativeEntered!: () => void, upstreamEntered!: () => void
+  const native = new Promise<void>(resolve => { nativeEntered = resolve })
+  const upstream = new Promise<void>(resolve => { upstreamEntered = resolve })
+  h.state.nativeGate = async () => { nativeEntered(); await new Promise(resolve => setTimeout(resolve, 4_000)) }
+  let upstreamSignal: AbortSignal | null | undefined, quotaCalls = 0
+  t.mock.method(globalThis, "fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+    quotaCalls++
+    upstreamSignal = init?.signal
+    upstreamEntered()
+    return new Promise<Response>((_resolve, reject) => upstreamSignal!.addEventListener("abort", () => reject(new Error("fake-private-timeout")), { once: true }))
+  })
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  try {
+    const slow = h.app.inject(url)
+    await native
+    t.mock.timers.tick(1_000)
+    const newer = h.app.inject(url)
+    await upstream
+    t.mock.timers.tick(3_000)
+    // Drain native credential reads before advancing to the older route's deadline.
+    await new Promise(resolve => setImmediate(resolve))
+    t.mock.timers.tick(8_000)
+    const first = await slow
+    assert.equal(first.statusCode, 200)
+    assert.equal(first.json().configured, true)
+    assert.equal(first.json().ok, false)
+    assert.deepEqual(first.json().windows, {})
+    assert.equal(upstreamSignal?.aborted, false, "the newer shared quota read keeps its own deadline")
+    t.mock.timers.tick(1_000)
+    const second = await newer
+    assert.equal(second.statusCode, 200)
+    assert.equal(second.json().configured, true)
+    assert.equal(second.json().ok, false)
+    assert.deepEqual(second.json().windows, {})
+    assert.equal(quotaCalls, 1)
+    h.assertPrivate([first, second])
   } finally { t.mock.timers.reset(); clearProviderUsageCache(); await h.app.close() }
 })
 }

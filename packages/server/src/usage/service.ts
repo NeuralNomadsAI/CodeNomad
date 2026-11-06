@@ -7,7 +7,7 @@ import { miniMaxProviders } from "./providers/minimax"
 import { oauthProviders } from "./providers/oauth"
 import { specialProviders } from "./providers/special"
 import { xaiProviders } from "./providers/xai"
-import { googleUsage, selectGoogleModelWindows } from "./providers/google"
+import { googleUsage, selectGoogleModelWindows, unknownGoogleUsage } from "./providers/google"
 import type { AuthFile, ProviderResult, UsageProvider } from "./types"
 
 const CACHE_TTL_MS = 60_000
@@ -60,7 +60,18 @@ async function fetchProvider(provider: UsageProvider, auth: AuthFile, signal?: A
   if (cached?.identity === identity && cached.expiresAt > Date.now()) return cached.result
   const key = `${provider.id}\0${identity}`
   const inFlight = pending.get(key)
-  if (inFlight) return inFlight
+  if (inFlight) {
+    if (provider.id !== "google" || !signal) return inFlight
+    // A slower native prelude can join a newer request with a later deadline.
+    if (signal.aborted) return unknownGoogleUsage(auth)
+    let abort!: () => void
+    try {
+      return await Promise.race([inFlight, new Promise<ProviderResult>(resolve => {
+        abort = () => resolve(unknownGoogleUsage(auth))
+        signal.addEventListener("abort", abort, { once: true })
+      })])
+    } finally { signal.removeEventListener("abort", abort) }
+  }
   const request = provider.fetchQuota(auth, signal).then((result) => {
     cache.set(provider.id, { identity, result, expiresAt: Date.now() + (result.ok ? CACHE_TTL_MS : FAILURE_CACHE_TTL_MS) })
     return result

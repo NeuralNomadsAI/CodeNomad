@@ -85,7 +85,8 @@ quota display.
 `usage/google-credential.ts` uses OpenCode's access token until its actual expiry,
 then refreshes it with the matching application's public desktop client at the
 fixed `https://oauth2.googleapis.com/token` endpoint. Requests reject redirects,
-use a 12-second Google deadline within the route's 15-second budget and cap
+use a 12-second Google deadline measured from route entry, including native
+credential reads, within the route's 15-second budget and cap
 responses at 64 KiB. The refreshed
 access token and expiry stay only in a server-memory cache bounded to 32
 credential identities, with coalesced concurrent refreshes and expiry eviction.

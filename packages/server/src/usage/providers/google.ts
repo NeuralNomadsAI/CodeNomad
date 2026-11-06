@@ -2,12 +2,17 @@ import type { ProviderUsageWindow } from "../../api-types"
 import { postBoundedJson } from "../bounded-fetch"
 import { createGoogleTokenReader, googleCredential, googleQuotaIdentityGuard } from "../google-credential"
 import { asObject, getString, notConfigured, result, toTimestamp, toUsageWindow } from "../shared"
-import type { ProviderResult, ProviderUsage, UsageProvider } from "../types"
+import type { AuthFile, ProviderResult, ProviderUsage, UsageProvider } from "../types"
 import { antigravityQuota } from "./antigravity"
 
 const readToken = createGoogleTokenReader()
-// Leave time for the route's ownership recheck inside its 15-second budget.
+// Bound standalone reads too; the route supplies its earlier entry-time deadline.
 const QUOTA_TIMEOUT_MS = 12_000
+
+export function unknownGoogleUsage(auth: AuthFile): ProviderResult {
+  return result("google", asObject(auth.google)?.methodID === "antigravity" ? "Antigravity" : "Gemini CLI",
+    { configured: Boolean(asObject(auth.google)), ok: false })
+}
 
 // Code Assist quota schema:
 // https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/code_assist/types.ts
@@ -79,7 +84,7 @@ export const googleUsage: UsageProvider = {
       return result("google", "Gemini CLI", { configured: true, ok: true, usage: { windows: {}, models } })
     } catch {
       // Refresh/quota failures are unknown usage, never connection errors or upstream prose.
-      return result("google", name, { configured: true, ok: false })
+      return unknownGoogleUsage(auth)
     } finally {
       clearTimeout(timeout)
     }
