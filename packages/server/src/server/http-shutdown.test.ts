@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { once } from "node:events"
-import { get } from "node:http"
+import { Agent, get, request } from "node:http"
 import { connect, type Socket } from "node:net"
+import { PassThrough } from "node:stream"
 import test from "node:test"
 import { AuthManager } from "../auth/manager"
 import { ClientConnectionManager } from "../clients/connection-manager"
@@ -67,4 +68,56 @@ test("HTTP shutdown ends SSE and upgraded connections without waiting for client
   assert.equal(persisted.statusCode, 200)
   await stopping
   assert.ok(performance.now() - started < 1_000)
+})
+
+test("HTTP shutdown drains an already-started stream and closes its keep-alive connection", { timeout: 2_000 }, async t => {
+  const logger = createLogger({ level: "silent" } as never)
+  const stub = new Proxy({}, { get: () => () => undefined }) as never
+  const connections = new ClientConnectionManager(logger)
+  const stream = new PassThrough()
+  const server = createHttpServer({
+    bindHost: "127.0.0.1", bindPort: 0, defaultPort: 0, protocol: "http",
+    workspaceManager: stub, settings: stub, fileSystemBrowser: stub, eventBus: new EventBus(),
+    serverMeta: { localUrl: "http://localhost:0", addresses: [] } as never,
+    instanceStore: stub, speechService: {
+      getCapabilities: () => ({}), synthesizeStream: async () => ({ stream, mimeType: "audio/mpeg" }),
+    } as never, sidecarManager: stub, previewManager: stub,
+    authManager: new AuthManager({ dangerouslySkipAuth: true } as never, logger),
+    clientConnectionManager: connections, remoteProxySessionManager: stub,
+    remoteControlManager: { gate: () => ({}), previewsAllowed: () => true } as never,
+    yoloManager: stub, nativeParent: stub, automationBridgeToken: "test-bridge", uiStaticDir: "", logger,
+  })
+  const agent = new Agent({ keepAlive: true, maxSockets: 1 })
+  t.after(async () => { agent.destroy(); stream.destroy(); connections.shutdown(); await server.stop() })
+  let preClose!: () => void
+  const closing = new Promise<void>(resolve => { preClose = resolve })
+  server.instance.addHook("preClose", async () => preClose())
+  const { port } = await server.start()
+  const origin = `http://127.0.0.1:${port}`
+  // Finishing responses during normal operation must preserve socket reuse.
+  const normal = get(`${origin}/api/speech/capabilities`, { agent })
+  const [capabilities] = await once(normal, "response")
+  const normalEnd = once(capabilities, "end")
+  capabilities.resume()
+  await normalEnd
+  const speech = request(`${origin}/api/speech/synthesize/stream`, {
+    agent, method: "POST", headers: { "content-type": "application/json" },
+  })
+  speech.end(JSON.stringify({ text: "shutdown test" }))
+  stream.write("first")
+  const [response] = await once(speech, "response")
+  assert.equal(speech.reusedSocket, true)
+  assert.equal(response.statusCode, 200)
+  assert.equal(response.headers.connection, "keep-alive")
+  const chunks: Buffer[] = []
+  response.on("data", (chunk: Buffer) => chunks.push(chunk))
+  const ended = once(response, "end")
+  let stopped = false
+  const stopping = server.stop().then(() => { stopped = true })
+  await closing
+  assert.equal(stopped, false, "the active response must finish before shutdown")
+  stream.end("last")
+  await ended
+  assert.equal(Buffer.concat(chunks).toString(), "firstlast")
+  await stopping
 })

@@ -206,6 +206,10 @@ export function createHttpServer(deps: HttpServerDeps) {
     if (closing) reply.header("Connection", "close")
     done(null, payload)
   })
+  app.addHook("onResponse", async () => {
+    // Streams can send their keep-alive headers before shutdown starts.
+    if (closing) app.server.closeIdleConnections()
+  })
 
   registerRequestLogging(app, apiLogger)
 

@@ -90,7 +90,7 @@ Session Shell and conversation instructions are native features. Session Shell i
 
 CodeNomad configuration resolves through `packages/server/src/config/location.ts`: `config.yaml`, `state.yaml`, `remote-control-devices.json`, and `instances/` under `~/.config/codenomad/`. `config.json` is read only as migration input.
 
-Backend shutdown closes SSE and upgraded sockets in Fastify's `preClose` hook and drains accepted local HTTP handlers before releasing workspace and native-parent authority. Completing responses close their keep-alive connection. Permission recovery reads are cancelled; queued receipt writes, dispatched Yolo replies and Yolo persistence settle before workspace cleanup. Plugin leases and workspace cleanup run concurrently, and the success handshake follows resource cleanup. Native-parent responses remain readable through this drain. Mission mutations persist through their native RPC handlers in the shared OpenCode service.
+Backend shutdown closes SSE and upgraded sockets in Fastify's `preClose` hook and drains accepted local HTTP handlers before releasing workspace and native-parent authority. Completing responses close their keep-alive connection, including streams whose headers preceded shutdown, through a shutdown-only response-finish idle sweep. Permission recovery reads are cancelled; queued receipt writes, dispatched Yolo replies and Yolo persistence settle before workspace cleanup. Plugin leases and workspace cleanup run concurrently, and the success handshake follows resource cleanup. Native-parent responses remain readable through this drain. Mission mutations persist through their native RPC handlers in the shared OpenCode service.
 
 ## Implementation Map
 
