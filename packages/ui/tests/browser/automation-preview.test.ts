@@ -12,8 +12,13 @@ import { _electron, type ElectronApplication } from "playwright"
 test("the shared engine drives a real Electron preview through the guarded native channel, without a visible window", { timeout: 90_000 }, async t => {
   const profile = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-engine-"))
   let app: ElectronApplication | undefined
-  const server = createServer((_request, response) => {
+  const server = createServer((request, response) => {
     response.setHeader("Content-Type", "text/html")
+    // Transparent content is not contentful: first contentful paint follows the reveal, and Chromium
+    // drops key and click input until then (or its 500 ms commit-deferral limit).
+    if (request.url === "/late") return response.end(`<!doctype html><body style="opacity:0"><input autofocus><output id="late">Waiting</output>
+      <script>document.addEventListener('keydown', event => { document.getElementById('late').textContent = 'Late:' + event.key })
+      setTimeout(() => { document.body.style.opacity = '1' }, 400)</script></body>`)
     response.end(`<!doctype html><main><form>
       <label>Title <input value="Prefilled"></label>
       <label>Plan <select><option value="custom">Flexible</option><option value="wayfinder">Exploration</option></select></label>
@@ -46,9 +51,6 @@ test("the shared engine drives a real Electron preview through the guarded nativ
   app = await _electron.launch({ executablePath,
     args: ["--no-sandbox", fileURLToPath(new URL("fixtures/automation-preview-electron.cjs", import.meta.url))], env })
   const running = app
-  let stderr = ""
-  running.process().stderr?.on("data", chunk => { stderr = (stderr + chunk).slice(-4000) })
-  const diagnose = () => running.evaluate(() => (globalThis as any).automationPreview.diagnose())
   const execute = (action: Record<string, unknown>) => running.evaluate(async (_electron, input) =>
     (globalThis as any).automationPreview.execute(input), action) as Promise<Record<string, any>>
   // The guest must load before a snapshot; no installed app or foreground window is involved.
@@ -63,16 +65,8 @@ test("the shared engine drives a real Electron preview through the guarded nativ
   const title = ref(/textbox "Title"/), plan = ref(/combobox "Plan"/), confirm = ref(/button "Confirm"/)
   assert.deepEqual((await execute({ action: "type", ref: title, text: "Pilot", clear: true })).value, "Pilot")
   await execute({ action: "press", key: "a", ref: title })
-  const keyed = await execute({ action: "wait", text: "Key:a", gone: false, timeout: 500 }).catch(async error => {
-    const before = await diagnose()
-    await running.evaluate(() => (globalThis as any).automationPreview.focusGuest())
-    await execute({ action: "press", key: "a", ref: title }).catch(() => undefined)
-    const afterGuestFocus = await diagnose()
-    const paths = await running.evaluate(() => (globalThis as any).automationPreview.probeKeys()).catch(probe => String(probe))
-    console.error("automation-preview key diagnostics", JSON.stringify({ before, afterGuestFocus, paths, stderr }, null, 2))
-    throw error
-  })
-  assert.equal(keyed.found, true, "keys reach a newly opened guest with no preceding pointer click")
+  assert.equal((await execute({ action: "wait", text: "Key:a", gone: false, timeout: 500 })).found, true,
+    "keys reach a newly opened guest with no preceding pointer click")
   assert.match(String((await execute({ action: "snapshot", ref: title })).snapshot), /value="Pilota"/)
   await execute({ action: "press", key: "Control+A", ref: title })
   await execute({ action: "press", key: "Backspace" })
@@ -94,4 +88,8 @@ test("the shared engine drives a real Electron preview through the guarded nativ
   await running.evaluate(() => (globalThis as any).automationPreview.visible(true))
   await running.evaluate(async (_electron, url) => (globalThis as any).automationPreview.navigate(url), `${guestURL}?next`)
   await assert.rejects(execute({ action: "click", ref: confirm }), /stale ref/)
+  await running.evaluate(async (_electron, url) => (globalThis as any).automationPreview.navigate(url), `${guestURL}late`)
+  await execute({ action: "press", key: "x" })
+  assert.equal((await execute({ action: "wait", text: "Late:x", gone: false, timeout: 500 })).found, true,
+    "a key pressed right after a navigation waits until the page accepts input instead of being dropped")
 })
