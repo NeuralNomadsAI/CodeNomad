@@ -281,7 +281,8 @@ for (const afterCommit of [false, true]) {
     const readers = await Promise.all(Array.from({ length: 3 }, () => new MemoryStore(config).list(global)))
     for (const entries of readers) assert.deepEqual(entries, [entry()])
     assert.equal((await new MemoryGit(store.directory).run(["rev-list", "--count", "HEAD"])).trim(), "1")
-    assert.ok((await readdir(config)).some(name => name.startsWith("memory.lock.dead-")))
+    await store.list(global)
+    assert.ok(!(await readdir(config)).some(name => name.startsWith("memory.lock.dead-")), "quiescent acquisition prunes recovery fences")
   })
 }
 

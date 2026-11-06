@@ -7,6 +7,7 @@ import { parseRepositoryRemoteUrl } from "../forge/remote"
 import { runWorktreeGit } from "../workspaces/git-process"
 import { parseWslUncPath } from "../workspaces/spawn"
 import { MemoryError } from "./model"
+import { memoryGitEnvironment } from "./git-environment"
 
 export interface MemoryProjectIdentity {
   /** SHA-256; safe as the projects/<id> directory name. */
@@ -19,8 +20,10 @@ export interface MemoryProjectTarget { directory: string; distro?: string }
 type ExecuteWsl = (distro: string, executable: "git" | "realpath", args: string[]) => Promise<string>
 const executeFile = promisify(execFile)
 const executeWsl: ExecuteWsl = async (distro, executable, args) => {
-  const { stdout } = await executeFile("wsl.exe", ["--distribution", distro, "--exec", "env", "LC_ALL=C", "LANGUAGE=C", executable, ...args], {
-    windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024, encoding: "utf8",
+  const clean = memoryGitEnvironment()
+  const { stdout } = await executeFile("wsl.exe", ["--distribution", distro, "--exec", "env",
+    ...Object.keys(clean).flatMap(key => ["-u", key]), "LC_ALL=C", "LANGUAGE=C", executable, ...args], {
+    env: { ...process.env, ...clean }, windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024, encoding: "utf8",
   })
   return stdout.replace(/\r?\n$/, "")
 }
@@ -58,7 +61,7 @@ export async function resolveMemoryProjectIdentity(target: MemoryProjectTarget, 
   const git = async (args: string[]) => {
     try {
       return await (distro ? runWsl(distro, "git", ["-C", directory, ...args])
-        : runWorktreeGit(directory, args, 10_000, { LC_ALL: "C", LANGUAGE: "C" }))
+        : runWorktreeGit(directory, args, 10_000, { ...memoryGitEnvironment(), LC_ALL: "C", LANGUAGE: "C" }))
     } catch (error) {
       const code = (error as NodeJS.ErrnoException)?.code as string | number | undefined
       if (code === "ENOENT" || (distro && code === 127)) throw new MemoryError("git_unavailable", "Memory project Git is unavailable")

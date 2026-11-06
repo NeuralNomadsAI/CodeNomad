@@ -44,6 +44,9 @@ Other Git/discovery failures return an error. Windows host fallback paths are
 case-folded. WSL executes Git and `realpath` in the selected distro and preserves
 Linux path case; local fallbacks include the case-folded distro name. Both WSL
 UNC spellings resolve through that execution-host adapter.
+Identity reads clear inherited `GIT_*` overrides on the host. The WSL adapter also
+unsets Git's repository-local, discovery and configuration redirection variables
+inside the selected distro before invoking Git or `realpath`.
 
 The namespace is SHA-256 of `remote:<normalized-remote>` or
 `local:<canonical-local-path>`. Only the hash and source kind leave the resolver;
@@ -125,7 +128,13 @@ before private-directory cleanup. Cleanup retries apply only to that private
 directory; residual private artifacts leave future acquisition free. Recovery
 keeps a nonempty `memory.lock.dead-<nonce>/` marker so concurrent recovery attempts
 cannot move a successor's lock into the same destination. These small fencing
-markers remain beside the repository and leave acquisition free.
+markers remain beside the repository while an old recovery participant can resume.
+After publishing the lock and before admitting its writer, acquisition scans the
+populated candidate directories. Live, unknown, foreign or malformed participants
+retain every marker; absent or proven-dead participants permit their removal.
+Every old reaper published its candidate before observing the retired owner. New
+contenders can observe only the currently held lock, keeping cleanup safe across
+concurrent arrivals. Failed maintenance retains markers for the next acquisition.
 
 `memory/git.ts` uses `runGitProcess` and `requireHostGit`. Missing host Git keeps
 the shared `git_required` failure contract. Git commands explicitly name the

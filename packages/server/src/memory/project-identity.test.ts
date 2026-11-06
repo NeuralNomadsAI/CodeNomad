@@ -6,6 +6,7 @@ import path from "node:path"
 import { test } from "node:test"
 import { MemoryError } from "./model"
 import { normalizeMemoryRemote, resolveMemoryProjectIdentity } from "./project-identity"
+import { memoryGitEnvironment } from "./git-environment"
 
 const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8", windowsHide: true }).trim()
 const resolve = (directory: string) => resolveMemoryProjectIdentity({ directory })
@@ -67,6 +68,30 @@ test("identity selects origin rather than upstream, otherwise the first sorted r
 })
 
 const distro = process.env.CODENOMAD_MEMORY_TEST_WSL_DISTRO
+
+test("project A identity ignores inherited Git routing and configuration for project B", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "memory-project-environment-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const a = path.join(root, "a"), b = path.join(root, "b")
+  for (const repo of [a, b]) { await mkdir(repo); git(repo, "init", "-q"); git(repo, "remote", "add", "origin", `https://example.com/${path.basename(repo)}.git`) }
+  const expected = await resolve(a), other = await resolve(b)
+  assert.notDeepEqual(expected, other)
+  const overrides = { GIT_DIR: path.join(b, ".git"), GIT_WORK_TREE: b, GIT_COMMON_DIR: path.join(b, ".git"),
+    GIT_INDEX_FILE: path.join(b, ".git", "index"), GIT_OBJECT_DIRECTORY: path.join(b, ".git", "objects"),
+    GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "remote.origin.url", GIT_CONFIG_VALUE_0: "https://example.com/forged.git",
+    GIT_CEILING_DIRECTORIES: root }
+  const previous = Object.fromEntries(Object.keys(overrides).map(key => [key, process.env[key]]))
+  try {
+    Object.assign(process.env, overrides)
+    assert.deepEqual(await resolve(a), expected)
+    const clean = memoryGitEnvironment()
+    for (const key of Object.keys(overrides)) assert.equal(clean[key], undefined)
+    assert(Object.keys(clean).includes("GIT_COMMON_DIR"), "WSL also unsets routing variables absent from the Windows environment")
+  } finally {
+    for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value }
+  }
+})
+
 test("real WSL Git keeps worktrees/subfolders and UNC spellings on one memory identity", { skip: process.platform !== "win32" || !distro }, async () => {
   const wsl = (executable: string, ...args: string[]) => execFileSync("wsl.exe", ["--distribution", distro!, "--exec", executable, ...args], {
     encoding: "utf8", windowsHide: true, timeout: 30_000,
@@ -86,6 +111,17 @@ test("real WSL Git keeps worktrees/subfolders and UNC spellings on one memory id
     const remote = await read(repo)
     assert.equal(remote.source, "remote")
     assert.deepEqual(remote, await read(`${linked}/packages`))
+    const foreign = `${root}/foreign`
+    wsl("git", "init", "-q", foreign)
+    wsl("git", "-C", foreign, "remote", "add", "origin", "https://example.com/foreign.git")
+    const previous = Object.fromEntries(["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "WSLENV"].map(key => [key, process.env[key]]))
+    try {
+      Object.assign(process.env, { GIT_DIR: `${foreign}/.git`, GIT_COMMON_DIR: `${foreign}/.git`, GIT_WORK_TREE: foreign,
+        WSLENV: [process.env.WSLENV, "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE"].filter(Boolean).join(":") })
+      assert.deepEqual(await read(repo), remote, "WSL Git ignores forwarded redirection to another repository")
+    } finally {
+      for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value }
+    }
     wsl("mkdir", "-p", `${root}/plain`)
     assert.equal((await read(`${root}/plain`)).source, "local")
   } finally { wsl("rm", "-rf", "--", root) }

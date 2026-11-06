@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
-import { lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
+import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
+import path from "node:path"
 import { hostname } from "node:os"
 import { setTimeout as delay } from "node:timers/promises"
 import { lookupProcess, ownerState, type ProcessLookup, type ProcessState } from "../host-lifetime/process-identity"
@@ -19,6 +20,39 @@ async function selfState(): Promise<ProcessState> {
 
 function sharingViolation(error: unknown): boolean {
   return ["EPERM", "EBUSY", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")
+}
+
+/** Called after publication, before admitting the writer. Every possible old
+ * reaper published its candidate before observing the retired lock. Keep the
+ * fences while any such participant could still resume. New contenders can only
+ * observe our current lock, so their arrival during cleanup is harmless. */
+async function pruneRecoveryMarkers(lock: string, lookup: ProcessLookup): Promise<void> {
+  const parent = path.dirname(lock), base = path.basename(lock)
+  const names = await readdir(parent)
+  const nonce = /^[a-f0-9-]{36}$/
+  const candidates = names.filter(name => name.startsWith(`${base}.`) && nonce.test(name.slice(base.length + 1)))
+  for (const name of candidates) {
+    try {
+      const directory = path.join(parent, name)
+      const info = await lstat(directory)
+      if (!info.isDirectory() || info.isSymbolicLink()) return
+      const owner = JSON.parse(await readFile(path.join(directory, "owner"), "utf8")) as LockOwner
+      if (owner.nonce !== name.slice(base.length + 1) || !Number.isSafeInteger(owner.pid) || owner.pid < 1
+        || owner.host !== HOST || owner.platform !== process.platform) return
+      if (owner.startIdentity !== undefined) validateOwner(owner as Owner)
+      const state = owner.startIdentity !== undefined ? await ownerState(owner as Owner, lookup)
+        : (await lookup(owner.pid)).state === "dead" ? "dead" : "unknown"
+      if (state !== "dead") return
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") return
+    }
+  }
+  for (const name of names) {
+    if (!name.startsWith(`${base}.dead-`) || !nonce.test(name.slice(base.length + 6))) continue
+    const directory = path.join(parent, name)
+    const info = await lstat(directory)
+    if (info.isDirectory() && !info.isSymbolicLink()) await rm(directory, { recursive: true, force: true })
+  }
 }
 
 /** Publish a populated directory atomically; a crash can never leave an ownerless lock. */
@@ -46,6 +80,8 @@ export async function lockMemoryRepository(directory: string, lookup: ProcessLoo
       if (Date.now() >= deadline) throw new MemoryError("conflict", "Memory repository is busy")
       try {
         await rename(candidate, lock)
+        // Maintenance owns the published lock; errors conservatively retain fences.
+        await pruneRecoveryMarkers(lock, localLookup).catch(() => undefined)
         let released = false
         return async () => {
           if (released) return
@@ -100,9 +136,8 @@ export async function lockMemoryRepository(directory: string, lookup: ProcessLoo
         if (await readFile(`${lock}/owner`, "utf8").catch(() => undefined) !== previousText) continue
         if (checked.state === "unknown") throw new MemoryError("conflict", "Memory repository owner is unavailable")
         if (checked.state === "dead") {
-          // Keep this nonempty tombstone: concurrent reapers then cannot rename a
-          // successor into the same destination. Process-start evidence fences PID reuse.
-          // ponytail: retain crash markers; prune only with all writers verifiably stopped.
+          // Keep a nonempty tombstone until acquisition proves old reapers are
+          // quiescent. Concurrent reapers cannot move a successor into this name.
           await rename(lock, `${lock}.dead-${previous.nonce}`).catch(() => undefined)
         }
         if (Date.now() >= deadline) throw new MemoryError("conflict", "Memory repository is busy")

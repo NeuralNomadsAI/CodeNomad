@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto"
 import { runGitProcess } from "../workspaces/git-process"
 import { requireHostGit } from "../workspaces/git-requirement"
 import { MemoryError } from "./model"
+import { memoryGitEnvironment } from "./git-environment"
 
 const BRANCH = "refs/heads/main"
 const IDENTITY = { GIT_AUTHOR_NAME: "CodeNomad Memory", GIT_AUTHOR_EMAIL: "memory@codenomad.local",
@@ -14,8 +15,7 @@ export class MemoryGit {
   constructor(readonly directory: string) {}
 
   async run(args: string[], index?: string): Promise<string> {
-    const env: NodeJS.ProcessEnv = Object.fromEntries(Object.keys(process.env)
-      .filter(key => /^GIT_/i.test(key)).map(key => [key, undefined]))
+    const env = memoryGitEnvironment()
     Object.assign(env, IDENTITY, { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
       GIT_TERMINAL_PROMPT: "0", GIT_LITERAL_PATHSPECS: "1", GIT_NO_REPLACE_OBJECTS: "1", ...(index ? { GIT_INDEX_FILE: index } : {}) })
     try {

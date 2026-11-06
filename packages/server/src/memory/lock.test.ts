@@ -51,8 +51,7 @@ test("PID reuse recovers the exited process generation rather than retaining a l
   const successor = await lockMemoryRepository(target)
   assert.notEqual(JSON.parse(await readFile(`${target}.lock/owner`, "utf8")).nonce, previous.nonce)
   await successor()
-  assert.ok((await readdir(path.dirname(target))).includes(`memory.lock.dead-${previous.nonce}`))
-  // Fencing markers have no acquisition authority and remain harmless across later operations.
+  assert.ok(!(await readdir(path.dirname(target))).includes(`memory.lock.dead-${previous.nonce}`))
   for (let i = 0; i < 3; i++) await (await lockMemoryRepository(target))()
 })
 
@@ -128,7 +127,36 @@ test("a forcibly killed native owner is recoverable and concurrent reapers prese
     try { assert.equal(++active, 1); await delay(5); active-- }
     finally { await release() }
   }))
-  assert.ok((await readdir(path.dirname(target))).some(name => name.startsWith("memory.lock.dead-")))
+  await (await lockMemoryRepository(target))()
+  assert.ok(!(await readdir(path.dirname(target))).some(name => name.startsWith("memory.lock.dead-")))
+})
+
+test("recovery markers remain while an old reaper is live and are pruned after it retires", async t => {
+  const target = await directory(t)
+  const dead = { pid: 123456789, nonce: randomUUID(), startIdentity: "dead-generation", host: hostname(), platform: process.platform }
+  const current = await lookupProcess(process.pid)
+  assert.equal(current.state, "live")
+  if (current.state !== "live") return
+  const reaper = { pid: process.pid, nonce: randomUUID(), startIdentity: current.startIdentity, host: hostname(), platform: process.platform }
+  const candidate = `${target}.lock.${reaper.nonce}`
+  const marker = `${target}.lock.dead-${dead.nonce}`
+  await mkdir(candidate); await writeFile(`${candidate}/owner`, JSON.stringify(reaper))
+  await mkdir(marker); await writeFile(`${marker}/owner`, JSON.stringify(dead))
+  await (await lockMemoryRepository(target))()
+  assert.equal(await readFile(`${marker}/owner`, "utf8"), JSON.stringify(dead))
+  await rm(candidate, { recursive: true })
+  await (await lockMemoryRepository(target))()
+  await assert.rejects(readFile(`${marker}/owner`), { code: "ENOENT" })
+})
+
+test("repeated owner crashes leave no unbounded marker history after quiescent acquisition", async t => {
+  const target = await directory(t)
+  for (let index = 0; index < 12; index++) {
+    const dead = { pid: process.pid, nonce: randomUUID(), startIdentity: `ended-${index}`, host: hostname(), platform: process.platform }
+    await mkdir(`${target}.lock`); await writeFile(`${target}.lock/owner`, JSON.stringify(dead))
+    await (await lockMemoryRepository(target))()
+    assert.deepEqual(await readdir(path.dirname(target)), [])
+  }
 })
 
 test("contended publication and retirement retain exclusion across repeated reader handoffs", async t => {
