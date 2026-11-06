@@ -1,6 +1,6 @@
 import { Show, createSignal } from "solid-js"
 import { render } from "solid-js/web"
-import type { PluginControlsSnapshot } from "../../../../server/src/api-types"
+import type { PluginConfigScope, PluginControlsSnapshot } from "../../../../server/src/api-types"
 import { PluginActivationControls } from "../../../src/components/plugin-activation-controls"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
@@ -157,6 +157,76 @@ await updatePreferences({ locale: "en" })
 ;(window as any).fixture = {
   calls,
   reads: () => reads,
+  clearSystemConfiguration: () => { snapshot.configured.sources = []; snapshot.configured.rules = [] },
+  systemPlugins: (mode: "active" | "disabled" | "disabled-active" | "disabled-failed" | "failed" | "failed-no-id" | "unconfirmed" | "source-only", scope: PluginConfigScope = "project", ordinary = true) => {
+    snapshot.controls = ordinary ? [snapshot.controls[0]] : []
+    snapshot.runtime = ordinary ? [active] : []
+    snapshot.configured.sources = []
+    snapshot.configured.rules = []
+    // An ordinary local plugin can share the bundled plugin's filename.
+    if (ordinary) {
+      const runtime = { ...active, key: "codenomad.third-party", id: "codenomad.third-party", source: { type: "local" as const, path: "/user/codenomad-design/index.js" } }
+      snapshot.runtime.push(runtime)
+      snapshot.controls.push({ id: runtime.id, runtime, builtin: false, global: "default", project: "default", effective: "default" })
+    }
+    const runtime = {
+      key: "system-design", id: mode === "failed-no-id" ? undefined : "codenomad.design",
+      managedBy: "codenomad" as const,
+      source: { type: "package" as const, target: "@codenomad/design@1.0.0" }, features: {},
+      state: mode === "failed" || mode === "failed-no-id" || mode === "disabled-failed"
+        ? { status: "failed" as const, error: "Native system plugin failed safely", ref: "err_system_native" }
+        : { status: "active" as const },
+    }
+    if (["active", "disabled-active", "disabled-failed", "failed", "failed-no-id"].includes(mode)) snapshot.runtime.push(runtime)
+    if (mode !== "failed-no-id" && mode !== "source-only") {
+      const rule = { selector: "*", enabled: false, scope,
+        ...(scope === "virtual" ? {} : { path: scope === "global" ? "/daemon/opencode.jsonc" : scope === "project" ? "/repo/.opencode/opencode.jsonc" : "/ancestor/opencode.jsonc" }),
+        order: 0, entryIndex: 0 }
+      snapshot.controls.push({ id: "codenomad.design", managedBy: "codenomad", builtin: false,
+        runtime: ["active", "disabled-active", "disabled-failed", "failed"].includes(mode) ? runtime : undefined,
+        effective: mode.startsWith("disabled") ? "disabled" : "default", global: "default", project: "default",
+        controllingRule: mode.startsWith("disabled") ? rule : undefined })
+      if (mode.startsWith("disabled")) snapshot.configured.rules.push(rule)
+    }
+    snapshot.configured.sources.push({ target: runtime.source.target, pluginId: runtime.id, managedBy: "codenomad", scope: "global", path: "/daemon/opencode.jsonc", entryIndex: 0, hasOptions: false })
+    if (mode === "source-only") snapshot.configured.sources[0].pluginId = undefined
+    if (mode === "active") {
+      // Runtime without a control, and a correlated declaration without an ID,
+      // exercise the two other ordinary row paths independently.
+      const packageOnly = { ...runtime, key: "system-extra", id: undefined, source: { type: "package" as const, target: "@codenomad/extra" } }
+      snapshot.runtime.push(packageOnly)
+      snapshot.configured.sources.push({ target: packageOnly.source.target, managedBy: "codenomad", scope: "global", entryIndex: 1, hasOptions: false })
+    }
+  },
+  activateSystemPlugin: () => {
+    const runtime = { key: "system-design", id: "codenomad.design", managedBy: "codenomad" as const,
+      source: { type: "package" as const, target: "@codenomad/design@1.0.0" }, features: {}, state: { status: "active" as const } }
+    snapshot.runtime = snapshot.runtime.filter(entry => entry.managedBy !== "codenomad")
+    snapshot.runtime.push(runtime)
+    const control = snapshot.controls.find(entry => entry.id === runtime.id)
+    if (control) { control.runtime = runtime; control.effective = "enabled" }
+    ;(serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId,
+      event: { id: `system-active-${Date.now()}`, created: Date.now(), type: "plugin.updated", data: {}, location } }])
+  },
+  systemLocalFailure: (attached: boolean) => {
+    const runtime = { key: "native-local-failure", managedBy: "codenomad" as const,
+      source: { type: "local" as const, path: "/daemon/plugins/codenomad-design.js" }, features: {},
+      state: { status: "failed" as const, error: "Native system plugin failed safely", ref: "err_system_native" } }
+    snapshot.runtime = [runtime]
+    snapshot.controls = attached ? [{ id: "codenomad.design", managedBy: "codenomad", runtime, builtin: false,
+      global: "default", project: "default", effective: "default" }] : []
+    snapshot.configured.sources = [{ target: runtime.source.path, managedBy: "codenomad", pluginId: attached ? "codenomad.design" : undefined,
+      scope: "global", path: "/daemon/opencode.jsonc", entryIndex: 0, hasOptions: false }]
+    snapshot.configured.rules = []
+  },
+  ordinaryLocalFailure: () => {
+    snapshot.controls = []
+    snapshot.runtime = ["/thirdparty/plugin.ts", "/daemon/plugins/codenomad-design.js"].map(path => ({ key: path,
+      source: { type: "local", path }, features: {},
+      state: { status: "failed", error: "Unproven local plugin load failed", ref: "err_local_native" } }))
+    snapshot.configured.sources = snapshot.runtime.map((entry, entryIndex) => ({ target: entry.key, scope: "global", entryIndex, hasOptions: false }))
+    snapshot.configured.rules = []
+  },
   failedPackagesOnly: () => {
     snapshot.controls = []
     snapshot.configured.sources = []
