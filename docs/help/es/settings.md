@@ -36,6 +36,8 @@ En **Configuración → General**, **Mantener el ordenador activo mientras CodeN
 
 ## Memoria persistente del agente {#agent-memory}
 
+El envío continúa si falla la memoria. CodeNomad intenta retirar las instrucciones de memoria obsoletas de la sesión; si esa limpieza también falla, las anteriores pueden permanecer hasta una actualización correcta. Sigue verificando sus afirmaciones con los archivos y comandos actuales.
+
 Abre **Preferencias → General → Memoria** (o **Configuración → General** en el navegador). La memoria está desactivada por defecto. Actívala para que el agente conserve hechos y preferencias útiles entre conversaciones. El interruptor se aplica a la configuración CodeNomad conectada; desactivarlo conserva las entradas y su historial.
 
 - **Acerca de ti**: hasta 60 entradas compartidas entre los proyectos de esta configuración.

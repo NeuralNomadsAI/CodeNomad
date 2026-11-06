@@ -251,9 +251,15 @@ connection and authority checks run again before the input dispatch.
 directory, checks the fresh preference and independently reads both safe scope
 projections. It rechecks session ownership and enablement after the reads.
 Unreadable scopes stay absent; missing folders supply empty title lists.
-Disabling removes only `codenomad.memory`, including when stored scopes are
-malformed. Preparation failures block admission with private-safe errors;
-an authenticated capability result of `unsupported` keeps the feature silent.
+Disabled memory reads its preference first, bypasses capability discovery and
+storage, and attempts removal of only `codenomad.memory`. Preparation failures
+and uncertain instruction puts also attempt removal of that key. Discovery,
+storage and instruction transport failures leave ordinary admission available;
+cancellation, retired connections and Missions authority fences remain blocking.
+An authenticated capability result of `unsupported` keeps the feature silent.
+When removal itself fails, the native session may retain its preceding entry
+until a later successful admission refresh; consumers must verify stored claims
+against current reality. Cleanup errors carry no memory content into logs.
 
 The English instruction string always includes the recording rules, even when
 both lists are empty: corrections/preferences, successful unusual approaches,
@@ -270,8 +276,8 @@ every prompt admission, including children outside the proxy. The bridge applies
 the same capability, ownership, preference and scope projection as direct sends.
 Each activation owns and disposes its prompt hook with its tool registration.
 An explicit ownership refusal from every live backend clears the named entry and
-leaves unrelated native Locations usable; missing/ambiguous backends and transport
-failures reject preparation.
+leaves unrelated native Locations usable. Missing/ambiguous backends and transport
+failures trigger the same best-effort named-entry cleanup and admit the prompt.
 
 ## Preferences review, editing and badges
 
@@ -370,7 +376,8 @@ The callback uses `event.sessionID`, awaits the server bridge's current
 preference, owned session location and readable titles, then awaits
 `ctx.session.instructions.entry.put` or `remove` for `codenomad.memory` before
 returning. Hooks run after Location plugin activation and before prompt inbox
-admission. Preparation failure rejects that admission before a model call.
+admission. Optional memory failures attempt named-entry cleanup and admit the
+prompt; independently registered native admission checks retain their own refusals.
 
 Register the hook together with the plugin's activation lifetime. Preserve other
 instruction keys. Resolve each child's own server-authorized location rather
@@ -407,11 +414,12 @@ separately to include the real WSL Git/worktree test. The native instructions re
 uses a private authenticated daemon, private home/configuration/database and a
 loopback synthetic provider. It checks session-local parent entries, first-call
 child instructions through the awaited hook, resumed-child updates, removal of
-only the memory key and rejection of failed preparation with an empty inbox. Its plugin bundle uses
+only the memory key and independent mandatory admission refusal with an empty inbox. Its plugin bundle uses
 `packages/server/scripts/native-plugin-build.mjs`.
 The shipped-tool qualification also exercises the real bridge/store projection
 before a native child's first model call, title-only safe instructions, removal
-after disable while preserving another key, and an unrelated native Location.
+after disable while preserving another key, an unrelated native Location, and
+successful prompt admission with stale-key cleanup during a memory bridge outage.
 
 ## Agent conventions
 

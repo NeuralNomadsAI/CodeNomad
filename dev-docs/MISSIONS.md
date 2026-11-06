@@ -1089,8 +1089,10 @@ Agent memory refreshes its owned `codenomad.memory` entry through
 resume synthetics. Preparation uses the optional instructions capability, fresh
 enablement and the target session's authorized location; unreadable scopes are
 omitted independently. Native instruction writes retain the Missions authority
-checkpoint, and full admission checks run again afterward. Preparation errors
-block the send; an absent capability keeps memory silently inactive. See
+checkpoint, and full admission checks run again afterward. Optional memory errors
+attempt named-entry removal and allow admission; cancellation, retired connections
+and authority failures block the send. Disabled memory bypasses discovery and
+storage; an absent capability keeps memory silently inactive. See
 [Agent memory](AGENT_MEMORY.md#session-instruction-synchronization).
 
 The bridge accepts up to 250,000 assembled text characters within its 512 KiB JSON body limit. This accommodates the maximum objective, brief, title and dependencies after XML escaping (up to 5×), including JSON control-character escaping on the wire. HTTP regression coverage exercises maximum accepted contracts for all playbooks.

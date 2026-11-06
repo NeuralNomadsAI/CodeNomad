@@ -33,7 +33,7 @@ const previous = Object.fromEntries(["LOCALAPPDATA", "XDG_RUNTIME_DIR", "WSL_DIS
 process.env.LOCALAPPDATA = env.LOCALAPPDATA
 process.env.XDG_RUNTIME_DIR = env.XDG_RUNTIME_DIR
 delete process.env.WSL_DISTRO_NAME
-let client, connection, invoke, providerError, observedTools = [], child, stopped, output = "", removeBridge, first, second, dropResponse = false
+let client, connection, invoke, providerError, observedTools = [], child, stopped, output = "", removeBridge, first, second, dropResponse = false, contextOutage = false
 const requests = [], operations = []
 const provider = createServer(async (request, response) => {
   try {
@@ -77,8 +77,9 @@ const manager = {
   getServiceWslDistro: () => undefined,
 }
 const memory = new MemoryService(store, settings, manager, { publish() {} })
-bridge.addHook("preHandler", async request => {
+bridge.addHook("preHandler", async (request, reply) => {
   if (request.body?.mode === "memory-input") operations.push(request.body)
+  if (contextOutage && request.body?.mode === "memory-context") return reply.code(503).send({ code: "unreadable" })
 })
 bridge.addHook("onSend", async (request, reply, payload) => {
   if (dropResponse && request.body?.mode === "memory-input") {
@@ -188,6 +189,19 @@ try {
   assert(!disabledEntries.some(entry => entry.key === "codenomad.memory"))
   assert(disabledEntries.some(entry => entry.key === "other-owner"))
   await memory.setEnabled(true)
+  await client.session.prompt({ sessionID: parent.id, text: "MEMORY_ENABLED_REFRESH" })
+  await client.session.wait({ sessionID: parent.id }, { signal: AbortSignal.timeout(30_000) })
+  assert((await client.session.instructions.entry.list({ sessionID: parent.id })).some(entry => entry.key === "codenomad.memory"))
+  contextOutage = true
+  const beforeOutage = requests.length
+  await client.session.prompt({ sessionID: parent.id, text: "MEMORY_OUTAGE_STAYS_USABLE" })
+  await client.session.wait({ sessionID: parent.id }, { signal: AbortSignal.timeout(30_000) })
+  contextOutage = false
+  assert(requests.slice(beforeOutage).some(body => body.stream && JSON.stringify(body.messages).includes("MEMORY_OUTAGE_STAYS_USABLE")))
+  const outageEntries = await client.session.instructions.entry.list({ sessionID: parent.id })
+  assert(!outageEntries.some(entry => entry.key === "codenomad.memory"))
+  assert(outageEntries.some(entry => entry.key === "other-owner"))
+  console.log("PASS shipped native hook admits prompts during a memory-context 503 and clears the stale key while preserving other owners")
   const unownedDirectory = path.join(root, "unowned")
   await mkdir(unownedDirectory)
   const unowned = await client.session.create({ location: { directory: unownedDirectory } })

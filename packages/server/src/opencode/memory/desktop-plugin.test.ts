@@ -28,6 +28,7 @@ async function fixture(t: test.TestContext) {
   const instructions: unknown[] = [], contexts: string[] = []
   let hookDisposed = 0
   let owned = true
+  let instructionStatus = 204
   const registration = createAutomationBridgeRegistration("http://127.0.0.1")
   app.post(AUTOMATION_BRIDGE_PATH, (request, reply) => {
     assert.equal(request.headers["x-codenomad-automation-token"], registration.token)
@@ -53,7 +54,10 @@ async function fixture(t: test.TestContext) {
   const plugin = desktopPlugin(presence)
   const cleanup = await plugin.setup!({ session: {
     hook: async (kind: string, callback: typeof hook) => { assert.equal(kind, "prompt"); hook = callback; return { dispose() { hookDisposed++ } } },
-    instructions: { entry: { put: async (input: unknown) => { instructions.push(input) }, remove: async (input: unknown) => { instructions.push(input) } } },
+    instructions: { entry: {
+      put: async (input: unknown) => { instructions.push(input); if (instructionStatus !== 204) throw new Error("503") },
+      remove: async (input: unknown) => { instructions.push(input); if (instructionStatus !== 204) throw new Error("503") },
+    } },
   }, tool: { transform: async (callback: (editor: { add(definition: Definition): void }) => void) => {
     callback({ add: definition => { definitions.push(definition) } })
     return { dispose: async () => { disposed++ } }
@@ -74,6 +78,7 @@ async function fixture(t: test.TestContext) {
   return { tool, calls, setResponse(value: typeof response) { response = value }, cleanup,
     instructions, contexts, setContext(value: unknown) { context = value }, prompt: (sessionID: string) => hook!({ sessionID }), hookDisposed: () => hookDisposed,
     setOwned(value: boolean) { owned = value },
+    setInstructionStatus(value: number) { instructionStatus = value },
     probes: () => probes, disposed: () => disposed,
     execute: (input: object) => tool.execute({ scope: "global", ...input }, { sessionID: "ses_native" }) }
 }
@@ -115,13 +120,26 @@ test("awaited prompt hook resolves each native child's own context, removes only
   await f.prompt("ses_native_child")
   assert.equal(f.instructions.length, 2)
   f.setContext("unavailable")
-  await assert.rejects(f.prompt("ses_native_child"))
-  assert.equal(f.instructions.length, 2, "failed preparation rejects the awaited hook without any native instruction write")
+  await f.prompt("ses_native_child")
+  assert.deepEqual(f.instructions[2], { sessionID: "ses_native_child", key: "codenomad.memory" }, "failed preparation clears stale memory and preserves native admission")
   f.setOwned(false)
   await f.prompt("ses_unowned")
-  assert.deepEqual(f.instructions[2], { sessionID: "ses_unowned", key: "codenomad.memory" }, "an explicit ownership refusal clears stale memory without blocking unrelated Locations")
+  assert.deepEqual(f.instructions[3], { sessionID: "ses_unowned", key: "codenomad.memory" }, "an explicit ownership refusal clears stale memory without blocking unrelated Locations")
   await f.cleanup()
   assert.equal(f.hookDisposed(), 1)
+})
+
+test("native prompt hooks tolerate failed memory puts and removals without replaying a put", async t => {
+  const f = await fixture(t)
+  f.setInstructionStatus(503)
+  await f.prompt("ses_native_child")
+  assert.deepEqual(f.instructions, [
+    { sessionID: "ses_native_child", key: "codenomad.memory", value: "MEMORY TITLES" },
+    { sessionID: "ses_native_child", key: "codenomad.memory" },
+  ])
+  f.setContext({ supported: true, value: null })
+  await f.prompt("ses_native_child")
+  assert.equal(f.instructions.length, 3, "disabled cleanup is attempted once even when it fails")
 })
 
 test("agent-facing errors preserve capacity titles and never replay uncertain writes", async t => {

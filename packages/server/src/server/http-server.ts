@@ -1292,12 +1292,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           logger.debug({ workspaceId, sessionId }, "Unable to update Git availability context")
         }
         if (connection) {
-          try { await wait(syncSessionMemoryContext(connection, args.memory, sessionId!, signal)) }
-          catch {
-            signal.throwIfAborted()
-            releaseMutation?.()
-            return reply.code(502).send({ error: "Memory instructions are unavailable" })
-          }
+          await wait(syncSessionMemoryContext(connection, args.memory, sessionId!, signal))
         }
       }
       signal.throwIfAborted()

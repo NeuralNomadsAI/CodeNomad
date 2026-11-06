@@ -143,7 +143,7 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
       await checkTarget()
       await checkCoordinator()
       await checkOperation()
-      await syncSessionMemoryContext(connection, memory, target.sessionID, signal, missionInstructionClient(client, authority))
+      await syncSessionMemoryContext(connection, memory, target.sessionID, signal, missionInstructionClient(client, authority), current)
       await prepareMissionAuthority(authority)
       await checkTarget()
       await checkCoordinator()

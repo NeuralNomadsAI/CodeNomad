@@ -45,10 +45,21 @@ export function desktopPlugin(presenceDirectory: string | readonly string[]): Pl
       const hook = typeof ctx.session?.hook === "function" && typeof ctx.session.instructions?.entry?.put === "function"
         && typeof ctx.session.instructions?.entry?.remove === "function"
         ? await ctx.session.hook("prompt", async event => {
-          const context = await requestMemoryContext(event.sessionID)
-          if (!context.supported) return
-          if (context.value === null) await ctx.session.instructions.entry.remove({ sessionID: event.sessionID, key: "codenomad.memory" })
-          else await ctx.session.instructions.entry.put({ sessionID: event.sessionID, key: "codenomad.memory", value: context.value })
+          const input = { sessionID: event.sessionID, key: "codenomad.memory" }
+          let removing = false
+          try {
+            const context = await requestMemoryContext(event.sessionID)
+            if (!context.supported) return
+            if (context.value === null) { removing = true; await ctx.session.instructions.entry.remove(input); return }
+            await ctx.session.instructions.entry.put({ ...input, value: context.value })
+          } catch {
+            // Memory is advisory. Clear a possibly stale entry without blocking
+            // the native hook chain's independent permission/authority checks.
+            if (!removing) {
+              try { await ctx.session.instructions.entry.remove(input) }
+              catch { /* Cleanup is advisory too, including synchronous API errors. */ }
+            }
+          }
         }) : undefined
       try {
         const tools = await ctx.tool.transform(editor => editor.add({

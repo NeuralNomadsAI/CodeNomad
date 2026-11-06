@@ -133,13 +133,13 @@ try {
   assert.ok((await entries(hooked.descendant.id)).some(entry => entry.key === "other-owner"))
   console.log("PASS removing the memory entry preserves other owners' instruction keys")
 
-  await writeFile(state, JSON.stringify({ enabled: true, fail: true }))
+  await writeFile(state, JSON.stringify({ enabled: true, refuse: true }))
   const failed = await client.session.create({ location })
   const beforeFailure = requests.length
   await assert.rejects(client.session.prompt({ sessionID: failed.id, text: "FAILURE_PROOF" }))
-  assert.equal(requests.length, beforeFailure, "A failed awaited prompt hook admits no provider request")
+  assert.equal(requests.length, beforeFailure, "An independent mandatory prompt hook admits no provider request")
   assert.equal((await client.session.inbox.list({ sessionID: failed.id })).length, 0)
-  console.log("PASS failed instruction preparation rejects prompt admission without a provider call or queued input")
+  console.log("PASS an independent mandatory native admission gate still rejects input before any provider call or inbox entry")
 } finally {
   try { await stopFixtureChild(child, stopped) } finally {
     provider.closeAllConnections()

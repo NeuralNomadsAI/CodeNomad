@@ -89,10 +89,14 @@ remain distinct. Native child sessions get their own entries through the awaited
 plugin prompt-admission hook, with instruction changes carried by native
 context-update notices. The isolated
 `scripts/test-memory-instructions-native.mjs` checks first-call child delivery,
-resumed updates and failed-admission rejection. The shipped bundle's
+resumed updates and independently refused native admissions. The shipped bundle's
 `scripts/test-memory-tool-native.mjs` also qualifies title-only child delivery
 through the real backend policy/store, disable cleanup and unrelated Location
-admission. See [Agent memory](AGENT_MEMORY.md).
+admission. Optional memory failures attempt stale-entry cleanup and allow prompts;
+disabled memory bypasses discovery and storage. Failed cleanup can retain the
+preceding entry until the next successful refresh. Cancellation, retired
+connections and Missions authority checks keep their blocking contracts. See
+[Agent memory](AGENT_MEMORY.md).
 
 - Generated client URLs keep their `baseUrl` prefix and pass through unchanged;
   scheduling classifies API paths relative to the proxy prefix.

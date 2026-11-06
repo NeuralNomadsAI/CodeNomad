@@ -36,6 +36,8 @@ Renklerin okunması zorlaşırsa yerleşik bir palet seçin veya düzenlenen pal
 
 ## Kalıcı ajan belleği {#agent-memory}
 
+Bellek arızasında gönderim devam eder. CodeNomad oturumun eski bellek talimatlarını kaldırmayı dener; temizleme de başarısız olursa önceki talimatlar başarılı bir yenilemeye kadar kalabilir. İddiaları güncel dosya ve komutlarla doğrulamaya devam edin.
+
 **Tercihler → Genel → Bellek** yolunu açın (tarayıcıda **Ayarlar → Genel**). Bellek varsayılan olarak kapalıdır. Ajanın yararlı bilgileri ve tercihleri konuşmalar arasında saklaması için etkinleştirin. Anahtar bağlı CodeNomad yapılandırması için geçerlidir; kapatmak kayıtları ve geçmişlerini korur.
 
 - **Hakkınızda**: bu yapılandırmayı kullanan projeler arasında paylaşılan en fazla 60 kayıt.

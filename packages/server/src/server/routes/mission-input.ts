@@ -142,7 +142,8 @@ export async function admitMissionInput(manager: Manager, fence: WorktreeDeletio
     if (recovery) await assertNativeMissionRecoveryReady(client, await assertSessionsCurrent(), signal)
     await prepareMissionAuthority(authority)
     await assertSessionsCurrent()
-    await syncSessionMemoryContext(connection, memory, target.id, signal, missionInstructionClient(client, authority))
+    await syncSessionMemoryContext(connection, memory, target.id, signal, missionInstructionClient(client, authority),
+      () => assertMissionAuthorityCurrent(authority))
     // Readiness/environment/Git awaits are not location authority. Re-read both
     // identities after them; the existing fence covers only the recorded roots.
     await prepareMissionAuthority(authority)

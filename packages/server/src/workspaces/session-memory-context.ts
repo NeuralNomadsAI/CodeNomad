@@ -46,22 +46,42 @@ export function buildSessionMemoryContext(scopes: MemoryTitles): string {
 export async function prepareSessionMemoryContext(connection: ServiceConnection, memory: MemoryService, sessionID: string,
   signal: AbortSignal): Promise<MemoryInstructionContext> {
   signal.throwIfAborted()
-  const capability = await readMemoryInstructionsCapability(connection)
-  signal.throwIfAborted()
-  if (capability === "unsupported") return { supported: false }
-  if (capability !== "supported") throw new Error("Memory instructions are unavailable")
-  const scopes = await memory.sessionTitles(sessionID)
+  let context: MemoryInstructionContext = { supported: true, value: null }
+  try {
+    // Disabled memory needs neither discovery nor storage. Cleanup is best effort.
+    if (memory.getSettings().enabled) {
+      const capability = await readMemoryInstructionsCapability(connection)
+      if (capability === "unsupported") context = { supported: false }
+      else if (capability === "supported") {
+        const scopes = await memory.sessionTitles(sessionID)
+        context = { supported: true, value: scopes === null ? null : buildSessionMemoryContext(scopes) }
+      }
+    }
+  } catch { /* Optional memory failures request removal rather than publish stale titles. */ }
   signal.throwIfAborted()
   connection.assertCurrent()
-  return { supported: true, value: scopes === null ? null : buildSessionMemoryContext(scopes) }
+  return context
 }
 
 export async function syncSessionMemoryContext(connection: ServiceConnection, memory: MemoryService | undefined, sessionID: string,
-  signal: AbortSignal, client: OpenCodeClient = connection.client): Promise<void> {
+  signal: AbortSignal, client: OpenCodeClient = connection.client, checkpoint?: () => void): Promise<void> {
   if (!memory) return
+  const current = () => { signal.throwIfAborted(); connection.assertCurrent(); checkpoint?.() }
+  current()
   const context = await prepareSessionMemoryContext(connection, memory, sessionID, signal)
+  current()
   if (!context.supported) return
-  connection.assertCurrent()
-  if (context.value === null) await client.session.instructions.entry.remove({ sessionID, key: MEMORY_INSTRUCTIONS_KEY }, { signal })
-  else await client.session.instructions.entry.put({ sessionID, key: MEMORY_INSTRUCTIONS_KEY, value: context.value }, { signal })
+  const input = { sessionID, key: MEMORY_INSTRUCTIONS_KEY }
+  try {
+    if (context.value === null) await client.session.instructions.entry.remove(input, { signal })
+    else await client.session.instructions.entry.put({ ...input, value: context.value }, { signal })
+  } catch {
+    current()
+    // An uncertain put can leave the preceding entry installed. Never replay it.
+    if (context.value !== null) {
+      try { await client.session.instructions.entry.remove(input, { signal }) }
+      catch { /* A failed cleanup must leave ordinary input admission usable. */ }
+    }
+  }
+  current()
 }

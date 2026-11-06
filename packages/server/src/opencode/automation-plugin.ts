@@ -587,7 +587,8 @@ async function sendMemoryBridge(sessionID: string, mode: "memory-input" | "memor
     targets.push(...batch.filter((value): value is DiscoveredBridgeRegistration => Boolean(value)))
   }
   // Global plugin activation also covers Locations outside CodeNomad. Only an
-  // explicit ownership refusal may clear stale context there; outages still fail closed.
+  // explicit ownership refusal clears stale context there. Context callers also
+  // attempt cleanup on transport failures; memory mutations retain strict ownership.
   if (mode === "memory-context" && active.length > 0 && unowned === active.length) return { supported: true, value: null }
   if (targets.length !== 1) throw new MemoryError(targets.length ? "conflict" : "unreadable", "Memory requires exactly one owning CodeNomad backend")
   const response = await callBridge(targets[0]!, { mode, sessionID, ...(command ? { command } : {}) }, REQUEST_TIMEOUT_MS)

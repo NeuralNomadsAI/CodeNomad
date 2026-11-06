@@ -12,7 +12,7 @@ function fixture(supported = true) {
     client: { session: { instructions: { entry: {
       put: async (input: unknown) => { calls.push(input) }, remove: async (input: unknown) => { calls.push(input) },
     } } } } }
-  const memory = { sessionTitles: async () => titles }
+  const memory = { getSettings: () => ({ enabled: true }), sessionTitles: async () => titles }
   return { calls, connection, memory, setTitles(value: typeof titles) { titles = value },
     sync: () => syncSessionMemoryContext(connection as never, memory as never, "ses_owned", signal()) }
 }
@@ -67,4 +67,34 @@ test("preparation errors, retired connections and cancellation prevent instructi
   controller.abort()
   await assert.rejects(syncSessionMemoryContext(g.connection as never, g.memory as never, "ses_owned", controller.signal))
   assert.deepEqual(g.calls, [])
+})
+
+test("disabled memory bypasses discovery and storage; failed cleanup remains advisory", async () => {
+  const f = fixture()
+  f.memory.getSettings = () => ({ enabled: false })
+  f.connection.fetch = async () => { throw new Error("must not discover") }
+  f.memory.sessionTitles = async () => { throw new Error("must not read") }
+  f.connection.client.session.instructions.entry.remove = async input => { f.calls.push(input); throw new Error("503") }
+  await f.sync()
+  assert.deepEqual(f.calls, [{ sessionID: "ses_owned", key: "codenomad.memory" }])
+})
+
+test("discovery, title reads and uncertain puts attempt cleanup without blocking admission", async () => {
+  for (const mode of ["discovery", "titles", "put"]) {
+    const f = fixture()
+    if (mode === "discovery") f.connection.fetch = async () => new Response("unavailable", { status: 503 })
+    if (mode === "titles") f.memory.sessionTitles = async () => { throw new Error("private") }
+    if (mode === "put") f.connection.client.session.instructions.entry.put = async input => { f.calls.push(input); throw new Error("503") }
+    await f.sync()
+    assert.deepEqual(f.calls.at(-1), { sessionID: "ses_owned", key: "codenomad.memory" })
+  }
+})
+
+test("advisory failures preserve the synchronous Missions authority fence", async () => {
+  const f = fixture()
+  let allowed = true
+  f.connection.client.session.instructions.entry.put = async () => { allowed = false; throw new Error("503") }
+  await assert.rejects(syncSessionMemoryContext(f.connection as never, f.memory as never, "ses_owned", signal(),
+    f.connection.client as never, () => { if (!allowed) throw new Error("authority retired") }), /authority retired/)
+  assert.deepEqual(f.calls, [], "retired authority cannot authorize fallback removal")
 })
