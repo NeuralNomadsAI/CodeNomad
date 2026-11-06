@@ -81,20 +81,20 @@ export function AgentMemorySettingsCard(props: { instanceId?: string; location?:
           void review.changeScope(value)
         }}><option value="global">{t("settings.memory.global")}</option><option value="project" disabled={!context()}>{t("settings.memory.project")}</option></select>
         <Show when={review.available() && review.hasSnapshot()}><span class="agent-memory-counter">{t("settings.memory.count", { count: review.entries().length, limit: review.scope() === "global" ? 60 : 200 })}</span></Show>
-        <button type="button" class="window-action" disabled={!canTidy()} onClick={() => void tidy()}>{t("settings.memory.tidy")}</button><SettingsInfoTip text={t("settings.memory.tidyInfo")} />
+        <span class="agent-memory-tidy"><button type="button" class="window-action" disabled={!canTidy()} onClick={() => void tidy()}>{t("settings.memory.tidy")}</button><SettingsInfoTip text={t("settings.memory.tidyInfo")} /></span>
       </div>
       <Show when={tidyError()}><p role="alert">{t("settings.memory.tidyFailed")}</p></Show>
       <Show when={!review.available()}><p role="status">{t("settings.memory.noProject")}</p></Show>
       <Show when={review.loading()}><p role="status">{t("settings.memory.loading")}</p></Show>
       <Show when={review.error()}>{error => <div role="alert" class="agent-memory-error">
         <span>{t(`settings.memory.error.${error().code}`)}</span>
-        <Show when={error().titles?.length}><ul><For each={error().titles}>{title => <li>{title}</li>}</For></ul></Show>
+        <Show when={error().titles?.length}><ul><For each={error().titles}>{title => <li><bdi>{title}</bdi></li>}</For></ul></Show>
         <button type="button" class="window-action" disabled={review.loading()} onClick={() => void (error().code === "conflict" ? review.reload() : review.load())}>{t(error().code === "conflict" ? "settings.memory.reload" : "settings.memory.retry")}</button>
       </div>}</Show>
       <Show when={review.available() && !review.loading() && !review.error() && !review.entries().length}><p role="status">{t("settings.memory.empty")}</p></Show>
       <ul class="agent-memory-list"><For each={review.entries()}>{entry => <li>
         <button type="button" class="agent-memory-entry" aria-expanded={review.draft()?.entry.id === entry.id} aria-controls={review.draft()?.entry.id === entry.id ? `${id}-editor` : undefined} disabled={review.busy()} onClick={() => void review.open(entry)}>
-          <span class="agent-memory-entry-title">{entry.title}</span><span class="agent-memory-entry-type">{t(`settings.memory.type.${entry.type}`)}</span>
+          <bdi class="agent-memory-entry-title">{entry.title}</bdi><span class="agent-memory-entry-type">{t(`settings.memory.type.${entry.type}`)}</span>
           <Show when={badge(entry.createdAt, entry.updatedAt)}>{state => <span class="badge-shape agent-memory-badge">{t(`settings.memory.${state()}`)}</span>}</Show>
           <Show when={entry.flagged}><span class="badge-shape agent-memory-badge">{t("settings.memory.flagged")}</span></Show>
         </button>

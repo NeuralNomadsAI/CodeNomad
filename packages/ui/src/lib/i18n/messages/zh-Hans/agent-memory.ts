@@ -1,6 +1,6 @@
 export const agentMemoryMessages = {
   "settings.memory.tidy": "整理",
-  "settings.memory.tidyInfo": "在此项目中启动新会话，验证并合并所选范围的记忆。更改保留本地 Git 历史。",
+  "settings.memory.tidyInfo": "在此项目中启动新会话，验证所选记忆中的条目并合并重复项。更改保存在本地 Git 历史中。",
   "settings.memory.tidyConfirm": "在新的项目会话中验证并整理“{scope}”？",
   "settings.memory.tidyFailed": "无法确认整理结果。重试前请检查项目会话。",
   "settings.memory.title": "记忆",

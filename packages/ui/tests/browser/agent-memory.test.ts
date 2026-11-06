@@ -339,6 +339,13 @@ test("ten locales have the same labels; Hebrew layout keeps fields and actions i
   try {
     await page.goto(`${url}?locale=he`); await page.getByRole("button", { name: /Project A/ }).click()
     assert.equal(await page.locator("html").getAttribute("dir"), "rtl")
+    const fields = card(page).locator(".agent-memory-editor input, .agent-memory-editor textarea")
+    for (const field of await fields.all()) {
+      assert.equal(await field.getAttribute("dir"), "auto")
+      assert.equal(await field.evaluate(node => getComputedStyle(node).direction), "ltr", "Latin content keeps its own direction in Hebrew UI")
+    }
+    assert.equal(await card(page).locator(".agent-memory-entry-title").evaluate(node => getComputedStyle(node).unicodeBidi), "isolate")
+    assert.equal(await card(page).locator(".agent-memory-entry-title").evaluate(node => getComputedStyle(node).direction), "ltr")
     for (const element of await card(page).locator("input, textarea, select, button").all()) {
       const rect = await element.boundingBox()
       // The native switch's checkbox is intentionally visually hidden.
@@ -348,4 +355,25 @@ test("ten locales have the same labels; Hebrew layout keeps fields and actions i
     assert.equal((await card(page).innerText()).includes("settings.memory."), false)
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
+})
+
+test("Tidy up and its keyboard-openable info tip stay together at 390 px in every locale", async () => {
+  for (const locale of ["en", "fr", "de", "es", "he", "ja", "ne", "ru", "tr", "zh-Hans"]) {
+    const page = await browser.newPage({ viewport: { width: 390, height: 850 } })
+    await setup(page)
+    try {
+      await page.goto(`${url}?locale=${locale}`)
+      const group = card(page).locator(".agent-memory-tidy")
+      const button = group.getByRole("button"), info = group.getByRole("img")
+      await button.waitFor()
+      const { a, b } = await group.evaluate(node => {
+        const a = node.querySelector("button")!.getBoundingClientRect(), b = node.querySelector(".settings-info-tip")!.getBoundingClientRect()
+        return { a: { top: a.top, bottom: a.bottom }, b: { top: b.top, bottom: b.bottom } }
+      })
+      assert(b.top >= a.top && b.bottom <= a.bottom, `${locale}: ${JSON.stringify({ a, b })}`)
+      await info.focus()
+      await page.getByRole("tooltip").waitFor()
+      assert.equal(await page.getByRole("tooltip").innerText(), await info.getAttribute("aria-label"))
+    } finally { await page.close() }
+  }
 })

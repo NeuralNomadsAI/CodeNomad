@@ -30,7 +30,7 @@ export function AgentMemoryEditor(props: { review: ReturnType<typeof createAgent
       <ActionOverflowMenu triggerClass="window-icon-button" label={t("settings.memory.actions", { title: selected().entry.title })} items={items()} />
     </div>
     <label for={`${id}-title`}>{t("settings.memory.entryTitle")}</label>
-    <input ref={titleField} id={`${id}-title`} value={selected().title} disabled={blocked()}
+    <input ref={titleField} id={`${id}-title`} dir="auto" value={selected().title} disabled={blocked()}
       aria-invalid={!memoryTitleValid(selected().title)} aria-describedby={`${id}-title-count${!memoryTitleValid(selected().title) ? ` ${id}-title-error` : ""}`}
       onInput={event => review.edit({ title: event.currentTarget.value })} />
     <span id={`${id}-title-count`} class="agent-memory-counter">{t("settings.memory.characters", { count: memoryCharacters(selected().title), limit: 60 })}</span>
@@ -40,7 +40,7 @@ export function AgentMemoryEditor(props: { review: ReturnType<typeof createAgent
       <option value="fact">{t("settings.memory.type.fact")}</option><option value="preference">{t("settings.memory.type.preference")}</option><option value="reference">{t("settings.memory.type.reference")}</option>
     </select>
     <label for={`${id}-text`}>{t("settings.memory.text")}</label>
-    <textarea id={`${id}-text`} rows={8} value={selected().text} disabled={blocked()} aria-invalid={memoryCharacters(selected().text) > 2000}
+    <textarea id={`${id}-text`} dir="auto" rows={8} value={selected().text} disabled={blocked()} aria-invalid={memoryCharacters(selected().text) > 2000}
       aria-describedby={`${id}-text-count${memoryCharacters(selected().text) > 2000 ? ` ${id}-text-error` : ""}`} onInput={event => review.edit({ text: event.currentTarget.value })} />
     <span id={`${id}-text-count`} class="agent-memory-counter">{t("settings.memory.characters", { count: memoryCharacters(selected().text), limit: 2000 })}</span>
     <Show when={memoryCharacters(selected().text) > 2000}><span id={`${id}-text-error`} role="alert">{t("settings.memory.textInvalid")}</span></Show>

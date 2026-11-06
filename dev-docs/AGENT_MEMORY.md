@@ -288,6 +288,8 @@ are visible while enabled. The server keeps stored entries when disabled.
 Project context uses the shared Preferences resolver; without an authorized
 project only About you can be selected. Titles/types/text have localized labels
 in all ten UI languages, and supplementary copy uses `SettingsInfoTip`.
+The cleanup action and its info tip wrap as one group. Editable title/text fields
+derive direction from their contents, and list titles use bidirectional isolation.
 
 `stores/agent-memory.ts` owns demand reads, draft preservation, stale-response
 fencing and coalesced trailing invalidation after `memory.changed` or reconnect.

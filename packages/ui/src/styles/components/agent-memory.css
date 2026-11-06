@@ -4,6 +4,7 @@
 .agent-memory-editor-heading { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
 .agent-memory-toolbar { margin-block: 1rem; justify-content: space-between; }
 .agent-memory-toolbar select { inline-size: 14rem; max-inline-size: 100%; }
+.agent-memory-tidy { display: inline-flex; align-items: center; gap: 0.5rem; flex: none; }
 .agent-memory-counter,
 .agent-memory-entry-type { color: var(--text-secondary); font-size: 0.75rem; }
 .agent-memory-counter { text-align: end; }
