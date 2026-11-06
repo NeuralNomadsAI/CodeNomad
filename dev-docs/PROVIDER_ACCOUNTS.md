@@ -101,10 +101,35 @@ keys alike) stay unread (unknown); never refresh them or send them to the public
 endpoint. The Usage tab sends native Go credentials only for the `opencode-go`
 provider (ID or canonical); pay-as-you-go Zen sessions use the env-cookie reader.
 
-The Go usage endpoint (`GET https://opencode.ai/zen/go/v1/usage`) is
-unversioned and only partly verified: the parser accepts the current
-`usage.{rolling,weekly,monthly}` and older `*Usage` shapes, and treats anything
-else as unknown. Console OAuth usage with `x-org-id` is unverified upstream.
+Go API keys read `GET https://opencode.ai/zen/go/v1/usage`: the partly verified,
+unversioned contract supplies consumed `usage.{rolling,weekly,monthly}.percent`
+and `resetsAt`; older `*Usage` shapes remain readable. Key reads stay on that
+endpoint, with unknown payloads yielding unknown quota. Full parity with Console's
+available data depends on the key's API access and remains unverified.
+Console OAuth reads `GET https://opencode.ai/console/api/go/status` and
+`GET https://opencode.ai/console/api/billing/status`, Bearer-authenticated with
+the credential's `x-org-id`. The public Console client defines
+`access.meters.{fiveHour,week,month}.{limitMicroCents,usedMicroCents,resetsAt}`;
+the reader computes consumed percentages without restricting product names.
+Billing's decimal `availableMicroCents` becomes USD by dividing by 100,000,000.
+The parser accepts finite decimal values within the safe numeric magnitude,
+omits absent/invalid values and retains zero. The wallet uses
+`credits_balance.balanceUSD.remaining`, formatted with the UI locale and hidden
+by default through `showProviderUsageCreditBalance`; a hidden balance-only read
+shows unavailable usage. It stays distinct from Go limits and Extra Usage;
+balance-only reads leave account selection's quota unknown. Missing billing
+access preserves independently readable Go windows. Every request shares the
+caller's bounded cancellation signal; native failures retain their HTTP status.
+
+Only HTTP 401 with allowlisted code `api_key_expired` publishes
+`opencode-go-key-expired` and `opencode-go-new-key`. The bounded transport reads
+error bodies only for explicitly allowlisted codes and discards other contents.
+The UI translates the expiry and replacement action and owns the fixed
+`https://opencode.ai/console/login` destination. Native authentication failures
+remain attached to that login. The [Console API guide](https://opencode.ai/v2/docs/console/api/)
+documents personal and service-account key creation and expiry;
+the [Go guide](https://opencode.ai/v2/docs/console/go/) documents plan windows,
+Console credits and Extra Usage.
 
 MiniMax's international and China readers try Token Plan, then Coding Plan when
 needed. A final successful response (`base_resp.status_code === 0`) with absent

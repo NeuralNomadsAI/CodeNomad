@@ -56,7 +56,7 @@ test("Go key and Console credentials read with their own explicit token and orga
     { orgID: "org_b", email: "dev@example.com", server: "https://opencode.ai/console" }))!
   assert.equal(signedIn.login, "dev@example.com")
   await signedIn.read(signal())
-  assert.deepEqual(h.go, [{ token: "secret-k2" }, { token: "secret-svc", orgID: "org_a" }, { token: "secret-access-acct", orgID: "org_b" }])
+  assert.deepEqual(h.go, [{ token: "secret-k2" }, { token: "secret-svc", orgID: "org_a" }, { token: "secret-access-acct", orgID: "org_b", consoleOAuth: true }])
   for (const credential of [goKey, consoleKey, signedIn]) {
     assert.match(credential.identity, /^[0-9a-f]{64}$/)
     assert.equal(JSON.stringify(credential).includes("secret"), false)

@@ -137,9 +137,9 @@ export function notConfigured(providerId: string, providerName: string): Provide
   return result(providerId, providerName, { ok: false, configured: false, error: "Not configured" })
 }
 
-/** Only the status is retained; upstream bodies may echo credentials. */
+/** Retain only HTTP status and an explicitly allowlisted code; bodies may echo credentials. */
 export class ProviderHttpError extends Error {
-  constructor(readonly status: number) { super(`Provider returned HTTP ${status}`) }
+  constructor(readonly status: number, readonly code?: string) { super(`Provider returned HTTP ${status}`) }
 }
 
 export async function fetchJson(url: string, init: RequestInit = {}): Promise<any> {

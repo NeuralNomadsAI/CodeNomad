@@ -32,6 +32,7 @@ after(async () => { try { await browser?.close() } finally { await server?.close
 async function prepare(page: Page) {
   const requests: Route[] = []
   const errors: string[] = []
+  let uiConfig = { settings: {} }
   page.on("pageerror", error => errors.push(error.message))
   // Do not open any shared server/SSE connection. Events below use the real dispatcher.
   await page.addInitScript(() => {
@@ -42,6 +43,10 @@ async function prepare(page: Page) {
   })
   await page.route("**/api/**", route => {
     if (new URL(route.request().url()).pathname.startsWith("/api/usage/")) { requests.push(route); return }
+    if (new URL(route.request().url()).pathname === "/api/storage/config/ui") {
+      if (route.request().method() === "PATCH") uiConfig = { settings: { ...uiConfig.settings, ...route.request().postDataJSON().settings } }
+      return route.fulfill({ json: uiConfig })
+    }
     return route.fulfill({ contentType: "application/json", body: "{}" })
   })
   await page.goto(url)
@@ -133,6 +138,64 @@ for (const [locale, label, invalid] of [
     await requests[1].fulfill({ json: { ...base, ok: false, windows: {}, unavailableReason: "invalid-base-url" } })
     await page.getByRole("status").getByText(invalid, { exact: true }).waitFor()
     assert.equal(await page.getByRole("progressbar").count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+for (const [locale, expired, action] of [
+  ["en-US", "The OpenCode Go key has expired.", "Create a new key in OpenCode Console, then replace it"],
+  ["fr-FR", "La clé OpenCode Go a expiré.", "Créer une nouvelle clé dans OpenCode Console, puis la remplacer"],
+  ["de-DE", "Der OpenCode-Go-Schlüssel ist abgelaufen.", "Neuen Schlüssel in OpenCode Console erstellen und ersetzen"],
+  ["es-ES", "La clave de OpenCode Go ha caducado.", "Crear una clave nueva en OpenCode Console y sustituirla"],
+  ["he-IL", "תוקף מפתח OpenCode Go פג.", "יצירת מפתח חדש ב-OpenCode Console והחלפת המפתח"],
+  ["ja-JP", "OpenCode Go キーの有効期限が切れています。", "OpenCode Console で新しいキーを作成して置き換える"],
+  ["ne-NP", "OpenCode Go कुञ्जीको म्याद सकिएको छ।", "OpenCode Console मा नयाँ कुञ्जी बनाएर पुरानो बदल्नुहोस्"],
+  ["ru-RU", "Срок действия ключа OpenCode Go истёк.", "Создать новый ключ в OpenCode Console и заменить старый"],
+  ["tr-TR", "OpenCode Go anahtarının süresi doldu.", "OpenCode Console'da yeni bir anahtar oluşturup eskisini değiştirin"],
+  ["zh-CN", "OpenCode Go 密钥已过期。", "在 OpenCode Console 中创建新密钥并替换旧密钥"],
+]) test(`Go wallet is opt-in localized USD and expired keys have an accessible fixed recovery link (${locale})`, async () => {
+  const page = await browser.newPage({ locale })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1)
+    const base = { requestedProviderId: "opencode-go", providerId: "opencode-go", providerName: "OpenCode Go", supported: true,
+      configured: true, ok: true, fetchedAt: Date.now() }
+    const wallet = { usedPercent: null, remainingPercent: null, resetAt: null, windowSeconds: null, balanceUSD: { remaining: 1.5 } }
+    const format = () => page.evaluate(locale => new Intl.NumberFormat(locale, { style: "currency", currency: "USD" }).format(1.5), locale === "zh-CN" ? "zh-Hans" : locale)
+    await requests[0].fulfill({ json: { ...base, windows: { credits_balance: wallet } } })
+    await page.locator(".right-panel-empty-text").waitFor()
+    assert.equal(await page.getByText("OpenCode Go", { exact: true }).count(), 0, "hidden balance alone cannot produce an empty successful card")
+    await page.evaluate(() => (window as any).usageFixture.creditBalance(true))
+    await page.getByText(await format(), { exact: true }).waitFor()
+    await page.getByText("OpenCode Go", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("progressbar").count(), 0, "a wallet has no quota percentage")
+    await page.evaluate(() => (window as any).usageFixture.creditBalance(false))
+    await page.locator(".right-panel-empty-text").waitFor()
+    assert.equal(await page.getByText(await format(), { exact: true }).count(), 0)
+    await page.evaluate(() => (window as any).usageFixture.event("provider.updated"))
+    await waitRequests(requests, 2)
+    await requests[1].fulfill({ json: { ...base, ok: false, windows: {}, unavailableReason: "opencode-go-key-expired", unavailableAction: "opencode-go-new-key" } })
+    await page.getByRole("status").getByText(expired, { exact: true }).waitFor()
+    const link = page.getByRole("link", { name: action, exact: true })
+    assert.equal(await link.getAttribute("href"), "https://opencode.ai/console/login")
+    assert.equal(await link.getAttribute("target"), "_blank")
+    assert.equal(await link.getAttribute("rel"), "noopener noreferrer")
+    assert.equal(await link.evaluate(el => getComputedStyle(el).textDecorationLine), "underline")
+    await page.keyboard.press("Tab")
+    assert.equal(await link.evaluate(el => document.activeElement === el), true)
+    assert.notEqual(await link.evaluate(el => getComputedStyle(el).outlineStyle), "none")
+    await page.evaluate(() => {
+      ;(window as any).openedUsageLinks = []
+      window.open = ((...args: unknown[]) => { (window as any).openedUsageLinks.push(args); return null }) as typeof window.open
+    })
+    await page.keyboard.press("Enter")
+    assert.deepEqual(await page.evaluate(() => (window as any).openedUsageLinks), [["https://opencode.ai/console/login", "_blank", "noopener,noreferrer"]])
+    await page.evaluate(() => (window as any).usageFixture.event("credential.switched"))
+    await waitRequests(requests, 3)
+    assert.equal(await link.count(), 0)
+    await fulfill(requests[2], 25)
+    await page.getByRole("progressbar").waitFor()
+    assert.equal(await page.getByRole("status").count(), 0)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

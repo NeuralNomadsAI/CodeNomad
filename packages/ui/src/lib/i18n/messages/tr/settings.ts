@@ -276,6 +276,8 @@ export const settingsMessages = {
   "providerUsage.unavailable": "Kullanım bilgisi geçici olarak kullanılamıyor.",
   "providerUsage.providerErrorCode": "Sağlayıcı hatası ({code}).",
   "providerUsage.viewChatGPTUsage": "ChatGPT kullanımını görüntüle",
+  "providerUsage.openCodeGoKeyExpired": "OpenCode Go anahtarının süresi doldu.",
+  "providerUsage.createOpenCodeGoKey": "OpenCode Console'da yeni bir anahtar oluşturup eskisini değiştirin",
   "providerUsage.unavailableValue": "--",
   "providerUsage.minimaxLimitsNotShared": "MiniMax sınırlarını paylaşmıyor",
   "providerUsage.usedPercent": "%{percent} kullanıldı",

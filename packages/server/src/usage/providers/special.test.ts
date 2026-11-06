@@ -3,6 +3,33 @@ import test, { type TestContext } from "node:test"
 
 import { specialProviders } from "./special"
 
+test("Go keeps native authentication failures, distinguishing only a 401 expired key", async t => {
+  const previous = { workspace: process.env.OPENCODE_GO_WORKSPACE_ID, cookie: process.env.OPENCODE_GO_AUTH_COOKIE }
+  process.env.OPENCODE_GO_WORKSPACE_ID = "fixture-workspace"
+  process.env.OPENCODE_GO_AUTH_COOKIE = "fixture-cookie"
+  t.after(() => {
+    for (const [key, value] of [["OPENCODE_GO_WORKSPACE_ID", previous.workspace], ["OPENCODE_GO_AUTH_COOKIE", previous.cookie]]) {
+      if (value === undefined) delete process.env[key!]; else process.env[key!] = value
+    }
+  })
+  const go = specialProviders.find(provider => provider.id === "opencode-go")!
+  let status = 401, code = "api_key_expired"
+  t.mock.method(globalThis, "fetch", async (url: string) => {
+    assert.equal(url, "https://opencode.ai/zen/go/v1/usage", "native failures never fall back to an unrelated cookie")
+    return Response.json({ code, message: "fixture-private" }, { status })
+  })
+  for (const [httpStatus, errorCode] of [[401, "api_key_expired"], [401, "invalid_api_key"], [403, "api_key_expired"]] as const) {
+    status = httpStatus; code = errorCode
+    const result = await go.fetchQuota({ "opencode-go": { type: "api", key: "fixture-key" } })
+    assert.equal(result.configured, true)
+    assert.equal(result.ok, false)
+    assert.equal(result.status, httpStatus)
+    assert.equal(result.unavailableReason, httpStatus === 401 && errorCode === "api_key_expired" ? "opencode-go-key-expired" : undefined)
+    assert.equal(result.unavailableAction, result.unavailableReason ? "opencode-go-new-key" : undefined)
+    assert.equal(JSON.stringify(result).includes("fixture"), false)
+  }
+})
+
 test("fails closed without requesting quota for an expired Cursor access token", async () => {
   const previousAccess = process.env.CURSOR_ACCESS_TOKEN
   const previousToken = process.env.CURSOR_TOKEN

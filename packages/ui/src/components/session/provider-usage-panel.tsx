@@ -83,6 +83,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   const unavailableMessage = createMemo(() => {
     const data = usage()
     if (data?.unavailableReason === "openai-token-sharing-unsupported") return t("providerUsage.openaiTokenSharingUnsupported")
+    if (data?.unavailableReason === "opencode-go-key-expired") return t("providerUsage.openCodeGoKeyExpired")
     if (data?.unavailableReason === "minimax-limits-not-shared") return t("providerUsage.minimaxLimitsNotShared")
     if (data?.unavailableReason === "invalid-base-url") return t("providerUsage.invalidBaseURL")
     if (data?.unavailableReason === "cursor-token-expired") return t("providerUsage.cursorTokenExpired")
@@ -96,7 +97,9 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   // Destinations and labels belong to the UI, never to upstream response text.
   const unavailableLink = createMemo(() => usage()?.unavailableReason === "openai-token-sharing-unsupported"
     && usage()?.unavailableAction === "chatgpt-usage"
-    ? { href: "https://chatgpt.com/settings/usage", label: t("providerUsage.viewChatGPTUsage") } : null)
+    ? { href: "https://chatgpt.com/settings/usage", label: t("providerUsage.viewChatGPTUsage") }
+    : usage()?.unavailableReason === "opencode-go-key-expired" && usage()?.unavailableAction === "opencode-go-new-key"
+      ? { href: "https://opencode.ai/console/login", label: t("providerUsage.createOpenCodeGoKey") } : null)
 
   const windowLabel = (label: string): string => {
     // Model-scoped limits arrive as `window:Model`, e.g. `7d:Opus`.
@@ -138,7 +141,8 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
     if (window.limitUSD !== undefined) return new Intl.NumberFormat(locale(), { style: "currency", currency: "USD" }).format(window.limitUSD)
     if (window.balanceUSD) {
       const money = new Intl.NumberFormat(locale(), { style: "currency", currency: "USD" })
-      return `${money.format(window.balanceUSD.remaining)} / ${money.format(window.balanceUSD.total)}`
+      return window.balanceUSD.total === undefined ? money.format(window.balanceUSD.remaining)
+        : `${money.format(window.balanceUSD.remaining)} / ${money.format(window.balanceUSD.total)}`
     }
     if (window.valueLabel) return window.valueLabel
     if (window.usedPercent === null) return t("providerUsage.unavailableValue")
@@ -164,7 +168,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
         <Show when={usage()} fallback={<div class="right-panel-empty-text">{t("providerUsage.unavailable")}</div>}>
           {(data) => (
             <Show
-              when={data().supported && data().configured && data().ok && !unavailableMessage() && entries().length > 0}
+              when={data().supported && data().configured && data().ok && !unavailableMessage() && displayedLabels().length > 0}
               fallback={
                 <Show when={unavailableMessage()} fallback={<div class="right-panel-empty-text">
                   {t(
@@ -230,7 +234,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
           )}
         </Show>
       </Show>
-      <Show when={usage()?.supported && usage()?.configured && usage()?.ok && entries().length > 0}>
+      <Show when={usage()?.supported && usage()?.configured && usage()?.ok && displayedLabels().length > 0}>
         <Show when={usage()?.estimated}>
           <div class="mt-1 text-[10px] text-tertiary">{t("providerUsage.estimated")}</div>
         </Show>

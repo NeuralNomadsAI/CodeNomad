@@ -283,6 +283,8 @@ export const settingsMessages = {
   "providerUsage.unavailable": "用量暂时不可用。",
   "providerUsage.providerErrorCode": "提供商错误（{code}）。",
   "providerUsage.viewChatGPTUsage": "查看 ChatGPT 用量",
+  "providerUsage.openCodeGoKeyExpired": "OpenCode Go 密钥已过期。",
+  "providerUsage.createOpenCodeGoKey": "在 OpenCode Console 中创建新密钥并替换旧密钥",
   "providerUsage.unavailableValue": "--",
   "providerUsage.minimaxLimitsNotShared": "MiniMax 不公开其限额",
   "providerUsage.usedPercent": "已使用 {percent}%",

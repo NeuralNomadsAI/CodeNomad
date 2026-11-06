@@ -283,6 +283,8 @@ export const settingsMessages = {
   "providerUsage.unavailable": "נתוני השימוש אינם זמינים כרגע.",
   "providerUsage.providerErrorCode": "שגיאת ספק ({code}).",
   "providerUsage.viewChatGPTUsage": "הצגת השימוש ב-ChatGPT",
+  "providerUsage.openCodeGoKeyExpired": "תוקף מפתח OpenCode Go פג.",
+  "providerUsage.createOpenCodeGoKey": "יצירת מפתח חדש ב-OpenCode Console והחלפת המפתח",
   "providerUsage.unavailableValue": "--",
   "providerUsage.minimaxLimitsNotShared": "MiniMax לא משתפת את המגבלות שלה",
   "providerUsage.usedPercent": "{percent}% בשימוש",

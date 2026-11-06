@@ -206,14 +206,15 @@ export interface ProviderUsageWindow {
   windowSeconds: number | null
   resetAt: number | null
   valueLabel?: string
-  balanceUSD?: { remaining: number; total: number }
+  balanceUSD?: { remaining: number; total?: number }
   limitUSD?: number
   consumption?: { used: number; limit?: number } | { creditsUsed: number } | { unlimited: true }
 }
 
 export type ProviderUsageUnavailableReason = "openai-token-sharing-unsupported" | "provider-error" | "minimax-limits-not-shared" | "invalid-base-url"
   | "cursor-token-expired" | "cursor-team-unavailable" | "cursor-access-denied" | "cursor-usage-unavailable"
-export type ProviderUsageUnavailableAction = "chatgpt-usage"
+  | "opencode-go-key-expired"
+export type ProviderUsageUnavailableAction = "chatgpt-usage" | "opencode-go-new-key"
 
 export interface ProviderUsageResponse {
   requestedProviderId: string

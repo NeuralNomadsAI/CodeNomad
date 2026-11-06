@@ -283,6 +283,8 @@ export const settingsMessages = {
   "providerUsage.unavailable": "使用量は一時的に利用できません。",
   "providerUsage.providerErrorCode": "プロバイダーエラー（{code}）。",
   "providerUsage.viewChatGPTUsage": "ChatGPT の使用状況を確認",
+  "providerUsage.openCodeGoKeyExpired": "OpenCode Go キーの有効期限が切れています。",
+  "providerUsage.createOpenCodeGoKey": "OpenCode Console で新しいキーを作成して置き換える",
   "providerUsage.unavailableValue": "--",
   "providerUsage.minimaxLimitsNotShared": "MiniMax は上限を公開していません",
   "providerUsage.usedPercent": "{percent}% 使用",

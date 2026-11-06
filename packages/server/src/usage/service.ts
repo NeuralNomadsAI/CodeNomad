@@ -98,7 +98,8 @@ export async function getProviderUsage(
   options.context?.signal?.throwIfAborted()
   const reason = !result.ok && (result.unavailableReason === "openai-token-sharing-unsupported" || result.unavailableReason === "provider-error" || result.unavailableReason === "minimax-limits-not-shared" || result.unavailableReason === "invalid-base-url"
     || result.unavailableReason === "cursor-token-expired" || result.unavailableReason === "cursor-team-unavailable"
-    || result.unavailableReason === "cursor-access-denied" || result.unavailableReason === "cursor-usage-unavailable")
+    || result.unavailableReason === "cursor-access-denied" || result.unavailableReason === "cursor-usage-unavailable"
+    || result.unavailableReason === "opencode-go-key-expired")
     ? result.unavailableReason : undefined
   return {
     requestedProviderId,
@@ -114,7 +115,8 @@ export async function getProviderUsage(
     ...(reason ? { unavailableReason: reason } : {}),
     ...(reason === "provider-error" && typeof result.providerErrorCode === "string" && /^\d{1,8}$/.test(result.providerErrorCode) && result.providerErrorCode.trim() === result.providerErrorCode
       ? { providerErrorCode: result.providerErrorCode } : {}),
-    ...(reason === "openai-token-sharing-unsupported" && result.unavailableAction === "chatgpt-usage"
+    ...((reason === "openai-token-sharing-unsupported" && result.unavailableAction === "chatgpt-usage"
+      || reason === "opencode-go-key-expired" && result.unavailableAction === "opencode-go-new-key")
       ? { unavailableAction: result.unavailableAction } : {}),
   }
 }

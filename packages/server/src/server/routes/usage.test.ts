@@ -285,6 +285,10 @@ test("OpenCode Go reads the session provider's own native login, without env coo
   globalThis.fetch = async (input, init) => {
     const headers = new Headers(init?.headers)
     requests.push({ url: String(input), authorization: headers.get("authorization"), org: headers.get("x-org-id") })
+    if (String(input).endsWith("/console/api/go/status")) return Response.json({ access: { meters: {
+      fiveHour: { usedMicroCents: "42", limitMicroCents: "100", resetsAt: new Date(Date.now() + 3_600_000).toISOString() },
+    } } })
+    if (String(input).endsWith("/console/api/billing/status")) return Response.json({ availableMicroCents: "150000000" })
     return Response.json({ usage: { rolling: { status: "ok", percent: 42, resetsAt: new Date(Date.now() + 3_600_000).toISOString() } } })
   }
   const goUrl = url.replace("/usage/openai", "/usage/opencode-go")
@@ -292,11 +296,16 @@ test("OpenCode Go reads the session provider's own native login, without env coo
     const key = await app.inject({ url: goUrl })
     assert.equal(key.json().ok, true)
     assert.equal(key.json().windows["5h"].usedPercent, 42)
+    assert.equal(key.json().windows.credits_balance, undefined, "API keys cannot invent a Console wallet")
     state.integrations["opencode-go"] = "opencode"
-    assert.equal((await app.inject({ url: goUrl })).json().ok, true)
+    const consoleUsage = await app.inject({ url: goUrl })
+    assert.equal(consoleUsage.json().ok, true)
+    assert.equal(consoleUsage.json().windows["5h"].usedPercent, 42)
+    assert.equal(consoleUsage.json().windows.credits_balance.balanceUSD.remaining, 1.5)
     assert.deepEqual(requests, [
       { url: "https://opencode.ai/zen/go/v1/usage", authorization: "Bearer secret-go-key", org: null },
-      { url: "https://opencode.ai/zen/go/v1/usage", authorization: "Bearer secret-console", org: "org_fixture" },
+      { url: "https://opencode.ai/console/api/go/status", authorization: "Bearer secret-console", org: "org_fixture" },
+      { url: "https://opencode.ai/console/api/billing/status", authorization: "Bearer secret-console", org: "org_fixture" },
     ])
     assert.equal([key.body, ...logs].join("").includes("secret-"), false)
   } finally {
@@ -305,6 +314,28 @@ test("OpenCode Go reads the session provider's own native login, without env coo
     if (previous.workspace !== undefined) process.env.OPENCODE_GO_WORKSPACE_ID = previous.workspace
     if (previous.cookie !== undefined) process.env.OPENCODE_GO_AUTH_COOKIE = previous.cookie
   }
+})
+
+test("Go exposes only its allowlisted expired-key reason and fixed action", async t => {
+  const { app, logs } = harness()
+  let status = 401, code = "api_key_expired"
+  t.mock.method(globalThis, "fetch", async () => Response.json({ code, message: "secret-body" }, { status }))
+  try {
+    for (const [httpStatus, errorCode] of [[401, "api_key_expired"], [401, "invalid_api_key"], [403, "api_key_expired"]] as const) {
+      status = httpStatus; code = errorCode
+      clearProviderUsageCache()
+      const response = await app.inject(url.replace("/usage/openai", "/usage/opencode-go"))
+      assert.equal(response.statusCode, 200)
+      const data = response.json()
+      assert.equal(data.configured, true)
+      assert.equal(data.ok, false)
+      assert.deepEqual(data.windows, {})
+      const expired = httpStatus === 401 && errorCode === "api_key_expired"
+      assert.equal(data.unavailableReason, expired ? "opencode-go-key-expired" : undefined)
+      assert.equal(data.unavailableAction, expired ? "opencode-go-new-key" : undefined)
+      assert.equal([response.body, ...logs].join("").includes("secret-"), false)
+    }
+  } finally { clearProviderUsageCache(); await app.close() }
 })
 
 test("pay-as-you-go Zen sessions keep the env-cookie behaviour and never send Console credentials to Go", async () => {

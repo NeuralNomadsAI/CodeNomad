@@ -20,10 +20,11 @@ export function parseQuotaBaseURL(value: unknown): URL | null {
 // Credential-bearing quota reads. Errors are generic on purpose: callers must
 // never log or return upstream bodies, headers or transport details.
 export async function fetchBoundedJson(url: string, headers: Record<string, string>, signal = AbortSignal.timeout(15_000),
-  maxBytes = MAX_RESPONSE_BYTES, request: Pick<RequestInit, "method" | "body"> = {}): Promise<unknown> {
+  maxBytes = MAX_RESPONSE_BYTES, request: Pick<RequestInit, "method" | "body"> & { errorCodes?: readonly string[] } = {}): Promise<unknown> {
   signal.throwIfAborted()
-  const response = await fetch(url, { ...request, signal, redirect: "error", headers })
-  if (!response.ok || !response.body) {
+  const { errorCodes, ...init } = request
+  const response = await fetch(url, { ...init, signal, redirect: "error", headers })
+  if ((!response.ok && !errorCodes) || !response.body) {
     await response.body?.cancel().catch(() => {})
     throw new ProviderHttpError(response.status)
   }
@@ -42,7 +43,16 @@ export async function fetchBoundedJson(url: string, headers: Record<string, stri
       chunks.push(chunk.value)
     }
     signal.throwIfAborted()
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"))
+    const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"))
+    if (!response.ok) {
+      const code = payload?.code ?? payload?.error?.code
+      throw new ProviderHttpError(response.status, errorCodes?.includes(code) ? code : undefined)
+    }
+    return payload
+  } catch (error) {
+    // Malformed/oversized error bodies still retain their HTTP status, never their contents.
+    if (!response.ok && !(error instanceof ProviderHttpError)) throw new ProviderHttpError(response.status)
+    throw error
   } finally {
     signal.removeEventListener("abort", abort)
     await reader.cancel().catch(() => {})

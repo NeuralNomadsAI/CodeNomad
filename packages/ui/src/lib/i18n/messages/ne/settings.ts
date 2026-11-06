@@ -283,6 +283,8 @@ export const settingsMessages = {
   "providerUsage.unavailable": "प्रयोग विवरण अस्थायी रूपमा उपलब्ध छैन।",
   "providerUsage.providerErrorCode": "प्रदायक त्रुटि ({code})।",
   "providerUsage.viewChatGPTUsage": "ChatGPT को प्रयोग हेर्नुहोस्",
+  "providerUsage.openCodeGoKeyExpired": "OpenCode Go कुञ्जीको म्याद सकिएको छ।",
+  "providerUsage.createOpenCodeGoKey": "OpenCode Console मा नयाँ कुञ्जी बनाएर पुरानो बदल्नुहोस्",
   "providerUsage.unavailableValue": "--",
   "providerUsage.minimaxLimitsNotShared": "MiniMax ले आफ्ना सीमाहरू साझा गर्दैन",
   "providerUsage.usedPercent": "{percent}% प्रयोग भयो",

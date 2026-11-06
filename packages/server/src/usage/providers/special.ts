@@ -174,20 +174,29 @@ export function openCodeGoAuth(auth: AuthFile): OpenCodeGoAuth | null {
   }
   if (entry.type !== "oauth" || oauthTokenNeedsRefresh(entry)) return null
   const access = getString(entry.access)
-  return access ? { token: access, ...scope } : null
+  return access ? { token: access, ...scope, consoleOAuth: true } : null
 }
 
 const openCodeGo: UsageProvider = {
   id: "opencode-go",
   name: "OpenCode Go",
   aliases: ["opencode-go", "opencode"],
-  async fetchQuota(auth) {
+  async fetchQuota(auth, context) {
     const workspaceId = getString(process.env.OPENCODE_GO_WORKSPACE_ID)
     const authCookie = getString(process.env.OPENCODE_GO_AUTH_COOKIE)
     const native = openCodeGoAuth(auth)
     if (native) {
-      const usage = await safeFetch(this.id, this.name, () => fetchOpenCodeGoQuota(native, AbortSignal.timeout(15_000)))
-      if (usage.ok || !workspaceId || !authCookie) return usage
+      const timeout = AbortSignal.timeout(15_000)
+      const signal = context?.signal ? AbortSignal.any([context.signal, timeout]) : timeout
+      try {
+        return result(this.id, this.name, { ok: true, configured: true, usage: await fetchOpenCodeGoQuota(native, signal) })
+      } catch (error) {
+        const expired = error instanceof ProviderHttpError && error.status === 401 && error.code === "api_key_expired"
+        return result(this.id, this.name, { ok: false, configured: true,
+          ...(error instanceof ProviderHttpError ? { status: error.status } : {}),
+          ...(expired ? { unavailableReason: "opencode-go-key-expired", unavailableAction: "opencode-go-new-key" } : {}),
+        })
+      }
     }
     if (!workspaceId || !authCookie) return notConfigured(this.id, this.name)
     return safeFetch(this.id, this.name, async () => {

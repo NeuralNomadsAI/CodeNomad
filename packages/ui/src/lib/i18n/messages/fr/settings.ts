@@ -283,6 +283,8 @@ export const settingsMessages = {
   "providerUsage.unavailable": "L'utilisation est temporairement indisponible.",
   "providerUsage.providerErrorCode": "Erreur du fournisseur ({code}).",
   "providerUsage.viewChatGPTUsage": "Consulter l’utilisation ChatGPT",
+  "providerUsage.openCodeGoKeyExpired": "La clé OpenCode Go a expiré.",
+  "providerUsage.createOpenCodeGoKey": "Créer une nouvelle clé dans OpenCode Console, puis la remplacer",
   "providerUsage.unavailableValue": "--",
   "providerUsage.minimaxLimitsNotShared": "MiniMax ne partage pas ses limites",
   "providerUsage.usedPercent": "{percent} % utilisé",

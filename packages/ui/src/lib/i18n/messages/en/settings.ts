@@ -265,6 +265,8 @@ export const settingsMessages = {
   "providerUsage.unavailable": "Usage is temporarily unavailable.",
   "providerUsage.providerErrorCode": "Provider error ({code}).",
   "providerUsage.viewChatGPTUsage": "View ChatGPT usage",
+  "providerUsage.openCodeGoKeyExpired": "The OpenCode Go key has expired.",
+  "providerUsage.createOpenCodeGoKey": "Create a new key in OpenCode Console, then replace it",
   "providerUsage.openaiTokenSharingUnsupported": "OpenAI does not provide usage for this ChatGPT sign-in method. You can still chat.",
   "providerUsage.unavailableValue": "--",
   "providerUsage.minimaxLimitsNotShared": "MiniMax doesn't share its limits",
