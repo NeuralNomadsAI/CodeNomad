@@ -298,33 +298,36 @@ export class WorkspaceManager {
 
   // `_client` is retained for callers' pinned-connection signature; directory
   // ownership needs no native request.
-  async ownsLocation(id: string, location: LocationRef, _client?: OpenCodeClient, signal?: AbortSignal, purpose: "request" | "event" = "request"): Promise<boolean> {
+  // Strict probes reject unreadable ownership instead of turning it into a negative.
+  async ownsLocation(id: string, location: LocationRef, _client?: OpenCodeClient, signal?: AbortSignal, purpose: "request" | "event" = "request", strict = false): Promise<boolean> {
     signal?.throwIfAborted()
     // OpenCode V2 identifies locations by directory; a retired workspace selector
     // is never authorized, whatever directory it names.
     if (location.workspaceID !== undefined) return false
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return false
-    const directory = await this.getServiceDirectoryForPath(id, location.directory, purpose)
+    const directory = await this.getServiceDirectoryForPath(id, location.directory, purpose, strict)
     signal?.throwIfAborted()
     return Boolean(directory)
   }
 
-  async getServiceDirectoryForPath(id: string, directory: string, purpose: "request" | "event" = "request"): Promise<string | undefined> {
+  async getServiceDirectoryForPath(id: string, directory: string, purpose: "request" | "event" = "request", strict = false): Promise<string | undefined> {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return undefined
     // Directory authorization does not need the checkout's Git mutation identity.
     // Resolve aliases against the explicitly opened folder without spawning Git.
     if (!record.wslDistro) {
       const [target, root] = await Promise.all([
-        realpath(directory).catch(() => undefined), realpath(record.path).catch(() => undefined),
+        realpath(directory).catch(error => { if (strict) throw error }), realpath(record.path).catch(error => { if (strict) throw error }),
       ])
       if (target && target === root) return target
     }
-    const owned = await this.resolveOwnedWorktree(record, directory, purpose)
+    const owned = await this.resolveOwnedWorktree(record, directory, purpose, strict)
     if (!owned) return undefined
     if (!record.wslDistro) return owned.directory
-    return await this.resolveWslServiceDirectory(owned.directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS) ?? undefined
+    const translated = await this.resolveWslServiceDirectory(owned.directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
+    if (strict && !translated) throw new Error("WSL service directory translation unavailable")
+    return translated ?? undefined
   }
 
   async getWorktreeIdentityForPath(id: string, directory: string, purpose: "request" | "event" = "request"): Promise<string | undefined> {
@@ -457,15 +460,18 @@ export class WorkspaceManager {
     })) !== null
   }
 
-  private async resolveOwnedWorktree(record: WorkspaceRecord, directory: string, purpose: "request" | "event" = "request") {
+  private async resolveOwnedWorktree(record: WorkspaceRecord, directory: string, purpose: "request" | "event" = "request", strict = false) {
     const hostDirectory = record.wslDistro
       ? isWindowsHostPath(directory)
         ? directory
         : await this.resolveWslHostDirectory(directory, record.wslDistro, DEFAULT_LAUNCH_TIMEOUT_MS)
       : directory
-    if (!hostDirectory) return null
+    if (!hostDirectory) {
+      if (strict) throw new Error("WSL host directory translation unavailable")
+      return null
+    }
     const [target, root] = await Promise.all([
-      realpath(hostDirectory).catch(() => undefined), realpath(record.path).catch(() => undefined),
+      realpath(hostDirectory).catch(error => { if (strict) throw error }), realpath(record.path).catch(error => { if (strict) throw error }),
     ])
     // The explicitly opened folder is already authority. Do not require native
     // discovery (or a second connection) to authorize that exact local directory.
@@ -481,11 +487,12 @@ export class WorkspaceManager {
         return { slug: "root", directory: target, worktreeDirectory: root }
       }
     }
-    if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target)) return null
+    if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target, strict)) return null
     return resolveOwnedWorktreePath({
       workspaceId: purpose === "event" ? `event:${record.id}` : record.id,
       workspacePath: record.path,
       directory: hostDirectory,
+      strict,
       loadWorktrees: (refresh) => this.ownershipWorktrees(record.id, refresh, purpose),
       logger: this.options.logger,
     })

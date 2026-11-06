@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { MissionControlError } from "../../missions/control-error"
-import { parseMissionCreationDefaultsInput } from "../../missions/creation-defaults"
+import { MISSION_DEFAULTS_REQUEST_INVALID, parseMissionCreationDefaultsInput } from "../../missions/creation-defaults"
 import { MissionPreferencesError, resolveMissionCreationDefaults } from "../../missions/profile-defaults"
 import { missionRecoveryError } from "../../missions/recovery-error"
 import { isPlainObject } from "../../settings/merge-patch"
@@ -16,7 +16,7 @@ function refusal(code: "mission-preferences-invalid" | "mission-preferences-unav
 /** Read the UI owner's raw document afresh for each creation; never persist resolved choices. */
 export function readMissionProfileDefaults(settings: Partial<Pick<SettingsService, "getRawConfigOwner">> | undefined, command: unknown) {
   const parsed = commandSchema.safeParse(command)
-  if (!parsed.success) throw new MissionControlError("Correct the profile-defaults request: use a supported template, valid profiles and taskMode, and a complete coordinatorModel", "invalid-execution")
+  if (!parsed.success) throw new MissionControlError(MISSION_DEFAULTS_REQUEST_INVALID, "invalid-execution")
   const input = parseMissionCreationDefaultsInput(parsed.data.input)
   let preferences: unknown
   try {

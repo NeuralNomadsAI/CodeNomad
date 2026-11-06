@@ -10,6 +10,7 @@ import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
 import { compactMissionMap, missionTaskPage } from "./mission-compact-map"
 import { missionCreationChoices, sameMissionCreationChoices, parseMissionCreationSelection, missionCreationSelection, type MissionCreationMetadata } from "./creation-defaults"
 import { MissionCreationIntents } from "./creation-intent"
+import { hasExplicitMissionCreationChoices, resolveMissionCreationDefaults, type MissionCreationSelection } from "./profile-defaults"
 import type { MissionTaskPageResult, MissionTaskRequest } from "./mission-panel-map"
 import { missionPanelPage, missionPanelWindow, type MissionPanelPageRequest, type MissionPanelPageResult } from "./mission-panel-page"
 import { projectMissionPanel } from "./mission-panel-projection"
@@ -426,12 +427,17 @@ export class MissionControl {
       return { ...input, profiles: frozen.profiles, taskMode: frozen.taskMode, creationDefaults: frozen }
     }
     const resolve = this.options.transport?.resolveCreationDefaults
-    // Internal journal-only consumers supply their own frozen profiles. Desktop
-    // tools always install the authenticated owning-backend resolver.
-    if (!resolve) return input
     const request = missionCreationChoices(input)
-    const selection = parseMissionCreationSelection(input.template, await resolve(sessionID, { template: input.template, ...request,
-      ...(coordinatorModel === undefined ? {} : { coordinatorModel }) }))
+    let selection: MissionCreationSelection
+    if (hasExplicitMissionCreationChoices(input)) {
+      selection = resolveMissionCreationDefaults({ template: input.template, ...request, coordinatorModel, preferences: undefined })
+    } else if (resolve) {
+      selection = parseMissionCreationSelection(input.template, await resolve(sessionID, { template: input.template, ...request,
+        ...(coordinatorModel === undefined ? {} : { coordinatorModel }) }))
+    } else {
+      // Internal journal-only consumers supply their own frozen profiles.
+      return input
+    }
     return { ...input, profiles: selection.profiles, taskMode: selection.taskMode, creationDefaults: { request, ...selection } }
   }
 

@@ -93,6 +93,14 @@ export interface MissionCreationSelection {
   origins: { coordinator: MissionDefaultOrigin; roles: Record<string, MissionDefaultOrigin>; taskMode: MissionDefaultOrigin }
 }
 
+/** Whole explicit slots and an explicit policy leave nothing for preferences to supply. */
+export function hasExplicitMissionCreationChoices(input: {
+  template: MissionTemplateId; profiles?: MissionProfiles; taskMode?: MissionTaskMode
+}): boolean {
+  return input.taskMode !== undefined && input.profiles?.coordinator !== undefined
+    && missionProfileRoles[input.template].every(role => input.profiles?.roles?.[role] !== undefined)
+}
+
 /** Resolve whole slots, then freeze Compare's missing judge model against the coordinator. */
 export function resolveMissionCreationDefaults(input: {
   template: MissionTemplateId

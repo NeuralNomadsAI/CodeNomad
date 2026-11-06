@@ -150,7 +150,12 @@ refuse otherwise. Only one-time coordinators are offered and told about
   `freezeCompareProfiles`, including explicit/preference `{}` or agent-only slots;
   a judge's own model stays unchanged. An explicit `taskMode` wins over
   the playbook preference, then the global preference; the final fallback is
-  `native`. Missing profile preferences fall back to OpenCode defaults.
+  `native`. Missing profile preferences fall back to OpenCode defaults. Supplying
+  the coordinator, every exact role of the selected template and `taskMode` skips
+  backend preferences entirely; `{}` counts as an explicit profile slot. All
+  origins are `explicit`, and preference availability stays unobserved. Unused
+  unreadable or invalid preferences are irrelevant. Partial or omitted selections
+  read the owning backend's preferences.
 
   Creation responses include `selection: { profiles, taskMode, origins }`:
   the saved coordinator and every role of the selected playbook, plus origins
@@ -166,7 +171,7 @@ refuse otherwise. Only one-time coordinators are offered and told about
   check still applies. An explicit-profile mismatch keeps the generic
   native-profile error.
 
-  With no bridge presence or zero proven owning backends, `inspect({ start })`
+  When preferences are needed, with no bridge presence or zero proven owning backends, `inspect({ start })`
   uses explicit inputs and OpenCode defaults for omitted choices (`native` task-mode
   fallback), with origins `explicit` or `opencode-default` and
   `selection.preferences: "unavailable"`. The saved
@@ -175,10 +180,15 @@ refuse otherwise. Only one-time coordinators are offered and told about
   backend discovery, or an unreadable preference document return
   `mission-preferences-unavailable`; invalid preferences return
   `mission-preferences-invalid`. These failures refuse creation and ask for
-  recovery, including when profiles were supplied explicitly. Discovery includes
-  the Windows registry under WSL. A typed missing-session reply or an empty backend
-  workspace inventory proves non-ownership. Directory-authorization failure with
-  open workspaces is indeterminate because Git/WSL read failures can yield false.
+  recovery. Discovery includes the Windows registry under WSL. A stale registration
+  whose connection is refused has no listener and counts as absent; timeouts,
+  HTTP/authentication failures and unreadable registration state with indeterminate
+  ownership refuse preference resolution. A local registration whose filename's
+  publishing PID is proven dead is absent even when its contents are unreadable;
+  cross-host PIDs require endpoint evidence. A typed missing-session reply, an empty
+  backend workspace inventory or a successful ownership read proving an unrelated
+  project establishes non-ownership, including with other workspaces open. Actual
+  Git/WSL ownership-read failures remain indeterminate and refuse resolution.
   `mission.prepare` requires an owning backend for fenced creation even when
   profile resolution can use the no-owner fallback.
 
@@ -195,9 +205,8 @@ refuse otherwise. Only one-time coordinators are offered and told about
   had no effect releases its retained choices. An unknown outcome keeps them; a
   retry refused during prevalidation leaves the preceding attempt's uncertainty
   intact. At most 128 unknown preparation choices are retained per project, each
-  for 24 hours from its first reservation; retries preserve that deadline. An
-  entry without a timestamp receives the current time on its first read or prune
-  and expires 24 hours later. At capacity, retry the original requestIDs to
+  for 24 hours from its first reservation; retries preserve that deadline. At
+  capacity, retry the original requestIDs to
   recover completed preparations and release their slots, or wait for their
   24-hour retention to expire.
 

@@ -109,12 +109,11 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     }
     // One validated owner is sufficient. Waiting for every unrelated inventory
     // can exceed the plugin's discovery deadline despite a ready local owner.
-    let owned: boolean, ownershipReadFailed = false, workspaceCount = 0
+    let owned: boolean, ownershipReadFailed = false
     try {
       const workspaces = deps.workspaceManager.list()
-      workspaceCount = workspaces.length
       owned = await lifetime.wait(Promise.any(workspaces.map(async workspace => {
-        try { if (await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, signal)) return true }
+        try { if (await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, signal, "request", preferenceProbe)) return true }
         catch { ownershipReadFailed = true }
         throw new Error("Not an owner")
       }))).catch(() => false)
@@ -123,9 +122,6 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       throw error
     }
     if (preferenceProbe && (signal.aborted || !owned && ownershipReadFailed)) return preferenceUnavailable()
-    // Directory authorization intentionally collapses some failed Git/WSL reads
-    // to false. With open workspaces that is not proof of absent ownership.
-    if (preferenceProbe && !owned && workspaceCount) return preferenceUnavailable()
     if (!owned) return notOwner("Session is not owned by this CodeNomad instance")
 
     if (body.mode === "mission-input") {

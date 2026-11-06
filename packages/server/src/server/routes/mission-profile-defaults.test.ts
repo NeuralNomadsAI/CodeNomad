@@ -4,6 +4,7 @@ import Fastify from "fastify"
 import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
 import { registerAutomationPluginRoute } from "./automation-plugin"
 import { readMissionProfileDefaults } from "./mission-profile-defaults"
+import { MISSION_DEFAULTS_REQUEST_INVALID } from "../../missions/creation-defaults"
 
 function fixture(t: TestContext, read?: () => unknown) {
   const app = Fastify()
@@ -75,6 +76,13 @@ test("profile default command validates all input before reading preferences", a
   }
   assert.equal((await request({ template: "custom" }, { extra: true })).json().code, "invalid-execution")
   assert.equal(reads, 0)
+})
+
+test("invalid command and selector requests share actionable validation copy", () => {
+  for (const command of [{ kind: "profile-defaults", extra: true }, { kind: "profile-defaults", input: { template: "other" } }]) {
+    assert.throws(() => readMissionProfileDefaults(undefined, command), (error: any) =>
+      error.code === "invalid-execution" && error.message === MISSION_DEFAULTS_REQUEST_INVALID)
+  }
 })
 
 test("profile resolution preserves unexpected errors rather than labelling them invalid preferences", () => {

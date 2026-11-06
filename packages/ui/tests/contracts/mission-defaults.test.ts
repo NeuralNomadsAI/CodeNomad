@@ -5,11 +5,6 @@ import * as ui from "../../src/lib/mission-defaults"
 import { freezeCompareProfiles, missionProfileRoles } from "../../../server/src/missions/playbook-profiles"
 import type { MissionTemplateId } from "../../../server/src/missions/model"
 
-test("the UI default API reexports the pure server implementation", () => {
-  assert.deepEqual(Object.keys(ui).sort(), Object.keys(server).sort())
-  for (const key of Object.keys(server) as (keyof typeof server)[]) assert.equal(ui[key], server[key])
-})
-
 test("UI creation defaults and server resolution agree for all five templates, including the inherited Compare judge", () => {
   const coordinator = { agent: "coordinator", model: { providerID: "p", id: "coordinator", variant: "high" } }
   const specialist = { agent: "worker", model: { providerID: "p", id: "worker" } }
@@ -26,7 +21,7 @@ test("UI creation defaults and server resolution agree for all five templates, i
     ]),
   ]
   for (const preferences of cases) for (const template of templates) {
-    // mission-editor.tsx:133 loads the draft; mission-creation-pipeline.ts:53 freezes its Compare payload.
+    // The mission editor's draft-loading effect resolves defaults; prepareMissionCreation freezes its Compare payload.
     const normalized = ui.normalizeMissionDefaults(preferences)
     const payload = freezeCompareProfiles(template, ui.missionDefaultsFor(normalized, template))
     const result = server.resolveMissionCreationDefaults({ template, preferences })

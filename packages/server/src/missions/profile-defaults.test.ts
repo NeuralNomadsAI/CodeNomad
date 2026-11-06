@@ -1,13 +1,33 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { missionProfileRoles, type MissionProfiles } from "./playbook-profiles"
-import { globalMissionTaskMode, missionTaskModeFor, MissionPreferencesError, resolveMissionCreationDefaults, type MissionProfileDefault } from "./profile-defaults"
+import { globalMissionTaskMode, hasExplicitMissionCreationChoices, missionTaskModeFor, MissionPreferencesError, resolveMissionCreationDefaults, type MissionProfileDefault } from "./profile-defaults"
 import type { MissionTemplateId } from "./model"
 
 const coordinator = { agent: "coordinator", model: { providerID: "p", id: "coordinator", variant: "high" } }
 const specialist = { agent: "worker", model: { providerID: "p", id: "worker", variant: "low" } }
 const preferences: MissionProfileDefault[] = [{ template: "all", profiles: { coordinator, roles: { specialist } }, taskMode: "independent" }]
 const templates = Object.keys(missionProfileRoles) as MissionTemplateId[]
+
+test("explicit creation choices require the coordinator, every playbook role and task mode, including empty slots", () => {
+  for (const template of templates) {
+    const roles = Object.fromEntries(missionProfileRoles[template].map(role => [role, {}]))
+    const profiles = { coordinator: {}, roles }
+    for (const taskMode of ["native", "independent"] as const) {
+      const input = { template, profiles, taskMode }
+      assert.equal(hasExplicitMissionCreationChoices(input), true)
+      assert.equal(hasExplicitMissionCreationChoices({ ...input, profiles: undefined }), false)
+      assert.equal(hasExplicitMissionCreationChoices({ ...input, profiles: {} }), false)
+      assert.equal(hasExplicitMissionCreationChoices({ ...input, profiles: { roles } }), false)
+      assert.equal(hasExplicitMissionCreationChoices({ ...input, profiles: { coordinator: {} } }), false)
+      assert.equal(hasExplicitMissionCreationChoices({ ...input, taskMode: undefined }), false)
+      for (const role of missionProfileRoles[template]) {
+        const partial = Object.fromEntries(Object.entries(roles).filter(([key]) => key !== role))
+        assert.equal(hasExplicitMissionCreationChoices({ ...input, profiles: { ...profiles, roles: partial } }), false)
+      }
+    }
+  }
+})
 
 test("missing preferences resolve complete native profiles and origins for every template", () => {
   for (const template of templates) for (const preferences of [undefined, []]) {

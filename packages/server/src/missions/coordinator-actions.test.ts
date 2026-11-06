@@ -290,6 +290,26 @@ test("an explicit cross-playbook profile fails before reading user preferences",
   assert.deepEqual([...f.storage.values], before)
 })
 
+test("both creation tools bypass preferences when every slot and the task policy are explicit", async () => {
+  for (const method of ["inspect", "prepare"] as const) {
+    let control!: MissionControl, prepares = 0
+    const f = fixture({ transport: {
+      resolveCreationDefaults: async () => assert.fail("Unused preferences must not be read"),
+      prepare: async (id, input) => { prepares++; return control.create({ ...input, prepared: true,
+        preparedBy: { missionID: input.missionID, coordinatorSessionID: id } }) },
+    } })
+    control = f.control
+    if (method === "prepare") await control.create({ requestID: "source", objective: "Source", template: "custom", coordinatorSessionID: coordinator })
+    const input = { objective: "Explicit", template: "custom" as const, taskMode: "native" as const,
+      profiles: { coordinator: {}, roles: { specialist: {} } } }
+    const result = method === "inspect" ? await control.inspect(coordinator, { start: input }, "explicit")
+      : await control.prepare(coordinator, { ...input, requestID: "explicit" })
+    assert.deepEqual(result.mission!.creationDefaults?.origins, { coordinator: "explicit", roles: { specialist: "explicit" }, taskMode: "explicit" })
+    assert.equal(result.mission!.creationDefaults?.preferences, undefined)
+    assert.equal(prepares, method === "prepare" ? 1 : 0, "only hand-off creation still requires its backend")
+  }
+})
+
 test("an explicit empty coordinator slot overrides a mismatching coordinator preference", async () => {
   const f = fixture({ transport: { resolveCreationDefaults: async (_id, input) => resolveMissionCreationDefaults({ ...input,
     preferences: [{ template: "all", profiles: { coordinator: { agent: "other" } } }] }) } })

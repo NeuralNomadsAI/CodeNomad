@@ -181,16 +181,27 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
   workspaceId: string
   workspacePath: string
   directory: string
+  strict?: boolean
   logger?: LogLike
 }): Promise<{ slug: string; directory: string; worktreeDirectory: string } | null> {
-  const target = await resolveDirectoryPath(params.directory)
+  const target = params.strict ? await realpath(params.directory) : await resolveDirectoryPath(params.directory)
   if (!target) return null
-  const find = (worktrees: WorktreeCacheEntry["worktrees"]) => worktrees
+  const find = async (worktrees: WorktreeCacheEntry["worktrees"]) => {
+    if (params.strict && worktrees.some(worktree => worktree.directoryOnly)) throw new Error("Git ownership inventory unavailable")
+    return (params.strict
+    ? await Promise.all(worktrees.map(async worktree => ({
+      ...worktree,
+      normalizedDirectory: await realpath(worktree.directory),
+      worktreeDirectory: await realpath(worktree.worktreeDirectory),
+    })))
+    : worktrees)
     .filter((worktree) => worktree.directoryOnly ? worktree.normalizedDirectory === target : isPathWithinWorktree(worktree.normalizedDirectory, target))
     .sort((left, right) => right.normalizedDirectory.length - left.normalizedDirectory.length)[0]
+  }
   let entry = await getCachedWorktrees(params)
-  if (entry.resolvedDirectories.has(target)) return entry.resolvedDirectories.get(target)!
-  let match = find(entry.worktrees)
+  if (!params.strict && entry.resolvedDirectories.has(target)) return entry.resolvedDirectories.get(target)!
+  let match = await find(entry.worktrees)
+  if (worktreeCache.get(params.workspaceId) !== entry) return resolveOwnedWorktreePath(params)
   if (!entry.refreshedOnMiss && (!match || (match.slug === "root" && match.normalizedDirectory !== target))) {
     // Refresh once for this cache lifetime, including sequential misses from
     // distinct foreign event locations. Otherwise every miss discards the last
@@ -198,8 +209,9 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
     if (worktreeCache.get(params.workspaceId) === entry) worktreeCache.delete(params.workspaceId)
     entry = await getCachedWorktrees(params, true)
     entry.refreshedOnMiss = true
-    match = find(entry.worktrees)
+    match = await find(entry.worktrees)
   }
+  if (worktreeCache.get(params.workspaceId) !== entry) return resolveOwnedWorktreePath(params)
   const resolved = match ? { slug: match.slug, directory: target, worktreeDirectory: match.worktreeDirectory } : null
   entry.resolvedDirectories.set(target, resolved)
   return resolved

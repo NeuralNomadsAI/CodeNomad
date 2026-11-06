@@ -1,7 +1,7 @@
 import { z } from "zod"
 import type { MissionStartInput } from "./control-types"
 import { MissionControlError } from "./control-error"
-import { missionCreationChoices, missionCreationChoicesSchema, parseMissionCreationDefaults, sameMissionCreationChoices,
+import { missionCreationChoices, missionCreationChoicesSchema, missionCreationTemplateSchema, parseMissionCreationDefaults, sameMissionCreationChoices,
   type MissionCreationMetadata } from "./creation-defaults"
 import { runMissionExclusive } from "./exclusive"
 import type { MissionStorage } from "./journal"
@@ -10,9 +10,9 @@ import type { MissionEvent, MissionJsonValue } from "./model"
 type Request = MissionStartInput & { title?: string }
 const requestSchema = missionCreationChoicesSchema.extend({ objective: z.string().min(1).max(20_000),
   title: z.string().min(1).max(60).optional(), notes: z.string().max(20_000).optional(),
-  template: z.enum(["custom", "debug", "wayfinder", "delivery", "compare"]) }).strict()
+  template: missionCreationTemplateSchema }).strict()
 const intentSchema = z.object({ version: z.literal(1), request: requestSchema, defaults: z.unknown(),
-  createdAt: z.number().finite().nonnegative().optional() }).strict()
+  createdAt: z.number().finite().nonnegative() }).strict()
 export const MISSION_CREATION_INTENT_RETENTION_MS = 24 * 60 * 60 * 1_000
 export const MISSION_CREATION_INTENT_LIMIT = 128
 const sameRequest = (left: Request, right: Request) => left.objective === right.objective && left.title === right.title
@@ -21,6 +21,15 @@ const originalRequest = (input: Request, defaults: MissionCreationMetadata): Req
   objective: input.objective, template: input.template, ...(input.title === undefined ? {} : { title: input.title }),
   ...(input.notes === undefined ? {} : { notes: input.notes }), ...missionCreationChoices(defaults.request),
 })
+
+function parseIntent(raw: unknown) {
+  try {
+    const saved = intentSchema.parse(raw)
+    const defaults = parseMissionCreationDefaults(saved.request.template, saved.defaults)
+    if (!sameMissionCreationChoices(saved.request, defaults.request)) throw new Error("Invalid original choices")
+    return { ...saved, defaults }
+  } catch { throw new MissionControlError("Mission creation intent is unreadable; existing data is retained", "invalid-journal") }
+}
 
 /** Retained preparation choices, separate from the backend's native-effect holds. */
 export class MissionCreationIntents {
@@ -36,17 +45,10 @@ export class MissionCreationIntents {
   private async recorded(missionID: string, request: Request, conflict: string): Promise<MissionCreationMetadata | undefined> {
     const raw = await this.storage.get(this.prefix + missionID)
     if (raw === undefined || raw === null) return undefined
-    let saved: z.infer<typeof intentSchema>, defaults: MissionCreationMetadata
-    try {
-      saved = intentSchema.parse(raw)
-      defaults = parseMissionCreationDefaults(saved.request.template, saved.defaults)
-      if (!sameMissionCreationChoices(saved.request, defaults.request)) throw new Error("Invalid original choices")
-    } catch { throw new MissionControlError("Mission creation intent is unreadable; existing data is retained", "invalid-journal") }
+    const saved = parseIntent(raw)
     if (this.expired(saved.createdAt)) { await this.clear(missionID); return undefined }
-    if (saved.createdAt === undefined) await this.storage.set(this.prefix + missionID,
-      JSON.parse(JSON.stringify({ ...saved, createdAt: this.now() })) as MissionJsonValue)
     if (!sameRequest(saved.request, request)) this.conflict(conflict)
-    return defaults
+    return saved.defaults
   }
 
   private fromEvent(event: MissionEvent | undefined, request: Request, conflict: string) {
@@ -65,8 +67,8 @@ export class MissionCreationIntents {
     return this.fromEvent(await created(), request, conflict) ?? await this.recorded(missionID, request, conflict)
   }
 
-  private expired(createdAt?: number): boolean {
-    return createdAt !== undefined && (this.now() - createdAt >= MISSION_CREATION_INTENT_RETENTION_MS || createdAt > this.now())
+  private expired(createdAt: number): boolean {
+    return this.now() - createdAt >= MISSION_CREATION_INTENT_RETENTION_MS || createdAt > this.now()
   }
 
   private async activeCount(): Promise<number> {
@@ -76,21 +78,9 @@ export class MissionCreationIntents {
       for (const entry of page.entries) {
         if (!entry.key.startsWith(this.prefix) || after !== undefined && entry.key <= after) throw new MissionControlError("Mission preparation storage is unreadable", "invalid-journal")
         if (entry.value === null) continue
-        const parsed = intentSchema.safeParse(entry.value)
-        let valid = parsed.success
-        if (parsed.success) {
-          try {
-            const defaults = parseMissionCreationDefaults(parsed.data.request.template, parsed.data.defaults)
-            valid = sameMissionCreationChoices(parsed.data.request, defaults.request)
-          } catch { valid = false }
-        }
-        if (!valid) throw new MissionControlError("Mission preparation storage is unreadable; existing data is retained", "invalid-journal")
-        if (parsed.success && valid && this.expired(parsed.data.createdAt)) await this.clear(entry.key.slice(this.prefix.length))
-        else {
-          if (parsed.success && valid && parsed.data.createdAt === undefined) await this.storage.set(entry.key,
-            JSON.parse(JSON.stringify({ ...parsed.data, createdAt: this.now() })) as MissionJsonValue)
-          if (++count >= MISSION_CREATION_INTENT_LIMIT) return count
-        }
+        const saved = parseIntent(entry.value)
+        if (this.expired(saved.createdAt)) await this.clear(entry.key.slice(this.prefix.length))
+        else if (++count >= MISSION_CREATION_INTENT_LIMIT) return count
       }
       if (page.next !== undefined && (page.next === after || !page.entries.length)) throw new MissionControlError("Mission preparation storage is unreadable", "invalid-journal")
       after = page.next

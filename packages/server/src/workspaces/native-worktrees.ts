@@ -7,6 +7,7 @@ import { locationRequestOptions } from "../opencode/compatibility/location"
 import { readCheckout, readCheckoutIdentity, readWorktreeAnnotations, createCheckoutRootVerifier, resolveRepoRoot, prepareWorktreeBranch, attachWorktreeBranch } from "./git-worktrees"
 import { ensureCodenomadGitExclude } from "./worktree-map"
 import { GitRequiredError } from "./git-requirement"
+import { discoverCheckoutCommonDirectory } from "../opencode/session-pruning/checkout-identity"
 
 export interface NativeWorktreeContext {
   client: OpenCodeClient
@@ -25,15 +26,20 @@ async function sameDirectory(left: string, right: string): Promise<boolean> {
 
 export async function listNativeWorktrees(context: NativeWorktreeContext, options: { refresh?: boolean } = {}): Promise<WorktreeListResponse> {
   const { client, location, workspacePath, toHost } = context
-  let isGitRepo: boolean
+  let isGitRepo = false
+  let gitUnavailable: GitRequiredError | undefined
   try {
     ;({ isGitRepo } = await resolveRepoRoot(workspacePath))
   } catch (error) {
     if (!(error instanceof GitRequiredError)) throw error
-    // No repository claim or discovered sibling checkouts without Git.
-    return { gitAvailable: false, worktrees: [{ slug: "root", directory: workspacePath, serviceDirectory: location.directory, kind: "root", directoryOnly: true }] }
+    gitUnavailable = error
   }
-  if (!isGitRepo) return { isGitRepo, worktrees: [{ slug: "root", directory: workspacePath, serviceDirectory: location.directory, kind: "root" }] }
+  if (!isGitRepo) {
+    if (!gitUnavailable && await discoverCheckoutCommonDirectory(workspacePath) !== undefined) throw new Error("Git checkout discovery failed")
+    return { ...(gitUnavailable ? { gitAvailable: false } : { isGitRepo }),
+      worktrees: [{ slug: "root", directory: workspacePath, serviceDirectory: location.directory, kind: "root",
+        ...(gitUnavailable ? { directoryOnly: true } : {}) }] }
+  }
   const local = await readCheckout(workspacePath)
   const current = await client.location.get({ location: { directory: location.directory } }, locationRequestOptions(location))
   const checkoutHost = await toHost(current.project.directory)

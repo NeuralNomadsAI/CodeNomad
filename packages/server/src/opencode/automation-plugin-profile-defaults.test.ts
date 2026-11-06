@@ -1,11 +1,14 @@
 import assert from "node:assert/strict"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import test from "node:test"
 import Fastify from "fastify"
 import childProcess from "node:child_process"
 import { syncBuiltinESMExports } from "node:module"
+import fs from "node:fs/promises"
+import { EventEmitter } from "node:events"
+import { PassThrough } from "node:stream"
 import { MissionControlError } from "../missions/control-error"
 import { registerAutomationPluginRoute } from "../server/routes/automation-plugin"
 import { setupMissionsPlugin } from "./missions-plugin"
@@ -29,9 +32,9 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
     await rm(root, { recursive: true, force: true })
   })
   const registration = createAutomationBridgeRegistration("http://127.0.0.1:54321")
-  let preferences: unknown = [], unreadable = false, denied = false, posts = 0, reads = 0, owned = true, ownershipFailure = false, noWorkspaces = false
+  let preferences: unknown = [], unreadable = false, denied = false, posts = 0, reads = 0, calls = 0, owned = true, ownershipFailure = false, noWorkspaces = false
   let sessionFailure: "missing" | "unavailable" | undefined
-  let probeFailure: "network" | "http" | "malformed" | "unproven-negative" | undefined
+  let probeFailure: "network" | "refused" | "timeout" | "http" | "malformed" | "unproven-negative" | undefined
   let inventoryFailure = false
   let failureCode: string | undefined
   registerAutomationPluginRoute(app, {
@@ -48,15 +51,22 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
         return { location: { directory: "/repo" } }
       } } }),
       list: () => { if (inventoryFailure) throw new Error("secret inventory failure"); return noWorkspaces ? [] : [{ id: "owner" }] },
-      ownsLocation: async () => { if (ownershipFailure) throw new Error("Ownership unavailable"); return owned },
+      ownsLocation: async (_id: string, _location: unknown, _client: unknown, _signal: AbortSignal, _purpose: string, strict: boolean) => {
+        if (strict) assert.equal(_purpose, "request")
+        if (ownershipFailure) { if (strict) throw new Error("Ownership unavailable"); return false }
+        return owned
+      },
     },
   } as never)
   t.mock.method(globalThis, "fetch", async (_url: unknown, options: RequestInit) => {
+    calls++
     const body = JSON.parse(String(options.body))
     const token = new Headers(options.headers).get("x-codenomad-automation-token")
     if (token !== registration.token) return new Response(JSON.stringify({ result: { available: true } }), { status: 200 })
     if (body.mode === "browser-claim") {
       if (probeFailure === "network") throw new Error("secret network error")
+      if (probeFailure === "refused") throw Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("refused"), { code: "ECONNREFUSED" }) })
+      if (probeFailure === "timeout") throw Object.assign(new Error("deadline"), { code: "ETIMEDOUT" })
       if (probeFailure === "http") return new Response(JSON.stringify({ error: "secret backend error" }), { status: 503 })
       if (probeFailure === "malformed") return new Response(JSON.stringify({ result: {} }), { status: 200 })
       if (probeFailure === "unproven-negative") return new Response(JSON.stringify({ error: "Session not found" }), { status: 404 })
@@ -133,13 +143,27 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
   assert.equal((await handlers.snapshot()).missions.length, 2, "backend-less hand-offs remain unavailable")
   assert.equal([...values.keys()].some(key => key.includes("/creation-intents/")), false)
 
+  const registry = automationBridgeDirectories()[0]
+  await mkdir(registry, { recursive: true })
+  const deadFile = path.join(registry, `${Date.now()}-2147483647-dead.json`)
+  await writeFile(deadFile, "{unreadable")
+  assert.deepEqual(await request(), fallback, "a dead publishing pid is absent even when its registration cannot be parsed")
+  await assert.rejects(readFile(deadFile), (error: any) => error.code === "ENOENT")
+  const liveFile = path.join(registry, `${Date.now()}-${process.pid}-unknown.json`)
+  await writeFile(liveFile, "{unreadable")
+  await assert.rejects(request(), unavailable, "an unreadable live publisher cannot safely be ignored")
+  const unpublish = await publishAutomationBridge(registration)
+  try { assert.equal(await readFile(liveFile, "utf8"), "{unreadable", "another publisher's cleanup preserves unreadable live registrations") }
+  finally { await unpublish() }
+  await rm(liveFile)
+
   removals.push(await publishAutomationBridge(registration))
   const resolved = await request() as { taskMode: string }
   assert.equal(resolved.taskMode, "native")
   assert.equal("preferences" in resolved, false, "readable owner preferences need no unavailable warning")
   const beforeNegative = reads
   owned = false
-  await assert.rejects(request(), unavailable, "a false authorization can hide failed Git or WSL reads")
+  assert.deepEqual(await request(), fallback, "clean non-ownership remains negative proof while unrelated workspaces are open")
   noWorkspaces = true
   assert.deepEqual(await request(), fallback, "a backend with no open workspace cannot own this session")
   noWorkspaces = false
@@ -156,11 +180,21 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
   inventoryFailure = true
   await assert.rejects(request(), unavailable)
   inventoryFailure = false
-  for (probeFailure of ["network", "http", "malformed", "unproven-negative"] as const) await assert.rejects(request(), unavailable, "a registered backend failure refuses fallback")
+  probeFailure = "refused"
+  assert.deepEqual(await request(), fallback, "a stale Windows or local registration with no listener is absent")
+  for (probeFailure of ["network", "timeout", "http", "malformed", "unproven-negative"] as const) await assert.rejects(request(), unavailable, "a registered backend failure refuses fallback")
   probeFailure = undefined
   preferences = [{ template: "all", profiles: {}, taskMode: "independent" }]
   assert.equal((await request() as { taskMode: string }).taskMode, "independent", "the next bridge call reads fresh preferences")
   preferences = "secret-invalid-value"
+  const beforeExplicit = posts
+  const callsBeforeExplicit = calls
+  const complete = await sendMissionInput("ses_owner", "profile-defaults", { template: "custom",
+    profiles: { coordinator: {}, roles: { specialist: {} } }, taskMode: "native" }) as any
+  assert.deepEqual(complete.origins, { coordinator: "explicit", roles: { specialist: "explicit" }, taskMode: "explicit" })
+  assert.equal("preferences" in complete, false, "unused preference availability is not invented")
+  assert.equal(posts, beforeExplicit, "complete explicit choices do not reach the broken preference document")
+  assert.equal(calls, callsBeforeExplicit, "complete explicit choices skip every backend probe and request")
   await assert.rejects(request(), (error: unknown) => error instanceof MissionControlError
     && error.code === "mission-preferences-invalid" && error.message === "Correct the Missions preferences before creating a mission")
   unreadable = true
@@ -206,4 +240,56 @@ test("strict WSL discovery retries a failed cached Windows registry lookup", t =
   assert.equal(attempts, 1)
   assert.throws(() => automationBridgeDirectories({ ...options, strict: true }), /Windows mission backend discovery is unavailable/)
   assert.equal(attempts, 2, "an old failed lookup is not reused as negative ownership evidence")
+})
+
+test("WSL Windows probes ignore curl connection refusal but retain timeout, HTTP and auth refusals", async t => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!
+  const previous = { WSL_DISTRO_NAME: process.env.WSL_DISTRO_NAME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR }
+  Object.defineProperty(process, "platform", { value: "linux", configurable: true })
+  process.env.WSL_DISTRO_NAME = "fixture"
+  process.env.XDG_RUNTIME_DIR = "/fixture-linux"
+  t.after(() => {
+    Object.defineProperty(process, "platform", platform)
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value
+    }
+    t.mock.restoreAll()
+    syncBuiltinESMExports()
+  })
+  const registration = createAutomationBridgeRegistration("http://127.0.0.1:1")
+  const bytes = Buffer.from(JSON.stringify(registration))
+  t.mock.method(childProcess, "execFileSync", () => "/fixture-windows")
+  t.mock.method(fs, "opendir", async (directory: string) => (async function* () {
+    if (directory.startsWith("/fixture-windows/")) yield {
+      name: `${registration.startedAt}-${registration.pid}-windows.json`, isFile: () => true,
+    }
+  })())
+  t.mock.method(fs, "open", async () => ({
+    read: async (buffer: Buffer) => { bytes.copy(buffer); return { bytesRead: bytes.length } }, close: async () => {},
+  }))
+  let exit = 7, status = 0, diagnostic = "* connect to 127.0.0.1 port 1 failed: Connection refused"
+  t.mock.method(childProcess, "spawn", (command: string, args: string[]) => {
+    assert.equal(command, "curl.exe")
+    assert.deepEqual(args.slice(args.indexOf("--noproxy"), args.indexOf("--noproxy") + 2), ["--noproxy", "*"])
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true,
+    })
+    child.stdin.on("finish", () => setImmediate(() => {
+      child.stderr.write(diagnostic)
+      child.stdout.write(`${JSON.stringify({ error: "fixture refusal" })}\n${status}`)
+      child.emit("close", exit)
+    }))
+    return child
+  })
+  syncBuiltinESMExports()
+  const request = () => sendMissionInput("ses_wsl", "profile-defaults", { template: "custom" })
+  assert.equal((await request() as any).preferences, "unavailable", "curl's connection-refused diagnostic proves no Windows listener")
+  for (diagnostic of ["* connect to 127.0.0.1 port 1 failed: Permission denied (10013)", "curl: (7) Could not connect to server"]) {
+    await assert.rejects(request(), (error: unknown) => error instanceof MissionControlError && error.code === "mission-preferences-unavailable",
+      "curl exit 7 without a refusal diagnostic leaves ownership indeterminate")
+  }
+  for (const failure of [{ exit: 28, status: 0 }, { exit: 0, status: 503 }, { exit: 0, status: 401 }]) {
+    ;({ exit, status } = failure)
+    await assert.rejects(request(), (error: unknown) => error instanceof MissionControlError && error.code === "mission-preferences-unavailable")
+  }
 })

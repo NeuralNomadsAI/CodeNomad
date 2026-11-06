@@ -91,12 +91,23 @@ test("settled choices release capacity on adapters without key removal", async (
   assert.equal([...f.values.values()].filter(value => value !== null).length, 1)
 })
 
-test("an un-timestamped valid intention gets one bounded retention window", async () => {
-  const f = fixture()
-  f.values.set("codenomad-missions/v2/creation-intents/project/msn_old", { version: 1, request, defaults } as unknown as MissionJsonValue)
-  assert.deepEqual(await f.intents.read("msn_old", request, missing, "request-conflict"), defaults)
-  f.advance(MISSION_CREATION_INTENT_RETENTION_MS)
-  assert.equal(await f.intents.read("msn_old", request, missing, "request-conflict"), undefined)
+test("direct reads and capacity scans reject malformed intentions without changing retained bytes", async () => {
+  for (const invalid of [
+    { version: 1, request, defaults },
+    { version: 1, request, defaults, createdAt: -1 },
+    { version: 1, request: { ...request, template: "other" }, defaults, createdAt: Date.now() },
+    { version: 1, request, defaults: { ...defaults, origins: {} }, createdAt: Date.now() },
+    { version: 1, request, defaults: { ...defaults, request: { profiles: {} } }, createdAt: Date.now() },
+  ]) {
+    const f = fixture()
+    f.values.set("codenomad-missions/v2/creation-intents/project/msn_invalid", invalid as unknown as MissionJsonValue)
+    const before = structuredClone([...f.values])
+    await assert.rejects(f.intents.read("msn_invalid", request, missing, "request-conflict"),
+      (error: any) => error.code === "invalid-journal")
+    await assert.rejects(f.intents.save("msn_new", request, defaults, missing, () => {}, "request-conflict"),
+      (error: any) => error.code === "invalid-journal")
+    assert.deepEqual([...f.values], before)
+  }
 })
 
 test("failed choice cleanup cannot replace an authoritative success or refusal", async () => {

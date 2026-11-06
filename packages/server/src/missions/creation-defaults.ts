@@ -7,9 +7,11 @@ import { MissionControlError } from "./control-error"
 import { parseExecution } from "./execution"
 
 const origin = z.enum(MISSION_DEFAULT_ORIGINS)
+export const missionCreationTemplateSchema = z.enum(Object.keys(missionProfileRoles) as [MissionTemplateId, ...MissionTemplateId[]])
+export const MISSION_DEFAULTS_REQUEST_INVALID = "Correct the profile-defaults request: use a supported template, valid profiles and taskMode, and a complete coordinatorModel"
 export const missionCreationChoicesSchema = z.object({ profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.optional() }).strict()
 const defaultsInputSchema = missionCreationChoicesSchema.extend({
-  template: z.enum(["custom", "wayfinder", "debug", "delivery", "compare"]),
+  template: missionCreationTemplateSchema,
   coordinatorModel: z.unknown().transform((model, context) => {
     try { return parseExecution({ model })?.model }
     catch { context.addIssue({ code: "custom", message: "Invalid coordinator model" }); return z.NEVER }
@@ -18,7 +20,7 @@ const defaultsInputSchema = missionCreationChoicesSchema.extend({
 
 export function parseMissionCreationDefaultsInput(input: unknown) {
   const parsed = defaultsInputSchema.safeParse(input)
-  if (!parsed.success) throw new MissionControlError("Correct the profile-defaults request: use a supported template, valid profiles and taskMode, and a complete coordinatorModel", "invalid-execution")
+  if (!parsed.success) throw new MissionControlError(MISSION_DEFAULTS_REQUEST_INVALID, "invalid-execution")
   try { validateMissionProfiles(parsed.data.template, parsed.data.profiles) }
   catch { throw new MissionControlError("Correct profiles.roles to use roles from the selected playbook", "invalid-execution") }
   return parsed.data

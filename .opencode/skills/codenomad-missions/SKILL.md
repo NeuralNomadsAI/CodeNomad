@@ -24,19 +24,28 @@ defaults to the coordinator's model). Each explicit profile slot wins whole:
 native model default, except for the Compare judge: after slot selection, any
 missing judge model inherits the known coordinator model, including explicit or
 preference `{}` and agent-only slots; a judge's own model stays unchanged.
-`profiles: {}` inherits all slots. With absent preferences,
+`profiles: {}` inherits all slots. Supplying the coordinator, every exact role of
+the selected template and `taskMode` skips backend preferences entirely; `{}` counts
+as an explicit profile slot. All origins are `explicit`, and preference availability
+stays unobserved. Unused unreadable or invalid preferences are irrelevant. Partial
+or omitted selections read owning-backend preferences. With absent preferences,
 profiles use OpenCode defaults and task mode uses `native`.
 Read the creation response's `selection.profiles`, `selection.taskMode` and
 `selection.origins` to check the saved coordinator and every playbook role:
 `explicit`, `preference` or `opencode-default`. A chosen judge slot keeps its
 explicit/preference origin even with an inherited model; an absent judge slot
-inherits the coordinator's origin. With no bridge presence or zero proven owning
+inherits the coordinator's origin. When preferences are needed, with no bridge presence or zero proven owning
 backends, `inspect({ start })` uses explicit inputs and OpenCode defaults for omitted
 choices (`native` task-mode fallback), returning `selection.preferences: "unavailable"` and only `explicit`
 or `opencode-default` origins. Saved `creationDefaults.preferences: "unavailable"`
 retains the warning on retries even after a backend appears. Multiple owners,
 failed/incomplete backend discovery or unreadable/invalid preferences refuse
-creation; report the error and arrange recovery before retrying. `mission.prepare`
+creation; report the error and arrange recovery before retrying. A stale registration
+with connection refused counts as absent; timeouts, HTTP/authentication errors and
+unreadable registration state with indeterminate ownership refuse resolution. A
+successful ownership read proving an unrelated project establishes non-ownership
+even with other workspaces open; actual Git/WSL ownership-read failures refuse resolution.
+`mission.prepare`
 requires an owning backend for fenced creation even with fallback profile choices.
 `inspect({ start })` requires the caller's existing coordinator profile to match
 the resolved selection. When a coordinator preference differs, pass
@@ -49,8 +58,7 @@ preparations are serialized. Its standalone intent retains choices for an unknow
 outcome, releasing them on a positive result or a definitive no-effect refusal.
 A retry's prevalidation refusal leaves an earlier attempt's uncertainty intact.
 The project retains at most 128 unknown choices for 24 hours from first
-reservation; retries preserve that deadline. An entry without a timestamp gets
-one on its first read/prune and expires 24 hours later. At capacity, retry original
+reservation; retries preserve that deadline. At capacity, retry original
 requestIDs to recover receipts and release slots, or wait for expiry. After expiry,
 preferences may be read anew only with both creation event and document absent;
 a positive receipt or saved document keeps its choices frozen. `inspect({ start })`

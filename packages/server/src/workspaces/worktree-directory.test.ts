@@ -169,3 +169,18 @@ test("an invalidated directory load cannot return obsolete ownership to its awai
   release()
   assert.equal(await read, null)
 })
+
+test("strict ownership revalidates cached fallback paths and propagates realpath failures", async t => {
+  const temp = mkdtempSync(path.join(tmpdir(), "codenomad-strict-directory-"))
+  t.after(() => { invalidateWorktreeCache(temp); rmSync(temp, { recursive: true, force: true }) })
+  const root = path.join(temp, "root")
+  const missing = path.join(temp, "missing")
+  mkdirSync(root)
+  const params = {
+    workspaceId: temp, workspacePath: root, directory: root,
+    loadWorktrees: async () => [{ slug: "root", directory: missing, kind: "root" as const }],
+  }
+  assert.equal(await resolveOwnedWorktreePath(params), null)
+  await assert.rejects(resolveOwnedWorktreePath({ ...params, strict: true }), { code: "ENOENT" })
+  await assert.rejects(resolveOwnedWorktreePath({ ...params, directory: missing, strict: true }), { code: "ENOENT" })
+})

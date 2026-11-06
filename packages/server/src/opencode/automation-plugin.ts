@@ -8,7 +8,8 @@ import { MissionControlError } from "../missions/control-error"
 import { signNativeRecurrenceControl, type RecurrenceControlProofBody } from "../missions/recurrence-control-proof"
 import { missionRecoveryError } from "../missions/recovery-error"
 import { parseMissionCreationDefaultsInput } from "../missions/creation-defaults"
-import { resolveMissionCreationDefaults } from "../missions/profile-defaults"
+import { hasExplicitMissionCreationChoices, resolveMissionCreationDefaults } from "../missions/profile-defaults"
+import { isConnectionRefused } from "./connection-errors"
 import { PAGE_ACTION_PROPERTIES, PAGE_ACTIONS, parsePageAction, type RefAction } from "../automation/page/parse"
 
 export const AUTOMATION_BRIDGE_PATH = "/api/opencode-plugin/automation"
@@ -23,7 +24,7 @@ const MAX_LOCAL_REGISTRY_FILES = 4096
 const MAX_REGISTRATION_BYTES = 4 * 1024
 const MAX_BRIDGE_RESPONSE_BYTES = 8 * 1024 * 1024
 const PROBE_CONCURRENCY = 4
-const REGISTRATION_NAME = /^(\d+)-\d+-[A-Za-z0-9_-]+\.json$/
+const REGISTRATION_NAME = /^(\d+)-(\d+)-[A-Za-z0-9_-]+\.json$/
 const WINDOWS_INTEROP = Symbol("windowsInterop")
 let cachedWslWindowsLocalAppData: string | null | undefined
 
@@ -177,7 +178,7 @@ function isProcessAlive(pid: number): boolean {
     process.kill(pid, 0)
     return true
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM"
+    return (error as NodeJS.ErrnoException).code !== "ESRCH"
   }
 }
 
@@ -222,8 +223,10 @@ async function pruneDeadLocalRegistrations(directory: string): Promise<void> {
     entries.length = Math.min(entries.length, MAX_LOCAL_REGISTRY_FILES)
     for (const entry of entries) {
       const target = path.join(directory, entry.name)
+      const publishingPID = Number(REGISTRATION_NAME.exec(entry.name)![2])
       const registration = await readRegistration(target)
-      if (!registration || !isProcessAlive(registration.pid)) await rm(target, { force: true })
+      if (Number.isSafeInteger(publishingPID) && publishingPID > 0 && !isProcessAlive(publishingPID)
+        || registration && !isProcessAlive(registration.pid)) await rm(target, { force: true })
     }
   } catch {
     // Registry cleanup is best effort; publication and discovery still proceed.
@@ -320,6 +323,11 @@ async function registrations(pruneStale = true, strict = false): Promise<Discove
     entries.length = Math.min(entries.length, entryLimit)
     for (const entry of entries) {
       const target = path.join(directory, entry.name)
+      const publishingPID = Number(REGISTRATION_NAME.exec(entry.name)![2])
+      if (directoryIndex === 0 && Number.isSafeInteger(publishingPID) && publishingPID > 0 && !isProcessAlive(publishingPID)) {
+        if (pruneStale) await rm(target, { force: true }).catch(() => undefined)
+        continue
+      }
       const registration = await readRegistration(target) as DiscoveredBridgeRegistration | undefined
       if (!registration) {
         if (strict) throw new Error("Mission backend registration is unreadable")
@@ -397,7 +405,8 @@ function callWindowsBridge(
 ): Promise<{ status: number; body: BridgeResponse }> {
   return new Promise((resolve, reject) => {
     const child = spawn("curl.exe", [
-      "--silent", "--show-error", "--max-time", String(timeoutMs / 1_000),
+      "--verbose", "--silent", "--show-error", "--max-time", String(timeoutMs / 1_000),
+      "--noproxy", "*",
       "--request", "POST",
       "--header", "content-type: application/json",
       "--header", `x-codenomad-automation-token: ${registration.token}`,
@@ -439,7 +448,11 @@ function callWindowsBridge(
       const separator = output.lastIndexOf("\n")
       const status = separator >= 0 ? Number(output.slice(separator + 1)) : NaN
       if (code !== 0 || !Number.isInteger(status)) {
-        reject(new Error(Buffer.concat(stderr).toString("utf8").trim() || "Windows native automation bridge request failed"))
+        // Curl's exit 7 also covers denied sockets. Its connect diagnostic proves
+        // refusal; keep verbose headers/private tokens out of the returned error.
+        const refused = code === 7 && /\bfailed: Connection refused\b/i.test(Buffer.concat(stderr).toString("utf8"))
+        const error = new Error("Windows native automation bridge request failed")
+        reject(refused ? Object.assign(error, { code: "ECONNREFUSED" }) : error)
         return
       }
       try {
@@ -547,6 +560,7 @@ async function probeBrowserBridges(
         if (strict && !(response.status === 404 && response.body.code === "mission-not-owner")) throw new Error("Mission backend ownership is unavailable")
         return undefined
       } catch (error) {
+        if (isConnectionRefused(error)) return undefined
         if (strict) throw error
         return undefined
       }
@@ -562,6 +576,7 @@ export async function sendMissionInput(sessionID: string,
   kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root" | "prepare" | "task-sessions" | "interrupt" | "profile-defaults", input: unknown): Promise<unknown> {
   try {
     const defaultsInput = kind === "profile-defaults" ? parseMissionCreationDefaultsInput(input) : undefined
+    if (defaultsInput && hasExplicitMissionCreationChoices(defaultsInput)) return resolveMissionCreationDefaults({ ...defaultsInput, preferences: undefined })
     // `purpose` lets a backend without native browsers claim the session for dispatch only.
     let targets: DiscoveredBridgeRegistration[]
     try {

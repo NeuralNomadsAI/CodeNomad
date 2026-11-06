@@ -3,13 +3,20 @@ import test from "node:test"
 import Ajv from "ajv"
 import { MissionControl, MissionControlError } from "./control"
 import type { MissionInputTransport, NativeMissionSession } from "./control-types"
-import { missionCreationDefaultsSchema, missionCreationDefaultsWire, missionCreationSelection, parseMissionCreationDefaults } from "./creation-defaults"
+import { missionCreationDefaultsSchema, missionCreationDefaultsWire, missionCreationSelection, parseMissionCreationDefaults, parseMissionCreationDefaultsInput } from "./creation-defaults"
 import type { MissionStorage } from "./journal"
 import type { MissionJsonValue } from "./model"
 import { NativeMissionDocumentStore, type MissionDocumentStorage } from "./mission-document-store"
 import { MISSION_DEFAULT_ORIGINS, resolveMissionCreationDefaults } from "./profile-defaults"
 import { CODENOMAD_MISSIONS_RPC } from "./rpc"
-import { freezeCompareProfiles } from "./playbook-profiles"
+import { freezeCompareProfiles, missionProfileRoles } from "./playbook-profiles"
+
+test("creation default requests accept exactly the shared playbook keys", () => {
+  for (const template of Object.keys(missionProfileRoles)) assert.equal(parseMissionCreationDefaultsInput({ template }).template, template)
+  for (const template of ["other", "all", "toString", "__proto__", null]) {
+    assert.throws(() => parseMissionCreationDefaultsInput({ template }), (error: any) => error.code === "invalid-execution")
+  }
+})
 
 function fixture() {
   const values = new Map<string, MissionJsonValue>()
