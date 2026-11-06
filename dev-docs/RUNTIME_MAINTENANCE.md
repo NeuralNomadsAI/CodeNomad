@@ -12,9 +12,10 @@
   executable not named `node` (Electron's) receives a temporary `node` command
   pointing to it instead. Installation and native upgrade scope it to their
   child environment and clean it after completion; interrupted installers retain
-  their adapter and prefix lock for safe manual recovery. The command lives in a
-  `.codenomad-npm-*` directory inside the npm prefix, never the system temporary
-  directory, which may be mounted noexec.
+  their adapter and prefix lock for safe manual recovery. The command lives in an
+  installer directory inside the npm prefix (`.codenomad-npm-*` for direct npm,
+  `.codenomad-upgrade-*` beside the native upgrade's npm shim), never the system
+  temporary directory, which may be mounted noexec.
 - The packaged-resources smoke (`scripts/smoke-packaged-resources.cjs`, run by
   every Electron build and the release Linux package checks) fails unless the
   bundled npm's `engines.node` accepts the Node version the server runtime
