@@ -18,7 +18,8 @@ export interface MemorySettings { enabled: boolean }
 export type MemoryVersionedEntry = MemoryEntry & { revision: string }
 export type MemoryUIEntry = MemoryVersionedEntry & { flagged: boolean; warning?: "suspected_injection" }
 export type MemoryListEntry = MemoryEntryHeader & { revision: string }
-export type MemoryResult = { entries: MemoryUIEntry[] | MemoryListEntry[] }
+export interface MemoryUIListResult { entries: MemoryUIEntry[]; scopeKey: string; observedAt: string }
+export type MemoryResult = { entries: MemoryUIEntry[] | MemoryListEntry[]; scopeKey?: string; observedAt?: string }
   | { entry: MemoryUIEntry | MemoryVersionedEntry | null }
   | { id: string; revision: string; flagged: boolean } | { deleted: true }
 export interface MemoryApiError { code: MemoryErrorCode; error: string; titles?: readonly string[] }

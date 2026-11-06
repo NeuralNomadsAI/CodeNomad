@@ -114,7 +114,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
         return <InfoSettingsSection />
       case "general":
       default:
-        return <GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} />
+        return <GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
     }
   }
 

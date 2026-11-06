@@ -32,6 +32,23 @@ npm run build
 
 The output will be generated in the `dist` directory, which is then consumed by the Server or Electron app.
 
+## Agent memory preferences
+
+General embeds `components/settings/agent-memory-settings-card.tsx`, using the
+server-confirmed `/api/memory/settings` preference and the dedicated
+`lib/agent-memory-api.ts` adapter. Project reads use the exact resolved Preferences
+context, including its native directory. `stores/agent-memory.ts` fences late
+responses and keeps dirty drafts attached to their original context through
+project replacement, deletion and the shared Settings discard guard.
+
+UI list responses supply `scopeKey` and `observedAt`. Per-scope consultation
+frontiers live in browser storage; each visit freezes its baseline and advances
+the stored frontier only after successful reads. The server derives project keys
+so linked worktrees share badge state. Reviewable flagged entries carry an
+explanation behind an info tip. Explicit revision conflicts retain the draft and
+require a confirmed reload. Browser coverage lives in
+`tests/browser/agent-memory.test.ts`.
+
 ## Debug Logging
 
 The UI routes logging through a lightweight wrapper around [`debug`](https://github.com/debug-js/debug). Its namespaces can be toggled at runtime:

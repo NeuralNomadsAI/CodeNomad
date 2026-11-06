@@ -132,6 +132,18 @@ test("a slow unrelated inventory cannot hide a verified memory owner", { timeout
   assert.equal(response.statusCode, 200)
 })
 
+test("human lists supply a server consultation frontier and a stable opaque scope key", async t => {
+  const f = await fixture(t), before = Date.now()
+  const globalList = (await f.ui({ action: "list", ...global })).json()
+  assert.equal(globalList.scopeKey, "global")
+  assert.ok(Date.parse(globalList.observedAt) >= before && Date.parse(globalList.observedAt) <= Date.now())
+  const project = (directory: string) => f.ui({ action: "list", scope: "project" }, { workspaceId: "owner", directory })
+  const first = (await project("/repo")).json(), worktree = (await project("/repo-worktree")).json()
+  assert.equal(first.scopeKey, "a".repeat(64))
+  assert.equal(first.scopeKey, worktree.scopeKey)
+  assert.deepEqual(first.entries, [])
+})
+
 test("read by id/title, UI review warnings and revision-conditional edits/deletes keep flagged text out of agents", async t => {
   const f = await fixture(t)
   await f.enable()

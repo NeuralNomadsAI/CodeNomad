@@ -123,11 +123,13 @@ export class MemoryService {
     const namespace = await this.namespace(operation, target, agent)
     if (agent && !this.getSettings().enabled) throw new MemoryError("disabled", "Memory is disabled")
     if (operation.action === "list" || operation.action === "read") {
+      // Capture before the read: a concurrent later write stays unread next visit.
+      const observedAt = new Date().toISOString()
       const all = await this.store.listForUI(namespace)
       const entries = agent ? memoryForAgent(all) : all
       if (operation.action === "list") return { entries: agent
         ? entries.map(entry => { const { text: _text, ...header } = versioned(entry); return header })
-        : entries.map(reviewed) }
+        : entries.map(reviewed), ...(!agent ? { scopeKey: namespace.scope === "global" ? "global" : namespace.projectId, observedAt } : {}) }
       const entry = entries.find(entry => entry.id === operation.query) ?? entries.find(entry => entry.title === operation.query)
       return { entry: entry ? agent ? versioned(entry) : reviewed(entry) : null }
     }
