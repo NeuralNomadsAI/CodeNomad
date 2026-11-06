@@ -11,12 +11,16 @@ Le Contrôle à distance permet à un navigateur ou client de bureau appairé d�
 
 Le lien est valable **cinq minutes** et réussit **une seule fois**. Traitez-le comme un identifiant : quiconque le consomme peut devenir un appareil appairé. Le code se trouve dans le fragment d’URL, pas dans la chaîne de requête. **Créer un nouveau lien d’appairage** invalide immédiatement le lien inutilisé précédent. L’arrêt, la fermeture du backend et une panne du tunnel annulent les liens d’appairage en attente.
 
-Ouvrez les liens d’appairage dans le navigateur voulu. En coller un dans **Adresse ou lien du serveur** sur le bureau enregistre seulement l’origine du tunnel et signale que l’appairage côté serveur est indisponible. Le code est supprimé. Le parcours des dossiers par le backend utilise sa propre session d’accès direct ; la vue intégrée conserve indépendamment sa connexion ou son cookie d’appareil appairé.
+Ouvrez un lien d’appairage dans le navigateur voulu, ou collez un lien neuf dans **Adresse ou lien du serveur** sur le bureau pour enregistrer le serveur et appairer le backend local afin de parcourir les dossiers via le Contrôle à distance. Chaque lien fonctionne une seule fois, toutes méthodes confondues. Le backend conserve son identifiant d’appareil en privé entre les lancements ; le code est supprimé après la tentative. Les vues intégrées et fenêtres distantes conservent leur propre authentification et peuvent nécessiter un lien distinct.
+
+Les appairages du backend apparaissent sous `CodeNomad · <nom d’hôte du backend>`. Le nom d’hôte est une étiquette déclarée par le client ; vérifiez la destination et son certificat TLS avant de partager un lien. Supprimer le serveur enregistré efface son identifiant local de parcours ; révoquer son appareil termine l’accès. Pour rétablir le parcours, choisissez **Retour à Parcourir** et collez un lien neuf dans **Adresse ou lien du serveur**. Pour un code expiré ou déjà utilisé, créez un nouveau lien ; en cas de limitation, attendez avant de réessayer. L’appairage du backend autorise dix tentatives par minute pour l’ensemble des clients du backend distant.
+
+Si le serveur distant signale que l’appairage côté serveur est indisponible, mettez-le à jour ou enregistrez son URL d’écoute directe pour utiliser le formulaire de mot de passe intégré. La connexion par mot de passe passe par l’accès direct ; une adresse de tunnel exige un appairage.
 
 ## Gérer les appareils appairés {#paired-devices}
 
 1. Sur l’hôte, revenez à **Paramètres → Accès distant → Contrôle à distance**.
-2. Vérifiez **Appareils appairés** et leur heure **Dernière activité**. Chaque appareil porte le nom de la plateforme et du navigateur qui l’ont appairé, par exemple `iPhone · Safari`.
+2. Vérifiez **Appareils appairés** et leur heure **Dernière activité**. Les appairages de navigateur portent le nom de leur plateforme et de leur navigateur, par exemple `iPhone · Safari`.
 3. Choisissez **Révoquer** pour un appareil qui ne doit plus se connecter.
 
 La révocation termine les connexions HTTP/SSE actuelles de cet appareil ainsi que son accès futur. Appairez-le à nouveau avec un nouveau lien pour rétablir l’accès. Un appareil expire après **30 jours sans utilisation**. À la **limite de 32 appareils**, un nouvel appairage remplace l’appareil vu le moins récemment et ferme ses connexions.

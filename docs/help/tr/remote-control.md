@@ -11,12 +11,16 @@ Uzaktan Kontrol, eşleştirilmiş bir tarayıcının veya masaüstü istemcisini
 
 Bağlantı **beş dakika** süreyle geçerlidir ve **bir kez** başarılı olur. Bunu bir kimlik bilgisi olarak değerlendirin: Bunu tüketen herkes eşleştirilmiş bir cihaz haline gelebilir. Kod, sorgu dizesinde değil, URL parçasında bulunur. **Yeni eşleştirme bağlantısı oluştur**, önceki kullanılmayan bağlantıyı anında geçersiz kılar. Durdurma, arka uç kapatma ve tünel arızası, bekleyen eşleştirme bağlantılarını iptal eder.
 
-Eşleştirme bağlantılarını istediğiniz tarayıcıda açın. Masaüstündeki **Sunucu adresi veya bağlantısı** alanına yapıştırmak yalnızca tünel kökenini kaydeder ve sunucu tarafında eşleştirmenin kullanılamadığını bildirir. Kod silinir. Arka uç klasör taraması kendi doğrudan erişim oturumunu kullanır; gömülü görünüm kendi oturumunu veya cihaz çerezini bağımsız olarak saklar.
+Eşleştirme bağlantısını istediğiniz tarayıcıda açın veya yeni bir bağlantıyı masaüstündeki **Sunucu adresi veya bağlantısı** alanına yapıştırın. Bu, sunucuyu kaydeder ve Uzaktan Kontrol üzerinden klasör taraması için yerel arka ucu eşleştirir. Her bağlantı, iki yöntem arasında toplam bir kez çalışır. Arka uç cihaz kimlik bilgisini başlatmalar arasında özel olarak saklar; kod denemeden sonra silinir. Gömülü görünümler ve uzak pencereler kendi kimlik doğrulamalarını kullanır ve ayrı bir eşleştirme bağlantısı isteyebilir.
+
+Arka uç eşleştirmeleri `CodeNomad · <arka uç ana bilgisayar adı>` olarak görünür. Ana bilgisayar adı istemcinin bildirdiği bir etikettir; bağlantıyı paylaşmadan önce hedefi ve TLS sertifikasını doğrulayın. Kayıtlı sunucuyu kaldırmak yerel tarama kimlik bilgisini siler; cihazı iptal etmek erişimi sonlandırır. Taramayı geri getirmek için **Gözat'a dön** seçeneğini kullanıp **Sunucu adresi veya bağlantısı** alanına yeni bağlantı yapıştırın. Süresi dolmuş veya kullanılmış kod için yeni bağlantı oluşturun; hız sınırı hatasında yeniden denemeden önce bekleyin. Arka uç eşleştirmesi, uzak arka ucun tüm istemcileri için toplam dakikada on denemeye izin verir.
+
+Uzak sunucu, sunucu tarafında eşleştirmenin kullanılamadığını bildirirse sunucuyu güncelleyin veya satır içi parola formunu kullanmak için doğrudan dinleyici URL'sini kaydedin. Parolayla giriş doğrudan erişimde kullanılabilir; tünel adresi eşleştirme gerektirir.
 
 ## Eşleştirilmiş cihazları yönetin {#paired-devices}
 
 1. Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** öğesine dönün.
-2. **Eşleştirilmiş cihazlar** ve **Son görülme** zamanlarını inceleyin. Her cihaz, onu eşleştiren platform ve tarayıcıya göre adlandırılır; örneğin `iPhone · Safari`.
+2. **Eşleştirilmiş cihazlar** ve **Son görülme** zamanlarını inceleyin. Tarayıcı eşleştirmeleri platform ve tarayıcılarına göre adlandırılır; örneğin `iPhone · Safari`.
 3. Artık bağlanmaması gereken cihaz için **İptal et** eylemini seçin.
 
 İptal, cihazın mevcut HTTP/SSE bağlantılarını ve gelecekteki erişimini sonlandırır. Yeniden erişim için yeni bağlantıyla eşleştirin. Cihazın süresi **30 gün kullanılmadığında** dolar. **32 cihaz sınırında**, yeni eşleştirme en uzun süredir görülmeyen cihazın yerini alır ve bağlantılarını kapatır.

@@ -83,7 +83,7 @@ Si un client signale un avertissement de certificat, arrêtez-vous et vérifiez 
 
 ## Enregistrer un serveur distant {#saved-servers}
 
-1. Sur l’accueil, un onglet vide ou le lanceur **Ouvrir un onglet**, ouvrez **Parcourir** et saisissez l’adresse ou le lien d’appairage dans **Adresse ou lien du serveur**. Le collage l’ajoute immédiatement ; Entrée ajoute le texte saisi. L’ajout enregistre seulement le serveur sous son nom d’hôte et place le focus sur sa ligne ; le lanceur reste ouvert. Cliquez sur cette ligne pour parcourir ses projets sur place. **Paramètres → Serveurs** propose le même champ.
+1. Sur l’accueil, un onglet vide ou le lanceur **Ouvrir un onglet**, ouvrez **Parcourir** et saisissez l’adresse ou le lien d’appairage dans **Adresse ou lien du serveur**. Le collage l’ajoute immédiatement ; Entrée ajoute le texte saisi. L’ajout enregistre le serveur sous son nom d’hôte et place le focus sur sa ligne ; un lien d’appairage appaire aussi le backend local pour le parcours. Le lanceur reste ouvert. Cliquez sur cette ligne pour parcourir ses projets sur place. **Paramètres → Serveurs** propose le même champ.
 2. Utilisez une origine HTTPS de confiance. Si son certificat échoue à la vérification, l’erreur s’affiche sous le champ avec **Ignorer la vérification TLS** : cochez-la seulement pour un serveur de confiance, puis appuyez de nouveau sur Entrée pour l’enregistrer. Choisir un dossier ou un projet de ce profil ouvre sa propre fenêtre.
 3. Choisissez sa ligne dans **Parcourir** pour explorer ses projets sur place. Si demandé, saisissez le nom d’utilisateur et le mot de passe du serveur dans le formulaire intégré. Modifiez son nom ou son adresse avec **Modifier le serveur** dans **Paramètres → Serveurs**.
 
@@ -93,7 +93,7 @@ Pour ouvrir un serveur enregistré directement depuis la ligne de commande, lanc
 
 Une fenêtre distante laisse toujours un moyen de revenir sur cet ordinateur. Fermer la dernière fenêtre locale alors que des fenêtres distantes restent ouvertes conserve ses onglets : **Fenêtre → Nouvelle fenêtre** dans une fenêtre distante, ou un nouveau lancement de CodeNomad, la rouvre. Si un serveur ne peut pas être chargé, sa fenêtre l’indique et propose **Réessayer**, **Ouvrir une fenêtre locale** et **Fermer la fenêtre** ; dans la version Tauri, utilisez le bouton d’actualisation de la page et **Fenêtre → Nouvelle fenêtre**.
 
-Coller un lien du Contrôle à distance enregistre seulement l’origine du tunnel et signale que l’appairage côté serveur est indisponible ; le code est supprimé. Ouvrez le lien dans le navigateur voulu pour l’appairer. Voir [Contrôle à distance](remote-control.md).
+Coller un lien neuf du Contrôle à distance enregistre l’origine du tunnel et appaire le backend local pour le parcours ; son identifiant d’appareil reste privé et persiste entre les lancements. Le code est supprimé après la tentative. Après révocation, choisissez **Retour à Parcourir** et collez un lien neuf dans **Adresse ou lien du serveur**. Les vues intégrées s’appairent séparément. Si l’appairage côté serveur est indisponible, mettez le serveur distant à jour ou utilisez son URL d’écoute directe pour la connexion par mot de passe ; les adresses de tunnel exigent un appairage. Voir [Contrôle à distance](remote-control.md).
 
 ## Ouvrir un projet distant dans un onglet {#remote-project-tabs}
 

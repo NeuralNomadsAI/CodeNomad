@@ -83,7 +83,7 @@ Bir istemci bir sertifika uyarısı bildirirse, durdurun ve ana bilgisayar adın
 
 ## Uzak sunucuyu kaydedin {#saved-servers}
 
-1. Ana sayfada, boş sekmede veya **Sekme aç** başlatıcısında **Gözat** bölümünü açıp adresi ya da eşleştirme bağlantısını **Sunucu adresi veya bağlantısı** alanına girin. Yapıştırma hemen ekler; Enter yazılan metni ekler. Sunucu yalnızca ana bilgisayar adıyla kaydedilir ve satırına odaklanılır; başlatıcı açık kalır. Projeleri aynı yerde taramak için bu satıra tıklayın. **Ayarlar → Sunucular** aynı alanı sunar.
+1. Ana sayfada, boş sekmede veya **Sekme aç** başlatıcısında **Gözat** bölümünü açıp adresi ya da eşleştirme bağlantısını **Sunucu adresi veya bağlantısı** alanına girin. Yapıştırma hemen ekler; Enter yazılan metni ekler. Sunucu ana bilgisayar adıyla kaydedilir ve satırına odaklanılır; eşleştirme bağlantısı tarama için yerel arka ucu da eşleştirir. Başlatıcı açık kalır. Projeleri aynı yerde taramak için bu satıra tıklayın. **Ayarlar → Sunucular** aynı alanı sunar.
 2. Güvenilir bir HTTPS kaynağı kullanın. Sertifika doğrulanamazsa alanın altında **TLS doğrulamasını atla** görünür: yalnızca güvendiğiniz sunucu için işaretleyip kaydetmek üzere yeniden Enter'a basın. Bu profilde klasör veya proje seçmek kendi penceresini açar.
 3. Projeleri aynı yerde taramak için **Gözat** içindeki kayıtlı satırını seçin. İstenirse satır içi forma sunucu kullanıcı adını ve parolasını girin. Adı veya adresi **Ayarlar → Sunucular** içindeki **Sunucuyu düzenle** ile değiştirin.
 
@@ -93,7 +93,7 @@ Kayıtlı bir sunucuyu doğrudan komut satırından açmak için masaüstü uygu
 
 Uzak pencere bu bilgisayara dönmenin bir yolunu her zaman bırakır. Uzak pencereler açık kalırken son yerel pencereyi kapatmak sekmelerini korur: uzak penceredeki **Pencere → Yeni pencere** ya da CodeNomad'ı yeniden başlatmak onu yeniden açar. Bir sunucu yüklenemezse penceresi bunu bildirir ve **Yeniden dene**, **Yerel pencere aç** ve **Pencereyi kapat** seçeneklerini sunar; Tauri sürümünde sayfanın yeniden yükleme düğmesini ve **Pencere → Yeni pencere** öğesini kullanın.
 
-Uzaktan Kontrol bağlantısı yapıştırmak yalnızca tünel kökenini kaydeder ve sunucu tarafında eşleştirmenin kullanılamadığını bildirir; kod silinir. Eşleştirmek için bağlantıyı istediğiniz tarayıcıda açın. Bkz. [Uzaktan Kontrol](remote-control.md).
+Yeni bir Uzaktan Kontrol bağlantısı yapıştırmak tünel kökenini kaydeder ve yerel arka ucu tarama için eşleştirir. Cihaz kimlik bilgisi başlatmalar arasında özel olarak saklanır; kod denemeden sonra silinir. İptal sonrasında **Gözat'a dön** seçeneğini kullanıp **Sunucu adresi veya bağlantısı** alanına yeni bağlantı yapıştırın. Gömülü görünümler ayrı eşleştirilir. Sunucu tarafında eşleştirme kullanılamıyorsa uzak sunucuyu güncelleyin veya parolayla giriş için doğrudan dinleyici URL'sini kullanın; tünel adresleri eşleştirme gerektirir. Bkz. [Uzaktan Kontrol](remote-control.md).
 
 ## Uzak bir projeyi sekmede açın {#remote-project-tabs}
 

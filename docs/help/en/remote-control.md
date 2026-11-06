@@ -11,12 +11,16 @@ Remote Control lets a paired browser or desktop client use your running CodeNoma
 
 The link is valid for **five minutes** and succeeds **once**. Treat it as a credential: anyone who consumes it can become a paired device. The code lives in the URL fragment, not the query string. **Create new pairing link** immediately invalidates the preceding unused link. Stop, backend shutdown and tunnel failure cancel outstanding pairing links.
 
-Open pairing links in the intended browser. Pasting one into desktop **Server address or link** saves only the tunnel origin and reports that server-side pairing is unavailable. The code is discarded. Backend folder browsing uses its own direct-access session; an embedded view keeps its own sign-in or paired-device cookie independently.
+Open a pairing link in the intended browser, or paste a fresh link into desktop **Server address or link** to save the server and pair the local backend for folder browsing through Remote Control. Each link works once across both methods. The backend keeps its device credential privately across launches; the code is discarded after the attempt. Embedded views and remote windows keep their own authentication and may need a separate pairing link.
+
+Backend pairings appear as `CodeNomad · <backend hostname>` in the device list. The hostname is a self-reported label; verify the destination and its TLS certificate before sharing a link. Removing the saved server deletes its local browsing credential; revoking its device ends access. To restore browsing, choose **Back to Browse** and paste a fresh link into **Server address or link**. For an expired or already-used code, create a new link; for a rate-limit error, wait before retrying. Backend pairing allows ten attempts per minute across all clients of the remote backend.
+
+If the remote server reports server-side pairing unavailable, update that server or save its direct-listener URL to use the inline password form. Password login is available through direct access; a tunnel address requires pairing.
 
 ## Manage paired devices {#paired-devices}
 
 1. On the host, return to **Settings → Remote Access → Remote Control**.
-2. Review **Paired devices** and their **Last seen** time. Each device is named after the platform and browser that paired it, such as `iPhone · Safari`.
+2. Review **Paired devices** and their **Last seen** time. Browser pairings are named after their platform and browser, such as `iPhone · Safari`.
 3. Choose **Revoke** for a device that should no longer connect.
 
 Revocation ends that device's current HTTP/SSE connections as well as future access. Pair again with a new link to restore access. A device expires after **30 days without use**. At the **32-device limit**, a new pairing replaces the least recently seen device and closes its connections.

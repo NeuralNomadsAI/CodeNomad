@@ -11,12 +11,16 @@ Fernsteuerung ermöglicht einem gekoppelten Browser- oder Desktop-Client die Nut
 
 Der Link gilt **fünf Minuten** und funktioniert **einmal**. Behandeln Sie ihn als Zugangsdaten: Wer ihn einlöst, kann ein gekoppeltes Gerät werden. Der Code steht im URL-Fragment, nicht in der Abfragezeichenfolge. **Neuen Kopplungslink erstellen** macht den vorherigen ungenutzten Link sofort ungültig. Stop, Backend-Ende und Tunnelfehler stornieren offene Kopplungslinks.
 
-Öffnen Sie Kopplungslinks im gewünschten Browser. Das Einfügen in **Serveradresse oder -link** auf dem Desktop speichert nur den Tunnel-Ursprung und meldet, dass serverseitige Kopplung nicht verfügbar ist. Der Code wird verworfen. Die Ordnersuche des Backends verwendet eine eigene Direktzugriffssitzung; die eingebettete Ansicht behält unabhängig davon ihre Anmeldung oder ihr Geräte-Cookie.
+Öffnen Sie einen Kopplungslink im gewünschten Browser oder fügen Sie einen frischen Link auf dem Desktop in **Serveradresse oder -link** ein. Dadurch wird der Server gespeichert und das lokale Backend für die Ordnersuche über die Fernsteuerung gekoppelt. Jeder Link funktioniert über beide Methoden hinweg genau einmal. Das Backend bewahrt seine Gerätezugangsdaten privat über Neustarts hinweg auf; der Code wird nach dem Versuch verworfen. Eingebettete Ansichten und entfernte Fenster verwenden ihre eigene Authentifizierung und benötigen gegebenenfalls einen eigenen Kopplungslink.
+
+Backend-Kopplungen erscheinen als `CodeNomad · <Backend-Hostname>`. Der Hostname ist eine selbst angegebene Bezeichnung; prüfen Sie Ziel und TLS-Zertifikat, bevor Sie einen Link teilen. Das Entfernen des gespeicherten Servers löscht seine lokalen Zugangsdaten zur Ordnersuche; das Widerrufen seines Geräts beendet den Zugriff. Wählen Sie zur Wiederherstellung **Zurück zu Durchsuchen** und fügen Sie einen frischen Link in **Serveradresse oder -link** ein. Erstellen Sie bei abgelaufenen oder bereits verwendeten Codes einen neuen Link; warten Sie bei einer Ratenbegrenzung vor dem nächsten Versuch. Die Backend-Kopplung erlaubt insgesamt zehn Versuche pro Minute für alle Clients des entfernten Backends.
+
+Meldet der entfernte Server, dass serverseitige Kopplung nicht verfügbar ist, aktualisieren Sie ihn oder speichern Sie seine direkte Listener-URL für das integrierte Passwortformular. Die Passwortanmeldung erfolgt über den Direktzugriff; eine Tunneladresse erfordert Kopplung.
 
 ## Gekoppelte Geräte verwalten {#paired-devices}
 
 1. Kehren Sie auf dem Host zu **Einstellungen → Remote-Zugriff → Fernsteuerung** zurück.
-2. Prüfen Sie **Gekoppelte Geräte** und deren **Zuletzt gesehen:**-Zeit. Jedes Gerät ist nach der Plattform und dem Browser benannt, die es gekoppelt haben, etwa `iPhone · Safari`.
+2. Prüfen Sie **Gekoppelte Geräte** und deren **Zuletzt gesehen:**-Zeit. Browser-Kopplungen sind nach ihrer Plattform und ihrem Browser benannt, etwa `iPhone · Safari`.
 3. Wählen Sie **Widerrufen** für ein Gerät, das nicht länger zugreifen soll.
 
 Widerruf beendet aktuelle HTTP-/SSE-Verbindungen des Geräts sowie zukünftigen Zugriff. Koppeln Sie zum Wiederherstellen mit einem neuen Link. Ein Gerät verfällt nach **30 Tagen ohne Nutzung**. Bei der **Grenze von 32 Geräten** ersetzt eine neue Kopplung das am längsten nicht gesehene Gerät und schließt dessen Verbindungen.

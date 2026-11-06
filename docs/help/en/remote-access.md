@@ -83,7 +83,7 @@ If a client reports a certificate warning, stop and check the hostname, SANs, tr
 
 ## Save a remote server {#saved-servers}
 
-1. On Home, an empty tab or the **Open a tab** launcher, open **Browse** and enter the address or pairing link in **Server address or link**. Pasting adds it immediately; Enter adds typed text. Adding only saves the server under its host name and focuses its row; the launcher stays open. Click the saved row to browse projects in place. **Settings → Servers** offers the same field.
+1. On Home, an empty tab or the **Open a tab** launcher, open **Browse** and enter the address or pairing link in **Server address or link**. Pasting adds it immediately; Enter adds typed text. Adding saves the server under its host name and focuses its row; a pairing link also pairs the local backend for browsing. The launcher stays open. Click the saved row to browse projects in place. **Settings → Servers** offers the same field.
 2. Use a trusted HTTPS origin. If its certificate fails the check, the error shows under the field with **Skip TLS verification**: tick it only for a server you trust, then press Enter again to save it. Choosing a folder or project on that profile opens its own window.
 3. Choose its saved **Browse** row to browse projects in place. If prompted, enter the server username and password in the inline form. Rename it or change its address with **Edit server** in **Settings → Servers**.
 
@@ -93,7 +93,7 @@ To open a saved server straight from the command line, start the desktop app wit
 
 A remote window always leaves a way back to this computer. Closing the last local window while remote windows stay open keeps its tabs: **Window → New Window** in a remote window, or starting CodeNomad again, reopens it. If a server cannot be loaded, its window says so and offers **Try again**, **Open a local window** and **Close window**; in the Tauri build, use the page's reload button and **Window → New Window**.
 
-Pasting a Remote Control pairing link saves only its tunnel origin and reports that server-side pairing is unavailable; the code is discarded. Open the link in the intended browser to pair there. See [Remote Control](remote-control.md).
+Pasting a fresh Remote Control pairing link saves its tunnel origin and pairs the local backend for browsing, with its device credential kept privately across launches. The code is discarded after the attempt. After revocation, choose **Back to Browse** and paste a fresh link into **Server address or link**. Embedded views pair independently. If server-side pairing is unavailable, update the remote server or use its direct-listener URL for password login; tunnel addresses require pairing. See [Remote Control](remote-control.md).
 
 ## Open a remote project in a tab {#remote-project-tabs}
 

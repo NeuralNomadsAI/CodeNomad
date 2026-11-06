@@ -11,12 +11,16 @@ Control remoto permite a un navegador o cliente de escritorio emparejado usar tu
 
 El enlace es válido durante **cinco minutos** y funciona **una vez**. Trátalo como una credencial: cualquiera que lo consuma puede convertirse en un dispositivo emparejado. El código está en el fragmento de la URL, no en la cadena de consulta. **Crear nuevo enlace de emparejamiento** invalida inmediatamente el enlace anterior sin usar. Detener, apagar el backend y los fallos del túnel cancelan los enlaces de emparejamiento pendientes.
 
-Abre los enlaces de emparejamiento en el navegador deseado. Pegarlos en **Dirección o enlace del servidor** del escritorio solo guarda el origen del túnel e informa de que el emparejamiento del lado del servidor no está disponible. El código se descarta. La exploración de carpetas del backend utiliza su propia sesión de acceso directo; la vista integrada conserva su inicio de sesión o cookie de dispositivo de forma independiente.
+Abre un enlace de emparejamiento en el navegador deseado o pega uno nuevo en **Dirección o enlace del servidor** del escritorio para guardar el servidor y emparejar el backend local para explorar carpetas mediante Control remoto. Cada enlace funciona una sola vez entre ambos métodos. El backend conserva su credencial de dispositivo de forma privada entre inicios; el código se descarta tras el intento. Las vistas integradas y ventanas remotas conservan su propia autenticación y pueden necesitar otro enlace.
+
+Los emparejamientos del backend aparecen como `CodeNomad · <nombre de host del backend>`. El nombre de host es una etiqueta declarada por el cliente; comprueba el destino y su certificado TLS antes de compartir un enlace. Eliminar el servidor guardado borra su credencial local de exploración; revocar su dispositivo termina el acceso. Para restaurarlo, elige **Volver a Explorar** y pega un enlace nuevo en **Dirección o enlace del servidor**. Si el código ha caducado o ya se ha usado, crea otro enlace; si aparece un límite de intentos, espera antes de reintentar. El emparejamiento del backend permite diez intentos por minuto entre todos los clientes del backend remoto.
+
+Si el servidor remoto indica que el emparejamiento del lado del servidor no está disponible, actualízalo o guarda su URL de escucha directa para usar el formulario de contraseña integrado. El inicio de sesión con contraseña usa el acceso directo; una dirección de túnel requiere emparejamiento.
 
 ## Gestionar dispositivos emparejados {#paired-devices}
 
 1. En el equipo anfitrión, vuelve a **Configuración → Acceso remoto → Control remoto**.
-2. Revisa **Dispositivos emparejados** y su hora de **Última actividad**. Cada dispositivo recibe el nombre de la plataforma y el navegador que lo emparejaron, como `iPhone · Safari`.
+2. Revisa **Dispositivos emparejados** y su hora de **Última actividad**. Los emparejamientos de navegador reciben el nombre de su plataforma y navegador, como `iPhone · Safari`.
 3. Elige **Revocar** para un dispositivo que ya no deba conectarse.
 
 La revocación finaliza las conexiones HTTP/SSE actuales del dispositivo y su acceso futuro. Vuelve a emparejarlo con un enlace nuevo para restaurar el acceso. Un dispositivo caduca tras **30 días sin uso**. Al alcanzar el **límite de 32 dispositivos**, un emparejamiento nuevo reemplaza el dispositivo con actividad más antigua y cierra sus conexiones.

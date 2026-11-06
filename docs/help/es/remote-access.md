@@ -83,7 +83,7 @@ Si un cliente muestra una advertencia de certificado, detente y comprueba el nom
 
 ## Guardar un servidor remoto {#saved-servers}
 
-1. En Inicio, una pestaña vacía o el lanzador **Abrir una pestaña**, abre **Explorar** e introduce la dirección o enlace de emparejamiento en **Dirección o enlace del servidor**. Pegar lo añade al instante; Intro confirma el texto escrito. Solo se guarda el servidor con su nombre de host y se enfoca su fila; el lanzador permanece abierto. Haz clic en la fila para explorar sus proyectos en la misma lista. **Configuración → Servidores** ofrece el mismo campo.
+1. En Inicio, una pestaña vacía o el lanzador **Abrir una pestaña**, abre **Explorar** e introduce la dirección o enlace de emparejamiento en **Dirección o enlace del servidor**. Pegar lo añade al instante; Intro confirma el texto escrito. Se guarda el servidor con su nombre de host y se enfoca su fila; un enlace de emparejamiento también empareja el backend local para explorar. El lanzador permanece abierto. Haz clic en la fila para explorar sus proyectos en la misma lista. **Configuración → Servidores** ofrece el mismo campo.
 2. Usa un origen HTTPS de confianza. Si su certificado no supera la verificación, aparece **Omitir la verificación TLS** bajo el campo: márcala solo para un servidor de confianza y pulsa Intro de nuevo para guardarlo. Elegir una carpeta o proyecto de ese perfil abre su propia ventana.
 3. Elige su fila en **Explorar** para ver los proyectos en la misma lista. Si se solicita, introduce usuario y contraseña del servidor en el formulario integrado. Cambia su nombre o dirección con **Editar servidor** en **Configuración → Servidores**.
 
@@ -93,7 +93,7 @@ Para abrir un servidor guardado directamente desde la línea de comandos, inicia
 
 Una ventana remota siempre deja una forma de volver a este equipo. Cerrar la última ventana local mientras siguen abiertas ventanas remotas conserva sus pestañas: **Ventana → Nueva ventana** en una ventana remota, o iniciar CodeNomad de nuevo, la vuelve a abrir. Si un servidor no se puede cargar, su ventana lo indica y ofrece **Reintentar**, **Abrir una ventana local** y **Cerrar ventana**; en la versión Tauri, usa el botón de recarga de la página y **Ventana → Nueva ventana**.
 
-Pegar un enlace de Control remoto solo guarda el origen del túnel e informa de que el emparejamiento del lado del servidor no está disponible; el código se descarta. Abre el enlace en el navegador deseado para emparejarlo. Consulta [Control remoto](remote-control.md).
+Pegar un enlace nuevo de Control remoto guarda el origen del túnel y empareja el backend local para explorar; su credencial de dispositivo se conserva de forma privada entre inicios. El código se descarta tras el intento. Tras una revocación, elige **Volver a Explorar** y pega un enlace nuevo en **Dirección o enlace del servidor**. Las vistas integradas se emparejan por separado. Si el emparejamiento del lado del servidor no está disponible, actualiza el servidor remoto o usa su URL de escucha directa para iniciar sesión con contraseña; las direcciones de túnel requieren emparejamiento. Consulta [Control remoto](remote-control.md).
 
 ## Abrir un proyecto remoto en una pestaña {#remote-project-tabs}
 

@@ -53,7 +53,7 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
 - `request-origin.ts` is the only authority for local privileges:
   `isLocalRequest()` requires a loopback peer **and** a non-ingress socket.
 - `gate.ts` runs before CORS, authentication and routing. It requires the exact
-  tunnel `Host` and the public `Origin` on mutations, and strips forwarding
+   tunnel `Host` and the public `Origin` on browser mutations, and strips forwarding
   headers. It accepts origin-form targets only (no absolute-form, leading `//`
   or fragment, which the router would reinterpret) and judges the path the
   router routes (`server/routed-path.ts`). It denies host-only paths: login and token
@@ -73,7 +73,8 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   `pairingRequired`. The recovery dialog then explains how to pair again
   instead of offering password login, keeping the page and its drafts.
   Pairing from another tab restores it on the next check.
-- `devices.ts` issues one five-minute, single-use pairing code. The link carries
+- `devices.ts` issues one 192-bit, five-minute, single-use pairing code shared by
+   browser and server pairing. Consuming it through either route exhausts it for both. The link carries
   it in the fragment, never in the query or a log. It stores SHA-256 hashes of
   device credentials and expires devices after 30 days without use.
   `__Host-codenomad_device` is `Secure; HttpOnly; SameSite=Lax`. Revocation,
@@ -82,19 +83,68 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   only once Remote Control is used.
 - Remote devices authenticate even with `--dangerously-skip-auth`, and the
   local session cookie is never accepted on the ingress.
-- Browser pairing consumes the link in the intended browser/profile. The remote
-  gate requires its exact public browser `Origin` on mutations, while the direct
-  listener refuses the pair route. Backend remote-server requests omit `Origin`,
-  so `connect` with a pairing link returns `pairing_unavailable`. The desktop
-  saves only the tunnel-origin profile, reports localized server-side pairing
-  unavailable and discards the code. Never keep it in persisted state or a native
-  pending-entry map. Embedded views retain their own remote-window authentication;
-  the backend Browse session is independent of a view's paired-device cookie
-  ([PROJECTS.md](PROJECTS.md#agent-conventions)).
+- Browser pairing consumes the link in the intended browser/profile through
+   `/api/remote-control/pair`. Its exact public `Origin` checks remain mandatory.
+   Direct listeners refuse both pairing routes. Pasting a pairing link into the
+   desktop server-add field saves the tunnel-origin profile and asks the local
+   backend to redeem the code through the server protocol below. Embedded views
+   retain their own remote-window authentication, independently of backend Browse
+   pairing ([PROJECTS.md](PROJECTS.md#agent-conventions)). Never persist a pairing
+   code or retain it for native opening.
 - `--connect-server` opens a saved server or URL at launch through that same
   connect flow ([architecture.md](architecture.md#native-profiles-windows-and-client-state)).
   It refuses URLs with user info or a fragment, so a pairing code or password
-  never travels on a command line; open pairing links in the intended browser.
+   never travels on a command line; use the server-add field or the intended browser for pairing links.
+
+## Backend-to-backend pairing
+
+`POST /api/remote-control/server-pair` is a dedicated HTTPS tunnel-ingress
+protocol. `server-pairing.ts` guards its exact routed path before CORS, authentication
+and routing; the remote gate exempts only that path from browser mutation `Origin`
+requirements. The direct listener returns 404. Never forge an `Origin` to pair.
+
+- Require `X-CodeNomad-Server-Pairing: 1`, exact `Content-Type: application/json`,
+  and a body of at most 4096 bytes: `{code, hostName}`, with a 32-character base64url
+  code and a hostname of at most 255 characters.
+- Refuse every non-POST and any presence of `Origin` (including `null`), `Cookie`,
+  `Cookie2`, `Authorization`, `Proxy-Authorization`, `Referer`, `sec-fetch-*` or
+  `access-control-request-*` headers before CORS. Responses carry `Cache-Control:
+  no-store`, omit CORS and `Set-Cookie`, and return `{device, credential}` only to
+  the calling backend on success. Code possession is the authorization; excluding
+  ambient authentication and browser/preflight metadata confines this exchange
+  to the explicit protocol while browser pairing keeps its own admission checks.
+- A global bucket per remote backend allows ten attempts per minute on this
+  route and returns 429 with `Retry-After` when exhausted. This bounds redemption
+  work and guessing; competing clients can exhaust the shared bucket and delay
+  legitimate server pairing. Browser pairing retains its existing behavior.
+- The device uses the shared registry's 30-day idle expiry, revocation and
+  least-recently-seen eviction. Its display name is `CodeNomad · <backend hostname>`:
+  a self-reported label, with identity assurance supplied by code possession and
+  the TLS endpoint rather than hostname attestation.
+
+The local backend validates an HTTPS pairing link against the exact saved origin
+before DNS resolution. A fresh, cookie-free, bounded exchange strips Undici Fetch
+metadata, follows the saved TLS policy and endpoint-identity checks, and refuses
+redirects and foreign origins. It verifies `/api/auth/status` reports device
+authentication before persisting the device cookie in private
+`remote-server-credentials.json` (mode `0600`). Protect the configuration directory
+and its platform permissions as credential storage. The local UI receives only
+success; secrets stay out of UI state and logs, and the add field is scrubbed after
+the attempt. Never retain codes for retries.
+
+The credential survives local launches. Forgetting the saved server deletes it;
+revocation clears the rejected credential and returns Browse to its inline
+password form. To repair tunnel browsing, use Back to Browse and paste a fresh
+pairing link into the add field. Native embedded views pair separately.
+
+Compatibility is capability-based: an endpoint returning 403 (including an older
+browser-Origin rejection), 404 or 405 maps to `pairing_unavailable` and offers
+inline password recovery. Password login on tunnel ingress remains host-only:
+update the remote server for backend pairing, or save its direct-listener URL for
+password access. Invalid, expired or replayed codes map to `pairing_expired`
+(`pairingExpired` in UI translations); 429 maps to `pairing_rate_limited`
+(`pairingRateLimited`). Obtain a fresh link for expired codes and wait before
+retrying a rate-limited attempt.
 
 ## Validation
 

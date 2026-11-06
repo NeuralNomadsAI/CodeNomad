@@ -83,7 +83,7 @@ Meldet ein Client eine Zertifikatswarnung, halten Sie an und prüfen Sie Hostnam
 
 ## Remote-Server speichern {#saved-servers}
 
-1. Öffnen Sie auf der Startseite, einem leeren Tab oder im Starter **Tab öffnen** den Bereich **Durchsuchen**. Geben Sie Adresse oder Kopplungslink in **Serveradresse oder -link** ein: Einfügen fügt sofort hinzu, die Eingabetaste bestätigt getippten Text. Der Server wird nur unter seinem Hostnamen gespeichert und seine Zeile fokussiert; der Starter bleibt offen. Klicken Sie auf diese Zeile, um Projekte an Ort und Stelle zu durchsuchen. **Einstellungen → Server** bietet dasselbe Feld.
+1. Öffnen Sie auf der Startseite, einem leeren Tab oder im Starter **Tab öffnen** den Bereich **Durchsuchen**. Geben Sie Adresse oder Kopplungslink in **Serveradresse oder -link** ein: Einfügen fügt sofort hinzu, die Eingabetaste bestätigt getippten Text. Der Server wird unter seinem Hostnamen gespeichert und seine Zeile fokussiert; ein Kopplungslink koppelt außerdem das lokale Backend für die Ordnersuche. Der Starter bleibt offen. Klicken Sie auf diese Zeile, um Projekte an Ort und Stelle zu durchsuchen. **Einstellungen → Server** bietet dasselbe Feld.
 2. Verwenden Sie einen vertrauenswürdigen HTTPS-Ursprung. Besteht sein Zertifikat die Prüfung nicht, erscheint unter dem Feld **TLS-Prüfung überspringen**: Aktivieren Sie dies nur für einen vertrauenswürdigen Server und speichern Sie erneut mit der Eingabetaste. Die Auswahl eines Ordners oder Projekts dieses Profils öffnet ein eigenes Fenster.
 3. Wählen Sie seine Zeile unter **Durchsuchen**, um Projekte an Ort und Stelle zu durchsuchen. Geben Sie bei Bedarf Benutzername und Passwort im eingeblendeten Formular ein. Name und Adresse ändern Sie mit **Server bearbeiten** unter **Einstellungen → Server**.
 
@@ -93,7 +93,7 @@ Um einen gespeicherten Server direkt von der Befehlszeile zu öffnen, starten Si
 
 Ein Remote-Fenster lässt immer einen Weg zurück zu diesem Computer. Wenn Sie das letzte lokale Fenster schließen, während Remote-Fenster geöffnet bleiben, behält es seine Tabs: **Fenster → Neues Fenster** in einem Remote-Fenster oder ein erneuter Start von CodeNomad öffnet es wieder. Kann ein Server nicht geladen werden, zeigt sein Fenster das an und bietet **Erneut versuchen**, **Lokales Fenster öffnen** und **Fenster schließen**; in der Tauri-Version verwenden Sie die Schaltfläche zum Neuladen der Seite und **Fenster → Neues Fenster**.
 
-Das Einfügen eines Fernsteuerungslinks speichert nur den Tunnel-Ursprung und meldet, dass serverseitige Kopplung nicht verfügbar ist; der Code wird verworfen. Öffnen Sie den Link zum Koppeln im gewünschten Browser. Siehe [Fernsteuerung](remote-control.md).
+Das Einfügen eines frischen Fernsteuerungslinks speichert den Tunnel-Ursprung und koppelt das lokale Backend für die Ordnersuche. Seine Gerätezugangsdaten bleiben privat über Neustarts hinweg gespeichert; der Code wird nach dem Versuch verworfen. Wählen Sie nach einem Widerruf **Zurück zu Durchsuchen** und fügen Sie einen frischen Link in **Serveradresse oder -link** ein. Eingebettete Ansichten werden separat gekoppelt. Ist serverseitige Kopplung nicht verfügbar, aktualisieren Sie den entfernten Server oder nutzen Sie seine direkte Listener-URL zur Passwortanmeldung; Tunneladressen erfordern Kopplung. Siehe [Fernsteuerung](remote-control.md).
 
 ## Ein Remote-Projekt in einem Tab öffnen {#remote-project-tabs}
 

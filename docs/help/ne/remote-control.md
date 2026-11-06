@@ -11,12 +11,16 @@ Remote Control ले paired browser वा desktop client लाई inbound net
 
 link **पाँच मिनेट** मान्य हुन्छ र **एकपटक** सफल हुन्छ। credential झैं लिनुहोस्: प्रयोग गर्ने जोकोही paired device बन्न सक्छ। code URL fragment मा हुन्छ, query string मा होइन। **नयाँ जोडी लिंक बनाउनुहोस्** ले अघिल्लो unused link तुरुन्त अमान्य गर्छ। Stop, backend shutdown र tunnel failure ले बाँकी pairing link रद्द गर्छन्।
 
-Pairing link इच्छित browser मा खोल्नुहोस्। Desktop को **सर्भरको ठेगाना वा लिङ्क** मा टाँस्दा tunnel origin मात्र बचत हुन्छ र server-side pairing उपलब्ध नभएको त्रुटि देखिन्छ। Code हटाइन्छ। Backend को folder browsing ले आफ्नै direct-access session प्रयोग गर्छ; embedded view ले आफ्नो sign-in वा device cookie स्वतन्त्र रूपमा राख्छ।
+Pairing link इच्छित browser मा खोल्नुहोस्, वा नयाँ link desktop को **सर्भरको ठेगाना वा लिङ्क** मा टाँस्नुहोस्। यसले सर्भर बचत गरी Remote Control बाट folder browsing गर्न local backend pair गर्छ। दुवै विधि मिलाएर प्रत्येक link एक पटक मात्र चल्छ। Backend ले आफ्नो device credential निजी रूपमा राख्छ र अर्को launch मा पनि प्रयोग गर्छ; प्रयासपछि code हटाइन्छ। Embedded view र remote window का आफ्नै authentication हुन्छन् र छुट्टै pairing link चाहिन सक्छ।
+
+Backend pairing device सूचीमा `CodeNomad · <backend hostname>` देखिन्छ। Hostname client ले आफैँ दिएको label हो; link बाँड्नुअघि destination र TLS certificate जाँच्नुहोस्। बचत गरिएको सर्भर हटाउँदा यसको local browsing credential मेटिन्छ; device revoke गर्दा पहुँच बन्द हुन्छ। Browsing फर्काउन **ब्राउजमा फर्कनुहोस्** छानी नयाँ link **सर्भरको ठेगाना वा लिङ्क** मा टाँस्नुहोस्। Expired वा प्रयोग भइसकेको code भए नयाँ link बनाउनुहोस्; rate-limit त्रुटि भए फेरि प्रयास गर्नुअघि पर्खनुहोस्। Backend pairing मा remote backend का सबै client मिलाएर प्रति मिनेट दस प्रयासको सीमा छ।
+
+Remote server ले server-side pairing उपलब्ध नभएको देखाएमा त्यसलाई update गर्नुहोस् वा inline password form प्रयोग गर्न यसको direct-listener URL बचत गर्नुहोस्। Password login direct access बाट उपलब्ध हुन्छ; tunnel address लाई pairing चाहिन्छ।
 
 ## paired device व्यवस्थापन {#paired-devices}
 
 1. host मा **सेटिङहरू → रिमोट पहुँच → रिमोट कन्ट्रोल** फर्कनुहोस्।
-2. **जोडिएका उपकरणहरू** र तिनको **अन्तिम पटक:** समय समीक्षा गर्नुहोस्। हरेक device लाई त्यसलाई pair गर्ने platform र browser अनुसार नाम दिइन्छ, जस्तै `iPhone · Safari`।
+2. **जोडिएका उपकरणहरू** र तिनको **अन्तिम पटक:** समय समीक्षा गर्नुहोस्। Browser pairing लाई त्यसको platform र browser अनुसार नाम दिइन्छ, जस्तै `iPhone · Safari`।
 3. अब जोडिन नहुने device का लागि **हटाउनुहोस्** रोज्नुहोस्।
 
 revocation ले हालका HTTP/SSE जडान र भावी पहुँच दुवै अन्त्य गर्छ। पहुँच फर्काउन नयाँ link बाट pair गर्नुहोस्। device **30 दिन प्रयोग नभएपछि** expire हुन्छ। **32-device सीमा** मा नयाँ pairing ले सबैभन्दा पुरानो last-seen device बदल्छ र त्यसका जडान बन्द गर्छ।
