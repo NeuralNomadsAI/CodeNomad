@@ -18,21 +18,23 @@ const PAIR_TEMPLATE_URL = new URL("./auth-pages/remote-pair.html", import.meta.u
 let pairTemplate: string | null = null
 
 export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDeps) {
-  // One bounded global bucket per backend, independent of untrusted peer/forwarded metadata.
-  let attempts = 0
+  // One failure bucket per backend, independent of untrusted peer/forwarded metadata.
+  let failedAttempts = 0
   let resetsAt = 0
   app.post(SERVER_PAIR_PATH, { bodyLimit: 4096, config: { cors: false } }, async (request, reply) => {
     reply.header("Cache-Control", "no-store")
     if (!isRemoteRequest(request)) return reply.code(404).send({ error: "Not found" })
     if (!validServerPairRequest(request)) return reply.code(403).send({ error: "Server pairing request rejected" })
-    const now = Date.now()
-    if (now >= resetsAt) { attempts = 0; resetsAt = now + 60_000 }
-    if (++attempts > 10) return reply.header("Retry-After", String(Math.max(1, Math.ceil((resetsAt - now) / 1000)))).code(429).send({ error: "Pairing rate limited" })
     const parsed = ServerPairBody.safeParse(request.body)
+    // The 192-bit code is checked and consumed atomically before throttling failures;
+    // unauthenticated guesses must never lock out a holder of the valid code.
+    const paired = parsed.success ? deps.manager.exchangePairing(parsed.data.code, undefined, parsed.data.hostName) : null
+    if (paired) return { device: paired.device, credential: paired.token }
+    const now = Date.now()
+    if (now >= resetsAt) { failedAttempts = 0; resetsAt = now + 60_000 }
+    if (++failedAttempts > 10) return reply.header("Retry-After", String(Math.max(1, Math.ceil((resetsAt - now) / 1000)))).code(429).send({ error: "Pairing rate limited" })
     if (!parsed.success) return reply.code(400).send({ error: "Invalid server pairing body" })
-    const paired = deps.manager.exchangePairing(parsed.data.code, undefined, parsed.data.hostName)
-    if (!paired) return reply.code(401).send({ error: "This pairing link is invalid, already used or expired" })
-    return { device: paired.device, credential: paired.token }
+    return reply.code(401).send({ error: "This pairing link is invalid, already used or expired" })
   })
 
   app.get("/api/remote-control/status", async (request) => {

@@ -113,10 +113,16 @@ requirements. The direct listener returns 404. Never forge an `Origin` to pair.
   the calling backend on success. Code possession is the authorization; excluding
   ambient authentication and browser/preflight metadata confines this exchange
   to the explicit protocol while browser pairing keeps its own admission checks.
-- A global bucket per remote backend allows ten attempts per minute on this
-  route and returns 429 with `Retry-After` when exhausted. This bounds redemption
-  work and guessing; competing clients can exhaust the shared bucket and delay
-  legitimate server pairing. Browser pairing retains its existing behavior.
+- Valid codes are checked and atomically consumed through the manager exchange
+  before the global failure bucket: successful pairings always proceed, even
+  after an anonymous failure flood, and never count toward the quota. The bucket
+  allows ten failure responses per minute per remote backend, then returns 429
+  with `Retry-After`. Replayed codes remain invalid and receive 401 or 429 according
+  to the failure budget. The cryptographically random 192-bit code expires after
+  300 seconds; even at one million guesses per second, the chance of guessing it
+  is below 4.8 × 10^-50. Code entropy supplies the guessing resistance; the quota
+  throttles failure responses while keeping valid links redeemable. Browser
+  pairing has no failure quota and keeps its exact public `Origin` checks.
 - The device uses the shared registry's 30-day idle expiry, revocation and
   least-recently-seen eviction. Its display name is `CodeNomad · <backend hostname>`:
   a self-reported label, with identity assurance supplied by code possession and

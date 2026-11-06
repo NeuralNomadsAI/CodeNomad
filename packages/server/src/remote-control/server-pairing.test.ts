@@ -76,6 +76,17 @@ test("browser/ambient auth headers and every non-POST fail before CORS without c
   assert.equal((await send(f.target(), f.code)).status, 200)
 })
 
+test("ten wrong codes cannot lock out a fresh valid code or permit its replay", async t => {
+  const f = await startRemoteSurface(t)
+  for (let i = 0; i < 10; i++) assert.equal((await send(f.target(), "x".repeat(32))).status, 401)
+  const valid = new URL(f.manager.createPairing().url).hash.slice(1)
+  assert.equal((await send(f.target(), valid)).status, 200)
+  assert.equal(f.manager.devices().length, 1)
+  assert.notEqual((await send(f.target(), valid)).status, 200)
+  assert.equal((await send(f.target(), valid, { path: "/api/remote-control/pair", headers: { origin: `https://${FAKE_TUNNEL_HOST}` } })).status, 401)
+  assert.equal(f.manager.devices().length, 1)
+})
+
 test("strict bodies, expiry and wrong codes are refused; only the server route has a bounded limiter", async t => {
   let now = Date.now()
   const f = await startRemoteSurface(t, { now: () => now })
@@ -90,9 +101,13 @@ test("strict bodies, expiry and wrong codes are refused; only the server route h
   assert.equal((await send(f.target(), f.code)).status, 401)
   for (let i = 0; i < 5; i++) assert.equal((await send(f.target(), "x".repeat(32))).status, 401)
   const next = new URL(f.manager.createPairing().url).hash.slice(1)
+  assert.equal((await send(f.target(), next)).status, 200, "a valid code bypasses the failure quota")
+  assert.equal(f.manager.devices().length, 1)
   const limited = await send(f.target(), next)
   assert.equal(limited.status, 429)
   assert.match(String(limited.headers["retry-after"]), /^[1-6]?[0-9]$/)
   privateResponse(limited)
-  assert.equal((await send(f.target(), next, { path: "/api/remote-control/pair", headers: { origin: `https://${FAKE_TUNNEL_HOST}` } })).status, 200, "browser flow stays independent")
+  assert.equal((await send(f.target(), next, { path: "/api/remote-control/pair", headers: { origin: `https://${FAKE_TUNNEL_HOST}` } })).status, 401, "redemption consumes the shared browser code")
+  const browserCode = new URL(f.manager.createPairing().url).hash.slice(1)
+  assert.equal((await send(f.target(), browserCode, { path: "/api/remote-control/pair", headers: { origin: `https://${FAKE_TUNNEL_HOST}` } })).status, 200, "browser flow stays independent")
 })
