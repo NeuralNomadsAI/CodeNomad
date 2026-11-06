@@ -204,7 +204,9 @@ Mutation callbacks freshly read configuration authority under that lock, then
 reject disabled writes. Human review remains readable while disabled. Disabling
 uses the lock independently of stored entry parsing, so malformed scopes remain
 disableable. Settings writes refresh authoritative configuration before merging
-to preserve external fields.
+to preserve external fields. Speech URL/credential pairing reads that same fresh
+configuration inside the write lock, together with its merge, for document and
+owner patches.
 
 Reads return content-derived SHA-256 revisions over all entry fields. Explicit-ID
 saves and deletes require the displayed revision; stale or missing entries yield
@@ -288,7 +290,9 @@ failures trigger the same best-effort named-entry cleanup and admit the prompt.
 both native Preferences and embedded Settings. The Memory switch reads and
 updates `server.memoryEnabled` (default false); the scope selector and editor
 are visible while enabled. The server keeps stored entries when disabled.
-Project context uses the shared Preferences resolver; without an authorized
+Project context uses the shared Preferences resolver. Embedded Settings resolves
+the main window's active project and selected session Location on General demand;
+native Preferences keeps its explicit resolved context. Without an authorized
 project only About you can be selected. Titles/types/text have localized labels
 in all ten UI languages, and supplementary copy uses `SettingsInfoTip`.
 The cleanup action and its info tip wrap as one group. Editable title/text fields
@@ -296,6 +300,8 @@ derive direction from their contents, and list titles use bidirectional isolatio
 
 `stores/agent-memory.ts` owns demand reads, draft preservation, stale-response
 fencing and coalesced trailing invalidation after `memory.changed` or reconnect.
+Mutation replies check their context generation before changing drafts and only
+replace the draft version sent by that mutation, preserving newer edits.
 The list's `scopeKey` identifies the resolved namespace, and its server-generated
 `observedAt` is captured before the read. A successful read advances a monotonic
 localStorage consultation frontier per namespace. Each visit freezes the previous

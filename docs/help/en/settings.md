@@ -41,7 +41,7 @@ Sending continues during a memory outage. CodeNomad attempts to remove the sessi
 Open **Preferences → General → Memory** (or **Settings → General** in a browser). Memory is off by default. Enable it to let the agent keep useful facts and preferences across conversations. The switch applies to the connected CodeNomad configuration; disabling it retains saved entries and their history.
 
 - **About you**: up to 60 entries shared across projects using this configuration.
-- **Project**: up to 200 entries, selected from the conversation's directory. The server identifies the repository by its normalized Git remote address, falling back to its local repository path; worktrees share this memory. Open a project to select this scope.
+- **Project**: up to 200 entries. This interface uses the project selected in Preferences, or the main window's active project in embedded Settings. The agent's `codenomad_memory` tool and session instructions use that session's directory. The server identifies the repository by its normalized Git remote address, falling back to its local repository path; worktrees share this memory. Open a project to select this scope.
 
 Each session, including subsessions, receives recording rules and a bounded list of titles and types (the instruction block is at most about 8,000 characters). The agent is instructed to read relevant entries with `codenomad_memory` before acting, verify claims against current files and commands, and acknowledge saves. Even an empty memory carries the recording rules. Unreadable scopes are omitted as unavailable. When OpenCode lacks the optional session-instructions capability, memory integration stays silently inactive and keeps your saved choice.
 

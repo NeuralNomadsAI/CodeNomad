@@ -41,7 +41,7 @@ Bellek arızasında gönderim devam eder. CodeNomad oturumun eski bellek talimat
 **Tercihler → Genel → Bellek** yolunu açın (tarayıcıda **Ayarlar → Genel**). Bellek varsayılan olarak kapalıdır. Ajanın yararlı bilgileri ve tercihleri konuşmalar arasında saklaması için etkinleştirin. Anahtar bağlı CodeNomad yapılandırması için geçerlidir; kapatmak kayıtları ve geçmişlerini korur.
 
 - **Hakkınızda**: bu yapılandırmayı kullanan projeler arasında paylaşılan en fazla 60 kayıt.
-- **Proje**: konuşmanın klasörüne göre seçilen en fazla 200 kayıt. Sunucu depoyu normalleştirilmiş Git uzak adresiyle, bu yoksa yerel depo yoluyla tanımlar; worktree’ler bu belleği paylaşır. Bu kapsamı seçmek için bir proje açın.
+- **Proje**: en fazla 200 kayıt. Bu arayüz Tercihler’de seçilen projeyi, gömülü Ayarlar ise ana pencerenin etkin projesini kullanır. Ajanın `codenomad_memory` aracı ve oturum talimatları o oturumun klasörünü kullanır. Sunucu depoyu normalleştirilmiş Git uzak adresiyle, bu yoksa yerel depo yoluyla tanımlar; worktree’ler bu belleği paylaşır. Bu kapsamı seçmek için bir proje açın.
 
 Alt oturumlar dahil her oturum kayıt kurallarını ve sınırlı bir başlık ve tür listesini alır (talimat bloğu en fazla yaklaşık 8.000 karakterdir). Ajana işlem yapmadan önce ilgili kayıtları `codenomad_memory` ile okuması, iddiaları güncel dosya ve komutlarla doğrulaması ve kaydettiklerini belirtmesi söylenir. Boş bellek de kayıt kurallarını alır. Okunamayan kapsamlar kullanılamaz olarak dışarıda bırakılır. OpenCode isteğe bağlı oturum talimatı yeteneğine sahip değilse entegrasyon sessizce devre dışı kalır ve seçiminizi korur.
 
