@@ -56,8 +56,9 @@ server's listeners share this instance. Its lazily initialized repository is
 `projects/<projectId>/<id>.md`. Project IDs use the resolver's SHA-256 namespace.
 Missing folders read as empty; invalid UTF-8, malformed or extra header fields,
 duplicate YAML keys, filename/header mismatches, symbolic links and unreadable
-files produce explicit scope errors. Storage bounds encoded files and journals to 16 KiB and
-preserve Markdown content, including trailing whitespace and line endings.
+files produce explicit scope errors. Storage bounds encoded files and journals
+to 16 KiB and preserves Markdown content, including trailing whitespace and line
+endings.
 
 The server policy calls `mutate(namespace, decide)` to read a fresh scope and
 choose `{ kind: "save", entry, result }`, `{ kind: "delete", id, result }` or
@@ -80,12 +81,29 @@ recognizes the transaction ID and tree at the current commit to avoid duplicate
 history. Corrupt recovery data fails explicitly.
 
 `memory/lock.ts` atomically publishes a populated `memory.lock/` directory next
-to the repository. Live or inaccessible owner processes retain ownership;
-contenders wait up to 30 seconds. A demonstrably exited PID permits recovery.
-PID reuse conservatively retains the lock. Recovery keeps a nonempty
-`memory.lock.dead-<nonce>/` marker so concurrent recovery attempts cannot move a
-successor's lock. These small ownership markers remain beside the repository.
-Incomplete unpublished candidates have unique names and leave acquisition free.
+to the repository. Its owner records a nonce, PID, native process-start identity,
+hostname and platform. The shared `host-lifetime/process-identity.ts` adapter
+qualifies the process generation: Linux boot ID/start ticks, Windows creation
+ticks or the macOS native creation identity. The current process caches its own
+qualified identity; failed qualification remains retryable. macOS execution uses
+the bundled process-identity helper built by `build:host-helpers`.
+
+Contenders wait up to 30 seconds for a matching live owner. A confirmed exit or a
+different start identity proves that the recorded generation ended, including
+when its PID belongs to another live process. Unknown process evidence and a
+different execution host yield an explicit conflict while preserving ownership.
+Records containing only a PID qualify for recovery after a confirmed PID exit.
+After probing, the contender rereads the exact owner before recovery, fencing a
+normal release and successor publication during the probe. Age remains only an
+operation timeout; never use it to infer owner death.
+
+Release verifies the nonce before each retirement attempt and retries Windows
+sharing violations for up to 30 seconds. Atomic retirement frees the public name
+before private-directory cleanup. Cleanup retries apply only to that private
+directory; residual private artifacts leave future acquisition free. Recovery
+keeps a nonempty `memory.lock.dead-<nonce>/` marker so concurrent recovery attempts
+cannot move a successor's lock into the same destination. These small fencing
+markers remain beside the repository and leave acquisition free.
 
 `memory/git.ts` uses `runGitProcess` and `requireHostGit`. Missing host Git keeps
 the shared `git_required` failure contract. Git commands explicitly name the
