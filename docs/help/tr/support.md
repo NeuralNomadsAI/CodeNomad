@@ -31,7 +31,7 @@ CodeNomad kontrolleri yerine yerel OpenCode yapılandırmasıyla ilgili sorunlar
 
 ## Kaynaktan derleyin {#build-from-source}
 
-`.node-version` ile sabitlenen Node.js sürümünü, npm, Git ve uyumlu OpenCode CLI kullanın. Komutları geliştirme çalışma kopyasında çalıştırın:
+`.node-version` dosyasında sabitlenen Node.js sürümü, npm, Git ve uyumlu OpenCode CLI kullanın. Komutları geliştirme çalışma kopyasında çalıştırın:
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git
