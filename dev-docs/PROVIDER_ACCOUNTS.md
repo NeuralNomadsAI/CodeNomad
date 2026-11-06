@@ -4,9 +4,11 @@
 
 Choosing a dropdown option activates that account service-wide; the account label
 is softer than the provider name. Add reuses the native Connect flow with the
-provider preselected; never build a second connection mechanism. Refreshes never
-overwrite explicit aliases; rename drafts survive refreshes, account switches and
-failed writes.
+provider preselected; never build a second connection mechanism. Configured
+providers with a non-environment connection method expose Add even with zero
+connections; the empty Active account selector stays disabled until connected.
+Refreshes never overwrite explicit aliases; rename drafts survive refreshes,
+account switches and failed writes.
 
 ## Login-derived names
 

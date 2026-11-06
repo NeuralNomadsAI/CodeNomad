@@ -5,7 +5,7 @@ Provider authentication belongs to the connected OpenCode service, not to the br
 ## Connect a model or search provider {#connect}
 
 1. Open a workspace, then **Settings → Providers**. **Models** starts expanded; expand **Web search** for search providers. **Images** holds the image settings.
-2. In that group, choose **Select provider**, then **Connect**.
+2. In that group, choose **Select provider**, then **Connect**. For a model provider already listed below, use **Add account** (+) in its row, including for its first connection.
 3. For a model provider, complete the native **Authentication method** offered: API key, OAuth or command. For OAuth, use **Open authorization page** and submit an authorization code only when requested. Search providers connect with an API key.
 4. Check the configured-provider row after completion. **Models** rereads after connections, account changes and reconnects; **Web search** also has **Refresh**.
 

@@ -5,7 +5,7 @@ Sağlayıcı kimlik doğrulaması, tarayıcı cihazına veya bir CodeNomad proje
 ## Bir modeli veya arama sağlayıcısını bağlayın {#connect}
 
 1. Çalışma alanı açıp **Ayarlar → Provider'lar** yoluna gidin. **Modeller** açık olarak başlar; arama sağlayıcıları için **Web araması** bölümünü genişletin. **Görseller** görsel ayarlarını içerir.
-2. O grupta **Provider seç** öğesini, ardından **Bağlan** öğesini seçin.
+2. O grupta **Provider seç** öğesini, ardından **Bağlan** öğesini seçin. Aşağıda zaten listelenen bir model sağlayıcısının ilk bağlantısı için de kendi satırındaki **Hesap ekle** (+) öğesini kullanın.
 3. Model sağlayıcısı için sunulan yerel **Kimlik doğrulama yöntemi** öğesini tamamlayın: API anahtarı, OAuth veya komut. OAuth için **Yetkilendirme sayfasını aç** öğesini kullanın ve yalnızca istendiğinde bir yetkilendirme kodu gönderin. Arama sağlayıcıları API anahtarıyla bağlanır.
 4. Tamamlandıktan sonra yapılandırılmış sağlayıcı satırını kontrol edin. **Modeller** bağlantılardan, hesap değişikliklerinden ve yeniden bağlanmalardan sonra yeniden okunur; **Web araması** bölümünde ayrıca **Yenile** vardır.
 

@@ -5,7 +5,7 @@ Anbieterauthentifizierung gehört zum verbundenen OpenCode-Dienst, nicht zum Bro
 ## Modell- oder Suchanbieter verbinden {#connect}
 
 1. Öffnen Sie einen Arbeitsbereich und dann **Einstellungen → Anbieter**. **Modelle** ist anfangs aufgeklappt; klappen Sie für Suchanbieter **Websuche** auf. **Bilder** enthält die Bildeinstellungen.
-2. Wählen Sie in dieser Gruppe zuerst **Anbieter auswählen**, dann **Verbinden**.
+2. Wählen Sie in dieser Gruppe zuerst **Anbieter auswählen**, dann **Verbinden**. Verwenden Sie bei einem bereits unten aufgeführten Modellanbieter **Konto hinzufügen** (+) in seiner Zeile, auch für die erste Verbindung.
 3. Durchlaufen Sie bei einem Modellanbieter die angebotene native **Authentifizierungsmethode**: API-Schlüssel, OAuth oder Befehl. Verwenden Sie bei OAuth **Autorisierungsseite öffnen** und übermitteln Sie einen Autorisierungscode nur auf Aufforderung. Suchanbieter verbinden sich mit einem API-Schlüssel.
 4. Prüfen Sie nach Abschluss die Zeile des konfigurierten Anbieters. **Modelle** liest nach Verbindungen, Kontoänderungen und Wiederverbindungen erneut; **Websuche** bietet zusätzlich **Aktualisieren**.
 

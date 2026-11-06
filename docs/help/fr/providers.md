@@ -5,7 +5,7 @@ L’authentification des fournisseurs appartient au service OpenCode connecté, 
 ## Connecter un fournisseur de modèles ou de recherche {#connect}
 
 1. Ouvrez un espace de travail, puis **Paramètres → Fournisseurs**. **Modèles** est déplié au départ ; dépliez **Recherche web** pour les fournisseurs de recherche. **Images** regroupe les réglages d'images.
-2. Dans ce groupe, choisissez **Sélectionner un fournisseur**, puis **Connecter**.
+2. Dans ce groupe, choisissez **Sélectionner un fournisseur**, puis **Connecter**. Pour un fournisseur de modèles déjà présent dans la liste, utilisez **Ajouter un compte** (+) dans sa ligne, y compris pour sa première connexion.
 3. Pour un fournisseur de modèles, effectuez la **Méthode d'authentification** native proposée : clé API, OAuth ou commande. Pour OAuth, utilisez **Ouvrir la page d'autorisation** et ne soumettez un code d’autorisation que si demandé. Les fournisseurs de recherche se connectent avec une clé API.
 4. Vérifiez la ligne du fournisseur configuré après la fin. **Modèles** relit l’état après les connexions, les changements de compte et les reconnexions ; **Recherche web** dispose aussi d’**Actualiser**.
 
