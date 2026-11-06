@@ -1,0 +1,2 @@
+# Vendored-crate patches apply to the published LF crates; keep them byte-exact on every checkout.
+packages/tauri-app/vendor/patches/*.patch -text
