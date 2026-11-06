@@ -467,6 +467,12 @@ jobs:
             echo "Electron deb does not contain an executable CodeNomad binary" >&2
             exit 1
           fi
+          # Electron addresses Linux dock badges (LauncherEntry) to its desktopName.
+          desktop_name=$(node -e "process.stdout.write(JSON.parse(require('@electron/asar').extractFile(process.argv[1], 'package.json')).desktopName ?? '')" "$extract_dir/opt/CodeNomad/resources/app.asar")
+          if [ "$desktop_name" != "CodeNomad.desktop" ]; then
+            echo "Electron desktopName '$desktop_name' must name the deb's CodeNomad.desktop" >&2
+            exit 1
+          fi
 
           resources_dir="$(dirname "$binary")/resources"
           node scripts/smoke-packaged-resources.cjs \

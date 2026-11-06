@@ -9,6 +9,7 @@
   },
   "type": "module",
   "main": "dist/main/main.js",
+  "desktopName": "CodeNomad.desktop",
   "repository": {
     "type": "git",
     "url": "https://github.com/NeuralNomadsAI/CodeNomad.git"
