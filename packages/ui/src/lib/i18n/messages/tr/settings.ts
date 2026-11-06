@@ -1,5 +1,4 @@
 export const settingsMessages = {
-  "providerUsage.usedCount": "{used} / {limit} kullanıldı",
   "providerUsage.usedCountOnly": "{used} kullanıldı",
   "providerUsage.windows.requests": "İstekler",
   "providerUsage.windows.perUserLimit": "Kullanıcı başına sınır",
@@ -8,7 +7,7 @@ export const settingsMessages = {
   "providerUsage.cursorTeamUnavailable": "Cursor takımı kullanılamıyor. Takım üyeliğinizi kontrol edin.",
   "providerUsage.cursorAccessDenied": "Cursor takım kullanımına erişimi reddetti. İzinlerinizi kontrol edin.",
   "providerUsage.cursorUsageUnavailable": "Cursor okunabilir kullanım veya sınır bilgisi sağlamadı.",
-  "providerUsage.creditsUsed": "{used} kredi kullanıldı",
+  "providerUsage.creditsUsed": "Kullanılan kredi: {used}",
   "providerUsage.unlimited": "Sınırsız",
   "providerUsage.copilotPlans.free": "Free",
   "providerUsage.copilotPlans.pro": "Pro",

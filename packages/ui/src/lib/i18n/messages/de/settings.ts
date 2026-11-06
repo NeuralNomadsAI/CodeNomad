@@ -1,5 +1,4 @@
 export const settingsMessages = {
-  "providerUsage.usedCount": "{used} / {limit} verbraucht",
   "providerUsage.usedCountOnly": "{used} verbraucht",
   "providerUsage.windows.requests": "Anfragen",
   "providerUsage.windows.perUserLimit": "Limit pro Nutzer",
@@ -8,7 +7,7 @@ export const settingsMessages = {
   "providerUsage.cursorTeamUnavailable": "Cursor-Team nicht verfügbar. Prüfen Sie Ihre Teammitgliedschaft.",
   "providerUsage.cursorAccessDenied": "Cursor verweigert den Zugriff auf die Teamnutzung. Prüfen Sie Ihre Teamberechtigungen.",
   "providerUsage.cursorUsageUnavailable": "Cursor hat keine lesbaren Nutzungsdaten oder Limits bereitgestellt.",
-  "providerUsage.creditsUsed": "{used} Credits verbraucht",
+  "providerUsage.creditsUsed": "Verbrauchte Credits: {used}",
   "providerUsage.unlimited": "Unbegrenzt",
   "providerUsage.copilotPlans.free": "Free",
   "providerUsage.copilotPlans.pro": "Pro",

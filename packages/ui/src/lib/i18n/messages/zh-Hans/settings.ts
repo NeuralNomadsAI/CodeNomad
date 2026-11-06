@@ -1,5 +1,4 @@
 export const settingsMessages = {
-  "providerUsage.usedCount": "已使用 {used} / {limit}",
   "providerUsage.usedCountOnly": "已使用 {used}",
   "providerUsage.windows.requests": "请求",
   "providerUsage.windows.perUserLimit": "每用户限额",
@@ -8,7 +7,7 @@ export const settingsMessages = {
   "providerUsage.cursorTeamUnavailable": "Cursor 团队不可用。请检查团队成员资格。",
   "providerUsage.cursorAccessDenied": "Cursor 拒绝访问团队用量。请检查您的权限。",
   "providerUsage.cursorUsageUnavailable": "Cursor 未提供可读取的用量或限额。",
-  "providerUsage.creditsUsed": "已使用 {used} 点数",
+  "providerUsage.creditsUsed": "已用点数：{used}",
   "providerUsage.unlimited": "无限制",
   "providerUsage.copilotPlans.free": "Free",
   "providerUsage.copilotPlans.pro": "Pro",

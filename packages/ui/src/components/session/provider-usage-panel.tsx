@@ -130,21 +130,27 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
     return key ? t(`providerUsage.windows.${key}`) : label
   }
 
+  const usedValue = (key: string, value: string) => {
+    const [before, after] = t(key).split("{used}")
+    return <>{before}<bdi dir="ltr">{value}</bdi>{after}</>
+  }
+
   const displayValue = (window: ProviderUsageWindow) => {
     const consumption = window.consumption
     const number = new Intl.NumberFormat(locale(), { maximumFractionDigits: 8 })
-    if (consumption && "used" in consumption) return consumption.limit === undefined
-      ? t("providerUsage.usedCountOnly", { used: number.format(consumption.used) })
-      : t("providerUsage.usedCount", { used: number.format(consumption.used), limit: number.format(consumption.limit) })
-    if (consumption && "creditsUsed" in consumption) return t("providerUsage.creditsUsed", { used: number.format(consumption.creditsUsed) })
+    if (consumption && "used" in consumption) return usedValue("providerUsage.usedCountOnly", consumption.limit === undefined
+      ? number.format(consumption.used) : `${number.format(consumption.used)} / ${number.format(consumption.limit)}`)
+    if (consumption && "creditsUsed" in consumption) return usedValue("providerUsage.creditsUsed", number.format(consumption.creditsUsed))
     if (consumption && "unlimited" in consumption) return t("providerUsage.unlimited")
-    if (window.limitUSD !== undefined) return new Intl.NumberFormat(locale(), { style: "currency", currency: "USD" }).format(window.limitUSD)
+    if (window.limitUSD !== undefined) return <bdi dir="ltr">{new Intl.NumberFormat(locale(), { style: "currency", currency: "USD" }).format(window.limitUSD)}</bdi>
     if (window.balanceUSD) {
       const money = new Intl.NumberFormat(locale(), { style: "currency", currency: "USD" })
-      return window.balanceUSD.total === undefined ? money.format(window.balanceUSD.remaining)
-        : `${money.format(window.balanceUSD.remaining)} / ${money.format(window.balanceUSD.total)}`
+      // Currency formatters may include RTL marks; isolate each amount as well as the ratio.
+      return <bdi dir="ltr"><bdi dir="ltr">{money.format(window.balanceUSD.remaining)}</bdi>
+        <Show when={window.balanceUSD.total !== undefined}>{" / "}<bdi dir="ltr">{money.format(window.balanceUSD.total!)}</bdi></Show>
+      </bdi>
     }
-    if (window.valueLabel) return window.valueLabel
+    if (window.valueLabel) return <bdi dir="ltr">{window.valueLabel}</bdi>
     if (window.usedPercent === null) return t("providerUsage.unavailableValue")
     return t("providerUsage.usedPercent", { percent: new Intl.NumberFormat(locale()).format(Math.round(window.usedPercent)) })
   }
@@ -199,9 +205,9 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
                     return (
                       <div>
                         <div class="mb-1 flex items-baseline justify-between gap-2 text-[11px] text-primary">
-                          <span class="font-medium">{windowLabel(label)}</span>
-                          <div class="flex min-w-0 items-baseline gap-1.5 text-right">
-                            <span class="shrink-0 font-medium">{displayValue(window())}</span>
+                          <span class="min-w-0 font-medium [overflow-wrap:anywhere]">{windowLabel(label)}</span>
+                          <div class="flex min-w-0 flex-wrap items-baseline justify-end gap-1.5 text-end">
+                            <span class="min-w-0 font-medium [overflow-wrap:anywhere]">{displayValue(window())}</span>
                             <Show when={resetLabel(window().resetAt)}>
                               {(reset) => (
                                 <>

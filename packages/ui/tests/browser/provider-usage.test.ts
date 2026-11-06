@@ -59,16 +59,16 @@ const fulfill = (route: Route, usedPercent: number) => route.fulfill({ contentTy
 }) })
 
 for (const [locale, usedTemplate, creditsTemplate, unlimited] of [
-  ["en-US", "{used} / {limit} used", "{used} credits used", "Unlimited"],
-  ["fr-FR", "{used} / {limit} utilisés", "{used} crédits utilisés", "Illimité"],
-  ["de-DE", "{used} / {limit} verbraucht", "{used} Credits verbraucht", "Unbegrenzt"],
-  ["es-ES", "{used} / {limit} usados", "{used} créditos usados", "Ilimitado"],
-  ["he-IL", "{used} / {limit} נוצלו", "{used} נקודות זכות נוצלו", "ללא הגבלה"],
-  ["ja-JP", "{used} / {limit} 使用済み", "{used} クレジット使用済み", "無制限"],
-  ["ne-NP", "{used} / {limit} प्रयोग भयो", "{used} क्रेडिट प्रयोग भयो", "असीमित"],
-  ["ru-RU", "{used} / {limit} использовано", "{used} кредитов использовано", "Без ограничений"],
-  ["tr-TR", "{used} / {limit} kullanıldı", "{used} kredi kullanıldı", "Sınırsız"],
-  ["zh-CN", "已使用 {used} / {limit}", "已使用 {used} 点数", "无限制"],
+  ["en-US", "{used} / {limit} used", "Credits used: {used}", "Unlimited"],
+  ["fr-FR", "{used} / {limit} utilisés", "Crédits utilisés : {used}", "Illimité"],
+  ["de-DE", "{used} / {limit} verbraucht", "Verbrauchte Credits: {used}", "Unbegrenzt"],
+  ["es-ES", "{used} / {limit} usados", "Créditos usados: {used}", "Ilimitado"],
+  ["he-IL", "{used} / {limit} נוצלו", "נקודות זכות שנוצלו: {used}", "ללא הגבלה"],
+  ["ja-JP", "{used} / {limit} 使用済み", "使用済みクレジット: {used}", "無制限"],
+  ["ne-NP", "{used} / {limit} प्रयोग भयो", "प्रयोग भएका क्रेडिट: {used}", "असीमित"],
+  ["ru-RU", "{used} / {limit} использовано", "Использовано кредитов: {used}", "Без ограничений"],
+  ["tr-TR", "{used} / {limit} kullanıldı", "Kullanılan kredi: {used}", "Sınırsız"],
+  ["zh-CN", "已使用 {used} / {limit}", "已用点数：{used}", "无限制"],
 ]) test(`Copilot renders localized consumption, unlimited credits and plan (${locale})`, async () => {
   const page = await browser.newPage({ locale })
   try {
@@ -80,14 +80,19 @@ for (const [locale, usedTemplate, creditsTemplate, unlimited] of [
     await requests[0].fulfill({ json: { ...base, copilotPlan: "enterprise", windows: {
       premium: { ...quotaWindow, usedPercent: 25.75, remainingPercent: 74.25, consumption: { used: 25.75, limit: 100 } },
       chat: { ...quotaWindow, consumption: { creditsUsed: 1234.125 } },
+      credits: { ...quotaWindow, consumption: { creditsUsed: 1 } },
+      billing_cycle: { ...quotaWindow, consumption: { creditsUsed: 0.5 } },
       completions: { ...quotaWindow, consumption: { unlimited: true } },
     } } })
     const formatted = await page.evaluate(locale => {
       const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 8 })
-      return [25.75, 100, 1234.125].map(value => number.format(value))
+      return [25.75, 100, 1234.125, 1, 0.5].map(value => number.format(value))
     }, locale === "zh-CN" ? "zh-Hans" : locale)
     await page.getByText(usedTemplate.replace("{used}", formatted[0]).replace("{limit}", formatted[1]), { exact: true }).waitFor()
-    await page.getByText(creditsTemplate.replace("{used}", formatted[2]), { exact: true }).waitFor()
+    for (const value of formatted.slice(2)) assert.equal(
+      await page.getByText(creditsTemplate.replace("{used}", value), { exact: true }).count(), 1,
+      "credit wording works for one and fractional values without number agreement",
+    )
     await page.getByText(unlimited, { exact: true }).waitFor()
     await page.getByText("GitHub Copilot · Enterprise", { exact: true }).waitFor()
     assert.equal(await page.getByRole("progressbar").count(), 1, "unlimited pools never get a percentage bar")
@@ -98,6 +103,90 @@ for (const [locale, usedTemplate, creditsTemplate, unlimited] of [
     await requests[1].fulfill({ json: { ...base, windows: { completions: { ...quotaWindow, consumption: { unlimited: true } } } } })
     await page.getByText("GitHub Copilot", { exact: true }).waitFor()
     assert.equal(await page.getByText(/providerUsage\.copilotPlans/).count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+for (const kind of ["consumption", "money"] as const) test(`Hebrew ${kind} ratios isolate left-to-right numbers inside right-to-left text`, async () => {
+  const page = await browser.newPage({ locale: "he-IL" })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1)
+    await requests[0].fulfill({ json: {
+      requestedProviderId: "github-copilot", providerId: "github-copilot", providerName: "GitHub Copilot",
+      supported: true, configured: true, ok: true, fetchedAt: Date.now(), windows: { premium: {
+        usedPercent: 25.75, remainingPercent: 74.25, resetAt: null, windowSeconds: null,
+        ...(kind === "consumption" ? { consumption: { used: 25.75, limit: 100 } } : { balanceUSD: { remaining: 75.5, total: 100 } }),
+      } },
+    } })
+    await page.getByRole("progressbar").waitFor()
+    await page.getByText("בקשות פרימיום", { exact: true }).waitFor()
+    const ratio = page.locator("[data-usage] span > bdi")
+    assert.equal(await ratio.count(), 1, "the complete numeric ratio has its own bidi isolate")
+    assert.equal(await ratio.getAttribute("dir"), "ltr")
+    const layout = await ratio.evaluate(element => {
+      const text = element.textContent!
+      const slash = text.indexOf("/")
+      const used = text.search(/[0-9]/)
+      const limit = slash + 1 + text.slice(slash + 1).search(/[0-9]/)
+      const [usedX, limitX] = [used, limit].map(offset => {
+        const range = document.createRange()
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+        let node: Node | null
+        while ((node = walker.nextNode())) {
+          if (offset < node.textContent!.length) {
+            range.setStart(node, offset)
+            range.setEnd(node, offset + 1)
+            break
+          }
+          offset -= node.textContent!.length
+        }
+        return range.getBoundingClientRect().x
+      })
+      return { direction: getComputedStyle(element).direction, bidi: getComputedStyle(element).unicodeBidi,
+        surroundingDirection: getComputedStyle(element.parentElement!).direction, usedX, limitX }
+    })
+    assert.equal(layout.direction, "ltr")
+    assert.equal(layout.bidi, "isolate")
+    assert.equal(layout.surroundingDirection, "rtl")
+    assert.ok(layout.usedX < layout.limitX, "used/remaining stays visually before the limit/total")
+    if (kind === "consumption") await page.getByText("25.75 / 100 נוצלו", { exact: true }).waitFor()
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("German monetary ratios wrap at 200px without overflow or truncation", async () => {
+  const page = await browser.newPage({ locale: "de-DE", viewport: { width: 200, height: 400 } })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1)
+    await requests[0].fulfill({ json: {
+      requestedProviderId: "openrouter", providerId: "openrouter", providerName: "OpenRouter",
+      supported: true, configured: true, ok: true, fetchedAt: Date.now(), windows: { key_limit: {
+        usedPercent: 24.495, remainingPercent: 75.505, resetAt: null, windowSeconds: null,
+        balanceUSD: { remaining: 7550.5, total: 10000 },
+      } },
+    } })
+    const value = page.getByText("7.550,50 $ / 10.000,00 $", { exact: true })
+    await value.waitFor()
+    const layout = await value.evaluate(element => {
+      const panel = document.querySelector<HTMLElement>("[data-usage]")!
+      const box = element.closest("span")!
+      const range = document.createRange()
+      range.selectNodeContents(element)
+      return { width: panel.getBoundingClientRect().width, scrollWidth: panel.scrollWidth, panelClientWidth: panel.clientWidth,
+        clientWidth: box.clientWidth, valueScrollWidth: box.scrollWidth,
+        lines: new Set(Array.from(range.getClientRects(), rect => rect.top)).size,
+        whiteSpace: getComputedStyle(box).whiteSpace, overflow: getComputedStyle(box).overflow,
+        textOverflow: getComputedStyle(box).textOverflow }
+    })
+    assert.equal(layout.width, 200)
+    assert.ok(layout.scrollWidth <= layout.panelClientWidth, "the panel fits its 200px container")
+    assert.ok(layout.valueScrollWidth <= layout.clientWidth, "the entire ratio fits its wrapping box")
+    assert.ok(layout.lines > 1, "the complete monetary ratio wraps onto multiple lines")
+    assert.equal(layout.whiteSpace, "normal")
+    assert.notEqual(layout.overflow, "hidden")
+    assert.notEqual(layout.textOverflow, "ellipsis")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

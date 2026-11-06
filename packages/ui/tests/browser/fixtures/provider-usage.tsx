@@ -25,6 +25,6 @@ function PreferencesControl() {
   return null
 }
 render(() => <ConfigProvider><PreferencesControl /><I18nProvider><Show when={mounted()}>
-  <div data-usage><ProviderUsagePanel instanceId={scope().instanceId} sessionId={scope().sessionId} directory={scope().directory}
+  <div data-usage class="border border-base bg-surface-secondary px-3 py-2"><ProviderUsagePanel instanceId={scope().instanceId} sessionId={scope().sessionId} directory={scope().directory}
     providerId={scope().providerId} modelId={scope().modelId} active={active()} /></div>
 </Show></I18nProvider></ConfigProvider>, document.getElementById("root")!)
