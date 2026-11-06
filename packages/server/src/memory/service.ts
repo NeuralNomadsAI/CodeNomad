@@ -109,7 +109,15 @@ export class MemoryService {
   }
 
   async executeUI(input: unknown, context?: MemoryContext): Promise<MemoryResult> {
-    return this.execute(input, () => this.uiTarget(context))
+    const operation = MemoryOperationSchema.safeParse(input)
+    const cleanupTarget = context && operation.success && operation.data.action === "list" ? await this.uiTarget(context) : undefined
+    const result = await this.execute(input, () => this.uiTarget(context))
+    if (cleanupTarget) {
+      if (JSON.stringify(await this.uiTarget(context)) !== JSON.stringify(cleanupTarget))
+        throw new MemoryError("conflict", "Memory project changed")
+      return { ...result, cleanupDirectory: cleanupTarget.directory }
+    }
+    return result
   }
 
   private async namespace(operation: MemoryOperation, target: () => Promise<MemoryProjectTarget>, agent: boolean): Promise<MemoryNamespace> {

@@ -35,6 +35,10 @@ SCP-style network addresses, strips credentials, query, fragment, surrounding
 slashes and `.git`, lowercases the host, preserves repository path case and every
 explicit port, and produces `authority/repository-path`. Equivalent SSH/SCP and
 HTTPS addresses without explicit ports share an identity.
+Repository identity decodes and re-encodes each path segment with canonical UTF-8
+percent escapes, sharing encoded/decoded spaces and Unicode spellings. Empty,
+dot-only, control and encoded path-separator segments fail validation. Forge web
+links retain their strict ASCII path policy.
 
 An absent or unparseable selected remote uses the shared repository's physical
 root: the parent of its common `.git` directory, or the physical common Git
@@ -348,6 +352,11 @@ creation/removal in the scope and Git publication directories, and opens existin
 entry/index/ref files for update without changing their contents. Probes leave
 entry bytes and commit history intact; normal writes retain their authoritative
 checks because filesystem permissions can change after a snapshot.
+Lists with a project context also return `cleanupDirectory`, the server-authorized
+execution-host directory, with ownership rechecked after the read. Cleanup compares
+the created session against this canonical directory, so WSL UNC requests match
+their Linux Location. A failed post-creation check keeps the session discoverable
+in the project's session inventory and shows the localized cleanup failure.
 
 `lib/native/memory-cleanup-command.ts` defines the fixed scope/project/request-ID
 intent. Electron and Tauri accept it only from the trusted Preferences main

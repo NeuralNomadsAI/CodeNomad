@@ -22,7 +22,7 @@ export function parseRemoteUrl(url: string): ForgeRemote | undefined {
   return parseGitRemoteUrl(url, false)
 }
 
-/** Repository identity shares the validated parser, retaining every explicit transport port. */
+/** Repository identity retains transport ports and canonical URL-encoded path segments. */
 export function parseRepositoryRemoteUrl(url: string): ForgeRemote | undefined {
   return parseGitRemoteUrl(url, true)
 }
@@ -42,7 +42,7 @@ function parseGitRemoteUrl(url: string, forIdentity: boolean): ForgeRemote | und
         const explicit = /:(\d+)$/.exec(trimmed.split("/")[2]?.split("@").at(-1) ?? "")?.[1]
         port = explicit ? String(Number(explicit)) : ""
       } else if (/^https?:$/i.test(parsed.protocol)) port = parsed.port
-      rawPath = decodeURIComponent(parsed.pathname)
+      rawPath = forIdentity ? parsed.pathname : decodeURIComponent(parsed.pathname)
     } catch {
       return undefined
     }
@@ -54,10 +54,13 @@ function parseGitRemoteUrl(url: string, forIdentity: boolean): ForgeRemote | und
   // A bracketed IPv6 literal is valid as such; it is never a public forge, so only a signed-in CLI reads it.
   const ipv6 = /^\[(.+)\]$/.exec(host ?? "")
   if (!host || !(ipv6 ? isIP(ipv6[1]!) === 6 : HOST_NAME.test(host)) || (port && !/^\d{1,5}$/.test(port)) || !rawPath) return undefined
-  const path = rawPath.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "")
-  const segments = path.split("/")
-  if (segments.length < (forIdentity ? 1 : 2) || segments.some(segment => !PATH_SEGMENT.test(segment) || /^\.+$/.test(segment))) return undefined
-  return { host: port ? `${host}:${port}` : host, path }
+  try {
+    const segments = rawPath.replace(/^\/+|\/+$/g, "").split("/").map(segment => forIdentity ? decodeURIComponent(segment) : segment)
+    segments[segments.length - 1] = segments.at(-1)!.replace(/\.git$/i, "")
+    if (segments.length < (forIdentity ? 1 : 2) || segments.some(segment => !segment || /^\.+$/.test(segment)
+      || (forIdentity ? /[\x00-\x1f\x7f/\\]/.test(segment) : !PATH_SEGMENT.test(segment)))) return undefined
+    return { host: port ? `${host}:${port}` : host, path: segments.map(segment => forIdentity ? encodeURIComponent(segment) : segment).join("/") }
+  } catch { return undefined }
 }
 
 /**

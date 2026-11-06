@@ -22,10 +22,34 @@ test("remote normalization shares transport-independent identities, strips crede
     ["https://example.com:8443/team/app.git", "example.com:8443/team/app"],
     ["ssh://git@[2001:db8::1]:2222/group/sub/repo.git", "[2001:db8::1]:2222/group/sub/repo"],
     ["git@host:repo.git", "host/repo"],
+    ["https://dev.azure.com/Org/My%20Project/_git/Repo", "dev.azure.com/Org/My%20Project/_git/Repo"],
+    ["https://dev.azure.com/Org/My Project/_git/Repo", "dev.azure.com/Org/My%20Project/_git/Repo"],
+    ["https://host/team/r%c3%a9po.git", "host/team/r%C3%A9po"],
+    ["ssh://git@host/team/répo.git", "host/team/r%C3%A9po"],
+    ["git@host:team/répo.git", "host/team/r%C3%A9po"],
   ]) assert.equal(normalizeMemoryRemote(url!), normalized)
-  for (const value of ["C:/repo", "file:///srv/repo.git", "https://host/../..", "ssh://host/team/%2e%2e", "git@host:../escape", "", "https://ho_st/team/app"]) {
+  for (const value of ["C:/repo", "file:///srv/repo.git", "https://host/../..", "ssh://host/team/%2e%2e", "git@host:../escape", "", "https://ho_st/team/app",
+    "https://host/team/a%2fb", "https://host/team/a%5cb", "https://host/team/a%00b", "https://host/team/a%zz"]) {
     assert.equal(normalizeMemoryRemote(value), undefined, value)
   }
+})
+
+test("separate real repositories share encoded origins and their decoded Unicode variants", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "memory-project-encoded-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const repos = [path.join(root, "a"), path.join(root, "b")]
+  for (const repo of repos) { await mkdir(repo); git(repo, "init", "-q"); git(repo, "remote", "add", "origin", "https://dev.azure.com/Org/My%20Project/_git/Repo") }
+  const expected = await resolve(repos[0]!)
+  assert.equal(expected.source, "remote")
+  assert.deepEqual(await resolve(repos[1]!), expected)
+  git(repos[1]!, "remote", "set-url", "origin", "https://dev.azure.com/Org/My Project/_git/Repo")
+  assert.deepEqual(await resolve(repos[1]!), expected)
+  git(repos[0]!, "remote", "set-url", "origin", "https://host/team/r%c3%a9po.git")
+  git(repos[1]!, "remote", "set-url", "origin", "https://host/team/répo.git")
+  const unicode = await resolve(repos[0]!)
+  assert.equal(unicode.source, "remote")
+  assert.deepEqual(await resolve(repos[1]!), unicode)
+  assert.notDeepEqual(unicode, expected)
 })
 
 test("identity selects origin rather than upstream, otherwise the first sorted remote; local folders/worktrees stay shared", async () => {

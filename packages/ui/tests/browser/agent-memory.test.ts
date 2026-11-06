@@ -61,7 +61,9 @@ async function setup(page: Page, initial = true) {
     const key = operation.scope === "global" ? "global" : body.context.workspaceId
     if (operation.action === "list") {
       if (hold) { const handler = hold; hold = undefined; return handler(route) }
-      return listError ? route.fulfill({ status: 503, json: { code: listError } }) : route.fulfill({ json: { entries: data[key] ?? [], scopeKey: key, observedAt: frontier, cleanupWritable } })
+      const directory = body.context?.directory
+      const cleanupDirectory = directory?.startsWith("\\\\wsl.localhost\\Ubuntu\\") ? "/home/user/repo" : directory
+      return listError ? route.fulfill({ status: 503, json: { code: listError } }) : route.fulfill({ json: { entries: data[key] ?? [], scopeKey: key, observedAt: frontier, cleanupWritable, cleanupDirectory } })
     }
     if (writeError) return route.fulfill({ status: 409, json: { code: writeError, titles: writeError === "full" ? ["Stored title"] : undefined } })
     if (holdWrite) { const handler = holdWrite; holdWrite = undefined; await handler() }
@@ -316,6 +318,40 @@ test("replaced/deleted contexts fence late memory replies and preserve their own
     assert.equal(f.requests.filter(value => value.operation?.scope === "project").every(value => value.context.workspaceId && value.context.directory), true)
     assert.deepEqual(f.errors, [])
   } finally { release?.(); await page.close() }
+})
+
+for (const selectedScope of ["project", "global"] as const) test(`UNC cleanup without a selected session accepts the authorized Linux location (${selectedScope})`, async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  const directory = "\\\\wsl.localhost\\Ubuntu\\home\\user\\repo"
+  try {
+    await open(page)
+    await page.evaluate(options => (window as any).fixture.enableCleanup(false, options), { directory, returnedDirectory: "/home/user/repo", noSelection: true })
+    assert.equal((await page.evaluate(() => (window as any).cleanupState())).session, undefined)
+    await scope(page).selectOption(selectedScope)
+    await tidy(page).click()
+    await page.getByRole("dialog").getByRole("button", { name: en["settings.memory.tidy"], exact: true }).click()
+    await page.waitForFunction(() => (window as any).cleanupCalls.some((value: any) => value.action === "prompt"))
+    const calls = await page.evaluate(() => (window as any).cleanupCalls)
+    assert.deepEqual(calls.map((value: any) => value.action), ["create", "prompt"])
+    assert.deepEqual(calls[0].input.location, { directory })
+    assert.equal((await page.evaluate(() => (window as any).cleanupState())).session, "cleanup-new")
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("a created cleanup session with a changed location remains discoverable and reports an explicit failure", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  try {
+    await open(page)
+    await page.evaluate(() => (window as any).fixture.enableCleanup(false, { returnedDirectory: "/different-project", noSelection: true }))
+    await tidy(page).click()
+    await page.getByRole("dialog").getByRole("button", { name: en["settings.memory.tidy"], exact: true }).click()
+    await card(page).getByRole("alert").getByText(en["settings.memory.tidyFailed"]).waitFor()
+    assert.equal(await tidy(page).isDisabled(), true)
+    assert.ok((await page.evaluate(() => (window as any).cleanupSessionIds())).includes("cleanup-new"))
+    assert.deepEqual((await page.evaluate(() => (window as any).cleanupCalls)).map((value: any) => value.action), ["create"])
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
 })
 for (const host of ["electron", "tauri"] as const) test(`remote ${host} Settings tidies through the renderer without randomUUID or a native bridge`, async () => {
   const page = await browser.newPage(), f = await setup(page)

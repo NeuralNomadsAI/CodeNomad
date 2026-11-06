@@ -24,7 +24,7 @@ function fixture() {
   const settings = { getRawConfigOwner: () => ({ memoryEnabled: enabled }) }
   const service = new MemoryService(store as never, settings as never, manager as never, { publish() {} } as never,
     async () => ({ id: identity, source: "local" }))
-  return { store, service, change: (kind: string) => {
+  return { store, service, manager, change: (kind: string) => {
     if (kind === "move") { directory = "/b"; identity = "b".repeat(64) }
     if (kind === "remote") identity = "c".repeat(64)
     if (kind === "owner") owned = false
@@ -52,6 +52,22 @@ test("global agent reads recheck ownership and enablement; human review remains 
   }
   const f = fixture(); f.change("disable")
   assert.equal((await f.service.executeUI({ action: "read", scope: "global", query: "editor" }) as any).entry.text, entry.text)
+})
+
+for (const scope of ["global", "project"] as const) test(`${scope} cleanup receives the server-authorized WSL directory`, async () => {
+  const f = fixture(), unc = "\\\\wsl.localhost\\Ubuntu\\home\\user\\repo"
+  f.manager.getServiceDirectoryForPath = async (_id, value) => value === unc || value === "/home/user/repo" ? "/home/user/repo" : undefined
+  const result = await f.service.executeUI({ action: "list", scope }, { workspaceId: "owner", directory: unc })
+  assert.equal("cleanupDirectory" in result && result.cleanupDirectory, "/home/user/repo")
+  await assert.rejects(f.service.executeUI({ action: "list", scope }, { workspaceId: "owner", directory: "/foreign" }), { code: "invalid" })
+})
+
+for (const change of ["move", "owner"]) test(`global cleanup location fences ${change} during storage reads`, async () => {
+  const f = fixture(), reached = deferred(), gate = deferred()
+  f.store.listForUI = async () => { reached.resolve(); await gate.promise; return [entry] }
+  const pending = f.service.executeUI({ action: "list", scope: "global" }, { workspaceId: "owner" })
+  await reached.promise; f.change(change); gate.resolve()
+  await assert.rejects(pending, { code: change === "owner" ? "invalid" : "conflict" })
 })
 
 test("human project lists fence namespace changes after their last writability await", async () => {

@@ -22,8 +22,8 @@ function Fixture() {
   const [request, setRequest] = createSignal<NativePreferencesRequest>({ section: "general", instanceId: "project-a", workspacePath: "C:/project-a", location: { directory: "/repo-a" } })
   const project = createPreferencesProjectContext(request, () => true, (next, current) => { if (current()) setRequest(previous => ({ ...previous, ...next })) })
   ;(window as any).fixture = {
-    enableCleanup: async (fail: boolean | "prompt" = false) => {
-      const [{ addInstance, setActiveInstanceId }, { sdkManager }, { setSessions, setActiveParentSession, activeSessionId }, { messageStoreBus }, { activeAppTabId }, { runMemoryCleanup }] = await Promise.all([
+    enableCleanup: async (fail: boolean | "prompt" = false, options: { directory?: string; returnedDirectory?: string; noSelection?: boolean } = {}) => {
+      const [{ addInstance, setActiveInstanceId }, { sdkManager }, { setSessions, setActiveParentSession, activeSessionId, sessions }, { messageStoreBus }, { activeAppTabId }, { runMemoryCleanup }] = await Promise.all([
         import("../../../src/stores/instances"), import("../../../src/lib/sdk-manager"),
         import("../../../src/stores/session-state"), import("../../../src/stores/message-v2/bus"),
         import("../../../src/stores/app-tabs"), import("../../../src/stores/agent-memory-cleanup"),
@@ -33,7 +33,7 @@ function Fixture() {
       const client = {
         model: { default: async () => ({ data: null }) },
         session: {
-          create: async (input: any) => { calls.push({ action: "create", input }); if (fail === true) throw new Error("Uncertain creation"); return session("cleanup-new", input.location.directory) },
+          create: async (input: any) => { calls.push({ action: "create", input }); if (fail === true) throw new Error("Uncertain creation"); return session("cleanup-new", options.returnedDirectory ?? input.location.directory) },
           prompt: async (input: any) => { calls.push({ action: "prompt", input }); if (fail === "prompt") throw new Error("Uncertain send") },
           switchAgent: async () => {}, switchModel: async () => {},
           instructions: { entry: { put: async () => {}, remove: async () => {} } },
@@ -44,11 +44,13 @@ function Fixture() {
       ;(sdkManager as any).clients.set("project-a:/workspaces/project-a/instance", client)
       addInstance({ id: "project-a", folder: "C:/project-a", port: 0, pid: 0, proxyPath: "", status: "ready", client })
       setSessions(previous => new Map(previous).set("project-a", new Map([["existing", { ...session("existing", "/another-worktree"), instanceId: "project-a", parentId: null, agent: "", model: { providerId: "", modelId: "" }, status: "idle" } as any]])))
-      setActiveParentSession("project-a", "existing")
+      if (!options.noSelection) setActiveParentSession("project-a", "existing")
+      if (options.directory) setRequest(previous => ({ ...previous, location: { directory: options.directory! } }))
       setActiveInstanceId("project-a")
       messageStoreBus.getOrCreate("project-a")
       ;(window as any).cleanupCalls = calls
       ;(window as any).cleanupState = () => ({ tab: activeAppTabId(), session: activeSessionId().get("project-a") })
+      ;(window as any).cleanupSessionIds = () => [...sessions().get("project-a")!.keys()]
       ;(window as any).runCleanup = runMemoryCleanup
     },
     context: (next?: Partial<NativePreferencesRequest>) => setRequest({ section: "general", ...next }),
