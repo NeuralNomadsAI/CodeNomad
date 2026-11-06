@@ -35,7 +35,7 @@ test("all Node setup steps use the checked-out runtime pin", () => {
   assert.ok(checked > 0)
 })
 
-test("both macOS bundles require the OS supported by Node 24", () => {
+test("both macOS bundles share the minimum required by Tauri's bundled Node 24", () => {
   const electron = JSON.parse(read("packages/electron-app/package.json"))
   const tauri = JSON.parse(read("packages/tauri-app/src-tauri/tauri.conf.json"))
   assert.equal(electron.build.mac.minimumSystemVersion, "13.5")

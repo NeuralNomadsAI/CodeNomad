@@ -10,19 +10,24 @@ This guide explains how to build distributable binaries for CodeNomad.
 
 ### Bundled server runtime
 
-Both Tauri and Electron ship a separate Node.js executable for the CodeNomad
-server. `scripts/prepare-node-runtime.cjs` reads the same `.node-version` pin as
-CI, downloads the official target archive, and verifies its SHA-256 before
-packaging. Only the executable is bundled, not npm or Corepack. Updating this
-pin does not update Electron's internal Node/Chromium, WebView2, the system Node
-installation, or the independently managed OpenCode daemon.
+Tauri ships a separate Node.js executable with its npm for the CodeNomad
+server. Electron runs the server with its integrated Node (`ELECTRON_RUN_AS_NODE=1`)
+and ships npm only. `scripts/prepare-node-runtime.cjs` reads the same
+`.node-version` pin as CI, downloads the official target archive, and verifies
+its SHA-256 before packaging; it copies Node and npm for Tauri and npm alone for
+Electron. Corepack is never bundled. This pin selects Tauri's Node and both
+hosts' npm; Electron's Node and Chromium follow the Electron version. WebView2,
+the system Node installation and the independently managed OpenCode daemon stay
+independent of both.
 
 For a runtime update, run the server and desktop tests with the pinned Node,
 then rebuild and smoke-test the packaged applications on Windows, macOS, and
-Linux. Check the upstream Node platform requirements before changing the pin;
-Node 24 requires macOS 13.5 or later. Keep both desktop bundle minimum versions
-aligned. Keep the version exact rather than resolving `latest` or `lts/*` at
-build time so release inputs remain reproducible.
+Linux. Check the upstream platform requirements before changing the pin or the
+Electron version: Tauri's bundled Node 24 requires macOS 13.5 or later, and
+Electron 39 requires macOS 12 or later. Both macOS bundles declare 13.5 so the
+two desktop builds share one minimum; keep them aligned. Keep the version exact
+rather than resolving `latest` or `lts/*` at build time so release inputs remain
+reproducible.
 
 ## Quick Start
 
@@ -128,7 +133,7 @@ Electron names deb architectures the Debian way (`amd64`) and Tauri keeps its na
 ### macOS
 
 - **Build on:** macOS 13.5+ with the required Xcode tools (CI uses macOS 15)
-- **Run on:** macOS 13.5+ (Intel and Apple Silicon; required by bundled Node 24)
+- **Run on:** macOS 13.5+ (Intel and Apple Silicon; required by Tauri's bundled Node 24, shared by Electron)
 - **Code signing:** Optional (recommended for distribution)
 
 ### Windows

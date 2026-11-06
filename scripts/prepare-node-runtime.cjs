@@ -191,7 +191,9 @@ async function prepareBundledNodeRuntime(options) {
       fs.chmodSync(runtimeBinary, 0o755)
     }
 
-    if (!options.npmOnly && target === currentTarget()) {
+    if (options.npmOnly) {
+      console.log(`[node-runtime] ${target} keeps npm only; no Node executable to check`)
+    } else if (target === currentTarget()) {
       run(runtimeBinary, ["--version"])
     } else {
       console.log(`[node-runtime] skipped ${target} execution check on ${currentTarget()} build host`)

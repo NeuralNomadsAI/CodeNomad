@@ -16,9 +16,14 @@ export function bundledNpm(execPath = process.execPath,
   return candidates.find(candidate => existsSync(candidate))
 }
 
-/** npm lifecycle scripts invoke `node` by name; Electron has a different executable name. */
+/** npm lifecycle scripts invoke `node` by name. Tauri's Node already answers to
+ * it beside npm; Electron's executable (CodeNomad) needs a scoped `node` command. */
+export function npmNeedsNodeCommand(node: string, platform: NodeJS.Platform): boolean {
+  const name = (platform === "win32" ? path.win32 : path.posix).basename(node)
+  return platform === "win32" ? name.toLowerCase() !== "node.exe" : name !== "node"
+}
+
 export async function writeNpmNodeCommand(directory: string, node: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Promise<void> {
-  if (env.ELECTRON_RUN_AS_NODE !== "1") return
   env.CODENOMAD_NPM_NODE = node
   await writeFile(path.join(directory, platform === "win32" ? "node.cmd" : "node"), platform === "win32"
     ? '@echo off\r\n"%CODENOMAD_NPM_NODE%" %*\r\n'
@@ -27,14 +32,14 @@ export async function writeNpmNodeCommand(directory: string, node: string, env: 
 
 export async function executeNpm(node: string, args: string[], env: NodeJS.ProcessEnv, platform: NodeJS.Platform,
   execute = executeInstaller): Promise<void> {
-  const directory = env.ELECTRON_RUN_AS_NODE === "1" ? await mkdtemp(path.join(os.tmpdir(), "codenomad-npm-")) : undefined
+  const directory = npmNeedsNodeCommand(node, platform) ? await mkdtemp(path.join(os.tmpdir(), "codenomad-npm-")) : undefined
   let retain = false
   try {
     const childEnv = { ...env }
     if (directory) await writeNpmNodeCommand(directory, node, childEnv, platform)
     const key = Object.keys(childEnv).find(key => key.toLowerCase() === "path") ?? "PATH"
     childEnv[key] = [...(directory ? [directory] : []), path.dirname(node), childEnv[key] || ""].join(platform === "win32" ? ";" : ":")
-    await execute(node, args, childEnv, directory ? { cwd: directory } : {})
+    await execute(node, args, childEnv, directory ? { cwd: directory } : undefined)
   } catch (error) {
     retain = error instanceof InstallationInterruptedError
     throw error

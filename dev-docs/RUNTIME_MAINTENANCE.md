@@ -7,8 +7,10 @@
   Electron requests npm-only resources. Qualify the server and that npm version
   against Electron's Node when updating either runtime. A new application release
   delivers runtime changes to installed applications.
-- Electron's npm lifecycle scripts receive a temporary `node` command pointing
-  to the Electron executable. Installation and native upgrade scope it to their
+- npm lifecycle scripts call `node` by name. Tauri's bundled `node` answers to it
+  from PATH, even though Tauri also sets `ELECTRON_RUN_AS_NODE=1`. A runtime
+  executable not named `node` (Electron's) receives a temporary `node` command
+  pointing to it instead. Installation and native upgrade scope it to their
   child environment and clean it after completion; interrupted installers retain
   their adapter and prefix lock for safe manual recovery.
 - Dependabot checks GitHub Actions weekly and proposes updates against `dev`;

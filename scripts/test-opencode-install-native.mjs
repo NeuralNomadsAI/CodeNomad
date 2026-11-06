@@ -57,8 +57,10 @@ try {
     // A private foreground server maps the real OpenCode image for Electron;
     // standalone Node also supports the small mapped-executable fixture.
     const backup = path.join(root, "original-opencode.exe")
-    await copyFile(binary, backup)
-    if (!selected.electron) await copyFile(node, binary)
+    if (!selected.electron) {
+      await copyFile(binary, backup)
+      await copyFile(node, binary)
+    }
     const child = spawn(binary, selected.electron ? ["serve", "--hostname", "127.0.0.1", "--port", "0"]
       : ["-e", "console.log('ready'); setInterval(() => {}, 1000)"], { env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
     try {

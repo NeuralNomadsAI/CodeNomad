@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { executeInstaller, writeNpmNodeCommand } from "./npm-runtime"
+import { executeInstaller, npmNeedsNodeCommand, writeNpmNodeCommand } from "./npm-runtime"
 import { InstallationInterruptedError } from "./installation-lock"
 
 /** Let OpenCode retain its running Windows image while using our bundled npm
@@ -25,7 +25,7 @@ export async function upgradeSharedOpenCode(options: {
       : '#!/bin/sh\nexec "$CODENOMAD_UPGRADE_NODE" "$CODENOMAD_UPGRADE_NPM" "$@"\n'
     await writeFile(path.join(directory, windows ? "npm.cmd" : "npm"), shim, { mode: 0o700 })
     const env = { ...options.env }
-    await writeNpmNodeCommand(directory, options.node, env, options.platform)
+    if (npmNeedsNodeCommand(options.node, options.platform)) await writeNpmNodeCommand(directory, options.node, env, options.platform)
     // npm config keys are case-insensitive, even on POSIX. Do not allow an
     // inherited prefix or registry to redirect this verified installation.
     for (const key of Object.keys(env)) {

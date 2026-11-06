@@ -270,7 +270,6 @@ export async function installSharedOpenCode(version: string, options: Installati
   const npm: string = bundled
   const binary = npmExecutable(prefix, platform)
   const probe = options.probe ?? probeBinaryVersionAsync
-  const npmEnvironment = () => ({ ...(options.env ?? process.env) })
   return withInstallationLock(prefix, async () => {
     const current = sharedInstallationPlan(options)
     if (current.prefix !== prefix) throw new Error("The OpenCode installation changed; check its status again")
@@ -285,7 +284,7 @@ export async function installSharedOpenCode(version: string, options: Installati
     for (const image of images) await assertExecutableWritable(image, platform)
     try {
       await executeNpm(node, [npm, "uninstall", "--global", "--prefix", prefix,
-        "--no-audit", "--no-fund", LEGACY_NPM_PACKAGE], npmEnvironment(), platform, options.execute)
+        "--no-audit", "--no-fund", LEGACY_NPM_PACKAGE], options.env ?? process.env, platform, options.execute)
     } catch (error) {
       if (error instanceof InstallationBusyError) throw error
       const intact = Boolean(legacyNpmInstallation(legacy.command, prefix, npmCommandDirectory(prefix, platform), platform))
@@ -331,7 +330,7 @@ export async function installSharedOpenCode(version: string, options: Installati
       } else {
         await assertExecutableWritable(oldBinary, platform)
         await executeNpm(node, [npm, "install", "--global", "--prefix", prefix,
-          "--no-audit", "--no-fund", "--registry=https://registry.npmjs.org", `@opencode/cli@${target}`], npmEnvironment(), platform, options.execute)
+          "--no-audit", "--no-fund", "--registry=https://registry.npmjs.org", `@opencode/cli@${target}`], options.env ?? process.env, platform, options.execute)
       }
     }
     const result = await probe(binary)

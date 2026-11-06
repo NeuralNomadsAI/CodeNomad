@@ -8,11 +8,14 @@ import { installSharedOpenCode, npmExecutable, npmCommandDirectory } from "./sha
 import { MINIMUM_OPENCODE_VERSION as minimum } from "../opencode/runtime-support"
 
 test("native upgrade scopes bundled npm and prefix and cleans its shim on success/failure", async () => {
-  for (const platform of ["win32", "linux"] as const) for (const fail of [false, true]) {
+  // Electron's executable needs the scoped `node` command; Tauri's Node (also
+  // started with ELECTRON_RUN_AS_NODE) is found by name beside npm.
+  for (const platform of ["win32", "linux"] as const) for (const electron of [true, false]) for (const fail of [false, true]) {
     let shim = ""
+    const node = electron ? "/application/CodeNomad" : platform === "win32" ? "/bundled node/node.exe" : "/bundled node/bin/node"
     const env = { Path: "/original", ELECTRON_RUN_AS_NODE: "1", NPM_CONFIG_PREFIX: "/wrong", NPM_CONFIG_REGISTRY: "https://wrong.invalid" }
     const pending = upgradeSharedOpenCode({ binary: "/verified/opencode.exe", version: "2.0.16", prefix: "/verified prefix",
-      node: "/bundled node/node", npm: "/bundled npm/npm-cli.js", env, platform,
+      node, npm: "/bundled npm/npm-cli.js", env, platform,
       execute: async (file, args, childEnv, execution) => {
         assert.equal(file, "/verified/opencode.exe")
         assert.deepEqual(args, ["upgrade", "2.0.16", "--method", "npm"])
@@ -20,13 +23,22 @@ test("native upgrade scopes bundled npm and prefix and cleans its shim on succes
         assert.equal(childEnv.npm_config_registry, "https://registry.npmjs.org")
         assert.equal(childEnv.NPM_CONFIG_PREFIX, undefined)
         assert.equal(childEnv.NPM_CONFIG_REGISTRY, undefined)
-        assert.equal(childEnv.CODENOMAD_UPGRADE_NODE, "/bundled node/node")
+        assert.equal(childEnv.CODENOMAD_UPGRADE_NODE, node)
         assert.equal(childEnv.CODENOMAD_UPGRADE_NPM, "/bundled npm/npm-cli.js")
-        const directory = childEnv.Path!.split(platform === "win32" ? ";" : ":/bundled")[0]
+        const separator = platform === "win32" ? ";" : ":"
+        const runtime = separator + path.dirname(node) + separator
+        assert.ok(childEnv.Path!.endsWith(runtime + "/original"))
+        const directory = childEnv.Path!.slice(0, -(runtime + "/original").length)
         assert.equal(execution?.cwd, directory)
         assert.equal(execution?.timeout, 360_000)
-        assert.equal(childEnv.CODENOMAD_NPM_NODE, "/bundled node/node")
-        assert.match(await readFile(path.join(directory, platform === "win32" ? "node.cmd" : "node"), "utf8"), /CODENOMAD_NPM_NODE/)
+        const command = path.join(directory, platform === "win32" ? "node.cmd" : "node")
+        if (electron) {
+          assert.equal(childEnv.CODENOMAD_NPM_NODE, node)
+          assert.match(await readFile(command, "utf8"), /CODENOMAD_NPM_NODE/)
+        } else {
+          assert.equal(childEnv.CODENOMAD_NPM_NODE, undefined)
+          await assert.rejects(access(command), { code: "ENOENT" })
+        }
         shim = path.join(directory, platform === "win32" ? "npm.cmd" : "npm")
         assert.match(await readFile(shim, "utf8"), /CODENOMAD_UPGRADE_NODE/)
         if (fail) throw new Error("native failure")
