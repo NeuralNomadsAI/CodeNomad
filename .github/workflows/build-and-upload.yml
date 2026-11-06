@@ -467,6 +467,7 @@ jobs:
             echo "Electron deb does not contain an executable CodeNomad binary" >&2
             exit 1
           fi
+
           resources_dir="$(dirname "$binary")/resources"
           node scripts/smoke-packaged-resources.cjs \
             --resources "$resources_dir" \
