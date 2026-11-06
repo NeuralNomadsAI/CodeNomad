@@ -1,6 +1,8 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack, type JSX } from "solid-js"
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search } from "lucide-solid"
 import { Portal } from "solid-js/web"
+import { captureBackendOperation } from "../lib/backend-operation"
+import { backendEvents } from "../lib/server-events"
 import { matchesHotkey, withHotkey } from "../lib/hotkeys"
 import DismissibleWindow from "./dismissible-window"
 import WindowCloseButton from "./window-close-button"
@@ -537,6 +539,7 @@ export default function MessageSection(props: MessageSectionProps) {
     readerOwnsActiveSegment = true
     setNavigation({ kind: "unrestored" })
   }
+  createEffect(on(() => backendEvents.signalForInstance(props.instanceId), resetNavigation, { defer: true }))
 
   function registerListApi(api: VirtualFollowListApi) {
     if (listApi() !== api) untrack(resetNavigation)
@@ -730,11 +733,13 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   function restoreTranscriptPosition(api: VirtualFollowListApi) {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     const restoreSessionId = props.sessionId
     const restoring: RestoringNavigation = { kind: "restoring", sessionId: restoreSessionId, loading: null }
     setNavigation(restoring)
     releaseActiveSegment()
-    const isCurrentRestore = () => navigation() === restoring && isActive() && api === listApi()
+    const isCurrentRestore = () => operation.current() && navigation() === restoring && isActive() && api === listApi()
     const finish = (applied: boolean) => {
       if (!isCurrentRestore()) return
       setNavigation({ kind: "idle" })
@@ -759,16 +764,16 @@ export default function MessageSection(props: MessageSectionProps) {
           if (loadsLatest) {
             const controller = new AbortController()
             restoring.loading = controller
-            try { await props.onLoadLatestMessages!(controller.signal) }
+            try { await props.onLoadLatestMessages!(AbortSignal.any([controller.signal, operation.signal])) }
             finally { if (restoring.loading === controller) restoring.loading = null }
           } else if (props.onLoadMessageAnchor) {
             const controller = new AbortController()
             restoring.loading = controller
             try {
-              try { await props.onLoadMessageAnchor(snapshot.anchorKey!, controller.signal) }
+              try { await props.onLoadMessageAnchor(snapshot.anchorKey!, AbortSignal.any([controller.signal, operation.signal])) }
               catch (error) {
                 if (!(error instanceof MissingHistoryAnchorError) || !props.onLoadLatestMessages || !isCurrentRestore()) throw error
-                await props.onLoadLatestMessages(controller.signal)
+                await props.onLoadLatestMessages(AbortSignal.any([controller.signal, operation.signal]))
                 if (!isCurrentRestore()) return
                 restoredSnapshot = store().getScrollSnapshot(restoreSessionId, MESSAGE_SCROLL_CACHE_SCOPE) ?? snapshot
               }
@@ -1123,6 +1128,10 @@ export default function MessageSection(props: MessageSectionProps) {
     }
     const sessionId = props.sessionId
     const controller = new AbortController()
+    const operation = captureBackendOperation(props.instanceId, controller.signal)
+    if (!operation.current()) return
+    const revoke = () => controller.abort()
+    operation.signal.addEventListener("abort", revoke, { once: true })
     const paging: PagingNavigation = {
       kind: "paging",
       sessionId,
@@ -1136,7 +1145,7 @@ export default function MessageSection(props: MessageSectionProps) {
     setNavigation(paging)
     // A jump keeps its selected marker; other pages show the reading line's.
     if (direction !== "around") readerOwnsActiveSegment = true
-    const isCurrent = () => navigation() === paging && isActive() && api === listApi()
+    const isCurrent = () => operation.current() && navigation() === paging && isActive() && api === listApi()
     if (direction !== "latest") api.setAutoScroll(false)
     setOlderMessageLoadFailed(false)
     retryAnchorRestore = null
@@ -1174,6 +1183,7 @@ export default function MessageSection(props: MessageSectionProps) {
         log.error("Failed to page message window", { instanceId: props.instanceId, sessionId, direction, error })
       }
     } finally {
+      operation.signal.removeEventListener("abort", revoke)
       if (navigation() === paging) settlePaging(paging)
     }
   }
@@ -1190,6 +1200,7 @@ export default function MessageSection(props: MessageSectionProps) {
 
   createEffect(() => {
     const query = searchQuery()
+    const operation = captureBackendOperation(props.instanceId)
     if (query.trim().length < SEARCH_MIN_CHARS) {
       setDebouncedSearchQuery("")
       setActiveSearchIndex(0)
@@ -1201,6 +1212,7 @@ export default function MessageSection(props: MessageSectionProps) {
     }
     setIsSearchPending(true)
     const timeout = window.setTimeout(() => {
+      if (!operation.current()) return
       setDebouncedSearchQuery(query)
     }, SEARCH_DEBOUNCE_MS)
     onCleanup(() => window.clearTimeout(timeout))
@@ -1241,8 +1253,10 @@ export default function MessageSection(props: MessageSectionProps) {
     const sessionId = props.sessionId
     const generation = ++searchGeneration
     const controller = new AbortController()
+    const operation = captureBackendOperation(instanceId, controller.signal)
+    if (!operation.current()) return
     let frame: number | undefined
-    const isCurrentSearch = () => generation === searchGeneration
+    const isCurrentSearch = () => operation.current() && generation === searchGeneration
       && isActive()
       && isSearchOpen()
       && props.instanceId === instanceId
@@ -1275,7 +1289,7 @@ export default function MessageSection(props: MessageSectionProps) {
       })
     }
     const request = workspace
-      ? findRankedHistoryMatches(instanceId, query, technical, controller.signal, cursor).then(result => {
+      ? findRankedHistoryMatches(instanceId, query, technical, operation.signal, cursor).then(result => {
         if (!isCurrentSearch()) return
         setRankedSearchResult(result)
         if (result.status === "restart_required") {
@@ -1291,7 +1305,7 @@ export default function MessageSection(props: MessageSectionProps) {
       })
       : findHistoryMatches(instanceId, {
         sessionID: sessionId, query, purpose: "search", includeTechnical: technical, cursor,
-      }, controller.signal, page => publish(page, false)).then(page => publish(page, true))
+      }, operation.signal, page => publish(page, false)).then(page => publish(page, true))
     void request.catch((error) => {
       if (!isCurrentSearch()) return
       if (frame !== undefined) cancelAnimationFrame(frame)

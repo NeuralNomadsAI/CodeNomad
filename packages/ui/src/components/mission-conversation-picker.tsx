@@ -2,6 +2,7 @@ import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import type { SessionInfo } from "@opencode/client"
 import { useI18n } from "../lib/i18n"
 import { getRootClient } from "../stores/opencode-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { buildProjectSessionListOptions } from "../stores/session-list-options"
 import { sessions } from "../stores/session-state"
@@ -24,15 +25,17 @@ export function MissionConversationPicker(props: {
     const key = identity(), search = query().trim(), page = cursor(); revision()
     if (!open() || !props.active() || props.disabled) return
     const controller = new AbortController()
+    const operation = captureBackendOperation(props.instanceId, controller.signal)
     let alive = true
-    const current = () => alive && props.active() && identity() === key
+    const current = () => operation.current() && alive && props.active() && identity() === key
     setLoading(true); setFailed(false)
     if (!page) setRows([])
     const timer = setTimeout(() => {
+      if (!current()) return
       void getRootClient(props.instanceId).session.list(buildProjectSessionListOptions({
         ...(page ? { cursor: page } : props.directory ? { directory: props.directory } : { project: props.projectID }),
         search, order: "desc",
-      }), { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) }).then(result => {
+      }), { signal: AbortSignal.any([operation.signal, AbortSignal.timeout(10_000)]) }).then(result => {
         if (!current()) return
         const choices = result.data.filter(row => !isReservedMissionScheduleSessionID(row.id))
         setRows(previous => page ? [...previous, ...choices.filter(row => !previous.some(item => item.id === row.id))] : choices)

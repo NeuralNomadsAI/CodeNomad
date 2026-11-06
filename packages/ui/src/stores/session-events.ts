@@ -71,6 +71,8 @@ const pendingSessionFetches = new Map<string, {
   retry?: SessionRetryState | null
   /** Settles once the session's metadata read ends. */
   settled: Promise<void>
+  signal: AbortSignal
+  current: () => boolean
 }>()
 const nativeLifecycleGenerations = new Map<string, number>()
 // The live backoff countdown of one session; it ends when that session's next
@@ -451,6 +453,7 @@ function ensureSessionStatus(
   retry?: SessionRetryState | null,
 ): Promise<void> {
   const authority = captureEventAuthority(instanceId)
+  if (!authority.current()) return Promise.resolve()
   const existing = sessions().get(instanceId)?.get(sessionId)
   if (existing) {
     setSessionStatus(instanceId, sessionId, status, { retry })
@@ -460,13 +463,13 @@ function ensureSessionStatus(
   // Reads coalesce within one instance generation: a replaced client reads again.
   const key = `${instanceId}:${getOpenCodeInstanceGeneration(instanceId)}:${sessionId}`
   const existingFetch = pendingSessionFetches.get(key)
-  if (existingFetch) {
+  if (existingFetch?.current() && existingFetch.signal === authority.signal) {
     existingFetch.status = status
     existingFetch.retry = retry
     return existingFetch.settled
   }
 
-  const pendingState: { status: SessionStatus; retry?: SessionRetryState | null; settled: Promise<void> } = { status, retry, settled: Promise.resolve() }
+  const pendingState = { status, retry, settled: Promise.resolve(), signal: authority.signal, current: authority.current }
   const pending = (async () => {
     const fetched = await fetchSessionInfo(instanceId, sessionId, directory)
     if (!fetched || !authority.current()) return

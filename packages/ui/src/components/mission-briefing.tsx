@@ -4,6 +4,7 @@ import { useI18n } from "../lib/i18n"
 import { instances } from "../stores/instances"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { createMissionViewFence } from "../lib/mission-view-fence"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { missionAcceptsMessage, sendMissionCoordinatorMessage } from "../lib/mission-coordinator-message"
 import { missionBriefingRequestText } from "../lib/mission-briefing-request"
 import { missionBriefingRequest, setMissionBriefingRequest } from "../stores/mission-briefing-request"
@@ -36,9 +37,11 @@ export function createMissionBriefingRequest(props: {
   const ask = async () => {
     if (!available() || waiting() || props.disabled || !props.active) return
     const key = identity(), instanceId = props.instanceId, mission = props.mission
+    const operation = captureBackendOperation(instanceId)
+    if (!operation.current()) return
     const original = { requestID: crypto.randomUUID(), state: "preparing" as const }
     const owner = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId), viewCurrent = capture()
-    const current = () => viewCurrent() && !props.disabled && missionAcceptsMessage(props.mission)
+    const current = () => operation.current() && viewCurrent() && !props.disabled && missionAcceptsMessage(props.mission)
       && missionBriefingRequest(key)?.requestID === original.requestID
       && instances().get(instanceId)?.client === owner && getOpenCodeInstanceGeneration(instanceId) === generation
     setMissionBriefingRequest(key, original)

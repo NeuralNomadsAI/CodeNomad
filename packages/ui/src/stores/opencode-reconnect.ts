@@ -1,6 +1,7 @@
 import type { OpenCodeEvent, SessionMessageInfo } from "@opencode/client"
 import type { Data } from "@opencode/client/solid"
 import type { TranscriptEntry } from "./opencode-data"
+import { captureBackendOperation } from "../lib/backend-operation"
 
 /** A shared-stream reconnect reconciles this long after the last native event. */
 const RECONNECT_RESYNC_DELAY_MS = 1000
@@ -41,19 +42,21 @@ export interface ReconnectHost {
 export function createReconnect(host: ReconnectHost) {
   /** Last observed daemon identity per instance; continuity is seeded only
    * when the reconnect is verified to come from the same source. */
-  const daemonSources = new Map<string, string>()
+  const daemonSources = new Map<string, { source: string; signal: AbortSignal }>()
 
   /** One quiet, revision-stable reconnect reconciliation: live events keep
    * admitting on the resident entry, so the fetch only starts after the stream
    * stays quiet for the delay and never drops anything. */
   function scheduleTrailing(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+    const operation = captureBackendOperation(instanceId)
+    if (!operation.current()) return
     if (!host.isCurrent(instanceId, sessionId, transcript)
       || transcript.needsAuthoritativeResync || transcript.resyncing || !transcript.reconnectResync) return
     host.clearRetryTimer(transcript)
     const revision = host.fullDataRevision(instanceId, sessionId)
     transcript.retryTimer = setTimeout(() => {
       transcript.retryTimer = undefined
-      if (!host.isCurrent(instanceId, sessionId, transcript) || !transcript.reconnectResync) return
+      if (!operation.current() || !host.isCurrent(instanceId, sessionId, transcript) || !transcript.reconnectResync) return
       if (host.fullDataRevision(instanceId, sessionId) !== revision) {
         // Events kept arriving: trail behind the live stream instead of racing it.
         scheduleTrailing(instanceId, sessionId, transcript)
@@ -64,6 +67,8 @@ export function createReconnect(host: ReconnectHost) {
   }
 
   function reconnect(instanceId: string): void {
+    const operation = captureBackendOperation(instanceId)
+    if (!operation.current()) return
     const live = host.capture(instanceId)
     host.resetInstance(instanceId)
     for (const capture of live) {
@@ -72,6 +77,7 @@ export function createReconnect(host: ReconnectHost) {
       // retirement cannot fire on a transcript whose page has not landed yet.
       scheduleTrailing(instanceId, capture.sessionId, transcript)
       void host.seedPage(instanceId, capture).catch(() => {
+        if (!operation.current() || !host.isCurrent(instanceId, capture.sessionId, transcript)) return
         // Seeding failed: fall back to dropping-mode recovery so the transcript
         // still reconciles from one quiet authoritative snapshot.
         transcript.reconnectResync = false
@@ -86,13 +92,16 @@ export function createReconnect(host: ReconnectHost) {
       daemonSources.delete(instanceId)
     },
     onServerConnected(instanceId: string, event: OpenCodeEvent): void {
+      const operation = captureBackendOperation(instanceId)
+      if (!operation.current()) return
       const daemon = (event as { data?: { daemon?: unknown } }).data?.daemon
       const source = typeof daemon === "string" && daemon.length > 0 ? daemon : undefined
       // Seed continuity only across a verified same-daemon reconnect; a
       // replaced daemon and an unattributed stream keep the hard reset.
-      if (source !== undefined && daemonSources.get(instanceId) === source) reconnect(instanceId)
+      const previous = daemonSources.get(instanceId)
+      if (source !== undefined && previous?.source === source && previous.signal === operation.signal) reconnect(instanceId)
       else host.resetInstance(instanceId)
-      if (source !== undefined) daemonSources.set(instanceId, source)
+      if (source !== undefined) daemonSources.set(instanceId, { source, signal: operation.signal })
     },
   }
 }

@@ -109,16 +109,18 @@ const log = getLogger("api")
 const sessionLog = getLogger("session")
 const sessionListRequestIds = new Map<string, number>()
 const catalogLocations = new Map<string, string>()
-const catalogRefreshes = new Map<string, { key: string; promise: Promise<void>; pending: boolean }>()
+const catalogRefreshes = new Map<string, { key: string; promise: Promise<void>; pending: boolean; current: () => boolean }>()
 const agentRequestIds = new Map<string, number>()
 const providerRequestIds = new Map<string, number>()
 const agentRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean; current: () => boolean }>()
 const providerRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean; current: () => boolean }>()
 const sessionPageRequests = new Map<string, Promise<void>>()
 const sessionExhaustionRequests = new Map<string, Promise<void>>()
+const sessionRequestOwners = new WeakMap<Promise<void>, () => boolean>()
 const sessionPageTraversals = new Map<string, { cursors: Set<string>; pages: number }>()
 interface MessagePageRequest {
   controller: AbortController
+  current: () => boolean
   consumers: Set<symbol>
   request: Promise<boolean>
 }
@@ -175,21 +177,24 @@ function catalogLocationKey(location: LocationRef): string {
 }
 
 async function refreshSessionCatalog(instanceId: string, force = false): Promise<void> {
+  const signal = backendEvents.signalForInstance(instanceId)
+  if (signal.aborted) return
   const instance = instances().get(instanceId)
   if (!instance?.client) return
   const client = instance.client
+  const current = () => !signal.aborted && instances().get(instanceId)?.client === client
   const location = getActiveCatalogLocation(instanceId)
   const key = catalogLocationKey(location)
   if (!force && catalogLocations.get(instanceId) === key) return
   const existing = catalogRefreshes.get(instanceId)
-  if (existing?.key === key) {
+  if (existing?.key === key && existing.current()) {
     if (force) existing.pending = true
     return existing.promise
   }
-  const state = { key, promise: Promise.resolve(), pending: false }
+  const state = { key, promise: Promise.resolve(), pending: false, current }
   state.promise = (async () => {
     await waitForInstanceReady(instanceId)
-    if (instances().get(instanceId)?.client !== client || catalogRefreshes.get(instanceId) !== state
+    if (!current() || catalogRefreshes.get(instanceId) !== state
       || catalogLocationKey(getActiveCatalogLocation(instanceId)) !== key) return
     let refresh = force
     do {
@@ -200,6 +205,7 @@ async function refreshSessionCatalog(instanceId: string, force = false): Promise
         fetchProviders(instanceId, location, refresh),
         fetchCommands(instanceId, client, location),
       ])
+      if (!current() || catalogRefreshes.get(instanceId) !== state) return
       if (successes.every(Boolean) && catalogLocationKey(getActiveCatalogLocation(instanceId)) === key) {
         catalogLocations.set(instanceId, key)
       }
@@ -208,7 +214,7 @@ async function refreshSessionCatalog(instanceId: string, force = false): Promise
       if (getOpenCodeInstanceGeneration(instanceId) !== generation) state.pending = true
       refresh = true
     } while (state.pending
-      && instances().get(instanceId)?.client === client
+      && current()
       && catalogRefreshes.get(instanceId) === state
       && catalogLocationKey(getActiveCatalogLocation(instanceId)) === key)
   })().finally(() => {
@@ -312,9 +318,11 @@ function hasMissingParentChain(session: SDKSession, loaded: Map<string, SDKSessi
 async function fetchV2Sessions(
   instanceId: string,
   options: V2SessionListOptions,
-  signal?: AbortSignal,
+  signal = backendEvents.signalForInstance(instanceId),
   visiblePage = false,
 ): Promise<ProjectSessionListResponse> {
+  signal.throwIfAborted()
+  const instanceClient = instances().get(instanceId)?.client
   const client = getRootClient(instanceId)
   const project = options.project ?? (options.directory ? undefined : getInstanceMetadata(instanceId)?.project?.id)
   const scopedProject = project === "global" ? undefined : project
@@ -324,10 +332,11 @@ async function fetchV2Sessions(
     : { ...options, project: scopedProject, directory, order: options.order ?? "desc" }
   if (scopedProject) delete listOptions.directory
 
-  const read = () => client.session.list(
-    buildProjectSessionListOptions(listOptions),
-    signal ? { signal } : undefined,
-  )
+  const read = () => {
+    signal.throwIfAborted()
+    if (instances().get(instanceId)?.client !== instanceClient) return Promise.resolve({ data: [], cursor: {} })
+    return client.session.list(buildProjectSessionListOptions(listOptions), { signal })
+  }
   // Publish the visible directory/project page before secondary scans, while
   // historical cursor traversal continues within the shared background budget.
   const response = await prioritizedRead(
@@ -442,6 +451,9 @@ function withRuntimeStatus(session: Session, existingSession: Session | undefine
 }
 
 async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSignal) {
+  const attachment = backendEvents.signalForInstance(instanceId)
+  signal = signal ? AbortSignal.any([attachment, signal]) : attachment
+  if (signal.aborted) return
   const client = instances().get(instanceId)?.client
   if (!client) return
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
@@ -503,7 +515,14 @@ async function hydrateRestoredSessionChain(
   signal?: AbortSignal,
   isCurrent: () => boolean = () => true,
 ): Promise<void> {
+  const attachment = backendEvents.signalForInstance(instanceId)
+  signal = signal ? AbortSignal.any([attachment, signal]) : attachment
+  const client = instances().get(instanceId)?.client
+  const owns = isCurrent
+  isCurrent = () => !signal.aborted && instances().get(instanceId)?.client === client && owns()
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    signal.throwIfAborted()
+    if (!isCurrent()) return
     const generationCurrent = captureInstanceRequestAuthority(instanceId)
     await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, signal, () => isCurrent() && generationCurrent())
     signal?.throwIfAborted()
@@ -600,6 +619,9 @@ async function fetchSessions(instanceId: string, options?: {
   registerInvalidation?: (invalidate: () => void) => void
   signal?: AbortSignal
 }): Promise<void> {
+  const attachment = backendEvents.signalForInstance(instanceId)
+  options = { ...options, signal: options?.signal ? AbortSignal.any([attachment, options.signal]) : attachment }
+  options.signal!.throwIfAborted()
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -849,6 +871,7 @@ async function fetchSessions(instanceId: string, options?: {
         && !getDirectoryOnlyWorktree(instanceId)) reconcileWorktreeMoves()
     })
     if (options?.strictStatus) await statusUpdate
+    if (!isCurrent()) return
 
     setMessagesLoaded((prev) => {
       const next = new Map(prev)
@@ -867,7 +890,7 @@ async function fetchSessions(instanceId: string, options?: {
   } catch (error) {
     const aborted = options?.signal?.aborted === true
     if (!aborted) log.error("Failed to fetch sessions:", error)
-    if (!aborted && isLatestSessionListRequest(instanceId, requestId)) {
+    if (!aborted && isCurrent()) {
       setSessionListError(instanceId, getOpencodeErrorMessage(error, tGlobal("sessionList.loadError.detail")))
     }
     throw error
@@ -883,7 +906,7 @@ async function fetchSessions(instanceId: string, options?: {
         && !options?.signal?.aborted && !options?.strictStatus) {
         return fetchSessions(instanceId, options)
       }
-      setLoading((prev) => {
+      if (!attachment.aborted) setLoading((prev) => {
         const next = { ...prev }
         next.fetchingSessions.set(instanceId, false)
         return next
@@ -893,31 +916,39 @@ async function fetchSessions(instanceId: string, options?: {
 }
 
 async function loadMoreSessions(instanceId: string): Promise<void> {
+  const current = captureInstanceRequestAuthority(instanceId)
+  if (!current()) return
   const pending = sessionPageRequests.get(instanceId)
-  if (pending) return pending
+  if (pending && sessionRequestOwners.get(pending)?.()) return pending
   const request = loadNextSessionPage(instanceId).finally(() => {
     if (sessionPageRequests.get(instanceId) === request) sessionPageRequests.delete(instanceId)
   })
   sessionPageRequests.set(instanceId, request)
+  sessionRequestOwners.set(request, current)
   return request
 }
 
 async function loadAllSessions(instanceId: string): Promise<void> {
+  const current = captureInstanceRequestAuthority(instanceId)
+  if (!current()) return
   const pending = sessionExhaustionRequests.get(instanceId)
-  if (pending) return pending
+  if (pending && sessionRequestOwners.get(pending)?.()) return pending
   const listRequestId = sessionListRequestIds.get(instanceId)
   const request = (async () => {
     setSessionListError(instanceId, null)
     try {
       while (getSessionHasMore(instanceId)) {
+        if (!current()) return
         const cursor = getSessionNextCursor(instanceId)
         await loadMoreSessions(instanceId)
+        if (!current()) return
         if (sessionListRequestIds.get(instanceId) !== listRequestId) return
         if (getSessionHasMore(instanceId) && getSessionNextCursor(instanceId) === cursor) {
           throw new Error("Session pagination was interrupted")
         }
       }
     } catch (error) {
+      if (!current()) return
       if (sessionListRequestIds.get(instanceId) !== listRequestId) return
       setSessionListError(instanceId, getOpencodeErrorMessage(error, tGlobal("sessionList.loadError.detail")))
       throw error
@@ -926,10 +957,13 @@ async function loadAllSessions(instanceId: string): Promise<void> {
     if (sessionExhaustionRequests.get(instanceId) === request) sessionExhaustionRequests.delete(instanceId)
   })
   sessionExhaustionRequests.set(instanceId, request)
+  sessionRequestOwners.set(request, current)
   return request
 }
 
 async function loadNextSessionPage(instanceId: string): Promise<void> {
+  const signal = backendEvents.signalForInstance(instanceId)
+  if (signal.aborted) return
   const cursor = getSessionNextCursor(instanceId)
   if (!cursor) return
   const instance = instances().get(instanceId)
@@ -942,8 +976,8 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
     && generationCurrent()
   const capturedSessions = new Map(sessions().get(instanceId) ?? [])
   const [response, activeSessions] = await Promise.all([
-    fetchV2Sessions(instanceId, { cursor }),
-    getRootClient(instanceId).session.active().catch((error) => {
+    fetchV2Sessions(instanceId, { cursor }, signal),
+    getRootClient(instanceId).session.active({ signal }).catch((error) => {
       log.warn("Failed to refresh active sessions", { instanceId, error })
       return null
     }),
@@ -973,7 +1007,7 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
     next.set(instanceId, current)
     return next
   })
-  await ensureV2ParentChainsLoaded(instanceId, pageSessions, undefined, isCurrent)
+  await ensureV2ParentChainsLoaded(instanceId, pageSessions, signal, isCurrent)
   if (!isCurrent() || getSessionNextCursor(instanceId) !== cursor) return
   const roots = response.data.filter((item) => !item.parentID).map((item) => item.id)
   for (const item of response.data) {
@@ -985,6 +1019,8 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
 }
 
 async function searchSessions(instanceId: string, query: string): Promise<void> {
+  const signal = backendEvents.signalForInstance(instanceId)
+  if (signal.aborted) return
   const trimmedQuery = query.trim()
   if (!trimmedQuery) return
 
@@ -1003,14 +1039,15 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
 
   try {
     log.info("v2.session.search", { instanceId, query: trimmedQuery, directory: instance.folder })
-    await ensureWorktreesLoaded(instanceId)
+    await ensureWorktreesLoaded(instanceId, signal)
+    if (!isCurrent()) return
     const results = new Map<string, SDKSession>()
     const worktreeDirectories = getInstanceMetadata(instanceId)?.project?.id === "global"
       ? [] : getWorktrees(instanceId).map(entry => entry.serviceDirectory ?? entry.directory)
     const directories = new Set([instance.folder, ...worktreeDirectories])
     for (const directory of directories) {
       if (!isCurrent()) return
-      let response = await fetchV2Sessions(instanceId, { search: trimmedQuery, directory })
+      let response = await fetchV2Sessions(instanceId, { search: trimmedQuery, directory }, signal)
       const cursors = new Set<string>()
       let pageCount = 1
       while (true) {
@@ -1020,7 +1057,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
         if (++pageCount > MAX_SESSION_LIST_PAGES) throw new Error("Session search exceeded the page limit")
         if (cursors.has(response.nextCursor)) throw new Error(`Repeated session cursor: ${response.nextCursor}`)
         cursors.add(response.nextCursor)
-        response = await fetchV2Sessions(instanceId, { cursor: response.nextCursor })
+        response = await fetchV2Sessions(instanceId, { cursor: response.nextCursor }, signal)
       }
     }
     const searchResults = Array.from(results.values())
@@ -1054,7 +1091,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     setSessionSearchResults(instanceId, trimmedQuery, currentSearchResults.map((session) => session.id), requestId)
   } catch (error) {
     log.error("Failed to search sessions:", error)
-    if (isLatestSessionSearch(instanceId, trimmedQuery, requestId)) {
+    if (isCurrent()) {
       clearSessionSearch(instanceId)
     }
     throw error
@@ -1103,20 +1140,32 @@ function isCreatingSession(instanceId: string): boolean {
 
 // Creations can overlap (the sidebar's and the draft composer's first send):
 // the instance stays busy until the last one settles.
-const creationsInFlight = new Map<string, number>()
+const creationsInFlight = new Map<string, { count: number; current: () => boolean }>()
 
-function trackCreation(instanceId: string, delta: 1 | -1): void {
-  const count = (creationsInFlight.get(instanceId) ?? 0) + delta
-  if (count > 0) creationsInFlight.set(instanceId, count)
-  else creationsInFlight.delete(instanceId)
+function trackCreation(instanceId: string, current: () => boolean, signal: AbortSignal): () => void {
+  const previous = creationsInFlight.get(instanceId)
+  const state = previous?.current() ? previous : { count: 0, current }
+  state.count++
+  creationsInFlight.set(instanceId, state)
   setLoading((prev) => {
     const next = { ...prev }
-    next.creatingSession.set(instanceId, count > 0)
+    next.creatingSession.set(instanceId, true)
     return next
   })
+  return () => {
+    if (creationsInFlight.get(instanceId) !== state) return
+    if (--state.count === 0) creationsInFlight.delete(instanceId)
+    if (!signal.aborted) setLoading(prev => {
+      const next = { ...prev }
+      next.creatingSession.set(instanceId, state.count > 0)
+      return next
+    })
+  }
 }
 
 async function createSession(instanceId: string, agent?: string): Promise<Session> {
+  const attachment = backendEvents.signalForInstance(instanceId)
+  attachment.throwIfAborted()
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -1140,7 +1189,8 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   // visibly in progress until the request settles one way or the other, each
   // call sends its own request, and repeated UI triggers are deduplicated by
   // the startNewSession action instead.
-  trackCreation(instanceId, 1)
+  const creationCurrent = () => !attachment.aborted && instances().get(instanceId)?.client === instance.client
+  const finishCreation = trackCreation(instanceId, creationCurrent, attachment)
 
   try {
     const defaultModel = await getDefaultModel(instanceId, selectedAgent)
@@ -1217,7 +1267,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     log.error("Failed to create session:", error)
     throw error
   } finally {
-    trackCreation(instanceId, -1)
+    finishCreation()
   }
 }
 
@@ -1226,6 +1276,7 @@ async function forkSession(
   sourceSessionId: string,
   options?: { afterMessageId?: string },
 ): Promise<Session> {
+  backendEvents.signalForInstance(instanceId).throwIfAborted()
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -1287,6 +1338,8 @@ async function forkSession(
 }
 
 async function deleteSession(instanceId: string, sessionId: string): Promise<void> {
+  const attachment = backendEvents.signalForInstance(instanceId)
+  attachment.throwIfAborted()
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -1318,7 +1371,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
   } finally {
     if (deleteSessionAuthorities.get(loadingKey) === loadingAuthority) {
       deleteSessionAuthorities.delete(loadingKey)
-      setLoading((prev) => {
+      if (!attachment.aborted) setLoading((prev) => {
         const next = { ...prev }
         const deleting = next.deletingSession.get(instanceId)
         if (deleting) {
@@ -1595,6 +1648,9 @@ async function loadMessages(
   sessionId: string,
   options?: MessageLoadOptions,
 ): Promise<boolean> {
+  const attachment = backendEvents.signalForInstance(instanceId)
+  if (attachment.aborted) return false
+  options = { ...options, signal: options?.signal ? AbortSignal.any([attachment, options.signal]) : attachment }
   const force = options?.force ?? false
   const intent = options?.intent ?? "open"
   const revisionRetry = options?.revisionRetry ?? 0
@@ -1669,6 +1725,7 @@ async function loadMessages(
   const releaseLoadingFlag = () => {
     if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) clearMessageLoadingFlag(instanceId, sessionId)
   }
+  attachment.addEventListener("abort", releaseLoadingFlag, { once: true })
   const staleReason = () => {
     if (options?.signal?.aborted) return undefined
     if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return "superseded"
@@ -1910,6 +1967,7 @@ async function loadMessages(
     }
     throw error
   } finally {
+    attachment.removeEventListener("abort", releaseLoadingFlag)
     if (!committed && !deferRelease) {
       // Diagnostic only (session logger): names the identity that discarded a result.
       const reason = staleReason()
@@ -1956,11 +2014,13 @@ function enqueueMessageWindowLoad(
   intent: Exclude<MessageWindowIntent, "open">,
   signal?: AbortSignal,
 ): Promise<boolean> {
+  const current = captureInstanceRequestAuthority(instanceId)
+  if (!current()) return Promise.resolve(false)
   const key = `${messagePageKey(instanceId, sessionId)}\0${intent}`
   let pending = messagePageRequests.get(key)
-  if (!pending) {
+  if (!pending?.current()) {
     const controller = new AbortController()
-    pending = { controller, consumers: new Set(), request: undefined as unknown as Promise<boolean> }
+    pending = { controller, current, consumers: new Set(), request: undefined as unknown as Promise<boolean> }
     const entry = pending
     entry.request = loadMessages(instanceId, sessionId, { force: true, intent, signal: controller.signal }).then(
       (committed) => {

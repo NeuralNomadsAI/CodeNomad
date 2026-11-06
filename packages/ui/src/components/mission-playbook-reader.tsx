@@ -3,6 +3,7 @@ import type { MissionTemplateId } from "../../../server/src/missions/model"
 import type { MissionPlaybookDetails } from "../../../server/src/missions/playbook-details"
 import type { MissionTaskMode } from "../../../server/src/missions/task-execution-mode"
 import { serverApi } from "../lib/api-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { openExternalUrl } from "../lib/external-url"
 import { helpUrl } from "../lib/help-url"
 import { useI18n } from "../lib/i18n"
@@ -18,9 +19,10 @@ export function MissionPlaybookReader(props: { playbook: MissionTemplateId; task
   createEffect(() => {
     const taskMode = props.taskMode
     attempt()
+    const operation = captureBackendOperation("")
     let current = true
     setFailed(false)
-    serverApi.fetchMissionPlaybooks(taskMode).then(value => { if (current) setDetails(value) }, () => { if (current) setFailed(true) })
+    if (operation.current()) serverApi.fetchMissionPlaybooks(taskMode).then(value => { if (current && operation.current()) setDetails(value) }, () => { if (current && operation.current()) setFailed(true) })
     onCleanup(() => { current = false })
   })
   const shown = () => details()?.taskMode === props.taskMode ? details() : undefined

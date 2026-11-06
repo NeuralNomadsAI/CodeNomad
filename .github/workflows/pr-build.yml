@@ -495,6 +495,14 @@ jobs:
           packages/ui/src/lib/backend-events.test.ts
           packages/ui/src/lib/backend-event-lifecycle.test.ts
           packages/ui/src/lib/backend-event-authority.test.ts
+          packages/ui/src/lib/backend-consumer-lifetime.test.ts
+          packages/ui/src/lib/backend-async-inventory.test.ts
+          packages/ui/src/stores/backend-demand-lifetime.test.ts
+          packages/ui/src/stores/backend-action-lifetime.test.ts
+          packages/ui/src/stores/backend-runtime-lifetime.test.ts
+          packages/ui/src/components/backend-view-lifetime.test.ts
+          packages/ui/src/lib/backend-view-io.test.ts
+          packages/ui/src/components/panel-extensions/extension-manager-lifetime.test.ts
           packages/ui/src/stores/backend-workspace-list-refresh.test.ts
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/preferences-favorites-mode.test.ts

@@ -1,5 +1,6 @@
 import type { ImagesConversationRequest, ImagesConversationResponse } from "../../../server/src/server/routes/images-conversation-contract"
 import { serverApi } from "../lib/api-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { tGlobal } from "../lib/i18n"
 import type { LocationRef } from "@opencode/client"
 import type { Agent, Session } from "../types/session"
@@ -38,13 +39,16 @@ export function isDesignAgentMissing(instanceId: string, location: LocationRef):
 export async function resolveImagesConversation(instanceId: string, mode: "open" | "new",
   send: (instanceId: string, request: ImagesConversationRequest) => Promise<ImagesConversationResponse> = (id, request) => serverApi.imagesConversation(id, request),
 ): Promise<ImagesConversationResponse> {
+  const operation = captureBackendOperation(instanceId)
+  if (!operation.current()) return { status: "unknown" }
   const location = getActiveCatalogLocation(instanceId)
   // Without a fresh catalog of this Location, Design's presence is unknown: create nothing.
-  if (!await fetchAgents(instanceId, location, true)) return { status: "unknown" }
+  if (!await fetchAgents(instanceId, location, true) || !operation.current()) return { status: "unknown" }
   const catalog = locationAgents(instanceId, location)
   if (!catalog) return { status: "unknown" }
   const agent = catalog.some(entry => entry.id === DESIGN_AGENT_ID) ? DESIGN_AGENT_ID : undefined
   const model = await getDefaultModel(instanceId, agent)
+  if (!operation.current()) return { status: "unknown" }
   return send(instanceId, {
     directory: location.directory, mode, title: tGlobal("imagesConversation.title"),
     ...(agent ? { agent } : {}),
@@ -59,7 +63,10 @@ export async function resolveImagesConversation(instanceId: string, mode: "open"
  */
 export async function showImagesConversation(instanceId: string, result: Extract<ImagesConversationResponse, { status: "found" }>,
   stillWanted: () => boolean = () => true): Promise<void> {
-  await hydrateRestoredSessionChain(instanceId, [result.sessionID])
+  const operation = captureBackendOperation(instanceId)
+  if (!operation.current()) return
+  await hydrateRestoredSessionChain(instanceId, [result.sessionID], undefined, operation.current)
+  if (!operation.current()) return
   if (result.created) prependSessionListId(instanceId, result.sessionID)
   if (!stillWanted()) return
   setActiveParentSession(instanceId, result.sessionID)
@@ -68,7 +75,8 @@ export async function showImagesConversation(instanceId: string, result: Extract
 
 /** `resolveImagesConversation`, then `showImagesConversation` when found. */
 export async function openImagesConversation(instanceId: string, mode: "open" | "new"): Promise<ImagesConversationResponse> {
+  const operation = captureBackendOperation(instanceId)
   const result = await resolveImagesConversation(instanceId, mode)
-  if (result.status === "found") await showImagesConversation(instanceId, result)
+  if (operation.current() && result.status === "found") await showImagesConversation(instanceId, result)
   return result
 }

@@ -1,10 +1,11 @@
 import { createEffect, createSignal, on, onCleanup, type Accessor } from "solid-js"
 import type { GitCommitDetails, GitHistoryPage } from "../../../../../../server/src/api-types"
 import { serverApi } from "../../../../lib/api-client"
+import type { captureBackendOperation } from "../../../../lib/backend-operation"
 import { backgroundReads } from "../../../../lib/background-read-queue"
 import { createDebouncedRefresh, filesystemInvalidationVersion } from "../../../../lib/filesystem-events"
 
-export function useGitHistory(instanceId: string, slug: Accessor<string>, active: Accessor<boolean>) {
+export function useGitHistory(instanceId: string, slug: Accessor<string>, active: Accessor<boolean>, capture?: typeof captureBackendOperation) {
   const [page, setPage] = createSignal<GitHistoryPage | null>(null)
   const [details, setDetails] = createSignal<GitCommitDetails | null>(null)
   const [selected, setSelected] = createSignal<string | null>(null)
@@ -21,23 +22,25 @@ export function useGitHistory(instanceId: string, slug: Accessor<string>, active
     if (!active()) return
     if (loading()) { pending = true; return }
     const controller = listController = new AbortController()
+    const signal = capture?.(instanceId, controller.signal).signal ?? controller.signal
+    if (signal.aborted) return
     const scope = slug(), previous = page()
     setLoading(true)
     setError(null)
     try {
-      const result = await backgroundReads.run(controller.signal, () => serverApi.fetchGitHistory(instanceId, scope,
-        more ? previous?.commits.length ?? 0 : 0, more ? previous?.head ?? undefined : undefined, controller.signal), "visible")
-      if (controller.signal.aborted || scope !== slug()) return
+      const result = await backgroundReads.run(signal, () => serverApi.fetchGitHistory(instanceId, scope,
+        more ? previous?.commits.length ?? 0 : 0, more ? previous?.head ?? undefined : undefined, signal), "visible")
+      if (signal.aborted || scope !== slug()) return
       if (more && previous) setPage({ ...result, commits: [...previous.commits, ...result.commits] })
       else if (previous && previous.head === result.head && previous.commits.length > result.commits.length) {
         setPage({ ...result, commits: [...result.commits, ...previous.commits.slice(result.commits.length)], hasMore: previous.hasMore })
       } else setPage(result)
     } catch (cause) {
-      if (!controller.signal.aborted) setError(String(cause instanceof Error ? cause.message : cause))
+      if (!signal.aborted) setError(String(cause instanceof Error ? cause.message : cause))
     } finally {
       if (listController === controller) {
         setLoading(false)
-        if (pending) { pending = false; void refresh() }
+        if (pending && !signal.aborted) { pending = false; void refresh() }
       }
     }
   }
@@ -46,15 +49,17 @@ export function useGitHistory(instanceId: string, slug: Accessor<string>, active
     if (!active()) return
     detailController?.abort()
     const controller = detailController = new AbortController()
+    const signal = capture?.(instanceId, controller.signal).signal ?? controller.signal
+    if (signal.aborted) return
     setSelected(id)
     setDetails(null)
     setError(null)
     setDetailLoading(true)
     try {
-      const result = await backgroundReads.run(controller.signal, () => serverApi.fetchGitCommit(instanceId, slug(), id, controller.signal), "visible")
-      if (!controller.signal.aborted) setDetails(result)
+      const result = await backgroundReads.run(signal, () => serverApi.fetchGitCommit(instanceId, slug(), id, signal), "visible")
+      if (!signal.aborted) setDetails(result)
     } catch (cause) {
-      if (!controller.signal.aborted) setError(String(cause instanceof Error ? cause.message : cause))
+      if (!signal.aborted) setError(String(cause instanceof Error ? cause.message : cause))
     } finally { if (detailController === controller) setDetailLoading(false) }
   }
 
@@ -76,6 +81,10 @@ export function useGitHistory(instanceId: string, slug: Accessor<string>, active
     if (selected() && !details()) void select(selected()!)
   }))
   const debounced = createDebouncedRefresh(() => void refresh())
+  createEffect(on(() => capture?.(instanceId).signal, signal => {
+    cancel(); debounced.cancel(); historyStale = true
+    if (signal && !signal.aborted && active()) { historyStale = false; void refresh(); if (selected()) void select(selected()!) }
+  }, { defer: true }))
   createEffect(on(() => filesystemInvalidationVersion(instanceId), () => {
     if (active()) debounced.trigger()
     else historyStale = true

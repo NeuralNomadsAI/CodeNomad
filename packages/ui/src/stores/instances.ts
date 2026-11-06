@@ -7,6 +7,8 @@ import { consumeFormAnswerInteraction, type FormAnswerInteraction } from "../lib
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
 import { backendEvents as serverEvents } from "../lib/server-events"
+import { captureBackendOperation } from "../lib/backend-operation"
+import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import type { BackendEventPayload } from "../lib/backend-events"
 import { backends } from "../lib/backend-client"
 import type { WorkspaceDescriptor, WorkspaceLogEntry } from "../../../server/src/api-types"
@@ -139,6 +141,7 @@ serverEvents.on("yolo.stateChanged", (event) => {
   const { instanceId, sessionId, enabled } = event
   if (typeof instanceId !== "string" || typeof sessionId !== "string" || typeof enabled !== "boolean") return
   log.info(`[SSE] Yolo state changed: ${instanceId}:${sessionId} -> ${enabled}`)
+  yoloOperations.set(`${instanceId}:${sessionId}`, captureInstanceOperation(instanceId))
   setPermissionAutoAcceptEnabled(instanceId, sessionId, enabled)
 })
 
@@ -284,6 +287,14 @@ const pendingRequestSyncs = new Map<string, {
   promise: Promise<void>
 }>()
 const pendingRequestLiveness = new Map<string, Promise<void>>()
+const pendingOperationOwners = new WeakMap<Promise<void>, () => boolean>()
+
+function captureInstanceOperation(instanceId: string, parent?: AbortSignal) {
+  const client = instances().get(instanceId)?.client
+  const generation = getOpenCodeInstanceGeneration(instanceId)
+  return captureBackendOperation(instanceId, parent, () => instances().get(instanceId)?.client === client
+    && getOpenCodeInstanceGeneration(instanceId) === generation)
+}
 const pendingRequestControllers = new Map<string, Set<AbortController>>()
 const [incompletePendingRecovery, setIncompletePendingRecovery] = createSignal<ReadonlySet<string>>(new Set())
 export { incompletePendingRecovery }
@@ -339,10 +350,10 @@ function markPendingRecovery(instanceId: string, incomplete: boolean, cause?: Pe
 const pendingRequestSyncSuperseded = new Error("Pending request sync was superseded")
 const pendingDiscoveryDeferred = new Error("Pending discovery deferred during compaction")
 type PendingCompaction = {
-  client: NonNullable<Instance["client"]>; active: boolean; created: number; sequence?: number
+  client: NonNullable<Instance["client"]>; active: boolean; created: number; sequence?: number; signal: AbortSignal
 }
 const pendingCompactions = new Map<string, Map<string, PendingCompaction>>()
-const deferredPendingDiscovery = new Set<string>()
+const deferredPendingDiscovery = new Map<string, ReturnType<typeof captureInstanceOperation>>()
 let pendingDiscoveryResume: Promise<void> | undefined
 let nextPendingRequestSyncGeneration = 0
 
@@ -350,7 +361,7 @@ function isPendingDiscoveryCompacting(): boolean {
   // ponytail: one daemon per backend; only observed compactions are known here.
   for (const instance of instances().values()) {
     const tracked = pendingCompactions.get(instance.id)
-    if (Array.from(tracked?.values() ?? []).some((entry) => entry.active)) return true
+    if (Array.from(tracked?.values() ?? []).some((entry) => entry.active && !entry.signal.aborted)) return true
     if (!instance.client || instance.status !== "ready") continue
     if (Array.from(sessions().get(instance.id)?.values() ?? []).some((session) => session.status === "compacting" && !tracked?.has(session.id))) return true
   }
@@ -360,20 +371,26 @@ function isPendingDiscoveryCompacting(): boolean {
 function deferPendingDiscovery(instanceId: string): boolean {
   if (!isPendingDiscoveryCompacting()) return false
   markPendingRecovery(instanceId, true)
-  deferredPendingDiscovery.add(instanceId)
+  deferredPendingDiscovery.set(instanceId, captureInstanceOperation(instanceId))
   return true
 }
 
 function resumePendingDiscovery(): void {
   if (pendingDiscoveryResume || !deferredPendingDiscovery.size || isPendingDiscoveryCompacting()) return
+  const owners = new Map(deferredPendingDiscovery)
   const resume = Promise.resolve().then(async () => {
     while (deferredPendingDiscovery.size && !isPendingDiscoveryCompacting()) {
-      const id = deferredPendingDiscovery.values().next().value!
+      const id = deferredPendingDiscovery.keys().next().value!
+      const operation = owners.get(id)
+      if (!operation || deferredPendingDiscovery.get(id) !== operation) break
+      if (!operation.current()) { deferredPendingDiscovery.delete(id); continue }
       await pendingRequestSyncs.get(id)?.promise.catch(() => {})
+      if (!operation.current()) continue
       if (isPendingDiscoveryCompacting()) break
+      if (deferredPendingDiscovery.get(id) !== operation) break
       if (!deferredPendingDiscovery.delete(id)) continue
       const instance = instances().get(id)
-      if (instance?.client && instance.status === "ready") await syncPendingRequests(id).catch((error) => {
+      if (instance?.client && instance.status === "ready") await syncPendingRequests(id, undefined, undefined, operation.signal).catch((error) => {
         log.warn("Failed to resume pending discovery after compaction", { instanceId: id, error })
       })
     }
@@ -391,32 +408,39 @@ function observePendingCompaction(instanceId: string, event: Parameters<NonNulla
   if (!client || !("sessionID" in event.data)) return
   const id = event.data.sessionID
   const entries = pendingCompactions.get(instanceId) ?? new Map<string, PendingCompaction>()
-  const previous = entries.get(id)
+  const captured = entries.get(id)
+  const previous = captured && !captured.signal.aborted ? captured : undefined
   if (!starting && previous && (!previous.active || previous.client !== client)) return
   const sequence = "durable" in event ? event.durable.seq : undefined
   if (previous?.client === client && (sequence === undefined ? event.created <= previous.created
     : previous.sequence !== undefined && sequence <= previous.sequence)) return
-  entries.set(id, { client, active: starting, created: Math.max(event.created, previous?.created ?? 0), sequence: sequence ?? previous?.sequence })
+  entries.set(id, { client, active: starting, created: Math.max(event.created, previous?.created ?? 0), sequence: sequence ?? previous?.sequence,
+    signal: serverEvents.signalForInstance(instanceId) })
   pendingCompactions.set(instanceId, entries)
   if (starting) {
-    for (const [id, sync] of pendingRequestSyncs) if (!sync.targeted) deferredPendingDiscovery.add(id)
+    for (const [id, sync] of pendingRequestSyncs) if (!sync.targeted) deferredPendingDiscovery.set(id, captureInstanceOperation(id))
   } else resumePendingDiscovery()
 }
 
 async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>, background = true, timeoutMs = 10_000): Promise<T> {
+  const operation = captureInstanceOperation(instanceId)
+  operation.signal.throwIfAborted()
   const controller = new AbortController()
+  const signal = AbortSignal.any([operation.signal, controller.signal])
   const controllers = pendingRequestControllers.get(instanceId) ?? new Set<AbortController>()
   controllers.add(controller)
   pendingRequestControllers.set(instanceId, controllers)
   try {
     const timed = async () => {
+      signal.throwIfAborted()
+      if (!operation.current()) throw pendingRequestSyncSuperseded
       // Check after background queue admission, immediately before dispatch.
       if (background && deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
       const timeout = setTimeout(() => controller.abort(), timeoutMs)
-      try { return await run(controller.signal) }
+      try { return await run(signal) }
       finally { clearTimeout(timeout) }
     }
-    return await (background ? backgroundReads.run(controller.signal, timed) : timed())
+    return await (background ? backgroundReads.run(signal, timed) : timed())
   } finally {
     controllers.delete(controller)
     if (!controllers.size && pendingRequestControllers.get(instanceId) === controllers) {
@@ -680,6 +704,8 @@ function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string, 
 }
 
 function attachClient(descriptor: WorkspaceDescriptor) {
+  const signal = serverEvents.signalForInstance(descriptor.id)
+  if (signal.aborted) return
   const instance = instances().get(descriptor.id)
   if (!instance) return
 
@@ -707,7 +733,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     status: "ready",
   })
   sseManager.seedStatusIfMissing(descriptor.id, "connecting")
-  const sessionHydration = startInstanceSessionHydration(descriptor.id)
+  const sessionHydration = startInstanceSessionHydration(descriptor.id, false, signal)
   initialSessionHydrations.set(descriptor.id, sessionHydration.sessions)
   initialWorkspaceMetadataHydrations.set(descriptor.id, sessionHydration.workspaceMetadata)
   const recovered = successfulPendingRecoveries.get(descriptor.id)
@@ -715,11 +741,12 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     propagateErrors: true,
     sessionHydration: sessionHydration.sessions,
     workspaceMetadataHydration: sessionHydration.workspaceMetadata,
+    signal,
   })
   initialHydrations.set(descriptor.id, hydration)
   void hydration.catch((error) => {
     log.error("Failed to hydrate instance data", error)
-    if (initialHydrations.get(descriptor.id) === hydration
+    if (!signal.aborted && initialHydrations.get(descriptor.id) === hydration
       && instances().get(descriptor.id)?.client === client
       && successfulPendingRecoveries.get(descriptor.id) === recovered) markPendingRecovery(descriptor.id, true, hydrationCause(error))
   })
@@ -863,6 +890,7 @@ async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => b
       // Directory/Git authorization has a longer broker budget than native queue
       // reads. Let it finish, with a small transport margin, before aborting.
       const next = await withPendingRequestTimeout(instanceId, (signal) => serverApi.getPendingRequests(instanceId, batch, signal, optional), true, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS + 5_000)
+      if (!isCurrent()) throw pendingRequestSyncSuperseded
       if (next.supported === false) return next
       if (next.supported !== true) throw new Error("Invalid pending request snapshot")
       addBatch(next.directories)
@@ -911,6 +939,10 @@ async function syncPendingPermissions(
   snapshot?: Promise<RecoverySnapshot>,
   targetLocations?: RequestLocation[],
 ): Promise<void> {
+  const operation = captureInstanceOperation(instanceId)
+  const owns = isCurrent
+  isCurrent = () => operation.current() && owns()
+  if (!isCurrent()) return
   const instance = instances().get(instanceId)
   if (!instance?.client) return
   const mutationEpoch = pendingPermissionMutationEpochs.get(instanceId) ?? 0
@@ -995,6 +1027,10 @@ async function syncPendingForms(
   snapshot?: Promise<RecoverySnapshot>,
   targetLocations?: RequestLocation[],
 ): Promise<void> {
+  const operation = captureInstanceOperation(instanceId)
+  const owns = isCurrent
+  isCurrent = () => operation.current() && owns()
+  if (!isCurrent()) return
   const instance = instances().get(instanceId)
   if (!instance?.client) return
   const mutationEpoch = pendingFormMutationEpochs.get(instanceId) ?? 0
@@ -1066,15 +1102,16 @@ async function runPendingRequestSync(
   generation: number,
   token: { cancelled: boolean },
   targetLocations?: RequestLocation[],
+  current: () => boolean = captureInstanceOperation(instanceId).current,
 ): Promise<void> {
   const startingClient = instances().get(instanceId)?.client
-  for (let attempt = 0; attempt < 3 && !token.cancelled; attempt += 1) {
+  for (let attempt = 0; attempt < 3 && !token.cancelled && current(); attempt += 1) {
     if (!targetLocations && deferPendingDiscovery(instanceId)) return
     const epoch = (pendingRequestSyncEpochs.get(instanceId) ?? 0) + 1
     pendingRequestSyncEpochs.set(instanceId, epoch)
     const client = instances().get(instanceId)?.client
     if (!client) return
-    const isCurrent = () => !token.cancelled
+    const isCurrent = () => !token.cancelled && current()
       && instances().get(instanceId)?.client === client
       && pendingRequestSyncEpochs.get(instanceId) === epoch
       && pendingRequestSyncGenerations.get(instanceId) === generation
@@ -1101,7 +1138,7 @@ async function runPendingRequestSync(
       if (error !== pendingRequestSyncSuperseded) throw error
     }
   }
-  if (!token.cancelled && pendingRequestSyncGenerations.get(instanceId) === generation) {
+  if (current() && !token.cancelled && pendingRequestSyncGenerations.get(instanceId) === generation) {
     if (instances().get(instanceId)?.client === startingClient) {
       markPendingRecovery(instanceId, true, { kind: "unstable" })
     }
@@ -1115,20 +1152,23 @@ function syncPendingRequests(
   targetLocations?: RequestLocation[],
   signal?: AbortSignal,
 ): Promise<void> {
+  const operation = captureInstanceOperation(instanceId, signal)
+  signal = operation.signal
   if (signal?.aborted) return Promise.resolve()
   const owned = (promise: Promise<void>, invalidate: () => void) => {
     registerInvalidation?.(invalidate)
     if (!signal) return promise
     signal?.addEventListener("abort", invalidate, { once: true })
     if (signal?.aborted) invalidate()
-    return promise.finally(() => signal?.removeEventListener("abort", invalidate))
+    void promise.then(() => signal?.removeEventListener("abort", invalidate), () => signal?.removeEventListener("abort", invalidate))
+    return promise
   }
   const generation = pendingRequestSyncGenerations.get(instanceId)
   if (generation === undefined) return Promise.resolve()
   if (!targetLocations && deferPendingDiscovery(instanceId)) return Promise.resolve()
   const existing = pendingRequestSyncs.get(instanceId)
-  if (existing?.generation === generation) {
-    if (!targetLocations && existing.targeted) { deferredPendingDiscovery.add(instanceId); resumePendingDiscovery() }
+  if (existing?.generation === generation && pendingOperationOwners.get(existing.promise)?.()) {
+    if (!targetLocations && existing.targeted) { deferredPendingDiscovery.set(instanceId, operation); resumePendingDiscovery() }
     return owned(existing.promise, () => {
       if (pendingRequestSyncs.get(instanceId)?.token !== existing.token) return
       existing.token.cancelled = true
@@ -1139,10 +1179,11 @@ function syncPendingRequests(
   }
   const token = { cancelled: false }
   if (!targetLocations) deferredPendingDiscovery.delete(instanceId)
-  const promise = runPendingRequestSync(instanceId, generation, token, targetLocations).finally(() => {
+  const promise = runPendingRequestSync(instanceId, generation, token, targetLocations, operation.current).finally(() => {
     if (pendingRequestSyncs.get(instanceId)?.promise === promise) pendingRequestSyncs.delete(instanceId)
   })
   pendingRequestSyncs.set(instanceId, { generation, targeted: Boolean(targetLocations), token, promise })
+  pendingOperationOwners.set(promise, operation.current)
   return owned(promise, () => {
     if (pendingRequestSyncs.get(instanceId)?.token !== token) return
     token.cancelled = true
@@ -1164,18 +1205,19 @@ function schedulePendingRequestReconciliation(instanceId: string, location?: Req
   })
 }
 
-async function runPendingRequestLiveness(instanceId: string): Promise<void> {
+async function runPendingRequestLiveness(instanceId: string, operation = captureInstanceOperation(instanceId)): Promise<void> {
+  if (!operation.current()) return
   const instanceSessions = sessions().get(instanceId)
   const hasRunningSession = Array.from(instanceSessions?.values() ?? []).some((session) => session.status === "working" || session.status === "compacting")
   let sessionError: unknown
   const compactions = new Map(pendingCompactions.get(instanceId) ?? [])
   const client = instances().get(instanceId)?.client
-  if (hasRunningSession || Array.from(compactions.values()).some((entry) => entry.active) || getPermissionQueue(instanceId).length || getFormQueue(instanceId).length) {
+  if (hasRunningSession || Array.from(compactions.values()).some((entry) => entry.active && !entry.signal.aborted) || getPermissionQueue(instanceId).length || getFormQueue(instanceId).length) {
     try {
       const active = await withPendingRequestTimeout(instanceId, (signal) => refreshSessionRuntimeStatus(instanceId, signal), false)
-      if (active && instances().get(instanceId)?.client === client) {
+      if (active && operation.current() && instances().get(instanceId)?.client === client) {
         for (const [id, baseline] of compactions) {
-          if (baseline.active && pendingCompactions.get(instanceId)?.get(id) === baseline && !Object.prototype.hasOwnProperty.call(active, id)) {
+          if (baseline.active && !baseline.signal.aborted && pendingCompactions.get(instanceId)?.get(id) === baseline && !Object.prototype.hasOwnProperty.call(active, id)) {
             pendingCompactions.get(instanceId)!.set(id, { ...baseline, active: false })
           }
         }
@@ -1185,31 +1227,40 @@ async function runPendingRequestLiveness(instanceId: string): Promise<void> {
       sessionError = error
     }
   }
-  await syncPendingRequests(instanceId)
+  if (!operation.current()) return
+  await syncPendingRequests(instanceId, undefined, undefined, operation.signal)
+  if (!operation.current()) return
   reconcilePendingSessionIndicators(instanceId)
   if (sessionError) throw sessionError
 }
 
 function reconcilePendingRequestLiveness(instanceId: string): Promise<void> {
+  const operation = captureInstanceOperation(instanceId)
+  if (!operation.current()) return Promise.resolve()
   const existing = pendingRequestLiveness.get(instanceId)
-  if (existing) return existing
-  const promise = runPendingRequestLiveness(instanceId).finally(() => {
+  if (existing && pendingOperationOwners.get(existing)?.()) return existing
+  const promise = runPendingRequestLiveness(instanceId, operation).finally(() => {
     if (pendingRequestLiveness.get(instanceId) === promise) pendingRequestLiveness.delete(instanceId)
   })
   pendingRequestLiveness.set(instanceId, promise)
+  pendingOperationOwners.set(promise, operation.current)
   return promise
 }
 
-function startInstanceSessionHydration(instanceId: string, force = false): {
+function startInstanceSessionHydration(instanceId: string, force = false, signal = serverEvents.signalForInstance(instanceId)): {
   sessions: Promise<void>
   workspaceMetadata: Promise<void>
 } {
+  const client = instances().get(instanceId)?.client
+  const current = () => !signal.aborted && instances().get(instanceId)?.client === client
+  if (!current()) return { sessions: Promise.resolve(), workspaceMetadata: Promise.resolve() }
   const worktreeHydration = force
-    ? reloadWorktrees(instanceId)
-    : ensureWorktreesLoaded(instanceId)
+    ? reloadWorktrees(instanceId, false, signal)
+    : ensureWorktreesLoaded(instanceId, signal)
   const projectMetadata = Promise.resolve().then(async () => {
+    if (!current()) return
     const instance = instances().get(instanceId)
-    if (instance?.client) await loadInstanceProjectMetadata(instance, { force }).catch((error) => {
+    if (instance?.client) await loadInstanceProjectMetadata(instance, { force, signal }).catch((error) => {
       log.warn("Failed to load project metadata before session hydration", { instanceId, error })
     })
   })
@@ -1220,16 +1271,18 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
   // Publish the root directory page without waiting for project/checkout metadata.
   // Full family reconciliation still awaits that inventory in session-api.
   const sessions = Promise.resolve().then(async () => {
+    if (!current()) return
     // fetchSessions reconciles the index after publication. Clearing it here
     // hides restored rows while the first network request is still pending.
-    await fetchSessions(instanceId, { projectMetadata }).catch((error) => {
+    await fetchSessions(instanceId, { projectMetadata, signal }).catch((error) => {
       log.error("Failed to hydrate sessions", { instanceId, error })
     })
   })
   void sessions.then(async () => {
+    if (!current()) return
     const instance = instances().get(instanceId)
     if (instance?.client) {
-      await loadInstanceMetadata(instance, { force, location: getActiveCatalogLocation(instanceId) })
+      await loadInstanceMetadata(instance, { force, location: getActiveCatalogLocation(instanceId), signal })
     }
   }).catch((error) => log.warn("Failed to load supplemental instance metadata", { instanceId, error }))
   return { sessions, workspaceMetadata }
@@ -1240,22 +1293,29 @@ async function hydrateInstanceData(instanceId: string, options?: {
   propagateErrors?: boolean
   sessionHydration?: Promise<void>
   workspaceMetadataHydration?: Promise<void>
+  signal?: AbortSignal
 }) {
+  const signal = options?.signal ?? serverEvents.signalForInstance(instanceId)
+  const client = instances().get(instanceId)?.client
+  const current = () => !signal.aborted && instances().get(instanceId)?.client === client
+  if (!current()) return
   try {
     const hydration = options?.sessionHydration
       ? {
           sessions: options.sessionHydration,
           workspaceMetadata: options.workspaceMetadataHydration ?? Promise.resolve(),
         }
-      : startInstanceSessionHydration(instanceId, options?.force)
+      : startInstanceSessionHydration(instanceId, options?.force, signal)
     // Composer catalogues must not wait for the complete historical inventory.
     await Promise.all([
       hydration.sessions,
       hydration.workspaceMetadata,
       refreshSessionCatalog(instanceId, options?.force),
     ])
+    if (!current()) return
     await ensureInstanceConfigLoaded(instanceId)
-    await syncPendingRequests(instanceId)
+    if (!current()) return
+    await syncPendingRequests(instanceId, undefined, undefined, signal)
   } catch (error) {
     log.error("Failed to fetch initial data", error)
     if (options?.propagateErrors) throw error
@@ -1431,10 +1491,12 @@ function handleWorkspaceEvent(event: BackendEventPayload) {
       // a visible shell's state in the same update remounted views inside the
       // dying subtree and broke the whole window. Skip a re-created workspace.
       const stop = Symbol(event.workspaceId)
+      const operation = captureInstanceOperation(event.workspaceId)
       pendingWorkspaceStops.set(event.workspaceId, stop)
       queueMicrotask(() => {
         if (pendingWorkspaceStops.get(event.workspaceId) !== stop) return
         pendingWorkspaceStops.delete(event.workspaceId)
+        if (!operation.current()) return
         releaseInstanceResources(event.workspaceId)
         removeInstance(event.workspaceId, { authoritative: event.reason === "deleted" })
       })
@@ -2114,14 +2176,21 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
 }
 
 function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: string): void {
+  const operation = captureInstanceOperation(instanceId)
+  if (!operation.current()) return
+  const key = `${instanceId}:${sessionId}`
+  yoloOperations.set(key, operation)
+  const current = () => operation.current() && yoloOperations.get(key) === operation
   const wasEnabled = isPermissionAutoAcceptEnabled(instanceId, sessionId)
   togglePermissionAutoAccept(instanceId, sessionId)
   void serverApi
     .toggleYolo(instanceId, sessionId)
     .then((state) => {
+      if (!current()) return
       setPermissionAutoAcceptEnabled(instanceId, sessionId, state.enabled)
     })
     .catch((error) => {
+      if (!current()) return
       log.warn("Failed to toggle Yolo on server", { instanceId, sessionId, error })
       // revert to the pre-toggle state (not a naive flip, which can be wrong
       // if an SSE yolo.stateChanged arrived between toggle and catch)
@@ -2137,18 +2206,25 @@ function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: str
  * reconnect so state re-syncs after a server restart.
  */
 const syncedYoloSessions = new Set<string>()
+const yoloOperations = new Map<string, ReturnType<typeof captureInstanceOperation>>()
 
 export function ensureYoloStateSynced(instanceId: string, sessionId: string): void {
   if (!instanceId || !sessionId || sessionId === "info") return
+  const operation = captureInstanceOperation(instanceId)
+  if (!operation.current()) return
   const key = `${instanceId}:${sessionId}`
-  if (syncedYoloSessions.has(key)) return
+  if (syncedYoloSessions.has(key) && yoloOperations.get(key)?.current()) return
   syncedYoloSessions.add(key)
+  yoloOperations.set(key, operation)
+  const current = () => operation.current() && yoloOperations.get(key) === operation
   void serverApi
     .getYoloState(instanceId, sessionId)
     .then((state) => {
+      if (!current()) return
       setPermissionAutoAcceptEnabled(instanceId, sessionId, state.enabled)
     })
     .catch((error) => {
+      if (!current()) return
       // allow retry on next activation (e.g. instance not ready yet)
       syncedYoloSessions.delete(key)
       log.warn("Failed to sync Yolo state", { instanceId, sessionId, error })
@@ -2156,16 +2232,20 @@ export function ensureYoloStateSynced(instanceId: string, sessionId: string): vo
 }
 
 serverEvents.onOpen((backendId) => {
-  for (const key of syncedYoloSessions) {
-    if (parseInstanceKey(key).backendId === backendId) syncedYoloSessions.delete(key)
+  for (const key of new Set([...syncedYoloSessions, ...yoloOperations.keys()])) {
+    if (parseInstanceKey(key).backendId === backendId) {
+      syncedYoloSessions.delete(key)
+      yoloOperations.delete(key)
+    }
   }
 })
 
 function clearSyncedYoloSessionsForInstance(instanceId: string): void {
   const prefix = `${instanceId}:`
-  for (const key of Array.from(syncedYoloSessions)) {
+  for (const key of new Set([...syncedYoloSessions, ...yoloOperations.keys()])) {
     if (key.startsWith(prefix)) {
       syncedYoloSessions.delete(key)
+      yoloOperations.delete(key)
     }
   }
 }
@@ -2200,6 +2280,9 @@ async function sendPermissionResponse(
   reply: PermissionReply,
   message?: string,
 ): Promise<void> {
+  const operation = captureInstanceOperation(instanceId)
+  operation.signal.throwIfAborted()
+  if (!operation.current()) throw pendingRequestSyncSuperseded
   const instance = instances().get(instanceId)
   if (!instance?.client) {
     throw new Error("Instance not ready")
@@ -2215,6 +2298,7 @@ async function sendPermissionResponse(
       ...(message ? { message } : {}),
     })
 
+    if (!operation.current()) return
     markPermissionReplied(instanceId, requestId)
     // Remove from both local queues after successful response; the SSE replied event
     // is still accepted, but the UI no longer depends on receiving it.
@@ -2222,13 +2306,16 @@ async function sendPermissionResponse(
     removePermissionV2(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send permission response", error)
-    schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(permissionRequestLocations, instanceId, requestId)
+    if (operation.current()) schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(permissionRequestLocations, instanceId, requestId)
       ?? sessions().get(instanceId)?.get(permission?.sessionID ?? "")?.location)
     throw error
   }
 }
 
 async function sendFormReply(instanceId: string, formId: string, answer: FormAnswer, interaction?: FormAnswerInteraction): Promise<void> {
+  const operation = captureInstanceOperation(instanceId)
+  operation.signal.throwIfAborted()
+  if (!operation.current()) throw pendingRequestSyncSuperseded
   const form = getFormQueue(instanceId).find((item) => item.id === formId)
   if (!form) throw new Error(`Form request not found: ${formId}`)
   const humanSubmit = form.metadata?.kind === "question" && consumeFormAnswerInteraction(interaction, form, answer)
@@ -2239,10 +2326,11 @@ async function sendFormReply(instanceId: string, formId: string, answer: FormAns
       { sessionID: form.sessionID, formID: form.id, answer },
       humanSubmit ? { ...options, headers: { ...options?.headers, "x-codenomad-human-answer": "1" } } : options,
     )
+    if (!operation.current()) return
     markFormSettled(instanceId, form.id)
     removePendingForm(instanceId, form.id)
   } catch (error) {
-    schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(formRequestLocations, instanceId, form.id) ?? form.location)
+    if (operation.current()) schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(formRequestLocations, instanceId, form.id) ?? form.location)
     throw error
   }
 }
@@ -2294,6 +2382,9 @@ function clearPendingFormQueue(instanceId: string): void {
 }
 
 async function sendFormCancel(instanceId: string, formId: string): Promise<void> {
+  const operation = captureInstanceOperation(instanceId)
+  operation.signal.throwIfAborted()
+  if (!operation.current()) throw pendingRequestSyncSuperseded
   const form = getFormQueue(instanceId).find((item) => item.id === formId)
   if (!form) throw new Error(`Form request not found: ${formId}`)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
@@ -2302,10 +2393,11 @@ async function sendFormCancel(instanceId: string, formId: string): Promise<void>
       { sessionID: form.sessionID, formID: form.id },
       formRequestOptions(form),
     )
+    if (!operation.current()) return
     markFormSettled(instanceId, form.id)
     removePendingForm(instanceId, form.id)
   } catch (error) {
-    schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(formRequestLocations, instanceId, form.id) ?? form.location)
+    if (operation.current()) schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(formRequestLocations, instanceId, form.id) ?? form.location)
     throw error
   }
 }

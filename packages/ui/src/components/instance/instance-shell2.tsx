@@ -39,6 +39,7 @@ import { getLogger } from "../../lib/logger"
 import PromptInput from "../prompt-input"
 import PromptContextControls from "../prompt-input/PromptContextControls"
 import { useI18n } from "../../lib/i18n"
+import { captureBackendOperation } from "../../lib/backend-operation"
 import { hotkeyLabel, withHotkey } from "../../lib/hotkeys"
 import { getInterruptionQueue } from "../../stores/interruption-scope"
 import SessionSidebar from "./shell/SessionSidebar"
@@ -987,15 +988,21 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   function createAndActivateDraftSession() {
     if (draftSessionCreation) return draftSessionCreation
+    const operation = captureBackendOperation(props.instance.id)
+    const assertCurrent = () => { if (!operation.current()) throw new DOMException("Backend detached", "AbortError") }
     const creation = (async () => {
+      assertCurrent()
       const agent = draftAgent()
       const model = draftModel()
       if (agent && model.providerId && model.modelId) {
         await setAgentModelPreference(props.instance.id, agent, model)
+        assertCurrent()
       }
       const session = await createSession(props.instance.id, agent || undefined)
+      assertCurrent()
       if (model.providerId && model.modelId) {
         await updateSessionModel(props.instance.id, session.id, model)
+        assertCurrent()
       }
       if (!window.matchMedia?.("(pointer: coarse)")?.matches || window.matchMedia?.("(any-pointer: fine)")?.matches) {
         setFocusConversationSessionId(session.id)
@@ -1014,10 +1021,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     submit: (sessionId: string) => Promise<void>,
     draft?: { text: string; attachments: Attachment[] },
   ) {
+    const operation = captureBackendOperation(props.instance.id)
+    if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
     const session = await createAndActivateDraftSession()
+    if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
     try {
       await submit(session.id)
+      if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
     } catch (error) {
+      if (!operation.current()) throw error
       if (draft) {
         const api = sessionPromptApis()[session.id]
         if ((!api || !api.getPromptText()) && getAttachments(props.instance.id, session.id).length === 0) {

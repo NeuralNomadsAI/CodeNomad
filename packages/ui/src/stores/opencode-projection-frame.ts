@@ -1,5 +1,6 @@
 import type { Data } from "@opencode/client/solid"
 import { getLogger } from "../lib/logger"
+import { captureBackendOperation } from "../lib/backend-operation"
 
 const log = getLogger("session")
 
@@ -30,6 +31,7 @@ export type TranscriptProjectionGates = {
 }
 
 type PendingProjection = {
+  operation: ReturnType<typeof captureBackendOperation>
   instanceId: string
   sessionId: string
   data: Data
@@ -71,11 +73,14 @@ export function scheduleTranscriptProjection(
   options: { confirmPending?: boolean; updateUsage?: boolean } = {},
 ): void {
   if (!gates) return
+  const operation = captureBackendOperation(instanceId)
+  if (!operation.current()) return
   const key = projectionKey(instanceId, sessionId)
   const previous = pending.get(key)
-  const merged = previous !== undefined && previous.data === data
+  const merged = previous !== undefined && previous.operation.signal === operation.signal && previous.data === data
   pending.set(key, {
     instanceId,
+    operation,
     sessionId,
     data,
     // The merged pass replaces a sequence of per-event projections, so the last
@@ -111,7 +116,7 @@ export function takeTranscriptProjection(instanceId: string, sessionId: string):
   const key = projectionKey(instanceId, sessionId)
   const entry = pending.get(key)
   if (entry !== undefined) disarmIfEmpty(key)
-  return entry
+  return entry?.operation.current() ? entry : undefined
 }
 
 /** Drops pending projections for a session (or whole instance): destroyed
@@ -167,7 +172,7 @@ function drain(bypassActiveGate: boolean, matches?: (key: string) => boolean): v
 
 function applyProjection(entry: PendingProjection, bypassActiveGate: boolean): void {
   const gate = gates
-  if (!gate) return
+  if (!gate || !entry.operation.current()) return
   if (!bypassActiveGate && !gate.isActiveSession(entry.instanceId, entry.sessionId)) {
     // Admitted under an older selection: the next activation reads the page
     // authoritatively instead of trusting a stale display window.

@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js"
 import type { OutlineEntry, OutlineCheckpoint } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import { serverApi } from "../lib/api-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { tGlobal } from "../lib/i18n"
 import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision } from "./opencode-data"
 import { sessions } from "./session-state"
@@ -15,7 +16,7 @@ interface OutlineScan {
   checkpoints: OutlineCheckpoint[]
   sourceOffset: number
 }
-interface OutlineSnapshot { entries: OutlineEntry[]; checkpoints: OutlineCheckpoint[]; scan?: OutlineScan; persisted?: PersistedOutline }
+interface OutlineSnapshot { entries: OutlineEntry[]; checkpoints: OutlineCheckpoint[]; scan?: OutlineScan; persisted?: PersistedOutline; signal?: AbortSignal }
 // SessionView can be unmounted when changing sessions. Retain structural indexes
 // metadata snapshots, fenced by instance generation/content revision/revert.
 // No message payloads, network requests or hidden-view timers live in this cache.
@@ -81,6 +82,7 @@ export function createSessionOutline(props: { instanceId: Accessor<string>; sess
   let snapshot: OutlineSnapshot
   createEffect(() => {
     const instanceId = props.instanceId(), sessionID = props.sessionId()
+    const attachment = captureBackendOperation(instanceId)
     const generation = getOpenCodeInstanceGeneration(instanceId)
     const [, revert, directory, projectID] = JSON.parse(sessionState()) as [string, string | null, string | null, string | null]
     const revision = getOpenCodeMutationRevision(instanceId, sessionID)
@@ -100,19 +102,22 @@ export function createSessionOutline(props: { instanceId: Accessor<string>; sess
       trimSnapshots()
       setEntries(snapshot.entries); setError("")
     }
+    if (snapshot.signal !== attachment.signal) { snapshot.scan = undefined; snapshot.signal = attachment.signal }
     // Status transitions may refresh a completed snapshot, but cannot starve an
     // initial multi-page scan. Its fixed sequence horizon survives those events.
     const messageRevision = getOpenCodeMessageRevision(instanceId, sessionID)
     if (requested !== lastRetry || (snapshot.scan?.complete && messageRevision !== snapshot.scan.messageRevision)) snapshot.scan = undefined
     lastRetry = requested
     if (!props.active()) { setPending(false); return }
+    if (!attachment.current()) { setPending(false); return }
     // Restored structure displays immediately. Native checkpoints revalidate all
     // ranges using row stamps/lengths, returning structure only for changed ranges.
     snapshot.scan ??= { entries: [], checkpoints: [], sourceOffset: 0, complete: false, total: 0, messageRevision }
     const work = snapshot.scan, owner = snapshot
     if (work.complete) { setPending(false); return }
     const controller = new AbortController()
-    const current = () => !controller.signal.aborted && key === identity
+    const operation = captureBackendOperation(instanceId, controller.signal)
+    const current = () => operation.current() && key === identity
       && generation === getOpenCodeInstanceGeneration(instanceId)
       && revision === getOpenCodeMutationRevision(instanceId, sessionID)
     setPending(true)
@@ -120,8 +125,9 @@ export function createSessionOutline(props: { instanceId: Accessor<string>; sess
     const timer = setTimeout(() => {
       void (async () => {
         do {
+          if (!current()) return
           const cursor = work.cursor
-          const page = await serverApi.fetchSessionOutline(instanceId, sessionID, cursor, controller.signal, -1,
+          const page = await serverApi.fetchSessionOutline(instanceId, sessionID, cursor, operation.signal, -1,
             owner.checkpoints.length <= 512 ? owner.checkpoints : [])
           if (!current()) return
           if (page.status !== "outline") throw new Error(tGlobal(`session.pruning.${page.reason}`))

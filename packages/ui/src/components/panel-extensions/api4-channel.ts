@@ -1,9 +1,10 @@
 import { z } from "zod"
-import { onCleanup } from "solid-js"
+import { createEffect, on, onCleanup } from "solid-js"
 import { assetTargetSchema } from "../../../../server/src/opencode/session-pruning/assets-contract"
 import { generationTargetSchema } from "../../../../server/src/opencode/session-pruning/assets-gallery-contract"
 import { PANEL_EXTENSION_LIMITS } from "../../../../server/src/panel-extensions/contract"
 import { panelExtensionsApi4 } from "../../lib/panel-extensions-api"
+import { captureBackendOperation } from "../../lib/backend-operation"
 import { backendEvents as serverEvents } from "../../lib/server-events"
 import { getActiveCatalogLocation } from "../../stores/session-api"
 import { requestComposerFocus } from "../../stores/composer-focus"
@@ -67,13 +68,18 @@ export function useApi4Channel(props: {
   const invalidate = (gallery: boolean, status: boolean) => {
     if (disposed || !granted("session.images.read")) return
     changes = { gallery: changes.gallery || gallery, status: changes.status || status }
+    const operation = captureBackendOperation(props.instanceId)
     timer ??= setTimeout(() => {
       timer = undefined
       const detail = changes
       changes = { gallery: false, status: false }
-      if (!disposed && connected && nativeConnected) props.send({ type: "images:changed", ...detail })
+      if (operation.current() && current()) props.send({ type: "images:changed", ...detail })
     }, CHANGE_DELAY_MS)
   }
+  createEffect(on(() => serverEvents.signalForInstance(props.instanceId), signal => {
+    clearTimeout(timer); timer = undefined; abort()
+    if (!signal.aborted) invalidate(true, true)
+  }, { defer: true }))
   onCleanup(serverEvents.on("instance.event", payload => {
     if (payload.type !== "instance.event" || payload.instanceId !== props.instanceId) return
     const event = payload.event as { type?: string; data?: { sessionID?: string } }
@@ -158,7 +164,8 @@ export function useApi4Channel(props: {
     // the user selects during hydration wins: navigation needs the mount's selection unchanged.
     const selected = props.sessionId
     return { result: mode === "new" ? { opened: true } : { opened: true, created: result.created }, after: () => {
-      void showImagesConversation(props.instanceId, result, () => (props.host.activeSessionId() ?? null) === selected)
+      if (signal.aborted || !current()) return
+      void showImagesConversation(props.instanceId, result, () => !signal.aborted && (props.host.activeSessionId() ?? null) === selected)
       if (props.host.isPhoneLayout()) props.host.closePanel()
     } }
   }
@@ -176,7 +183,7 @@ export function useApi4Channel(props: {
     const paths = refs.length ? (await panelExtensionsApi4.prefillReferences(authority, session, refs, signal)).paths : []
     if (paths.some(path => path === null)) return { result: "invalid" }
     // The conversation captured at mount must still be displayed, with the same composer.
-    if (!current() || props.host.promptInputApi() !== api) throw new Error("Conversation changed")
+    if (signal.aborted || !current() || props.host.promptInputApi() !== api) throw new Error("Conversation changed")
     if (api.getMode() === "shell") return { result: "busy" }
     const composed = composePrefill(api.getPromptText(), text, paths as string[])
     if (composed.status !== "added") return { result: composed.status }
@@ -184,7 +191,7 @@ export function useApi4Channel(props: {
     api.setPromptText(composed.draft, { focus: !phone })
     if (phone) return { result: "added", after: () => { props.host.closePanel(); requestComposerFocus(props.instanceId, session) } }
     // Checked one frame later and taken once more if the frame kept it.
-    requestAnimationFrame(() => { if (!disposed && document.activeElement?.closest?.(".prompt-input") == null) api.focus() })
+    requestAnimationFrame(() => { if (!signal.aborted && current() && document.activeElement?.closest?.(".prompt-input") == null) api.focus() })
     return { result: "added" }
   }
 
@@ -193,25 +200,26 @@ export function useApi4Channel(props: {
     if (!parsed.success || disposed) return
     const { id, capability, method, input } = parsed.data
     const controller = new AbortController()
+    const operation = captureBackendOperation(props.instanceId, controller.signal)
     let settled = false
     const answer = (message: Record<string, unknown>) => {
       if (settled) return false
       settled = true
       clearTimeout(deadline)
       pending.delete(controller)
-      if (!disposed && (props.host.activeSessionId() ?? null) === props.sessionId) props.send({ type: "api4:result", id, ...message })
+      if (operation.current() && current()) props.send({ type: "api4:result", id, ...message })
       return true
     }
     const deadline = setTimeout(() => { controller.abort(new Error("Deadline")); answer({ error: true }) }, API4_HOST_DEADLINE_MS)
     try {
       const run = methods.get(capability)?.get(method)
-      if (!granted(grants[capability]) || typeof run !== "function" || !connected || !nativeConnected || pending.size >= MAX_PENDING) throw new Error("Unavailable")
+      if (!operation.current() || !granted(grants[capability]) || typeof run !== "function" || !connected || !nativeConnected || pending.size >= MAX_PENDING) throw new Error("Unavailable")
       pending.add(controller)
-      const { result, after } = await run(input, controller.signal)
-      if (!current() || controller.signal.aborted) throw new Error("Stale")
+      const { result, after } = await run(input, operation.signal)
+      if (!current() || !operation.current()) throw new Error("Stale")
       // Host actions that remove the frame (navigation, closing the phone panel) wait one
       // task, so the frame handles its answer first. Only host functions, never a string.
-      if (answer({ result }) && typeof after === "function") setTimeout(() => after(), 0)
+      if (answer({ result }) && typeof after === "function") setTimeout(() => { if (operation.current() && current()) after() }, 0)
     } catch {
       answer({ error: true })
     }

@@ -13,6 +13,7 @@ import { agents, executeCustomCommand } from "../stores/sessions"
 import { getCommands } from "../stores/commands"
 import { showAlertDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { createAttachmentPlaceholderRegex, getAttachmentPlaceholder } from "../lib/attachment-placeholders"
@@ -465,6 +466,8 @@ export default function PromptInput(props: PromptInputProps) {
   )
 
   async function handleSend(delivery?: PromptDelivery) {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     const draftText = prompt()
     const text = draftText.trim()
     const currentAttachments = attachments()
@@ -570,6 +573,7 @@ export default function PromptInput(props: PromptInputProps) {
       } else {
         await props.onSend(submitPrompt, currentAttachments, resolvedDelivery, restoredPayload)
       }
+      if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
       restoredQueuedPayload = undefined
     } catch (error) {
       log.error("Failed to send message:", error)
@@ -582,6 +586,7 @@ export default function PromptInput(props: PromptInputProps) {
           if (!existingIds.has(attachment.id)) addAttachment(props.instanceId, props.sessionId, attachment)
         }
       }
+      if (!operation.current()) return
       showAlertDialog(t("promptInput.send.errorFallback"), {
         title: t("promptInput.send.errorTitle"),
         detail: getOpencodeErrorMessage(error, t("promptInput.send.errorFallback")),

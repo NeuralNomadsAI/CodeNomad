@@ -1,4 +1,5 @@
-import { Component, createSignal, createEffect, createMemo, For, Show, onCleanup } from "solid-js"
+import { Component, createSignal, createEffect, createMemo, For, Show, on, onCleanup } from "solid-js"
+import { captureBackendOperation } from "../lib/backend-operation"
 import type { Agent } from "../types/session"
 import type { CommandInfo, SkillInfo } from "@opencode/client"
 import { serverApi } from "../lib/api-client"
@@ -137,23 +138,27 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       return inflightSnapshotPromise
     }
  
+    const operation = captureBackendOperation(workspaceId)
+    operation.signal.throwIfAborted()
     inflightWorkspaceId = workspaceId
     inflightSnapshotPromise = serverApi
-      .listWorkspaceFiles(workspaceId, ".", props.directory)
+      .listWorkspaceFiles(workspaceId, ".", props.directory, operation.signal)
       .then((entries) => mapEntriesToFileItems(entries))
       .then((snapshot) => {
+        operation.signal.throwIfAborted()
         setAllFiles(snapshot)
         setCachedWorkspaceId(workspaceId)
         return snapshot
       })
       .catch((error) => {
+        if (!operation.current()) throw error
         log.error(`[UnifiedPicker] Failed to load workspace files:`, error)
         setAllFiles([])
         setCachedWorkspaceId(null)
         throw error
       })
       .finally(() => {
-        if (inflightWorkspaceId === workspaceId) {
+        if (operation.current() && inflightWorkspaceId === workspaceId) {
           inflightWorkspaceId = null
           inflightSnapshotPromise = null
         }
@@ -176,6 +181,8 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     searchController?.abort()
     const controller = new AbortController()
     searchController = controller
+    const operation = captureBackendOperation(workspaceId, controller.signal)
+    if (!operation.current()) return
     const normalizedQuery = normalizeQuery(rawQuery)
     const requestId = ++activeRequestId
     const hasCachedSnapshot =
@@ -190,7 +197,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     try {
       if (!normalizedQuery) {
         const snapshot = await ensureWorkspaceSnapshot(workspaceId)
-        if (!shouldApplyResults(requestId, workspaceId)) {
+        if (!operation.current() || !shouldApplyResults(requestId, workspaceId)) {
           return
         }
         applyFileResults(snapshot)
@@ -199,15 +206,15 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
 
       const results = await serverApi.searchWorkspaceFiles(workspaceId, normalizedQuery, {
         limit: SEARCH_RESULT_LIMIT,
-        signal: controller.signal,
+        signal: operation.signal,
         directory: props.directory,
       })
-      if (!shouldApplyResults(requestId, workspaceId)) {
+      if (!operation.current() || !shouldApplyResults(requestId, workspaceId)) {
         return
       }
       applyFileResults(mapEntriesToFileItems(results))
     } catch (error) {
-      if (controller.signal.aborted) return
+      if (!operation.current()) return
       if (workspaceId === props.workspaceId) {
         log.error(`[UnifiedPicker] Failed to fetch files:`, error)
         if (shouldApplyResults(requestId, workspaceId)) {
@@ -215,7 +222,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
         }
       }
     } finally {
-      if (shouldFinalizeRequest(requestId, workspaceId)) {
+      if (operation.current() && shouldFinalizeRequest(requestId, workspaceId)) {
         setLoadingState("idle")
       }
     }
@@ -234,9 +241,12 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     clearQueryDebounce()
     const normalizedQuery = normalizeQuery(rawQuery)
     const shouldDebounce = !immediate && normalizedQuery.length > 0
+    const operation = captureBackendOperation(workspaceId)
+    if (!operation.current()) return
     if (shouldDebounce) {
       queryDebounceTimer = setTimeout(() => {
         queryDebounceTimer = null
+        if (!operation.current()) return
         void loadFilesForQuery(rawQuery, workspaceId)
       }, SEARCH_DEBOUNCE_MS)
       return
@@ -276,6 +286,10 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     searchController?.abort()
     clearQueryDebounce()
   })
+  createEffect(on(() => serverEvents.signalForInstance(props.workspaceId), () => {
+    inflightWorkspaceId = null; inflightSnapshotPromise = null
+    resetPickerState()
+  }, { defer: true }))
 
   createEffect(() => {
     if (!props.open) {
@@ -316,17 +330,18 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     const directory = props.directory ?? ""
     if (!workspaceId || !directory) return
     let disposed = false, inFlight = false, trailing = false
+    const operation = captureBackendOperation(workspaceId, undefined, () => !disposed)
     setSkills([])
     setSkillsError(false)
     setSkillsLoading(true)
     const load = () => {
-      if (disposed) return
+      if (!operation.current()) return
       if (inFlight) { trailing = true; return }
       inFlight = true
       setSkillsLoading(true)
-      void getRootClient(workspaceId).skill.list({ location: { directory } }).then(
+      void getRootClient(workspaceId).skill.list({ location: { directory } }, { signal: operation.signal }).then(
         (response) => {
-          if (disposed) return
+          if (!operation.current()) return
           if (trailing) { inFlight = false; trailing = false; load(); return }
           setSkills((response.data ?? []).map(({ id, name, description }) => ({ id, name, description })))
           setSkillsError(false)
@@ -334,7 +349,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
           setSkillsLoading(false)
         },
         (error) => {
-          if (disposed) return
+          if (!operation.current()) return
           if (trailing) { inFlight = false; trailing = false; load(); return }
           log.error(`[UnifiedPicker] Failed to load skills:`, error)
           setSkillsError(true)

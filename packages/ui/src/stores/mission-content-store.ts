@@ -43,6 +43,7 @@ const MAX_RETAINED_BODIES = 128
 const MAX_RESTARTS = 4
 
 interface Entry {
+  attachment?: AbortSignal
   key: string
   ref: MissionBodyRef
   identity: string
@@ -80,7 +81,7 @@ const keyOf = (ref: MissionBodyRef) => JSON.stringify([ref.instanceId, ref.proje
 
 /** The display cache of mission bodies read through the content route, per workspace,
  * project, mission and selector, each continuation pinned by its digest. */
-export function createMissionContentStore(fetch: MissionContentFetch, budget = MISSION_BODY_CACHE_BYTES) {
+export function createMissionContentStore(fetch: MissionContentFetch, budget = MISSION_BODY_CACHE_BYTES, signalForInstance?: (id: string) => AbortSignal) {
   const entries = new Map<string, Entry>()
   let tick = 0
 
@@ -133,6 +134,7 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
   }
 
   const promote = (entry: Entry) => {
+    if (entry.attachment?.aborted) return false
     if (!entry.pending || entry.display && !covers(entry.pending, need(entry))) return false
     if (entry.ref.passage && !currentValueEligible(entry, entry.pending)) return false
     entry.display = entry.pending
@@ -213,12 +215,12 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
       entry.operation = { controller, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(TASK_READ_TIMEOUT_MS)]),
         deadline: performance.now() + TASK_READ_TIMEOUT_MS }
     }
-    const operation = entry.operation, signal = operation?.signal ?? controller.signal
+    const operation = entry.operation, signal = AbortSignal.any([controller.signal, ...(operation ? [operation.signal] : []), ...(entry.attachment ? [entry.attachment] : [])])
     entry.controller = controller
     entry.sentMark = mark
     // A late answer for a released, replaced or switched entry never publishes; one sent
     // before a recovery invalidation leaves that invalidation's fresh read to come.
-    const admitted = () => entry.controller === controller && !controller.signal.aborted && entries.get(entry.key) === entry && entry.epoch === epoch
+    const admitted = () => !signal.aborted && entry.controller === controller && !controller.signal.aborted && entries.get(entry.key) === entry && entry.epoch === epoch
       && entry.operation === operation
     const transfer = async () => {
       assertTaskReadLive(signal, operation?.deadline)
@@ -227,7 +229,7 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
       return raceTaskRead(fetch(entry.ref, query, signal, operation?.deadline), operation?.signal)
     }
     if (!operation && entry.status === "error") { entry.status = entry.display ? "ready" : "loading"; publish(entry) }
-    void (operation ? transfer() : fetch(entry.ref, query, controller.signal)).then(response => {
+    void (operation ? transfer() : fetch(entry.ref, query, signal)).then(response => {
       if (!admitted()) return
       assertTaskReadLive(signal, operation?.deadline)
       // Validate/assemble current content off-display, then fence its promotion and publication.
@@ -245,14 +247,14 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     }).finally(() => {
       if (entry.controller !== controller) return
       entry.controller = undefined
-      pump(entry)
+      if (!signal.aborted) pump(entry)
       evict()
     })
   }
 
   /** Coalesce reads, completing fresh covered current demand before guarding a held transfer. */
   function pump(entry: Entry) {
-    if (!entry.consumers.size || entries.get(entry.key) !== entry) return
+    if (entry.attachment?.aborted || !entry.consumers.size || entries.get(entry.key) !== entry) return
     const shown = entry.pending ?? entry.display
     // Current aggregate demand can finish while a now-unnecessary continuation is held.
     if (entry.ref.passage && shown && currentValueEligible(entry, shown) && covers(shown, need(entry))
@@ -280,9 +282,11 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     if (entry && entry.identity !== identity) { drop(entry); entry = undefined }
     if (!entry) {
       const [state, setState] = createSignal<MissionBodyState>({ status: "loading" })
-      entry = { key, ref, identity, state, publish: setState, status: "loading", epoch: 0, stale: false, parked: false, restarts: 0, consumers: new Map(), used: 0 }
+      entry = { key, ref, identity, state, publish: setState, status: "loading", epoch: 0, stale: false, parked: false, restarts: 0, consumers: new Map(), used: 0, attachment: signalForInstance?.(ref.instanceId) }
       entries.set(key, entry)
     }
+    const attachment = signalForInstance?.(ref.instanceId)
+    if (entry.attachment !== attachment) { cancel(entry); entry.attachment = attachment; entry.epoch++; entry.stale = true }
     if (mark !== undefined) entry.mark = mark
     const owner = entry, id = Symbol(key)
     owner.consumers.set(id, { need: 1 })
@@ -361,6 +365,8 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
       for (const entry of entries.values()) if ((instanceId === undefined || entry.ref.instanceId === instanceId)
         && (backendId === undefined || parseInstanceKey(entry.ref.instanceId).backendId === backendId)) {
         entry.epoch++
+        const attachment = signalForInstance?.(entry.ref.instanceId)
+        if (entry.attachment !== attachment) { cancel(entry); entry.attachment = attachment }
         entry.stale = true
         entry.parked = false
         pump(entry)

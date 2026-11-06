@@ -2,6 +2,7 @@ import { createEffect, createMemo, createSignal, onCleanup, untrack } from "soli
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import { missionBodyDescriptor, type MissionBodyDescriptor, type MissionContentSelector } from "../../../server/src/missions/mission-content-wire"
 import { serverApi } from "../lib/api-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { backendEvents as serverEvents } from "../lib/server-events"
 import { instances } from "./instances"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
@@ -10,7 +11,7 @@ import { missionBodyRevision, missionHistoryMark } from "./mission-task-pages"
 
 export const missionContent = createMissionContentStore((ref, query, signal, deadline) =>
   ref.passage ? serverApi.fetchMissionCurrentBody(ref.instanceId, ref.passage, { missionID: ref.missionID, ...ref.selector, ...query }, signal, deadline)
-    : serverApi.fetchMissionContent(ref.instanceId, ref.missionID, { ...ref.selector, ...query }, signal))
+    : serverApi.fetchMissionContent(ref.instanceId, ref.missionID, { ...ref.selector, ...query }, signal), undefined, id => captureBackendOperation(id).signal)
 
 /** A body a reader shows, the revision its descriptor is expected at, that descriptor
  * (absent when the map names no such body) and, for a body no descriptor describes, the

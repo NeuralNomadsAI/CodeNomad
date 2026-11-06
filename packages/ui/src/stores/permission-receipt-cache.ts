@@ -3,6 +3,7 @@ import { serverApi } from "../lib/api-client"
 import { receiptReads } from "../lib/background-read-queue"
 import { backendEvents as serverEvents } from "../lib/server-events"
 import { parseInstanceKey } from "../lib/backend-identity"
+import { captureBackendOperation } from "../lib/backend-operation"
 
 export type PermissionReceiptScope = { messageId: string } | { unanchored: true }
 export interface PermissionReceiptSnapshot { receipts: PermissionReceipt[]; next?: string; pages: number }
@@ -11,6 +12,7 @@ type Read = {
   stale: boolean
   subscribers: number
   controller: AbortController
+  signal: AbortSignal
   promise: Promise<PermissionReceiptSnapshot>
 }
 
@@ -72,7 +74,7 @@ export function ownsPermissionReceipt(receipt: PermissionReceipt, sessionId: str
 export function acquirePermissionReceipts(instanceId: string, sessionId: string, scope: PermissionReceiptScope, pages: number) {
   const key = permissionReceiptKey(instanceId, sessionId, scope)
   let read = reads.get(key)
-  if (!read || read.pages < pages) read = startRead(key, instanceId, sessionId, scope, pages)
+  if (!read || read.signal.aborted || read.pages < pages) read = startRead(key, instanceId, sessionId, scope, pages)
   const joined = read
   joined.subscribers++
   let released = false
@@ -89,20 +91,22 @@ export function acquirePermissionReceipts(instanceId: string, sessionId: string,
 }
 
 function startRead(key: string, instanceId: string, sessionId: string, scope: PermissionReceiptScope, pages: number): Read {
-  const read: Read = { pages, stale: false, subscribers: 0, controller: new AbortController(), promise: undefined! }
-  const { signal } = read.controller
+  const controller = new AbortController()
+  const { signal, current } = captureBackendOperation(instanceId, controller.signal)
+  const read: Read = { pages, stale: false, subscribers: 0, controller, signal, promise: undefined! }
   read.promise = (async () => {
     const receipts: PermissionReceipt[] = []
     let cursor: string | undefined
     let fetched = 0
     do {
       const page = await receiptReads.run(signal, () => serverApi.fetchPermissionReceipts(instanceId, sessionId, scope, cursor, signal))
+      signal.throwIfAborted()
       receipts.push(...page.receipts.filter(receipt => ownsPermissionReceipt(receipt, sessionId, scope)))
       cursor = page.next
       fetched++
     } while (cursor && fetched < pages)
     const snapshot = { receipts, next: cursor, pages: fetched }
-    if (!read.stale) rememberPermissionReceipts(key, snapshot)
+    if (current() && !read.stale) rememberPermissionReceipts(key, snapshot)
     return snapshot
   })()
   reads.set(key, read)

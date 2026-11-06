@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import type { IntegrationInstallHostResponse, IntegrationView } from "../../../server/src/integration-types"
 import { integrationAttachmentRequest } from "../lib/integrations-api"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { useI18n } from "../lib/i18n"
 import { showToastNotification } from "../lib/notifications"
 import { HttpResponseError } from "../lib/retryable-file-search"
@@ -39,31 +40,33 @@ export function createIntegrationHostInstallation(props: {
     const generation = ++focusGeneration
     target = captured
     confirmation = new AbortController()
-    const signal = confirmation.signal
+    const operation = captureBackendOperation(instanceId, confirmation.signal, () => !disposed && identity() === owner)
+    const signal = operation.signal
+    if (!operation.current()) { cancel(); return }
     const action = entry.status!.host!.action!
     const accepted = await confirmIntegrationAction(t("integrations.installHost.warning", { app: entry.app.name, name: entry.displayName, version: entry.status!.version }), {
       title: t(`integrations.installHost.${action}`),
       confirmLabel: t(`integrations.installHost.${action}`), variant: "warning",
       returnFocus: () => {
-        if (!disposed && generation === focusGeneration && identity() === owner && epoch() === captured.epoch && signature(id) === captured.signature
+        if (operation.current() && generation === focusGeneration && identity() === owner && epoch() === captured.epoch && signature(id) === captured.signature
           && opener?.isConnected && opener.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }) && !opener.closest('[inert], [aria-hidden="true"]') && !opener.matches(":disabled")) opener.focus({ preventScroll: true })
       },
     }, signal)
-    const current = accepted && !signal.aborted && target === captured && identity() === owner
+    const current = accepted && operation.current() && target === captured && identity() === owner
       && epoch() === captured.epoch && signature(id) === captured.signature
-    cancel()
+    confirmation = undefined; target = undefined
     if (!current) return
     setPending(true)
     try {
       // Once admitted, cancellation/navigation cannot promise rollback. Never replay this request.
-      const result = await integrationAttachmentRequest<IntegrationInstallHostResponse>(instanceId, directory, id, "install-host", new AbortController().signal, {})
+      const result = await integrationAttachmentRequest<IntegrationInstallHostResponse>(instanceId, directory, id, "install-host", operation.signal, {})
       if (!["installed", "updated", "unchanged", "refused", "failed"].includes(result?.outcome)) throw new Error("Invalid installation result")
-      if (!disposed && identity() === owner) showToastNotification({ category: "opencode", variant: ["refused", "failed"].includes(result.outcome) ? "error" : "success",
+      if (operation.current()) showToastNotification({ category: "opencode", variant: ["refused", "failed"].includes(result.outcome) ? "error" : "success",
         message: t(`integrations.installHost.${result.outcome}`) })
     } catch (error) {
-      if (!disposed && identity() === owner) showToastNotification({ category: "opencode", variant: "error", message: t(
+      if (operation.current()) showToastNotification({ category: "opencode", variant: "error", message: t(
         error instanceof HttpResponseError && error.code === "unsupported" ? "integrations.installHost.unsupported" : "integrations.installHost.error") })
-    } finally { setPending(false); void integrations.refreshDemanded(instanceId) }
+    } finally { if (!disposed) setPending(false); if (operation.current()) void integrations.refreshDemanded(instanceId) }
   }
   return { pending, action: (id: string) => !pending() ? eligible(id)?.status?.host?.action : undefined, open }
 }

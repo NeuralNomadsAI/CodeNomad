@@ -2,6 +2,7 @@ import { z } from "zod"
 import { onCleanup } from "solid-js"
 import { openExternalUrl } from "../../lib/external-url"
 import { panelExtensionsApi } from "../../lib/panel-extensions-api"
+import type { captureBackendOperation } from "../../lib/backend-operation"
 import { backendEvents as serverEvents } from "../../lib/server-events"
 
 const kind = z.enum(["issue", "pullRequest"])
@@ -17,7 +18,7 @@ const OPEN_INTERVAL_MS = 1_000
  * an item to open. Opening goes through the host's external-link opener, at
  * most once a second, to the forge page the server builds for that number.
  */
-export function useWorkItemsChannel(props: { instanceId: string; id: string; digest: string; send: (value: unknown) => void }) {
+export function useWorkItemsChannel(props: { instanceId: string; id: string; digest: string; send: (value: unknown) => void; captureOperation?: typeof captureBackendOperation }) {
   const pending = new Set<AbortController>()
   let disposed = false, connected = true, lastOpen = 0, opening = false
   const abort = () => { for (const request of pending) request.abort() }
@@ -31,29 +32,31 @@ export function useWorkItemsChannel(props: { instanceId: string; id: string; dig
     if (!parsed.success || disposed) return
     const { id, method, input } = parsed.data
     const controller = new AbortController()
+    const operation = props.captureOperation?.(props.instanceId, controller.signal)
+    const signal = operation?.signal ?? controller.signal
     try {
-      if (!connected || pending.size >= 4) throw new Error("Unavailable")
+      if (signal.aborted || !connected || pending.size >= 4) throw new Error("Unavailable")
       pending.add(controller)
       const args = [props.instanceId, props.id, props.digest] as const
       let result: unknown
       if (method === "list") {
-        result = await panelExtensionsApi.workItems(...args, listSchema.parse(input), controller.signal)
+        result = await panelExtensionsApi.workItems(...args, listSchema.parse(input), signal)
       } else {
         const request = openSchema.parse(input)
         // One open at a time, and the interval counts at the opener itself, so delayed answers cannot burst.
         if (opening || Date.now() - lastOpen < OPEN_INTERVAL_MS) throw new Error("Too frequent")
         opening = true
         try {
-          const { url } = await panelExtensionsApi.workItemUrl(...args, request.kind, request.number, controller.signal)
-          if (new URL(url).protocol !== "https:" || controller.signal.aborted || disposed || !connected
+          const { url } = await panelExtensionsApi.workItemUrl(...args, request.kind, request.number, signal)
+          if (new URL(url).protocol !== "https:" || signal.aborted || disposed || !connected
             || Date.now() - lastOpen < OPEN_INTERVAL_MS) throw new Error("Unavailable")
           lastOpen = Date.now()
           result = { opened: await openExternalUrl(url, "panel-extension") }
         } finally { opening = false }
       }
-      if (!disposed && connected && !controller.signal.aborted) props.send({ type: "workItems:result", id, result })
+      if (!disposed && connected && !signal.aborted) props.send({ type: "workItems:result", id, result })
     } catch {
-      if (!disposed) props.send({ type: "workItems:result", id, error: true })
+      if (!disposed && !signal.aborted) props.send({ type: "workItems:result", id, error: true })
     } finally { pending.delete(controller) }
   }
 }

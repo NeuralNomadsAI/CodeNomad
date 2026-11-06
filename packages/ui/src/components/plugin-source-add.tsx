@@ -2,6 +2,7 @@ import { Show, createEffect, createSignal, createUniqueId, on } from "solid-js"
 import { Popover } from "@kobalte/core/popover"
 import type { PluginControlLocation, PluginControlScope } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { getLogger } from "../lib/logger"
 import { nativeSelectListOpen } from "../lib/native-select-open"
 import { HttpResponseError } from "../lib/retryable-file-search"
@@ -39,14 +40,18 @@ export function PluginSourceAdd(props: {
     event.preventDefault()
     const value = spec().trim()
     if (!value || pending() || props.active === false) return
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     // Never widen the chosen scope: an unavailable Project target is refused by the server.
     const target = scope()
     setPending(true)
     setError(undefined)
     try {
       await pluginSourcesStore.add(props.instanceId, props.location, target, value)
+      if (!operation.current()) return
       setOpen(false)
     } catch (failure) {
+      if (!operation.current()) return
       log.error("Failed to add plugin source", { scope: target, error: failure })
       setError(t(errorKey(failure), { scope: scopeLabel(target), global: scopeLabel("global") }))
     } finally {

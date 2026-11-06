@@ -36,8 +36,10 @@ function hasMetadataLoaded(metadata?: Instance["metadata"], location?: LocationR
   return !location || metadataMatchesLocation(metadata, location)
 }
 
-export function loadInstanceMetadata(instance: Instance, options?: { force?: boolean; location?: LocationRef }): Promise<void> {
-  const signal = backendEvents.signalForInstance(instance.id)
+export function loadInstanceMetadata(instance: Instance, options?: { force?: boolean; location?: LocationRef; signal?: AbortSignal }): Promise<void> {
+  const attachment = backendEvents.signalForInstance(instance.id)
+  const signal = options?.signal ? AbortSignal.any([attachment, options.signal]) : attachment
+  if (signal.aborted) return Promise.resolve()
   const client = instance.client
   if (!client) {
     log.warn("[metadata] Skipping fetch; client missing", { instanceId: instance.id })
@@ -63,8 +65,8 @@ export function loadInstanceMetadata(instance: Instance, options?: { force?: boo
       const requestLocation = toRequestLocation(location)
       const [projectResult, projectsResult, mcpResult] = await Promise.allSettled([
         loadInstanceProjectMetadata(instance, options),
-        client.project.list(),
-        client.mcp.list({ location: requestLocation }, requestLocationOptions(location)),
+        client.project.list(undefined, { signal }),
+        client.mcp.list({ location: requestLocation }, { ...requestLocationOptions(location), signal }),
       ])
 
       const currentProject = getInstanceMetadata(instance.id)?.project
@@ -103,8 +105,10 @@ export function loadInstanceMetadata(instance: Instance, options?: { force?: boo
   return request.promise
 }
 
-export function loadInstanceProjectMetadata(instance: Instance, options?: { force?: boolean }): Promise<void> {
-  const signal = backendEvents.signalForInstance(instance.id)
+export function loadInstanceProjectMetadata(instance: Instance, options?: { force?: boolean; signal?: AbortSignal }): Promise<void> {
+  const attachment = backendEvents.signalForInstance(instance.id)
+  const signal = options?.signal ? AbortSignal.any([attachment, options.signal]) : attachment
+  if (signal.aborted) return Promise.resolve()
   const client = instance.client
   if (!client) return Promise.resolve()
   const currentMetadata = getInstanceMetadata(instance.id) ?? instance.metadata
@@ -114,7 +118,7 @@ export function loadInstanceProjectMetadata(instance: Instance, options?: { forc
   const pending = pendingProjectMetadataRequests.get(instance.id)
   if (pending?.client === client && pending.signal === signal && pending.generation === generation) return pending.promise
   const request = { client, generation, signal, promise: Promise.resolve() as Promise<void> }
-  request.promise = client.location.get({ location: { directory: instance.folder } })
+  request.promise = client.location.get({ location: { directory: instance.folder } }, { signal })
     .then((location) => {
       if (signal?.aborted || pendingProjectMetadataRequests.get(instance.id) !== request
         || getInstanceMetadataGeneration(instance.id) !== generation) return

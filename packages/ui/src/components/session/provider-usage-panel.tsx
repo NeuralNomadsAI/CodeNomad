@@ -2,6 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, type Comp
 
 import type { ProviderUsageResponse, ProviderUsageWindow } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
+import { captureBackendOperation } from "../../lib/backend-operation"
 import { useI18n } from "../../lib/i18n"
 import { useConfig } from "../../stores/preferences"
 import { backendEvents as serverEvents } from "../../lib/server-events"
@@ -29,11 +30,13 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
     return { instanceId: props.instanceId, sessionId: props.sessionId, directory: props.directory, providerId, modelId }
   }, null, { equals: (a, b) => a === b || Boolean(a && b && providerUsageKey(a) === providerUsageKey(b)) })
   const [usage, setUsage] = createSignal<ProviderUsageResponse | null | undefined>()
-  const state = createProviderUsageState(current => serverApi.fetchProviderUsage(
-    current.instanceId, current.sessionId, current.providerId, current.modelId,
-  ), value => setUsage(value))
+  const state = createProviderUsageState((current, signal) => serverApi.fetchProviderUsage(
+    current.instanceId, current.sessionId, current.providerId, current.modelId, signal,
+  ), value => setUsage(value), current => captureBackendOperation(current.instanceId))
 
   createEffect(() => {
+    serverEvents.signalForInstance(props.instanceId)
+    state.invalidate()
     state.select(source())
     void state.refresh()
   })

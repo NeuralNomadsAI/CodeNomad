@@ -78,6 +78,7 @@ import type { PluginSourceAddRequest, PluginSourceMutationResponse, PluginSource
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
 import { attachEventSourceHandlers } from "./event-source-handlers"
+import { captureBackendOperation } from "./backend-operation"
 import { HttpResponseError, retryFileSearch } from "./retryable-file-search"
 import { deleteMissionRequest, type MissionDeletionRequest } from "./mission-cleanup"
 import { missionMutationRequest } from "./mission-mutation"
@@ -101,7 +102,7 @@ const sseLogger = getLogger("sse")
 // Secondary panel (plugin controls) and timeline reads share the bounded
 // background budget, so they never take the browser connections needed by the
 // selected transcript and its metadata during startup. Provider usage stays
-// direct (superseded reads are fenced, not cancelled), as does the OpenCode
+// direct and cancellable, as does the OpenCode
 // status read that Restart/Start await, so a stalled daemon read cannot hold it.
 function secondaryRead<T>(signal: AbortSignal | undefined, read: () => Promise<T>, priority: "normal" | "visible" = "visible"): Promise<T> {
   return backgroundReads.run(signal ?? new AbortController().signal, read, priority)
@@ -185,11 +186,15 @@ async function sendRequest<T>(ctx: BackendHttp, path: string, init?: RequestInit
   logHttp(`${method} ${logPath}`)
 
   try {
+    init?.signal?.throwIfAborted()
     const response = await ctx.fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
+    init?.signal?.throwIfAborted()
     if (!response.ok) {
       const body = await response.clone().json().catch(() => undefined)
+      init?.signal?.throwIfAborted()
       const code = typeof body?.code === "string" && body.code.length <= 100 ? body.code : undefined
       const message = await readErrorMessage(response)
+      init?.signal?.throwIfAborted()
       logHttp(`${method} ${logPath} -> ${response.status}`, { durationMs: Date.now() - startedAt, ...(sensitive ? {} : { error: message }) })
       throw new HttpResponseError(message || `Request failed with ${response.status}`, response.status, response.headers.get("Retry-After"), code, body)
     }
@@ -198,7 +203,9 @@ async function sendRequest<T>(ctx: BackendHttp, path: string, init?: RequestInit
     if (response.status === 204) {
       return undefined as T
     }
-    return (await response.json()) as T
+    const value = await response.json()
+    init?.signal?.throwIfAborted()
+    return value as T
   } catch (error) {
     logHttp(`${method} ${logPath} failed`, { durationMs: Date.now() - startedAt, ...(sensitive ? {} : { error }) })
     throw error
@@ -216,9 +223,12 @@ async function sendRawRequest(ctx: BackendHttp, path: string, init?: RequestInit
   const startedAt = Date.now()
   logHttp(`${method} ${path}`)
 
+  init?.signal?.throwIfAborted()
   const response = await ctx.fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
+  init?.signal?.throwIfAborted()
   if (!response.ok) {
     const message = await readErrorMessage(response)
+    init?.signal?.throwIfAborted()
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
     throw new Error(message || `Request failed with ${response.status}`)
   }
@@ -262,6 +272,8 @@ export function createServerApi(ctx: BackendHttp) {
       })
     },
     queryRankedHistory(instanceId: string, input: HistoryRankedInput, signal?: AbortSignal): Promise<RankedHistoryResult> {
+      const attachment = captureBackendOperation(instanceId, signal)
+      signal = attachment.signal
       return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/ranked`, {
         method: "POST", body: JSON.stringify(input), signal,
       })
@@ -288,11 +300,11 @@ export function createServerApi(ctx: BackendHttp) {
       return request<WorkspaceDescriptor[]>("/api/workspaces", { signal })
     },
 
-    fetchProviderUsage(instanceId: string, sessionId: string, providerId: string, modelId?: string): Promise<ProviderUsageResponse> {
+    fetchProviderUsage(instanceId: string, sessionId: string, providerId: string, modelId?: string, signal?: AbortSignal): Promise<ProviderUsageResponse> {
       const params = new URLSearchParams({ instanceId, sessionId })
       if (modelId) params.set("modelId", modelId)
       const query = params.toString()
-      return request<ProviderUsageResponse>(`/api/usage/${encodeURIComponent(providerId)}${query ? `?${query}` : ""}`)
+      return request<ProviderUsageResponse>(`/api/usage/${encodeURIComponent(providerId)}${query ? `?${query}` : ""}`, { signal })
     },
 
     fetchWorktrees(id: string, fresh = false, signal?: AbortSignal): Promise<WorktreeListResponse> {
@@ -443,8 +455,8 @@ export function createServerApi(ctx: BackendHttp) {
       if (location.workspaceID) params.set("workspaceID", location.workspaceID)
       return secondaryRead(signal, () => request<PluginControlsSnapshot>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls?${params.toString()}`, { signal }))
     },
-    getWebSearchSettings(instanceId: string, directory: string): Promise<import("../../../server/src/api-types").WebSearchSettingsSnapshot> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings?${new URLSearchParams({ directory })}`)
+    getWebSearchSettings(instanceId: string, directory: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").WebSearchSettingsSnapshot> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings?${new URLSearchParams({ directory })}`, { signal })
     },
     getServiceUsageOwner(instanceId: string, signal?: AbortSignal): Promise<{ owner: string; identity?: string; connection?: string }> {
       return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage/owner`, { signal })
@@ -455,14 +467,14 @@ export function createServerApi(ctx: BackendHttp) {
     getServiceUsage(instanceId: string, query: { from: number; to: number; timezone: string; restorePeriod?: boolean }, signal?: AbortSignal): Promise<import("../../../server/src/api-types").ServiceUsageSnapshot> {
       return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage?${new URLSearchParams({ from: String(query.from), to: String(query.to), timezone: query.timezone, ...(query.restorePeriod ? { restorePeriod: "true" } : {}) })}`, { signal })
     },
-    setWebSearchSettings(instanceId: string, payload: import("../../../server/src/api-types").WebSearchSettingsMutation): Promise<void> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings`, { method: "PUT", body: JSON.stringify(payload) })
+    setWebSearchSettings(instanceId: string, payload: import("../../../server/src/api-types").WebSearchSettingsMutation, signal?: AbortSignal): Promise<void> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings`, { method: "PUT", body: JSON.stringify(payload), signal })
     },
-    getImageSettings(instanceId: string, directory: string): Promise<import("../../../server/src/api-types").ImageSettingsSnapshot> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/image-settings?${new URLSearchParams({ directory })}`)
+    getImageSettings(instanceId: string, directory: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").ImageSettingsSnapshot> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/image-settings?${new URLSearchParams({ directory })}`, { signal })
     },
-    setImageSettings(instanceId: string, payload: import("../../../server/src/api-types").ImageSettingsMutation): Promise<void> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/image-settings`, { method: "PUT", body: JSON.stringify(payload) })
+    setImageSettings(instanceId: string, payload: import("../../../server/src/api-types").ImageSettingsMutation, signal?: AbortSignal): Promise<void> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/image-settings`, { method: "PUT", body: JSON.stringify(payload), signal })
     },
     getSubagentDepth(instanceId: string, directory: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").SubagentDepthSnapshot> {
       return request(`/api/workspaces/${encodeURIComponent(instanceId)}/subagent-depth?${new URLSearchParams({ directory })}`, { signal })
@@ -555,7 +567,7 @@ export function createServerApi(ctx: BackendHttp) {
         `/api/workspaces/${encodeURIComponent(id)}/files/content?${params.toString()}`,
       )
     },
-    writeWorkspaceFile(id: string, relativePath: string, contents: string, options?: { worktree?: string; directory?: string }): Promise<void> {
+    writeWorkspaceFile(id: string, relativePath: string, contents: string, options?: { worktree?: string; directory?: string; signal?: AbortSignal }): Promise<void> {
       const params = new URLSearchParams({ path: relativePath })
       if (options?.directory) params.set("directory", options.directory)
       if (options?.worktree && options.worktree !== "root") {
@@ -566,6 +578,7 @@ export function createServerApi(ctx: BackendHttp) {
         {
           method: "PUT",
           body: JSON.stringify({ contents }),
+          signal: options?.signal,
         },
       )
     },
@@ -595,46 +608,50 @@ export function createServerApi(ctx: BackendHttp) {
         { signal },
       )
     },
-    stageWorktreeGitPaths(id: string, slug: string, payload: WorktreeGitPathsRequest): Promise<WorktreeGitMutationResponse> {
+    stageWorktreeGitPaths(id: string, slug: string, payload: WorktreeGitPathsRequest, signal?: AbortSignal): Promise<WorktreeGitMutationResponse> {
       return request<WorktreeGitMutationResponse>(
         `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-stage`,
         {
           method: "POST",
           body: JSON.stringify(payload),
+          signal,
         },
       )
     },
-    unstageWorktreeGitPaths(id: string, slug: string, payload: WorktreeGitPathsRequest): Promise<WorktreeGitMutationResponse> {
+    unstageWorktreeGitPaths(id: string, slug: string, payload: WorktreeGitPathsRequest, signal?: AbortSignal): Promise<WorktreeGitMutationResponse> {
       return request<WorktreeGitMutationResponse>(
         `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-unstage`,
         {
           method: "POST",
           body: JSON.stringify(payload),
+          signal,
         },
       )
     },
-    initializeWorkspaceGit(id: string, directory: string): Promise<WorktreeGitMutationResponse> {
+    initializeWorkspaceGit(id: string, directory: string, signal?: AbortSignal): Promise<WorktreeGitMutationResponse> {
       return request<WorktreeGitMutationResponse>(`/api/workspaces/${encodeURIComponent(id)}/git-init`, {
         method: "POST",
         body: JSON.stringify({ directory }),
+        signal,
       })
     },
-    commitWorktreeGitChanges(id: string, slug: string, payload: WorktreeGitCommitRequest): Promise<WorktreeGitCommitResponse> {
+    commitWorktreeGitChanges(id: string, slug: string, payload: WorktreeGitCommitRequest, signal?: AbortSignal): Promise<WorktreeGitCommitResponse> {
       return request<WorktreeGitCommitResponse>(
         `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-commit`,
         {
           method: "POST",
           body: JSON.stringify(payload),
+          signal,
         },
       )
     },
 
-    getProviderAccounts(instanceId: string, integrationID: string, directory: string): Promise<ProviderAccountsSnapshot> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/provider-accounts/${encodeURIComponent(integrationID)}?${new URLSearchParams({ directory })}`)
+    getProviderAccounts(instanceId: string, integrationID: string, directory: string, signal?: AbortSignal): Promise<ProviderAccountsSnapshot> {
+      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/provider-accounts/${encodeURIComponent(integrationID)}?${new URLSearchParams({ directory })}`, { signal })
     },
-    setProviderAccountSelection(instanceId: string, integrationID: string, directory: string, enabled: boolean): Promise<ProviderAccountsSnapshot> {
+    setProviderAccountSelection(instanceId: string, integrationID: string, directory: string, enabled: boolean, signal?: AbortSignal): Promise<ProviderAccountsSnapshot> {
       return request(`/api/workspaces/${encodeURIComponent(instanceId)}/provider-accounts/${encodeURIComponent(integrationID)}`, {
-        method: "PUT", body: JSON.stringify({ directory, enabled }),
+        method: "PUT", body: JSON.stringify({ directory, enabled }), signal,
       })
     },
     fetchConfigOwner<T extends Record<string, any> = Record<string, any>>(owner: string, signal?: AbortSignal): Promise<T> {

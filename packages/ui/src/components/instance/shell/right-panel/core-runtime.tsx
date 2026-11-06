@@ -17,6 +17,7 @@ import { FILES_PANEL_MODE_KEY, type FilesPanelMode } from "./files-panel-state"
 import { readStoredEnum } from "../storage"
 import { writeClientLayoutValue } from "../../../../stores/client-state"
 import { projectScope } from "../../../../lib/backend-identity"
+import { captureBackendOperation } from "../../../../lib/backend-operation"
 
 const LazyFilesPanel = lazy(() => import("./tabs/FilesPanel"))
 const LazyStatusTab = lazy(() => import("./tabs/StatusTab"))
@@ -62,11 +63,11 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
   const gitAvailable = () => getGitRepoStatus(options.instanceId) !== false
   const directory = () => worktree()?.directory ?? options.instance.folder
   const gitInit = useGitInit({ instanceId: options.instanceId, directory, t: options.t })
-  const tree = useWorkspaceTree(options.instanceId, directory, () => active() && mode() === "workspace")
-  const history = useGitHistory(options.instanceId, slug, () => active() && gitAvailable() && mode() === "history")
+  const tree = useWorkspaceTree(options.instanceId, directory, () => active() && mode() === "workspace", captureBackendOperation)
+  const history = useGitHistory(options.instanceId, slug, () => active() && gitAvailable() && mode() === "history", captureBackendOperation)
   const git = useGitChanges({
     ...options, isActive: () => active() && gitAvailable() && mode() === "changes", rightPanelTab: () => "git-changes",
-    worktreeSlug: slug, closeGitList: () => {}, externalDiff: true,
+    worktreeSlug: slug, closeGitList: () => {}, externalDiff: true, captureOperation: captureBackendOperation,
   })
   const openFile = (file: Pick<FilePreviewTarget, "kind" | "path" | "originalPath" | "scope" | "commit" | "subject">) => {
     const sessionId = options.activeSessionId()

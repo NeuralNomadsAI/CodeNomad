@@ -5,6 +5,7 @@ import { useI18n } from "../../lib/i18n"
 import { backendEvents as serverEvents } from "../../lib/server-events"
 import { requestLocationOptions, toRequestLocation } from "../../stores/request-locations"
 import { serverApi } from "../../lib/api-client"
+import { captureBackendOperation } from "../../lib/backend-operation"
 import { SettingsSwitch } from "../settings/settings-switch"
 import type { ProviderAccountsSnapshot } from "../../../../server/src/api-types"
 
@@ -27,67 +28,73 @@ export function ProviderAccounts(props: {
   let setAutomatic: (enabled: boolean) => Promise<void> = async () => {}
   let refresh = () => {}
   let run: (id: string, action: "activate" | "remove" | "rename", label?: string) => Promise<boolean> = async () => false
+  let scope: string | undefined
   createEffect(() => {
     const client = props.client, instanceId = props.instanceId, integrationID = props.integrationId, location = { ...props.location }
     let disposed = false, reading = false, writing = false, trailing = false
+    const controller = new AbortController()
+    const operation = captureBackendOperation(instanceId, controller.signal, () => !disposed)
     // Cache-first: keep the catalog snapshot while the authoritative read
     // revalidates behind it.
-    setConnections(props.initialConnections ?? []); setError(false); setBusy(false); setSelection(emptySnapshot())
+    const identity = JSON.stringify([instanceId, integrationID, location.directory])
+    if (scope !== identity) { scope = identity; setConnections(props.initialConnections ?? []); setSelection(emptySnapshot()) }
+    setError(false); setBusy(false)
     const read = async () => {
-      if (disposed) return
+      if (!operation.current()) return
       if (reading || writing) { trailing = true; return }
       reading = true; setBusy(true)
       do {
         trailing = false
         try {
-          const catalog = await client.integration.list({ location: toRequestLocation(location) }, requestLocationOptions(location))
+          const catalog = await client.integration.list({ location: toRequestLocation(location) }, { ...requestLocationOptions(location), signal: operation.signal })
+          if (!operation.current()) return
           const current = catalog.data.find(item => item.id === integrationID)?.connections ?? []
           // The server decides which integrations support automatic selection;
           // only saved credentials can carry logins or become candidates.
           const snapshot = current.some(item => item.type === "credential")
-            ? await serverApi.getProviderAccounts(instanceId, integrationID, location.directory).catch(() => emptySnapshot())
+            ? await serverApi.getProviderAccounts(instanceId, integrationID, location.directory, operation.signal).catch(() => emptySnapshot())
             : emptySnapshot()
-          if (!disposed && !trailing) {
+          if (operation.current() && !trailing) {
             setConnections(current)
             setSelection(snapshot)
             setError(false)
           }
-        } catch { if (!disposed && !trailing) setError(true) }
-      } while (trailing && !disposed)
+        } catch { if (operation.current() && !trailing) setError(true) }
+      } while (trailing && operation.current())
       reading = false
-      if (!disposed) setBusy(false)
+      if (operation.current()) setBusy(false)
     }
     refresh = () => { void read() }
     setAutomatic = async enabled => {
-      if (disposed || reading || writing || props.disabled) return
+      if (!operation.current() || reading || writing || props.disabled) return
       writing = true; setBusy(true); setError(false)
       let failed = false
       try {
-        const snapshot = await serverApi.setProviderAccountSelection(instanceId, integrationID, location.directory, enabled)
-        if (!disposed) setSelection(snapshot)
+        const snapshot = await serverApi.setProviderAccountSelection(instanceId, integrationID, location.directory, enabled, operation.signal)
+        if (operation.current()) setSelection(snapshot)
       } catch { failed = true }
       finally { writing = false }
-      if (disposed) return
+      if (!operation.current()) return
       await read()
-      if (failed && !disposed) setError(true)
+      if (failed && operation.current()) setError(true)
     }
     run = async (credentialID, action, label) => {
-      if (disposed || reading || writing || props.disabled) return false
+      if (!operation.current() || reading || writing || props.disabled) return false
       if (!connections().some(item => item.type === "credential" && item.id === credentialID)) return false
       writing = true; setBusy(true); setError(false)
       let failed = false
       try {
-        const options = requestLocationOptions(location, { includeDirectory: true })
+        const options = { ...requestLocationOptions(location, { includeDirectory: true }), signal: operation.signal }
         if (action === "activate") await client.credential.activate({ credentialID }, options)
         else if (action === "remove") await client.credential.remove({ credentialID }, options)
         else await client.credential.update({ credentialID, label: label!.trim() }, options)
       } catch { failed = true }
       finally { writing = false }
-      if (disposed) return false
+      if (!operation.current()) return false
       await read()
-      if (failed) { if (!disposed) setError(true); return false }
-      if (!disposed) await props.onChanged?.()
-      return !disposed
+      if (failed) { if (operation.current()) setError(true); return false }
+      if (operation.current()) await props.onChanged?.()
+      return operation.current()
     }
     const events = serverEvents.on("instance.event", payload => {
       if (payload.type === "instance.event" && payload.instanceId === instanceId
@@ -100,7 +107,7 @@ export function ProviderAccounts(props: {
     const policy = serverEvents.forInstance(() => instanceId).on("storage.configChanged", payload => {
       if (payload.type === "storage.configChanged" && ["providerAccounts", "*"].includes(payload.owner)) refresh()
     })
-    onCleanup(() => { disposed = true; events(); status(); reconnect(); policy() })
+    onCleanup(() => { disposed = true; controller.abort(); events(); status(); reconnect(); policy() })
     void read()
   })
   const ids = () => connections().map(item => item.type === "credential" ? `credential:${item.id}` : `env:${item.name}`)

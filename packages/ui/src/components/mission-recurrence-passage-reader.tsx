@@ -2,6 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack }
 import type { MissionRecurrenceReadPage } from "../../../server/src/api-types"
 import type { RecurrenceHistoryItem } from "../stores/mission-recurrence"
 import { serverApi } from "../lib/api-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { useI18n } from "../lib/i18n"
 import { instances } from "../stores/instances"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
@@ -9,7 +10,7 @@ import { MissionReaderSection } from "./mission-reader"
 import { MissionReaderNumber } from "./mission-reader-number"
 import { MissionComparisonVerdict } from "./mission-comparison-report"
 
-const cache = new Map<string, { value: MissionRecurrenceReadPage; client: unknown; generation: number }>()
+const cache = new Map<string, { value: MissionRecurrenceReadPage; client: unknown; generation: number; signal: AbortSignal }>()
 const labels: Record<MissionRecurrenceReadPage["sections"][number]["label"], string> = {
   summary: "missions.control.summary", objective: "missions.control.objective", notes: "missions.control.notes",
   evidence: "missions.control.report.evidence", next: "missions.control.report.next", brief: "missions.control.brief",
@@ -28,10 +29,12 @@ export function MissionRecurrencePassageReader(props: { instanceId: string; scop
   const selectSection = (section: number) => setSelection({ identity: binding(), section, page: 0 })
   const selectPage = (page: number) => setSelection({ identity: binding(), section: section(), page })
   const connection = createMemo(() => ({ instanceId: props.instanceId, client: instances().get(props.instanceId)?.client,
+    signal: captureBackendOperation(props.instanceId).signal,
     generation: getOpenCodeInstanceGeneration(props.instanceId) }), undefined,
-    { equals: (a, b) => Boolean(a && a.instanceId === b.instanceId && a.client === b.client && a.generation === b.generation) })
+    { equals: (a, b) => Boolean(a && a.signal === b.signal && a.instanceId === b.instanceId && a.client === b.client && a.generation === b.generation) })
   let previous = ""
   let previousClient: unknown, previousGeneration: number | undefined
+  let previousSignal: AbortSignal | undefined
   let previousRefresh = 0
   createEffect(() => {
     const revalidate = refresh()
@@ -40,24 +43,26 @@ export function MissionRecurrencePassageReader(props: { instanceId: string; scop
     const identity = binding(), { instanceId, directory, projectID, scheduleID, receipt } = untrack(() => ({
       instanceId: props.instanceId, directory: instances().get(props.instanceId)?.folder, projectID: props.projectID, scheduleID: props.scheduleID, receipt: props.receipt,
     })), selectedSection = section(), selectedPage = page()
-    const { client, generation } = connection()
+    const { client, generation, signal } = connection()
     const key = JSON.stringify([identity, selectedSection, selectedPage]), entry = cache.get(key)
-    const cached = entry?.client === client && entry?.generation === generation ? entry.value : undefined
-    const sameSource = previous === identity && previousClient === client && previousGeneration === generation
+    const cached = !signal.aborted && entry?.signal === signal && entry?.client === client && entry?.generation === generation ? entry.value : undefined
+    const sameSource = previous === identity && previousClient === client && previousGeneration === generation && previousSignal === signal
     const revision = sameSource ? untrack(value)?.revision : undefined
     previous = identity
     previousClient = client; previousGeneration = generation
+    previousSignal = signal
     setValue(cached ?? (sameSource ? untrack(value) : undefined)); setError(false); setLoading(!cached)
     // Exact archived receipts are immutable. Reopening a known page is demand
     // for cached prose, not another journal read; connection fences revoke it.
     if (cached && !retry) return
     const controller = new AbortController()
     let current = true
-    const admitted = () => current && !controller.signal.aborted && binding() === identity
+    const admitted = () => !signal.aborted && current && !controller.signal.aborted && binding() === identity
       && instances().get(instanceId)?.folder === directory && instances().get(instanceId)?.metadata?.project?.id === projectID
       && instances().get(instanceId)?.client === client && getOpenCodeInstanceGeneration(instanceId) === generation
+    if (!admitted()) return
     void serverApi.fetchMissionRecurrencePassagePage(instanceId, scheduleID, receipt.passageID,
-      { section: selectedSection, page: selectedPage, ...(revision === undefined ? {} : { revision }) }, controller.signal).then(result => {
+      { section: selectedSection, page: selectedPage, ...(revision === undefined ? {} : { revision }) }, AbortSignal.any([signal, controller.signal])).then(result => {
       if (!admitted()) return
       if (result.version !== 1 || result.projectID !== projectID || result.scheduleID !== scheduleID || result.passageID !== receipt.passageID
         || result.missionID !== receipt.missionID || result.conversationID !== receipt.conversationID
@@ -65,8 +70,8 @@ export function MissionRecurrencePassageReader(props: { instanceId: string; scop
         || !Array.isArray(result.sections) || result.sections.length > 32 || !result.sections.some(item => item.index === selectedSection)
         || result.sourceText.length > 9001 || result.markdownText !== null && result.markdownText.length > 9116) throw new Error("Foreign archived page")
       if (cache.size >= 64 && !cache.has(key)) cache.delete(cache.keys().next().value!)
-      cache.set(key, { value: result, client, generation }); setValue(result)
-    }).catch(() => { if (admitted()) setError(true) }).finally(() => { if (current) setLoading(false) })
+      cache.set(key, { value: result, client, generation, signal }); setValue(result)
+    }).catch(() => { if (admitted()) setError(true) }).finally(() => { if (admitted()) setLoading(false) })
     onCleanup(() => { current = false; controller.abort() })
   })
   const selected = () => value()?.sections.find(item => item.index === value()?.section)

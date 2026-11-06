@@ -6,7 +6,7 @@ import { backendEvents as serverEvents } from "../lib/server-events"
 import { parseInstanceKey } from "../lib/backend-identity"
 import { createIntegrationsStore, isIntegrationRefreshEvent } from "./integrations-store"
 
-export const integrations = createIntegrationsStore(fetchIntegrations)
+export const integrations = createIntegrationsStore(fetchIntegrations, { signal: id => serverEvents.signalForInstance(id) })
 export const integrationBindings = createIntegrationBindingsStore(fetchIntegrationBinding, { signal: target => serverEvents.signalForInstance(target.instanceId) })
 // Invalidates live offer snapshots, including across reconnects. Action receipts have their own view ownership.
 const [epochs, setEpochs] = createSignal<ReadonlyMap<string, number>>(new Map())
@@ -33,7 +33,7 @@ const observeBackend = (backendId: string) => {
 }
 serverEvents.on("*", event => { observeBackend(event.backendId ?? "local") })
 const invalidate = (instanceId: string) => setEpochs(current => new Map(current).set(instanceId, (current.get(instanceId) ?? 0) + 1))
-const reconnects = createEventRefreshScheduler(instanceId => integrations.refreshDemanded(instanceId))
+const reconnects = createEventRefreshScheduler((instanceId, signal) => signal.aborted ? undefined : integrations.refreshDemanded(instanceId))
 serverEvents.on("instance.event", event => {
   if (event.type !== "instance.event") return
   const type = event.event.type
@@ -46,7 +46,7 @@ serverEvents.on("instance.event", event => {
     integrationBindings.reconnect(event.instanceId)
     invalidate(event.instanceId)
     integrations.invalidate(event.instanceId)
-    reconnects.schedule(event.instanceId, "urgent")
+    reconnects.schedule(event.instanceId, "urgent", serverEvents.signalForInstance(event.instanceId))
   } else if (["session.updated", "session.deleted", "session.moved"].includes(type)) {
     const sessionID = (event.event as { data?: { sessionID?: unknown } }).data?.sessionID
     if (typeof sessionID !== "string") return
@@ -59,7 +59,7 @@ serverEvents.on("instance.eventStatus", event => {
   integrationBindings.reconnect(event.instanceId, event.status === "connected")
   invalidate(event.instanceId)
   integrations.invalidate(event.instanceId)
-  if (event.status === "connected") reconnects.schedule(event.instanceId, "urgent")
+  if (event.status === "connected") reconnects.schedule(event.instanceId, "urgent", serverEvents.signalForInstance(event.instanceId))
 })
 serverEvents.onOpen(backendId => {
   if (!observeBackend(backendId)) return

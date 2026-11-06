@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, on, onCleanup, type Accessor } from "solid-js"
 import type { FileSystemEntry } from "../../../../../../server/src/api-types"
 import { serverApi } from "../../../../lib/api-client"
+import type { captureBackendOperation } from "../../../../lib/backend-operation"
 import { backgroundReads } from "../../../../lib/background-read-queue"
 import { createDebouncedRefresh, filesystemInvalidationVersion } from "../../../../lib/filesystem-events"
 
@@ -10,7 +11,7 @@ interface TreeState {
   selected: string | null
 }
 type TreeRow = FileSystemEntry & { depth: number; parent: string }
-export function useWorkspaceTree(instanceId: string, directory: Accessor<string>, active: Accessor<boolean>) {
+export function useWorkspaceTree(instanceId: string, directory: Accessor<string>, active: Accessor<boolean>, capture?: typeof captureBackendOperation) {
   const empty = (): TreeState => ({ directories: new Map(), expanded: new Set(["."]), selected: null })
   const cache = new Map<string, { state: TreeState; versions: Map<string, number> }>()
   const [state, setState] = createSignal<TreeState>(empty())
@@ -29,14 +30,17 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
   async function load(path: string, force = false) {
     if (!active() || requests.has(path) || (!force && state().directories.has(path))) return
     const scope = directory(), controller = new AbortController()
+    const operation = capture?.(instanceId, controller.signal)
+    const signal = operation?.signal ?? controller.signal
+    if (signal.aborted) return
     const version = versionFor(path)
     requests.set(path, controller)
     setBusy(new Set(requests.keys()))
     setErrors(previous => { const next = new Map(previous); next.delete(path); return next })
     try {
-      const entries = await backgroundReads.run(controller.signal,
-        () => serverApi.listWorkspaceFiles(instanceId, path, scope, controller.signal), "visible")
-      if (controller.signal.aborted || directory() !== scope) return
+      const entries = await backgroundReads.run(signal,
+        () => serverApi.listWorkspaceFiles(instanceId, path, scope, signal), "visible")
+      if (signal.aborted || directory() !== scope) return
       const nextEntries = new Map(entries.map(entry => [entry.path, entry]))
       const replaced = new Set((state().directories.get(path) ?? []).filter(entry => {
         const next = nextEntries.get(entry.path)
@@ -64,7 +68,7 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
       // descendants). Reload only those stale visible listings and bind new watches.
       if (hasStaleVisibleDirectories()) dirty = true
     } catch (error) {
-      if (!controller.signal.aborted) setErrors(previous => new Map(previous).set(path, error instanceof Error ? error.message : String(error)))
+      if (!signal.aborted) setErrors(previous => new Map(previous).set(path, error instanceof Error ? error.message : String(error)))
     } finally {
       if (requests.get(path) === controller) { requests.delete(path); setBusy(new Set(requests.keys())) }
     }
@@ -122,6 +126,10 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
       && (all || loadedVersions.get(row.path) !== versionFor(row.path))) void load(row.path, true)
   }
   const debounced = createDebouncedRefresh(() => refresh(false))
+  createEffect(on(() => capture?.(instanceId).signal, signal => {
+    cancel(); debounced.cancel()
+    if (signal && !signal.aborted) refresh(true)
+  }, { defer: true }))
   const hasStaleVisibleDirectories = () => {
     return loadedVersions.get(".") !== versionFor(".") || rows().some(row =>
       row.type === "directory" && state().expanded.has(row.path) && loadedVersions.get(row.path) !== versionFor(row.path))

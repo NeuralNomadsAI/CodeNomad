@@ -11,7 +11,8 @@ import { getLogger } from "./logger"
 import { retryWithBackoff, isRetryableError } from "./retry-utils"
 import { createStreamStalenessWatchdog } from "./stream-staleness"
 import { authRecovery, type AuthRecovery } from "./auth-recovery"
-import { BackendEvents } from "./backend-events"
+import { backendEvents } from "./backend-events"
+export { backendEvents } from "./backend-events"
 
 const RETRY_BASE_DELAY = 1000
 const RETRY_MAX_DELAY = 10000
@@ -328,6 +329,5 @@ export class ServerEvents {
 }
 
 export const serverEvents = new ServerEvents({ api: serverApi, auth: authRecovery })
-export const backendEvents = new BackendEvents()
 backendEvents.attach("local", serverEvents)
 serverEvents.start()

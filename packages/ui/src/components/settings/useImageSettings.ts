@@ -2,6 +2,7 @@ import { createEffect, createSignal, onCleanup } from "solid-js"
 import type { LocationRef } from "@opencode/client"
 import type { ImageGenerationSelection, ImageSettingsSnapshot } from "../../../../server/src/api-types"
 import { serverApi } from "../../lib/api-client"
+import { captureBackendOperation } from "../../lib/backend-operation"
 import { backendEvents as serverEvents } from "../../lib/server-events"
 import { getActiveCatalogLocation } from "../../stores/sessions"
 
@@ -12,36 +13,42 @@ export function useImageSettings(props: { instanceId: string; location?: Locatio
   const [error, setError] = createSignal(false)
   const location = () => props.location ?? getActiveCatalogLocation(props.instanceId)
   let mutate: (change: { generation: ImageGenerationSelection } | { mediaStorage: boolean }) => Promise<void> = async () => {}
+  let scope: string | undefined
 
   createEffect(() => {
     const instanceId = props.instanceId, directory = location().directory
     let disposed = false, reading = false, writing = false, trailing = false, revision = 0
-    setSnapshot(undefined); setError(false); setBusy(false)
+    const controller = new AbortController()
+    const operation = captureBackendOperation(instanceId, controller.signal, () => !disposed)
+    const current = operation.current
+    const identity = JSON.stringify([instanceId, directory])
+    if (scope !== identity) { scope = identity; setSnapshot(undefined) }
+    setError(false); setBusy(false)
     mutate = async () => {}
     if (!instanceId || !directory) return
     const load = async () => {
-      if (disposed) return
+      if (!current()) return
       if (reading || writing) { trailing = true; return }
       reading = true; setBusy(true)
       do {
         trailing = false
         const captured = revision
         try {
-          const next = await serverApi.getImageSettings(instanceId, directory)
-          if (!disposed && captured === revision && !trailing) { setSnapshot(next); setError(false) }
-        } catch { if (!disposed && captured === revision && !trailing) setError(true) }
-      } while (!disposed && !writing && trailing)
+          const next = await serverApi.getImageSettings(instanceId, directory, operation.signal)
+          if (current() && captured === revision && !trailing) { setSnapshot(next); setError(false) }
+        } catch { if (current() && captured === revision && !trailing) setError(true) }
+      } while (current() && !writing && trailing)
       reading = false
-      if (!disposed && !writing) setBusy(false)
+      if (current() && !writing) setBusy(false)
     }
     mutate = async change => {
-      if (disposed || writing || reading) return
+      if (!current() || writing || reading) return
       writing = true; revision++; setBusy(true); setError(false)
       let failed = false
-      try { await serverApi.setImageSettings(instanceId, { location: { directory }, ...change }) } catch { failed = true }
-      finally { writing = false; if (!disposed) setBusy(false) }
-      if (!disposed) await load()
-      if (!disposed && failed) setError(true)
+      try { await serverApi.setImageSettings(instanceId, { location: { directory }, ...change }, operation.signal) } catch { failed = true }
+      finally { writing = false; if (current()) setBusy(false) }
+      if (current()) await load()
+      if (current() && failed) setError(true)
     }
     const events = serverEvents.on("instance.event", payload => {
       if (payload.type === "instance.event" && payload.instanceId === instanceId
@@ -51,7 +58,7 @@ export function useImageSettings(props: { instanceId: string; location?: Locatio
       if (payload.type === "instance.eventStatus" && payload.instanceId === instanceId && payload.status === "connected") void load()
     })
     const reconnect = serverEvents.forInstance(() => instanceId).onOpen(() => void load())
-    onCleanup(() => { disposed = true; events(); status(); reconnect() })
+    onCleanup(() => { disposed = true; controller.abort(); events(); status(); reconnect() })
     void load()
   })
 

@@ -1,6 +1,7 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { isRejectedLifecycleIntent, type MissionLifecycleInput } from "../lib/mission-lifecycle-request"
 import { useI18n } from "../lib/i18n"
 import { showToastNotification } from "../lib/notifications"
@@ -66,16 +67,20 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
   const full = () => !missionLifecycleIntents.available()
   const blocked = () => Boolean(props.disabled) || busy() || full() || !active()
   async function checkStatus() {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     if (busy() || !active() || props.disabled) return
     const scope = identity(), startedEpoch = epoch
     setRefreshing(true)
     try { await missionStore.refresh(props.instanceId) }
-    finally { if (alive && scope === identity() && startedEpoch === epoch) setRefreshing(false) }
+    finally { if (operation.current() && alive && scope === identity() && startedEpoch === epoch) setRefreshing(false) }
   }
   async function act(action: "start" | "pause" | "stop", replay = false, graceful = false) {
     if (props.disabled || busy() || !active() || (!replay && retry() && !pending()) || (replay && !pending() && !retry())) return
     const instanceId = props.instanceId, scope = identity(), sourceLocation = location(), startedEpoch = epoch
-    const owned = () => alive && identity() === scope && epoch === startedEpoch
+    const operation = captureBackendOperation(instanceId)
+    const owned = () => operation.current() && alive && identity() === scope && epoch === startedEpoch
+    if (!owned()) return
     const mission = props.mission
     if (!replay && full()) return
     const input = replay ? durableRequest() ?? retry()?.input
@@ -103,7 +108,7 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
       const matched = missionLifecycleIntents.finish(intent, outcome)
       // A certified rejection is announced once per exact request, even when
       // its view is hidden or gone; nothing is resent.
-      if (matched && outcome === "rejected") showToastNotification({ category: "sessions", title: missionDisplayTitle(mission, 80),
+      if (matched && operation.current() && outcome === "rejected") showToastNotification({ category: "sessions", title: missionDisplayTitle(mission, 80),
         message: t(`missions.control.run.rejected.${intent.input.action}`), variant: "error" })
       if (matched && current()) {
         setRefreshing(true)
@@ -113,11 +118,12 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
     }
   }
   async function confirmStop() {
+    const operation = captureBackendOperation(props.instanceId)
     if (blocked() || terminal()) return
     const scope = identity(), revision = props.mission.revision, missionId = props.mission.id
     const confirmed = await showConfirmDialog(t("missions.control.run.stopConfirm"), { variant: "warning",
       confirmLabel: t("missions.control.run.stop"), cancelLabel: t("missions.control.cancel") })
-    if (!confirmed) return
+    if (!confirmed || !operation.current()) return
     // The confirmation belongs to the exact Mission revision it described; after
     // drift nothing is sent and the person is asked to review and reconfirm.
     if (alive && identity() === scope && props.mission.revision === revision) await act("stop")
@@ -142,11 +148,12 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
   /** Reuse the panel's own read; do not authorize a resend from a failed map or
    * from a different Mission/request selected while that read was pending. */
   const reconcile = async (read: Promise<void>): Promise<boolean> => {
+    const operation = captureBackendOperation(props.instanceId)
     const scope = identity(), startedEpoch = epoch, instanceId = props.instanceId
     const original = durableRequest() ?? retry()?.input
     await read
     const next = durableRequest() ?? retry()?.input
-    return alive && scope === identity() && startedEpoch === epoch && instanceId === props.instanceId
+    return operation.current() && alive && scope === identity() && startedEpoch === epoch && instanceId === props.instanceId
       && missionStore.state(instanceId).status === "ready" && retryable() && Boolean(original && next
         && original.requestId === next.requestId && original.action === next.action && original.expectedRevision === next.expectedRevision)
   }

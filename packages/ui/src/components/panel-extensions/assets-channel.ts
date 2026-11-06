@@ -1,7 +1,8 @@
 import { z } from "zod"
-import { onCleanup } from "solid-js"
+import { createEffect, on, onCleanup } from "solid-js"
 import { assetTargetSchema } from "../../../../server/src/opencode/session-pruning/assets-contract"
 import { panelExtensionsApi } from "../../lib/panel-extensions-api"
+import { captureBackendOperation } from "../../lib/backend-operation"
 import { backendEvents as serverEvents } from "../../lib/server-events"
 import { assertThumbnailBounds } from "./image-bounds"
 
@@ -21,8 +22,13 @@ export function useAssetsChannel(props: {
   const abort = () => { for (const request of pending) request.abort() }
   const invalidate = () => {
     if (timer || disposed) return
-    timer = setTimeout(() => { timer = undefined; if (!disposed && connected && nativeConnected) props.send({ type: "assets:changed" }) }, 300)
+    const operation = captureBackendOperation(props.instanceId)
+    timer = setTimeout(() => { timer = undefined; if (operation.current() && !disposed && connected && nativeConnected) props.send({ type: "assets:changed" }) }, 300)
   }
+  createEffect(on(() => serverEvents.signalForInstance(props.instanceId), signal => {
+    clearTimeout(timer); timer = undefined; abort()
+    if (!signal.aborted) invalidate()
+  }, { defer: true }))
   onCleanup(serverEvents.on("instance.event", payload => {
     if (payload.type !== "instance.event" || payload.instanceId !== props.instanceId) return
     const event = payload.event as { type?: string; data?: { sessionID?: string } }
@@ -47,22 +53,24 @@ export function useAssetsChannel(props: {
     if (!parsed.success || disposed) return
     const { id, method, input } = parsed.data, session = props.sessionId()
     const controller = new AbortController()
+    const operation = captureBackendOperation(props.instanceId, controller.signal)
     try {
-      if (!connected || !nativeConnected || !session || pending.size >= 4) throw new Error("Unavailable")
+      if (!operation.current() || !connected || !nativeConnected || !session || pending.size >= 4) throw new Error("Unavailable")
       pending.add(controller)
       const args = [props.instanceId, props.id, props.digest, session] as const
       let result
       if (method === "list") {
         const request = listSchema.parse(input)
-        result = await panelExtensionsApi.assets(...args, request.cursor, controller.signal)
+        result = await panelExtensionsApi.assets(...args, request.cursor, operation.signal)
       } else {
         const request = readSchema.parse(input)
-        const asset = await panelExtensionsApi.assetRead(...args, request.target, controller.signal)
+        const asset = await panelExtensionsApi.assetRead(...args, request.target, operation.signal)
+        if (!operation.current()) return
         result = request.thumbnail ? await thumbnail(asset) : asset
       }
-      if (!disposed && connected && nativeConnected && !controller.signal.aborted && props.sessionId() === session) props.send({ type: "assets:result", id, result })
+      if (operation.current() && !disposed && connected && nativeConnected && props.sessionId() === session) props.send({ type: "assets:result", id, result })
     } catch {
-      if (!disposed && props.sessionId() === session) props.send({ type: "assets:result", id, error: true })
+      if (operation.current() && !disposed && props.sessionId() === session) props.send({ type: "assets:result", id, error: true })
     } finally { pending.delete(controller) }
   }
 }

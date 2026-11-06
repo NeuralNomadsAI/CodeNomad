@@ -9,6 +9,7 @@ import { getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionC
 import { setSessionSearchDestination } from "./session-search"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { projectScope } from "../lib/backend-identity"
+import { captureBackendOperation } from "../lib/backend-operation"
 
 export interface HistorySessionLabel {
   title: string
@@ -29,21 +30,27 @@ export function createHistorySessionLabels(instanceId: () => string) {
   const requested = new Set<string>()
   const queue: string[] = []
   let running = 0
-  let owner = { instanceId: instanceId(), generation: getOpenCodeInstanceGeneration(instanceId()), controller: new AbortController() }
+  const captureOwner = () => {
+    const controller = new AbortController()
+    return { instanceId: instanceId(), generation: getOpenCodeInstanceGeneration(instanceId()), controller,
+      operation: captureBackendOperation(instanceId(), controller.signal) }
+  }
+  let owner = captureOwner()
 
   function pump() {
     const current = owner
+    if (!current.operation.current()) return
     while (running < CONCURRENT_READS && queue.length) {
       const sessionID = queue.shift()!
       running += 1
-      void getRootClient(current.instanceId).session.get({ sessionID }, { signal: current.controller.signal })
+      void getRootClient(current.instanceId).session.get({ sessionID }, { signal: current.operation.signal })
         .then(session => ({ title: session.title ?? "", directory: session.location?.directory }), error => {
           // Only a missing session is unavailable; other failures retry on the next request.
-          if (current === owner && !isSessionNotFoundError(error)) requested.delete(sessionID)
+          if (current === owner && current.operation.current() && !isSessionNotFoundError(error)) requested.delete(sessionID)
           return null
         })
         .then(label => {
-          if (current === owner) setFetched(previous => new Map(previous).set(sessionID, label))
+          if (current === owner && current.operation.current()) setFetched(previous => new Map(previous).set(sessionID, label))
         })
         .finally(() => {
           if (current !== owner) return
@@ -55,9 +62,9 @@ export function createHistorySessionLabels(instanceId: () => string) {
 
   /** Abandons pending reads; resolved labels are kept unless the connection changed. */
   function restart() {
-    const clearLabels = owner.instanceId !== instanceId() || owner.generation !== getOpenCodeInstanceGeneration(instanceId())
+    const clearLabels = !owner.operation.current() || owner.instanceId !== instanceId() || owner.generation !== getOpenCodeInstanceGeneration(instanceId())
     owner.controller.abort()
-    owner = { instanceId: instanceId(), generation: getOpenCodeInstanceGeneration(instanceId()), controller: new AbortController() }
+    owner = captureOwner()
     queue.length = 0
     running = 0
     const labels = clearLabels ? new Map<string, HistorySessionLabel | null>() : fetched()
@@ -73,7 +80,8 @@ export function createHistorySessionLabels(instanceId: () => string) {
   return {
     /** Queues reads for these sessions only; a reconnect discards older labels. */
     request(sessionIds: readonly string[]) {
-      if (owner.instanceId !== instanceId() || owner.generation !== getOpenCodeInstanceGeneration(instanceId())) restart()
+      captureBackendOperation(instanceId())
+      if (!owner.operation.current() || owner.instanceId !== instanceId() || owner.generation !== getOpenCodeInstanceGeneration(instanceId())) restart()
       untrack(() => {
         const wanted = new Set(sessionIds)
         for (let index = queue.length - 1; index >= 0; index -= 1) {
@@ -110,9 +118,10 @@ export function createHistorySessionLabels(instanceId: () => string) {
  */
 export async function openHistoryMatchSession(instanceId: string, sessionId: string, messageId: string, current: () => boolean,
   highlight?: { query: string; match: SessionSearchMatch }): Promise<boolean> {
+  const operation = captureBackendOperation(instanceId, undefined, current)
   const client = instances().get(instanceId)?.client
   const generation = getOpenCodeInstanceGeneration(instanceId)
-  const admitted = () => current() && instances().get(instanceId)?.client === client
+  const admitted = () => operation.current() && instances().get(instanceId)?.client === client
     && getOpenCodeInstanceGeneration(instanceId) === generation
     && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)
   if (!admitted()) return false

@@ -106,7 +106,8 @@ test("disposing an attached source removes its fan-in and integration connection
   await tick()
   replacement.open()
   await tick()
-  assert.equal(reads, before, "removed bindings cannot revive reads in a replacement backend")
+  assert.equal(reads, before + 1, "a retained view reacquires its binding under the replacement attachment")
+  assert.deepEqual(integrationBindings.state(target), { state: "attached", label: "Scene" })
 })
 
 test("dispose fences pending connection acquisition even before it returns its transport", async t => {

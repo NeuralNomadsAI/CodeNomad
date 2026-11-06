@@ -5,6 +5,7 @@ import { serverApi } from "../api-client"
 import { useI18n } from "../i18n"
 import { isElectronHost } from "../runtime-env"
 import { blobToBase64, createMediaRecorder, stopTracks } from "../audio-utils"
+import { captureBackendOperation } from "../backend-operation"
 
 type TranscriptionTestState = "idle" | "requesting" | "recording" | "transcribing"
 
@@ -18,6 +19,7 @@ export function useTranscriptionTest() {
   let recordedChunks: Blob[] = []
   let requestGeneration = 0
   let disposed = false
+  let releaseAttachment: (() => void) | undefined
 
   const isSupported = () => {
     if (typeof window === "undefined") return false
@@ -44,12 +46,15 @@ export function useTranscriptionTest() {
   }
 
   onCleanup(() => {
+    releaseAttachment?.()
     disposed = true
     requestGeneration += 1
     releaseAll()
   })
 
   const startRecording = async () => {
+    const operation = captureBackendOperation("", undefined, () => !disposed)
+    if (!operation.current()) return
     if (!isSupported()) {
       showAlertDialog(t("promptInput.voiceInput.error.unsupported"), {
         title: t("promptInput.voiceInput.error.title"),
@@ -59,12 +64,22 @@ export function useTranscriptionTest() {
     }
 
     const generation = ++requestGeneration
+    releaseAttachment?.()
+    const detached = () => {
+      if (generation !== requestGeneration) return
+      requestGeneration++
+      releaseAll()
+      setState("idle")
+    }
+    operation.signal.addEventListener("abort", detached, { once: true })
+    releaseAttachment = () => operation.signal.removeEventListener("abort", detached)
     setState("requesting")
     setResult(null)
 
     try {
       if (isElectronHost()) {
         const granted = await (window as Window & { electronAPI?: ElectronAPI }).electronAPI?.requestMicrophoneAccess?.()
+        if (!operation.current() || disposed || generation !== requestGeneration) return
         if (granted && !granted.granted) {
           throw new Error(t("promptInput.voiceInput.error.permissionDenied"))
         }
@@ -72,7 +87,7 @@ export function useTranscriptionTest() {
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
 
-      if (generation !== requestGeneration || disposed) {
+      if (!operation.current() || generation !== requestGeneration || disposed) {
         stopTracks(stream)
         return
       }
@@ -96,7 +111,7 @@ export function useTranscriptionTest() {
 
       recorder.addEventListener("stop", () => {
         if (generation === requestGeneration) {
-          void finalizeRecording(generation)
+          void finalizeRecording(generation, operation)
         }
       })
 
@@ -121,13 +136,13 @@ export function useTranscriptionTest() {
     setState("transcribing")
   }
 
-  const finalizeRecording = async (generation: number) => {
+  const finalizeRecording = async (generation: number, operation: ReturnType<typeof captureBackendOperation>) => {
     const chunks = recordedChunks
     recordedChunks = []
     const recorder = mediaRecorder
     mediaRecorder = null
 
-    if (generation !== requestGeneration || chunks.length === 0) {
+    if (!operation.current() || generation !== requestGeneration || chunks.length === 0) {
       if (generation === requestGeneration) setState("idle")
       return
     }
@@ -136,15 +151,17 @@ export function useTranscriptionTest() {
 
     try {
       const audioBlob = new Blob(chunks, { type: mimeType })
+      const audioBase64 = await blobToBase64(audioBlob)
+      if (!operation.current() || generation !== requestGeneration || disposed) return
       const transcription = await serverApi.transcribeAudio({
-        audioBase64: await blobToBase64(audioBlob),
+        audioBase64,
         mimeType,
       })
-      if (generation === requestGeneration) {
+      if (operation.current() && generation === requestGeneration) {
         setResult(transcription.text.trim() || t("settings.speech.testInput.empty"))
       }
     } catch (error) {
-      if (generation === requestGeneration) {
+      if (operation.current() && generation === requestGeneration) {
         showAlertDialog(t("promptInput.voiceInput.error.transcribe"), {
           title: t("promptInput.voiceInput.error.title"),
           detail: error instanceof Error ? error.message : String(error),

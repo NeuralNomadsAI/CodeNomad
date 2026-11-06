@@ -4,6 +4,7 @@ import type { BackendId } from "./backend-transport"
 import type { WorkspaceEventTransportStatus } from "./event-transport"
 import { getLogger } from "./logger"
 import type { ServerEvents } from "./server-events"
+import { createStore } from "solid-js/store"
 
 export type BackendEventPayload = WorkspaceEventPayload & { backendId?: BackendId }
 
@@ -19,10 +20,12 @@ export function scopeBackendEvent(backendId: BackendId, event: WorkspaceEventPay
 }
 
 const log = getLogger("sse")
+const detachedSignal = AbortSignal.abort()
 
 /** Synchronous fan-in; subscribing never starts or restarts a source. */
 export class BackendEvents {
   private sources = new Map<BackendId, { detach: () => void; controller: AbortController }>()
+  private readonly attachments = createStore<Record<string, AbortSignal | undefined>>({})
   private handlers = new Map<WorkspaceEventType | "*", Set<(event: BackendEventPayload) => void>>()
   private opens = new Set<(backendId: BackendId) => void>()
   private statuses = new Set<(status: WorkspaceEventTransportStatus, backendId: BackendId) => void>()
@@ -58,6 +61,7 @@ export class BackendEvents {
     const detach = () => {
       if (!active()) return
       this.sources.delete(backendId)
+      this.attachments[1](backendId, undefined)
       off.forEach(unsubscribe => unsubscribe())
       controller.abort()
       const removed = () => !this.sources.has(backendId)
@@ -66,16 +70,18 @@ export class BackendEvents {
     }
     this.sources.set(backendId, { detach, controller })
     off.push(source.onDispose(detach))
+    if (active()) this.attachments[1](backendId, controller.signal)
     return detach
   }
 
   /** Capture once when admitting backend-owned work; never reacquire after an await. */
   signal(backendId: BackendId): AbortSignal | undefined {
+    this.attachments[0][backendId]
     return this.sources.get(backendId)?.controller.signal
   }
 
-  signalForInstance(instanceId: string): AbortSignal | undefined {
-    return this.signal(parseInstanceKey(instanceId).backendId)
+  signalForInstance(instanceId: string): AbortSignal {
+    return this.signal(parseInstanceKey(instanceId).backendId) ?? detachedSignal
   }
 
   onDetach(handler: (backendId: BackendId, signal: AbortSignal) => void): () => void {
@@ -108,3 +114,6 @@ export class BackendEvents {
     return () => { this.statuses.delete(handler) }
   }
 }
+
+/** The fan-in is passive; importing an authority never starts a transport. */
+export const backendEvents = new BackendEvents()

@@ -3,6 +3,8 @@ import { For, Show, createEffect, createMemo, createSignal, on, onCleanup } from
 import type { IntegrationAttachResponse, IntegrationDetachResponse, IntegrationHostOffer, IntegrationHostsResponse, IntegrationView } from "../../../server/src/integration-types"
 import { INTEGRATION_ATTACHMENT_METADATA_KEY } from "../../../server/src/integration-types"
 import { integrationAttachmentRequest } from "../lib/integrations-api"
+import { captureBackendOperation } from "../lib/backend-operation"
+import { backendEvents } from "../lib/server-events"
 import { useI18n } from "../lib/i18n"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { integrationBindings, integrationEpoch, integrations } from "../stores/integrations"
@@ -11,7 +13,7 @@ import { claimIntegrationConfirmation, INTEGRATION_CONFIRM_DELAY_MS } from "./in
 
 interface Target { id: string; title?: string; metadata?: Record<string, unknown> }
 interface Offer { integration: IntegrationView; host: IntegrationHostOffer }
-interface Capture { instanceId: string; directory: string; session: Target; identity: string; epoch: string; receiptGeneration: number; openedAt: number; release: () => void; returnFocus: () => void }
+interface Capture { instanceId: string; directory: string; session: Target; identity: string; epoch: string; receiptGeneration: number; openedAt: number; release: () => void; returnFocus: () => void; authority: ReturnType<typeof captureBackendOperation> }
 const attachable = (entry: IntegrationView) => entry.family === "native" && entry.state === "ok"
   && entry.status?.host?.state !== "unsupported" && (entry.status?.connection?.offers ?? 0) > 0
 
@@ -72,13 +74,16 @@ export function createIntegrationAttachment(props: {
   }
   const clearReceipt = (integrationId: string) => setReceipts(current => { const next = new Map(current); next.delete(integrationId); return next })
   createEffect(on(identity, () => { viewGeneration++; receiptGeneration++; close(); setReceipts(new Map()); setKnownOffers(undefined) }))
+  createEffect(on(() => backendEvents.signalForInstance(props.instanceId), () => {
+    viewGeneration++; receiptGeneration++; close(); setKnownOffers(undefined)
+  }, { defer: true }))
   createEffect(on(epoch, () => {
     if (!operation()) { close(); return }
     controller?.abort()
     setOffers([]); setSelected(undefined)
   }, { defer: true }))
   onCleanup(() => { disposed = true; close() })
-  const owns = (value: Capture) => props.active !== false && value.identity === identity() && capture() === value
+  const owns = (value: Capture) => value.authority.current() && props.active !== false && value.identity === identity() && capture() === value
   const current = (value: Capture) => owns(value) && value.epoch === epoch() && !controller?.signal.aborted
   const fail = (failure: unknown) => t(failure instanceof HttpResponseError && failure.status === 403 ? "integrations.error.placement"
     : failure instanceof HttpResponseError && failure.code === "unsupported" ? "integrations.state.unsupported" : "integrations.error.retry")
@@ -90,22 +95,24 @@ export function createIntegrationAttachment(props: {
     const session = props.session
     const integration = shown().find(entry => entry.id === integrationId)
     if (!session || !integration || !canOpen(integrationId) || capture()) return
+    const authority = captureBackendOperation(props.instanceId)
+    if (!authority.current()) return
     const release = claimIntegrationConfirmation()
     if (!release) return
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
     const generation = ++viewGeneration
     const signature = JSON.stringify(shown())
     const value: Capture = { instanceId: props.instanceId, directory: props.directory, session: { ...session }, identity: identity(), epoch: epoch(),
-      receiptGeneration, openedAt: Date.now(), release,
+      receiptGeneration, openedAt: Date.now(), release, authority,
       returnFocus: () => {
-        if (disposed || capture() || generation !== viewGeneration || value.identity !== identity() || value.epoch !== epoch() || signature !== JSON.stringify(shown())) return
+        if (!authority.current() || disposed || capture() || generation !== viewGeneration || value.identity !== identity() || value.epoch !== epoch() || signature !== JSON.stringify(shown())) return
         if (opener?.isConnected && opener.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }) && !opener.closest('[inert], [aria-hidden="true"]') && !opener.matches(":disabled")) opener.focus({ preventScroll: true })
         else props.focusFallback?.()?.focus({ preventScroll: true })
       } }
     controller = new AbortController()
-    const signal = controller.signal
+    const signal = AbortSignal.any([controller.signal, authority.signal])
     setCapture(value); setError(undefined); setPending(true)
-    readyTimer = setTimeout(() => { if (capture() === value) setReady(true) }, INTEGRATION_CONFIRM_DELAY_MS)
+    readyTimer = setTimeout(() => { if (current(value)) setReady(true) }, INTEGRATION_CONFIRM_DELAY_MS)
     try {
       const result = await integrationAttachmentRequest<IntegrationHostsResponse>(value.instanceId, value.directory, integration.id, "hosts", signal)
       if (!current(value)) return
@@ -137,10 +144,10 @@ export function createIntegrationAttachment(props: {
     if (integrationBindings.busy(bindingTarget)) return
     setOperation(offer); setOffers([]); setSelected(undefined)
     setPending(true); setError(undefined)
-    await integrationBindings.run(bindingTarget, async () => { try {
+    await integrationBindings.run(bindingTarget, async () => { if (!owns(value)) return; try {
       const result = await integrationAttachmentRequest<IntegrationAttachResponse>(value.instanceId, value.directory,
         // Finish the admitted write across native echoes; navigation still fences its feedback.
-        offer.integration.id, "attach", new AbortController().signal, { sessionID: value.session.id, offerID: offer.host.offerID })
+        offer.integration.id, "attach", value.authority.signal, { sessionID: value.session.id, offerID: offer.host.offerID })
       if (!owns(value)) return
       if (result.outcome === "attached") setOutcome(result.outcome)
       else if (["busy", "gone", "refused"].includes(result.outcome)) {
@@ -148,7 +155,7 @@ export function createIntegrationAttachment(props: {
         setError(message); props.onMessage?.(message)
       } else { receipt(offer.integration.id, value.identity, value.receiptGeneration); setError(fail(undefined)) }
     } catch (failure) {
-      receipt(offer.integration.id, value.identity, value.receiptGeneration)
+      if (value.authority.current()) receipt(offer.integration.id, value.identity, value.receiptGeneration)
       if (owns(value)) setError(fail(failure))
     }
     finally { if (owns(value)) setPending(false) } })
@@ -156,15 +163,19 @@ export function createIntegrationAttachment(props: {
   /** D24: one explicit click, at most one `detachHost` for the displayed conversation only. */
   const detach = async (integrationId: string) => {
     const captured = identity(), bindingTarget = target(integrationId)
+    const authority = captureBackendOperation(props.instanceId, undefined, () => !disposed && identity() === captured)
     const generation = receiptGeneration
-    if (props.active === false || !props.session || !attached(integrationId) || integrationBindings.busy(bindingTarget)
+    if (!authority.current() || props.active === false || !props.session || !attached(integrationId) || integrationBindings.busy(bindingTarget)
       || receipts().get(integrationId) === captured) return
     await integrationBindings.run(bindingTarget, async () => {
+      if (!authority.current()) return
       try {
         const result = await integrationAttachmentRequest<IntegrationDetachResponse>(bindingTarget.instanceId, bindingTarget.directory, integrationId,
-          "detach", new AbortController().signal, { sessionID: bindingTarget.sessionID })
+          "detach", authority.signal, { sessionID: bindingTarget.sessionID })
+        if (!authority.current()) return
         if (result?.outcome !== "detached" && result?.outcome !== "none") receipt(integrationId, captured, generation)
       } catch (failure) {
+        if (!authority.current()) return
         // Ownership can fail after the native effect too; an HTTP status alone cannot establish its phase.
         receipt(integrationId, captured, generation)
         if (identity() === captured) props.onMessage?.(fail(failure))
@@ -173,7 +184,7 @@ export function createIntegrationAttachment(props: {
   }
   /** A new authoritative read; it settles an uncertain receipt. */
   const refresh = (integrationId: string) => {
-    if (!props.session || props.active === false) return
+    if (!captureBackendOperation(props.instanceId).current() || !props.session || props.active === false) return
     clearReceipt(integrationId)
     void integrationBindings.refresh(target(integrationId))
     void integrations.refreshDemanded(props.instanceId)

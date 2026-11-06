@@ -18,11 +18,13 @@ export interface MissionTaskSessionDeps {
   /** Current connection identity; a change fences reads begun on the previous one. */
   connection(instanceId: string): unknown
   generation(instanceId: string): number
+  signal?(instanceId: string): AbortSignal
   root(instanceId: string): Root
   warn(message: string, details: Record<string, unknown>): void
 }
 
 interface Entry {
+  signal?: AbortSignal
   stamp: string; pulse: number; sessions: Map<string, string[]>
   /** Direct children whose admitted first message was already examined. */
   examined: ReadonlySet<string>
@@ -43,7 +45,7 @@ const unlinked = (mission: MissionPanelMap, sessions: Map<string, string[]>) => 
 export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
   const [entries, setEntries] = createSignal(new Map<string, Entry>())
   /** One read per mission at a time; a demand arriving meanwhile reruns once after it. */
-  const inFlight = new Map<string, { rerun?: () => void; done: Promise<void> }>()
+  const inFlight = new Map<string, { rerun?: () => void; done: Promise<void>; signal?: AbortSignal }>()
 
   /** Visible demand: a full coordinator read once per mission revision and connection
    * generation. Each activity pulse (the mission activity projection's generation)
@@ -51,11 +53,13 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
    * coordinator's direct children. A child without an admitted first message stays
    * unexamined, so a later pulse of the same revision reads it again. */
   function demand(instanceId: string, mission: MissionPanelMap, pulse = 0): Promise<void> {
+    const signal = deps.signal?.(instanceId)
+    if (signal?.aborted) return Promise.resolve()
     const key = keyOf(instanceId, mission), connection = deps.connection(instanceId)
     const generation = deps.generation(instanceId)
     const stamp = `${generation}:${mission.revision}`
     const entry = entries().get(key)
-    const known = entry?.stamp === stamp
+    const known = entry?.stamp === stamp && entry.signal === signal
     if (!connection || (known && entry.pulse === pulse)) return Promise.resolve()
     // Preserve startup's no-work fast path after extracting the read logic:
     // activity invalidations must not fan out reads without a task to observe.
@@ -64,28 +68,28 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
       return Promise.resolve()
     }
     const running = inFlight.get(key)
-    if (running) { running.rerun = () => void demand(instanceId, mission, pulse); return running.done }
-    const flight: { rerun?: () => void; done: Promise<void> } = { done: Promise.resolve() }
+    if (running && running.signal === signal) { running.rerun = () => { if (!signal?.aborted) void demand(instanceId, mission, pulse) }; return running.done }
+    const flight: { rerun?: () => void; done: Promise<void>; signal?: AbortSignal } = { done: Promise.resolve(), signal }
     inFlight.set(key, flight)
     const root = deps.root(instanceId)
-    const current = () => inFlight.get(key) === flight && deps.connection(instanceId) === connection
+    const current = () => !signal?.aborted && inFlight.get(key) === flight && deps.connection(instanceId) === connection
       && deps.generation(instanceId) === generation
     const taskKeys = new Set(mission.tasks.map(task => task.key))
     flight.done = (async () => {
       let sessions = known ? new Map(entry.sessions) : undefined
       if (!sessions) {
         const page = await listMessageWindow(root as OpenCodeClient, mission.coordinatorSessionId,
-          { limit: COORDINATOR_MESSAGE_BOUND, isAuthoritative: current })
+          { limit: COORDINATOR_MESSAGE_BOUND, isAuthoritative: current, signal })
         if (!page || !current()) return
         sessions = parseMissionTaskSessions(mission.id, mission.coordinatorSessionId, page.messages, taskKeys)
       }
       const examined = new Set(known ? entry.examined : [])
       if (unlinked(mission, sessions)) {
-        const children = await root.session.list({ parentID: mission.coordinatorSessionId, project: mission.projectID, limit: CHILD_BOUND })
+        const children = await root.session.list({ parentID: mission.coordinatorSessionId, project: mission.projectID, limit: CHILD_BOUND }, { signal })
         if (!current()) return
         for (const child of children.data ?? []) {
           if (examined.has(child.id) || [...sessions.values()].some(ids => ids.includes(child.id))) continue
-          const first = await root.message.list({ sessionID: child.id, limit: 1, order: "asc" })
+          const first = await root.message.list({ sessionID: child.id, limit: 1, order: "asc" }, { signal })
           if (!current()) return
           const message = first.data?.[0]
           // Not admitted yet: leave unexamined for the next activity pulse.
@@ -96,16 +100,16 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
         }
       }
       const linked = new Set([...sessions.values()].flat())
-      const active = linked.size ? await root.session.active() : {}
+      const active = linked.size ? await root.session.active({ signal }) : {}
       if (!current()) return
       const live = new Set(Object.keys(active ?? {}).filter(id => linked.has(id)))
-      setEntries(previous => new Map(previous).set(key, { stamp, pulse, sessions: sessions!, examined, active: live }))
+      setEntries(previous => new Map(previous).set(key, { stamp, pulse, sessions: sessions!, examined, active: live, signal }))
     })()
-      .catch(error => deps.warn("Mission task conversations unavailable", { instanceId, missionId: mission.id, error }))
+      .catch(error => { if (current()) deps.warn("Mission task conversations unavailable", { instanceId, missionId: mission.id, error }) })
       .finally(() => {
         if (inFlight.get(key) !== flight) return
         inFlight.delete(key)
-        flight.rerun?.()
+        if (!signal?.aborted) flight.rerun?.()
       })
     return flight.done
   }
