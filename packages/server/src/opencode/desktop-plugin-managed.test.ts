@@ -13,6 +13,7 @@ const bundleFor = (ids: string[]) => Buffer.from(`// CodeNomad plugin IDs: ${JSO
 
 for (const [feature, id] of [
   ["automation", "codenomad.automation"], ["session-pruning", "codenomad-session-pruning"], ["missions", "codenomad.missions"],
+  ["memory", "codenomad.memory"],
 ] as const) test(`recognizes the installed ${feature} shim and verified bundle, without executing either`, async t => {
   const fixture = await createFixture(t)
   const installed = await fixture.install(feature, [id])

@@ -1114,15 +1114,15 @@ function trackCreation(instanceId: string, delta: 1 | -1): void {
   })
 }
 
-async function createSession(instanceId: string, agent?: string): Promise<Session> {
+async function createSession(instanceId: string, agent?: string, location?: { directory: string }): Promise<Session> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
   }
   const activeId = activeSessionId().get(instanceId)
-  const activeLocation = activeId && activeId !== "info"
+  const activeLocation = location ?? (activeId && activeId !== "info"
     ? sessions().get(instanceId)?.get(activeId)?.location
-    : undefined
+    : undefined)
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
 

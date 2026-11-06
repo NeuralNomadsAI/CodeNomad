@@ -80,7 +80,7 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
 
 The server marks records `managedBy: "codenomad"` only after validating the installer-generated
 entry and its content-addressed payload location. Recognition parses the exact generated
-`plugins/codenomad-<feature>.ts` shape, used by `session-pruning`, `automation` and `missions`:
+`plugins/codenomad-<feature>.ts` shape, used by `session-pruning`, `automation`, `missions` and `memory`:
 the lifecycle marker, generated `desktopPlugin` import/call shape, presence directories and
 `<sha256>.mjs` payload must agree. Missions' provider/runtime artifact descriptors follow the
 installer's generated shape. Validated storage retained outside the default data path remains
@@ -98,17 +98,11 @@ homonym retains its ordinary controls.
 The per-feature build scripts emit a minimal descriptor on the runtime payload's first line:
 `// CodeNomad plugin IDs: ["..."]`. These IDs are inside the SHA-256-verified payload bytes.
 Detection reads them generically; every new feature builder must emit its actual exported IDs.
-The current builders export `codenomad-session-pruning`, `codenomad.automation` and
-`codenomad.missions`. The descriptor supplies IDs for correlating absent runtime entries with
+The current builders export `codenomad-session-pruning`, `codenomad.automation`,
+`codenomad.missions` and `codenomad.memory`. The descriptor supplies IDs for correlating absent runtime entries with
 exact or wildcard activation rules. Descriptor-less generated installations remain recognisable
 by the validated source when the runtime reports them; synthesising an absent ID requires the
 payload descriptor. Never add an ID/name allowlist or execute the payload during discovery.
-
-The standalone `session-pruning-tui` entry (`@neuralnomads/codenomad-session-pruning/tui`)
-exports `codenomad-session-pruning-tui` through the package's separate TUI path. The managed
-installer publishes the desktop plugin factory from `session-pruning/desktop-plugin.ts`.
-Recognise installer ownership through the validated entry and payload rather than adding a
-name-based exclusion for the TUI entry.
 Qualification follows the consumed native contracts without a daemon-version allowlist.
 
 The UI excludes managed records from every ordinary plugin row, activation switch, package

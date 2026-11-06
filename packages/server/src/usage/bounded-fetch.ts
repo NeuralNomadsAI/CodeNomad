@@ -39,7 +39,7 @@ export async function fetchBoundedJson(url: string, headers: Record<string, stri
       const chunk = await reader.read()
       if (chunk.done) break
       size += chunk.value.byteLength
-      if (size > maxBytes) throw new Error("Quota response too large")
+      if (size > Math.min(maxBytes, MAX_RESPONSE_BYTES)) throw new Error("Quota response too large")
       chunks.push(chunk.value)
     }
     signal.throwIfAborted()

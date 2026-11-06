@@ -81,6 +81,23 @@ reply the goal reviewer rejects, pausing the goal) runs in the minimum/latest CI
 
 ### Contract notes
 
+Agent memory qualifies the optional session instruction entry GET/PUT/DELETE
+contract per authenticated connection (`memory/instructions-capability.ts`). A
+valid contract declaring the routes absent keeps memory inactive silently while
+preserving its preference; authentication and transient/unreadable discovery
+remain distinct. Native child sessions get their own entries through the awaited
+plugin prompt-admission hook, with instruction changes carried by native
+context-update notices. The isolated
+`scripts/test-memory-instructions-native.mjs` checks first-call child delivery,
+resumed updates and independently refused native admissions. The shipped bundle's
+`scripts/test-memory-tool-native.mjs` also qualifies title-only child delivery
+through the real backend policy/store, disable cleanup and unrelated Location
+admission. Optional memory failures attempt stale-entry cleanup and allow prompts;
+disabled memory bypasses discovery and storage. Failed cleanup can retain the
+preceding entry until the next successful refresh. Cancellation, retired
+connections and Missions authority checks keep their blocking contracts. See
+[Agent memory](AGENT_MEMORY.md).
+
 - Generated client URLs keep their `baseUrl` prefix and pass through unchanged;
   scheduling classifies API paths relative to the proxy prefix.
 - The generated `experimental.session` methods and their `session` aliases use
@@ -189,7 +206,18 @@ mutation fences and settlement tombstones stay essential.
 
 ## Agent conventions
 
-All managed bundle payloads (automation, session-pruning, Missions runtime and
+The bundled `codenomad.memory` plugin exposes `codenomad_memory` with `list`,
+`read` (exact ID or title), `save` (title/type/text), and revision-conditional
+`delete`. It uses the native execution session as provenance and the shared
+authenticated memory bridge for every operation. Backend presence admits its
+tool transform in desktop and standalone hosts; the server checks current
+enablement and session ownership on execution. Its payload, shim, leases,
+integrity repair and WSL translation use the shared lifecycle. Build it with
+`build:memory`; `scripts/test-memory-tool-native.mjs` exercises model-driven
+operations, safe projections, useful disabled/full errors and an uncertain
+write response with one dispatch. Never automatically replay a memory mutation.
+
+All managed bundle payloads (automation, memory, session-pruning, Missions runtime and
 Missions carrier provider) share `opencode/desktop-plugin-artifact.ts` for digest
 verification, atomic repair and bounded lock retries. Provisioning verifies both
 Missions payloads before publishing its shim or lease. Failures flow through the

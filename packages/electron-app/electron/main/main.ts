@@ -23,6 +23,7 @@ import { MultiwindowLifecycle } from "./multiwindow-lifecycle"
 import { decideNavigation, requireHttpUrl } from "./navigation-security"
 import { configureBrowserPermissionHandlers, configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./permissions"
 import { setupPreferencesIPC } from "./preferences-ipc"
+import { runMemoryCleanupInWindow } from "./memory-cleanup"
 import { createPreferencesUrl, PreferencesWindowRegistry, type PreferencesRequest } from "./preferences-window"
 import { CliProcessManager, setBackendProfileScope } from "./process-manager"
 import { loadNewRemoteWindow, navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
@@ -451,6 +452,13 @@ function runPrimary(firstIntent: LaunchIntent) {
     getAllowedOrigins,
     openPreferences,
     getRequest: (window) => preferencesWindows.request(window),
+    memoryCleanup: async (window, request) => {
+      const opener = preferencesWindows.opener(window)
+      const target = opener?.id ? registry.get(opener.id)?.window : undefined
+      await runMemoryCleanupInWindow(target, request, url => isAllowedRendererOrigin(url, getAllowedOrigins(target ?? null)))
+      target?.show()
+      target?.focus()
+    },
     openerStartupState: async (window, command, epoch) => {
       let opener = preferencesWindows.opener(window)
       if (!opener) throw new Error("Preferences window is no longer current")

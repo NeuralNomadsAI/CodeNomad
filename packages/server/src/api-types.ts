@@ -7,6 +7,7 @@ import type {
   RecentFolder,
 } from "./config/schema"
 import type { FormInfo, OpenCodeEvent, PermissionRequest } from "@opencode/client"
+export type { MemoryScope, MemoryEntryType, MemoryContent, MemoryEntryHeader, MemoryEntry, MemoryErrorCode, MemoryOperation, MemoryContext, MemorySettings, MemoryVersionedEntry, MemoryUIEntry, MemoryListEntry, MemoryUIListResult, MemoryResult, MemoryApiError } from "./memory/contract"
 export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionContext, PanelExtensionCatalog, PanelExtensionCatalogEntry } from "./panel-extensions/contract"
 export type { ForgeRepository, ForgeWorkItem, ForgeWorkItemKind, ForgeWorkItemsResult } from "./panel-extensions/contract"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
@@ -860,6 +861,7 @@ export type WorkspaceEventType =
   | "yolo.stateChanged"
   | "yolo.autoAccepted"
   | "permission.receiptsChanged"
+  | "memory.changed"
 
 export interface PermissionReceipt {
   requestId: string
@@ -883,6 +885,7 @@ export interface PermissionReceiptPage {
 export interface WorkspaceDirectoryChange { directory: string; path: string }
 
 export type WorkspaceEventPayload =
+  | { type: "memory.changed" }
   | { type: "workspace.created"; workspace: WorkspaceDescriptor }
   | { type: "workspace.started"; workspace: WorkspaceDescriptor }
   | { type: "workspace.error"; workspace: WorkspaceDescriptor }

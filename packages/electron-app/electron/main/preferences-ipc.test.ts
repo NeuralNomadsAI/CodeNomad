@@ -2,8 +2,9 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import type { BrowserWindow, IpcMainInvokeEvent } from "electron"
 import { setupPreferencesIPC } from "./preferences-ipc"
+import type { PreferencesRequest } from "./preferences-window"
 
-function harness() {
+function harness(request: PreferencesRequest = { section: "speech" }) {
   const handlers = new Map<string, Function>()
   const calls: string[] = []
   const frame = { url: "http://localhost:3000/preferences" }
@@ -35,7 +36,8 @@ function harness() {
         calls.push(`startup:${window === preferencesWindow}:${command}:${epoch}`)
         return { epoch: 1, state: null, applied: false }
       },
-      getRequest: () => ({ section: "speech" }),
+      getRequest: () => request,
+      memoryCleanup: async (_window, input) => { calls.push(`cleanup:${input.scope}:${input.workspaceId}:${input.directory}`) },
       markReady: () => { calls.push("ready") },
       acceptRequest: (_window, request) => { calls.push(`accept:${request.section}`) },
       resolveTransition: (_window, id, approved) => { calls.push(`transition:${id}:${approved}`) },
@@ -49,7 +51,7 @@ function harness() {
 test("Preferences IPC separates local open authority and controls registered app windows", async () => {
   const h = harness()
   assert.deepEqual([...h.handlers.keys()], [
-    "preferences:open", "preferences:openerStartupState", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:minimize", "preferences:toggleMaximize", "preferences:close",
+    "preferences:open", "preferences:openerStartupState", "preferences:memoryCleanup", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:minimize", "preferences:toggleMaximize", "preferences:close",
   ])
 
   assert.deepEqual(await h.handlers.get("preferences:open")!(h.event(h.localContents), "speech", { instanceId: "workspace-1" }, true), { ok: true })
@@ -79,6 +81,19 @@ test("opener startup state is only reachable from Preferences with fixed command
   h.frame.url = "https://outside.example/preferences"
   assert.throws(() => handler(h.event(h.preferencesContents), "read"), /allowed renderer origin/)
   assert.deepEqual(h.calls, ["startup:true:disable-restore:4"])
+})
+
+test("memory cleanup checks Preferences frame and current project before forwarding", async () => {
+  const h = harness({ section: "general", instanceId: "a", location: { directory: "/repo" } })
+  const handler = h.handlers.get("preferences:memoryCleanup")!
+  const request = { id: "one", scope: "global", workspaceId: "a", directory: "/repo" }
+  await handler(h.event(h.preferencesContents), request)
+  assert.throws(() => handler(h.event(h.localContents), request), /Preferences window/)
+  assert.throws(() => handler(h.event(h.preferencesContents), { ...request, directory: "/other" }), /context changed/)
+  assert.throws(() => handler(h.event(h.preferencesContents), { ...request, prompt: "run" }), /context changed/)
+  h.frame.url = "https://outside.example/preferences"
+  assert.throws(() => handler(h.event(h.preferencesContents), request), /allowed renderer origin/)
+  assert.deepEqual(h.calls, ["cleanup:global:a:/repo"])
 })
 
 test("Preferences IPC rejects unregistered, subframe, and cross-origin senders", () => {

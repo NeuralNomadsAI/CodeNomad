@@ -124,12 +124,12 @@ export class DesktopPluginLifecycle {
   }
 }
 
-// Commit both feature claims together. A failed/stale attempt relinquishes only
+// Commit feature claims together. A failed/stale attempt relinquishes only
 // its new claims, never another attempt's committed lease or another backend's.
 export async function prepareDesktopPluginPresence(
   paths: DesktopPluginPaths,
   assertCurrent: () => void,
-  lifecycles: { pruning: DesktopPluginLifecycle; automation?: DesktopPluginLifecycle; missions?: DesktopPluginLifecycle },
+  lifecycles: { pruning: DesktopPluginLifecycle; automation?: DesktopPluginLifecycle; missions?: DesktopPluginLifecycle; memory?: DesktopPluginLifecycle },
 ): Promise<void> {
   const prepared: PreparedPlugin[] = []
   try {
@@ -139,6 +139,8 @@ export async function prepareDesktopPluginPresence(
     if (lifecycles.automation) prepared.push(await lifecycles.automation.prepare(paths, assertCurrent))
     assertCurrent()
     if (lifecycles.missions) prepared.push(await lifecycles.missions.prepare(paths, assertCurrent))
+    assertCurrent()
+    if (lifecycles.memory) prepared.push(await lifecycles.memory.prepare(paths, assertCurrent))
     assertCurrent()
     for (const entry of prepared) entry.commit()
   } finally {

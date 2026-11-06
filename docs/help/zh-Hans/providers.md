@@ -50,13 +50,17 @@
 
 使用右侧面板的**用量**查看活动对话的提供商计划窗口、重置时间和受支持余额。这些提供商读数不同于每条消息的**令牌**和成本估算：订阅配额不是根据可见对话计算的账单。缺失、过时或未知读数不是零用量，也不能证明还有容量。**设置 → 高级**中的**提供商额度余额**控制补充余额显示。
 
+对于使用 OpenCode 的 Gemini CLI 认证方式的 Google 连接，**用量**显示各模型的限额；对于 Antigravity 连接，显示 **5 小时**和**每周**限额，并在提供相关数据时按模型系列分别显示配额。无法获取配额时显示“用量暂时不可用。”。这些连接的账户选择保持手动。
+
+Google 的 [Antigravity 常见问题](https://antigravity.google/docs/faq/)指出，通过 Antigravity 登录使用第三方软件违反其服务条款，并可能导致账户被暂停或终止。
+
 对于 OpenCode Zen 免费模型，**用量**根据此服务自 00:00 UTC 起记录的步骤数估算消耗，以假定的每天 200 次请求为参考，并将下一个 UTC 午夜作为预计重置时间。步骤数近似请求数；其他流量和动态 IP 限制可能使其与实际配额用量不同。
 
 OpenAI 不为某一种 ChatGPT 登录方式提供用量：此时用量面板会说明这一点，而不显示配额窗口。选择[查看 ChatGPT 用量](https://chatgpt.com/settings/usage)，即可在 ChatGPT 中查看应用用量，并管理应用对您的套餐和额度的访问。聊天仍可正常使用，重新连接同一登录也不会恢复该读数。
 
-用量跟随所选原生凭据。通过 `anthropic`/`claude` 使用 Claude 时，采用 OpenCode 的 Anthropic OAuth。OpenCode 的 **Claude Agent** 提供商（`claude-agent`）和 `claude-code` 提供商使用守护进程主机上的 Claude Code 登录，包括其 WSL 发行版：先用 `CLAUDE_CODE_OAUTH_TOKEN`，再用已存储登录，文件存储由 `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` 或 `~/.claude` 决定；本地 macOS 可使用钥匙串。CodeNomad 不会用一种 Claude 登录替代另一种。
+用量凭据的来源取决于提供商。通过 `anthropic`/`claude` 使用 Claude 时，采用 OpenCode 的 Anthropic OAuth。OpenCode 的 **Claude Agent** 提供商（`claude-agent`）和 `claude-code` 提供商使用守护进程主机上的 Claude Code 登录，包括其 WSL 发行版：先用 `CLAUDE_CODE_OAUTH_TOKEN`，再用已存储登录，文件存储由 `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` 或 `~/.claude` 决定；本地 macOS 可使用钥匙串。CodeNomad 不会用一种 Claude 登录替代另一种。
 
-提供商登录过期时，通过其所属方——OpenCode、Claude Code 或 Codex CLI——刷新/登录，再刷新 CodeNomad。CodeNomad 不交换外部所有的刷新令牌。CodeNomad 服务器登录过期是另一回事：重新连接/登录 CodeNomad，不要假定失败的提供商请求会重发。参阅[故障排查](troubleshooting.md)。
+用量读取器仅可在服务器内存中刷新访问令牌，且仅限刷新令牌在每次使用时保持不变的提供商，包括 Gemini CLI 和 Antigravity。已保存的连接仍由 OpenCode 管理。其他提供商登录过期时，通过其所属方——OpenCode、Claude Code 或 Codex CLI——刷新/登录，再刷新 CodeNomad。CodeNomad 服务器登录过期是另一回事：重新连接/登录 CodeNomad，不要假定失败的提供商请求会重发。参阅[故障排查](troubleshooting.md)。
 
 当 MiniMax 成功响应但未提供限额时，**用量**会显示 **MiniMax 不公开其限额**，而不是配额数值。
 

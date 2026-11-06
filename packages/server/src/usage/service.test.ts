@@ -32,6 +32,7 @@ const providerIds = [
   "kilo",
   "zenmux",
   "exe-dev",
+  "google",
 ]
 
 test("registers every supported usage provider", () => {
@@ -44,10 +45,11 @@ test("maps OpenCode provider aliases to their usage provider", () => {
   assert.equal(resolveUsageProvider("openai")?.id, "codex")
   assert.equal(resolveUsageProvider("copilot")?.id, "github-copilot")
   assert.equal(resolveUsageProvider("grok")?.id, "xai")
+  assert.equal(resolveUsageProvider("google")?.id, "google")
   for (const alias of ["kimi", "kimi-code-plan-cn", "kimi-code-plan-global"]) {
     assert.equal(resolveUsageProvider(alias)?.id, "kimi-for-coding")
   }
-  for (const providerId of ["google", "google.oauth", "gemini", "antigravity"]) {
+  for (const providerId of ["google.oauth", "gemini", "antigravity"]) {
     assert.equal(resolveUsageProvider(providerId), null)
   }
   assert.equal(resolveUsageProvider("opencode")?.id, "opencode-go")
@@ -202,7 +204,7 @@ test("returns a stable unsupported response without making a provider request", 
     assert.equal(response.providerId, null)
     assert.deepEqual(response.windows, {})
     assert.deepEqual(auth, { "unknown-provider": { key: "synthetic-key" } })
-    for (const providerId of ["google", "google.oauth", "gemini", "antigravity"]) {
+    for (const providerId of ["google.oauth", "gemini", "antigravity"]) {
       assert.equal((await getProviderUsage(providerId)).supported, false)
     }
     assert.equal(calls, 0)
@@ -410,8 +412,8 @@ test("only enumerated public reasons, bounded numeric codes and associated fixed
   } finally { provider.fetchQuota = original; clearProviderUsageCache() }
 })
 
-test("cancellation during a reader prevents publication and warming its cache", async () => {
-  const provider = resolveUsageProvider("openrouter")!
+for (const providerId of ["openrouter", "google"]) test(`${providerId} cancellation during a reader prevents publication and warming its cache`, async () => {
+  const provider = resolveUsageProvider(providerId)!
   const original = provider.fetchQuota
   const controller = new AbortController()
   let calls = 0
@@ -421,8 +423,13 @@ test("cancellation during a reader prevents publication and warming its cache", 
   }
   clearProviderUsageCache()
   try {
-    await assert.rejects(getProviderUsage("openrouter", { context: { signal: controller.signal } }))
-    assert.equal((await getProviderUsage("openrouter")).ok, true)
+    const cancelled = getProviderUsage(providerId, { context: { signal: controller.signal } })
+    if (providerId === "google") {
+      const unknown = await cancelled
+      assert.equal(unknown.ok, false)
+      assert.deepEqual(unknown.windows, {})
+    } else await assert.rejects(cancelled)
+    assert.equal((await getProviderUsage(providerId)).ok, true)
     assert.equal(calls, 2)
   } finally { provider.fetchQuota = original; clearProviderUsageCache() }
 })

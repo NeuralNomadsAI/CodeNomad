@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply } from "fastify"
 import { stat } from "node:fs/promises"
 import path from "node:path"
 import { z } from "zod"
-import { GitRequiredError } from "../../workspaces/git-requirement"
+import { GitProbeUnavailableError, GitRequiredError } from "../../workspaces/git-requirement"
 import { NestedFolderUnavailableError } from "../../workspaces/native-worktrees"
 import { WorkspaceManager } from "../../workspaces/manager"
 import {
@@ -353,7 +353,7 @@ async function assertNoWorktreeBlockers(
 }
 
 function handleError(error: unknown, reply: FastifyReply) {
-  if (error instanceof GitRequiredError || error instanceof NestedFolderUnavailableError) {
+  if (error instanceof GitRequiredError || error instanceof GitProbeUnavailableError || error instanceof NestedFolderUnavailableError) {
     return reply.code(error.statusCode).send({ error: error.message, code: error.code })
   }
   reply.code(error instanceof ProjectSessionError ? error.statusCode : 400)

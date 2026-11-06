@@ -18,8 +18,15 @@ const entries: CredentialEntry[] = [
 test("projects only each integration's active native credential, without unrelated metadata", () => {
   assert.deepEqual(projectCredentials(entries), {
     deepinfra: { type: "api", key: "secret-key" },
-    anthropic: { type: "oauth", access: "secret-access", refresh: "secret-refresh", expires: 42, accountId: "acct" },
+    anthropic: { type: "oauth", methodID: "claude", access: "secret-access", refresh: "secret-refresh", expires: 42, accountId: "acct" },
   })
+})
+
+test("Google's server-only projection keeps its client method and complete selected-credential identity", () => {
+  const value = { type: "oauth" as const, methodID: "gemini-cli", access: "fake-google-access", refresh: "fake-google-refresh|fake-project",
+    expires: 42, metadata: { email: "fake@example.invalid", project: "fake-metadata" } }
+  const entry: CredentialEntry = { id: "fake-google-identity", integrationID: "google", label: "default", active: true, value }
+  assert.deepEqual(projectCredential(entry), { ...value, credentialID: entry.id })
 })
 
 test("projects only Copilot's raw enterprise destination metadata, retaining invalid values for rejection", () => {
@@ -27,7 +34,7 @@ test("projects only Copilot's raw enterprise destination metadata, retaining inv
     const entry: CredentialEntry = { id: "copilot", integrationID: "github-copilot", active: true, label: "Enterprise",
       value: { type: "oauth", methodID: "device", access: "synthetic", refresh: "synthetic", expires: 0,
         metadata: { enterpriseUrl, apiEndpoint: "https://unrelated.example.com", unrelated: "omit" } } }
-    assert.deepEqual(projectCredential(entry), { type: "oauth", access: "synthetic", refresh: "synthetic", expires: 0, enterpriseUrl })
+    assert.deepEqual(projectCredential(entry), { type: "oauth", methodID: "device", access: "synthetic", refresh: "synthetic", expires: 0, enterpriseUrl })
     assert.equal(projectCredential({ ...entry, integrationID: "anthropic" })?.enterpriseUrl, undefined)
   }
 })
