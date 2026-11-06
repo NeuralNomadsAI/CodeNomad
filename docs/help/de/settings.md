@@ -32,7 +32,7 @@ Werden Farben schwer lesbar, wählen Sie eine integrierte Palette oder setzen di
 
 ## Computer wach halten {#keep-computer-awake}
 
-Unter **Einstellungen → Allgemein** ist **Computer wach halten, solange CodeNomad läuft** standardmäßig deaktiviert. Aktivieren Sie die Option, um den Ruhezustand zu verhindern, solange CodeNomad geöffnet ist, auch wenn keine Sitzung arbeitet; der Bildschirm kann sich weiterhin ausschalten. Wenn deaktiviert, hält CodeNomad den Computer nur wach, während eine Sitzung arbeitet. Das **i** neben dem Titel erklärt dieses Verhalten. Die Option erscheint nur in der Desktop-App und ist im Webbrowser ausgeblendet.
+Unter **Einstellungen → Allgemein** ist **Computer wach halten, solange CodeNomad läuft** standardmäßig deaktiviert. Aktivieren Sie die Option, um den Ruhezustand zu verhindern, solange CodeNomad geöffnet ist, auch wenn keine Sitzung arbeitet; der Bildschirm kann sich weiterhin ausschalten. Wenn deaktiviert, hält CodeNomad den Computer nur wach, während eine Sitzung arbeitet. Das **i** neben dem Titel erklärt dieses Verhalten. Die Option erscheint nur in lokalen Desktop-App-Fenstern und im nativen Einstellungsfenster; in Browser-/Remote-Ansichten ist sie ausgeblendet.
 
 ## Panels und Statusabschnitte {#panels-status}
 

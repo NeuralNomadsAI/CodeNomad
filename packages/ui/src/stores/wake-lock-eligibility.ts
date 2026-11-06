@@ -1,7 +1,8 @@
 import type { Session } from "../types/session"
+import type { WindowContextKind } from "../lib/runtime-env"
 
-export function shouldAppHoldWakeLock(keepComputerAwake: boolean, hasEligibleWork: boolean): boolean {
-  return keepComputerAwake || hasEligibleWork
+export function shouldAppHoldWakeLock(keepComputerAwake: boolean, hasEligibleWork: boolean, windowContext: WindowContextKind): boolean {
+  return (windowContext === "local" && keepComputerAwake) || hasEligibleWork
 }
 
 export function shouldSessionHoldWakeLock(

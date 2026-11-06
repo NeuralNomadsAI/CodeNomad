@@ -1,6 +1,6 @@
 export const settingsMessages = {
   "settings.behavior.keepComputerAwake.title": "CodeNomad の実行中はコンピューターをスリープさせない",
-  "settings.behavior.keepComputerAwake.info": "CodeNomad が開いている間、システムのスリープを防ぎます。画面は引き続きオフにできます。無効の場合、セッションが作業中の間だけコンピューターをスリープさせません。",
+  "settings.behavior.keepComputerAwake.info": "CodeNomad が開いている間、システムのスリープを防ぎます。画面は引き続きオフになることがあります。無効の場合、セッションが作業中の間だけコンピューターをスリープさせません。",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "推定リセット時刻 {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "サブセッションを自動展開",

@@ -34,7 +34,7 @@ const keepAwakeInfo = "Prevents system sleep while CodeNomad is open; the screen
 
 test("General hides keep-awake in a plain web browser and remote desktop views", async () => {
   for (const host of ["web", "electron", "tauri"]) {
-    const page = await browser.newPage()
+    const page = await browser.newPage({ locale: "en-US" })
     await page.addInitScript(({ host }) => Object.assign(window, {
       __CODENOMAD_RUNTIME_HOST__: host, __CODENOMAD_WINDOW_CONTEXT__: "remote",
     }), { host })
@@ -42,6 +42,7 @@ test("General hides keep-awake in a plain web browser and remote desktop views",
     try {
       await page.goto(url)
       await page.waitForFunction(() => Boolean((window as any).appearanceFixture))
+      await page.getByRole("checkbox", { name: "Automatically expand subsessions", exact: true }).waitFor()
       assert.equal(await page.getByRole("checkbox", { name: keepAwakeTitle, exact: true }).count(), 0, host)
     } finally { await page.close() }
   }

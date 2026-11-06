@@ -32,7 +32,7 @@ Si les couleurs deviennent difficiles à lire, sélectionnez une palette intégr
 
 ## Garder l’ordinateur éveillé {#keep-computer-awake}
 
-Dans **Paramètres → Général**, **Garder l’ordinateur éveillé tant que CodeNomad tourne** est désactivé par défaut. Activez cette option pour empêcher la mise en veille tant que CodeNomad est ouvert, même sans session au travail ; l’écran peut toujours s’éteindre. Lorsque cette option est désactivée, CodeNomad garde l’ordinateur éveillé uniquement pendant qu’une session travaille. Le **i** à côté du titre explique ce comportement. Cette option apparaît uniquement dans l’application de bureau et reste masquée dans un navigateur web.
+Dans **Paramètres → Général**, **Garder l’ordinateur éveillé tant que CodeNomad tourne** est désactivé par défaut. Activez cette option pour empêcher la mise en veille tant que CodeNomad est ouvert, même sans session au travail ; l’écran peut toujours s’éteindre. Lorsque cette option est désactivée, CodeNomad garde l’ordinateur éveillé uniquement pendant qu’une session travaille. Le **i** à côté du titre explique ce comportement. Cette option apparaît uniquement dans les fenêtres locales de l’application de bureau et dans Preferences ; elle est masquée dans les vues navigateur et distantes.
 
 ## Panneaux et sections Statut {#panels-status}
 

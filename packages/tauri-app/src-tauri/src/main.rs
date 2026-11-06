@@ -734,7 +734,7 @@ fn wake_lock_start(
         .display(config.display)
         .idle(config.idle)
         .sleep(config.sleep)
-        .reason("CodeNomad active session")
+        .reason("CodeNomad keeps the computer awake")
         .app_name("CodeNomad")
         .app_reverse_domain("ai.neuralnomads.codenomad.client");
 

@@ -229,6 +229,7 @@ const App: Component = () => {
   const shouldHoldWakeLock = createMemo(() => shouldAppHoldWakeLock(
     preferences().keepComputerAwake,
     [...instances().keys()].some(hasWakeLockEligibleWork),
+    runtimeEnv.windowContext,
   ))
 
   createEffect(() => {
