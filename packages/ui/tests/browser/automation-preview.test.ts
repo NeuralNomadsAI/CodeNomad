@@ -65,6 +65,12 @@ test("the shared engine drives a real Electron preview through the guarded nativ
   const title = ref(/textbox "Title"/), plan = ref(/combobox "Plan"/), confirm = ref(/button "Confirm"/)
   assert.deepEqual((await execute({ action: "type", ref: title, text: "Pilot", clear: true })).value, "Pilot")
   await execute({ action: "press", key: "a", ref: title })
+  // TEMPORARY runner probe (removed before merge): late or lost.
+  await execute({ action: "wait", text: "Key:a", gone: false, timeout: 500 }).catch(async error => {
+    const later = await execute({ action: "wait", text: "Key:a", gone: false, timeout: 3000 }).catch(late => ({ found: false, error: String(late).slice(0, 80) }))
+    console.log("PROBE real-test " + JSON.stringify(later))
+    throw error
+  })
   assert.equal((await execute({ action: "wait", text: "Key:a", gone: false, timeout: 500 })).found, true,
     "keys reach a newly opened guest with no preceding pointer click")
   assert.match(String((await execute({ action: "snapshot", ref: title })).snapshot), /value="Pilota"/)
