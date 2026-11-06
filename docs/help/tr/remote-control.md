@@ -11,7 +11,7 @@ Uzaktan Kontrol, eşleştirilmiş bir tarayıcının veya masaüstü istemcisini
 
 Bağlantı **beş dakika** süreyle geçerlidir ve **bir kez** başarılı olur. Bunu bir kimlik bilgisi olarak değerlendirin: Bunu tüketen herkes eşleştirilmiş bir cihaz haline gelebilir. Kod, sorgu dizesinde değil, URL parçasında bulunur. **Yeni eşleştirme bağlantısı oluştur**, önceki kullanılmayan bağlantıyı anında geçersiz kılar. Durdurma, arka uç kapatma ve tünel arızası, bekleyen eşleştirme bağlantılarını iptal eder.
 
-Başka masaüstü CodeNomad istemcisini eşleştirmek için ana sayfada veya boş sekmede **Gözat** bölümünü açıp bağlantıyı **Sunucu adresi veya bağlantısı** alanına yapıştırın. Bu yalnızca sunucuyu ekler; açıp eşleştirmek için kayıtlı satırına tıklayın. Tek kullanımlık bağlantı, açılana veya yeniden yüklemeye kadar bu pencerenin belleğinde bekler; beş dakikalık geçerlilik süresinde kullanın. Yer imi yalnızca tünelin origin adresini saklar. Eşleştirme bağlantılarında TLS doğrulaması etkin kalır.
+Eşleştirme bağlantılarını istediğiniz tarayıcıda açın. Masaüstündeki **Sunucu adresi veya bağlantısı** alanına yapıştırmak yalnızca tünel kökenini kaydeder ve sunucu tarafında eşleştirmenin kullanılamadığını bildirir. Kod silinir. Arka uç klasör taraması kendi doğrudan erişim oturumunu kullanır; gömülü görünüm kendi oturumunu veya cihaz çerezini bağımsız olarak saklar.
 
 ## Eşleştirilmiş cihazları yönetin {#paired-devices}
 
@@ -28,7 +28,7 @@ Doğrudan erişim parolasını değiştirmek cihazları **iptal etmez**. **Uzakt
 ### Yerinizi kaybetmeden yeniden eşleştirin {#re-pair}
 
 1. İstemci **Bu cihazı yeniden eşleştirin** gösterirse bu sayfayı açık bırakın.
-2. Ana bilgisayarda **Yeni eşleştirme bağlantısı oluştur** öğesini seçin ve **aynı istemci tarayıcısında/profilinde** açın. Kaydedilmiş bir masaüstü sunucusu için, yeni eşleştirme bağlantısını kullanarak yeniden bağlanın, böylece mevcut uzak pencere depolama alanı yeniden kullanılabilir.
+2. Ana bilgisayarda **Yeni eşleştirme bağlantısı oluştur** öğesini seçin ve **aynı istemci tarayıcısında/profilinde** açın.
 3. Bekleme sayfasına dönün ve **Bağlantıyı kontrol et** öğesini seçin; sayfa yeniden odak kazandığında da kontrol tekrarlanır.
 
 Kurtarma, açık sayfayı ve taslakları korur; başarısız bir eylemi tekrarlamaz. Yeniden denemeden önce bir gönderme, yanıtlama veya silme işleminin etkili olup olmadığını kontrol edin. Doğrudan erişim parolası Uzaktan Kontrol eşleştirmesini kurtaramaz.

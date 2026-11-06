@@ -11,7 +11,7 @@ Control remoto permite a un navegador o cliente de escritorio emparejado usar tu
 
 El enlace es válido durante **cinco minutos** y funciona **una vez**. Trátalo como una credencial: cualquiera que lo consuma puede convertirse en un dispositivo emparejado. El código está en el fragmento de la URL, no en la cadena de consulta. **Crear nuevo enlace de emparejamiento** invalida inmediatamente el enlace anterior sin usar. Detener, apagar el backend y los fallos del túnel cancelan los enlaces de emparejamiento pendientes.
 
-Para emparejar otro CodeNomad de escritorio, abre **Explorar** en Inicio o una pestaña vacía y pega el enlace en **Dirección o enlace del servidor**. Esto solo añade el servidor; haz clic en su fila guardada para abrir y emparejar. El enlace de un solo uso espera en la memoria de esta ventana hasta abrirlo o recargar; úsalo durante sus cinco minutos de validez. Solo se guarda el origen del túnel como marcador. La verificación TLS permanece activada para los enlaces de emparejamiento.
+Abre los enlaces de emparejamiento en el navegador deseado. Pegarlos en **Dirección o enlace del servidor** del escritorio solo guarda el origen del túnel e informa de que el emparejamiento del lado del servidor no está disponible. El código se descarta. La exploración de carpetas del backend utiliza su propia sesión de acceso directo; la vista integrada conserva su inicio de sesión o cookie de dispositivo de forma independiente.
 
 ## Gestionar dispositivos emparejados {#paired-devices}
 
@@ -28,7 +28,7 @@ Cambiar la contraseña de acceso directo **no** revoca dispositivos. **Detener c
 ### Volver a emparejar sin perder tu lugar {#re-pair}
 
 1. Si el cliente muestra **Vincular de nuevo este dispositivo**, deja abierta esa página.
-2. En el anfitrión, elige **Crear nuevo enlace de emparejamiento** y ábrelo en el **mismo navegador/perfil del cliente**. Para un servidor de escritorio guardado, reconecta usando el enlace nuevo para reutilizar el almacenamiento de su ventana remota existente.
+2. En el anfitrión, elige **Crear nuevo enlace de emparejamiento** y ábrelo en el **mismo navegador/perfil del cliente**.
 3. Vuelve a la página en espera y elige **Comprobar conexión**; también vuelve a comprobarla cuando la página recupera el foco.
 
 La recuperación conserva la página abierta y los borradores; no repite una acción fallida. Comprueba si un envío, respuesta o eliminación surtió efecto antes de reintentarlo. Una contraseña de acceso directo no puede recuperar el emparejamiento de Control remoto.

@@ -11,7 +11,7 @@ Remote Control ले paired browser वा desktop client लाई inbound net
 
 link **पाँच मिनेट** मान्य हुन्छ र **एकपटक** सफल हुन्छ। credential झैं लिनुहोस्: प्रयोग गर्ने जोकोही paired device बन्न सक्छ। code URL fragment मा हुन्छ, query string मा होइन। **नयाँ जोडी लिंक बनाउनुहोस्** ले अघिल्लो unused link तुरुन्त अमान्य गर्छ। Stop, backend shutdown र tunnel failure ले बाँकी pairing link रद्द गर्छन्।
 
-अर्को desktop CodeNomad pair गर्न गृह पृष्ठ वा खाली ट्याबमा **ब्राउज गर्नुहोस्** खोली link **सर्भरको ठेगाना वा लिङ्क** मा टाँस्नुहोस्। यसले सर्भर मात्र थप्छ; खोल्न र pair गर्न बचत गरिएको पङ्क्ति क्लिक गर्नुहोस्। एकपटक प्रयोग हुने link खोल्दासम्म वा पुनः लोड हुँदासम्म यस झ्यालको मेमोरीमा पर्खन्छ; पाँच मिनेटको वैधताभित्र प्रयोग गर्नुहोस्। bookmark मा tunnel origin मात्र बचत हुन्छ। pairing link मा TLS verification enabled रहन्छ।
+Pairing link इच्छित browser मा खोल्नुहोस्। Desktop को **सर्भरको ठेगाना वा लिङ्क** मा टाँस्दा tunnel origin मात्र बचत हुन्छ र server-side pairing उपलब्ध नभएको त्रुटि देखिन्छ। Code हटाइन्छ। Backend को folder browsing ले आफ्नै direct-access session प्रयोग गर्छ; embedded view ले आफ्नो sign-in वा device cookie स्वतन्त्र रूपमा राख्छ।
 
 ## paired device व्यवस्थापन {#paired-devices}
 
@@ -28,7 +28,7 @@ direct-access password बदल्दा device revoke **हुँदैनन�
 ### आफ्नो ठाउँ नगुमाई पुनःpair {#re-pair}
 
 1. client ले **यो उपकरण फेरि जोड्नुहोस्** देखाए त्यो पृष्ठ खुलै राख्नुहोस्।
-2. host मा **नयाँ जोडी लिंक बनाउनुहोस्** रोजी **उही client browser/profile** मा खोल्नुहोस्। saved desktop server मा विद्यमान remote-window storage पुनःप्रयोग गर्न नयाँ pairing link बाट reconnect गर्नुहोस्।
+2. host मा **नयाँ जोडी लिंक बनाउनुहोस्** रोजी **उही client browser/profile** मा खोल्नुहोस्।
 3. पर्खिरहेको पृष्ठमा फर्केर **जडान जाँच्नुहोस्** रोज्नुहोस्; पृष्ठमा फेरि focus आउँदा पनि यसले फेरि जाँच्छ।
 
 recovery ले खुला पृष्ठ र मस्यौदा जोगाउँछ; असफल कार्य replay गर्दैन। retry अघि send, answer वा delete लागू भयो कि जाँच्नुहोस्। direct-access password ले Remote Control pairing पुनःप्राप्त गर्न सक्दैन।

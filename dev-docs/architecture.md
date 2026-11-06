@@ -53,6 +53,7 @@ CodeNomad control APIs live under `/api/*`. Important routes include:
 - `/api/storage`, `/api/settings`, `/api/filesystem`, `/api/speech`
 - `/api/opencode-plugin/automation`, authenticated by a per-process loopback token and restricted to CodeNomad-owned locations
 - `/api/remote-control/*`, managed from the host only; `POST /api/remote-control/pair` and `/remote-pair` answer only through Remote Control ([REMOTE_CONTROL.md](REMOTE_CONTROL.md))
+- `POST /api/remote-servers/:id/browse`, `/connect` and `/forget`, for saved-profile direct-access browsing. Access requires both loopback non-Remote-Control ingress and an explicit trusted self `Origin`. The backend resolves the profile id from its authoritative UI state; never accept caller-supplied remote URLs as profile authority.
 
 Authentication and Remote Control admission judge `routedPath()` (`server/routed-path.ts`), the path Fastify's router matches (`/%61pi/x` routes as `/api/x`), and refuse targets it would reinterpret. Never base an access decision on the raw request target.
 
@@ -61,6 +62,8 @@ Native OpenCode requests use `/workspaces/:id/instance/api/*`. The Fastify proxy
 Yolo state endpoints live at `/workspaces/:id/yolo/sessions/:sessionId`; Yolo notifications use `/api/events`.
 
 ## Client And Events
+
+Remote Browse obtains remote recent projects and folders through a backend-held direct CodeNomad session. The UI switches its Browse list in place, requests username/password inline when needed, and opens a remote tab only after a folder is selected. An expired session is reauthenticated once. All upstream remote-server requests omit `Origin`; target validation rejects CGNAT/Tailscale IP literals and special-use address ranges. TLS verification follows the saved profile and its existing explicit opt-out confirmation. Embedded native views retain their own authentication and remote-window storage independently of backend browsing. Remote Control pairing through backend connect returns `pairing_unavailable`; the profile retains only the tunnel origin and the code is discarded ([REMOTE_CONTROL.md](REMOTE_CONTROL.md)).
 
 `packages/ui/src/lib/sdk-manager.ts` uses `OpenCode.make()` and caches generated Promise clients by instance proxy path. `packages/ui/src/stores/opencode-client.ts` is the root-client authority; native directory/location fields select the worktree.
 
@@ -88,7 +91,7 @@ Session Shell and conversation instructions are native features. Session Shell i
 
 ## Persistence
 
-CodeNomad configuration resolves through `packages/server/src/config/location.ts`: `config.yaml`, `state.yaml`, `remote-control-devices.json`, and `instances/` under `~/.config/codenomad/`. `config.json` is read only as migration input.
+CodeNomad configuration resolves through `packages/server/src/config/location.ts`: `config.yaml`, `state.yaml`, `remote-control-devices.json`, `remote-server-credentials.json`, and `instances/` under `~/.config/codenomad/`. `config.json` is read only as migration input. The private `remote-server-credentials.json` beside the backend configuration stores remote browsing passwords and sessions with mode `0600`. Never include those secrets in API responses, UI state or logs. Removing a saved profile calls `/api/remote-servers/:id/forget` before deleting its UI-state entry.
 
 ## Implementation Map
 

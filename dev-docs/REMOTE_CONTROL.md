@@ -82,24 +82,19 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   only once Remote Control is used.
 - Remote devices authenticate even with `--dangerously-skip-auth`, and the
   local session cookie is never accepted on the ingress.
-- A desktop CodeNomad pairs as a device: pasting a pairing link into the inline server
-  field (Browse on Home, an empty tab or in the launcher, or Settings → Servers) saves the tunnel
-  origin. The single-use entry waits in renderer memory (`pendingPairingEntries` in
-  `lib/hooks/use-remote-server-profiles.ts`) until the saved server is explicitly opened;
-  reload drops it, removal or a changed origin clears it and a successful opening consumes it.
-  Adding focuses the Browse row and keeps the launcher open. The profile keeps TLS verification on, since
-  a Tauri TLS-proxy window uses an incognito store without the device cookie.
-  The code is never stored with the server;
-  re-pairing a saved server reuses its window storage, which keeps the device
-  cookie across launches. Covered by `tests/browser/remote-server-pairing.test.ts`.
-   Where project tabs are available, choosing the saved server opens a remote project tab whose view
-  pairs on its first load with the remote window's storage
-  ([PROJECTS.md](PROJECTS.md#agent-conventions)); the tab never relays the
-  tunnel through the host.
+- Browser pairing consumes the link in the intended browser/profile. The remote
+  gate requires its exact public browser `Origin` on mutations, while the direct
+  listener refuses the pair route. Backend remote-server requests omit `Origin`,
+  so `connect` with a pairing link returns `pairing_unavailable`. The desktop
+  saves only the tunnel-origin profile, reports localized server-side pairing
+  unavailable and discards the code. Never keep it in persisted state or a native
+  pending-entry map. Embedded views retain their own remote-window authentication;
+  the backend Browse session is independent of a view's paired-device cookie
+  ([PROJECTS.md](PROJECTS.md#agent-conventions)).
 - `--connect-server` opens a saved server or URL at launch through that same
   connect flow ([architecture.md](architecture.md#native-profiles-windows-and-client-state)).
   It refuses URLs with user info or a fragment, so a pairing code or password
-  never travels on a command line; pair from Browse instead.
+  never travels on a command line; open pairing links in the intended browser.
 
 ## Validation
 

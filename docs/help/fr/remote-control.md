@@ -11,7 +11,7 @@ Le Contrôle à distance permet à un navigateur ou client de bureau appairé d�
 
 Le lien est valable **cinq minutes** et réussit **une seule fois**. Traitez-le comme un identifiant : quiconque le consomme peut devenir un appareil appairé. Le code se trouve dans le fragment d’URL, pas dans la chaîne de requête. **Créer un nouveau lien d’appairage** invalide immédiatement le lien inutilisé précédent. L’arrêt, la fermeture du backend et une panne du tunnel annulent les liens d’appairage en attente.
 
-Pour appairer un autre CodeNomad de bureau, ouvrez **Parcourir** sur l’accueil ou un onglet vide et collez le lien dans **Adresse ou lien du serveur**. Cela ajoute seulement le serveur ; cliquez sur sa ligne enregistrée pour l’ouvrir et l’appairer. Le lien à usage unique attend en mémoire dans cette fenêtre jusqu’à son ouverture ou au rechargement ; utilisez-le pendant ses cinq minutes de validité. Seule l’origine du tunnel est enregistrée comme favori. La vérification TLS reste activée pour les liens d’appairage.
+Ouvrez les liens d’appairage dans le navigateur voulu. En coller un dans **Adresse ou lien du serveur** sur le bureau enregistre seulement l’origine du tunnel et signale que l’appairage côté serveur est indisponible. Le code est supprimé. Le parcours des dossiers par le backend utilise sa propre session d’accès direct ; la vue intégrée conserve indépendamment sa connexion ou son cookie d’appareil appairé.
 
 ## Gérer les appareils appairés {#paired-devices}
 
@@ -28,7 +28,7 @@ Changer le mot de passe d’accès direct ne révoque **pas** les appareils. **A
 ### Réappairer sans perdre sa place {#re-pair}
 
 1. Si le client affiche **Appairer à nouveau cet appareil**, laissez cette page ouverte.
-2. Sur l’hôte, choisissez **Créer un nouveau lien d’appairage** et ouvrez-le dans le **même navigateur/profil client**. Pour un serveur de bureau enregistré, reconnectez-vous avec le lien récent afin de réutiliser le stockage existant de sa fenêtre distante.
+2. Sur l’hôte, choisissez **Créer un nouveau lien d’appairage** et ouvrez-le dans le **même navigateur/profil client**.
 3. Revenez à la page en attente et choisissez **Vérifier la connexion** ; la vérification se refait aussi quand la page reprend le focus.
 
 La récupération préserve la page ouverte et les brouillons ; elle ne rejoue pas une action échouée. Vérifiez si un envoi, une réponse ou une suppression a pris effet avant de réessayer. Un mot de passe d’accès direct ne peut pas récupérer un appairage de Contrôle à distance.

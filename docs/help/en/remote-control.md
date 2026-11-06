@@ -11,7 +11,7 @@ Remote Control lets a paired browser or desktop client use your running CodeNoma
 
 The link is valid for **five minutes** and succeeds **once**. Treat it as a credential: anyone who consumes it can become a paired device. The code lives in the URL fragment, not the query string. **Create new pairing link** immediately invalidates the preceding unused link. Stop, backend shutdown and tunnel failure cancel outstanding pairing links.
 
-To pair another desktop CodeNomad, open **Browse** on Home or an empty tab and paste the link into **Server address or link**. This only adds the server; click its saved row to open and pair. The one-use link waits in memory in this window until you open it or reload; use it within its five-minute lifetime. Only the tunnel origin is saved as the bookmark. TLS verification stays enabled for pairing links.
+Open pairing links in the intended browser. Pasting one into desktop **Server address or link** saves only the tunnel origin and reports that server-side pairing is unavailable. The code is discarded. Backend folder browsing uses its own direct-access session; an embedded view keeps its own sign-in or paired-device cookie independently.
 
 ## Manage paired devices {#paired-devices}
 
@@ -28,7 +28,7 @@ Changing the direct-access password does **not** revoke devices. **Stop Remote C
 ### Re-pair without losing your place {#re-pair}
 
 1. If the client shows **Pair this device again**, leave that page open.
-2. On the host, choose **Create new pairing link** and open it in the **same client browser/profile**. For a saved desktop server, reconnect using the fresh pairing link so its existing remote-window storage is reused.
+2. On the host, choose **Create new pairing link** and open it in the **same client browser/profile**.
 3. Return to the waiting page and choose **Check connection**; it also checks again when the page regains focus.
 
 Recovery preserves the open page and drafts; it does not replay a failed action. Check whether a send, answer or delete took effect before retrying it. A direct-access password cannot recover Remote Control pairing.

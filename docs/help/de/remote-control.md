@@ -11,7 +11,7 @@ Fernsteuerung ermöglicht einem gekoppelten Browser- oder Desktop-Client die Nut
 
 Der Link gilt **fünf Minuten** und funktioniert **einmal**. Behandeln Sie ihn als Zugangsdaten: Wer ihn einlöst, kann ein gekoppeltes Gerät werden. Der Code steht im URL-Fragment, nicht in der Abfragezeichenfolge. **Neuen Kopplungslink erstellen** macht den vorherigen ungenutzten Link sofort ungültig. Stop, Backend-Ende und Tunnelfehler stornieren offene Kopplungslinks.
 
-Um einen weiteren CodeNomad-Desktop zu koppeln, öffnen Sie auf der Startseite oder einem leeren Tab **Durchsuchen** und fügen den Link in **Serveradresse oder -link** ein. Das fügt nur den Server hinzu; klicken Sie zum Öffnen und Koppeln auf seine gespeicherte Zeile. Der Einmallink wartet im Speicher dieses Fensters bis zum Öffnen oder Neuladen; nutzen Sie ihn innerhalb seiner fünf Minuten Gültigkeit. Nur die Tunnel-Origin wird als Lesezeichen gespeichert. Die TLS-Prüfung bleibt für Kopplungslinks aktiviert.
+Öffnen Sie Kopplungslinks im gewünschten Browser. Das Einfügen in **Serveradresse oder -link** auf dem Desktop speichert nur den Tunnel-Ursprung und meldet, dass serverseitige Kopplung nicht verfügbar ist. Der Code wird verworfen. Die Ordnersuche des Backends verwendet eine eigene Direktzugriffssitzung; die eingebettete Ansicht behält unabhängig davon ihre Anmeldung oder ihr Geräte-Cookie.
 
 ## Gekoppelte Geräte verwalten {#paired-devices}
 
@@ -28,7 +28,7 @@ Eine Änderung des Direktzugriffspassworts widerruft Geräte **nicht**. **Fernst
 ### Ohne Positionsverlust erneut koppeln {#re-pair}
 
 1. Zeigt der Client **Dieses Gerät erneut koppeln**, lassen Sie diese Seite offen.
-2. Wählen Sie auf dem Host **Neuen Kopplungslink erstellen** und öffnen Sie ihn im **selben Client-Browser/-Profil**. Verbinden Sie bei gespeichertem Desktop-Server mit dem frischen Link neu, damit der vorhandene Remote-Fensterspeicher wiederverwendet wird.
+2. Wählen Sie auf dem Host **Neuen Kopplungslink erstellen** und öffnen Sie ihn im **selben Client-Browser/-Profil**.
 3. Kehren Sie zur wartenden Seite zurück und wählen Sie **Verbindung prüfen**; sie prüft auch erneut, wenn die Seite wieder den Fokus erhält.
 
 Die Wiederherstellung bewahrt die geöffnete Seite und Entwürfe; sie wiederholt keine fehlgeschlagene Aktion. Prüfen Sie vor Wiederholung, ob Senden, Antworten oder Löschen wirksam war. Ein Direktzugriffspasswort kann die Fernsteuerungskopplung nicht wiederherstellen.
