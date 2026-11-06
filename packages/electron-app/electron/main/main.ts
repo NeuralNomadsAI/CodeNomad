@@ -43,8 +43,10 @@ const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
 // The UI draws local application and Preferences title bars. On macOS the native
 // traffic lights keep their standard place at its left and the menus stay in the
-// global menu bar; elsewhere windows are frameless.
-const applicationWindowChrome = isMac ? { titleBarStyle: "hidden" as const } : { frame: false }
+// global menu bar; elsewhere windows are frameless. Linux desktops with client-side
+// decorations would round frameless corners; CodeNomad's chrome stays square there.
+const applicationWindowChrome = isMac ? { titleBarStyle: "hidden" as const }
+  : { frame: false, ...(process.platform === "linux" ? { roundedCorners: false } : {}) }
 
 function resolveStoragePaths(baseUserDataPath: string, profileKey: string) {
   const scope = resolveStorageScope({
