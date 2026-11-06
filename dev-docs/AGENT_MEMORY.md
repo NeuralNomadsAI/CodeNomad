@@ -62,6 +62,26 @@ files produce explicit scope errors. Storage bounds encoded files and journals
 to 16 KiB and preserves Markdown content, including trailing whitespace and line
 endings.
 
+Entries use UTF-8 Markdown with a YAML frontmatter block delimited by `---`,
+followed immediately by the literal body:
+
+```markdown
+---
+id: build-command
+title: Build command
+type: fact
+createdAt: '2026-01-01T00:00:00Z'
+updatedAt: '2026-01-01T00:00:00Z'
+sessionId: ses_example
+---
+Run npm run build from the repository root.
+```
+
+The repository remains local to the CodeNomad configuration. Saves, duplicate
+replacement and deletion retain the previous text in its Git history; forgetting
+an entry removes it from active memory. Treat stored secrets as sensitive across
+that full history. External memory belongs in a literal `reference` entry.
+
 The server policy calls `mutate(namespace, decide)` to read a fresh scope and
 choose `{ kind: "save", entry, result }`, `{ kind: "delete", id, result }` or
 `{ kind: "none", result }`. The callback owns enablement, capacity, deduplication
@@ -244,6 +264,36 @@ An explicit ownership refusal from every live backend clears the named entry and
 leaves unrelated native Locations usable; missing/ambiguous backends and transport
 failures reject preparation.
 
+## Preferences review, editing and badges
+
+`components/settings/agent-memory-settings-card.tsx` mounts under General in
+both native Preferences and embedded Settings. The Memory switch reads and
+updates `server.memoryEnabled` (default false); the scope selector and editor
+are visible while enabled. The server keeps stored entries when disabled.
+Project context uses the shared Preferences resolver; without an authorized
+project only About you can be selected. Titles/types/text have localized labels
+in all ten UI languages, and supplementary copy uses `SettingsInfoTip`.
+
+`stores/agent-memory.ts` owns demand reads, draft preservation, stale-response
+fencing and coalesced trailing invalidation after `memory.changed` or reconnect.
+The list's `scopeKey` identifies the resolved namespace, and its server-generated
+`observedAt` is captured before the read. A successful read advances a monotonic
+localStorage consultation frontier per namespace. Each visit freezes the previous
+frontier: created-after entries show **New**, otherwise updated-after entries
+show **Modified**. Badges remain visible through refreshes during that visit.
+Failed reads leave the saved frontier untouched; unavailable localStorage keeps
+the badges visit-local. The frontier belongs to the current UI storage origin.
+
+The editor changes existing entries; **Save** and **Forget** send the displayed
+ID and revision, preserving agent session provenance. **Forget** requires an
+explicit confirmation. **Cancel** resets fields to the selected saved entry.
+Dirty drafts use the shared Settings leave guard; scope changes and cleanup
+confirmation also check it. Revision conflicts retain the draft and offer
+**Reload**, with confirmation before discarding edits. Flagged entries stay
+visible with **Needs review**, a contextual warning and editable content, while
+the server's safe projection excludes them from agent use. Read failures keep
+their explicit error, with retry; callers must never render them as empty scopes.
+
 ## Cleanup sessions from Preferences
 
 General's Memory scope bar offers **Tidy up** with an info tip and a short
@@ -337,6 +387,9 @@ node --import tsx --test packages/server/src/opencode/memory/*.test.ts
 node --import tsx --test packages/server/src/workspaces/session-memory-context.test.ts packages/server/src/server/__tests__/session-environment.test.ts packages/server/src/server/routes/mission-input.test.ts packages/server/src/server/routes/mission-lifecycle.test.ts packages/server/src/server/routes/mission-authority-checkpoint.test.ts
 npm run build:memory --workspace @neuralnomads/codenomad
 node --import tsx scripts/test-memory-tool-native.mjs <absolute-opencode-executable>
+node --import tsx --test packages/ui/tests/browser/agent-memory.test.ts
+npm run test:help
+npm run build:help
 ```
 
 Set `CODENOMAD_MEMORY_TEST_WSL_DISTRO` to a disposable-test-capable local distro

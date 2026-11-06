@@ -34,6 +34,26 @@ Si los colores se vuelven difíciles de leer, selecciona una paleta integrada o 
 
 En **Configuración → General**, **Mantener el ordenador activo mientras CodeNomad esté en ejecución** está desactivado por defecto. Actívalo para impedir la suspensión del sistema mientras haya una ventana local de CodeNomad abierta (aunque esté minimizada), incluso si ninguna sesión está trabajando; la pantalla puede seguir apagándose. Si se desactiva, CodeNomad mantiene el ordenador activo solo mientras una sesión está trabajando. La **i** junto al título explica este comportamiento. La opción aparece solo en las ventanas locales de la aplicación de escritorio y en Preferencias; está oculta en las vistas de navegador y remotas.
 
+## Memoria persistente del agente {#agent-memory}
+
+Abre **Preferencias → General → Memoria** (o **Configuración → General** en el navegador). La memoria está desactivada por defecto. Actívala para que el agente conserve hechos y preferencias útiles entre conversaciones. El interruptor se aplica a la configuración CodeNomad conectada; desactivarlo conserva las entradas y su historial.
+
+- **Acerca de ti**: hasta 60 entradas compartidas entre los proyectos de esta configuración.
+- **Proyecto**: hasta 200 entradas, seleccionadas según la carpeta de la conversación. El servidor identifica el repositorio por su dirección remota Git normalizada, con la ruta local del repositorio como alternativa; los worktrees comparten esta memoria. Abre un proyecto para seleccionar este ámbito.
+
+Cada sesión, incluidas las subsesiones, recibe reglas de registro y una lista limitada de títulos y tipos (el bloque de instrucciones ocupa como máximo unos 8000 caracteres). El agente debe leer las entradas relevantes con `codenomad_memory` antes de actuar, verificar sus afirmaciones con los archivos y comandos actuales y mencionar lo guardado. Incluso una memoria vacía recibe las reglas. Los ámbitos ilegibles se omiten como no disponibles. Si OpenCode carece de la capacidad opcional de instrucciones de sesión, la integración permanece inactiva silenciosamente y conserva tu elección.
+
+1. Selecciona un ámbito y una entrada. **Nuevo** y **Modificado** señalan cambios desde la última consulta correcta de ese ámbito en esta vista del navegador o escritorio; siguen visibles durante la visita actual.
+2. Edita **Título**, **Tipo** (**Hecho**, **Preferencia** o **Referencia**) y **Texto**, y pulsa **Guardar**. El título admite 60 caracteres y el texto 2000. **Cancelar** restaura el contenido guardado. Si alguien modificó la entrada, usa **Recargar** y revísala antes de guardar de nuevo.
+3. Para quitar una entrada, abre su menú de acciones y confirma **Olvidar**. Sale de la memoria activa; Git conserva su historial local, incluido el texto anterior. Olvidar retira la entrada del uso del agente, sin borrarla de forma segura.
+4. Si la memoria está llena, combina u olvida entradas antes de reintentar. Los títulos coincidentes o textos muy similares reemplazan una entrada existente; Git conserva su texto anterior.
+
+**Requiere revisión** marca instrucciones sospechosas de eludir protecciones o revelar credenciales. Estas entradas siguen siendo editables aquí, cuentan para el límite y se excluyen de los títulos y lecturas del agente. Se comprueban en cada lectura; corrige y guarda el contenido o usa **Olvidar**. Una memoria mal formada o ilegible muestra un error en vez de una lista vacía; repara la causa antes de reintentar.
+
+**Ordenar** pide confirmación y abre una conversación nueva en el proyecto mostrado en Preferencias para verificar y combinar el ámbito seleccionado. Conserva las entradas no verificables y las referencias externas e informa de los cambios. Requiere un proyecto abierto y memoria activada, legible y escribible con al menos una entrada sin marcar. Si el inicio queda sin confirmar, comprueba las conversaciones del proyecto antes de reintentar.
+
+La memoria la mantiene el agente. Si ya mantiene otra, como `.claude/…/MEMORY.md`, guarda una **Referencia** a ese archivo; los archivos externos conservan su propia gestión. CodeNomad almacena un archivo Markdown por entrada bajo `memory/global/` o `memory/projects/<id>/` en su directorio de configuración, con un commit Git local por cada guardado o eliminación. El almacenamiento es solo local, sin sincronización remota. Consulta [Ventanas y datos de escritorio](desktop.md) para los límites de configuración y perfiles.
+
 ## Paneles y secciones de Estado {#panels-status}
 
 Arrastra el borde interior de un panel acoplado para cambiar su tamaño. El tirador permanece resaltado y mantiene la captura del puntero durante todo el arrastre, incluso si el puntero sobrepasa el borde. Suelta para terminar.
