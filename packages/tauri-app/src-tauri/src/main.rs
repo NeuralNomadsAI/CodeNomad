@@ -18,6 +18,8 @@ mod launch;
 #[cfg(target_os = "linux")]
 mod linux_tls;
 mod local_windows;
+#[cfg(target_os = "macos")]
+mod macos_relaunch;
 mod managed_node;
 mod menu_bar;
 mod menu_labels;
@@ -2219,6 +2221,10 @@ fn main() {
             }
             #[cfg(target_os = "linux")]
             tauri::RunEvent::Exit => appimage_exit::stop_mounted_children(),
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Exit if shutdown::restart_on_exit() => {
+                macos_relaunch::relaunch_and_exit(&app_handle)
+            }
             tauri::RunEvent::WindowEvent {
                 label,
                 event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Enter { paths, .. }),

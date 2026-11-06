@@ -688,6 +688,8 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
         client_state::release(&app);
         let restart = app.state::<ShutdownCoordinator>().complete_cleanup();
         if restart {
+            #[cfg(target_os = "macos")]
+            RESTART_ON_EXIT.store(true, std::sync::atomic::Ordering::Release);
             app.request_restart();
         } else {
             app.exit(0);
@@ -698,6 +700,16 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
 pub(crate) fn request_restart(app: AppHandle) {
     app.state::<ShutdownCoordinator>().request_restart();
     request(app);
+}
+
+/// Set once cleanup has requested Tauri's restart; `RunEvent::Exit` then relaunches
+/// with this process's environment (`macos_relaunch.rs`).
+#[cfg(target_os = "macos")]
+static RESTART_ON_EXIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "macos")]
+pub(crate) fn restart_on_exit() -> bool {
+    RESTART_ON_EXIT.load(std::sync::atomic::Ordering::Acquire)
 }
 
 fn retry_bounded<E>(
