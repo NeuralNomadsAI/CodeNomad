@@ -8,6 +8,8 @@ import { getSessionAttachmentsForInstance } from "./attachments"
 import { closeWorkspace, createInstance, instances, trackWorkspaceClose, updateInstance } from "./instances"
 import { addNamedRecentFolder } from "./preferences"
 import { getSessionDraftPromptsForInstance, getSessions } from "./sessions"
+import { backendIdOf, LOCAL_BACKEND_ID } from "../lib/backend-identity"
+import type { Instance } from "../types/instance"
 
 const log = getLogger("api")
 
@@ -27,11 +29,12 @@ function showFailure(titleKey: string, error: unknown) {
   })
 }
 
-// A kept folder leaves the registry; every window drops its temporary mark.
+// A kept folder leaves the local registry; every window drops its temporary mark.
 serverEvents.on("workspace.temporaryChanged", (event) => {
   if (event.type !== "workspace.temporaryChanged") return
   const registered = new Set(event.folders)
   for (const instance of instances().values()) {
+    if (backendIdOf(instance) !== LOCAL_BACKEND_ID) continue
     if (instance.temporary && !registered.has(instance.folder)) updateInstance(instance.id, { temporary: false })
   }
 })
@@ -66,9 +69,9 @@ export async function openTemporaryInstance(): Promise<string> {
 // Another window kept the folder and this one missed the event.
 const isNoLongerTemporary = (error: unknown) => error instanceof Error && error.message === "temporary_not_temporary"
 
-function clearTemporaryMark(folder: string) {
+function clearTemporaryMark(project: Pick<Instance, "folder" | "backendId">) {
   for (const instance of instances().values()) {
-    if (instance.folder === folder) updateInstance(instance.id, { temporary: false })
+    if (instance.folder === project.folder && backendIdOf(instance) === backendIdOf(project)) updateInstance(instance.id, { temporary: false })
   }
 }
 
@@ -84,7 +87,7 @@ export async function keepTemporaryInstance(instanceId: string): Promise<boolean
       return false
     }
   }
-  clearTemporaryMark(instance.folder)
+  clearTemporaryMark(instance)
   await addNamedRecentFolder(instance.folder, instance.projectName ?? "")
     .catch((error) => log.error("Failed to add the kept project to recent folders", error))
   return true
@@ -119,7 +122,7 @@ async function discardTemporaryInstance(instanceId: string, quiet = false): Prom
     // Kept elsewhere: nothing was deleted; it closes like an ordinary project.
     if (!quiet) showFailure("temporaryInstance.discard.failedTitle", error)
     const instance = instances().get(instanceId)
-    if (instance) clearTemporaryMark(instance.folder)
+    if (instance) clearTemporaryMark(instance)
     detachInstanceTab(instanceId)
     await closeWorkspace(instanceId).catch(() => {})
     return true

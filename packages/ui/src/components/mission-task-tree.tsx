@@ -13,6 +13,7 @@ import { missionPanelScroll } from "./mission-panel-scroll"
 import { useMissionPanelStore } from "./mission-panel-scope"
 import type { MissionTaskRequest } from "../../../server/src/missions/mission-panel-map"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
+import { projectScope } from "../lib/backend-identity"
 
 export type MissionTaskState = "done" | "active" | "input" | "assigned" | "ready" | "waiting" | "blocked" | "failed" | "retired"
 
@@ -98,7 +99,7 @@ export function MissionTaskTree(props: {
   }
   const id = `mission-tree-${createUniqueId()}`
   // Per project, like the picker list: the folder scope survives instance restarts.
-  const scope = () => instances().get(props.instanceId)?.folder ?? props.instanceId
+  const scope = () => { const instance = instances().get(props.instanceId); return instance ? projectScope(instance) : props.instanceId }
   const open = () => missionProjectView(scope()).tasksCollapsed !== true
   let root!: HTMLElement
   const panelScrolls = missionPanelScroll(() => root, () => props.active ?? true)

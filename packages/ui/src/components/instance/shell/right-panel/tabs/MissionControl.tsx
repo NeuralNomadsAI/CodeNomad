@@ -36,6 +36,7 @@ import { sessionListRestored } from "../../../../../stores/session-list-restorat
 import { createMissionScheduleList } from "../../../../mission-schedule-list"
 import { MissionPanelScope } from "../../../../mission-panel-scope"
 import { MissionPanelPaging } from "../../../../mission-panel-paging"
+import { projectScope } from "../../../../../lib/backend-identity"
 
 interface MissionControlProps {
   instanceId: string
@@ -56,7 +57,7 @@ const UNAVAILABLE_DETAIL: Record<MissionUnavailableReason, string> = {
 
 const MissionControl: Component<MissionControlProps> = (props) => {
   const { locale } = useI18n()
-  const scope = () => instances().get(props.instanceId)?.folder ?? props.instanceId
+  const scope = () => { const instance = instances().get(props.instanceId); return instance ? projectScope(instance) : props.instanceId }
   const selectedMissionId = () => missionProjectView(scope()).selected
   const selectedSchedule = () => missionProjectView(scope()).selectedRecurrence
   const selectedScheduled = () => missionProjectView(scope()).selectedScheduled
@@ -145,7 +146,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const passageSchedule = () => selectedSchedule() ?? selectedScheduled()
   const [scheduledCurrent, setScheduledCurrent] = createSignal<string>()
   const currentPassage = useMissionCurrentPassage({ instanceId: () => props.instanceId, projectID,
-    directory: scope, scheduleID: () => selectedSchedule() ?? scheduledCurrent(), owner: () => selectedScheduled() ? "scheduled" : "daily", active: () => props.isActive?.() ?? true, refresh: recurrenceRefresh })
+    directory: () => directory() ?? "", scheduleID: () => selectedSchedule() ?? scheduledCurrent(), owner: () => selectedScheduled() ? "scheduled" : "daily", active: () => props.isActive?.() ?? true, refresh: recurrenceRefresh })
   const passageStore = () => currentPassage.inventory() ?? missionStore
   const mission = createMemo(() => passageSchedule() ? currentPassage.snapshot()?.scheduleID === passageSchedule() ? currentPassage.snapshot()?.mission : undefined
     : missions().find((candidate) => candidate.id === selectedMissionId()))
@@ -317,7 +318,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // The saved Mission ID survives ownership conversion in another window, including
   // cold restoration. Point-read that selection; absence never triggers an inventory scan.
   const unifiedSelection = () => selectedScheduled() ?? (selectedSchedule() ? undefined : selectedMissionId())
-  const scheduled = createMissionScheduleList({ get instanceId() { return props.instanceId }, get directory() { return scope() },
+  const scheduled = createMissionScheduleList({ get instanceId() { return props.instanceId }, get directory() { return directory() ?? "" },
     get selectedRequests() { return selectedScheduled() ? currentRequests() : undefined },
     onPassage: setScheduledCurrent,
     get tracking() { return selectedScheduled() ? tracking() : undefined },

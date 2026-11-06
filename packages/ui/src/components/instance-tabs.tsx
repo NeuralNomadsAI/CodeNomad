@@ -20,6 +20,7 @@ import { withHotkey } from "../lib/hotkeys"
 import { createLongPressHandlers } from "../lib/long-press"
 import { useI18n } from "../lib/i18n"
 import type { AppTabRecord } from "../stores/app-tabs"
+import type { BackendId } from "../lib/backend-transport"
 
 interface InstanceTabsProps {
   tabs: AppTabRecord[]
@@ -38,7 +39,7 @@ interface SortableAppTabProps {
   activeTabId: string | null
   onSelect: (tabId: string) => void
   onClose: (tabId: string) => void
-  onRename: (folder: string, label: string) => void
+  onRename: (folder: string, label: string, backendId?: BackendId) => void
 }
 
 const AppTabContent: Component<SortableAppTabProps> = (props) => {
@@ -51,7 +52,7 @@ const AppTabContent: Component<SortableAppTabProps> = (props) => {
           active={props.tab.id === props.activeTabId}
           onSelect={() => props.onSelect(props.tab.id)}
           onClose={() => props.onClose(props.tab.id)}
-          onRename={(label) => props.tab.kind === "instance" && props.onRename(props.tab.instance.folder, label)}
+          onRename={(label) => props.tab.kind === "instance" && props.onRename(props.tab.instance.folder, label, props.tab.instance.backendId)}
         />
       ) : (
         <div
@@ -185,15 +186,15 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
 
   // Renaming a tab renames its project folder, like the home page: every tab of
   // that folder and its recent-folder entry share one name.
-  const [renameTarget, setRenameTarget] = createSignal<{ folder: string; label: string } | null>(null)
+  const [renameTarget, setRenameTarget] = createSignal<{ folder: string; label: string; backendId?: BackendId } | null>(null)
   const [isRenaming, setIsRenaming] = createSignal(false)
-  const openRename = (folder: string, label: string) => setRenameTarget({ folder, label })
+  const openRename = (folder: string, label: string, backendId?: BackendId) => setRenameTarget({ folder, label, backendId })
   const submitRename = async (name: string) => {
     const target = renameTarget()
     if (!target) return
     setIsRenaming(true)
     try {
-      await renameProject(target.folder, name)
+      await renameProject(target.folder, name, target.backendId)
       setRenameTarget(null)
     } finally {
       setIsRenaming(false)

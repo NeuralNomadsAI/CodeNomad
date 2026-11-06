@@ -51,6 +51,8 @@ interface SessionViewProps {
   activeSessions: Map<string, Session>
   instanceId: string
   instanceFolder: string
+  /** The project's view-state scope (Missions, previews); its folder when omitted. */
+  scope?: string
   escapeInDebounce: boolean
   isPhoneLayout?: boolean
   focusConversationOnActivate?: boolean
@@ -104,8 +106,9 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   const pendingUserPrompts = createMemo(() => getOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)
     .filter((item): item is SessionInboxUser => item.type === "user"))
   const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
-  const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceFolder))
-  const missionReader = () => props.isActive ? missionProjectView(props.instanceFolder).reader : undefined
+  const projectViewScope = () => props.scope ?? props.instanceFolder
+  const preview = createMemo(() => getSessionPreview(props.sessionId, projectViewScope()))
+  const missionReader = () => props.isActive ? missionProjectView(projectViewScope()).reader : undefined
   const readingMission = () => Boolean(missionReader())
   // A layout-restored reader for a one-time Mission the loaded map no longer
   // contains has nothing to show: release the central surface to the transcript.
@@ -114,7 +117,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     if (!target || target.kind === "recurrence" || target.kind === "playbook" || target.recurrence) return
     const state = missionStore.state(props.instanceId)
     if ((state.status === "ready" || state.status === "unavailable") && !state.summaries.some(row => row.id === target.missionId))
-      updateMissionProjectView(props.instanceFolder, { reader: undefined })
+      updateMissionProjectView(projectViewScope(), { reader: undefined })
   })
   const filePreview = createMemo(() => {
     const target = getFilePreview(props.instanceId)
@@ -126,7 +129,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   // must not leave the other mounted invisibly above it; editor drafts live in
   // their own store and the composer stays outside both readers.
   createEffect(on(filePreview, target => {
-    if (target && props.isActive) updateMissionProjectView(props.instanceFolder, { reader: undefined })
+    if (target && props.isActive) updateMissionProjectView(projectViewScope(), { reader: undefined })
   }, { defer: true }))
   createEffect(on(readingMission, reading => { if (reading) closeFilePreview(props.instanceId) }))
 
@@ -671,7 +674,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
         </div>
         <Show when={readingMission()}>
-          <MissionReader instanceId={props.instanceId} scope={props.instanceFolder} />
+          <MissionReader instanceId={props.instanceId} scope={projectViewScope()} />
         </Show>
         </div>
 

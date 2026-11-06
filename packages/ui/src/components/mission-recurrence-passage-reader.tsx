@@ -37,8 +37,8 @@ export function MissionRecurrencePassageReader(props: { instanceId: string; scop
     const revalidate = refresh()
     const retry = revalidate !== previousRefresh
     previousRefresh = revalidate
-    const identity = binding(), { instanceId, scope, projectID, scheduleID, receipt } = untrack(() => ({
-      instanceId: props.instanceId, scope: props.scope, projectID: props.projectID, scheduleID: props.scheduleID, receipt: props.receipt,
+    const identity = binding(), { instanceId, directory, projectID, scheduleID, receipt } = untrack(() => ({
+      instanceId: props.instanceId, directory: instances().get(props.instanceId)?.folder, projectID: props.projectID, scheduleID: props.scheduleID, receipt: props.receipt,
     })), selectedSection = section(), selectedPage = page()
     const { client, generation } = connection()
     const key = JSON.stringify([identity, selectedSection, selectedPage]), entry = cache.get(key)
@@ -54,7 +54,7 @@ export function MissionRecurrencePassageReader(props: { instanceId: string; scop
     const controller = new AbortController()
     let current = true
     const admitted = () => current && !controller.signal.aborted && binding() === identity
-      && instances().get(instanceId)?.folder === scope && instances().get(instanceId)?.metadata?.project?.id === projectID
+      && instances().get(instanceId)?.folder === directory && instances().get(instanceId)?.metadata?.project?.id === projectID
       && instances().get(instanceId)?.client === client && getOpenCodeInstanceGeneration(instanceId) === generation
     void serverApi.fetchMissionRecurrencePassagePage(instanceId, scheduleID, receipt.passageID,
       { section: selectedSection, page: selectedPage, ...(revision === undefined ? {} : { revision }) }, controller.signal).then(result => {

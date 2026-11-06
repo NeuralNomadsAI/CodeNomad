@@ -16,6 +16,8 @@ type PromptStateOptions = {
   instanceId: Accessor<string>
   sessionId: Accessor<string>
   instanceFolder: Accessor<string>
+  /** Persistence identity, separate from the physical directory used for file operations. */
+  historyKey?: Accessor<string>
   onSessionDraftLoaded?: (draft: string) => void
 }
 
@@ -112,14 +114,14 @@ export function usePromptState(options: PromptStateOptions): PromptState {
 
   onMount(() => {
     void (async () => {
-      const loaded = await getHistory(options.instanceFolder())
+      const loaded = await getHistory(options.historyKey?.() ?? options.instanceFolder())
       setHistory(loaded)
     })()
   })
 
   const recordHistoryEntry = async (entry: string) => {
     try {
-      await addToHistory(options.instanceFolder(), entry)
+      await addToHistory(options.historyKey?.() ?? options.instanceFolder(), entry)
       setHistory((prev) => {
         const next = [entry, ...prev]
         if (next.length > HISTORY_LIMIT) {

@@ -90,6 +90,7 @@ import { readClientLayoutValue, writeClientLayoutValue } from "../../stores/clie
 import { runtimeEnv } from "../../lib/runtime-env"
 import { getServerMeta, previewsUnavailable } from "../../lib/server-meta"
 import { useInterruptionViewport } from "./shell/useInterruptionViewport"
+import { projectScope } from "../../lib/backend-identity"
 
 const log = getLogger("session")
 const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
@@ -443,7 +444,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const activeSessionPreview = createMemo(() => {
     const sessionId = activeSessionIdForInstance()
-    return sessionId ? getSessionPreview(sessionId, props.instance.folder) : null
+    return sessionId ? getSessionPreview(sessionId, projectScope(props.instance)) : null
   })
 
   const registerSessionPromptApi = (sessionId: string, api: PromptInputApi | null) => {
@@ -462,9 +463,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return
     try {
-      const restored = await restoreSessionPreview(sessionId, props.instance.folder)
+      const restored = await restoreSessionPreview(sessionId, projectScope(props.instance))
       if (restored) showSessionPreview(restored.storageKey)
-      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, props.instance.folder)
+      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, projectScope(props.instance))
     } catch (error) {
       showAlertDialog(t("sessionPreview.open.title"), {
         title: t("sessionPreview.open.title"),
@@ -720,7 +721,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   // still unmount and remain subject to the existing transcript memory budget.
   const mountedSessionIds = createMemo<string[]>((previous) => {
     const wanted = new Set([
-      ...getPreviewSessionIds(props.instance.folder).filter((id) => allInstanceSessions().has(id)),
+      ...getPreviewSessionIds(projectScope(props.instance)).filter((id) => allInstanceSessions().has(id)),
       ...cachedSessionIds(),
     ])
     // Reordering an Electron webview in the DOM can recreate its guest.
@@ -908,7 +909,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   // Readers that need no conversation: schedules and playbook details.
   const readingWithoutConversation = () => Boolean(props.isActiveInstance)
-    && ["recurrence", "playbook"].includes(missionProjectView(props.instance.folder).reader?.kind ?? "")
+    && ["recurrence", "playbook"].includes(missionProjectView(projectScope(props.instance)).reader?.kind ?? "")
   const activeSessionTitle = createMemo(() => {
     if (showingInfoView()) return null
     const title = activeSessionForInstance()?.title?.trim()
@@ -1216,7 +1217,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       onSidebarToggle={() => setLeftOpen(true)}
                       forceCompactStatusLayout={showEmbeddedSidebarToggle()}
                     />
-                    <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
+                    <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} scope={projectScope(props.instance)} /></Show>
                     </div>
 
                     <Show when={draftAttachments().length > 0}>
@@ -1268,7 +1269,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 active={Boolean(props.isActiveInstance) && showingInfoView()}
                 onBackToConversation={handleBackToConversation}
               />
-              <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
+              <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} scope={projectScope(props.instance)} /></Show>
             </div>
           </Show>
           <For each={mountedSessionIds()}>
@@ -1290,6 +1291,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     activeSessions={activeSessions()}
                     instanceId={props.instance.id}
                     instanceFolder={props.instance.folder}
+                    scope={projectScope(props.instance)}
                     escapeInDebounce={props.escapeInDebounce}
                     isPhoneLayout={isPhoneLayout()}
                     focusConversationOnActivate={focusConversationSessionId() === sessionId}
