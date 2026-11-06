@@ -78,6 +78,24 @@ test("Missions start refreshes memory for the exact synthetic target; optional f
   assert.deepEqual(f.calls.slice(count).map(call => call.kind), ["environment", "remove-memory", "synthetic"])
 })
 
+test("Missions resume admits its synthetic after hanging memory removal reaches its own budget", async t => {
+  const f = fixture("start")
+  let reached!: () => void
+  const started = new Promise<void>(resolve => { reached = resolve })
+  f.client.session.instructions.entry.remove = async (input?: any) => {
+    if (input.key === "codenomad.memory") { reached(); await new Promise(() => {}) }
+  }
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  try {
+    const pending = applyMissionLifecycle(f.manager as never, f.fence, "ses_coordinator", f.command, new AbortController().signal,
+      undefined, { getSettings: () => ({ enabled: false }) } as never)
+    await started
+    t.mock.timers.tick(2_000)
+    await pending
+    assert.deepEqual(f.calls.map(call => call.kind), ["environment", "synthetic"])
+  } finally { t.mock.timers.reset() }
+})
+
 for (const mode of ["exact", "missing", "changed", "replaced-during-environment"] as const) test(`frozen immediate source envelope: ${mode}`, async () => {
   const f = fixture("start"), text = "Objective\n\nFrozen untrusted conversation context"
   f.mission.actors = [{ sessionId: "ses_coordinator", location: { directory: "/repo" } }]

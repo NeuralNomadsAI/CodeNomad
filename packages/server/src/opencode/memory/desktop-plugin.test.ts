@@ -12,7 +12,7 @@ type Definition = {
   name: string
   options: { namespace: string; codemode: boolean }
   input: { properties: object; additionalProperties: boolean }
-  execute(input: unknown, tool: { sessionID: string }): Promise<{ content: string }>
+  execute(input: unknown, tool: { sessionID: string; signal: AbortSignal }): Promise<{ content: string }>
 }
 
 async function fixture(t: test.TestContext) {
@@ -21,7 +21,7 @@ async function fixture(t: test.TestContext) {
   process.env.LOCALAPPDATA = root
   process.env.XDG_RUNTIME_DIR = root
   delete process.env.WSL_DISTRO_NAME
-  const app = Fastify(), calls: Array<{ sessionID: string; command: unknown }> = [], definitions: Definition[] = []
+  const app = Fastify({ forceCloseConnections: true }), calls: Array<{ sessionID: string; command: unknown }> = [], definitions: Definition[] = []
   let response: { status: number; body: object } | "lost" = { status: 200, body: { result: { entries: [] } } }
   let probes = 0, disposed = 0
   let context: unknown = { supported: true, value: "MEMORY TITLES" }, hook: ((event: { sessionID: string }) => Promise<void>) | undefined
@@ -29,16 +29,20 @@ async function fixture(t: test.TestContext) {
   let hookDisposed = 0
   let owned = true
   let instructionStatus = 204
+  let beforeProbe = async () => {}, beforeContext = async () => {}
+  let beforeInstruction = async (_kind: string) => {}
   const registration = createAutomationBridgeRegistration("http://127.0.0.1")
-  app.post(AUTOMATION_BRIDGE_PATH, (request, reply) => {
+  app.post(AUTOMATION_BRIDGE_PATH, async (request, reply) => {
     assert.equal(request.headers["x-codenomad-automation-token"], registration.token)
     const body = request.body as { mode: string; sessionID: string; command: unknown }
     if (body.mode === "memory-probe") {
       probes++
+      await beforeProbe()
       return owned ? { result: { available: true } } : reply.code(400).send({ code: "invalid" })
     }
     if (body.mode === "memory-context") {
       contexts.push(body.sessionID)
+      await beforeContext()
       return context === "unavailable" ? reply.code(503).send({ code: "unreadable" }) : { result: context }
     }
     assert.equal(body.mode, "memory-input")
@@ -55,8 +59,8 @@ async function fixture(t: test.TestContext) {
   const cleanup = await plugin.setup!({ session: {
     hook: async (kind: string, callback: typeof hook) => { assert.equal(kind, "prompt"); hook = callback; return { dispose() { hookDisposed++ } } },
     instructions: { entry: {
-      put: async (input: unknown) => { instructions.push(input); if (instructionStatus !== 204) throw new Error("503") },
-      remove: async (input: unknown) => { instructions.push(input); if (instructionStatus !== 204) throw new Error("503") },
+      put: async (input: unknown) => { instructions.push(input); await beforeInstruction("put"); if (instructionStatus !== 204) throw new Error("503") },
+      remove: async (input: unknown) => { instructions.push(input); await beforeInstruction("remove"); if (instructionStatus !== 204) throw new Error("503") },
     } },
   }, tool: { transform: async (callback: (editor: { add(definition: Definition): void }) => void) => {
     callback({ add: definition => { definitions.push(definition) } })
@@ -79,8 +83,11 @@ async function fixture(t: test.TestContext) {
     instructions, contexts, setContext(value: unknown) { context = value }, prompt: (sessionID: string) => hook!({ sessionID }), hookDisposed: () => hookDisposed,
     setOwned(value: boolean) { owned = value },
     setInstructionStatus(value: number) { instructionStatus = value },
+    beforeProbe(value: typeof beforeProbe) { beforeProbe = value },
+    beforeContext(value: typeof beforeContext) { beforeContext = value },
+    beforeInstruction(value: typeof beforeInstruction) { beforeInstruction = value },
     probes: () => probes, disposed: () => disposed,
-    execute: (input: object) => tool.execute({ scope: "global", ...input }, { sessionID: "ses_native" }) }
+    execute: (input: object, signal = new AbortController().signal) => tool.execute({ scope: "global", ...input }, { sessionID: "ses_native", signal }) }
 }
 
 test("native memory tools route every action using only the execution session and dispose with presence", async t => {
@@ -156,3 +163,50 @@ test("agent-facing errors preserve capacity titles and never replay uncertain wr
   assert.equal(f.calls.length, before + 1, "a lost mutation response produces exactly one dispatch")
   await assert.rejects(f.execute({ action: "list" }), /unavailable/)
 })
+
+test("cancelling the tool during ownership discovery sends zero memory-input mutations", async t => {
+  const f = await fixture(t), controller = new AbortController()
+  let reached!: () => void, release!: () => void
+  const started = new Promise<void>(resolve => { reached = resolve })
+  const gate = new Promise<void>(resolve => { release = resolve })
+  f.beforeProbe(async () => { reached(); await gate })
+  const pending = f.execute({ action: "save", title: "Cancelled", type: "fact", text: "Never publish" }, controller.signal)
+  const rejected = assert.rejects(pending)
+  await started
+  controller.abort()
+  release()
+  await rejected
+  assert.deepEqual(f.calls, [])
+  const before = f.probes()
+  await assert.rejects(f.execute({ action: "delete", id: "entry_id", revision: "a".repeat(64) }, controller.signal))
+  assert.equal(f.probes(), before, "already cancelled tools never discover a backend")
+})
+
+for (const stage of ["probe", "context", "put", "remove", "cleanup"] as const) {
+  test(`native prompt admission bounds a hanging ${stage} with the same memory budget`, async t => {
+    const f = await fixture(t)
+    let reached!: () => void, release!: () => void
+    const started = new Promise<void>(resolve => { reached = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const hang = async () => { reached(); await gate }
+    if (stage === "probe") f.beforeProbe(hang)
+    if (stage === "context") f.beforeContext(hang)
+    if (stage === "remove") f.setContext({ supported: true, value: null })
+    if (stage === "put" || stage === "remove" || stage === "cleanup") f.beforeInstruction(async kind => {
+      if (stage === "cleanup" && kind === "put") throw new Error("uncertain put")
+      await hang()
+    })
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    try {
+      const pending = f.prompt("ses_child")
+      await started
+      t.mock.timers.tick(2_000)
+      await pending
+      const count = f.instructions.length
+      release()
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(f.instructions.length, count, "expired hooks never issue a late put/cleanup")
+      assert.equal(count, stage === "probe" || stage === "context" ? 0 : stage === "cleanup" ? 2 : 1)
+    } finally { release(); t.mock.timers.reset() }
+  })
+}

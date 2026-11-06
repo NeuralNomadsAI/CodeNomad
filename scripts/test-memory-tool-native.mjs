@@ -34,6 +34,7 @@ process.env.LOCALAPPDATA = env.LOCALAPPDATA
 process.env.XDG_RUNTIME_DIR = env.XDG_RUNTIME_DIR
 delete process.env.WSL_DISTRO_NAME
 let client, connection, invoke, providerError, observedTools = [], child, stopped, output = "", removeBridge, first, second, dropResponse = false, contextOutage = false
+let holdContext
 const requests = [], operations = []
 const provider = createServer(async (request, response) => {
   try {
@@ -79,6 +80,7 @@ const manager = {
 const memory = new MemoryService(store, settings, manager, { publish() {} })
 bridge.addHook("preHandler", async (request, reply) => {
   if (request.body?.mode === "memory-input") operations.push(request.body)
+  if (holdContext && request.body?.mode === "memory-context") await holdContext()
   if (contextOutage && request.body?.mode === "memory-context") return reply.code(503).send({ code: "unreadable" })
 })
 bridge.addHook("onSend", async (request, reply, payload) => {
@@ -202,6 +204,21 @@ try {
   assert(!outageEntries.some(entry => entry.key === "codenomad.memory"))
   assert(outageEntries.some(entry => entry.key === "other-owner"))
   console.log("PASS shipped native hook admits prompts during a memory-context 503 and clears the stale key while preserving other owners")
+  let releaseContext, reachedContext
+  const contextStarted = new Promise(resolve => { reachedContext = resolve })
+  const contextGate = new Promise(resolve => { releaseContext = resolve })
+  holdContext = async () => { reachedContext(); await contextGate }
+  const beforeHang = requests.length
+  try {
+    const admitted = client.session.prompt({ sessionID: parent.id, text: "MEMORY_HANG_STAYS_USABLE" }, { signal: AbortSignal.timeout(10_000) })
+    await contextStarted
+    // The bridge has accepted the request and stays suspended until prompt admission.
+    await admitted
+    await client.session.wait({ sessionID: parent.id }, { signal: AbortSignal.timeout(30_000) })
+    assert(requests.slice(beforeHang).some(body => body.stream && JSON.stringify(body.messages).includes("MEMORY_HANG_STAYS_USABLE")))
+    assert((await client.session.instructions.entry.list({ sessionID: parent.id })).some(entry => entry.key === "other-owner"))
+  } finally { holdContext = undefined; releaseContext() }
+  console.log("PASS shipped native hook admits a prompt within its own budget while the accepted memory-context request is still suspended")
   const unownedDirectory = path.join(root, "unowned")
   await mkdir(unownedDirectory)
   const unowned = await client.session.create({ location: { directory: unownedDirectory } })

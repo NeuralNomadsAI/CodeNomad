@@ -98,3 +98,50 @@ test("advisory failures preserve the synchronous Missions authority fence", asyn
     f.connection.client as never, () => { if (!allowed) throw new Error("authority retired") }), /authority retired/)
   assert.deepEqual(f.calls, [], "retired authority cannot authorize fallback removal")
 })
+
+for (const stage of ["discovery", "titles", "put", "remove", "cleanup"] as const) {
+  test(`one memory budget releases a hanging ${stage} and fences its late continuation`, async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    const f = fixture()
+    let reached!: () => void, release!: () => void
+    const started = new Promise<void>(resolve => { reached = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const hang = async () => { reached(); await gate }
+    if (stage === "discovery") f.connection.fetch = async () => { await hang(); return Response.json({}) }
+    if (stage === "titles") f.memory.sessionTitles = async () => { await hang(); return {} }
+    if (stage === "put") f.connection.client.session.instructions.entry.put = hang
+    if (stage === "remove" || stage === "cleanup") {
+      if (stage === "remove") f.memory.getSettings = () => ({ enabled: false })
+      else f.connection.client.session.instructions.entry.put = async () => { throw new Error("uncertain") }
+      f.connection.client.session.instructions.entry.remove = hang
+    }
+    const pending = f.sync()
+    await started
+    t.mock.timers.tick(2_000)
+    await pending
+    assert.deepEqual(f.calls, [])
+    release()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.deepEqual(f.calls, [], "expired preparation cannot publish or start another cleanup")
+  })
+}
+
+for (const fence of ["abort", "connection", "authority"] as const) {
+  test(`hanging memory retains the mandatory ${fence} refusal at deadline`, async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    const f = fixture(), controller = new AbortController()
+    let reached!: () => void, allowed = true
+    const started = new Promise<void>(resolve => { reached = resolve })
+    f.memory.sessionTitles = async () => { reached(); return new Promise(() => {}) }
+    const pending = syncSessionMemoryContext(f.connection as never, f.memory as never, "ses_owned", controller.signal,
+      f.connection.client as never, () => { if (!allowed) throw new Error("authority retired") })
+    const rejected = assert.rejects(pending, fence === "abort" ? /external/ : /retired/)
+    await started
+    if (fence === "abort") controller.abort(new Error("external"))
+    if (fence === "connection") f.connection.assertCurrent = () => { throw new Error("connection retired") }
+    if (fence === "authority") allowed = false
+    t.mock.timers.tick(2_000)
+    await rejected
+    assert.deepEqual(f.calls, [])
+  })
+}

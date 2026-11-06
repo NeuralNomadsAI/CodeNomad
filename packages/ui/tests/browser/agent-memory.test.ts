@@ -317,6 +317,26 @@ test("replaced/deleted contexts fence late memory replies and preserve their own
     assert.deepEqual(f.errors, [])
   } finally { release?.(); await page.close() }
 })
+for (const host of ["electron", "tauri"] as const) test(`remote ${host} Settings tidies through the renderer without randomUUID or a native bridge`, async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  await page.addInitScript(host => {
+    Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: host, __CODENOMAD_WINDOW_CONTEXT__: "remote" })
+    Object.defineProperty(crypto, "randomUUID", { value: undefined })
+  }, host)
+  try {
+    await open(page)
+    await page.evaluate(async () => { await (window as any).fixture.enableCleanup(); await (window as any).fixture.settings("embedded") })
+    await card(page).getByRole("button", { name: /Project A/ }).waitFor()
+    assert.equal(await page.evaluate(() => typeof crypto.randomUUID), "undefined")
+    await tidy(page).click()
+    await page.getByRole("dialog").getByRole("button", { name: en["settings.memory.tidy"], exact: true }).click()
+    await page.waitForFunction(() => (window as any).cleanupCalls.some((value: any) => value.action === "prompt"))
+    const calls = await page.evaluate(() => (window as any).cleanupCalls)
+    assert.deepEqual(calls.map((value: any) => value.action), ["create", "prompt"])
+    assert.deepEqual(calls[0].input.location, { directory: "/another-worktree" })
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
 test("a late save cannot erase a newer draft across missing and restored reconnect context", async () => {
   const page = await browser.newPage(), f = await setup(page)
   let release!: () => void, reached!: () => void

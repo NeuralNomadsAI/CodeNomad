@@ -1,14 +1,14 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
-import { isElectronHost, isTauriHost, isLocalWindow } from "../runtime-env"
+import { isElectronHost, isTauriHost, isLocalWindow, isPreferencesWindow } from "../runtime-env"
 import { normalizeMemoryCleanupRequest, type MemoryCleanupRequest } from "./memory-cleanup-command"
 
 export async function requestMemoryCleanup(request: MemoryCleanupRequest): Promise<void> {
   if (!normalizeMemoryCleanupRequest(request)) throw new Error("Invalid memory cleanup request")
-  if (isElectronHost()) {
+  if (isPreferencesWindow() && isElectronHost()) {
     if (!window.electronAPI?.memoryCleanup) throw new Error("Memory cleanup unavailable")
     await window.electronAPI.memoryCleanup(request)
-  } else if (isTauriHost()) {
+  } else if (isPreferencesWindow() && isTauriHost()) {
     await invoke("preferences_memory_cleanup", { request })
   } else {
     const { runMemoryCleanup } = await import("../../stores/agent-memory-cleanup")

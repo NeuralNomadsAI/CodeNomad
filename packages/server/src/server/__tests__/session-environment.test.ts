@@ -22,6 +22,7 @@ async function harness(memory?: Pick<MemoryService, "sessionTitles"> & Partial<P
     beforeEnvironment: async () => {},
     afterEnvironment: () => {},
     beforeInstructions: async () => {},
+    beforeMemory: async (_method: string) => {},
     current: true,
     openapiStatus: 200,
     memoryStatus: 204,
@@ -61,6 +62,7 @@ async function harness(memory?: Pick<MemoryService, "sessionTitles"> & Partial<P
     handler: async (request, reply) => {
       if ((request.params as { key: string }).key === "codenomad.memory") {
         calls.push(`memory:${request.method}`)
+        await control.beforeMemory(request.method)
         if (control.memoryStatus !== 204) return reply.code(control.memoryStatus).send({ error: "PRIVATE MEMORY" })
       }
       await control.beforeInstructions(); return reply.code(204).send()
@@ -139,6 +141,21 @@ test("QA regression: disabled/discovery/cleanup outages never block proxy prompt
     assert.equal(f.calls.filter(call => call === "memory:DELETE").length, 2)
     await f.fence.run("delete", ["root"], async () => {})
   }
+})
+
+for (const mode of ["put", "remove", "cleanup"] as const) test(`proxy admits input after a hanging memory ${mode} exhausts its own budget`, { timeout: 10_000 }, async () => {
+  const f = await harness({ getSettings: () => ({ enabled: mode !== "remove" }), sessionTitles: async () => ({}) })
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  f.control.beforeMemory = async method => { if (mode !== "cleanup" || method === "DELETE") await gate }
+  if (mode === "cleanup") f.control.memoryStatus = 503
+  try {
+    const response = await f.app.inject({ method: "POST", url: `${prefix}one/prompt`, payload: {} })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.equal(f.sends.length, 1)
+    assert.deepEqual(f.calls.filter(call => call.startsWith("memory:")), mode === "cleanup" ? ["memory:PUT", "memory:DELETE"] : [`memory:${mode === "put" ? "PUT" : "DELETE"}`])
+    await f.fence.run("delete", ["root"], async () => {})
+  } finally { release() }
 })
 
 test("every prompt applies current profile values before forwarding, including removal and other sessions", async () => {

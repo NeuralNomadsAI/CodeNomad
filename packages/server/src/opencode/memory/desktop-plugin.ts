@@ -4,6 +4,7 @@ import { MemoryError } from "../../memory/model"
 import type { MemoryOperation } from "../../memory/api"
 import { requestMemoryContext, sendMemoryInput } from "../automation-plugin"
 import { followPresence } from "../desktop-plugin-presence"
+import { withMemoryContextBudget } from "../../memory/context-budget"
 
 const scope = z.enum(["global", "project"])
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/)
@@ -16,14 +17,15 @@ const inputSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("delete"), scope, id, revision }).strict(),
 ])
 
-async function executeMemoryTool(sessionID: string, input: unknown) {
+async function executeMemoryTool(sessionID: string, input: unknown, signal: AbortSignal) {
+  signal.throwIfAborted()
   const parsed = inputSchema.safeParse(input)
   if (!parsed.success) throw new Error("Invalid memory input. Use list; read with query; save with title, type and text; delete with id and revision. Always supply scope.")
   const operation: MemoryOperation = parsed.data.action === "save"
     ? (() => { const { title, type, text, ...rest } = parsed.data; return { ...rest, content: { title, type, text } } })()
     : parsed.data
   try {
-    return { content: JSON.stringify(await sendMemoryInput(sessionID, operation)) }
+    return { content: JSON.stringify(await sendMemoryInput(sessionID, operation, signal)) }
   } catch (error) {
     if (error instanceof MemoryError) {
       if (error.code === "full") throw new Error(`Memory is full. Merge or delete entries before saving. Current titles: ${JSON.stringify(error.titles ?? [])}`)
@@ -44,23 +46,24 @@ export function desktopPlugin(presenceDirectory: string | readonly string[]): Pl
     setup: ctx => followPresence(presenceDirectory, async () => {
       const hook = typeof ctx.session?.hook === "function" && typeof ctx.session.instructions?.entry?.put === "function"
         && typeof ctx.session.instructions?.entry?.remove === "function"
-        ? await ctx.session.hook("prompt", async event => {
+        ? await ctx.session.hook("prompt", event => withMemoryContextBudget(async signal => {
           const input = { sessionID: event.sessionID, key: "codenomad.memory" }
           let removing = false
           try {
-            const context = await requestMemoryContext(event.sessionID)
+            const context = await requestMemoryContext(event.sessionID, signal)
+            signal.throwIfAborted()
             if (!context.supported) return
-            if (context.value === null) { removing = true; await ctx.session.instructions.entry.remove(input); return }
-            await ctx.session.instructions.entry.put({ ...input, value: context.value })
+            if (context.value === null) { removing = true; await ctx.session.instructions.entry.remove(input, { signal }); return }
+            await ctx.session.instructions.entry.put({ ...input, value: context.value }, { signal })
           } catch {
             // Memory is advisory. Clear a possibly stale entry without blocking
             // the native hook chain's independent permission/authority checks.
-            if (!removing) {
-              try { await ctx.session.instructions.entry.remove(input) }
+            if (!removing && !signal.aborted) {
+              try { await ctx.session.instructions.entry.remove(input, { signal }) }
               catch { /* Cleanup is advisory too, including synchronous API errors. */ }
             }
           }
-        }) : undefined
+        })) : undefined
       try {
         const tools = await ctx.tool.transform(editor => editor.add({
           name: "memory",
@@ -81,7 +84,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[]): Pl
             additionalProperties: false,
           },
           options: { namespace: "codenomad", codemode: false },
-          execute: (input, tool) => executeMemoryTool(tool.sessionID, input),
+          execute: (input, tool) => executeMemoryTool(tool.sessionID, input, tool.signal),
         }))
         return () => { hook?.dispose(); tools.dispose() }
       } catch (error) { hook?.dispose(); throw error }

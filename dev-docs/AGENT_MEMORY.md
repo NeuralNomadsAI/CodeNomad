@@ -261,6 +261,9 @@ storage, and attempts removal of only `codenomad.memory`. Preparation failures
 and uncertain instruction puts also attempt removal of that key. Discovery,
 storage and instruction transport failures leave ordinary admission available;
 cancellation, retired connections and Missions authority fences remain blocking.
+Preparation, instruction publication and cleanup share a two-second advisory
+admission budget, including hung transports. Expiry cancels transport and fences
+late preparation continuations while preserving the caller's mandatory fences.
 An authenticated capability result of `unsupported` keeps the feature silent.
 When removal itself fails, the native session may retain its preceding entry
 until a later successful admission refresh; consumers must verify stored claims
@@ -279,6 +282,9 @@ counts exclusions and the instructions direct the agent to `list` for all titles
 The native plugin awaits `memory-context` through the authenticated bridge before
 every prompt admission, including children outside the proxy. The bridge applies
 the same capability, ownership, preference and scope projection as direct sends.
+The hook shares the two-second memory budget across discovery, publication and
+cleanup. Tool cancellation propagates through ownership discovery and is checked
+again immediately before dispatch; admitted writes retain transaction recovery.
 Each activation owns and disposes its prompt hook with its tool registration.
 An explicit ownership refusal from every live backend clears the named entry and
 leaves unrelated native Locations usable. Missing/ambiguous backends and transport
@@ -340,7 +346,9 @@ window's exact local opener. Missing openers fail explicitly. The main renderer
 claims each Tauri event hint through the native host, which returns the pending
 intent only to its targeted local window and only once. The main renderer
 alone owns session creation, tab/session activation and the initial send through
-`stores/agent-memory-cleanup.ts`. Embedded browser Settings use that same action.
+`stores/agent-memory-cleanup.ts`. Embedded Settings, including remote Electron and
+Tauri windows, use that same action directly; native forwarding belongs to the
+Preferences window. Request IDs use the shared UUID fallback on HTTP origins.
 The create call takes the captured explicit directory, independently of the
 currently selected conversation. Fresh enablement, readable safe entries,
 writability and project ownership are checked before the single creation attempt.
@@ -439,6 +447,8 @@ The shipped-tool qualification also exercises the real bridge/store projection
 before a native child's first model call, title-only safe instructions, removal
 after disable while preserving another key, an unrelated native Location, and
 successful prompt admission with stale-key cleanup during a memory bridge outage.
+It also holds an accepted context request until the native hook's own budget
+admits the prompt, preserving other instruction owners.
 
 ## Agent conventions
 

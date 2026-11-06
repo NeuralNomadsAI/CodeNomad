@@ -9,6 +9,7 @@ import { SettingsInfoTip } from "./settings-info-tip"
 import { SettingsSwitch } from "./settings-switch"
 import { showConfirmDialog } from "../../stores/alerts"
 import { requestMemoryCleanup } from "../../lib/native/memory-cleanup"
+import { generateUUID } from "../../lib/client-identity"
 
 export function AgentMemorySettingsCard(props: { instanceId?: string; location?: LocationRef }) {
   const { t } = useI18n(), id = createUniqueId()
@@ -34,7 +35,7 @@ export function AgentMemorySettingsCard(props: { instanceId?: string; location?:
         confirmLabel: t("settings.memory.tidy"), cancelLabel: t("settings.memory.cancel"),
       }, cleanupConsent.signal)) || owner !== cleanupOwner() || disposed) return
       setAdmitted(true)
-      await requestMemoryCleanup({ id: crypto.randomUUID(), scope, workspaceId: project.workspaceId, directory: project.directory! })
+      await requestMemoryCleanup({ id: generateUUID(), scope, workspaceId: project.workspaceId, directory: project.directory! })
     } catch { if (!disposed && owner === cleanupOwner()) setTidyError(true) }
     finally { if (!disposed) setTidying(false) }
   }

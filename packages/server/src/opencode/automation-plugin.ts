@@ -352,13 +352,15 @@ async function callBridge(
   registration: DiscoveredBridgeRegistration,
   body: Record<string, unknown>,
   timeoutMs = PROBE_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<{ status: number; body: BridgeResponse }> {
-  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs)
+  signal?.throwIfAborted()
+  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs, signal)
   const response = await fetch(registration.url, {
     method: "POST",
     headers: { "content-type": "application/json", "x-codenomad-automation-token": registration.token },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
   })
   const contentLength = Number(response.headers.get("content-length"))
   if (Number.isFinite(contentLength) && contentLength > MAX_BRIDGE_RESPONSE_BYTES) {
@@ -389,7 +391,9 @@ function callWindowsBridge(
   registration: AutomationBridgeRegistration,
   body: Record<string, unknown>,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<{ status: number; body: BridgeResponse }> {
+  signal?.throwIfAborted()
   return new Promise((resolve, reject) => {
     const child = spawn("curl.exe", [
       "--silent", "--show-error", "--max-time", String(timeoutMs / 1_000),
@@ -408,6 +412,7 @@ function callWindowsBridge(
       if (settled) return false
       settled = true
       clearTimeout(timer)
+      signal?.removeEventListener("abort", onAbort)
       if (error) reject(error)
       return true
     }
@@ -415,6 +420,9 @@ function callWindowsBridge(
       child.kill()
       finish(new Error("Native automation bridge request timed out"))
     }, timeoutMs)
+    const onAbort = () => { child.kill(); finish(signal!.reason) }
+    signal?.addEventListener("abort", onAbort, { once: true })
+    if (signal?.aborted) { onAbort(); return }
     child.stdout.on("data", (chunk: Buffer) => {
       stdoutBytes += chunk.length
       if (stdoutBytes > MAX_BRIDGE_RESPONSE_BYTES + 16) {
@@ -564,34 +572,38 @@ export async function sendMissionInput(sessionID: string,
 }
 
 /** Discover independently of desktop capabilities; never pick between owning backends. */
-export async function sendMemoryInput(sessionID: string, command: MemoryOperation): Promise<MemoryResult> {
-  return sendMemoryBridge(sessionID, "memory-input", command) as Promise<MemoryResult>
+export async function sendMemoryInput(sessionID: string, command: MemoryOperation, signal?: AbortSignal): Promise<MemoryResult> {
+  return sendMemoryBridge(sessionID, "memory-input", command, signal) as Promise<MemoryResult>
 }
 
-export async function requestMemoryContext(sessionID: string): Promise<import("../memory/contract").MemoryInstructionContext> {
-  return sendMemoryBridge(sessionID, "memory-context") as Promise<import("../memory/contract").MemoryInstructionContext>
+export async function requestMemoryContext(sessionID: string, signal?: AbortSignal): Promise<import("../memory/contract").MemoryInstructionContext> {
+  return sendMemoryBridge(sessionID, "memory-context", undefined, signal) as Promise<import("../memory/contract").MemoryInstructionContext>
 }
 
-async function sendMemoryBridge(sessionID: string, mode: "memory-input" | "memory-context", command?: MemoryOperation): Promise<unknown> {
+async function sendMemoryBridge(sessionID: string, mode: "memory-input" | "memory-context", command?: MemoryOperation, signal?: AbortSignal): Promise<unknown> {
+  signal?.throwIfAborted()
   const active = await registrations()
+  signal?.throwIfAborted()
   const targets: DiscoveredBridgeRegistration[] = []
   let unowned = 0
   for (let index = 0; index < active.length && targets.length < 2; index += PROBE_CONCURRENCY) {
+    signal?.throwIfAborted()
     const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async registration => {
       try {
-        const response = await callBridge(registration, { mode: "memory-probe", sessionID }, MISSION_PROBE_TIMEOUT_MS)
+        const response = await callBridge(registration, { mode: "memory-probe", sessionID }, MISSION_PROBE_TIMEOUT_MS, signal)
         if (response.status === 400 && response.body.code === "invalid") unowned++
         return response.status === 200 ? registration : undefined
       } catch { return undefined }
     }))
     targets.push(...batch.filter((value): value is DiscoveredBridgeRegistration => Boolean(value)))
   }
+  signal?.throwIfAborted()
   // Global plugin activation also covers Locations outside CodeNomad. Only an
   // explicit ownership refusal clears stale context there. Context callers also
   // attempt cleanup on transport failures; memory mutations retain strict ownership.
   if (mode === "memory-context" && active.length > 0 && unowned === active.length) return { supported: true, value: null }
   if (targets.length !== 1) throw new MemoryError(targets.length ? "conflict" : "unreadable", "Memory requires exactly one owning CodeNomad backend")
-  const response = await callBridge(targets[0]!, { mode, sessionID, ...(command ? { command } : {}) }, REQUEST_TIMEOUT_MS)
+  const response = await callBridge(targets[0]!, { mode, sessionID, ...(command ? { command } : {}) }, REQUEST_TIMEOUT_MS, signal)
   if (response.status !== 200) {
     const codes: MemoryErrorCode[] = ["disabled", "full", "conflict", "invalid", "unreadable", "git_unavailable", "malformed"]
     const code = codes.find(code => code === response.body.code) ?? "unreadable"

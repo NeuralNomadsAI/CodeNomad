@@ -13,28 +13,30 @@ export const MEMORY_STOPWORDS = {
 } as const
 
 /** Detection is deliberately conservative: suspicious instructions stay available for human review. */
+// Word-delimited patterns use Unicode letters/marks/numbers; unspaced scripts and
+// inflected/prefixed phrases retain substring matching rather than ASCII boundaries.
 export const MEMORY_INJECTION_PATTERNS = {
   en: [
-    /\b(?:ignore|disregard|forget|override)\b.{0,50}\b(?:previous|prior|above|system|all)\b.{0,30}\b(?:instructions?|rules?|prompts?)\b/u,
-    /\b(?:ignore|disregard|forget|override)\b.{0,30}\b(?:instructions?|rules?|prompts?)\b.{0,30}\b(?:above|previous|prior|system)\b/u,
-    /\b(?:bypass|disable|override)\b.{0,40}\b(?:safety|security|safeguards?|restrictions?)\b/u,
-    /\b(?:send|upload|exfiltrate|reveal|transmit|leak)\b.{0,100}\b(?:secrets?|passwords?|credentials?|api[ -]?keys?|tokens?|private[ -]?keys?)\b/u,
+    /(?<![\p{L}\p{M}\p{N}_])(?:ignore|disregard|forget|override)(?![\p{L}\p{M}\p{N}_]).{0,50}(?<![\p{L}\p{M}\p{N}_])(?:previous|prior|above|system|all)(?![\p{L}\p{M}\p{N}_]).{0,30}(?<![\p{L}\p{M}\p{N}_])(?:instructions?|rules?|prompts?)(?![\p{L}\p{M}\p{N}_])/u,
+    /(?<![\p{L}\p{M}\p{N}_])(?:ignore|disregard|forget|override)(?![\p{L}\p{M}\p{N}_]).{0,30}(?<![\p{L}\p{M}\p{N}_])(?:instructions?|rules?|prompts?)(?![\p{L}\p{M}\p{N}_]).{0,30}(?<![\p{L}\p{M}\p{N}_])(?:above|previous|prior|system)(?![\p{L}\p{M}\p{N}_])/u,
+    /(?<![\p{L}\p{M}\p{N}_])(?:bypass|disable|override)(?![\p{L}\p{M}\p{N}_]).{0,40}(?<![\p{L}\p{M}\p{N}_])(?:safety|security|safeguards?|restrictions?)(?![\p{L}\p{M}\p{N}_])/u,
+    /(?<![\p{L}\p{M}\p{N}_])(?:send|upload|exfiltrate|reveal|transmit|leak)(?![\p{L}\p{M}\p{N}_]).{0,100}(?<![\p{L}\p{M}\p{N}_])(?:secrets?|passwords?|credentials?|api[ -]?keys?|tokens?|private[ -]?keys?)(?![\p{L}\p{M}\p{N}_])/u,
   ],
   fr: [
-    /\b(?:ignore\w*|ignor\w*|oublie\w*|contourn\w*)\b.{0,50}\b(?:instructions?|règles?|consignes?)\b.{0,40}\b(?:précédent\w*|antérieur\w*|système|toutes?)\b/u,
-    /\b(?:ignor\w*|oublie\w*|contourn\w*)\b.{0,30}\b(?:précédent\w*|antérieur\w*|toutes?)\b.{0,30}\b(?:instructions?|règles?|consignes?)\b/u,
-    /\b(?:désactiv\w*|contourn\w*)\b.{0,40}\b(?:sécurité|protection\w*)(?!\p{L})/u,
-    /\b(?:envoi\w*|envoy\w*|exfiltr\w*|révèl\w*|révél\w*|transmet\w*)\b.{0,100}\b(?:secrets?|mots? de passe|identifiants?|clés? api|jetons?)\b/u,
+    /(?<![\p{L}\p{M}\p{N}_])(?:ignor[\p{L}\p{M}]*|oublie[\p{L}\p{M}]*|contourn[\p{L}\p{M}]*)(?![\p{L}\p{M}\p{N}_]).{0,50}(?<![\p{L}\p{M}\p{N}_])(?:instructions?|règles?|consignes?)(?![\p{L}\p{M}\p{N}_]).{0,40}(?<![\p{L}\p{M}\p{N}_])(?:précédent[\p{L}\p{M}]*|antérieur[\p{L}\p{M}]*|système|toutes?)(?![\p{L}\p{M}\p{N}_])/u,
+    /(?<![\p{L}\p{M}\p{N}_])(?:ignor[\p{L}\p{M}]*|oublie[\p{L}\p{M}]*|contourn[\p{L}\p{M}]*)(?![\p{L}\p{M}\p{N}_]).{0,30}(?<![\p{L}\p{M}\p{N}_])(?:précédent[\p{L}\p{M}]*|antérieur[\p{L}\p{M}]*|toutes?)(?![\p{L}\p{M}\p{N}_]).{0,30}(?<![\p{L}\p{M}\p{N}_])(?:instructions?|règles?|consignes?)(?![\p{L}\p{M}\p{N}_])/u,
+    /(?<![\p{L}\p{M}\p{N}_])(?:désactiv[\p{L}\p{M}]*|contourn[\p{L}\p{M}]*)(?![\p{L}\p{M}\p{N}_]).{0,40}(?<![\p{L}\p{M}\p{N}_])(?:sécurité|protection[\p{L}\p{M}]*)(?![\p{L}\p{M}\p{N}_])/u,
+    /(?<![\p{L}\p{M}\p{N}_])(?:envoi[\p{L}\p{M}]*|envoy[\p{L}\p{M}]*|exfiltr[\p{L}\p{M}]*|révèl[\p{L}\p{M}]*|révél[\p{L}\p{M}]*|transmet[\p{L}\p{M}]*)(?![\p{L}\p{M}\p{N}_]).{0,100}(?<![\p{L}\p{M}\p{N}_])(?:secrets?|mots? de passe|identifiants?|clés? api|jetons?)(?![\p{L}\p{M}\p{N}_])/u,
   ],
   de: [
-    /\b(?:ignorier\w*|vergiss|missacht\w*)\b.{0,60}\b(?:anweisungen|instruktionen|regeln)\b/u,
-    /\b(?:umgeh\w*|deaktivier\w*)\b.{0,40}\b(?:sicherheit\w*|schutz\w*)\b/u,
-    /\b(?:send\w*|sende\w*|übertrag\w*|offenbar\w*|exfiltrier\w*)\b.{0,100}\b(?:geheimnisse|passwörter|zugangsdaten|api[ -]?schlüssel|token\w*)\b/u,
+    /(?<![\p{L}\p{M}\p{N}_])(?:ignorier[\p{L}\p{M}]*|vergiss|missacht[\p{L}\p{M}]*)(?![\p{L}\p{M}\p{N}_]).{0,60}(?<![\p{L}\p{M}\p{N}_])(?:anweisungen|instruktionen|regeln)(?![\p{L}\p{M}\p{N}_])/u,
+    /(?<![\p{L}\p{M}\p{N}_])(?:umgeh[\p{L}\p{M}]*|deaktivier[\p{L}\p{M}]*)(?![\p{L}\p{M}\p{N}_]).{0,40}(?<![\p{L}\p{M}\p{N}_])(?:sicherheit[\p{L}\p{M}]*|schutz[\p{L}\p{M}]*)(?![\p{L}\p{M}\p{N}_])/u,
+    /(?<![\p{L}\p{M}\p{N}_])(?:send[\p{L}\p{M}]*|übertrag[\p{L}\p{M}]*|offenbar[\p{L}\p{M}]*|exfiltrier[\p{L}\p{M}]*)(?![\p{L}\p{M}\p{N}_]).{0,100}(?<![\p{L}\p{M}\p{N}_])(?:geheimnisse|passwörter|zugangsdaten|api[ -]?schlüssel|token[\p{L}\p{M}]*)(?![\p{L}\p{M}\p{N}_])/u,
   ],
   es: [
-    /\b(?:ignora\w*|olvida\w*|omite\w*)\b.{0,60}\b(?:instrucciones|reglas|indicaciones)\b/u,
-    /\b(?:desactiva\w*|elude\w*|evita\w*)\b.{0,40}\b(?:seguridad|protecciones|salvaguardas)\b/u,
-    /\b(?:envía\w*|envia\w*|revela\w*|exfiltra\w*|transmite\w*)\b.{0,100}\b(?:secretos|contraseñas|credenciales|claves api|tokens)\b/u,
+    /(?<![\p{L}\p{M}\p{N}_])(?:ignora[\p{L}\p{M}]*|olvida[\p{L}\p{M}]*|omite[\p{L}\p{M}]*)(?![\p{L}\p{M}\p{N}_]).{0,60}(?<![\p{L}\p{M}\p{N}_])(?:instrucciones|reglas|indicaciones)(?![\p{L}\p{M}\p{N}_])/u,
+    /(?<![\p{L}\p{M}\p{N}_])(?:desactiva[\p{L}\p{M}]*|elude[\p{L}\p{M}]*|evita[\p{L}\p{M}]*)(?![\p{L}\p{M}\p{N}_]).{0,40}(?<![\p{L}\p{M}\p{N}_])(?:seguridad|protecciones|salvaguardas)(?![\p{L}\p{M}\p{N}_])/u,
+    /(?<![\p{L}\p{M}\p{N}_])(?:envía[\p{L}\p{M}]*|envia[\p{L}\p{M}]*|revela[\p{L}\p{M}]*|exfiltra[\p{L}\p{M}]*|transmite[\p{L}\p{M}]*)(?![\p{L}\p{M}\p{N}_]).{0,100}(?<![\p{L}\p{M}\p{N}_])(?:secretos|contraseñas|credenciales|claves api|tokens)(?![\p{L}\p{M}\p{N}_])/u,
   ],
   he: [
     /(?:התעלם|התעלמי|שכח|עקוף).{0,50}(?:הוראות|הנחיות|כללים)/u,

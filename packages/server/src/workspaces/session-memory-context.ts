@@ -4,6 +4,7 @@ import type { MemoryScope, MemoryEntryType } from "../memory/model"
 import type { MemoryInstructionContext } from "../memory/contract"
 export type { MemoryInstructionContext } from "../memory/contract"
 import { readMemoryInstructionsCapability } from "../memory/instructions-capability"
+import { withMemoryContextBudget } from "../memory/context-budget"
 import type { ServiceConnection } from "./opencode-service"
 
 export const MEMORY_INSTRUCTIONS_KEY = "codenomad.memory"
@@ -64,24 +65,26 @@ export async function prepareSessionMemoryContext(connection: ServiceConnection,
 }
 
 export async function syncSessionMemoryContext(connection: ServiceConnection, memory: MemoryService | undefined, sessionID: string,
-  signal: AbortSignal, client: OpenCodeClient = connection.client, checkpoint?: () => void): Promise<void> {
+  disconnected: AbortSignal, client: OpenCodeClient = connection.client, checkpoint?: () => void): Promise<void> {
   if (!memory) return
-  const current = () => { signal.throwIfAborted(); connection.assertCurrent(); checkpoint?.() }
-  current()
-  const context = await prepareSessionMemoryContext(connection, memory, sessionID, signal)
-  current()
-  if (!context.supported) return
-  const input = { sessionID, key: MEMORY_INSTRUCTIONS_KEY }
-  try {
-    if (context.value === null) await client.session.instructions.entry.remove(input, { signal })
-    else await client.session.instructions.entry.put({ ...input, value: context.value }, { signal })
-  } catch {
+  return withMemoryContextBudget(async signal => {
+    const current = () => { signal.throwIfAborted(); connection.assertCurrent(); checkpoint?.() }
     current()
-    // An uncertain put can leave the preceding entry installed. Never replay it.
-    if (context.value !== null) {
-      try { await client.session.instructions.entry.remove(input, { signal }) }
-      catch { /* A failed cleanup must leave ordinary input admission usable. */ }
+    const context = await prepareSessionMemoryContext(connection, memory, sessionID, signal)
+    current()
+    if (!context.supported) return
+    const input = { sessionID, key: MEMORY_INSTRUCTIONS_KEY }
+    try {
+      if (context.value === null) await client.session.instructions.entry.remove(input, { signal })
+      else await client.session.instructions.entry.put({ ...input, value: context.value }, { signal })
+    } catch {
+      current()
+      // An uncertain put can leave the preceding entry installed. Never replay it.
+      if (context.value !== null) {
+        try { await client.session.instructions.entry.remove(input, { signal }) }
+        catch { /* A failed cleanup must leave ordinary input admission usable. */ }
+      }
     }
-  }
-  current()
+    current()
+  }, disconnected, () => { connection.assertCurrent(); checkpoint?.() })
 }
