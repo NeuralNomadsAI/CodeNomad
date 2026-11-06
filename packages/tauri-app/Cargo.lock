@@ -541,6 +541,7 @@ dependencies = [
  "libc",
  "open",
  "parking_lot",
+ "plist",
  "regex",
  "reqwest 0.12.28",
  "rfd",

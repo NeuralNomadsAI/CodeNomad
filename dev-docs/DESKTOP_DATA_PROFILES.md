@@ -21,7 +21,7 @@ Precedence, evaluated by both Electron (`electron/main/data-profile.ts`) and Tau
 3. Unpackaged (npm/dev) runs — the `dev` profile.
 4. Packaged builds — the remembered choice (made in the profile manager or by the automatic choice), otherwise the automatic choice below, otherwise the default profile.
 
-Updating CodeNomad or changing the update feed never changes the profile. Tauri restarts (developer mode, **Restart in <name>**, update installation) keep the process environment, so a launch pinned by `CODENOMAD_PROFILE`, its alias or `CLI_CONFIG` reopens the same profile: on macOS the host runs the bundle's executable directly in its own process group, without inherited stdio, instead of Tauri's LaunchServices relaunch, which starts the new instance with launchd's environment (`src-tauri/src/macos_relaunch.rs`).
+Updating CodeNomad or changing the update feed never changes the profile. Tauri restarts (developer mode, **Restart in <name>**, update installation) keep the process environment, so a launch pinned by `CODENOMAD_PROFILE`, its alias or `CLI_CONFIG` reopens the same profile: on macOS the host runs the bundle's executable (the one its `Info.plist` names, which an update may rename) directly in its own process group, without inherited stdio, instead of Tauri's LaunchServices relaunch, which starts the new instance with launchd's environment (`src-tauri/src/macos_relaunch.rs`).
 
 ### `CODENOMAD_PROFILE` grammar
 
