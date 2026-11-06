@@ -10,6 +10,7 @@ import { serverApi } from "../lib/api-client"
 
 export interface PluginControlsState {
   invalidationRevision?: number
+  runtimeUnconfirmed?: ReadonlySet<string>
   snapshot?: PluginControlsSnapshot
   loading: boolean
   refreshing: boolean
@@ -27,6 +28,7 @@ interface CacheRecord {
   invalidationRevision: number
   snapshotRevision: number
   snapshot?: PluginControlsSnapshot
+  runtimeUnconfirmed: Set<string>
   loading: boolean
   refreshing: boolean
   stale: boolean
@@ -111,6 +113,11 @@ export class PluginControlsCache {
         ? record.snapshot
         : undefined
       record.snapshot = newerSnapshot ? retainRuntime(response.snapshot, newerSnapshot) : response.snapshot
+      // The write response carries pre-write inventory. Only a later read can
+      // confirm a managed plugin's runtime state, even if that inventory is active.
+      if (enabled && response.reloadPending && record.snapshot.controls.some(control => control.id === pluginId && control.managedBy === "codenomad")) {
+        record.runtimeUnconfirmed.add(pluginId)
+      } else if (!enabled) record.runtimeUnconfirmed.delete(pluginId)
       // Alias reads dispatched during the write must also see this publication
       // as newer, even when the mutation's dispatch revision predates them.
       record.snapshotRevision = ++this.revision
@@ -221,6 +228,7 @@ export class PluginControlsCache {
       generation: 0,
       invalidationRevision: 0,
       snapshotRevision: 0,
+      runtimeUnconfirmed: new Set(),
       loading: false,
       refreshing: false,
       stale: false,
@@ -250,6 +258,7 @@ export class PluginControlsCache {
         if (!this.isActive(record) || generation !== record.generation) return
         if (!this.adoptCanonicalLocation(record, snapshot.location, false, { snapshot, revision: requestRevision })) return
         record.snapshot = snapshot
+        confirmRuntime(record)
         record.snapshotRevision = ++this.revision
         record.error = undefined
       })
@@ -289,6 +298,7 @@ export class PluginControlsCache {
     for (const record of active) {
       states.set(record, {
         invalidationRevision: record.invalidationRevision,
+        runtimeUnconfirmed: new Set(record.runtimeUnconfirmed),
         snapshot: record.snapshot,
         loading: record.loading,
         refreshing: record.refreshing,
@@ -348,6 +358,7 @@ export class PluginControlsCache {
         // genuinely newer successful alias read recover its failed refresh.
         // Completion order alone cannot authorize replacing newer publications
         // or invalidations; those require a canonical reconciliation instead.
+        let adoptedRead = false
         if (existing.error) {
           if (incomingRead && !existing.inFlight
             && existing.snapshotRevision < incomingRead.revision
@@ -355,6 +366,7 @@ export class PluginControlsCache {
             existing.snapshot = incomingRead.snapshot
             existing.snapshotRevision = ++this.revision
             existing.error = undefined
+            adoptedRead = true
           } else {
             existing.stale = true
           }
@@ -363,6 +375,7 @@ export class PluginControlsCache {
         record.generation += 1
         record.inFlightController?.abort()
         this.mergeRecord(record, existing)
+        if (adoptedRead) confirmRuntime(existing)
         this.publish(existing)
         return false
       }
@@ -394,6 +407,7 @@ export class PluginControlsCache {
   }
 
   private mergeRecord(source: CacheRecord, target: CacheRecord): void {
+    for (const pluginId of source.runtimeUnconfirmed) target.runtimeUnconfirmed.add(pluginId)
     for (const key of source.keys) {
       if (this.records.get(key) !== source) continue
       this.records.set(key, target)
@@ -407,20 +421,36 @@ export class PluginControlsCache {
   }
 }
 
+function confirmRuntime(record: CacheRecord): void {
+  for (const pluginId of record.runtimeUnconfirmed) {
+    const control = record.snapshot?.controls.find(control => control.id === pluginId)
+    if (control?.managedBy !== "codenomad" || control.runtime) record.runtimeUnconfirmed.delete(pluginId)
+  }
+}
+
 function retainRuntime(durable: PluginControlsSnapshot, newer: PluginControlsSnapshot): PluginControlsSnapshot {
   const runtimeById = new Map(newer.runtime.flatMap((entry) => entry.id ? [[entry.id, entry] as const] : []))
+  const newerControlsById = new Map(newer.controls.map(control => [control.id, control]))
+  const sourceKey = (source: PluginControlsSnapshot["configured"]["sources"][number]) => JSON.stringify([source.scope, source.path, source.entryIndex, source.target])
+  const newerSources = new Map(newer.configured.sources.map(source => [sourceKey(source), source.managedBy]))
   const configuredIds = new Set(durable.configured.rules.map((rule) => rule.selector))
   const durableIds = new Set(durable.controls.map((control) => control.id))
   return {
     ...durable,
     runtime: newer.runtime,
+    configured: { ...durable.configured, sources: durable.configured.sources.map(({ managedBy: _previous, ...source }) => {
+      const managedBy = newerSources.get(sourceKey(source))
+      return { ...source, ...(managedBy ? { managedBy } : {}) }
+    }) },
     controls: [
-      ...durable.controls.flatMap(({ runtime: previousRuntime, ...control }) => {
-        const runtime = runtimeById.get(control.id)
+      ...durable.controls.flatMap(({ runtime: previousRuntime, managedBy: _previous, ...control }) => {
+        // Proven managed installations can attach a native failure before it exports an ID.
+        const runtime = runtimeById.get(control.id) ?? newerControlsById.get(control.id)?.runtime
+        const managedBy = newerControlsById.get(control.id)?.managedBy ?? runtime?.managedBy
         // A removed runtime-only plugin is no longer an inventory control;
         // exact configured IDs (including the durable rule) remain actionable.
-        if (!runtime && previousRuntime && !configuredIds.has(control.id)) return []
-        return [{ ...control, ...(runtime ? { runtime } : {}) }]
+        if (!runtime && previousRuntime && !configuredIds.has(control.id) && managedBy !== "codenomad") return []
+        return [{ ...control, ...(managedBy ? { managedBy } : {}), ...(runtime ? { runtime } : {}) }]
       }),
       ...newer.controls.filter((control) => !durableIds.has(control.id)),
     ],
