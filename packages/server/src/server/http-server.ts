@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify"
-import cors from "@fastify/cors"
+import cors, { type FastifyCorsOptions } from "@fastify/cors"
 import fastifyStatic from "@fastify/static"
 import replyFrom from "@fastify/reply-from"
 import fs from "fs"
@@ -93,6 +93,7 @@ import { proxyWebSocket } from "./proxy-websocket"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
 import { gateRemoteRequest, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
+import { guardServerPairRequest, SERVER_PAIR_PATH } from "../remote-control/server-pairing"
 import { isRemoteRequest } from "../remote-control/request-origin"
 import { routedPath } from "./routed-path"
 import { redactSecrets, registerRequestLogging } from "./request-logging"
@@ -196,6 +197,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   // Remote Control admission runs before CORS, authentication and routing.
   const remoteGate = deps.remoteControlManager.gate()
   app.addHook("onRequest", (request, reply, done) => {
+    if (guardServerPairRequest(request, reply)) return
     if (!gateRemoteRequest(request, reply, remoteGate)) done()
   })
 
@@ -221,7 +223,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     return origins
   }
 
-  app.register(cors, {
+  const corsOptions: FastifyCorsOptions = {
     origin: (origin, cb) => {
       if (!origin) {
         cb(null, true)
@@ -254,7 +256,10 @@ export function createHttpServer(deps: HttpServerDeps) {
       cb(null, false)
     },
     credentials: true,
-  })
+  }
+  // This CORS version uses a per-request delegator for route-level opt-out.
+  app.register(cors, { delegator: (request, callback) => callback(null,
+    routedPath(request.raw.url ?? request.url) === SERVER_PAIR_PATH ? { origin: false } : corsOptions) })
 
   app.register(replyFrom, {
     contentTypesToEncode: [],
@@ -277,7 +282,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     }
 
     // Pairing routes answer only through the Remote Control ingress.
-    const publicApiPaths = new Set(["/api/auth/login", "/api/auth/token", "/api/auth/status", "/api/auth/logout", PAIR_EXCHANGE_PATH])
+    const publicApiPaths = new Set(["/api/auth/login", "/api/auth/token", "/api/auth/status", "/api/auth/logout", PAIR_EXCHANGE_PATH, SERVER_PAIR_PATH])
     const publicPagePaths = new Set(["/login", PAIR_PAGE_PATH])
     if (deps.authManager.isTokenBootstrapEnabled()) {
       publicPagePaths.add("/auth/token")

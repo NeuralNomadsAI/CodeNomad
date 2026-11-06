@@ -6,6 +6,7 @@ import type { RemoteControlDevice } from "../api-types"
 import { parsePreviewUpgradePath } from "../previews/upgrade-path"
 import { routedPath } from "../server/routed-path"
 import { attachRemoteDevice, isRemoteRequest } from "./request-origin"
+import { SERVER_PAIR_PATH, validServerPairRequest } from "./server-pairing"
 
 export const DEVICE_COOKIE_NAME = "__Host-codenomad_device"
 export const PAIR_PAGE_PATH = "/remote-pair"
@@ -51,6 +52,12 @@ export function gateRemoteRequest(request: FastifyRequest, reply: FastifyReply, 
   const pathname = routedPath(request.raw.url ?? "/")
   if (pathname === null) {
     reject(reply, 400, "Invalid request path")
+    return true
+  }
+  // Only this explicit non-browser exchange can omit the mutation Origin.
+  if (pathname === SERVER_PAIR_PATH) {
+    if (validServerPairRequest(request)) return false
+    reject(reply, 403, "Server pairing request rejected")
     return true
   }
   // A preview's sandboxed document sends no device cookie and `Origin: null`; its

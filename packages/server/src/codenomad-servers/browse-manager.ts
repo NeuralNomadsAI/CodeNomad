@@ -9,6 +9,15 @@ import { relayedFolderListing } from "./folders"
 
 const Profile = z.object({ id: z.string(), baseUrl: z.string(), skipTlsVerify: z.boolean().default(false) })
 const Recent = z.object({ path: z.string().min(1).max(8192), projectName: z.string().max(1024).optional(), lastAccessed: z.number().finite() })
+function pairingCode(link: string, origin: string): string {
+  try {
+    const url = new URL(link)
+    if (url.protocol === "https:" && url.origin === origin && !url.username && !url.password && !url.search
+      && url.pathname === "/remote-pair" && /^#[A-Za-z0-9_-]{32}$/.test(url.hash)
+      && link === `${url.origin}/remote-pair${url.hash}`) return url.hash.slice(1)
+  } catch { /* Return a stable error without the caller's link. */ }
+  throw new CodeNomadServerError("pairing_expired")
+}
 export const BrowseBody = z.object({ path: z.string().max(8192).optional() }).strict()
 export const ConnectBody = z.object({ username: z.string().min(1).max(1024).optional(), password: z.string().min(1).max(8192).optional(),
   pairingLink: z.string().max(8192).optional() }).strict()
@@ -48,16 +57,22 @@ export class RemoteServerBrowseManager {
   connect(id: string, body: z.infer<typeof ConnectBody>) {
     return this.serial(id, async () => {
       const profile = this.profile(id)
-      if (body.pairingLink !== undefined) throw new CodeNomadServerError("pairing_unavailable")
+      // Validate the exact saved origin and link syntax before constructing any transport or resolving DNS.
+      const code = body.pairingLink === undefined ? undefined : pairingCode(body.pairingLink, profile.origin)
       if (Boolean(body.username) !== Boolean(body.password)) throw new CodeNomadServerError("needs_credentials")
-      let secret: CodeNomadServerSecret | undefined = body.password
+      let secret: CodeNomadServerSecret | undefined = code ? undefined : body.password
         ? { kind: "password", username: body.username!, password: body.password }
         : this.credentials.read(id, profile.origin)
-      const client = new CodeNomadServerClient(profile.origin, secret, { skipTlsVerify: profile.skipTlsVerify, onSecretChanged: next => { secret = next } })
+      const client = new CodeNomadServerClient(profile.origin, secret, {
+        skipTlsVerify: profile.skipTlsVerify,
+        onSecretChanged: next => { secret = next },
+        onRejected: () => { if (!code && !body.password) this.remove(id) },
+      })
       this.#pending.add(client)
       try {
+        if (code) secret = await client.pair(code)
         const result = await client.json<{ authenticated?: unknown; pairingRequired?: unknown }>("/api/auth/status")
-        if (result.body?.pairingRequired === true) throw new CodeNomadServerError("pairing_unavailable")
+        if (result.body?.pairingRequired === true) throw new CodeNomadServerError("needs_credentials")
         if (result.status !== 200) throw new CodeNomadServerError("unreachable")
         if (result.body?.authenticated !== true) throw new CodeNomadServerError("needs_credentials")
         if (this.#closed || this.profile(id).key !== profile.key) throw new CodeNomadServerError("unknown_server")
@@ -87,7 +102,7 @@ export class RemoteServerBrowseManager {
       const suffix = body.path === undefined ? "" : `?path=${encodeURIComponent(body.path)}`
       if (!this.credentials.has(id, profile.origin)) {
         const status = await entry.client.json<{ pairingRequired?: unknown }>("/api/auth/status")
-        if (status.body?.pairingRequired === true) throw new CodeNomadServerError("pairing_unavailable")
+        if (status.body?.pairingRequired === true) throw new CodeNomadServerError("needs_credentials")
       }
       const folders = await entry.client.json<unknown>(`/api/filesystem${suffix}`)
       if (folders.status !== 200) throw new CodeNomadServerError("unreachable")

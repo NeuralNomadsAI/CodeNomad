@@ -1,4 +1,6 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.pairingExpired": "ペアリングリンクが無効か期限切れです。",
+  "remoteBrowse.pairingRateLimited": "ペアリングの試行が多すぎます。後でもう一度試してください。",
   "remoteBrowse.back": "参照に戻る",
   "remoteBrowse.pairingUnavailable": "サーバー側のリモートコントロールのペアリングは利用できません。",
   "remoteBrowse.tlsError": "証明書の検証に失敗しました。",

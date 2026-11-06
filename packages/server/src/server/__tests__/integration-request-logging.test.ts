@@ -39,6 +39,13 @@ function harness(level: "debug" | "trace") {
 }
 
 for (const level of ["debug", "trace"] as const) {
+  test(`${level}: server pairing logs exclude raw URLs, codes and credentials`, async t => {
+    const f = harness(level)
+    t.after(() => f.app.close())
+    f.app.post('/api/remote-control/server-pair', () => ({ credential: secret }))
+    await f.app.inject({ method: 'POST', url: `/api/remote-control/server-pair?code=${secret}`, payload: { code: secret, credential: secret } })
+    f.check()
+  })
   test(`${level}: remote server connection credentials never enter request logs`, async t => {
     const f = harness(level)
     t.after(() => f.app.close())

@@ -1,4 +1,6 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.pairingExpired": "Enlace de emparejamiento inválido o caducado.",
+  "remoteBrowse.pairingRateLimited": "Demasiados intentos de emparejamiento. Inténtalo más tarde.",
   "remoteBrowse.back": "Volver a Explorar",
   "remoteBrowse.pairingUnavailable": "Emparejamiento de Control remoto en el servidor no disponible.",
   "remoteBrowse.tlsError": "Error al verificar el certificado.",

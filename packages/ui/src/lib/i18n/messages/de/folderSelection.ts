@@ -1,4 +1,6 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.pairingExpired": "Kopplungslink ungültig oder abgelaufen.",
+  "remoteBrowse.pairingRateLimited": "Zu viele Kopplungsversuche. Versuchen Sie es später erneut.",
   "remoteBrowse.back": "Zurück zu Durchsuchen",
   "remoteBrowse.pairingUnavailable": "Serverseitige Remote-Control-Kopplung nicht verfügbar.",
   "remoteBrowse.tlsError": "Zertifikatsprüfung fehlgeschlagen.",

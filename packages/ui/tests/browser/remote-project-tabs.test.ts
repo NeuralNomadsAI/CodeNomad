@@ -35,6 +35,8 @@ interface Scenario {
   restore?: unknown
   sidecars?: unknown[]
   remoteNeedsPassword?: boolean
+  pairingWorks?: boolean
+  pairingError?: string
 }
 
 async function open(page: Page, path: string, scenario: Scenario) {
@@ -85,7 +87,8 @@ async function open(page: Page, path: string, scenario: Scenario) {
       const body = request.postDataJSON() ?? {}
       if (remote[2] === 'forget') return route.fulfill({ json: { ok: true } })
       if (remote[2] === 'connect') {
-        if (body.pairingLink) return route.fulfill({ status: 409, json: { error: 'pairing_unavailable' } })
+        if (body.pairingLink && !scenario.pairingWorks) return route.fulfill({ status: 409, json: { error: scenario.pairingError ?? 'pairing_unavailable' } })
+        if (body.pairingLink) { remoteAuthenticated = true; return route.fulfill({ json: { ok: true } }) }
         if (body.password !== 'fixture-password') return route.fulfill({ status: 409, json: { error: 'auth' } })
         remoteAuthenticated = true
         return route.fulfill({ json: { ok: true } })
@@ -373,6 +376,58 @@ test("a local window opens a saved server as a project tab whose view follows th
     assert.equal((await views(page)).windows[0].id, "lab")
     assert.equal((await views(page)).windows[0].entryUrl, 'https://lab.example/?codenomadEmbed=project&folder=%2F')
     assert.equal((await views(page)).opened.length, 1)
+  } finally { await page.close() }
+})
+
+test("a pairing-link profile browses with the backend's device and fills its blank tab only on project selection", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: 'en-US' })
+  try {
+    const f = await open(page, '', { context: 'local', host: 'electron', remoteNeedsPassword: true, pairingWorks: true,
+      sidecars: [sidecar('docs', 'Docs', 'running')] })
+    await browse(page)
+    await page.locator('[data-sidecar="docs"]').click()
+    await page.locator('.new-instance-button').click()
+    const blank = page.locator('[data-tab-kind="blank"][data-tab-visible="true"]')
+    await blank.getByRole('tab', { name: 'Browse', exact: true }).click()
+    const code = 'p'.repeat(32)
+    const field = blank.getByRole('textbox', { name: 'Server address or link' })
+    await field.fill(`https://paired.example.test/remote-pair#${code}`)
+    await field.press('Enter')
+    const row = blank.getByRole('button', { name: 'Open a project on paired.example.test' })
+    await row.waitFor()
+    await page.waitForFunction(() => document.activeElement?.textContent === 'paired.example.test')
+    assert.equal(await field.inputValue(), '')
+    assert.equal((await views(page)).opened.length, 0)
+    assert.equal(JSON.stringify(f.state()).includes(code), false)
+    await row.click()
+    const recent = blank.getByRole('button', { name: /Remote recent/ })
+    await recent.waitFor()
+    assert.equal(await blank.getByRole('textbox', { name: 'Password', exact: true }).count(), 0)
+    assert.equal((await views(page)).opened.length, 0)
+    await recent.click()
+    await page.waitForFunction(() => (window as any).fixtureViews.opened.length === 1)
+    assert.equal(await page.locator('[data-tab-kind="blank"]').count(), 0)
+    assert.equal((await views(page)).opened[0].url, 'https://paired.example.test/?codenomadEmbed=project&folder=%2Fsrv%2Frecent')
+    assert.equal(JSON.stringify(f.state()).includes(code), false)
+  } finally { await page.close() }
+})
+
+for (const [code, message] of [
+  ['pairing_unavailable', 'Server-side Remote Control pairing unavailable.'],
+  ['pairing_expired', 'Pairing link invalid or expired.'],
+  ['pairing_rate_limited', 'Too many pairing attempts. Try again later.'],
+] as const) test(`${code}: a refused exchange clears its link and permits inline password recovery`, async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: 'en-US' })
+  try {
+    const f = await open(page, '', { context: 'local', host: 'electron', remoteNeedsPassword: true, pairingError: code })
+    const field = await addServer(page, `https://older.example.test/remote-pair#${'x'.repeat(32)}`)
+    await page.getByRole('alert').getByText(message, { exact: true }).waitFor()
+    assert.equal(await field.inputValue(), '')
+    assert.equal(JSON.stringify(f.state()).includes('x'.repeat(32)), false)
+    await page.getByRole('button', { name: 'Open a project on older.example.test' }).click()
+    await page.getByRole('textbox', { name: 'Password', exact: true }).waitFor()
+    assert.equal(await page.getByRole('dialog').count(), 0)
+    assert.equal((await views(page)).opened.length, 0)
   } finally { await page.close() }
 })
 

@@ -1,4 +1,6 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.pairingExpired": "Eşleştirme bağlantısı geçersiz veya süresi dolmuş.",
+  "remoteBrowse.pairingRateLimited": "Çok fazla eşleştirme denemesi. Daha sonra tekrar deneyin.",
   "remoteBrowse.back": "Gözat'a dön",
   "remoteBrowse.pairingUnavailable": "Sunucu tarafında Uzaktan Kontrol eşleştirmesi kullanılamıyor.",
   "remoteBrowse.tlsError": "Sertifika doğrulaması başarısız.",

@@ -1,4 +1,6 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.pairingExpired": "Lien d’appairage invalide ou expiré.",
+  "remoteBrowse.pairingRateLimited": "Trop de tentatives d’appairage. Réessayez plus tard.",
   "remoteBrowse.back": "Retour à Parcourir",
   "remoteBrowse.pairingUnavailable": "Appairage Remote Control côté serveur indisponible.",
   "remoteBrowse.tlsError": "Échec de la vérification du certificat.",

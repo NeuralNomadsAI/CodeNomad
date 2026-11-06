@@ -59,9 +59,12 @@ export default function ServerAddField(props: ServerAddFieldProps) {
       reset()
       props.onAdded?.(profile.id)
     } catch (failure) {
-      if (failure instanceof Error && failure.message === "pairing_unavailable") {
+      if (link.kind === "pairing") {
+        const code = failure instanceof Error ? failure.message : "unreachable"
         reset()
-        setError(t("remoteBrowse.pairingUnavailable"))
+        setError(t(code === "pairing_unavailable" ? "remoteBrowse.pairingUnavailable"
+          : code === "pairing_expired" ? "remoteBrowse.pairingExpired"
+          : code === "pairing_rate_limited" ? "remoteBrowse.pairingRateLimited" : "folderSelection.servers.dialog.errorConnect"))
         const saved = remoteServers().find(server => server.baseUrl === link.baseUrl)
         if (saved) props.onAdded?.(saved.id)
         return

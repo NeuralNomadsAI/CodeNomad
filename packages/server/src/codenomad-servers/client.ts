@@ -1,8 +1,12 @@
+import { hostname } from "node:os"
+import { z } from "zod"
 import { createExplicitTransport } from "../opencode/servers/transport"
 import { ExplicitEndpointError, type ResolveAddresses } from "../opencode/servers/endpoint"
 import type { CodeNomadServerSecret } from "./credentials"
+import { SERVER_PAIR_PATH } from "../remote-control/server-pairing"
+import { DEVICE_COOKIE_NAME } from "../remote-control/gate"
 
-export type CodeNomadServerErrorCode = "unreachable" | "tls_error" | "auth" | "pairing_unavailable" | "needs_credentials" | "unknown_server"
+export type CodeNomadServerErrorCode = "unreachable" | "tls_error" | "auth" | "pairing_unavailable" | "pairing_expired" | "pairing_rate_limited" | "needs_credentials" | "unknown_server"
 
 /** Stable codes only; never a URL, credential or upstream message. */
 export class CodeNomadServerError extends Error {
@@ -14,6 +18,10 @@ export class CodeNomadServerError extends Error {
 
 const READ_LIMIT_BYTES = 8 * 1024 * 1024
 const CALL_TIMEOUT_MS = 10_000
+const PairResponse = z.object({
+  device: z.object({ id: z.string().uuid(), name: z.string().min(1).max(80), createdAt: z.string().datetime(), lastSeenAt: z.string().datetime() }).strict(),
+  credential: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+}).strict()
 
 export function endpointErrorCode(error: unknown): CodeNomadServerErrorCode {
   if (error instanceof CodeNomadServerError) return error.code
@@ -57,6 +65,7 @@ export class CodeNomadServerClient {
   }
 
   private capture(values: string[]) {
+    if (this.secret?.kind === "device") return
     for (const [name, value] of cookiePairs(values)) {
       if (value) this.#cookies.set(name, value)
       else this.#cookies.delete(name)
@@ -72,6 +81,31 @@ export class CodeNomadServerClient {
 
   close() { this.#controller.abort() }
   get closed() { return this.#controller.signal.aborted }
+
+  /** A fresh, cookie-free exchange; the code is never retained by the client. */
+  async pair(code: string): Promise<CodeNomadServerSecret> {
+    const transport = createExplicitTransport({ origin: this.origin, signal: this.#controller.signal,
+      skipTlsVerify: this.options.skipTlsVerify, omitFetchMetadata: true }, this.options.resolve)
+    const response = await transport.fetch(new URL(SERVER_PAIR_PATH, this.origin), {
+      method: "POST", headers: { "content-type": "application/json", "x-codenomad-server-pairing": "1" },
+      body: JSON.stringify({ code, hostName: hostname().slice(0, 255) }), signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+    })
+    if (response.status !== 200) {
+      await response.body?.cancel().catch(() => {})
+      throw new CodeNomadServerError([403, 404, 405].includes(response.status) ? "pairing_unavailable"
+        : [400, 401, 410].includes(response.status) ? "pairing_expired" : response.status === 429 ? "pairing_rate_limited" : "unreachable")
+    }
+    if (!/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? "")) {
+      await response.body?.cancel().catch(() => {})
+      throw new CodeNomadServerError("unreachable")
+    }
+    const parsed = PairResponse.safeParse(await readJson(response, 4096))
+    if (!parsed.success) throw new CodeNomadServerError("unreachable")
+    const cookie = `${DEVICE_COOKIE_NAME}=${parsed.data.credential}`
+    this.#cookies.clear()
+    this.#cookies.set(DEVICE_COOKIE_NAME, parsed.data.credential)
+    return this.secret = { kind: "device", cookie }
+  }
 
   /** Password login; cookies and passwords stay in the backend's private store. */
   login(signal?: AbortSignal): Promise<void> {
@@ -113,23 +147,25 @@ export class CodeNomadServerClient {
   async json<T>(path: string, init: RequestInit = {}): Promise<{ status: number; body: T | undefined }> {
     const signal = AbortSignal.any([AbortSignal.timeout(CALL_TIMEOUT_MS), ...(init.signal ? [init.signal] : [])])
     const response = await this.fetch(path, { ...init, signal })
-    const reader = response.body?.getReader()
-    const chunks: Uint8Array[] = []
-    let length = 0
-    if (reader) {
-      try {
-        while (true) {
-          const chunk = await reader.read()
-          if (chunk.done) break
-          length += chunk.value.byteLength
-          if (length > READ_LIMIT_BYTES) throw new CodeNomadServerError("unreachable")
-          chunks.push(chunk.value)
-        }
-      } catch (error) { await reader.cancel().catch(() => {}); throw error }
-    }
-    let body: T | undefined
-    try { body = length ? JSON.parse(Buffer.concat(chunks, length).toString("utf8")) as T : undefined } catch { body = undefined }
-    return { status: response.status, body }
+    return { status: response.status, body: await readJson(response, READ_LIMIT_BYTES) as T | undefined }
   }
 
+}
+
+async function readJson(response: Response, limit: number): Promise<unknown> {
+  const reader = response.body?.getReader()
+  const chunks: Uint8Array[] = []
+  let length = 0
+  if (reader) {
+    try {
+      while (true) {
+        const chunk = await reader.read()
+        if (chunk.done) break
+        length += chunk.value.byteLength
+        if (length > limit) throw new CodeNomadServerError("unreachable")
+        chunks.push(chunk.value)
+      }
+    } catch (error) { await reader.cancel().catch(() => {}); throw error }
+  }
+  try { return length ? JSON.parse(Buffer.concat(chunks, length).toString("utf8")) : undefined } catch { return undefined }
 }

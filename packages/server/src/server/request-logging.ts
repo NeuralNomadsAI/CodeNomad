@@ -2,11 +2,14 @@ import type { FastifyInstance, FastifyRequest } from "fastify"
 import type { Logger } from "../logger"
 import { isHumanAnswerProofPayload } from "../missions/human-answer"
 import { isRecurrenceProofPayload } from "../missions/recurrence-control-proof"
+import { SERVER_PAIR_PATH } from "../remote-control/server-pairing"
+import { routedPath } from "./routed-path"
 
 const integrationRoute = "/api/workspaces/:id/integrations"
 const integrationRoutes = new Set([integrationRoute, "/api/workspaces/:id/plugin-sources", ...["hosts", "binding", "attach", "detach", "install", "install-host"].map(action => `${integrationRoute}/:integrationId/${action}`)])
 
 function integrationLogRoute(request: FastifyRequest): string | undefined {
+  if (routedPath(request.raw.url ?? request.url) === SERVER_PAIR_PATH) return SERVER_PAIR_PATH
   const route = request.routeOptions.url
   if (route && integrationRoutes.has(route)) return route
   // Rejects and malformed parameters may have no matched route. Decode segments independently so
@@ -54,6 +57,6 @@ export function redactSecrets(value: unknown): unknown {
     || isHumanAnswerProofPayload(value as Record<string, unknown>)) return "<redacted>"
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
     key,
-    /(authorization|cookie|key|code|token|password|secret|principal|pairingLink)/i.test(key) ? "<redacted>" : redactSecrets(entry),
+    /(authorization|cookie|credential|key|code|token|password|secret|principal|pairingLink)/i.test(key) ? "<redacted>" : redactSecrets(entry),
   ]))
 }

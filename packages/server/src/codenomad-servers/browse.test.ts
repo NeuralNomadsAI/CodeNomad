@@ -52,10 +52,10 @@ async function fixture(t: TestContext, options: Parameters<typeof startFakeCodeN
     connect: () => call("connect", { username: "codenomad", password: "remote-password" }) }
 }
 
-test("Remote Control status never offers a password form or attempts login", async t => {
+test("unpaired Remote Control status requests credentials without attempting password login", async t => {
   const f = await fixture(t)
   f.remote.state.overrides.set('/api/auth/status', { status: 200, body: { authenticated: false, pairingRequired: true } })
-  for (let i = 0; i < 2; i++) assert.deepEqual((await f.call('browse')).json(), { error: 'pairing_unavailable' })
+  for (let i = 0; i < 2; i++) assert.deepEqual((await f.call('browse')).json(), { error: 'needs_credentials' })
   assert.equal(f.remote.state.logins, 0)
   assert(f.remote.state.requests.every(request => request.path === '/api/auth/status' && request.headers.origin === undefined))
 })
@@ -252,9 +252,9 @@ test("host guard requires loopback AND exact self Origin even with no general au
   assert.equal(fs.existsSync(path.join(f.dir, "remote-server-credentials.json")), false)
 })
 
-test("pairing unavailable preserves the actual Remote Control Origin and direct-listener policy", async t => {
+test("invalid pairing links never dispatch; browser pairing preserves its Origin and direct-listener policy", async t => {
   const f = await fixture(t)
-  assert.deepEqual((await f.call("connect", { pairingLink: "https://remote.test/remote-pair#secret" })).json(), { error: "pairing_unavailable" })
+  assert.deepEqual((await f.call("connect", { pairingLink: "https://remote.test/remote-pair#secret" })).json(), { error: "pairing_expired" })
   assert.equal(f.remote.state.requests.length, 0)
   assert.deepEqual(redactSecrets({ pairingLink: "https://remote.test/remote-pair#secret", password: "secret" }), { pairingLink: "<redacted>", password: "<redacted>" })
   const app = Fastify()

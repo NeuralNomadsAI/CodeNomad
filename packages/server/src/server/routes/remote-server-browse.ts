@@ -27,7 +27,7 @@ export function registerRemoteServerBrowseRoutes(app: FastifyInstance, deps: {
         return await deps.manager.browse(id, BrowseBody.parse(request.body ?? {}))
       } catch (error) {
         const code = endpointErrorCode(error)
-        return reply.code(code === "unknown_server" ? 404 : code === "needs_credentials" || code === "auth" || code === "pairing_unavailable" ? 409 : 502).send({ error: code })
+        return reply.code(code === "unknown_server" ? 404 : ["needs_credentials", "auth", "pairing_unavailable", "pairing_expired", "pairing_rate_limited"].includes(code) ? 409 : 502).send({ error: code })
       }
     })
   }

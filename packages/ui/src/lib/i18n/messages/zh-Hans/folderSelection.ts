@@ -1,4 +1,6 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.pairingExpired": "配对链接无效或已过期。",
+  "remoteBrowse.pairingRateLimited": "配对尝试过多。请稍后重试。",
   "remoteBrowse.back": "返回浏览",
   "remoteBrowse.pairingUnavailable": "服务器端远程控制配对不可用。",
   "remoteBrowse.tlsError": "证书验证失败。",

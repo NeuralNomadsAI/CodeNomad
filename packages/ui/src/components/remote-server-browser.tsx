@@ -20,7 +20,7 @@ export default function RemoteServerBrowser(props: {
   let root: HTMLDivElement | undefined
   let controller: AbortController | undefined
   let generation = 0
-  const needsCredentials = () => error() === "needs_credentials" || error() === "auth"
+  const needsCredentials = () => error() === "needs_credentials" || error() === "auth" || error() === "pairing_unavailable"
   function failure(value: unknown) {
     const code = value instanceof Error ? value.message : "unreachable"
     setError(["needs_credentials", "auth", "pairing_unavailable", "tls_error"].includes(code) ? code : "unreachable")

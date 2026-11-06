@@ -3,8 +3,8 @@ const PAIR_PAGE_PATH = "/remote-pair"
 
 /**
  * Splits a Remote Control pairing link into the server address to save and the
- * single-use link that only the first window opens. The code lives in the
- * fragment and is never stored with the server.
+ * single-use link redeemed by the local backend. The code lives in the
+ * fragment and is never stored with the profile.
  */
 export function splitPairingLink(input: string): { baseUrl: string; entryUrl: string } | null {
   let url: URL

@@ -1,4 +1,6 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.pairingExpired": "Pairing लिङ्क अमान्य वा म्याद सकिएको छ।",
+  "remoteBrowse.pairingRateLimited": "धेरै pairing प्रयास भए। पछि फेरि प्रयास गर्नुहोस्।",
   "remoteBrowse.back": "ब्राउजमा फर्कनुहोस्",
   "remoteBrowse.pairingUnavailable": "सर्भरबाट Remote Control pairing उपलब्ध छैन।",
   "remoteBrowse.tlsError": "प्रमाणपत्र जाँच असफल भयो।",

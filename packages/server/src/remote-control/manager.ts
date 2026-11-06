@@ -111,9 +111,9 @@ export class RemoteControlManager {
     return this.pairingFor(this.tunnel)
   }
 
-  exchangePairing(code: string, userAgent: string | undefined): { device: RemoteControlDevice; token: string } | null {
+  exchangePairing(code: string, userAgent: string | undefined, serverHostName?: string): { device: RemoteControlDevice; token: string } | null {
     if (!this.enabled || !this.tunnel) return null
-    const paired = this.options.registry.exchange(code, deviceNameFromUserAgent(userAgent))
+    const paired = this.options.registry.exchange(code, serverHostName === undefined ? deviceNameFromUserAgent(userAgent) : `CodeNomad · ${serverHostName}`)
     if (!paired) return null
     // A device replaced at the limit loses its live connections, as on revocation.
     if (paired.evictedId) this.ingress.disconnectDevice(paired.evictedId)

@@ -1,4 +1,6 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.pairingExpired": "קישור הצימוד אינו תקין או שפג תוקפו.",
+  "remoteBrowse.pairingRateLimited": "יותר מדי ניסיונות צימוד. נסו שוב מאוחר יותר.",
   "remoteBrowse.back": "חזרה לעיון",
   "remoteBrowse.pairingUnavailable": "צימוד שליטה מרחוק בצד השרת אינו זמין.",
   "remoteBrowse.tlsError": "בדיקת התעודה נכשלה.",

@@ -1,4 +1,6 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.pairingExpired": "Ссылка сопряжения недействительна или истекла.",
+  "remoteBrowse.pairingRateLimited": "Слишком много попыток сопряжения. Повторите позже.",
   "remoteBrowse.back": "Назад к обзору",
   "remoteBrowse.pairingUnavailable": "Сопряжение удалённого управления на стороне сервера недоступно.",
   "remoteBrowse.tlsError": "Проверка сертификата не пройдена.",

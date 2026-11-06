@@ -38,6 +38,8 @@ export function createExplicitTransport(options: {
   headers?: () => Record<string, string>
   /** Receives Set-Cookie values; they never reach the returned response. */
   onSetCookie?: (values: string[]) => void
+  /** Explicit server protocols must not carry Fetch's automatically generated browser metadata. */
+  omitFetchMetadata?: boolean
 }, resolve?: ResolveAddresses) {
   const origin = normalizeExplicitOrigin(options.origin)
   if (options.ca !== undefined) throw new ExplicitEndpointError("custom_ca_unsupported")
@@ -64,12 +66,19 @@ export function createExplicitTransport(options: {
           else callback(null, address.address, address.family)
         },
       } })
+      const dispatcher = options.omitFetchMetadata ? agent.compose(dispatch => (options, handler) => {
+        const input = options.headers
+        // Fetch supplies an object; also accept the dispatch API's flat pair form.
+        const entries = Array.isArray(input) ? input.flatMap((name, i) => i % 2 ? [] : [[name, input[i + 1]]]) : Object.entries(input ?? {})
+        const headers = Object.fromEntries(entries.filter(([name]) => !/^sec-fetch-/i.test(name!)))
+        return dispatch({ ...options, headers }, handler)
+      }) : agent
       const headers = filterHeaders(request.headers, requestDenied)
       if (credentials) headers.set("authorization", `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString("base64")}`)
       for (const [name, value] of Object.entries(options.headers?.() ?? {})) if (name.toLowerCase() !== "origin") headers.set(name, value)
       const response = await undiciFetch(url, {
         method: request.method, headers: Object.fromEntries(headers),
-        body: request.body as never, duplex: "half", signal, redirect: "manual", dispatcher: agent,
+        body: request.body as never, duplex: "half", signal, redirect: "manual", dispatcher,
       })
       signal.throwIfAborted()
       if (response.status >= 300 && response.status < 400 && response.status !== 304) {
