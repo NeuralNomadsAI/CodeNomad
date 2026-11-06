@@ -24,7 +24,7 @@ use crate::{
   window::WindowId,
 };
 
-// The pinned Tauri runtime clones/drops this handle through unsafe Send/Sync
+// The Tauri runtime clones/drops this handle through unsafe Send/Sync
 // contexts on worker threads. Only the reference count may cross threads;
 // the runner's interior remains confined to the event-loop thread.
 pub(crate) type EventLoopRunnerShared<T> = Arc<EventLoopRunner<T>>;
