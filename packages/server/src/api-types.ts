@@ -240,6 +240,9 @@ export interface WorktreeDescriptor {
   registeredDirectory?: string
   /** Degraded mode: only this exact physical directory authorizes sessions. */
   directoryOnly?: boolean
+  /** The opened nested folder is absent from this checkout: it still owns the
+   * sessions placed there, but is neither offered for selection nor recovered. */
+  nestedFolderMissing?: boolean
   kind: WorktreeKind
   /** False for the opened folder and Git's main checkout. */
   removable?: boolean
