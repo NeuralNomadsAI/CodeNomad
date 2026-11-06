@@ -4,7 +4,7 @@ import { once } from "node:events"
 import test from "node:test"
 import { OpenCode, type CredentialEntry } from "@opencode/client"
 import type { ServiceConnection } from "../workspaces/opencode-service"
-import { projectCredential, projectCredentials, readUsageCredentials } from "./native-credentials"
+import { openCodeConsoleCredential, projectCredential, projectCredentials, readUsageCredentials } from "./native-credentials"
 
 const entries: CredentialEntry[] = [
   { id: "a", integrationID: "deepinfra", label: "Key", active: true, value: { type: "key", key: "secret-key", metadata: { note: "x" } } },
@@ -37,6 +37,26 @@ test("projects only Copilot's raw enterprise destination metadata, retaining inv
     assert.deepEqual(projectCredential(entry), { type: "oauth", methodID: "device", access: "synthetic", refresh: "synthetic", expires: 0, enterpriseUrl })
     assert.equal(projectCredential({ ...entry, integrationID: "anthropic" })?.enterpriseUrl, undefined)
   }
+})
+
+test("Console OAuth wins over a key in either native entry order; other integrations keep native ordering", () => {
+  const key: CredentialEntry = { id: "key", integrationID: "opencode", active: true, label: "Key", value: { type: "key", key: "fake-key" } }
+  const oauth: CredentialEntry = { id: "oauth", integrationID: "opencode", active: true, label: "OAuth",
+    value: { type: "oauth", methodID: "device", access: "fake-access", refresh: "fake-refresh", expires: Date.now() + 3600000,
+      metadata: { orgID: "org_fixture", server: "https://opencode.ai/console" } } }
+  for (const entries of [[key, oauth], [oauth, key], [oauth]]) {
+    assert.deepEqual(openCodeConsoleCredential(projectCredentials(entries)), {
+      headers: { Authorization: "Bearer fake-access", "x-org-id": "org_fixture" },
+    })
+  }
+  assert.deepEqual(openCodeConsoleCredential(projectCredentials([key])), { headers: { Authorization: "Bearer fake-key" } })
+  const expired = { ...oauth, value: { ...oauth.value, expires: 1 } } as CredentialEntry
+  for (const entries of [[key, expired], [expired, key]]) {
+    assert.deepEqual(openCodeConsoleCredential(projectCredentials(entries)), { reason: "opencode-console-invalid-credential", configured: true })
+  }
+  assert.equal((projectCredentials([oauth, { ...key, integrationID: "other" }]).other as { key: string }).key, "fake-key")
+  const thirdParty = { ...key, value: { ...key.value, metadata: { server: "https://other.invalid" } } } as CredentialEntry
+  assert.deepEqual(openCodeConsoleCredential(projectCredentials([thirdParty])), { reason: "opencode-console-invalid-credential", configured: true })
 })
 
 async function daemon(status: number) {

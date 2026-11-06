@@ -1,9 +1,11 @@
 import type { ProviderUsageResponse, ProviderUsageWindow } from "../api-types"
+import type { OpenCodeConsoleUsage } from "../api-types-provider-usage"
 
 export interface ProviderUsage {
   copilotPlan?: ProviderUsageResponse["copilotPlan"]
   windows: Record<string, ProviderUsageWindow>
   models?: Record<string, { windows: Record<string, ProviderUsageWindow> }>
+  console?: OpenCodeConsoleUsage
 }
 
 export interface ProviderResult extends Pick<ProviderUsageResponse, "unavailableReason" | "providerErrorCode" | "unavailableAction"> {

@@ -5,7 +5,7 @@ Anbieterauthentifizierung gehört zum verbundenen OpenCode-Dienst, nicht zum Bro
 ## Modell- oder Suchanbieter verbinden {#connect}
 
 1. Öffnen Sie einen Arbeitsbereich und dann **Einstellungen → Anbieter**. **Modelle** ist anfangs aufgeklappt; klappen Sie für Suchanbieter **Websuche** auf. **Bilder** enthält die Bildeinstellungen.
-2. Wählen Sie in dieser Gruppe zuerst **Anbieter auswählen**, dann **Verbinden**.
+2. Wählen Sie in dieser Gruppe zuerst **Anbieter auswählen**, dann **Verbinden**. Verwenden Sie bei einem bereits unten aufgeführten Modellanbieter **Konto hinzufügen** (+) in seiner Zeile, auch für die erste Verbindung.
 3. Durchlaufen Sie bei einem Modellanbieter die angebotene native **Authentifizierungsmethode**: API-Schlüssel, OAuth oder Befehl. Verwenden Sie bei OAuth **Autorisierungsseite öffnen** und übermitteln Sie einen Autorisierungscode nur auf Aufforderung. Suchanbieter verbinden sich mit einem API-Schlüssel.
 4. Prüfen Sie nach Abschluss die Zeile des konfigurierten Anbieters. **Modelle** liest nach Verbindungen, Kontoänderungen und Wiederverbindungen erneut; **Websuche** bietet zusätzlich **Aktualisieren**.
 
@@ -28,7 +28,7 @@ Bei mehreren gespeicherten Zugangsdaten einer unterstützten Integration aktivie
 | Geeignete Integration | Geeigneter Kontotyp |
 | --- | --- |
 | OpenAI / Codex | Codex-Abonnementkonten mit Browser-/Geräte-OAuth, weder nutzungsabhängige OpenAI-Schlüssel noch die ChatGPT-Anmeldemethode, für die OpenAI keine Nutzungsdaten bereitstellt. |
-| OpenCode Go | Go-Schlüssel oder OpenCode-Console-Anmeldung/-Schlüssel **nur für den Go-Anbieter**, keine nutzungsabhängigen Zen-Guthaben. |
+| OpenCode Go | Go-Schlüssel oder OpenCode-Console-Anmeldung/-Schlüssel **nur für den Go-Anbieter**; kostenpflichtige Console-Modelle bleiben manuell. |
 | Anthropic | OpenCodes Claude-Pro/Max-OAuth-Anmeldung, **nicht** die Claude-Code-Anmeldung. |
 | GitHub Copilot | OAuth mit lesbarem Premium-Anfragekontingent; Zugangsdaten für Enterprise-Endpunkte sind keine lesbaren Kandidaten. |
 | Coding-Pläne | Schlüsselbasierte `zai-coding-plan`, `zhipuai-coding-plan`, `kimi-for-coding`, `minimax-coding-plan`, `minimax-cn-coding-plan`. |
@@ -54,7 +54,15 @@ Für Google-Verbindungen mit OpenCodes Gemini-CLI-Authentifizierungsmethode zeig
 
 Googles [Antigravity-FAQ](https://antigravity.google/docs/faq/) erklärt, dass die Nutzung von Drittanbietersoftware mit einer Antigravity-Anmeldung gegen die Nutzungsbedingungen verstößt und zur Sperrung oder Kündigung des Kontos führen kann.
 
-Für kostenlose OpenCode-Zen-Modelle schätzt **Nutzung** den Verbrauch anhand der seit 00:00 UTC aufgezeichneten Schritte dieses Dienstes bei angenommenen 200 Anfragen/Tag und einer geschätzten Rücksetzung zur nächsten UTC-Mitternacht. Schritte nähern Anfragen an; anderer Datenverkehr und variable IP-Limits können die tatsächliche Kontingentnutzung abweichen lassen.
+Für kostenpflichtige Modelle der Integration `opencode` zeigt **OpenCode Console** die **Anfragen** für **Heute (UTC)**, **7 Tage (UTC)** und **30 Tage (UTC)**. Diese UTC-Kalenderzeiträume schließen heute ein und beginnen jeweils um 00:00 UTC heute, vor sechs Tagen und vor 29 Tagen. **Anfragen nach Modell · 30 Tage** führt jedes Modell mit seinem Anbieter auf. Die Zähler gelten für das verbundene Console-Konto und werden in der Sprache der App formatiert. **Budgets der Dienstkonten** zeigt **Budgets nicht verfügbar.** OpenCode Go verwendet einen eigenen Kontingentleser.
+
+Der Leser verwendet den gespeicherten `opencode`-API-Schlüssel oder bevorzugt dessen OAuth-Console-Verbindung. OAuth erfordert `https://opencode.ai/console` und die Organisations-ID der Verbindung; der Console-Zugriff benötigt die Berechtigung **Usage › Read**. CodeNomad aktualisiert diese Zugangsdaten niemals. Eine ungültige oder abgelaufene OAuth-Verbindung muss über ihren Eigentümer wiederhergestellt werden, auch wenn ein API-Schlüssel gespeichert ist.
+
+Console-Fehler unterscheiden eine fehlende Verbindung, ungültige oder abgelaufene Zugangsdaten (401), verweigerten Zugriff (403), eine ungültige Nutzungsantwort und Netzwerkfehler. Prüfen Sie bei Verbindungsfehlern unter **Einstellungen → Anbieter** die Anmeldung und Berechtigungen und aktualisieren Sie **Nutzung**. Ein fehlgeschlagener Abruf einer Zusammenfassung oder Modellseite macht die gesamte Console-Anzeige unverfügbar.
+
+Für kostenlose OpenCode-Modelle (`big-pickle` und Modell-IDs mit der Endung `-free`) zeigt **Nutzung** **Geschätzt**: die seit 00:00 UTC aufgezeichneten Schritte dieses Dienstes im Vergleich zu einer Referenz von 200 Anfragen/Tag, mit geschätzter Rücksetzung zur nächsten UTC-Mitternacht. Schritte nähern Anfragen an; Verkehr anderer Clients und variable IP-Limits können das tatsächliche Kontingent abweichen lassen. Ein Kontingentfehler bei einem kostenlosen Modellschritt markiert alle kostenlosen Modelle dieser OpenCode-Verbindung bis 00:00 UTC als **Ausgeschöpft**. Die Anzeige steht bei 100 %, während der bekannte Zähler unverändert bleibt; ein unbekannter Zähler bleibt unbekannt. Die Markierung liegt pro Verbindung im Backend-Arbeitsspeicher und wird beim Neustart gelöscht.
+
+Die Console-Kalibrierung der kostenlosen Schätzung ist implementiert, aber deaktiviert, bis die Erfassung kostenloser Anfragen im passenden Geltungsbereich bestätigt ist. Schätzung, Erschöpfungsmarkierung und kostenpflichtige Console-Zähler dienen ausschließlich der Anzeige; die automatische Kontowahl verwendet eigene Kontingentleser und Regeln.
 
 Für eine ChatGPT-Anmeldemethode stellt OpenAI keine Nutzungsdaten bereit: Nutzung weist darauf hin, statt Kontingentfenster anzuzeigen. Wählen Sie [ChatGPT-Nutzung anzeigen](https://chatgpt.com/settings/usage), um die App-Nutzung einzusehen und den Zugriff auf Ihren Tarif und Ihr Guthaben in ChatGPT zu verwalten. Chatten funktioniert weiterhin, und eine erneute Verbindung derselben Anmeldung stellt den Wert nicht wieder her.
 

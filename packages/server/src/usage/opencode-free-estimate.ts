@@ -2,7 +2,7 @@ import type { SessionStatsInfo } from "@opencode/client"
 import type { ProviderUsageResponse } from "../api-types"
 
 // ponytail: a 200-request reference per UTC day; replace this heuristic with an
-// upstream counter when Zen exposes one. Actual limits vary with capacity/IP.
+// upstream counter when Console counts free traffic. Actual limits vary with capacity/IP.
 export const OPENCODE_FREE_DAILY_REQUESTS = 200
 const DAY_MS = 86_400_000
 
@@ -25,8 +25,9 @@ export function estimateOpenCodeFreeUsage(stats: Pick<SessionStatsInfo, "models"
   }, 0)
   const usedPercent = Math.min(100, (steps / OPENCODE_FREE_DAILY_REQUESTS) * 100)
   return {
-    requestedProviderId: providerId, providerId: "opencode-free", providerName: "OpenCode Zen", modelId,
+    requestedProviderId: providerId, providerId: "opencode-free", providerName: "OpenCode Console", modelId,
     supported: true, configured: true, ok: true, estimated: true, fetchedAt: now,
+    freeEstimate: { requests: steps, reference: OPENCODE_FREE_DAILY_REQUESTS, exhausted: false },
     windows: { daily: { usedPercent, remainingPercent: 100 - usedPercent, windowSeconds: DAY_MS / 1000,
       resetAt: openCodeFreeWindow(now).resetAt, valueLabel: `${steps} / ${OPENCODE_FREE_DAILY_REQUESTS}` } },
   }
