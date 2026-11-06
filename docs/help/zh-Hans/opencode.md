@@ -9,7 +9,7 @@ CodeNomad 连接到执行主机上的共享 OpenCode 服务。选择 CLI、更�
 3. 使用**检查状态和更新**。如果缺少 OpenCode，选择**安装并启动 OpenCode**；请先检查主机和安装范围。
 4. 如果设置流程提供**连接并继续**，请在解决报告的问题后使用它。
 
-安装使用随附的运行时（Electron 使用内置 Node，Tauri 附带 Node，两者均包含 npm），进行与其他客户端共享的标准用户安装。**为用户安装并配置 PATH**会更改该用户的终端设置；之后请打开新终端。浏览器连接的是 CodeNomad 服务器：其文件选择器和可执行文件选择针对该服务器，而非浏览设备。
+安装使用 CodeNomad 服务器所运行的 Node 运行时及其 npm（桌面版为 Electron 内置 Node 或 Tauri 附带 Node），进行与其他客户端共享的标准用户安装。**为用户安装并配置 PATH**会更改该用户的终端设置；之后请打开新终端。浏览器连接的是 CodeNomad 服务器：其文件选择器和可执行文件选择针对该服务器，而非浏览设备。
 
 当 PATH 中排在最前面的是较旧的 OpenCode 时，提供的操作取决于其安装方式。对于通过 npm 安装的 OpenCode 1.x，**用 OpenCode 2 替换 OpenCode {version}** 会请求确认，移除该 npm 软件包，并在同一 npm 文件夹中安装 OpenCode 2；OpenCode 数据文件夹会保留，OpenCode 2 会自行导入 1.x 的对话。以其他方式（winget、Homebrew、手动）安装的较旧或不可用的 OpenCode 绝不会被修改：**为 CodeNomad 安装 OpenCode 2** 会在其旁边的用户 npm 文件夹中安装 OpenCode 2，之后 CodeNomad 使用该副本。如果该旧命令本身位于用户 npm 文件夹中（例如 `~/.local/bin` 中的链接），或该文件夹不可写，设置会说明原因，而不提供此操作：移动或重命名该命令，或修复文件夹权限，然后选择**检查状态和更新**。终端中的 `opencode` 命令可能仍会启动旧版本。显式选择的自定义可执行文件绝不会被替换。
 
