@@ -9,7 +9,7 @@ Reasoning and tool headers show how long each step took, counting live while it 
 ## Find and navigate conversations {#navigate-conversations}
 
 1. Select a row under **Sessions**, or use **New session** to start a parent conversation.
-2. Click a parent's chevron to expand or collapse its subsessions while keeping their badges intact. A collapsed chevron shows its descendants' most urgent state: needing input, working, compacting or idle; its accessible label counts them.
+2. Click a parent's chevron to expand or collapse its subsessions while keeping their badges intact. Expanded or collapsed, the chevron shows its descendants' most urgent state: needing input, working, compacting or idle; its accessible label counts them. Right-click it and choose **Mark as read** to clear the **Idle** and **Interrupted** badges of the conversation and all its subsessions at once.
 3. Use **Search sessions…**, **Main sessions** / **Subsessions**, the worktree filter and **Activity**, **Name** or **Worktree** sorting to narrow the list. In search results, drag across the rows' checkboxes to select or clear several conversations at once.
 4. Use the sidebar's **Back** and **Forward** to revisit conversations you displayed.
 
