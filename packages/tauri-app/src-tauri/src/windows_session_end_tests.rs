@@ -89,17 +89,34 @@ fn finds_only_this_threads_window_of_the_requested_class() {
     unsafe { DestroyWindow(hwnd) };
 }
 
+/// The source directory of the Tao the application resolves: the vendored copy
+/// selected by `[patch.crates-io]`, or the registry crate without it.
+fn resolved_tao_directory() -> std::path::PathBuf {
+    let output = std::process::Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+        .args(["metadata", "--locked", "--format-version", "1"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("run cargo metadata");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let tao: Vec<_> = metadata["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|package| package["name"] == "tao")
+        .collect();
+    assert_eq!(tao.len(), 1, "the application resolves one Tao");
+    std::path::Path::new(tao[0]["manifest_path"].as_str().unwrap())
+        .parent()
+        .unwrap()
+        .to_path_buf()
+}
+
 #[test]
-fn vendored_tao_still_exits_from_the_named_event_target() {
+fn resolved_tao_still_exits_from_the_named_event_target() {
     // The forwarding exists for this upstream behavior; re-evaluate it whenever
     // Tao renames the window class or changes its WM_ENDSESSION handling.
-    let vendor = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../vendor");
-    let tao = std::fs::read_dir(&vendor)
-        .unwrap()
-        .filter_map(Result::ok)
-        .find(|entry| entry.file_name().to_string_lossy().starts_with("tao-"))
-        .expect("vendored Tao crate");
-    let source = std::fs::read_to_string(tao.path().join("src/platform_impl/windows/event_loop.rs")).unwrap();
+    let source = std::fs::read_to_string(resolved_tao_directory().join("src/platform_impl/windows/event_loop.rs")).unwrap();
     assert!(source.contains(&format!("w!(\"{TAO_EVENT_TARGET_CLASS}\")")));
     let session_end = &source[source.find("win32wm::WM_ENDSESSION =>").expect("Tao WM_ENDSESSION handler")..];
     assert!(session_end[..session_end.find("LRESULT(0)").unwrap()].contains("std::process::exit(0)"));

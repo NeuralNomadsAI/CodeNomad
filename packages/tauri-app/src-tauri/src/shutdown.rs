@@ -939,13 +939,16 @@ pub(crate) fn install_windows_session_end_handler(window: &WebviewWindow) -> Res
 #[cfg(windows)]
 fn install_tao_event_target_session_end_handler(app: &AppHandle) -> Result<(), String> {
     use crate::windows_session_end::{current_thread_window_of_class, install, TAO_EVENT_TARGET_CLASS};
+    // Main thread only; a failed attempt is retried with the next window.
     static INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if INSTALLED.swap(true, std::sync::atomic::Ordering::AcqRel) {
+    if INSTALLED.load(std::sync::atomic::Ordering::Acquire) {
         return Ok(());
     }
     let target = current_thread_window_of_class(TAO_EVENT_TARGET_CLASS)
         .ok_or_else(|| format!("{TAO_EVENT_TARGET_CLASS} window not found"))?;
-    install(target, windows_session_end_handler(app.clone(), true))
+    install(target, windows_session_end_handler(app.clone(), true))?;
+    INSTALLED.store(true, std::sync::atomic::Ordering::Release);
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -957,7 +960,7 @@ pub(crate) fn schedule_windows_session_end_handler(window: &WebviewWindow) -> Re
             eprintln!("[client-state] failed to install Windows session-end handler: {error}");
         }
         if let Err(error) = install_tao_event_target_session_end_handler(window.app_handle()) {
-            eprintln!("[client-state] failed to install Windows session-end handler: {error}");
+            eprintln!("[client-state] failed to install the Tao event target's Windows session-end handler: {error}");
         }
     })
     .map_err(|error| error.to_string())

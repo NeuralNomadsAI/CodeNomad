@@ -103,8 +103,8 @@ Tao's hidden thread event target (window class `Tao Thread Event Target`) calls
 to it before any application window. `windows_session_end.rs` subclasses that
 window too: CodeNomad's bounded session-end flush and backend cleanup run first,
 then the message reaches Tao. Application windows consume the message as before.
-`windows_session_end_tests.rs` checks the ordering, the lookup and that the
-vendored Tao still exits from the named target.
+`windows_session_end_tests.rs` checks the ordering, the lookup and that the Tao
+the application resolves (`cargo metadata`) still exits from the named target.
 
 ## Updater Windows launch handoff
 
