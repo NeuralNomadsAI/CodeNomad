@@ -186,6 +186,33 @@ test("the chevron's context menu marks the whole hierarchy as read and leaves wo
   } finally { await page.close() }
 })
 
+test("an open chevron menu keeps its row mounted while rows above push it out of the viewport", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await events.route(page)
+  const chevron = (sessionId: string) => page.locator(`[data-session-id="${sessionId}"] .session-item-expander`)
+  const menu = page.getByRole("menu")
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.locator('[data-session-id="other"]').waitFor()
+    await chevron("work").click()
+    await chevron("other").click({ button: "right" })
+    await page.waitForFunction(() => Boolean(document.activeElement?.closest("[role=menu]")))
+    // A hundred new subsessions above move the row far beyond Virtua's buffer.
+    await page.evaluate(() => { for (let index = 0; index < 100; index++) (window as any).fixture.add(`work-extra-${index}`, "work", "idle") })
+    await page.locator('[data-session-id="work-extra-99"]').waitFor({ state: "attached" })
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    assert.equal(await menu.isVisible(), true, "the menu stays open")
+    assert.equal(await page.evaluate(() => Boolean(document.activeElement?.closest("[role=menu]"))), true, "focus stays in the menu")
+    assert.equal(await chevron("other").count(), 1, "the menu's row stays mounted")
+    await page.keyboard.press("Escape")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("visible branches follow new chevron states recursively, restore all opened levels and can be disabled in General", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
   const errors: string[] = []

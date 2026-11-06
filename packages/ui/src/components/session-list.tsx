@@ -99,6 +99,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [virtualizerHandle, setVirtualizerHandle] = createSignal<VirtualizerHandle>()
   const [focusedSessionId, setFocusedSessionId] = createSignal<string>()
   const [menuSessionId, setMenuSessionId] = createSignal<string>()
+  const [expanderMenuSessionId, setExpanderMenuSessionId] = createSignal<string>()
   let attachmentFrame: number | undefined
 
   const setListElement = (element: HTMLDivElement) => {
@@ -278,7 +279,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   })
   const keptMountedIndexes = createMemo(() => {
     const indexes = new Set<number>()
-    for (const sessionId of [focusedSessionId(), menuSessionId()]) {
+    for (const sessionId of [focusedSessionId(), menuSessionId(), expanderMenuSessionId()]) {
       const index = sessionId ? visibleProjection().indexById.get(sessionId) : undefined
       if (index !== undefined) indexes.add(index)
     }
@@ -797,6 +798,7 @@ const SessionList: Component<SessionListProps> = (props) => {
               markReadDisabled={readableHierarchy().length === 0}
               onToggle={() => rowProps.onToggleExpand?.()}
               onMarkRead={() => batch(() => readableHierarchy().forEach(clearSessionStatus))}
+              onOpenChange={(open) => setExpanderMenuSessionId(open ? sessionId() : undefined)}
             />
           </Show>
           <button

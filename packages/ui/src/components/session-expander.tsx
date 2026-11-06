@@ -14,12 +14,14 @@ interface SessionExpanderProps {
   markReadDisabled: boolean
   onToggle: () => void
   onMarkRead: () => void
+  /** Lets the virtualized list keep the row mounted while its menu is open. */
+  onOpenChange: (open: boolean) => void
 }
 
 /** A parent row's chevron; its context menu marks the whole hierarchy as read. */
 export default function SessionExpander(props: SessionExpanderProps) {
   return (
-    <ContextMenu>
+    <ContextMenu onOpenChange={(open) => props.onOpenChange(open)}>
       <ContextMenu.Trigger
         as="button"
         type="button"
