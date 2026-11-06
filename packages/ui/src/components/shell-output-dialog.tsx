@@ -63,8 +63,8 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
         if (!operation.current()) return
         setOutput(t("backgroundProcessOutputDialog.loadErrorFallback"))
       } finally {
+        if (active) setLoading(false)
         if (!operation.current()) return
-        setLoading(false)
         timer = setTimeout(poll, 1000)
       }
     }
@@ -77,6 +77,7 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
     void poll()
     onCleanup(() => {
       active = false
+      setLoading(false)
       if (timer) clearTimeout(timer)
     })
   })

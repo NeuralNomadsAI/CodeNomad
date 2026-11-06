@@ -333,7 +333,6 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     const operation = captureBackendOperation(workspaceId, undefined, () => !disposed)
     setSkills([])
     setSkillsError(false)
-    setSkillsLoading(true)
     const load = () => {
       if (!operation.current()) return
       if (inFlight) { trailing = true; return }

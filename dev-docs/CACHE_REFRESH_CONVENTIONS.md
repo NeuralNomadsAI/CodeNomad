@@ -12,6 +12,9 @@ where their authority, lifetime or runtime differs.
   for the next demand. Avoid background polling merely to keep a hidden view warm.
 - A response must still belong to the current identity/generation before publication.
   Serialize follow-up reads so an older response cannot overwrite their result.
+- Release transient loading/busy state by its request/controller identity, independently
+  of response authority. Revocation prevents data publication; it must not strand a
+  completed indicator or let an old completion clear its replacement's active flag.
 - Preserve the last good snapshot on refresh failure and permit recovery. Surface
   failures for explicit operations rather than reporting stale data as success.
 - A successful mutation must be visible to its next dependent read. Display-cache

@@ -183,7 +183,7 @@ export function createMissionEditorScheduling(props: {
       if (!result.document || result.document.id !== target) throw new Error("Mission document unavailable")
       setPreviousDraft(comparison()); adopt(result.document)
     } catch { if (current()) setFailed(true) }
-    finally { if (current()) setReading(false) }
+    finally { setReading(false) }
   }
   async function saveJournalEdit(input: Omit<MissionJournalEditRequest, "missionID" | "expectedRevision">) {
     if (held() || !journal()) return
@@ -282,7 +282,7 @@ export function createMissionEditorScheduling(props: {
       releaseMissionScheduleEditor(scope, request.requestID)
       if (current()) props.onSaved(undefined, result.document?.id)
     } catch { /* Only a positive original receipt settles an unknown write. */ }
-    finally { if (current()) setReading(false) }
+    finally { setReading(false) }
   }
   function partialPreparation(request: MissionScheduleEditorRequest, result: MissionScheduleRead) {
     const doc = result.document, receipt = doc?.control
@@ -306,7 +306,7 @@ export function createMissionEditorScheduling(props: {
       releaseMissionScheduleEditor(scope, request.requestID)
       if (current()) props.onSaved(undefined, result.document?.id)
     } catch { /* The original request remains held through any uncertain retry. */ }
-    finally { if (current()) setReading(false) }
+    finally { setReading(false) }
   }
   return { unified, document, journal, scheduling, setScheduling, previousDraft, ready, failed, conflict, reading, capability, directory,
     revalidating: () => capabilityReading() || documentReading(),

@@ -57,8 +57,8 @@ export default function HistoryMessagePreview(props: { instanceId: string; sessi
       else if (message.type === "shell") setBlocks([message.command, message.output?.output ?? ""])
       else if (message.type === "compaction" && "summary" in message) setBlocks([message.summary])
     })().catch(() => { if (current()) setFailed(true) })
-      .finally(() => { if (current()) setPending(false) })
-    onCleanup(() => controller.abort())
+      .finally(() => { if (!controller.signal.aborted) setPending(false) })
+    onCleanup(() => { controller.abort(); setPending(false) })
   })
   async function open() {
     const opened = target
@@ -68,8 +68,8 @@ export default function HistoryMessagePreview(props: { instanceId: string; sessi
     setOpening(true)
     setOpenFailed(false)
     const result = await openHistoryMatchSession(props.instanceId, props.sessionId, props.messageId, current, props.highlight).catch(() => false)
+    if (opened === target) setOpening(false)
     if (!current()) return
-    setOpening(false)
     setOpenFailed(!result)
   }
   return <section class="history-message-preview" aria-live="polite">

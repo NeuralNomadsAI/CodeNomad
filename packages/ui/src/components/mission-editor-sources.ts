@@ -61,8 +61,8 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
           ? [...previous[kind] ?? [], ...page.rows.filter(row => !previous[kind]?.some(old => old.id === row.id))] : page.rows })))
         setNext(page.next ?? undefined)
       }).catch(() => { if (current()) { setFailed(true); untrack(() => forget(kind)) } })
-        .finally(() => { if (current()) setLoading(false) })
-      onCleanup(() => controller.abort())
+        .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+      onCleanup(() => { controller.abort(); setLoading(false) })
     })
     onCleanup(() => forget(kind))
     return { next, loading, failed, more: () => setCursor(next()) }

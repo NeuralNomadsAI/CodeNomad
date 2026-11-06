@@ -501,6 +501,9 @@ jobs:
           packages/ui/src/stores/backend-action-lifetime.test.ts
           packages/ui/src/stores/backend-runtime-lifetime.test.ts
           packages/ui/src/stores/backend-session-flags.test.ts
+          packages/ui/src/stores/backend-session-read-flags.test.ts
+          packages/ui/src/stores/backend-store-indicators.test.ts
+          packages/ui/src/components/backend-view-indicators.test.ts
           packages/ui/src/lib/backend-panel-deadline.test.ts
           packages/ui/tests/contracts/mission-current-body-attachment.test.ts
           packages/ui/tests/contracts/mission-current-body-lifetime.test.ts

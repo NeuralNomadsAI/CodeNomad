@@ -54,7 +54,7 @@ export const InstanceMetadataProvider: Component<InstanceMetadataProviderProps> 
       if (!operation.current() || loadId !== metadataLoadId || resolvedInstance()?.client !== current.client) return
       await loadInstanceMetadata(current, { force, location })
     } finally {
-      if (operation.current() && loadId === metadataLoadId) setIsLoading(false)
+      if (!disposed && loadId === metadataLoadId) setIsLoading(false)
     }
   }
 
@@ -63,7 +63,7 @@ export const InstanceMetadataProvider: Component<InstanceMetadataProviderProps> 
     const signal = backendEvents.signalForInstance(current.id)
     const replaced = attachment !== undefined && attachment !== signal
     attachment = signal
-    if (signal.aborted) return
+    if (signal.aborted) { setIsLoading(false); return }
     if (replaced) { void ensureMetadata(true); return }
     if (!current) {
       setIsLoading(false)

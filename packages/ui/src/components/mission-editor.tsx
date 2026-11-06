@@ -247,7 +247,7 @@ export function MissionEditor(props: {
       setDefaults(loaded); setProfiles(missionDefaultsFor(loaded, template())); setTaskMode(missionTaskModeFor(loaded, template()))
       setCustomProfiles(false); setCustomTaskMode(false); setDefaultsReady(true)
     } catch { if (current()) setDefaultsFailed(true) }
-    finally { if (current()) setDefaultsRefreshing(false) }
+    finally { setDefaultsRefreshing(false) }
   }
 
   // Creation only creates: one-time Missions and schedules start through their explicit Play.
@@ -295,7 +295,7 @@ export function MissionEditor(props: {
         await schedule.save(payload, requestId)
       } catch (error) {
         if (current()) setError(t("missions.control.mutation.error"))
-      } finally { if (current()) setPending(false) }
+      } finally { setPending(false) }
       return
     }
     if (kind === "edit") {
@@ -308,7 +308,7 @@ export function MissionEditor(props: {
       setPending(true); setError("")
       try { await schedule.saveJournalEdit({ objective: objective().trim(), notes: notes(), requestID: requestId }) }
       catch (error) { if (current()) setError(t(missionMutationErrorKey(error))) }
-      finally { if (current()) setPending(false) }
+      finally { setPending(false) }
       return
     }
     // A hold learned after this editor opened still cannot become a new logical
@@ -402,7 +402,7 @@ export function MissionEditor(props: {
         // An unknown create stays visible through its adopted hold, never as a retryable error.
         if (definitive) setError(t(missionMutationErrorKey(error)))
       }
-    } finally { if (current()) setPending(false) }
+    } finally { setPending(false) }
   }
 
   const inlineError = (field: FieldError["field"], id: string) =>

@@ -55,6 +55,8 @@ import {
   beginSessionSearch,
   clearSessionSearch,
   isLatestSessionSearch,
+  isSessionSearchLoading,
+  getSessionSearchResultIds,
   setSessionSearchResults,
   setSessionListError,
   setSessionExpanded,
@@ -910,7 +912,7 @@ async function fetchSessions(instanceId: string, options?: {
         && !options?.signal?.aborted && !options?.strictStatus) {
         return fetchSessions(instanceId, options)
       }
-      if (!attachment.aborted) setLoading((prev) => {
+      setLoading((prev) => {
         const next = { ...prev }
         next.fetchingSessions.set(instanceId, false)
         return next
@@ -1099,6 +1101,10 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
       clearSessionSearch(instanceId)
     }
     throw error
+  } finally {
+    if (isLatestSessionSearch(instanceId, trimmedQuery, requestId) && isSessionSearchLoading(instanceId)) {
+      setSessionSearchResults(instanceId, trimmedQuery, getSessionSearchResultIds(instanceId), requestId)
+    }
   }
 }
 

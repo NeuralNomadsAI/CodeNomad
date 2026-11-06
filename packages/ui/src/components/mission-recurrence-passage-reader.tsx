@@ -60,7 +60,7 @@ export function MissionRecurrencePassageReader(props: { instanceId: string; scop
     const admitted = () => !signal.aborted && current && !controller.signal.aborted && binding() === identity
       && instances().get(instanceId)?.folder === directory && instances().get(instanceId)?.metadata?.project?.id === projectID
       && instances().get(instanceId)?.client === client && getOpenCodeInstanceGeneration(instanceId) === generation
-    if (!admitted()) return
+    if (!admitted()) { setLoading(false); return }
     void serverApi.fetchMissionRecurrencePassagePage(instanceId, scheduleID, receipt.passageID,
       { section: selectedSection, page: selectedPage, ...(revision === undefined ? {} : { revision }) }, AbortSignal.any([signal, controller.signal])).then(result => {
       if (!admitted()) return
@@ -71,8 +71,8 @@ export function MissionRecurrencePassageReader(props: { instanceId: string; scop
         || result.sourceText.length > 9001 || result.markdownText !== null && result.markdownText.length > 9116) throw new Error("Foreign archived page")
       if (cache.size >= 64 && !cache.has(key)) cache.delete(cache.keys().next().value!)
       cache.set(key, { value: result, client, generation, signal }); setValue(result)
-    }).catch(() => { if (admitted()) setError(true) }).finally(() => { if (admitted()) setLoading(false) })
-    onCleanup(() => { current = false; controller.abort() })
+    }).catch(() => { if (admitted()) setError(true) }).finally(() => { if (current) setLoading(false) })
+    onCleanup(() => { current = false; controller.abort(); setLoading(false) })
   })
   const selected = () => value()?.sections.find(item => item.index === value()?.section)
   return <div class="mission-recurrence-result" data-passage-id={props.receipt.passageID}>

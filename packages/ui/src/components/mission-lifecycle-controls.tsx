@@ -73,7 +73,7 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
     const scope = identity(), startedEpoch = epoch
     setRefreshing(true)
     try { await missionStore.refresh(props.instanceId) }
-    finally { if (operation.current() && alive && scope === identity() && startedEpoch === epoch) setRefreshing(false) }
+    finally { if (alive && scope === identity() && startedEpoch === epoch) setRefreshing(false) }
   }
   async function act(action: "start" | "pause" | "stop", replay = false, graceful = false) {
     if (props.disabled || busy() || !active() || (!replay && retry() && !pending()) || (replay && !pending() && !retry())) return
@@ -113,7 +113,7 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
       if (matched && current()) {
         setRefreshing(true)
         try { await missionStore.refresh(instanceId) }
-        finally { if (owned()) setRefreshing(false) }
+        finally { if (alive && identity() === scope && epoch === startedEpoch) setRefreshing(false) }
       }
     }
   }

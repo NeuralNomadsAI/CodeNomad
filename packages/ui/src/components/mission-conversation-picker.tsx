@@ -26,6 +26,7 @@ export function MissionConversationPicker(props: {
     if (!open() || !props.active() || props.disabled) return
     const controller = new AbortController()
     const operation = captureBackendOperation(props.instanceId, controller.signal)
+    if (!operation.current()) return
     let alive = true
     const current = () => operation.current() && alive && props.active() && identity() === key
     setLoading(true); setFailed(false)
@@ -41,9 +42,9 @@ export function MissionConversationPicker(props: {
         setRows(previous => page ? [...previous, ...choices.filter(row => !previous.some(item => item.id === row.id))] : choices)
         setLabels(previous => ({ ...previous, ...Object.fromEntries(choices.map(row => [row.id, row.title || t("sessionPicker.session.untitled")])) }))
         setNext(result.cursor?.next ?? undefined)
-      }).catch(() => { if (current()) setFailed(true) }).finally(() => { if (current()) setLoading(false) })
+      }).catch(() => { if (current()) setFailed(true) }).finally(() => { if (alive) setLoading(false) })
     }, search ? 200 : 0)
-    onCleanup(() => { alive = false; clearTimeout(timer); controller.abort() })
+    onCleanup(() => { alive = false; clearTimeout(timer); controller.abort(); setLoading(false) })
   })
   return <div class="mission-conversation-picker">
     <span>{t("missions.recurrence.followedConversations")}</span>

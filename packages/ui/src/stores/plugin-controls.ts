@@ -217,14 +217,19 @@ export class PluginControlsCache {
     if (existing) {
       const attachment = this.signalForInstance?.(instanceId)
       if (existing.attachment !== attachment) {
-        existing.inFlightController?.abort()
+        const controller = existing.inFlightController
         existing.inFlight = undefined
         existing.inFlightController = undefined
+        existing.loading = false
+        existing.refreshing = false
         existing.attachment = attachment
         existing.generation++
         existing.stale = true
         existing.trailing = false
         existing.mutationTail = Promise.resolve()
+        controller?.abort()
+        // Releasing old ownership must not itself admit a replacement read.
+        this.publishAll([existing], false)
       }
       if (!existing.canonicalLocation) existing.location = { ...location }
       return existing
@@ -302,7 +307,7 @@ export class PluginControlsCache {
     this.publishAll([record])
   }
 
-  private publishAll(records: readonly CacheRecord[]): void {
+  private publishAll(records: readonly CacheRecord[], refresh = true): void {
     const active = records.filter((record) => this.isActive(record))
     if (active.length === 0) return
     const states = new Map<CacheRecord, PluginControlsState>()
@@ -325,6 +330,7 @@ export class PluginControlsCache {
       }
       return next
     })
+    if (!refresh) return
     for (const record of active) {
       if (record.demands.size > 0 && record.stale) void this.loadRecord(record, true)
     }
