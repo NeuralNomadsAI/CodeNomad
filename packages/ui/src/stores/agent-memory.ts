@@ -25,6 +25,7 @@ export function createAgentMemoryReview(context: () => MemoryContext | undefined
   const [draft, setDraft] = createSignal<Draft>()
   const [entries, setEntries] = createSignal<MemoryUIEntry[]>([])
   const [hasSnapshot, setHasSnapshot] = createSignal(false)
+  const [cleanupWritable, setCleanupWritable] = createSignal(false)
   const [baseline, setBaseline] = createSignal(0)
   const [loading, setLoading] = createSignal(false), [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal<AgentMemoryError>()
@@ -54,6 +55,7 @@ export function createAgentMemoryReview(context: () => MemoryContext | undefined
         baselines.set(result.scopeKey, seen)
       }
       setBaseline(baselines.get(result.scopeKey)!); setEntries(result.entries); setHasSnapshot(true)
+      setCleanupWritable(result.cleanupWritable === true)
       setError(previous => previous?.code === "conflict" ? previous : undefined)
       const opened = drafts.get(key)
       if (opened) {
@@ -87,7 +89,7 @@ export function createAgentMemoryReview(context: () => MemoryContext | undefined
   createEffect(() => {
     owner(); enabled()
     generation++; consent.abort(); consent = new AbortController(); pendingRead = undefined; trailing = false
-    setEntries([]); setHasSnapshot(false); setError(undefined); setLoading(false); setBusy(false); setDraft(drafts.get(owner()))
+    setEntries([]); setHasSnapshot(false); setCleanupWritable(false); setError(undefined); setLoading(false); setBusy(false); setDraft(drafts.get(owner()))
     untrack(() => { void load() })
   })
   const open = async (entry: MemoryUIEntry) => {
@@ -129,7 +131,7 @@ export function createAgentMemoryReview(context: () => MemoryContext | undefined
     const stop = serverEvents.on("memory.changed", refresh), reconnect = serverEvents.onOpen(refresh)
     onCleanup(() => { disposed = true; generation++; consent.abort(); stop(); reconnect() })
   })
-  return { scope, changeScope, available, entries, hasSnapshot, baseline, draft, loading, busy, error, load, open, discard,
+  return { scope, changeScope, available, entries, hasSnapshot, cleanupWritable, baseline, draft, loading, busy, error, load, open, discard,
     consentSignal: () => consent.signal,
     dirty: () => dirty(draft()), valid: () => !!draft() && memoryTitleValid(draft()!.title) && memoryCharacters(draft()!.text) <= 2000,
     edit: (patch: Partial<Pick<Draft, "title" | "text" | "type">>) => { const current = draft(); if (current) remember({ ...current, ...patch }) },

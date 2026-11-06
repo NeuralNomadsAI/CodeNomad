@@ -1,4 +1,8 @@
 export const agentMemoryMessages = {
+  "settings.memory.tidy": "Tidy up",
+  "settings.memory.tidyInfo": "Starts a new session in this project to verify and merge the selected memory scope. Changes have local Git history.",
+  "settings.memory.tidyConfirm": "Review and tidy “{scope}” in a new project session?",
+  "settings.memory.tidyFailed": "Cleanup could not be confirmed. Check the project's sessions before trying again.",
   "settings.memory.title": "Memory",
   "settings.memory.info": "The agent keeps useful facts and preferences between sessions, with local Git history.",
   "settings.memory.scope": "Memory scope",

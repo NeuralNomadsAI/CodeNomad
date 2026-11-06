@@ -1,5 +1,5 @@
 import type { LocationRef } from "@opencode/client"
-import { createMemo, createSignal, createUniqueId, For, onCleanup, onMount, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, createUniqueId, For, onCleanup, onMount, Show } from "solid-js"
 import { agentMemoryApi, AgentMemoryError } from "../../lib/agent-memory-api"
 import { useI18n } from "../../lib/i18n"
 import { serverEvents } from "../../lib/server-events"
@@ -7,6 +7,8 @@ import { createAgentMemoryReview } from "../../stores/agent-memory"
 import { AgentMemoryEditor } from "./agent-memory-editor"
 import { SettingsInfoTip } from "./settings-info-tip"
 import { SettingsSwitch } from "./settings-switch"
+import { showConfirmDialog } from "../../stores/alerts"
+import { requestMemoryCleanup } from "../../lib/native/memory-cleanup"
 
 export function AgentMemorySettingsCard(props: { instanceId?: string; location?: LocationRef }) {
   const { t } = useI18n(), id = createUniqueId()
@@ -14,6 +16,28 @@ export function AgentMemorySettingsCard(props: { instanceId?: string; location?:
   const [settingsError, setSettingsError] = createSignal(false)
   const context = createMemo(() => props.instanceId ? { workspaceId: props.instanceId, ...(props.location?.directory ? { directory: props.location.directory } : {}) } : undefined)
   const review = createAgentMemoryReview(context, () => enabled() === true)
+  const [tidying, setTidying] = createSignal(false), [tidyError, setTidyError] = createSignal(false)
+  const [admitted, setAdmitted] = createSignal(false)
+  let cleanupConsent = new AbortController()
+  const cleanupOwner = createMemo(() => JSON.stringify([context(), review.scope(), enabled()]))
+  createEffect(() => { cleanupOwner(); cleanupConsent.abort(); cleanupConsent = new AbortController(); setTidyError(false); setAdmitted(false) })
+  onCleanup(() => cleanupConsent.abort())
+  const canTidy = () => enabled() === true && !!context()?.directory && review.available() && review.hasSnapshot() &&
+    !review.loading() && !review.busy() && !review.error() && !settingsError() && !changing() && !tidying() && !admitted() && review.cleanupWritable() && review.entries().some(entry => !entry.flagged)
+  const tidy = async () => {
+    if (!canTidy()) return
+    const owner = cleanupOwner(), project = context()!, scope = review.scope()
+    setTidying(true)
+    try {
+      if (!(await review.discard()) || owner !== cleanupOwner() || disposed) return
+      if (!(await showConfirmDialog(t("settings.memory.tidyConfirm", { scope: t(`settings.memory.${scope}`) }), {
+        confirmLabel: t("settings.memory.tidy"), cancelLabel: t("settings.memory.cancel"),
+      }, cleanupConsent.signal)) || owner !== cleanupOwner() || disposed) return
+      setAdmitted(true)
+      await requestMemoryCleanup({ id: crypto.randomUUID(), scope, workspaceId: project.workspaceId, directory: project.directory! })
+    } catch { if (!disposed && owner === cleanupOwner()) setTidyError(true) }
+    finally { if (!disposed) setTidying(false) }
+  }
   let sequence = 0, disposed = false
   const loadSettings = async () => {
     const request = ++sequence
@@ -57,8 +81,9 @@ export function AgentMemorySettingsCard(props: { instanceId?: string; location?:
           void review.changeScope(value)
         }}><option value="global">{t("settings.memory.global")}</option><option value="project" disabled={!context()}>{t("settings.memory.project")}</option></select>
         <Show when={review.available() && review.hasSnapshot()}><span class="agent-memory-counter">{t("settings.memory.count", { count: review.entries().length, limit: review.scope() === "global" ? 60 : 200 })}</span></Show>
-        {/* The maintenance action is supplied by the session-maintenance slice. */}
+        <button type="button" class="window-action" disabled={!canTidy()} onClick={() => void tidy()}>{t("settings.memory.tidy")}</button><SettingsInfoTip text={t("settings.memory.tidyInfo")} />
       </div>
+      <Show when={tidyError()}><p role="alert">{t("settings.memory.tidyFailed")}</p></Show>
       <Show when={!review.available()}><p role="status">{t("settings.memory.noProject")}</p></Show>
       <Show when={review.loading()}><p role="status">{t("settings.memory.loading")}</p></Show>
       <Show when={review.error()}>{error => <div role="alert" class="agent-memory-error">

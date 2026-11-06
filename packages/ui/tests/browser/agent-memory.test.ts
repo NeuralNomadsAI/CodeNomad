@@ -34,7 +34,7 @@ const text = (page: Page) => page.getByRole("textbox", { name: en["settings.memo
 const scope = (page: Page) => page.getByRole("combobox", { name: en["settings.memory.scope"] })
 const save = (page: Page) => page.getByRole("button", { name: en["settings.memory.save"], exact: true })
 async function setup(page: Page, initial = true) {
-  let enabled = initial, writeError: string | undefined, listError: string | undefined, settingFailure = false, frontier = observedAt
+  let enabled = initial, writeError: string | undefined, listError: string | undefined, settingFailure = false, frontier = observedAt, cleanupWritable = true
   let hold: ((route: Route) => Promise<void>) | undefined
   let inventory = [
     { id: "project-a", path: "C:/project-a", status: "ready" },
@@ -60,7 +60,7 @@ async function setup(page: Page, initial = true) {
     const key = operation.scope === "global" ? "global" : body.context.workspaceId
     if (operation.action === "list") {
       if (hold) { const handler = hold; hold = undefined; return handler(route) }
-      return listError ? route.fulfill({ status: 503, json: { code: listError } }) : route.fulfill({ json: { entries: data[key] ?? [], scopeKey: key, observedAt: frontier } })
+      return listError ? route.fulfill({ status: 503, json: { code: listError } }) : route.fulfill({ json: { entries: data[key] ?? [], scopeKey: key, observedAt: frontier, cleanupWritable } })
     }
     if (writeError) return route.fulfill({ status: 409, json: { code: writeError, titles: writeError === "full" ? ["Stored title"] : undefined } })
     const current = data[key].find(value => value.id === operation.id)!
@@ -72,13 +72,101 @@ async function setup(page: Page, initial = true) {
   await events.route(page)
   return { data, requests, errors, writeError: (value?: string) => { writeError = value }, listError: (value?: string) => { listError = value },
     settingFailure: (value: boolean) => { settingFailure = value }, frontier: (value: string) => { frontier = value },
-    hold: (value: (route: Route) => Promise<void>) => { hold = value }, inventory: (value: typeof inventory) => { inventory = value } }
+    hold: (value: (route: Route) => Promise<void>) => { hold = value }, inventory: (value: typeof inventory) => { inventory = value }, writable: (value: boolean) => { cleanupWritable = value } }
 }
 async function open(page: Page) {
   await page.goto(url)
   await page.getByRole("button", { name: /Project A/ }).waitFor()
   assert.equal(await scope(page).inputValue(), "project")
 }
+const tidy = (page: Page) => card(page).getByRole("button", { name: en["settings.memory.tidy"], exact: true })
+test("cleanup creates, activates and prompts a new session in the captured project even for global memory", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  try {
+    await open(page)
+    await page.evaluate(() => (window as any).fixture.enableCleanup())
+    await scope(page).selectOption("global")
+    await page.getByRole("button", { name: /Global memory/ }).waitFor()
+    await tidy(page).click()
+    await page.getByRole("dialog").waitFor()
+    assert.equal((await page.evaluate(() => (window as any).cleanupCalls)).length, 0)
+    await page.getByRole("dialog").getByRole("button", { name: en["settings.memory.tidy"], exact: true }).click()
+    await page.waitForFunction(() => (window as any).cleanupCalls.some((value: any) => value.action === "prompt"))
+    const calls = await page.evaluate(() => (window as any).cleanupCalls)
+    assert.deepEqual(calls.map((value: any) => value.action), ["create", "prompt"])
+    assert.deepEqual(calls[0].input.location, { directory: "/repo-a" })
+    assert.deepEqual(await page.evaluate(() => (window as any).cleanupState()), { tab: "instance:project-a", session: "cleanup-new" })
+    assert.equal(calls[1].input.sessionID, "cleanup-new")
+    const prompt = JSON.stringify(calls[1].input)
+    for (const expected of ["global scope", "codenomad_memory", "untrusted data", "reference entries", "unverifiable"]) assert.ok(prompt.includes(expected), expected)
+    assert.equal(await tidy(page).isDisabled(), true)
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+test("cleanup revokes confirmation when Preferences changes project and never launches a substitute", async () => {
+  const page = await browser.newPage(); await setup(page)
+  try {
+    await open(page)
+    await page.evaluate(() => (window as any).fixture.enableCleanup())
+    await scope(page).selectOption("global")
+    await page.getByRole("button", { name: /Global memory/ }).waitFor()
+    await tidy(page).click()
+    await page.getByRole("dialog").waitFor()
+    await page.evaluate(() => (window as any).fixture.context())
+    await page.getByRole("dialog").waitFor({ state: "hidden" })
+    assert.equal((await page.evaluate(() => (window as any).cleanupCalls)).length, 0)
+    assert.equal(await tidy(page).isDisabled(), true)
+  } finally { await page.close() }
+})
+test("empty, unreadable, non-writable memory and missing project disable cleanup", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  try {
+    await open(page)
+    f.writable(false)
+    await page.evaluate(() => (window as any).fixture.reconnect())
+    await page.waitForFunction(() => (document.querySelector("#agent-memory .window-action") as HTMLButtonElement)?.disabled)
+    assert.equal(await tidy(page).isDisabled(), true)
+    f.writable(true); f.data["project-a"] = []
+    await page.evaluate(() => (window as any).fixture.reconnect())
+    await card(page).getByText(en["settings.memory.empty"], { exact: true }).waitFor()
+    assert.equal(await tidy(page).isDisabled(), true)
+    f.listError("malformed")
+    await page.evaluate(() => (window as any).fixture.reconnect())
+    await card(page).getByText(en["settings.memory.error.malformed"]).waitFor()
+    assert.equal(await tidy(page).isDisabled(), true)
+    await page.evaluate(() => (window as any).fixture.context())
+    assert.equal(await tidy(page).isDisabled(), true)
+  } finally { await page.close() }
+})
+test("uncertain creation is not recreated by repeated cleanup clicks", async () => {
+  const page = await browser.newPage(); await setup(page)
+  try {
+    await open(page)
+    await page.evaluate(() => (window as any).fixture.enableCleanup(true))
+    await tidy(page).click()
+    await page.getByRole("dialog").getByRole("button", { name: en["settings.memory.tidy"], exact: true }).click()
+    await card(page).getByText(en["settings.memory.tidyFailed"]).waitFor()
+    assert.equal(await tidy(page).isDisabled(), true)
+    assert.deepEqual((await page.evaluate(() => (window as any).cleanupCalls)).map((value: any) => value.action), ["create"])
+  } finally { await page.close() }
+})
+test("duplicate fixed intents retain both successful and uncertain send outcomes without replay", async () => {
+  for (const fail of [false, "prompt"] as const) {
+    const page = await browser.newPage(); await setup(page)
+    try {
+      await open(page)
+      await page.evaluate(fail => (window as any).fixture.enableCleanup(fail), fail)
+      const outcomes = await page.evaluate(async () => {
+        const request = { id: "same-intent", scope: "project", workspaceId: "project-a", directory: "/repo-a" }
+        const results = await Promise.allSettled([(window as any).runCleanup(request), (window as any).runCleanup(request)])
+        await (window as any).runCleanup(request).catch(() => {})
+        return results.map(value => value.status)
+      })
+      assert.deepEqual(outcomes, fail ? ["rejected", "rejected"] : ["fulfilled", "fulfilled"])
+      assert.deepEqual((await page.evaluate(() => (window as any).cleanupCalls)).map((value: any) => value.action), ["create", "prompt"])
+    } finally { await page.close() }
+  }
+})
 test("disabled memory shows only the activation card and makes no entry reads", async () => {
   const page = await browser.newPage(), f = await setup(page, false)
   try {

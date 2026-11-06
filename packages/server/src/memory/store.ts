@@ -91,6 +91,31 @@ export class MemoryStore {
     return (await this.listStored(namespace)).map(reviewMemoryEntry)
   }
 
+  /** A cleanup capability snapshot: probe actual host ACLs without modifying entries or Git history. */
+  async cleanupWritable(namespace: MemoryNamespace): Promise<boolean> {
+    try {
+      return await this.locked(async () => {
+        if (!await regularDirectory(this.directory)) return false
+        if ((await this.git.run(["symbolic-ref", "HEAD"])).trim() !== "refs/heads/main") return false
+        const scope = path.join(this.directory, this.scopePath(namespace))
+        for (const directory of [scope, this.directory, path.join(this.directory, ".git"),
+          path.join(this.directory, ".git", "objects"), path.join(this.directory, ".git", "refs"), path.join(this.directory, ".git", "refs", "heads")]) {
+          if (!await regularDirectory(directory)) return false
+          const probe = path.join(directory, `.cleanup.md.${randomUUID()}.tmp`)
+          const handle = await open(probe, "wx", 0o600)
+          try { await handle.close() } finally { await rm(probe) }
+        }
+        // Windows read-only file attributes can prevent atomic replacement even in a writable folder.
+        for (const file of [path.join(this.directory, ".git", "index"), path.join(this.directory, ".git", "refs", "heads", "main"),
+          ...(await this.readScope(namespace)).map(entry => path.join(scope, `${entry.id}.md`))]) {
+          const handle = await open(file, "r+")
+          await handle.close()
+        }
+        return true
+      })
+    } catch { return false }
+  }
+
   private async listStored(namespace: MemoryNamespace): Promise<MemoryEntry[]> {
     this.scopePath(namespace)
     // The config directory and repository stay absent for a pristine empty read.

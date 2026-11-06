@@ -1,4 +1,8 @@
 export const agentMemoryMessages = {
+  "settings.memory.tidy": "Ranger",
+  "settings.memory.tidyInfo": "Ouvre une nouvelle session dans ce projet pour vérifier et fusionner la portée sélectionnée. Les changements ont un historique Git local.",
+  "settings.memory.tidyConfirm": "Vérifier et ranger « {scope} » dans une nouvelle session du projet ?",
+  "settings.memory.tidyFailed": "Le rangement n’a pas pu être confirmé. Vérifiez les sessions du projet avant de réessayer.",
   "settings.memory.title": "Mémoire",
   "settings.memory.info": "L’agent conserve les faits et préférences utiles entre les sessions, avec un historique Git local.",
   "settings.memory.scope": "Portée de la mémoire",

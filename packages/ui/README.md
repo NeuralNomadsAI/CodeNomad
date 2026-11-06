@@ -49,6 +49,16 @@ explanation behind an info tip. Explicit revision conflicts retain the draft and
 require a confirmed reload. Browser coverage lives in
 `tests/browser/agent-memory.test.ts`.
 
+The scope bar's **Tidy up** captures the resolved Preferences project and scope,
+confirms, and launches a new session through `lib/native/memory-cleanup.ts`.
+Native hosts validate the fixed intent and forward it to the exact local opener;
+embedded browser Settings use the same main-renderer action. Session stores stay
+in `stores/agent-memory-cleanup.ts`, outside the Preferences renderer. Creation
+uses an explicit captured directory, then activates the project tab/session and
+sends one fixed verification/merge prompt. The displayed `cleanupWritable`
+snapshot and a fresh pre-creation read gate admission. Duplicate request IDs
+retain even uncertain outcomes; inspect sessions before another manual attempt.
+
 ## Debug Logging
 
 The UI routes logging through a lightweight wrapper around [`debug`](https://github.com/debug-js/debug). Its namespaces can be toggled at runtime:

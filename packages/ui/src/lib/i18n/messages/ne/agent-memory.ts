@@ -1,4 +1,8 @@
 export const agentMemoryMessages = {
+  "settings.memory.tidy": "मिलाउनुहोस्",
+  "settings.memory.tidyInfo": "चयन गरिएको स्मृति क्षेत्र जाँच्न र गाभ्न यस परियोजनामा नयाँ सत्र खोल्छ। परिवर्तनहरूको स्थानीय Git इतिहास रहन्छ।",
+  "settings.memory.tidyConfirm": "परियोजनाको नयाँ सत्रमा «{scope}» जाँचेर मिलाउने हो?",
+  "settings.memory.tidyFailed": "मिलाउने कार्य पुष्टि हुन सकेन। पुनः प्रयास गर्नुअघि परियोजनाका सत्रहरू जाँच्नुहोस्।",
   "settings.memory.title": "स्मृति",
   "settings.memory.info": "एजेन्टले स्थानीय Git इतिहाससहित उपयोगी तथ्य र प्राथमिकताहरू सत्रहरूबीच सुरक्षित राख्छ।",
   "settings.memory.scope": "स्मृतिको दायरा",

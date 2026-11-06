@@ -1,4 +1,8 @@
 export const agentMemoryMessages = {
+  "settings.memory.tidy": "Aufräumen",
+  "settings.memory.tidyInfo": "Startet eine neue Sitzung in diesem Projekt, um den gewählten Speicherbereich zu prüfen und Einträge zusammenzuführen. Änderungen haben einen lokalen Git-Verlauf.",
+  "settings.memory.tidyConfirm": "„{scope}“ in einer neuen Projektsitzung prüfen und aufräumen?",
+  "settings.memory.tidyFailed": "Das Aufräumen konnte nicht bestätigt werden. Prüfen Sie die Projektsitzungen vor einem neuen Versuch.",
   "settings.memory.title": "Gedächtnis",
   "settings.memory.info": "Der Agent behält nützliche Fakten und Vorlieben sitzungsübergreifend mit lokalem Git-Verlauf.",
   "settings.memory.scope": "Geltungsbereich",

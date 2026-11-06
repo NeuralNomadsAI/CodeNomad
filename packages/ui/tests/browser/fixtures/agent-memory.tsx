@@ -19,6 +19,34 @@ function Fixture() {
   const [request, setRequest] = createSignal<NativePreferencesRequest>({ section: "general", instanceId: "project-a", workspacePath: "C:/project-a", location: { directory: "/repo-a" } })
   const project = createPreferencesProjectContext(request, () => true, (next, current) => { if (current()) setRequest(previous => ({ ...previous, ...next })) })
   ;(window as any).fixture = {
+    enableCleanup: async (fail: boolean | "prompt" = false) => {
+      const [{ addInstance }, { sdkManager }, { setSessions, setActiveParentSession, activeSessionId }, { messageStoreBus }, { activeAppTabId }, { runMemoryCleanup }] = await Promise.all([
+        import("../../../src/stores/instances"), import("../../../src/lib/sdk-manager"),
+        import("../../../src/stores/session-state"), import("../../../src/stores/message-v2/bus"),
+        import("../../../src/stores/app-tabs"), import("../../../src/stores/agent-memory-cleanup"),
+      ])
+      const calls: unknown[] = []
+      const session = (id: string, directory: string) => ({ id, title: id, parentID: null, agent: "", model: null, projectID: "project", location: { directory }, time: { created: 1, updated: 1 }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } })
+      const client = {
+        model: { default: async () => ({ data: null }) },
+        session: {
+          create: async (input: any) => { calls.push({ action: "create", input }); if (fail === true) throw new Error("Uncertain creation"); return session("cleanup-new", input.location.directory) },
+          prompt: async (input: any) => { calls.push({ action: "prompt", input }); if (fail === "prompt") throw new Error("Uncertain send") },
+          switchAgent: async () => {}, switchModel: async () => {},
+          instructions: { entry: { put: async () => {}, remove: async () => {} } },
+          list: async () => ({ data: [], cursor: {} }), get: async () => session("existing", "/another-worktree"),
+          active: async () => ({}), inbox: { list: async () => [] },
+        }, message: { list: async () => ({ data: [{ id: "existing-message", type: "user" }], cursor: {} }) },
+      } as any
+      ;(sdkManager as any).clients.set("project-a:/workspaces/project-a/instance", client)
+      addInstance({ id: "project-a", folder: "C:/project-a", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+      setSessions(previous => new Map(previous).set("project-a", new Map([["existing", { ...session("existing", "/another-worktree"), instanceId: "project-a", parentId: null, agent: "", model: { providerId: "", modelId: "" }, status: "idle" } as any]])))
+      setActiveParentSession("project-a", "existing")
+      messageStoreBus.getOrCreate("project-a")
+      ;(window as any).cleanupCalls = calls
+      ;(window as any).cleanupState = () => ({ tab: activeAppTabId(), session: activeSessionId().get("project-a") })
+      ;(window as any).runCleanup = runMemoryCleanup
+    },
     context: (next?: Partial<NativePreferencesRequest>) => setRequest({ section: "general", ...next }),
     mount: setMounted,
     leave: async () => { if (await confirmSettingsDiscard()) setMounted(false) },

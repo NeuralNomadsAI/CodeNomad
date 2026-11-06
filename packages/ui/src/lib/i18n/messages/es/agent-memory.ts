@@ -1,4 +1,8 @@
 export const agentMemoryMessages = {
+  "settings.memory.tidy": "Ordenar",
+  "settings.memory.tidyInfo": "Abre una sesión nueva en este proyecto para verificar y combinar el ámbito de memoria seleccionado. Los cambios tienen un historial Git local.",
+  "settings.memory.tidyConfirm": "¿Verificar y ordenar «{scope}» en una sesión nueva del proyecto?",
+  "settings.memory.tidyFailed": "No se pudo confirmar la organización. Comprueba las sesiones del proyecto antes de volver a intentarlo.",
   "settings.memory.title": "Memoria",
   "settings.memory.info": "El agente conserva hechos y preferencias útiles entre sesiones, con historial Git local.",
   "settings.memory.scope": "Ámbito de la memoria",

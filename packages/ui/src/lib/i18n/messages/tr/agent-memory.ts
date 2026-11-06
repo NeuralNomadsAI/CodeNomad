@@ -1,4 +1,8 @@
 export const agentMemoryMessages = {
+  "settings.memory.tidy": "Düzenle",
+  "settings.memory.tidyInfo": "Seçilen bellek kapsamını doğrulamak ve birleştirmek için bu projede yeni bir oturum açar. Değişikliklerin yerel Git geçmişi tutulur.",
+  "settings.memory.tidyConfirm": "«{scope}» yeni bir proje oturumunda doğrulansın ve düzenlensin mi?",
+  "settings.memory.tidyFailed": "Düzenleme doğrulanamadı. Yeniden denemeden önce projenin oturumlarını kontrol edin.",
   "settings.memory.title": "Bellek",
   "settings.memory.info": "Ajan, yararlı bilgileri ve tercihleri yerel Git geçmişiyle oturumlar arasında saklar.",
   "settings.memory.scope": "Bellek kapsamı",

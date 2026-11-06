@@ -129,7 +129,8 @@ export class MemoryService {
       const entries = agent ? memoryForAgent(all) : all
       if (operation.action === "list") return { entries: agent
         ? entries.map(entry => { const { text: _text, ...header } = versioned(entry); return header })
-        : entries.map(reviewed), ...(!agent ? { scopeKey: namespace.scope === "global" ? "global" : namespace.projectId, observedAt } : {}) }
+        : entries.map(reviewed), ...(!agent ? { scopeKey: namespace.scope === "global" ? "global" : namespace.projectId, observedAt,
+          cleanupWritable: this.getSettings().enabled && entries.some(entry => !reviewMemoryEntry(entry).flagged) && await this.store.cleanupWritable(namespace) } : {}) }
       const entry = entries.find(entry => entry.id === operation.query) ?? entries.find(entry => entry.title === operation.query)
       return { entry: entry ? agent ? versioned(entry) : reviewed(entry) : null }
     }

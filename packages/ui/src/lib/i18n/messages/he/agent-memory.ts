@@ -1,4 +1,8 @@
 export const agentMemoryMessages = {
+  "settings.memory.tidy": "סידור",
+  "settings.memory.tidyInfo": "פותח שיחה חדשה בפרויקט זה כדי לבדוק ולמזג את תחום הזיכרון שנבחר. השינויים נשמרים בהיסטוריית Git מקומית.",
+  "settings.memory.tidyConfirm": "לבדוק ולסדר את ״{scope}״ בשיחה חדשה בפרויקט?",
+  "settings.memory.tidyFailed": "לא ניתן לאשר את הסידור. יש לבדוק את שיחות הפרויקט לפני ניסיון נוסף.",
   "settings.memory.title": "זיכרון",
   "settings.memory.info": "הסוכן שומר עובדות והעדפות שימושיות בין הפעלות, עם היסטוריית Git מקומית.",
   "settings.memory.scope": "תחום הזיכרון",

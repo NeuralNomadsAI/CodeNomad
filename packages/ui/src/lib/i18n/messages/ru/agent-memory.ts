@@ -1,4 +1,8 @@
 export const agentMemoryMessages = {
+  "settings.memory.tidy": "Упорядочить",
+  "settings.memory.tidyInfo": "Открывает новый сеанс в этом проекте для проверки и объединения записей выбранной области памяти. Изменения сохраняются в локальной истории Git.",
+  "settings.memory.tidyConfirm": "Проверить и упорядочить «{scope}» в новом сеансе проекта?",
+  "settings.memory.tidyFailed": "Не удалось подтвердить упорядочивание. Проверьте сеансы проекта перед повторной попыткой.",
   "settings.memory.title": "Память",
   "settings.memory.info": "Агент сохраняет полезные факты и предпочтения между сеансами с локальной историей Git.",
   "settings.memory.scope": "Область памяти",

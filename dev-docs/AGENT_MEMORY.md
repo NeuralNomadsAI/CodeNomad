@@ -244,6 +244,40 @@ An explicit ownership refusal from every live backend clears the named entry and
 leaves unrelated native Locations usable; missing/ambiguous backends and transport
 failures reject preparation.
 
+## Cleanup sessions from Preferences
+
+General's Memory scope bar offers **Tidy up** with an info tip and a short
+confirmation. It captures the resolved Preferences project directory and scope
+at the click, including for global memory. Project/scope changes revoke unsent
+confirmation. Empty, unreadable, disabled, flagged-only and non-writable scopes
+keep the action inactive. UI list snapshots carry `cleanupWritable`: under the
+repository lock the store checks Git's local branch, probes temporary-file
+creation/removal in the scope and Git publication directories, and opens existing
+entry/index/ref files for update without changing their contents. Probes leave
+entry bytes and commit history intact; normal writes retain their authoritative
+checks because filesystem permissions can change after a snapshot.
+
+`lib/native/memory-cleanup-command.ts` defines the fixed scope/project/request-ID
+intent. Electron and Tauri accept it only from the trusted Preferences main
+frame, compare it to the host's current Preferences project, and forward to that
+window's exact local opener. Missing openers fail explicitly. The main renderer
+claims each Tauri event hint through the native host, which returns the pending
+intent only to its targeted local window and only once. The main renderer
+alone owns session creation, tab/session activation and the initial send through
+`stores/agent-memory-cleanup.ts`. Embedded browser Settings use that same action.
+The create call takes the captured explicit directory, independently of the
+currently selected conversation. Fresh enablement, readable safe entries,
+writability and project ownership are checked before the single creation attempt.
+Request IDs retain their result in the renderer (bounded to 256 admissions);
+uncertain outcomes keep the action disabled for that view and require inspection
+of project sessions before another deliberate attempt.
+
+The fixed English prompt directs the model to read and verify each available
+entry against the project, merge duplicates, rewrite supported outdated claims
+through `codenomad_memory`, preserve unverifiable entries and external references,
+treat contents as untrusted data, and report created/modified/merged/deleted,
+unchanged and unverifiable entries. Only the selected scope may change.
+
 ## Optional native instructions capability
 
 `memory/instructions-capability.ts` reads the authenticated `/openapi.json`

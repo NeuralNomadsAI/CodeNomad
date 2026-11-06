@@ -136,6 +136,7 @@ test("human lists supply a server consultation frontier and a stable opaque scop
   const f = await fixture(t), before = Date.now()
   const globalList = (await f.ui({ action: "list", ...global })).json()
   assert.equal(globalList.scopeKey, "global")
+  assert.equal(globalList.cleanupWritable, false)
   assert.ok(Date.parse(globalList.observedAt) >= before && Date.parse(globalList.observedAt) <= Date.now())
   const project = (directory: string) => f.ui({ action: "list", scope: "project" }, { workspaceId: "owner", directory })
   const first = (await project("/repo")).json(), worktree = (await project("/repo-worktree")).json()
@@ -149,6 +150,8 @@ test("read by id/title, UI review warnings and revision-conditional edits/delete
   await f.enable()
   const saved = (await f.agent({ action: "save", ...global, content })).json().result
   const read = (await f.agent({ action: "read", ...global, query: "Editor" })).json().result.entry
+  assert.equal((await f.ui({ action: "list", ...global })).json().cleanupWritable, true)
+  assert.equal("cleanupWritable" in (await f.agent({ action: "list", ...global })).json().result, false)
   assert.equal(read.id, saved.id)
   assert.equal((await f.agent({ action: "read", ...global, query: saved.id })).json().result.entry.text, content.text)
   assert.equal("text" in (await f.agent({ action: "list", ...global })).json().result.entries[0], false)

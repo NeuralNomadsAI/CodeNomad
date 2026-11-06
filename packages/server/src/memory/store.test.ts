@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { once } from "node:events"
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile, utimes } from "node:fs/promises"
+import { chmod, mkdtemp, mkdir, readFile, readdir, rm, writeFile, utimes } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -28,6 +28,21 @@ async function temporary(t: test.TestContext): Promise<string> {
 
 const storeModule = new URL("./store.ts", import.meta.url).href
 const gitModule = new URL("./git.ts", import.meta.url).href
+
+test("cleanup writability probes leave entry bytes and Git history unchanged and refuse read-only entries", async t => {
+  const store = new MemoryStore(await temporary(t))
+  await save(store)
+  const git = new MemoryGit(store.directory), before = await git.head()
+  assert.equal(await store.cleanupWritable(global), true)
+  assert.equal(await git.head(), before)
+  assert.deepEqual(await readdir(path.join(store.directory, "global")), ["entry.md"])
+  const file = path.join(store.directory, "global", "entry.md")
+  await chmod(file, 0o444)
+  try { assert.equal(await store.cleanupWritable(global), false) }
+  finally { await chmod(file, 0o600) }
+  assert.deepEqual(await store.read(global, "entry"), entry())
+  assert.equal(await store.cleanupWritable(project), false)
+})
 
 function child(code: string, env: NodeJS.ProcessEnv = {}) {
   const process = spawn(globalThis.process.execPath, ["--import", "tsx", "--input-type=module", "-e", code], {

@@ -1,4 +1,8 @@
 export const agentMemoryMessages = {
+  "settings.memory.tidy": "整理",
+  "settings.memory.tidyInfo": "このプロジェクトで新しいセッションを開始し、選択した範囲のメモリを検証・統合します。変更はローカルの Git 履歴に保存されます。",
+  "settings.memory.tidyConfirm": "プロジェクトの新しいセッションで「{scope}」を検証・整理しますか？",
+  "settings.memory.tidyFailed": "整理を確認できませんでした。再試行する前にプロジェクトのセッションを確認してください。",
   "settings.memory.title": "メモリ",
   "settings.memory.info": "エージェントは有用な事実や設定をセッション間で保持し、ローカルのGit履歴に記録します。",
   "settings.memory.scope": "メモリの範囲",
