@@ -16,7 +16,7 @@ export async function readUsageProviderSettings(connection: ServiceConnection, p
     for (const key of ["baseURL", "apiKey"] as const) {
       const value: unknown = info.data.settings?.[key]
       // A declared destination must survive empty substitutions and invalid values.
-      if (key === "baseURL" && Object.hasOwn(info.data.settings ?? {}, key)) settings.baseURL = typeof value === "string" ? value.trim() : ""
+      if (key === "baseURL" && Object.prototype.hasOwnProperty.call(info.data.settings ?? {}, key)) settings.baseURL = typeof value === "string" ? value.trim() : ""
       if (typeof value !== "string") continue
       if (/\{(?:env|file):/i.test(value)) unresolved = true
       else if (key === "apiKey" && value.trim()) settings.apiKey = value.trim()
