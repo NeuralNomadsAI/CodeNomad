@@ -30,6 +30,14 @@ app.whenReady().then(async () => {
     navigate: url => controller.execute("fixture-session", { action: "navigate", url }),
     visible: value => { visible = value },
     ready: async () => { await guestLoaded; return Boolean(guest && !guest.isLoading()) },
+    // Failure evidence: what the guest document and its widgets report.
+    diagnose: async () => ({
+      guestFocused: guest?.isFocused(), ownerFocused: window.webContents.isFocused(), windowFocused: window.isFocused(),
+      page: await guest?.executeJavaScript(`({ result: document.getElementById("result")?.textContent, hasFocus: document.hasFocus(),
+        active: document.activeElement?.outerHTML?.slice(0, 120), visibility: document.visibilityState })`).catch(error => String(error)),
+      gpu: app.getGPUFeatureStatus(),
+    }),
+    focusGuest: () => guest?.focus(),
   }
   const html = `<html><body style="margin:0"><webview src="${process.env.CODENOMAD_TEST_GUEST_URL}" style="width:850px;height:650px;display:flex"></webview></body></html>`
   await window.loadURL(`data:text/html,${encodeURIComponent(html)}`)

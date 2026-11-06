@@ -46,6 +46,9 @@ test("the shared engine drives a real Electron preview through the guarded nativ
   app = await _electron.launch({ executablePath,
     args: ["--no-sandbox", fileURLToPath(new URL("fixtures/automation-preview-electron.cjs", import.meta.url))], env })
   const running = app
+  let stderr = ""
+  running.process().stderr?.on("data", chunk => { stderr = (stderr + chunk).slice(-4000) })
+  const diagnose = () => running.evaluate(() => (globalThis as any).automationPreview.diagnose())
   const execute = (action: Record<string, unknown>) => running.evaluate(async (_electron, input) =>
     (globalThis as any).automationPreview.execute(input), action) as Promise<Record<string, any>>
   // The guest must load before a snapshot; no installed app or foreground window is involved.
@@ -60,8 +63,14 @@ test("the shared engine drives a real Electron preview through the guarded nativ
   const title = ref(/textbox "Title"/), plan = ref(/combobox "Plan"/), confirm = ref(/button "Confirm"/)
   assert.deepEqual((await execute({ action: "type", ref: title, text: "Pilot", clear: true })).value, "Pilot")
   await execute({ action: "press", key: "a", ref: title })
-  assert.equal((await execute({ action: "wait", text: "Key:a", gone: false, timeout: 500 })).found, true,
-    "keys reach a newly opened guest with no preceding pointer click")
+  const keyed = await execute({ action: "wait", text: "Key:a", gone: false, timeout: 500 }).catch(async error => {
+    const before = await diagnose()
+    await running.evaluate(() => (globalThis as any).automationPreview.focusGuest())
+    await execute({ action: "press", key: "a", ref: title }).catch(() => undefined)
+    console.error("automation-preview key diagnostics", JSON.stringify({ before, afterGuestFocus: await diagnose(), stderr }, null, 2))
+    throw error
+  })
+  assert.equal(keyed.found, true, "keys reach a newly opened guest with no preceding pointer click")
   assert.match(String((await execute({ action: "snapshot", ref: title })).snapshot), /value="Pilota"/)
   await execute({ action: "press", key: "Control+A", ref: title })
   await execute({ action: "press", key: "Backspace" })
