@@ -87,6 +87,7 @@ export class MissionPreferencesError extends Error {
 }
 
 export interface MissionCreationSelection {
+  preferences?: "unavailable"
   profiles: Required<MissionProfiles>
   taskMode: MissionTaskMode
   origins: { coordinator: MissionDefaultOrigin; roles: Record<string, MissionDefaultOrigin>; taskMode: MissionDefaultOrigin }

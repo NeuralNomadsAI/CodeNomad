@@ -164,11 +164,23 @@ refuse otherwise. Only one-time coordinators are offered and told about
   coordinator origin is `preference` advises passing `profiles.coordinator`
   (for example `{}`) to override that preference; the existing native-profile
   check still applies. An explicit-profile mismatch keeps the generic
-  native-profile error. An unreadable
-  preference document or unavailable backend returns
+  native-profile error.
+
+  With no bridge presence or zero proven owning backends, `inspect({ start })`
+  uses explicit inputs and OpenCode defaults for omitted choices (`native` task-mode
+  fallback), with origins `explicit` or `opencode-default` and
+  `selection.preferences: "unavailable"`. The saved
+  `creationDefaults.preferences: "unavailable"` retains that warning on retries,
+  including after a backend appears. Multiple owning backends, failed or incomplete
+  backend discovery, or an unreadable preference document return
   `mission-preferences-unavailable`; invalid preferences return
-  `mission-preferences-invalid`. Both refuse creation and ask for preference
-  recovery, including when profiles were supplied explicitly.
+  `mission-preferences-invalid`. These failures refuse creation and ask for
+  recovery, including when profiles were supplied explicitly. Discovery includes
+  the Windows registry under WSL. A typed missing-session reply or an empty backend
+  workspace inventory proves non-ownership. Directory-authorization failure with
+  open workspaces is indeterminate because Git/WSL read failures can yield false.
+  `mission.prepare` requires an owning backend for fenced creation even when
+  profile resolution can use the no-owner fallback.
 
   The requestID is scoped to the coordinator and mission. Preparations with the
   same requestID are serialized. Reuse that requestID and the original inputs:

@@ -30,8 +30,14 @@ Read the creation response's `selection.profiles`, `selection.taskMode` and
 `selection.origins` to check the saved coordinator and every playbook role:
 `explicit`, `preference` or `opencode-default`. A chosen judge slot keeps its
 explicit/preference origin even with an inherited model; an absent judge slot
-inherits the coordinator's origin. Unreadable/invalid preferences refuse creation; report
-the error and arrange recovery of the Missions preferences before retrying.
+inherits the coordinator's origin. With no bridge presence or zero proven owning
+backends, `inspect({ start })` uses explicit inputs and OpenCode defaults for omitted
+choices (`native` task-mode fallback), returning `selection.preferences: "unavailable"` and only `explicit`
+or `opencode-default` origins. Saved `creationDefaults.preferences: "unavailable"`
+retains the warning on retries even after a backend appears. Multiple owners,
+failed/incomplete backend discovery or unreadable/invalid preferences refuse
+creation; report the error and arrange recovery before retrying. `mission.prepare`
+requires an owning backend for fenced creation even with fallback profile choices.
 `inspect({ start })` requires the caller's existing coordinator profile to match
 the resolved selection. When a coordinator preference differs, pass
 `profiles.coordinator` (for example `{}`) to override that preference; the existing
