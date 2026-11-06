@@ -60,9 +60,10 @@ pub(crate) fn bind(webview: &Webview, host: Weak<AppHandle>, binding: u64) {
             eprintln!("[notification-badge] failed to access renderer termination hook: {error}");
         }
     }
-    // Tauri forwards Darwin renderer termination only through an app-wide,
-    // label-keyed Builder hook without this physical-window binding. Do not
-    // replace WKWebView's runtime-owned navigation delegate or poll it.
+    // Without a Builder::on_web_content_process_terminate hook, Tauri's runtime
+    // reloads a webview whose Darwin renderer terminated; the reload's page start
+    // resets the count. Registering that app-wide hook would replace the reload.
+    // Do not replace WKWebView's runtime-owned navigation delegate or poll it.
     #[cfg(not(any(windows, target_os = "linux")))]
     let _ = (webview, host, binding);
 }
