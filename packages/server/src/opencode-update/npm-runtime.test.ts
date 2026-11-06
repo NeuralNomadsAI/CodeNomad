@@ -3,7 +3,8 @@ import test from "node:test"
 import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { bundledNpm, executeNpm, npmNeedsNodeCommand } from "./npm-runtime"
+import { execFileSync } from "node:child_process"
+import { bundledNpm, executeNpm, npmNeedsNodeCommand, writeNpmNodeCommand } from "./npm-runtime"
 import { InstallationInterruptedError } from "./installation-lock"
 
 test("discovers Electron npm resources on each platform and preserves Node layouts", async () => {
@@ -47,6 +48,46 @@ async function withPrivateTemporary(body: (temporary: string, prefix: string) =>
     await rm(root, { recursive: true, force: true })
   }
 }
+
+test("the console-hiding preload makes every asynchronous child process hide its window", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "npm-hide-windows-"))
+  try {
+    // The real writer's Windows preload; it loads under any OS's Node.
+    const env: NodeJS.ProcessEnv = {}
+    const [flag, preload] = await writeNpmNodeCommand(root, process.execPath, env, "win32")
+    assert.equal(flag, "--require")
+    // Loaded first, the spy sits beneath the preload's patch and sees the final options.
+    const spy = path.join(root, "spy.cjs")
+    await writeFile(spy, "const fs = require('fs'); const { ChildProcess } = require('child_process')\n"
+      + "const spawn = ChildProcess.prototype.spawn\n"
+      + "ChildProcess.prototype.spawn = function (options) {\n"
+      + "  fs.appendFileSync(process.env.CODENOMAD_SPY_OUTPUT, JSON.stringify({ file: options.file, windowsHide: options.windowsHide }) + '\\n')\n"
+      + "  return spawn.call(this, options)\n}\n")
+    const empty = path.join(root, "empty.cjs")
+    await writeFile(empty, "")
+    // Trivial children asking for a visible window (or not saying), through each async API.
+    const script = `const cp = require("child_process"), node = process.execPath
+const exited = child => new Promise(resolve => child.on("exit", resolve))
+Promise.all([
+  exited(cp.spawn(node, ["-e", ""], { windowsHide: false, stdio: "ignore" })),
+  exited(cp.execFile(node, ["-e", ""], () => {})),
+  exited(cp.exec(JSON.stringify(node) + ' -e ""', { windowsHide: false }, () => {})),
+  exited(cp.fork(${JSON.stringify(empty)}, [], { windowsHide: false, execArgv: [], silent: true })),
+]).then(() => process.exit(0))`
+    const run = (preloads: string[]) => {
+      const output = path.join(root, `spy-${preloads.length}.jsonl`)
+      // This test's own child is hidden; with piped stdio it gets a console without a window.
+      execFileSync(process.execPath, [...preloads.flatMap(file => ["--require", file]), "-e", script],
+        { env: { ...process.env, CODENOMAD_SPY_OUTPUT: output }, windowsHide: true, stdio: "pipe", timeout: 60_000 })
+      return readFile(output, "utf8").then(text => text.trim().split("\n").map(line => JSON.parse(line) as { windowsHide: boolean }))
+    }
+    // Control: without the preload the spy records the callers' own options.
+    assert.deepEqual((await run([spy])).map(call => call.windowsHide), [false, false, false, false])
+    const calls = await run([spy, preload!])
+    assert.equal(calls.length, 4)
+    assert.deepEqual(calls.map(call => call.windowsHide), [true, true, true, true])
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
 
 test("Electron lifecycle node command lives in the prefix, is cleaned, and is retained on interruption", async () => {
   await withPrivateTemporary(async (temporary, prefix) => {

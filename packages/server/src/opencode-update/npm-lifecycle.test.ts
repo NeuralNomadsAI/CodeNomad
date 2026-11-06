@@ -28,7 +28,7 @@ test("Electron runs a real npm lifecycle `node` script through the prefix-scoped
       name: "codenomad-lifecycle-fixture", version: "1.0.0", scripts: { postinstall: "node ./postinstall.js" },
     }))
     await writeFile(path.join(stage, "package", "postinstall.js"), "require('fs').writeFileSync(process.env.CODENOMAD_LIFECYCLE_OUTPUT, "
-      + "JSON.stringify({ electron: process.versions.electron ?? null, execPath: process.execPath }))\n")
+      + "JSON.stringify({ electron: process.versions.electron ?? null, execPath: process.execPath, execArgv: process.execArgv }))\n")
     // Relative names keep Windows tar from reading a drive letter as a host.
     const tar = process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar"
     execFileSync(tar, ["-czf", "fixture.tgz", "package"], { cwd: stage, windowsHide: true })
@@ -51,10 +51,20 @@ test("Electron runs a real npm lifecycle `node` script through the prefix-scoped
     await executeNpm(electron!, [npm!, "install", "--global", "--prefix", prefix, "--offline", "--no-audit", "--no-fund",
       path.join(stage, "fixture.tgz")], env, process.platform, prefix)
 
-    const result = JSON.parse(await readFile(output, "utf8")) as { electron: string | null; execPath: string }
+    const result = JSON.parse(await readFile(output, "utf8")) as { electron: string | null; execPath: string; execArgv: string[] }
     assert.match(result.electron ?? "", /^\d+\.\d+\.\d+/, "the lifecycle script ran under Electron")
     const same = (left: string, right: string) => process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right
     assert.ok(same(await realpath(result.execPath), await realpath(electron!)))
+    // Windows: the lifecycle `node` command loads the console-hiding preload from
+    // the prefix's installer directory; POSIX runs the script without it.
+    if (process.platform === "win32") {
+      assert.equal(result.execArgv.length, 2, JSON.stringify(result.execArgv))
+      assert.equal(result.execArgv[0], "--require")
+      const preload = result.execArgv[1]!
+      assert.equal(path.basename(preload), "hide-child-windows.cjs")
+      assert.equal(path.dirname(path.dirname(preload)), prefix)
+      assert.match(path.basename(path.dirname(preload)), /^\.codenomad-npm-/)
+    } else assert.deepEqual(result.execArgv, [])
     assert.deepEqual((await readdir(prefix)).filter(name => name.startsWith(".codenomad-")), [], "the adapter directory is removed")
   } finally { await rm(root, { recursive: true, force: true }) }
 })
