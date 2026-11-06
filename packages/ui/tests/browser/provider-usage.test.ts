@@ -155,6 +155,54 @@ for (const kind of ["consumption", "money"] as const) test(`Hebrew ${kind} ratio
   } finally { await page.close() }
 })
 
+for (const [locale, keyLimit] of [["en-US", "Key Limit"], ["de-DE", "Schlüssellimit"]]) {
+  for (const providerId of ["openrouter", "github-copilot"]) test(`${providerId} labels keep whole words and values stack at 200px (${locale})`, async () => {
+    const page = await browser.newPage({ locale, viewport: { width: 200, height: 400 } })
+    try {
+      const { requests, errors } = await prepare(page)
+      await waitRequests(requests, 1)
+      const openrouter = providerId === "openrouter"
+      await requests[0].fulfill({ json: {
+        requestedProviderId: providerId, providerId, providerName: openrouter ? "OpenRouter" : "GitHub Copilot",
+        supported: true, configured: true, ok: true, fetchedAt: Date.now(), windows: {
+          [openrouter ? "key_limit" : "chat"]: {
+            usedPercent: null, remainingPercent: null, resetAt: null, windowSeconds: null,
+            ...(openrouter ? { balanceUSD: { remaining: 7550500.5, total: 10000000 } } : { consumption: { creditsUsed: 1234567890.125 } }),
+          },
+        },
+      } })
+      const label = page.getByText(openrouter ? keyLimit : "Chat", { exact: true })
+      await label.waitFor()
+      const layout = await label.evaluate(element => {
+        const label = element as HTMLElement
+        const value = label.nextElementSibling!.querySelector<HTMLElement>("span")!
+        const panel = document.querySelector<HTMLElement>("[data-usage]")!
+        const text = label.firstChild!
+        const words = Array.from(label.textContent!.matchAll(/\S+/g), match => {
+          const range = document.createRange()
+          range.setStart(text, match.index!)
+          range.setEnd(text, match.index! + match[0].length)
+          return { word: match[0], lines: new Set(Array.from(range.getClientRects(), rect => rect.top)).size }
+        })
+        return { words, labelWidth: label.clientWidth, labelScrollWidth: label.scrollWidth,
+          valueWidth: value.clientWidth, valueScrollWidth: value.scrollWidth,
+          labelBottom: label.getBoundingClientRect().bottom, valueTop: value.getBoundingClientRect().top,
+          panelWidth: panel.getBoundingClientRect().width, panelClientWidth: panel.clientWidth, panelScrollWidth: panel.scrollWidth,
+          overflow: getComputedStyle(value).overflow, textOverflow: getComputedStyle(value).textOverflow }
+      })
+      assert.equal(layout.panelWidth, 200)
+      for (const word of layout.words) assert.equal(word.lines, 1, `${word.word} stays on one line`)
+      assert.ok(layout.labelScrollWidth <= layout.labelWidth, "the label fits without overflow")
+      assert.ok(layout.valueScrollWidth <= layout.valueWidth, "the complete value fits without overflow")
+      assert.ok(layout.panelScrollWidth <= layout.panelClientWidth, "the panel fits its container")
+      assert.ok(layout.valueTop >= layout.labelBottom, "the value moves below the label when both cannot fit")
+      assert.notEqual(layout.overflow, "hidden")
+      assert.notEqual(layout.textOverflow, "ellipsis")
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  })
+}
+
 test("German monetary ratios wrap at 200px without overflow or truncation", async () => {
   const page = await browser.newPage({ locale: "de-DE", viewport: { width: 200, height: 400 } })
   try {
@@ -164,10 +212,10 @@ test("German monetary ratios wrap at 200px without overflow or truncation", asyn
       requestedProviderId: "openrouter", providerId: "openrouter", providerName: "OpenRouter",
       supported: true, configured: true, ok: true, fetchedAt: Date.now(), windows: { key_limit: {
         usedPercent: 24.495, remainingPercent: 75.505, resetAt: null, windowSeconds: null,
-        balanceUSD: { remaining: 7550.5, total: 10000 },
+        balanceUSD: { remaining: 7550500000.5, total: 10000000000 },
       } },
     } })
-    const value = page.getByText("7.550,50 $ / 10.000,00 $", { exact: true })
+    const value = page.getByText("7.550.500.000,50 $ / 10.000.000.000,00 $", { exact: true })
     await value.waitFor()
     const layout = await value.evaluate(element => {
       const panel = document.querySelector<HTMLElement>("[data-usage]")!
