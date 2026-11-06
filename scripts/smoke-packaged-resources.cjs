@@ -92,7 +92,8 @@ function smokeServer(resourcesRoot, target, electron) {
     return
   }
 
-  const env = electron ? { ...process.env, ELECTRON_RUN_AS_NODE: "1" } : process.env
+  // The Electron backend's runtime variables: the server must load without app.asar.
+  const env = electron ? { ...process.env, ELECTRON_RUN_AS_NODE: "1", ELECTRON_NO_ASAR: "1" } : process.env
   const version = run(node, ["--version"], { stdio: "pipe", encoding: "utf8", env }).stdout.trim()
   if (!electron && version !== MANAGED_NODE_VERSION) {
     throw new Error(`Packaged Node version ${version} does not match ${MANAGED_NODE_VERSION}`)

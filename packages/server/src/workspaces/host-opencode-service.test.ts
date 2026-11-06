@@ -29,7 +29,7 @@ describe("HostOpenCodeService", () => {
 
   it("never hands the desktop profile scope or backend hand-offs to the shared daemon", () => {
     const keys = ["CODENOMAD_UPDATE_CHANNEL", "CODENOMAD_PROFILE_CONFIG_IDENTITY",
-      "CODENOMAD_PROFILE", "CLI_CONFIG", "CODENOMAD_NATIVE_PARENT", "ELECTRON_RUN_AS_NODE", "OPENCODE_DB"]
+      "CODENOMAD_PROFILE", "CLI_CONFIG", "CODENOMAD_NATIVE_PARENT", "ELECTRON_RUN_AS_NODE", "ELECTRON_NO_ASAR", "OPENCODE_DB"]
     const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]))
     try {
       process.env.CODENOMAD_UPDATE_CHANNEL = "stable"
@@ -37,6 +37,7 @@ describe("HostOpenCodeService", () => {
       process.env.CLI_CONFIG = "/owned/config.yaml"
       process.env.CODENOMAD_NATIVE_PARENT = "1"
       process.env.ELECTRON_RUN_AS_NODE = "1"
+      process.env.ELECTRON_NO_ASAR = "1"
       const environment = daemonProcessEnvironment({ FIXTURE: "kept", CODENOMAD_PROFILE: "team", OPENCODE_DB: "/x.db" })
       for (const key of keys) assert.equal(environment[key], undefined, key)
       assert.equal(environment.FIXTURE, "kept")

@@ -172,7 +172,8 @@ The install, upgrade and legacy replacement fixtures also accept
 and `CODENOMAD_FIXTURE_RESOURCES=<packaged resources directory>` to qualify
 Electron's npm-only package with system Node excluded from PATH; that mode first
 requires the executable to report an Electron version. Both modes set
-`ELECTRON_RUN_AS_NODE=1`, as both desktop hosts do.
+`ELECTRON_RUN_AS_NODE=1`, as both desktop hosts do; Electron mode also sets
+`ELECTRON_NO_ASAR=1`, like the Electron backend.
 
 Explicit custom binaries stay selected. WSL and custom installations receive
 execution-host instructions.

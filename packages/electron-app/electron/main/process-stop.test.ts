@@ -1,8 +1,10 @@
 import assert from "node:assert/strict"
 import { execFile, spawn } from "node:child_process"
 import { EventEmitter, once } from "node:events"
-import { readFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { registerHooks } from "node:module"
+import os from "node:os"
+import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import test from "node:test"
 import { getProcessStartIdentityAsync } from "./client-state-process-identity"
@@ -548,6 +550,38 @@ test("signal dispatch is not confirmation while the captured identity remains", 
   const kill = (() => true) as typeof process.kill
 
   assert.equal(await forceCapturedProcessTree(tree, () => "owned", undefined, kill), false)
+})
+
+test("process manager spawns the backend with Electron's plain-Node runtime variables", async () => {
+  const hooks = registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (specifier === "electron") {
+        return { shortCircuit: true, url: "data:text/javascript,export const app={isPackaged:false,getAppPath(){return ''}}" }
+      }
+      return nextResolve(specifier, context)
+    },
+  })
+  const directory = await mkdtemp(path.join(os.tmpdir(), "backend-spawn-env-"))
+  const saved = process.env.CODENOMAD_TEST_BACKEND_ENV
+  try {
+    const { CliProcessManager } = await import("./process-manager")
+    const output = path.join(directory, "env.json")
+    const entry = path.join(directory, "backend.cjs")
+    // The fake backend records what it received and exits before readiness.
+    await writeFile(entry, "require('fs').writeFileSync(process.env.CODENOMAD_TEST_BACKEND_ENV, JSON.stringify("
+      + "{ run: process.env.ELECTRON_RUN_AS_NODE, asar: process.env.ELECTRON_NO_ASAR })); process.exit(3)\n")
+    process.env.CODENOMAD_TEST_BACKEND_ENV = output
+    const manager = new CliProcessManager()
+    ;(manager as any).resolveCliEntry = async () => ({ entry, runner: "node", nodeBinaryPath: process.execPath })
+    await assert.rejects(manager.start({ dev: false }))
+    assert.deepEqual(JSON.parse(await readFile(output, "utf8")), { run: "1", asar: "1" })
+    await manager.shutdown()
+  } finally {
+    if (saved === undefined) delete process.env.CODENOMAD_TEST_BACKEND_ENV
+    else process.env.CODENOMAD_TEST_BACKEND_ENV = saved
+    hooks.deregister()
+    await rm(directory, { recursive: true, force: true })
+  }
 })
 
 test("process manager keeps incomplete shutdown terminal and interrupts a pending startup", async () => {

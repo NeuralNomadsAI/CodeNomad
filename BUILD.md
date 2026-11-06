@@ -11,8 +11,9 @@ This guide explains how to build distributable binaries for CodeNomad.
 ### Bundled server runtime
 
 Tauri ships a separate Node.js executable with its npm for the CodeNomad
-server. Electron runs the server with its integrated Node (`ELECTRON_RUN_AS_NODE=1`)
-and ships npm only. `scripts/prepare-node-runtime.cjs` reads the same
+server. Electron runs the server with its integrated Node (`ELECTRON_RUN_AS_NODE=1`,
+plus `ELECTRON_NO_ASAR=1` so project `.asar` files stay ordinary files) and ships
+npm only. `scripts/prepare-node-runtime.cjs` reads the same
 `.node-version` pin as CI, downloads the official target archive, and verifies
 its SHA-256 before packaging; it copies Node and npm for Tauri and npm alone for
 Electron. Corepack is never bundled. This pin selects Tauri's Node and both

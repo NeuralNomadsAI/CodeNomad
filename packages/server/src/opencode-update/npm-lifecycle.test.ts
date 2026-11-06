@@ -41,6 +41,7 @@ test("Electron runs a real npm lifecycle `node` script through the prefix-scoped
     Object.assign(env, {
       PATH: process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32") : tools,
       ELECTRON_RUN_AS_NODE: "1",
+      ELECTRON_NO_ASAR: "1",
       CODENOMAD_LIFECYCLE_OUTPUT: output,
       npm_config_cache: path.join(root, "npm-cache"),
       npm_config_userconfig: path.join(root, "npmrc"),

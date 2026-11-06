@@ -7,6 +7,7 @@ import os from "os"
 import path from "path"
 import { fileURLToPath } from "url"
 import { parse as parseYaml } from "yaml"
+import { BACKEND_RUNTIME_ENVIRONMENT } from "./backend-runtime"
 import { getProcessStartIdentityAsync } from "./client-state-process-identity"
 import {
   CLI_STOP_DEADLINE_MS,
@@ -236,7 +237,7 @@ export class CliProcessManager extends EventEmitter {
       if (this.lifecycle.stopped) throw new Error("CLI startup interrupted by shutdown")
     }
     restoreDesktopProfileEnvironment(env, this.desktopProfile)
-    env.ELECTRON_RUN_AS_NODE = "1"
+    Object.assign(env, BACKEND_RUNTIME_ENVIRONMENT)
     env.CODENOMAD_NATIVE_PARENT = "1"
     delete env.npm_config_prefix
     delete env.NPM_CONFIG_PREFIX

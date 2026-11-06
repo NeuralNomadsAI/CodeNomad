@@ -76,6 +76,7 @@ async function launchHistoryElectron(existingProfile?: string) {
     define: { "import.meta.url": JSON.stringify(pathToFileURL(controllerPath).href) } })
   const env = { ...process.env, CODENOMAD_TEST_PROFILE: profile, CODENOMAD_TEST_HISTORY_CONTROLLER: controllerPath }
   delete env.ELECTRON_RUN_AS_NODE
+  delete env.ELECTRON_NO_ASAR
   const app = await _electron.launch({ executablePath: process.env.CODENOMAD_TEST_ELECTRON || electronPath,
     args: ["--no-sandbox", fileURLToPath(new URL("fixtures/browser-frame-native-electron.cjs", import.meta.url))], env })
   const page = await app.firstWindow()

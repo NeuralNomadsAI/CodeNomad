@@ -2,7 +2,13 @@
 
 - `.node-version` exactly pins CI and Tauri's bundled Node. Electron runs the
   backend with its own Node (`process.execPath`, `ELECTRON_RUN_AS_NODE=1`), so
-  its Node version follows Electron. `scripts/prepare-node-runtime.cjs` copies
+  its Node version follows Electron. The backend also gets `ELECTRON_NO_ASAR=1`
+  (`electron/main/backend-runtime.ts`): otherwise Electron's fs treats project
+  `*.asar` files as archives (listed as folders, unreadable, locked on Windows).
+  The backend and its server runtime child load nothing from `app.asar`; the
+  server lives in `resources/server`. The shared OpenCode daemon never inherits
+  either variable (`DAEMON_EXCLUDED_ENVIRONMENT`), and launchers of Electron GUI
+  test apps remove both. `scripts/prepare-node-runtime.cjs` copies
   npm and its dependencies from the pinned official Node archive for both hosts;
   Electron requests npm-only resources. Qualify the server and that npm version
   against Electron's Node when updating either runtime. A new application release

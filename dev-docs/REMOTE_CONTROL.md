@@ -111,7 +111,7 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   afterwards. It creates a public, certificate-logged hostname.
 - The packaged smoke test imports the bundled runtime with each host's server
   runtime: Tauri's bundled Node, or the Electron executable with
-  `ELECTRON_RUN_AS_NODE=1`.
+  `ELECTRON_RUN_AS_NODE=1` and `ELECTRON_NO_ASAR=1`.
 
 ## Agent conventions
 
