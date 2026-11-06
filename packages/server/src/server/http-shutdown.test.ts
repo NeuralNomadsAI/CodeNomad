@@ -10,7 +10,14 @@ import { EventBus } from "../events/bus"
 import { createLogger } from "../logger"
 import { createHttpServer } from "./http-server"
 
-test("HTTP shutdown ends SSE and upgraded connections without waiting for clients", { timeout: 2_000 }, async t => {
+// Bounds only the shutdown phase: fixture setup under a loaded runner must not consume it.
+function withinShutdownBound<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const bound = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} exceeded 1 s`)), 1_000) })
+  return Promise.race([promise, bound]).finally(() => clearTimeout(timer))
+}
+
+test("HTTP shutdown ends SSE and upgraded connections without waiting for clients", async t => {
   const logger = createLogger({ level: "silent" } as never)
   const stub = new Proxy({}, { get: () => () => undefined }) as never
   const connections = new ClientConnectionManager(logger)
@@ -63,14 +70,14 @@ test("HTTP shutdown ends SSE and upgraded connections without waiting for client
   await new Promise<void>(resolve => setImmediate(resolve))
   assert.equal(stopped, false)
   release()
-  const [persisted] = await mutationResponse
+  const [persisted] = await withinShutdownBound(mutationResponse, "the accepted write")
   persisted.resume()
   assert.equal(persisted.statusCode, 200)
-  await stopping
+  await withinShutdownBound(stopping, "shutdown")
   assert.ok(performance.now() - started < 1_000)
 })
 
-test("HTTP shutdown drains an already-started stream and closes its keep-alive connection", { timeout: 2_000 }, async t => {
+test("HTTP shutdown drains an already-started stream and closes its keep-alive connection", async t => {
   const logger = createLogger({ level: "silent" } as never)
   const stub = new Proxy({}, { get: () => () => undefined }) as never
   const connections = new ClientConnectionManager(logger)
@@ -114,10 +121,10 @@ test("HTTP shutdown drains an already-started stream and closes its keep-alive c
   const ended = once(response, "end")
   let stopped = false
   const stopping = server.stop().then(() => { stopped = true })
-  await closing
+  await withinShutdownBound(closing, "preClose")
   assert.equal(stopped, false, "the active response must finish before shutdown")
   stream.end("last")
-  await ended
+  await withinShutdownBound(ended, "the active response")
   assert.equal(Buffer.concat(chunks).toString(), "firstlast")
-  await stopping
+  await withinShutdownBound(stopping, "shutdown")
 })
