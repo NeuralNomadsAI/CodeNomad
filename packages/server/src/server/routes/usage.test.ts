@@ -262,7 +262,7 @@ test("usage readers receive only native effective settings from the authorized s
     assert.equal(contexts[1]?.settingsStatus, "unresolved")
     state.settings = { baseURL: "{file:./endpoint}", apiKey: "{file:./key}" }
     await read()
-    assert.deepEqual(contexts[2]?.settings, {})
+    assert.deepEqual(contexts[2]?.settings, { baseURL: "{file:./endpoint}" })
     state.providerMissing = true
     const missing = await read()
     assert.equal(missing.statusCode, 200)

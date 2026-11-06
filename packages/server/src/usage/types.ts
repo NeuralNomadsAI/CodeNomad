@@ -22,7 +22,7 @@ export interface ProviderReadContext {
   signal?: AbortSignal
   /** Session provider's native integration; orders multi-alias display reads. */
   integrationID?: string
-  /** Effective native settings, server-only; unresolved substitutions are omitted. */
+  /** Server-only native settings; declared destinations retain empty/invalid values for validation. */
   settings?: { baseURL?: string; apiKey?: string }
   settingsStatus?: "available" | "unavailable" | "unresolved"
 }

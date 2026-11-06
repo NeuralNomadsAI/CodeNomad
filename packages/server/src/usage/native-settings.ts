@@ -15,9 +15,11 @@ export async function readUsageProviderSettings(connection: ServiceConnection, p
     let unresolved = false
     for (const key of ["baseURL", "apiKey"] as const) {
       const value: unknown = info.data.settings?.[key]
+      // A declared destination must survive empty substitutions and invalid values.
+      if (key === "baseURL" && Object.hasOwn(info.data.settings ?? {}, key)) settings.baseURL = typeof value === "string" ? value.trim() : ""
       if (typeof value !== "string") continue
       if (/\{(?:env|file):/i.test(value)) unresolved = true
-      else if (value.trim()) settings[key] = value.trim()
+      else if (key === "apiKey" && value.trim()) settings.apiKey = value.trim()
     }
     return { provider: info.data, context: { signal, settings, integrationID: info.data.integrationID ?? info.data.id,
       settingsStatus: unresolved ? "unresolved" : "available" } as ProviderReadContext }

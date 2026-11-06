@@ -378,6 +378,31 @@ test("credit consumption uses currentValue when remaining and percentage are abs
 const openrouter = apiKeyProviders.find(provider => provider.id === "openrouter")!
 const routerAuth = { openrouter: { type: "api", key: "synthetic-stored-key" } }
 
+test("OpenRouter rejects explicit invalid native destinations, including a missing substituted environment value", async t => {
+  let requests = 0
+  t.mock.method(globalThis, "fetch", async () => { requests++; return respondWith({ data: { limit: 100, limit_remaining: 75 } }) })
+  const directory = "D:/synthetic-project"
+  for (const baseURL of ["", "   ", null, 123, "{env:SYNTHETIC_MISSING_URL}", "https://localhost/v1"]) {
+    const connection = { assertCurrent() {}, client: { provider: { get: async () => ({
+      location: { directory }, data: { id: "openrouter", settings: { baseURL } },
+    }) } } } as unknown as Parameters<typeof readUsageProviderSettings>[0]
+    // The daemon substitutes an absent {env:...} variable with an explicit empty string.
+    const { context } = await readUsageProviderSettings(connection, "openrouter", directory, AbortSignal.timeout(15_000))
+    const response = await openrouter.fetchQuota(routerAuth, context)
+    assert.equal(response.unavailableReason, "invalid-base-url", `native destination ${String(baseURL)}`)
+    assert.equal(response.ok, false)
+    assert.equal(requests, 0, "an explicit invalid destination never authorizes the public fallback")
+  }
+})
+
+test("OpenRouter keeps the stored-key fallback when the native apiKey is empty", async () => {
+  await withRouterStub(async requests => {
+    const context = await nativeKeyContext("openrouter", "")
+    assert.equal((await openrouter.fetchQuota(routerAuth, context)).ok, true)
+    assert.deepEqual(requests, ["https://openrouter.ai/api/v1/key", "https://openrouter.ai/api/v1/credits"])
+  })
+})
+
 async function withRouterStub(run: (requests: string[]) => Promise<void>, keyData: unknown = { limit: 100, limit_remaining: 75, usage: 999 }, creditsStatus = 403) {
   const previous = globalThis.fetch
   const requests: string[] = []

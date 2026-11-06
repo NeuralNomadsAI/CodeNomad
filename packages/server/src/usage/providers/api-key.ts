@@ -121,12 +121,12 @@ const openRouter: UsageProvider = {
   async fetchQuota(auth, context) {
     const key = context?.settings?.apiKey ?? getCredential(auth, openRouterAliases, ["key", "token"])
     if (!key) return notConfigured(this.id, this.name)
+    const base = parseQuotaBaseURL(context?.settings?.baseURL ?? "https://openrouter.ai/api/v1")
+    if (!base) return result(this.id, this.name, { ok: false, configured: true, unavailableReason: "invalid-base-url" })
     // An unreadable native configuration cannot authorize the public fallback.
     if (context?.settingsStatus === "unavailable" || context?.settingsStatus === "unresolved") {
       return result(this.id, this.name, { ok: false, configured: true, unavailableReason: "provider-error" })
     }
-    const base = parseQuotaBaseURL(context?.settings?.baseURL ?? "https://openrouter.ai/api/v1")
-    if (!base) return result(this.id, this.name, { ok: false, configured: true, unavailableReason: "invalid-base-url" })
     const baseURL = base.href.replace(/\/+$/, "")
     const headers = { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }
     const signal = context?.signal ?? AbortSignal.timeout(15_000)
