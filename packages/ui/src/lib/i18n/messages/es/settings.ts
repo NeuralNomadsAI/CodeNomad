@@ -20,7 +20,7 @@ export const settingsMessages = {
   "providerUsage.console.invalidCredential": "La credencial de OpenCode Console no es válida o ha caducado.",
   "providerUsage.console.malformed": "Respuesta de uso de Console no válida.",
   "providerUsage.console.network": "No se puede acceder a OpenCode Console.",
-  "providerUsage.console.settings": "Ajustes → Proveedores",
+  "providerUsage.console.settings": "Configuración → Proveedores",
   "providerUsage.console.info": "Los contadores cubren la cuenta de OpenCode Console conectada. Los periodos son días naturales UTC, incluido hoy.",
   "providerUsage.estimatedReset": "Reinicio estimado {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "Expandir subsesiones automáticamente",

@@ -20,7 +20,7 @@ export const settingsMessages = {
   "providerUsage.console.invalidCredential": "OpenCode Console kimlik bilgisi geçersiz veya süresi dolmuş.",
   "providerUsage.console.malformed": "Console kullanım yanıtı geçersiz.",
   "providerUsage.console.network": "OpenCode Console'a ulaşılamıyor.",
-  "providerUsage.console.settings": "Ayarlar → Sağlayıcılar",
+  "providerUsage.console.settings": "Ayarlar → Provider'lar",
   "providerUsage.console.info": "Sayaçlar bağlı OpenCode Console hesabını kapsar. Dönemler bugün dahil UTC takvim günleridir.",
   "providerUsage.estimatedReset": "Tahmini sıfırlanma {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "Alt oturumları otomatik genişlet",
