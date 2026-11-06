@@ -78,7 +78,8 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
       { directory: props.directory, requestID: hold.requestID }).catch(error => {
         const result = partialReceipt(error); if (result) return result; throw error
       })
-    if (!current()) return
+    // A dispatched intent owns its exact receipt independently of the view.
+    // Only further reads and view publication require the live operation.
     if (exactMissionScheduleControl(result, hold, doc.id)) {
       if (holds.get(key) !== hold) return
       const revision = result.document?.revision

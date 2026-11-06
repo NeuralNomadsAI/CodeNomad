@@ -1,87 +1,33 @@
 import assert from "node:assert/strict"
-import { readdirSync, readFileSync } from "node:fs"
-import { dirname, relative, resolve } from "node:path"
-import { fileURLToPath } from "node:url"
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
 import test from "node:test"
 import ts from "typescript"
-
-const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")
-const architecture = resolve(sourceRoot, "../../../dev-docs/architecture.md")
-const backendNames = /^(?:fetch|fetcher|fetchImpl|serverApi|backendOf|OpenCodeClients|sdkManager|authenticatedFetch|captureBackendOperation|backendEvents|serverEvents|getRootClient|getSessionClient|EventSource|WebSocket|XMLHttpRequest|sendBeacon|toolImageSource|Image|Audio)$/
-const deferredCall = /(?:^|\.)(?:setTimeout|setInterval|queueMicrotask|requestAnimationFrame|then|catch|finally)$/
-const backendImport = /(?:api-client|server-events|backend-events|backend-client|backend-operation|sdk-manager|opencode-client|integrations-api|panel-extensions-api)$/
-
-// Scan syntax rather than grep comments, translations or stringified examples.
-// Include non-async wrappers, imported callbacks and timer-only consumers.
-function requiresClassification(file: string, text: string, checkedSource?: ts.SourceFile, checker?: ts.TypeChecker): boolean {
-  const source = checkedSource ?? ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
-  let found = false
-  const promiseLike = (type: ts.Type): boolean => type.isUnion()
-    ? type.types.some(promiseLike) : !!type.getProperty("then")
-  function visit(node: ts.Node) {
-    if (ts.isAwaitExpression(node)
-      || ts.isNewExpression(node) && node.expression.getText(source) === "Promise"
-      || ts.isFunctionLike(node) && ts.canHaveModifiers(node)
-        && ts.getModifiers(node)?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword)
-      || ts.isIdentifier(node) && backendNames.test(node.text)
-      || (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node))
-        && /^(?:img|iframe|audio|video|source|embed|object)$/.test(node.tagName.getText(source))
-      || ts.isBinaryExpression(node) && ts.isPropertyAccessExpression(node.left) && node.left.name.text === "src"
-      || ts.isCallExpression(node) && deferredCall.test(node.expression.getText(source))
-      || checker && ts.isCallExpression(node) && promiseLike(checker.getTypeAtLocation(node))
-      || checker && node.parent && ts.isCallExpression(node.parent)
-        && node.parent.arguments.some(argument => argument === node)
-        && checker.getNonNullableType(checker.getTypeAtLocation(node)).getCallSignatures()
-          .some(signature => promiseLike(signature.getReturnType()))
-      || ts.isImportDeclaration(node) && !node.importClause?.isTypeOnly
-        && ts.isStringLiteral(node.moduleSpecifier) && backendImport.test(node.moduleSpecifier.text)) found = true
-    if (!found) ts.forEachChild(node, visit)
-  }
-  visit(source)
-  return found
-}
-
-function sources(directory: string): string[] {
-  return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
-    const path = resolve(directory, entry.name)
-    return entry.isDirectory() ? sources(path)
-      : /\.tsx?$/.test(entry.name) && !/(?:\.test\.|\.d\.ts$)/.test(entry.name) ? [path] : []
-  })
-}
+import { architecture, discoverOperations, inventoryProgram, manifestPath, parseInventory, requiresClassification,
+  scanOperations, sourceRoot, type Manifest } from "../../tests/contracts/backend-async-inventory"
 
 test("every UI backend/deferred-async file has a current authority or explicit exclusion", t => {
   const document = readFileSync(architecture, "utf8")
-  const section = document.split("<!-- backend-async-inventory:start -->")[1]?.split("<!-- backend-async-inventory:end -->")[0]
-  assert.ok(section, "architecture.md must contain the backend async inventory")
-  const rows = new Map<string, string>()
-  for (const line of section.split("\n")) {
-    const row = /^\| (`.+`) \| (A|C|P|V|DOM|IPC|EXTERNAL|COMPUTE)(?:\+(A|C|P|V|DOM|IPC|EXTERNAL|COMPUTE))* \| (.+) \| (.+) \|$/.exec(line)
-    if (!row) continue
-    for (const match of row[1].matchAll(/`([^`]+\.(?:ts|tsx))`/g)) {
-      assert.ok(!rows.has(match[1]), `duplicate inventory row: ${match[1]}`)
-      rows.set(match[1], line)
-    }
-  }
-  const files = sources(sourceRoot)
-  const configFile = resolve(sourceRoot, "../tsconfig.json")
-  const config = ts.readConfigFile(configFile, ts.sys.readFile)
-  assert.equal(config.error, undefined)
-  const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, dirname(configFile))
-  const program = ts.createProgram(files, parsed.options)
-  const checker = program.getTypeChecker()
-  const paths = new Set(files.map(file => relative(sourceRoot, file).replace(/\\/g, "/")))
+  const rows = parseInventory(document)
+  const detected = discoverOperations(inventoryProgram())
+  const paths = new Set(Object.keys(detected))
   const missing: string[] = []
-  for (const file of files) {
-    const path = relative(sourceRoot, file).replace(/\\/g, "/")
-    if (requiresClassification(path, readFileSync(file, "utf8"), program.getSourceFile(file), checker)
-      && !rows.has(path)) missing.push(path)
+  for (const [path, operations] of Object.entries(detected)) {
+    if (operations.length && !rows.has(path)) missing.push(path)
   }
   assert.deepEqual(missing, [], "Classify backend/deferred async work in architecture.md")
   assert.deepEqual([...rows.keys()].filter(path => !paths.has(path)), [], "Remove stale inventory paths")
-  t.diagnostic(`${files.length} UI sources scanned; ${rows.size} explicitly classified files`)
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Manifest
+  assert.deepEqual(Object.keys(manifest).sort(), [...rows.keys()].sort(), "Manifest and documented families must agree")
+  for (const [file, classification] of rows) {
+    assert.deepEqual(manifest[file].classification, classification, `Review authority changes: ${file}`)
+    assert.equal(new Set(manifest[file].operations).size, manifest[file].operations.length, `Duplicate operation: ${file}`)
+    assert.deepEqual(detected[file], manifest[file].operations, `Classify each new/removed operation: ${file}`)
+  }
+  t.diagnostic(`${paths.size} UI sources scanned; ${rows.size} explicitly classified files; ${Object.values(manifest).reduce((sum, file) => sum + file.operations.length, 0)} operations`)
   const categories = new Map<string, number>()
   for (const row of rows.values()) {
-    const primary = row.split(" | ")[1].split("+")[0]
+    const primary = row.lifetime.split("+")[0]
     categories.set(primary, (categories.get(primary) ?? 0) + 1)
   }
   t.diagnostic(`Primary file lifetimes: ${[...categories].sort().map(([name, count]) => `${name}=${count}`).join(", ")}`)
@@ -104,6 +50,52 @@ test("inventory discovery includes delegated work and explicit non-backend exclu
     "new WebSocket(endpoint)",
   ]) assert.ok(requiresClassification("example.tsx", source), source)
   assert.equal(requiresClassification("example.ts", '// fetch, async, setTimeout\nconst copy = "fetch"'), false)
+})
+
+test("inventory table and operation identities accept both LF and CRLF", () => {
+  const document = readFileSync(architecture, "utf8").replace(/\r\n/g, "\n")
+  assert.deepEqual(parseInventory(document), parseInventory(document.replace(/\n/g, "\r\n")))
+  const text = "async function read() {\n await fetch('/api/status')\n setTimeout(read, 1)\n}\n"
+  assert.deepEqual(scanOperations("example.ts", text), scanOperations("example.ts", text.replace(/\n/g, "\r\n")))
+  assert.deepEqual(scanOperations("example.ts", text), scanOperations("example.ts", `// shifted source\n\n${text}`))
+  assert.throws(() => parseInventory(document.replace("<!-- backend-async-inventory:end -->",
+    "| `App.tsx` | A | duplicate | duplicate |\n<!-- backend-async-inventory:end -->")), /duplicate inventory row/)
+})
+
+test("static operation comparison rejects the reviewer's new backend function inside session-api", () => {
+  const file = "stores/session-api.ts"
+  const original = readFileSync(resolve(sourceRoot, file), "utf8")
+  const reviewed = (JSON.parse(readFileSync(manifestPath, "utf8")) as Manifest)[file].operations
+  const mutation = "\nasync function r4UnlistedBackendOperation(){await fetch('/api/workspaces/r4-new-operation');setTimeout(()=>fetch('/api/workspaces/r4-followup'),300)}"
+  // Replace this source only in the real typed program; no production file is written.
+  const program = inventoryProgram()
+  const options = program.getCompilerOptions()
+  const host = ts.createCompilerHost(options)
+  const getSourceFile = host.getSourceFile.bind(host)
+  host.getSourceFile = (name, languageVersion, onError, shouldCreateNewSourceFile) =>
+    resolve(name) === resolve(sourceRoot, file)
+      ? ts.createSourceFile(name, original + mutation, languageVersion, true)
+      : getSourceFile(name, languageVersion, onError, shouldCreateNewSourceFile)
+  const mutatedProgram = ts.createProgram(program.getRootFileNames(), options, host)
+  const source = mutatedProgram.getSourceFile(resolve(sourceRoot, file))!
+  const detected = scanOperations(file, source.text, source, mutatedProgram.getTypeChecker())
+  assert.throws(() => assert.deepEqual(detected, reviewed), assert.AssertionError)
+  const added = detected.filter(id => !reviewed.includes(id))
+  for (const kind of ["async:function", "await:fetch()", "backend-call:fetch", "deferred:setTimeout"]) {
+    assert.ok(added.some(id => id.includes("/r4UnlistedBackendOperation") && id.includes(`::${kind}`)), `${kind}: ${added}`)
+  }
+  assert.ok(added.some(id => id.includes("setTimeout:arg0::backend-call:fetch")), added.join("\n"))
+})
+
+test("operation comparison rejects new functions, timers and subscriptions in an existing context", () => {
+  const baseline = "async function existing(){ await fetch('/api/workspaces') }"
+  const reviewed = scanOperations("existing.ts", baseline)
+  for (const mutated of [
+    `${baseline}\nasync function added(){ await fetch('/api/new') }`,
+    baseline.replace("await fetch", "setTimeout(() => {}, 300); await fetch"),
+    baseline.replace("await fetch", "backendEvents.onOpen(() => {}); await fetch"),
+  ]) assert.throws(() => assert.deepEqual(scanOperations("existing.ts", mutated), reviewed), assert.AssertionError)
+  assert.ok(scanOperations("new-file.ts", "setTimeout(callback, 300)").length)
 })
 
 test("typed discovery follows arbitrary delegated aliases, callbacks and optional promise returns", () => {

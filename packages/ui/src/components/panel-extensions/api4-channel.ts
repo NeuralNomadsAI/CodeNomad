@@ -200,7 +200,7 @@ export function useApi4Channel(props: {
     if (!parsed.success || disposed) return
     const { id, capability, method, input } = parsed.data
     const controller = new AbortController()
-    const operation = captureBackendOperation(props.instanceId, controller.signal)
+    const operation = captureBackendOperation(props.instanceId)
     let settled = false
     const answer = (message: Record<string, unknown>) => {
       if (settled) return false
@@ -215,8 +215,8 @@ export function useApi4Channel(props: {
       const run = methods.get(capability)?.get(method)
       if (!operation.current() || !granted(grants[capability]) || typeof run !== "function" || !connected || !nativeConnected || pending.size >= MAX_PENDING) throw new Error("Unavailable")
       pending.add(controller)
-      const { result, after } = await run(input, operation.signal)
-      if (!current() || !operation.current()) throw new Error("Stale")
+      const { result, after } = await run(input, AbortSignal.any([operation.signal, controller.signal]))
+      if (!current() || !operation.current() || controller.signal.aborted) throw new Error("Stale")
       // Host actions that remove the frame (navigation, closing the phone panel) wait one
       // task, so the frame handles its answer first. Only host functions, never a string.
       if (answer({ result }) && typeof after === "function") setTimeout(() => { if (operation.current() && current()) after() }, 0)

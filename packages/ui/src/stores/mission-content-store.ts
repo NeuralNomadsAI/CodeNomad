@@ -212,16 +212,18 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     const controller = new AbortController(), epoch = entry.epoch, mark = entry.mark
     if (entry.ref.passage && !entry.operation) {
       const controller = new AbortController()
-      entry.operation = { controller, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(TASK_READ_TIMEOUT_MS)]),
+      entry.operation = { controller, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(TASK_READ_TIMEOUT_MS), ...(entry.attachment ? [entry.attachment] : [])]),
         deadline: performance.now() + TASK_READ_TIMEOUT_MS }
     }
-    const operation = entry.operation, signal = AbortSignal.any([controller.signal, ...(operation ? [operation.signal] : []), ...(entry.attachment ? [entry.attachment] : [])])
+    const operation = entry.operation, signal = operation?.signal ?? AbortSignal.any([controller.signal, ...(entry.attachment ? [entry.attachment] : [])])
     entry.controller = controller
     entry.sentMark = mark
     // A late answer for a released, replaced or switched entry never publishes; one sent
     // before a recovery invalidation leaves that invalidation's fresh read to come.
-    const admitted = () => !signal.aborted && entry.controller === controller && !controller.signal.aborted && entries.get(entry.key) === entry && entry.epoch === epoch
+    // Expiry parks the current demand; revoked owners and attachments never publish.
+    const ownsRead = () => !entry.attachment?.aborted && entry.controller === controller && !controller.signal.aborted && entries.get(entry.key) === entry
       && entry.operation === operation
+    const admitted = () => ownsRead() && entry.epoch === epoch
     const transfer = async () => {
       assertTaskReadLive(signal, operation?.deadline)
       // A read after a failure shows its body; an expired operation stays failed.
@@ -239,7 +241,7 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
       if (operation) Object.assign(entry, accepted)
       publish(entry)
     }).catch(() => {
-      if (!admitted()) return
+      if (!ownsRead() || entry.epoch !== epoch && !operation?.signal.aborted) return
       entry.status = "error"
       entry.parked = true
       entry.pending = undefined

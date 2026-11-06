@@ -516,16 +516,19 @@ async function hydrateRestoredSessionChain(
   isCurrent: () => boolean = () => true,
 ): Promise<void> {
   const attachment = backendEvents.signalForInstance(instanceId)
-  signal = signal ? AbortSignal.any([attachment, signal]) : attachment
+  signal ??= attachment
+  // Keep the caller's logical signal at the SDK boundary; its fetch adapter
+  // binds dispatch to the attachment. Queueing and settlement retain A here.
+  const cancellation = signal === attachment ? attachment : AbortSignal.any([attachment, signal])
   const client = instances().get(instanceId)?.client
   const owns = isCurrent
-  isCurrent = () => !signal.aborted && instances().get(instanceId)?.client === client && owns()
+  isCurrent = () => !cancellation.aborted && instances().get(instanceId)?.client === client && owns()
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    signal.throwIfAborted()
+    cancellation.throwIfAborted()
     if (!isCurrent()) return
     const generationCurrent = captureInstanceRequestAuthority(instanceId)
-    await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, signal, () => isCurrent() && generationCurrent())
-    signal?.throwIfAborted()
+    await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, signal, () => isCurrent() && generationCurrent(), cancellation)
+    cancellation.throwIfAborted()
     if (!isCurrent() || generationCurrent()) return
   }
   throw new Error("Restored session hydration was superseded by reconnect")
@@ -534,8 +537,9 @@ async function hydrateRestoredSessionChain(
 async function hydrateRestoredSessionChainAttempt(
   instanceId: string,
   requestedIds: Array<string | null | undefined>,
-  signal?: AbortSignal,
-  isCurrent: () => boolean = () => true,
+  signal: AbortSignal,
+  isCurrent: () => boolean,
+  cancellation: AbortSignal,
 ): Promise<void> {
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
@@ -546,7 +550,7 @@ async function hydrateRestoredSessionChainAttempt(
   const visited = new Set<string>()
   while (pending.length > 0) {
     if (!isRequestCurrent()) return
-    signal?.throwIfAborted()
+    cancellation.throwIfAborted()
     const level = [...new Set(pending)].filter((sessionId) => !visited.has(sessionId))
     pending = []
     level.forEach((sessionId) => visited.add(sessionId))
@@ -557,12 +561,12 @@ async function hydrateRestoredSessionChainAttempt(
       if (!session || session.catalogSnapshot) {
         const captured = session
         try {
-          signal?.throwIfAborted()
+          cancellation.throwIfAborted()
           const read = () => isRequestCurrent()
             ? client.session.get({ sessionID: sessionId }, signal ? { signal } : undefined)
             : Promise.resolve(null)
-          const apiSession = await prioritizedRead(foreground, signal ?? new AbortController().signal, read)
-          signal?.throwIfAborted()
+          const apiSession = await prioritizedRead(foreground, cancellation, read)
+          cancellation.throwIfAborted()
           if (!apiSession || !isRequestCurrent()) return null
           setSessions((prev) => {
             if (!isRequestCurrent() || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId) || signal?.aborted) return prev
@@ -579,7 +583,7 @@ async function hydrateRestoredSessionChainAttempt(
           session = sessions().get(instanceId)?.get(sessionId)
           if (session?.parentId === null) prependSessionListId(instanceId, sessionId)
         } catch (error) {
-          if (signal?.aborted) throw error
+          if (cancellation.aborted) throw error
           if (!isRequestCurrent()) return null
           if (!isSessionNotFoundError(error)) throw error
           log.warn("Failed to hydrate restored session", { instanceId, sessionId, error })
@@ -1142,7 +1146,7 @@ function isCreatingSession(instanceId: string): boolean {
 // the instance stays busy until the last one settles.
 const creationsInFlight = new Map<string, { count: number; current: () => boolean }>()
 
-function trackCreation(instanceId: string, current: () => boolean, signal: AbortSignal): () => void {
+function trackCreation(instanceId: string, current: () => boolean): () => void {
   const previous = creationsInFlight.get(instanceId)
   const state = previous?.current() ? previous : { count: 0, current }
   state.count++
@@ -1155,7 +1159,7 @@ function trackCreation(instanceId: string, current: () => boolean, signal: Abort
   return () => {
     if (creationsInFlight.get(instanceId) !== state) return
     if (--state.count === 0) creationsInFlight.delete(instanceId)
-    if (!signal.aborted) setLoading(prev => {
+    setLoading(prev => {
       const next = { ...prev }
       next.creatingSession.set(instanceId, state.count > 0)
       return next
@@ -1190,7 +1194,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   // call sends its own request, and repeated UI triggers are deduplicated by
   // the startNewSession action instead.
   const creationCurrent = () => !attachment.aborted && instances().get(instanceId)?.client === instance.client
-  const finishCreation = trackCreation(instanceId, creationCurrent, attachment)
+  const finishCreation = trackCreation(instanceId, creationCurrent)
 
   try {
     const defaultModel = await getDefaultModel(instanceId, selectedAgent)
@@ -1371,7 +1375,7 @@ async function deleteSession(instanceId: string, sessionId: string): Promise<voi
   } finally {
     if (deleteSessionAuthorities.get(loadingKey) === loadingAuthority) {
       deleteSessionAuthorities.delete(loadingKey)
-      if (!attachment.aborted) setLoading((prev) => {
+      setLoading((prev) => {
         const next = { ...prev }
         const deleting = next.deletingSession.get(instanceId)
         if (deleting) {

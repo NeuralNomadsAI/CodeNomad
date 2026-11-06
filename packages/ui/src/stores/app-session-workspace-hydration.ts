@@ -9,6 +9,7 @@ import { seedRestoredSessionSelection } from "./session-state"
 import { seedSessionOutlineIndexes } from "./session-outline"
 import { seedSessionCatalog } from "./session-catalog-hydration"
 import { hydrateSeenInterruptions } from "./session-interruption-seen"
+import { backendEvents } from "../lib/server-events"
 import {
   getSessions, hasAuthoritativeSessionSelection, hydrateActiveSessionSelection,
   hydrateRestoredSessionChain, hydrateSessionExpansion, hydrateSessionGenerationRecovery, hydrateSessionIdleMarkers,
@@ -39,13 +40,18 @@ export async function hydrateRestoredWorkspaceState(
   signal: AbortSignal,
   isCurrentBinding: () => boolean,
 ): Promise<Set<string> | null> {
+  const attachment = backendEvents.signalForInstance(instanceId)
+  attachment.throwIfAborted()
   if (signal.aborted) throw getAbortReason(signal)
+  const owns = isCurrentBinding
+  isCurrentBinding = () => !attachment.aborted && owns()
   if (!isCurrentBinding()) return null
   // Session selection mounts MessageSection synchronously. Seed scroll state
   // first so its initial restore cannot mistake an unavailable snapshot for a
   // deliberate at-bottom state.
   seedRestoredWorkspaceState(instanceId, snapshot)
   await hydrateRestoredSessionChain(instanceId, [snapshot.activeParentSessionId, snapshot.activeSessionId], signal, isCurrentBinding)
+  attachment.throwIfAborted()
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null
   let sessions = getSessions(instanceId)
@@ -64,6 +70,7 @@ export async function hydrateRestoredWorkspaceState(
     Object.keys(snapshot.drafts),
     Object.keys(snapshot.attachments),
   ]), signal, isCurrentBinding)
+  attachment.throwIfAborted()
   if (signal.aborted) throw getAbortReason(signal)
   if (!isCurrentBinding()) return null
   sessions = getSessions(instanceId)

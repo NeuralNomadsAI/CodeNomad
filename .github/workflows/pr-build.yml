@@ -500,6 +500,12 @@ jobs:
           packages/ui/src/stores/backend-demand-lifetime.test.ts
           packages/ui/src/stores/backend-action-lifetime.test.ts
           packages/ui/src/stores/backend-runtime-lifetime.test.ts
+          packages/ui/src/stores/backend-session-flags.test.ts
+          packages/ui/src/lib/backend-panel-deadline.test.ts
+          packages/ui/tests/contracts/mission-current-body-attachment.test.ts
+          packages/ui/tests/contracts/mission-current-body-lifetime.test.ts
+          packages/ui/src/stores/app-session-workspace-hydration.test.ts
+          packages/ui/src/stores/mission-schedules.test.ts
           packages/ui/src/components/backend-view-lifetime.test.ts
           packages/ui/src/lib/backend-view-io.test.ts
           packages/ui/src/components/panel-extensions/extension-manager-lifetime.test.ts

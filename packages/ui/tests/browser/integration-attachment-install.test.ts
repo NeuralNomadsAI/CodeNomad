@@ -34,6 +34,8 @@ test("AC-C15 sessionless install/update needs fresh active native status and a p
       const dialog = await launchInstallation(page, name)
       assert.match(await dialog.innerText(), /Blender.*OpenCode for Blender 1\.2\.3/s)
       assert.match(await dialog.innerText(), /machine where OpenCode runs/)
+      // Kobalte moves focus in its next task after mounting the visible dialog.
+      await page.waitForFunction(() => document.activeElement?.matches(".alert-dialog button.button-secondary"))
       assert.equal(await dialog.getByRole("button", { name: "Cancel", exact: true }).evaluate(el => el === document.activeElement), true)
       await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
     }
