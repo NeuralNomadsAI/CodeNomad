@@ -51,7 +51,7 @@ export function createOpenCodeFreeUsage(exhaustion: Pick<OpenCodeFreeExhaustion,
   return {
     async read(connection: ServiceConnection, providerId: string, modelId: string | undefined, signal: AbortSignal) {
       const now = Date.now(), { from, to } = openCodeFreeWindow(now)
-      let usage: ProviderUsageResponse = { requestedProviderId: providerId, providerId: "opencode-free", providerName: "OpenCode Zen", modelId,
+      let usage: ProviderUsageResponse = { requestedProviderId: providerId, providerId: "opencode-free", providerName: "OpenCode Console", modelId,
         supported: true, configured: true, ok: false, estimated: true, fetchedAt: now, windows: {},
         freeEstimate: { requests: null, reference: OPENCODE_FREE_DAILY_REQUESTS, exhausted: false } }
       try {

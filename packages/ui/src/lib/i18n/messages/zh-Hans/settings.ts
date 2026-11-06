@@ -5,7 +5,6 @@ export const settingsMessages = {
   "providerUsage.exhausted": "已耗尽",
   "providerUsage.estimateInfo": "根据本地步骤数估算免费请求数。实际限制可能不同。耗尽标记于 UTC 00:00 清除。",
   "providerUsage.console.requests": "请求数",
-  "providerUsage.console.name": "OpenCode Console",
   "providerUsage.console.today": "今天（UTC）",
   "providerUsage.console.sevenDays": "7天（UTC）",
   "providerUsage.console.thirtyDays": "30天（UTC）",

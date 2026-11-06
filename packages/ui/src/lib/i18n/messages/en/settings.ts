@@ -5,7 +5,6 @@ export const settingsMessages = {
   "providerUsage.exhausted": "Exhausted",
   "providerUsage.estimateInfo": "Local step counts estimate free requests. Actual limits vary. Exhaustion clears at 00:00 UTC.",
   "providerUsage.console.requests": "Requests",
-  "providerUsage.console.name": "OpenCode Console",
   "providerUsage.console.today": "Today (UTC)",
   "providerUsage.console.sevenDays": "7 days (UTC)",
   "providerUsage.console.thirtyDays": "30 days (UTC)",

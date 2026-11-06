@@ -5,7 +5,6 @@ export const settingsMessages = {
   "providerUsage.exhausted": "Лимит исчерпан",
   "providerUsage.estimateInfo": "Локальное число шагов даёт оценку бесплатных запросов. Фактические лимиты различаются. Отметка исчерпания снимается в 00:00 UTC.",
   "providerUsage.console.requests": "Запросы",
-  "providerUsage.console.name": "OpenCode Console",
   "providerUsage.console.today": "Сегодня (UTC)",
   "providerUsage.console.sevenDays": "7 дней (UTC)",
   "providerUsage.console.thirtyDays": "30 дней (UTC)",

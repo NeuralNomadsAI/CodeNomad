@@ -285,7 +285,9 @@ Pagination must remain consistent across the complete read, bounded to 20 pages,
 1,000 model rows, 64 KiB per response and 15 seconds overall. The shared display
 cache keys by credential identity, owns its deadline and isolates caller
 cancellation; OAuth expiry caps its lifetime and aborted reads stay uncached.
-Redirects are refused.
+The route's caller deadline reports the Console network/timeout reason after a
+fresh, separately bounded ownership/publication check; other callers retain their
+shared read. Redirects are refused.
 
 The response's optional `console` field carries request counts and individual
 `(provider, model)` request rows, alongside the existing `windows` field. Any

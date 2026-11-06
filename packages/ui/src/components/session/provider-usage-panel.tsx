@@ -282,8 +282,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
       </Show>
       <Show when={usage()?.supported && usage()?.configured && usage()?.ok && !unavailableMessage() && hasReadings()}>
         <div class="mt-2 truncate text-right text-sm font-semibold text-secondary">
-          {["opencode-free", "opencode-console"].includes(usage()?.providerId ?? "")
-            ? t("providerUsage.console.name") : usage()?.providerName ?? props.providerId}
+          {usage()?.providerName ?? props.providerId}
           <Show when={usage()?.copilotPlan}>{plan => ` · ${t(`providerUsage.copilotPlans.${plan()}`)}`}</Show>
         </div>
       </Show>

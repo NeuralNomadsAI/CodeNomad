@@ -996,6 +996,55 @@ for (const [reason, message, link] of [
   } finally { await page.close() }
 })
 
+for (const [locale, message] of [
+  ["en", "Cannot reach OpenCode Console."],
+  ["fr", "Impossible de joindre OpenCode Console."],
+] as const) test(`Console timeout message follows the app locale (${locale})`, async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  try {
+    const { requests, errors } = await prepare(page)
+    await page.evaluate(locale => (window as any).usageFixture.locale(locale), locale)
+    await page.waitForFunction(locale => document.documentElement.lang === locale, locale)
+    await waitRequests(requests, 1)
+    await requests[0].fulfill({ json: { ...consoleUsage(emptyConsole()), console: undefined, ok: false,
+      unavailableReason: "opencode-console-network-error" } })
+    await page.getByText(message, { exact: true }).waitFor()
+    assert.equal(await page.getByText("Usage is temporarily unavailable.", { exact: true }).count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+for (const locale of ["en", "fr"] as const) test(`largest safe Console counts stay inside a 300px card (${locale})`, async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 300, height: 750 } })
+  try {
+    const { requests, errors } = await prepare(page)
+    await page.evaluate(locale => {
+      (window as any).usageFixture.locale(locale)
+      document.querySelector("[data-usage]")!.className = "border border-base bg-surface-secondary px-3 py-2"
+    }, locale)
+    await page.waitForFunction(locale => document.documentElement.lang === locale, locale)
+    await waitRequests(requests, 1)
+    const usage = emptyConsole()
+    usage.requests = { "24h": Number.MAX_SAFE_INTEGER, "7d": Number.MAX_SAFE_INTEGER, "30d": Number.MAX_SAFE_INTEGER }
+    usage.models = [{ model: "paid-model", provider: "opencode", requests: Number.MAX_SAFE_INTEGER }]
+    await requests[0].fulfill({ json: consoleUsage(usage) })
+    await page.getByRole("table").waitFor()
+    const expected = await page.evaluate(locale => new Intl.NumberFormat(locale).format(Number.MAX_SAFE_INTEGER), locale)
+    assert.deepEqual(await page.locator("dd").allTextContents(), [expected, expected, expected])
+    assert.equal(await page.getByRole("cell").last().textContent(), expected)
+    const overflow = await page.locator("[data-usage]").evaluate(card => {
+      const bounds = card.getBoundingClientRect()
+      return Array.from(card.querySelectorAll("*")).filter(element => {
+        const rect = element.getBoundingClientRect()
+        return rect.left < bounds.left - 1 || rect.right > bounds.right + 1 || element.scrollWidth > element.clientWidth + 1
+      }).map(element => element.tagName)
+    })
+    assert.deepEqual(overflow, [], "all elements and their text must fit inside the card")
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 for (const colorScheme of ["light", "dark"] as const) test(`Console error text and action meet AA contrast (${colorScheme})`, async () => {
   const page = await browser.newPage({ locale: "en-US", colorScheme, viewport: { width: 300, height: 200 } })
   try {
@@ -1071,14 +1120,14 @@ test("French app locale formats Console numbers, USD and dates despite English b
     assert.ok((await page.locator("body").textContent())?.includes(formatted.date))
     await page.evaluate(() => (window as any).usageFixture.select({ providerId: "opencode", modelId: "big-pickle" }))
     await waitRequests(requests, 2)
-    await requests[1].fulfill({ json: { ...consoleUsage(emptyConsole()), console: undefined, providerId: "opencode-free", providerName: "OpenCode Zen",
+    await requests[1].fulfill({ json: { ...consoleUsage(emptyConsole()), console: undefined, providerId: "opencode-free", providerName: "OpenCode Console",
       estimated: true, freeEstimate: { requests: 1234, reference: 2000, exhausted: true },
       windows: { daily: { usedPercent: 61.7, remainingPercent: 38.3, resetAt: Date.now() + 86400000, windowSeconds: 86400, valueLabel: "1234 / 2000" } } } })
     await page.getByText("Épuisé", { exact: true }).waitFor()
     assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100")
     const expectedFree = await page.evaluate(() => `${new Intl.NumberFormat("fr").format(1234)} / ${new Intl.NumberFormat("fr").format(2000)}`)
     assert.ok((await page.locator("body").textContent())?.includes(expectedFree))
-    assert.equal(await page.getByText("OpenCode Zen", { exact: true }).count(), 0)
+    await page.getByText("OpenCode Console", { exact: true }).waitFor()
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

@@ -16,7 +16,7 @@ export function ProviderUsageConsole(props: { usage: OpenCodeConsoleUsage }) {
       </div>
       <dl class="space-y-1">
         <For each={[ ["24h", "today"], ["7d", "sevenDays"], ["30d", "thirtyDays"] ] as const}>{([range, label]) =>
-          <div class="flex justify-between gap-2"><dt>{t(`providerUsage.console.${label}`)}</dt><dd class="font-medium tabular-nums">{number(props.usage.requests[range])}</dd></div>
+          <div class="flex min-w-0 flex-wrap justify-between gap-x-2"><dt>{t(`providerUsage.console.${label}`)}</dt><dd class="min-w-0 break-words font-medium tabular-nums">{number(props.usage.requests[range])}</dd></div>
         }</For>
       </dl>
     </section>
@@ -28,7 +28,7 @@ export function ProviderUsageConsole(props: { usage: OpenCodeConsoleUsage }) {
           <tbody><For each={props.usage.models}>{row => <tr>
             <td class="align-top break-words pe-1"><bdi>{row.model}</bdi></td>
             <td class="align-top break-words pe-1"><bdi>{row.provider}</bdi></td>
-            <td class="align-top text-end tabular-nums">{number(row.requests)}</td>
+            <td class="break-words align-top text-end tabular-nums">{number(row.requests)}</td>
           </tr>}</For></tbody>
         </table>
       </Show>

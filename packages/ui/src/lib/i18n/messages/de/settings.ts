@@ -5,7 +5,6 @@ export const settingsMessages = {
   "providerUsage.exhausted": "Ausgeschöpft",
   "providerUsage.estimateInfo": "Lokale Schritte schätzen die kostenlosen Anfragen. Tatsächliche Limits variieren. Die Erschöpfungsmarkierung endet um 00:00 UTC.",
   "providerUsage.console.requests": "Anfragen",
-  "providerUsage.console.name": "OpenCode Console",
   "providerUsage.console.today": "Heute (UTC)",
   "providerUsage.console.sevenDays": "7 Tage (UTC)",
   "providerUsage.console.thirtyDays": "30 Tage (UTC)",

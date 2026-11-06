@@ -5,7 +5,6 @@ export const settingsMessages = {
   "providerUsage.exhausted": "Épuisé",
   "providerUsage.estimateInfo": "Le nombre d’étapes locales estime les requêtes gratuites. Les limites réelles varient. L’épuisement est levé à 00:00 UTC.",
   "providerUsage.console.requests": "Requêtes",
-  "providerUsage.console.name": "OpenCode Console",
   "providerUsage.console.today": "Aujourd’hui (UTC)",
   "providerUsage.console.sevenDays": "7 jours (UTC)",
   "providerUsage.console.thirtyDays": "30 jours (UTC)",

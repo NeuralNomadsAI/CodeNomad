@@ -5,7 +5,6 @@ export const settingsMessages = {
   "providerUsage.exhausted": "Tükendi",
   "providerUsage.estimateInfo": "Yerel adım sayıları ücretsiz istekleri tahmin eder. Gerçek sınırlar değişir. Tükenme işareti 00:00 UTC'de kaldırılır.",
   "providerUsage.console.requests": "İstekler",
-  "providerUsage.console.name": "OpenCode Console",
   "providerUsage.console.today": "Bugün (UTC)",
   "providerUsage.console.sevenDays": "7 gün (UTC)",
   "providerUsage.console.thirtyDays": "30 gün (UTC)",

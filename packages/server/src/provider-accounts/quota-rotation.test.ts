@@ -218,7 +218,7 @@ test("Console sign-in rotates only the Go provider", async () => {
     f.service.setEnabled(true, "opencode")
     f.state.quota.one = usage(100)
     await f.send()
-    assert.equal(f.activations(), 0, "Zen pay-as-you-go is not a quota subscription")
+    assert.equal(f.activations(), 0, "Console pay-as-you-go is not a quota subscription")
     f.state.provider = "opencode-go"
     await f.send()
     assert.equal(f.state.order[0], "two")
@@ -248,10 +248,10 @@ test("definite client errors rule candidates out; transport, rate-limit and 5xx 
   try {
     f.service.setEnabled(true, "opencode-go")
     f.state.quota.one = usage(100)
-    // e.g. a Zen key without Go (402), a missing endpoint (404) or a malformed request (400).
+    // e.g. a Console key without Go (402), a missing endpoint (404) or a malformed request (400).
     Object.assign(f.state.quota, { two: 402, three: 404, four: 400 })
     await f.send()
-    assert.equal(f.activations(), 0, "never switch to a rejected account (or its Zen billing)")
+    assert.equal(f.activations(), 0, "never switch to a rejected account (or its Console billing)")
     for (const status of [408, 429, 503]) {
       f.state.quota.four = status
       f.state.order = ["one", "two", "three", "four"]

@@ -5,7 +5,6 @@ export const settingsMessages = {
   "providerUsage.exhausted": "सीमा समाप्त",
   "providerUsage.estimateInfo": "स्थानीय चरणहरूको सङ्ख्याबाट निःशुल्क अनुरोधहरूको अनुमान गरिन्छ। वास्तविक सीमाहरू फरक हुन्छन्। सीमा समाप्त भएको चिन्ह 00:00 UTC मा हट्छ।",
   "providerUsage.console.requests": "अनुरोधहरू",
-  "providerUsage.console.name": "OpenCode Console",
   "providerUsage.console.today": "आज (UTC)",
   "providerUsage.console.sevenDays": "७ दिन (UTC)",
   "providerUsage.console.thirtyDays": "३० दिन (UTC)",

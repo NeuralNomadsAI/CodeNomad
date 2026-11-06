@@ -5,7 +5,6 @@ export const settingsMessages = {
   "providerUsage.exhausted": "Agotado",
   "providerUsage.estimateInfo": "Los pasos locales estiman las solicitudes gratuitas. Los límites reales varían. La marca de agotamiento se borra a las 00:00 UTC.",
   "providerUsage.console.requests": "Solicitudes",
-  "providerUsage.console.name": "OpenCode Console",
   "providerUsage.console.today": "Hoy (UTC)",
   "providerUsage.console.sevenDays": "7 días (UTC)",
   "providerUsage.console.thirtyDays": "30 días (UTC)",

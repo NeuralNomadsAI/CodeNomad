@@ -5,7 +5,6 @@ export const settingsMessages = {
   "providerUsage.exhausted": "מוצה",
   "providerUsage.estimateInfo": "מספר השלבים המקומיים משמש להערכת בקשות חינמיות. המגבלות בפועל משתנות. סימון המיצוי מתאפס ב־00:00 UTC.",
   "providerUsage.console.requests": "בקשות",
-  "providerUsage.console.name": "OpenCode Console",
   "providerUsage.console.today": "היום (UTC)",
   "providerUsage.console.sevenDays": "7 ימים (UTC)",
   "providerUsage.console.thirtyDays": "30 ימים (UTC)",

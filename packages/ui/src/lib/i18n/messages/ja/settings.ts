@@ -5,7 +5,6 @@ export const settingsMessages = {
   "providerUsage.exhausted": "上限到達",
   "providerUsage.estimateInfo": "ローカルのステップ数から無料リクエスト数を推定します。実際の上限は異なります。上限到達の表示は UTC 00:00 に解除されます。",
   "providerUsage.console.requests": "リクエスト数",
-  "providerUsage.console.name": "OpenCode Console",
   "providerUsage.console.today": "今日（UTC）",
   "providerUsage.console.sevenDays": "7日間（UTC）",
   "providerUsage.console.thirtyDays": "30日間（UTC）",
