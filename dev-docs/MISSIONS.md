@@ -1084,6 +1084,17 @@ Assignment prompts and report synthetics use a narrow authenticated loopback bri
 
 Before either kind of admission, the backend also refreshes its owned `codenomad.git-availability` instruction through `syncSessionGitContext`, removing stale context after recovery. This bounded Git advisory is separate from fail-closed environment synchronization: admission proceeds when it fails, while cancellation and connection retirement block admission.
 
+Agent memory refreshes its owned `codenomad.memory` entry through
+`syncSessionMemoryContext` before assignment/report/recovery inputs and lifecycle
+resume synthetics. Preparation uses the optional instructions capability, fresh
+enablement and the target session's authorized location; unreadable scopes are
+omitted independently. Native instruction writes retain the Missions authority
+checkpoint, and full admission checks run again afterward. Optional memory errors
+attempt named-entry removal and allow admission; cancellation, retired connections
+and authority failures block the send. Disabled memory bypasses discovery and
+storage; an absent capability keeps memory silently inactive. See
+[Agent memory](AGENT_MEMORY.md#session-instruction-synchronization).
+
 The bridge accepts up to 250,000 assembled text characters within its 512 KiB JSON body limit. This accommodates the maximum objective, brief, title and dependencies after XML escaping (up to 5×), including JSON control-character escaping on the wire. HTTP regression coverage exercises maximum accepted contracts for all playbooks.
 
 This transport reuses only the automation bridge discovery; automation keeps its own execution-time session/window fences. Environment and model state are session-scoped: a queued inbox item runs with the session's state at execution time; see [SESSION_ENVIRONMENT.md](SESSION_ENVIRONMENT.md).

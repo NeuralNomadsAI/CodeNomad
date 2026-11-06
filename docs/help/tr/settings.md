@@ -34,6 +34,28 @@ Renklerin okunması zorlaşırsa yerleşik bir palet seçin veya düzenlenen pal
 
 **Ayarlar → Genel** bölümündeki **CodeNomad çalışırken bilgisayarı uyanık tut** seçeneği varsayılan olarak kapalıdır. Hiçbir oturum çalışmasa bile yerel bir CodeNomad penceresi açıkken (simge durumuna küçültülmüş olsa bile) sistemin uykuya geçmesini önlemek için açın; ekran yine de kapanabilir. Bu seçenek kapalıyken CodeNomad, bilgisayarı yalnızca bir oturum çalışırken uyanık tutar. Başlığın yanındaki **i**, bu davranışı açıklar. Seçenek yalnızca masaüstü uygulamasının yerel pencerelerinde ve Tercihler penceresinde görünür; tarayıcı ve uzak görünümlerde gizlidir.
 
+## Kalıcı ajan belleği {#agent-memory}
+
+Bellek arızasında gönderim devam eder. CodeNomad oturumun eski bellek talimatlarını kaldırmayı dener; temizleme de başarısız olursa önceki talimatlar başarılı bir yenilemeye kadar kalabilir. İddiaları güncel dosya ve komutlarla doğrulamaya devam edin.
+
+**Tercihler → Genel → Bellek** yolunu açın (tarayıcıda **Ayarlar → Genel**). Bellek varsayılan olarak kapalıdır. Ajanın yararlı bilgileri ve tercihleri konuşmalar arasında saklaması için etkinleştirin. Anahtar bağlı CodeNomad yapılandırması için geçerlidir; kapatmak kayıtları ve geçmişlerini korur.
+
+- **Hakkınızda**: bu yapılandırmayı kullanan projeler arasında paylaşılan en fazla 60 kayıt.
+- **Proje**: en fazla 200 kayıt. Bu arayüz Tercihler’de seçilen projeyi, gömülü Ayarlar ise ana pencerenin etkin projesini kullanır. Ajanın `codenomad_memory` aracı ve oturum talimatları o oturumun klasörünü kullanır. Sunucu depoyu normalleştirilmiş Git uzak adresiyle, bu yoksa yerel depo yoluyla tanımlar; worktree’ler bu belleği paylaşır. Bu kapsamı seçmek için bir proje açın.
+
+Alt oturumlar dahil her oturum kayıt kurallarını ve sınırlı bir başlık ve tür listesini alır (talimat bloğu en fazla yaklaşık 8.000 karakterdir). Ajana işlem yapmadan önce ilgili kayıtları `codenomad_memory` ile okuması, iddiaları güncel dosya ve komutlarla doğrulaması ve kaydettiklerini belirtmesi söylenir. Boş bellek de kayıt kurallarını alır. Okunamayan kapsamlar kullanılamaz olarak dışarıda bırakılır. OpenCode isteğe bağlı oturum talimatı yeteneğine sahip değilse entegrasyon sessizce devre dışı kalır ve seçiminizi korur.
+
+1. Kapsamı ve kaydı seçin. **Yeni** ve **Değiştirildi**, bu tarayıcı veya masaüstü görünümünde kapsamın son başarılı incelemesinden sonraki değişiklikleri gösterir; geçerli ziyaret boyunca görünür kalırlar.
+2. **Başlık**, **Tür** (**Bilgi**, **Tercih** veya **Referans**) ve **Metin** alanlarını düzenleyip **Kaydet** seçeneğini kullanın. Başlık 60, metin 2.000 karakterle sınırlıdır. **İptal** kayıtlı içeriği geri getirir. Kayıt başka yerde değiştiyse **Yeniden yükle** ile inceleyip sonra kaydedin.
+3. Kaldırmak için kaydın işlem menüsünü açıp **Unut** işlemini onaylayın. Kayıt etkin bellekten çıkar; yerel Git eski metin dahil geçmişi korur. Unutmak ajanın kullanımını sonlandırır, güvenli veri silme değildir.
+4. Bellek doluysa yeniden denemeden önce kayıtları birleştirin veya unutun. Eşleşen başlıklar ya da büyük ölçüde örtüşen metinler mevcut bir kaydı değiştirir; Git önceki metni saklar.
+
+**İnceleme gerekli**, korumaları aşabilecek veya kimlik bilgilerini açığa çıkarabilecek şüpheli talimatları işaretler. Bu kayıtlar burada düzenlenebilir, sınıra dahil edilir ve ajanın başlık listesinden ve okumalarından çıkarılır. Her okumada kontrol edilirler; içeriği düzeltip kaydedin veya **Unut** seçeneğini kullanın. Hatalı biçimli veya okunamayan bellek boş liste yerine hata gösterir; yeniden denemeden önce nedeni giderin.
+
+**Düzenle**, onaydan sonra seçilen kapsamı doğrulayıp birleştirmek için Tercihler’de gösterilen projede yeni bir konuşma açar. Doğrulanamayan kayıtları ve dış referansları korur ve değişiklikleri bildirir. Açık bir proje ve en az bir işaretlenmemiş kaydı bulunan etkin, okunabilir ve yazılabilir bellek gerektirir. Başlatma doğrulanamazsa yeniden denemeden önce projenin konuşmalarını kontrol edin.
+
+Belleği ajan yönetir. Zaten `.claude/…/MEMORY.md` gibi başka bir yerde bellek tutuyorsa ona bir **Referans** kaydeder; dış bellek dosyaları kendi yönetimlerinde kalır. CodeNomad yapılandırma klasöründeki `memory/global/` veya `memory/projects/<id>/` altında kayıt başına bir Markdown dosyası saklar; her kaydetme veya silme yerel Git commit’i oluşturur. Depolama yalnızca yereldir, uzak eşitleme yapılmaz. Yapılandırma ve profil sınırları için [Masaüstü pencereleri ve verileri](desktop.md) bölümüne bakın.
+
 ## Paneller ve Durum bölümleri {#panels-status}
 
 Sabitlenmiş bir paneli yeniden boyutlandırmak için iç kenarını sürükleyin. İşaretçi kenarın dışına çıksa bile sürükleme boyunca tutamaç vurgulanır ve işaretçi yakalama korunur. Bitirmek için bırakın.

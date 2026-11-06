@@ -168,6 +168,7 @@ jobs:
       - run: npm run build:pruning --workspace @neuralnomads/codenomad
       - run: npm run build:automation --workspace @neuralnomads/codenomad
       - run: npm run build:missions --workspace @neuralnomads/codenomad
+      - run: npm run build:memory --workspace @neuralnomads/codenomad
       - name: Qualify the pinned client against the technical minimum and latest stable
         shell: pwsh
         run: |
@@ -187,6 +188,8 @@ jobs:
           node scripts/test-plugin-runtime-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-automation-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node --import tsx scripts/test-memory-tool-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # Design agent activation through backend leases: load-time registration,
           # user priority and permissions, union, expiry and retained installations.
@@ -301,6 +304,9 @@ jobs:
 
       - name: Build bundled mission integration
         run: npm run build:missions --workspace @neuralnomads/codenomad
+
+      - name: Build bundled memory integration
+        run: npm run build:memory --workspace @neuralnomads/codenomad
 
       - name: Test desktop packaging invariants
         run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs

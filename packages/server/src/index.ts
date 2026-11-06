@@ -54,6 +54,7 @@ import { RemoteControlManager } from "./remote-control/manager"
 import { RemoteControlOwnerLease } from "./remote-control/owner-lease"
 import { WorktreeDeletionFence } from "./workspaces/worktree-session-evacuation"
 import { IntegrationCatalogSource } from "./opencode/integrations/catalog"
+import { MemoryStore } from "./memory/store"
 
 const require = createRequire(import.meta.url)
 
@@ -296,6 +297,7 @@ async function main() {
 
   const configLocation = resolveConfigLocation(options.configPath)
   const configDir = configLocation.baseDir
+  const memoryStore = new MemoryStore(configLocation.baseDir)
 
   if ((options.tlsKeyPath && !options.tlsCertPath) || (!options.tlsKeyPath && options.tlsCertPath)) {
     throw new InvalidArgumentError("--tls-key and --tls-cert must be provided together")
@@ -353,6 +355,7 @@ async function main() {
   const nativeParent = new NativeParent()
   const automationLifecycle = new DesktopPluginLifecycle("automation")
   const missionsLifecycle = new DesktopPluginLifecycle("missions")
+  const memoryLifecycle = new DesktopPluginLifecycle("memory")
   // Missions dispatch through the loopback bridge of the owning backend, desktop or
   // standalone; window/browser automation needs a desktop host. Settles once
   // publication has been attempted, so early connections never skip Missions.
@@ -372,6 +375,7 @@ async function main() {
           pruning: pruningLifecycle,
           automation: nativeParent.available ? automationLifecycle : undefined,
           missions: missions ? missionsLifecycle : undefined,
+          memory: missions ? memoryLifecycle : undefined,
         })
       },
     })
@@ -523,6 +527,7 @@ async function main() {
 
   // The same application behind every listener of this backend.
   const listenerDeps = {
+    memoryStore,
     workspaceManager,
     settings,
     fileSystemBrowser,
@@ -712,7 +717,7 @@ async function main() {
             await yoloManager.stop()
             await permissionReceipts.stop()
             const results = await Promise.allSettled([
-              workspaceManager.shutdown(), pruningLifecycle.stop(), automationLifecycle.stop(), missionsLifecycle.stop(),
+              workspaceManager.shutdown(), pruningLifecycle.stop(), automationLifecycle.stop(), missionsLifecycle.stop(), memoryLifecycle.stop(),
               removeAutomationBridge?.(),
             ])
             nativeParent.close()

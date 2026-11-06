@@ -20,6 +20,9 @@ import { verifyHumanRecurrenceRequest } from "./mission-recurrence-proof"
 import { BrowserPage } from "../../automation/browser-page"
 import type { SettingsService } from "../../settings/service"
 import type { RemoteControlManager } from "../../remote-control/manager"
+import type { MemoryService } from "../../memory/service"
+import { memoryErrorReply } from "./memory"
+import { prepareSessionMemoryContext } from "../../workspaces/session-memory-context"
 
 interface AutomationPluginRouteDeps {
   authManager: AuthManager
@@ -30,6 +33,7 @@ interface AutomationPluginRouteDeps {
   worktreeDeletionFence?: WorktreeDeletionFence
   settings?: Pick<SettingsService, "getProfileScope">
   remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">
+  memory?: MemoryService
 }
 
 interface DeveloperNativeStatus {
@@ -78,9 +82,28 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         }, lifetime.signal) })
       } catch { return reply.code(403).send({ error: "Recurrence human admission unavailable" }) }
     }
-    if (!body || !["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute", "mission-input"].includes(String(body.mode))
+    if (!body || !["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute", "mission-input", "memory-probe", "memory-input", "memory-context"].includes(String(body.mode))
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {
       return reply.code(400).send({ error: "Invalid automation bridge request" })
+    }
+    if (body.mode === "memory-probe" || body.mode === "memory-input" || body.mode === "memory-context") {
+      if (!deps.memory) return reply.code(503).send({ code: "unreadable", error: "Memory is unavailable" })
+      try {
+        if (body.mode === "memory-probe") {
+          await deps.memory.probe(body.sessionID)
+          return reply.send({ result: { available: true } })
+        }
+        if (body.mode === "memory-context") {
+          await deps.memory.probe(body.sessionID)
+          const connection = await Promise.any(deps.workspaceManager.list().map(async workspace => {
+            const connection = await deps.workspaceManager.getSharedServiceConnection(workspace.id)
+            if (!connection) throw new Error("Memory connection is unavailable")
+            return connection
+          }))
+          return reply.send({ result: await prepareSessionMemoryContext(connection, deps.memory, body.sessionID, lifetime.signal) })
+        }
+        return reply.send({ result: await deps.memory.executeAgent(body.sessionID, body.command) })
+      } catch (error) { return memoryErrorReply(reply, error) }
     }
     // Lifecycle Pause/Stop and a retired task's interrupt walk and interrupt whole native
     // subagent families; they stay below the plugin's 95 s bridge timeout.
@@ -117,7 +140,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
           : commandKind === "prepare" ? await prepareCoordinatorMission(deps.workspaceManager, fence, body.sessionID, body.command, signal)
           : commandKind === "task-sessions" ? await observeMissionTask(deps.workspaceManager, body.sessionID, body.command, signal)
           : commandKind === "interrupt" ? await interruptMissionTask(deps.workspaceManager, fence, body.sessionID, body.command, signal)
-          : await admitMissionInput(deps.workspaceManager, fence, body.sessionID, body.command, signal)
+          : await admitMissionInput(deps.workspaceManager, fence, body.sessionID, body.command, signal, undefined, deps.memory)
         return reply.send({ result })
       } catch (error) {
         if (error instanceof MissionCreationHoldError) {

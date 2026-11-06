@@ -6,11 +6,15 @@ import { useConfig } from "../../stores/preferences"
 import { LocaleSelector } from "../locale-selector"
 import { BehaviorSettingRows } from "./behavior-setting-rows"
 import { ThemeSchemeSettings } from "./theme-scheme-settings"
+import type { LocationRef } from "@opencode/client"
+import { AgentMemorySettingsCard } from "./agent-memory-settings-card"
 
 const StartupStateSettingsCard = lazy(() => import("./startup-state-settings-card").then((module) => ({ default: module.StartupStateSettingsCard })))
 const OpenerStartupStateSettingsCard = lazy(() => import("./opener-startup-state-settings-card").then((module) => ({ default: module.OpenerStartupStateSettingsCard })))
 
 interface GeneralSettingsSectionProps {
+  instanceId?: string
+  location?: LocationRef
   showStartupState?: boolean
   /** "opener": the native Preferences window, which never owns client state. */
   startupStateOwner?: "self" | "opener"
@@ -43,6 +47,7 @@ export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (p
         </div>
       </div>
       <ThemeSchemeSettings />
+      <AgentMemorySettingsCard instanceId={props.instanceId} location={props.location} />
 
       <Show when={props.showStartupState !== false}>
         <Show when={props.startupStateOwner === "opener"} fallback={<StartupStateSettingsCard />}>

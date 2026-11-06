@@ -24,7 +24,7 @@ export interface DesktopPluginPaths {
   nativeData?: string
   resolveNativePath?: (directory: string, assertCurrent: () => void) => Promise<DesktopPluginNativePath>
 }
-export type DesktopPluginFeature = "session-pruning" | "automation" | "missions"
+export type DesktopPluginFeature = "session-pruning" | "automation" | "missions" | "memory"
 
 // Only parse our exact generated entry shape. Older backend leases remain
 // readable during migration, but new heartbeats must leave the watched root.
