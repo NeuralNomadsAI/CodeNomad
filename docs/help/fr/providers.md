@@ -5,7 +5,7 @@ L’authentification des fournisseurs appartient au service OpenCode connecté, 
 ## Connecter un fournisseur de modèles ou de recherche {#connect}
 
 1. Ouvrez un espace de travail, puis **Paramètres → Fournisseurs**. **Modèles** est déplié au départ ; dépliez **Recherche web** pour les fournisseurs de recherche. **Images** regroupe les réglages d'images.
-2. Dans ce groupe, choisissez **Sélectionner un fournisseur**, puis **Connecter**.
+2. Dans ce groupe, choisissez **Sélectionner un fournisseur**, puis **Connecter**. Pour un fournisseur de modèles déjà présent dans la liste, utilisez **Ajouter un compte** (+) dans sa ligne, y compris pour sa première connexion.
 3. Pour un fournisseur de modèles, effectuez la **Méthode d'authentification** native proposée : clé API, OAuth ou commande. Pour OAuth, utilisez **Ouvrir la page d'autorisation** et ne soumettez un code d’autorisation que si demandé. Les fournisseurs de recherche se connectent avec une clé API.
 4. Vérifiez la ligne du fournisseur configuré après la fin. **Modèles** relit l’état après les connexions, les changements de compte et les reconnexions ; **Recherche web** dispose aussi d’**Actualiser**.
 
@@ -28,7 +28,7 @@ Avec plusieurs identifiants enregistrés sur une intégration prise en charge, *
 | Intégration admissible | Type de compte admissible |
 | --- | --- |
 | OpenAI / Codex | Comptes d’abonnement Codex OAuth par navigateur/appareil, pas les clés OpenAI à l’usage ni la méthode de connexion ChatGPT dont OpenAI ne fournit pas l’utilisation. |
-| OpenCode Go | Clé Go, ou connexion/clé OpenCode Console utilisée pour le **fournisseur Go uniquement**, pas les crédits Zen à l’usage. |
+| OpenCode Go | Clé Go, ou connexion/clé OpenCode Console utilisée pour le **fournisseur Go uniquement** ; les modèles payants Console restent manuels. |
 | Anthropic | Connexion OAuth Claude Pro/Max d’OpenCode, **pas** la connexion Claude Code. |
 | GitHub Copilot | OAuth avec quota de requêtes premium lisible ; les identifiants de points d’accès d’entreprise ne sont pas des candidats lisibles. |
 | Offres de codage | À clé : `zai-coding-plan`, `zhipuai-coding-plan`, `kimi-for-coding`, `minimax-coding-plan`, `minimax-cn-coding-plan`. |
@@ -54,7 +54,15 @@ Pour les connexions Google utilisant la méthode d’authentification Gemini CLI
 
 La [FAQ Antigravity](https://antigravity.google/docs/faq/) de Google indique que l’utilisation de logiciels tiers avec une connexion Antigravity enfreint ses conditions et peut entraîner la suspension ou la clôture du compte.
 
-Pour les modèles gratuits OpenCode Zen, **Utilisation** estime la consommation à partir des étapes enregistrées par ce service depuis 00 h UTC, sur une base indicative de 200 requêtes/jour et avec une réinitialisation estimée au prochain minuit UTC. Les étapes approchent les requêtes ; le trafic externe et les limites variables par IP peuvent faire diverger l’estimation du quota réel.
+Pour les modèles payants de l’intégration `opencode`, **OpenCode Console** affiche les **Requêtes** pour **Aujourd’hui (UTC)**, **7 jours (UTC)** et **30 jours (UTC)**. Ces périodes calendaires UTC incluent aujourd’hui et commencent respectivement à 00:00 UTC aujourd’hui, il y a six jours et il y a 29 jours. **Requêtes par modèle · 30 jours** indique chaque modèle et son fournisseur. Les compteurs couvrent le compte Console connecté et sont formatés selon la langue de l’application. **Budgets des comptes de service** affiche **Budgets indisponibles.** OpenCode Go utilise son propre lecteur de quota.
+
+Le lecteur utilise la clé API `opencode` enregistrée ou, en priorité, sa connexion OAuth Console. OAuth exige `https://opencode.ai/console` et l’identifiant d’organisation de la connexion ; l’accès Console nécessite l’autorisation **Usage › Read**. CodeNomad ne rafraîchit jamais ces identifiants. Une connexion OAuth invalide ou expirée doit être rétablie via son propriétaire, même si une clé API est aussi enregistrée.
+
+Les erreurs Console distinguent une connexion absente, un identifiant invalide ou expiré (401), un accès refusé (403), une réponse d’utilisation invalide et une panne réseau. Pour les erreurs de connexion, ouvrez **Paramètres → Fournisseurs**, vérifiez la connexion et ses autorisations, puis actualisez **Utilisation**. L’échec d’un résumé ou d’une page de modèles rend toute la lecture Console indisponible.
+
+Pour les modèles gratuits OpenCode (`big-pickle` et identifiants finissant par `-free`), **Utilisation** affiche **Estimé** : les étapes enregistrées par ce service depuis 00:00 UTC sont comparées à une référence de 200 requêtes/jour, avec une réinitialisation estimée au prochain minuit UTC. Les étapes approchent les requêtes ; le trafic d’autres clients et les limites variables par IP peuvent faire diverger le quota réel. Un échec de quota sur une étape gratuite marque tous les modèles gratuits de cette connexion OpenCode **Épuisé** jusqu’à 00:00 UTC. La jauge indique 100 % tout en conservant le compte connu ; un compte inconnu reste inconnu. Cette marque est gardée en mémoire du backend, par connexion, et disparaît au redémarrage.
+
+Le calibrage Console de l’estimation gratuite est implémenté mais désactivé, en attendant de vérifier que la Console compte les requêtes gratuites dans le périmètre correspondant. L’estimation, la marque d’épuisement et les compteurs Console payants servent uniquement à l’affichage ; la sélection automatique de compte utilise ses propres lecteurs de quota et règles.
 
 OpenAI ne fournit pas l’utilisation pour l’une des méthodes de connexion ChatGPT : Utilisation l’indique au lieu d’afficher les fenêtres de quota. Choisissez [Consulter l’utilisation ChatGPT](https://chatgpt.com/settings/usage) pour consulter l’utilisation des applications et gérer leur accès à votre forfait et à vos crédits dans ChatGPT. Le chat fonctionne toujours, et reconnecter la même connexion ne rétablit pas la lecture.
 

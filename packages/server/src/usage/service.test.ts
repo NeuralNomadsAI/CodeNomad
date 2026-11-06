@@ -5,7 +5,7 @@ import path from "node:path"
 import test from "node:test"
 
 import { clearProviderUsageCache, getProviderUsage, resolveUsageProvider, selectModelWindows } from "./service"
-import type { ProviderReadContext, ProviderResult } from "./types"
+import type { AuthFile, ProviderReadContext, ProviderResult } from "./types"
 
 const providerIds = [
   "codex",
@@ -21,6 +21,7 @@ const providerIds = [
   "ollama-cloud",
   "wafer",
   "opencode-go",
+  "opencode-console",
   "cursor",
   "command-code",
   "deepseek",
@@ -52,7 +53,9 @@ test("maps OpenCode provider aliases to their usage provider", () => {
   for (const providerId of ["google.oauth", "gemini", "antigravity"]) {
     assert.equal(resolveUsageProvider(providerId), null)
   }
-  assert.equal(resolveUsageProvider("opencode")?.id, "opencode-go")
+  assert.equal(resolveUsageProvider("opencode")?.id, "opencode-console")
+  assert.equal(resolveUsageProvider("opencode-go")?.id, "opencode-go")
+  assert.ok(resolveUsageProvider("opencode-go")?.aliases.includes("opencode"))
   assert.equal(resolveUsageProvider("github-copilot-addon"), null)
 })
 
@@ -403,11 +406,13 @@ test("only enumerated public reasons, bounded numeric codes and associated fixed
     assert.equal(minimax.unavailableReason, "minimax-limits-not-shared")
     assert.equal(minimax.unavailableAction, undefined)
     assert.equal(minimax.providerErrorCode, undefined)
-    for (const reason of ["cursor-token-expired", "cursor-team-unavailable", "cursor-access-denied", "cursor-usage-unavailable"] as const) {
-      const cursor = await read({ unavailableReason: reason, unavailableAction: "chatgpt-usage", providerErrorCode: "1004" })
-      assert.equal(cursor.unavailableReason, reason)
-      assert.equal(cursor.unavailableAction, undefined)
-      assert.equal(cursor.providerErrorCode, undefined)
+    for (const reason of ["cursor-token-expired", "cursor-team-unavailable", "cursor-access-denied", "cursor-usage-unavailable",
+      "opencode-console-missing-credential", "opencode-console-invalid-credential", "opencode-console-access-denied",
+      "opencode-console-invalid-response", "opencode-console-network-error"] as const) {
+      const unavailable = await read({ unavailableReason: reason, unavailableAction: "chatgpt-usage", providerErrorCode: "1004" })
+      assert.equal(unavailable.unavailableReason, reason)
+      assert.equal(unavailable.unavailableAction, undefined)
+      assert.equal(unavailable.providerErrorCode, undefined)
     }
   } finally { provider.fetchQuota = original; clearProviderUsageCache() }
 })
@@ -432,4 +437,79 @@ for (const providerId of ["openrouter", "google"]) test(`${providerId} cancellat
     assert.equal((await getProviderUsage(providerId)).ok, true)
     assert.equal(calls, 2)
   } finally { provider.fetchQuota = original; clearProviderUsageCache() }
+})
+
+test("aborting one Console caller never cancels the shared read or caches its abort", async t => {
+  const provider = resolveUsageProvider("opencode")!
+  let release!: (value: ProviderResult) => void
+  let calls = 0, sharedSignal: AbortSignal | undefined
+  const gate = new Promise<ProviderResult>(resolve => { release = resolve })
+  t.mock.method(provider, "fetchQuota", (_auth: AuthFile, context?: ProviderReadContext) => { calls++; sharedSignal = context?.signal; return gate })
+  clearProviderUsageCache()
+  const first = new AbortController()
+  const auth = { opencode: { type: "api", key: "synthetic" } }
+  try {
+    const cancelled = getProviderUsage("opencode", { auth, context: { signal: first.signal } })
+    const other = getProviderUsage("opencode-console", { auth })
+    first.abort()
+    await assert.rejects(cancelled, { name: "AbortError" })
+    assert.equal(sharedSignal?.aborted, false)
+    release({ providerId: provider.id, providerName: provider.name, ok: true, configured: true, fetchedAt: 1,
+      usage: { windows: {}, console: { requests: { "24h": 1, "7d": 2, "30d": 3 }, models: [], budgets: { status: "unavailable", items: [] } } } })
+    assert.equal((await other).console?.requests["24h"], 1)
+    assert.equal((await getProviderUsage("opencode", { auth })).ok, true)
+    assert.equal(calls, 1)
+  } finally { clearProviderUsageCache() }
+})
+
+test("shared timeout aborts the read without caching a failed or late completion", async t => {
+  const provider = resolveUsageProvider("opencode")!, controller = new AbortController()
+  const timeout = t.mock.method(AbortSignal, "timeout", () => controller.signal)
+  let release!: (value: ProviderResult) => void
+  const gate = new Promise<ProviderResult>(resolve => { release = resolve })
+  const quota = t.mock.method(provider, "fetchQuota", () => gate)
+  clearProviderUsageCache()
+  try {
+    const request = getProviderUsage("opencode")
+    controller.abort()
+    await assert.rejects(request, { name: "AbortError" })
+    release({ providerId: provider.id, providerName: provider.name, ok: false, configured: true, usage: null, fetchedAt: 1 })
+    timeout.mock.restore(); quota.mock.restore()
+    assert.equal((await getProviderUsage("opencode")).unavailableReason, "opencode-console-missing-credential")
+  } finally { clearProviderUsageCache() }
+})
+
+test("a provider AbortError is never retained as a cached shared result", async t => {
+  const provider = resolveUsageProvider("opencode")!
+  const quota = t.mock.method(provider, "fetchQuota", async () => { throw new DOMException("synthetic", "AbortError") })
+  clearProviderUsageCache()
+  try {
+    await assert.rejects(getProviderUsage("opencode"), { name: "AbortError" })
+    quota.mock.restore()
+    assert.equal((await getProviderUsage("opencode")).unavailableReason, "opencode-console-missing-credential")
+  } finally { clearProviderUsageCache() }
+})
+
+test("a cached Console success expires with its OAuth credential, without another upstream request", async t => {
+  let now = 1000, calls = 0
+  t.mock.method(Date, "now", () => now)
+  t.mock.method(globalThis, "fetch", async (input: unknown) => {
+    calls++
+    return Response.json(String(input).includes("summary") ? {
+      totalRequests: "1", totalInputTokens: "0", totalOutputTokens: "0", totalCacheReadTokens: "0",
+      totalCacheWrite5mTokens: "0", totalCacheWrite1hTokens: "0", totalCostMicroCents: "0", services: [],
+    } : { items: [], pageInfo: { page: 1, pageSize: 50, total: 0, pageCount: 0 } })
+  })
+  const auth = { opencode: { type: "oauth", access: "synthetic", expires: 2000,
+    server: "https://opencode.ai/console", orgId: "org_fixture" } }
+  clearProviderUsageCache()
+  try {
+    assert.equal((await getProviderUsage("opencode", { auth })).ok, true)
+    now = 2001
+    const expired = await getProviderUsage("opencode", { auth })
+    assert.equal(expired.ok, false)
+    assert.equal(expired.console, undefined)
+    assert.equal(expired.unavailableReason, "opencode-console-invalid-credential")
+    assert.equal(calls, 4)
+  } finally { clearProviderUsageCache() }
 })
