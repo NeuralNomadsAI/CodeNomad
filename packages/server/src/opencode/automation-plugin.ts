@@ -565,25 +565,38 @@ export async function sendMissionInput(sessionID: string,
 
 /** Discover independently of desktop capabilities; never pick between owning backends. */
 export async function sendMemoryInput(sessionID: string, command: MemoryOperation): Promise<MemoryResult> {
+  return sendMemoryBridge(sessionID, "memory-input", command) as Promise<MemoryResult>
+}
+
+export async function requestMemoryContext(sessionID: string): Promise<import("../workspaces/session-memory-context").MemoryInstructionContext> {
+  return sendMemoryBridge(sessionID, "memory-context") as Promise<import("../workspaces/session-memory-context").MemoryInstructionContext>
+}
+
+async function sendMemoryBridge(sessionID: string, mode: "memory-input" | "memory-context", command?: MemoryOperation): Promise<unknown> {
   const active = await registrations()
   const targets: DiscoveredBridgeRegistration[] = []
+  let unowned = 0
   for (let index = 0; index < active.length && targets.length < 2; index += PROBE_CONCURRENCY) {
     const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async registration => {
       try {
         const response = await callBridge(registration, { mode: "memory-probe", sessionID }, MISSION_PROBE_TIMEOUT_MS)
+        if (response.status === 400 && response.body.code === "invalid") unowned++
         return response.status === 200 ? registration : undefined
       } catch { return undefined }
     }))
     targets.push(...batch.filter((value): value is DiscoveredBridgeRegistration => Boolean(value)))
   }
+  // Global plugin activation also covers Locations outside CodeNomad. Only an
+  // explicit ownership refusal may clear stale context there; outages still fail closed.
+  if (mode === "memory-context" && active.length > 0 && unowned === active.length) return { supported: true, value: null }
   if (targets.length !== 1) throw new MemoryError(targets.length ? "conflict" : "unreadable", "Memory requires exactly one owning CodeNomad backend")
-  const response = await callBridge(targets[0]!, { mode: "memory-input", sessionID, command }, REQUEST_TIMEOUT_MS)
+  const response = await callBridge(targets[0]!, { mode, sessionID, ...(command ? { command } : {}) }, REQUEST_TIMEOUT_MS)
   if (response.status !== 200) {
     const codes: MemoryErrorCode[] = ["disabled", "full", "conflict", "invalid", "unreadable", "git_unavailable", "malformed"]
     const code = codes.find(code => code === response.body.code) ?? "unreadable"
     throw new MemoryError(code, code === "full" ? "Memory is full. Merge or delete entries before retrying." : `Memory operation failed: ${code}`, response.body.titles)
   }
-  return response.body.result as MemoryResult
+  return response.body.result
 }
 
 export async function executeBrowserTool(sessionID: string, input: unknown) {

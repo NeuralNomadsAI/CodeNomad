@@ -17,6 +17,7 @@ import { EventBus } from "../events/bus"
 import { registerWorkspaceRoutes } from "./routes/workspaces"
 import { registerTemporaryWorkspaceRoutes } from "./routes/temporary-workspaces"
 import { syncSessionGitContext } from "../workspaces/session-git-context"
+import { syncSessionMemoryContext } from "../workspaces/session-memory-context"
 import { assertOrdinaryMissionScheduleBody, assertOrdinaryMissionScheduleSession, MissionScheduleInputError } from "./mission-schedule-input-guard"
 import { readGitStatus } from "../workspaces/git-requirement"
 import { registerSettingsRoutes } from "./routes/settings"
@@ -478,7 +479,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerImagesConversationRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerSessionGoalRoute(app, { workspaceManager: deps.workspaceManager })
   registerSessionMediaRoutes(app, { workspaceManager: deps.workspaceManager })
-  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, permissionReceipts: deps.permissionReceipts,
+  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, memory, permissionReceipts: deps.permissionReceipts,
     humanAnswers: { auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, bridgeToken: deps.automationBridgeToken,
       remoteDevices: deps.remoteControlManager } })
 
@@ -565,6 +566,7 @@ interface InstanceProxyDeps {
   logger: Logger
   worktreeDeletionFence: WorktreeDeletionFence
   accounts?: ProviderAccountsService
+  memory?: MemoryService
   permissionReceipts?: PermissionReceipts
   humanAnswers?: Parameters<typeof replyMissionHumanAnswer>[4]
 }
@@ -746,6 +748,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         workspaceManager: deps.workspaceManager,
         worktreeDeletionFence: deps.worktreeDeletionFence,
         accounts: deps.accounts,
+        memory: deps.memory,
         permissionReceipts: deps.permissionReceipts,
         humanAnswers: deps.humanAnswers,
         pathSuffix: "",
@@ -763,6 +766,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         workspaceManager: deps.workspaceManager,
         worktreeDeletionFence: deps.worktreeDeletionFence,
         accounts: deps.accounts,
+        memory: deps.memory,
         permissionReceipts: deps.permissionReceipts,
         humanAnswers: deps.humanAnswers,
         pathSuffix: request.params["*"] ?? "",
@@ -780,6 +784,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         workspaceManager: deps.workspaceManager,
         worktreeDeletionFence: deps.worktreeDeletionFence,
         accounts: deps.accounts,
+        memory: deps.memory,
         permissionReceipts: deps.permissionReceipts,
         humanAnswers: deps.humanAnswers,
         pathSuffix: `api/session/${encodeURIComponent(request.params.sessionId)}/prompt`,
@@ -803,6 +808,7 @@ interface InstanceProxyRequestArgs {
   workspaceManager: InstanceProxyWorkspaceManager
   worktreeDeletionFence: WorktreeDeletionFence
   accounts?: ProviderAccountsService
+  memory?: MemoryService
   permissionReceipts?: PermissionReceipts
   humanAnswers?: Parameters<typeof replyMissionHumanAnswer>[4]
   logger: Logger
@@ -1284,6 +1290,14 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           // Advisory context must not turn Git recovery into another send blocker.
           // Do not log SDK bodies (they may include unrelated session context).
           logger.debug({ workspaceId, sessionId }, "Unable to update Git availability context")
+        }
+        if (connection) {
+          try { await wait(syncSessionMemoryContext(connection, args.memory, sessionId!, signal)) }
+          catch {
+            signal.throwIfAborted()
+            releaseMutation?.()
+            return reply.code(502).send({ error: "Memory instructions are unavailable" })
+          }
         }
       }
       signal.throwIfAborted()

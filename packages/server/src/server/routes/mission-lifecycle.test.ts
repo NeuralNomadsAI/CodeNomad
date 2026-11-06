@@ -57,8 +57,25 @@ function fixture(action: "start" | "pause" | "stop") {
   const fence = new WorktreeDeletionFence()
   const command: any = { kind: "lifecycle", input: { missionID: mission.id, operationID: mission.control.id, sessionID: "ses_actor" } }
   const send = (signal = new AbortController().signal) => applyMissionLifecycle(manager as never, fence, "ses_coordinator", command, signal)
-  return { mission, native, state, effects, client, calls, send, fence, command }
+  return { mission, native, state, effects, client, calls, send, fence, command, manager }
 }
+
+test("Missions start refreshes memory for the exact synthetic target; preparation failure blocks resume", async () => {
+  const f = fixture("start"), original = f.manager.getSharedServiceConnection
+  const entries = "/api/experimental/session/{sessionID}/instructions/entries"
+  f.manager.getSharedServiceConnection = async () => ({ ...await original(), endpoint: { url: "http://127.0.0.1", auth: { type: "none" } },
+    fetch: async () => Response.json({ openapi: "3.1.0", paths: { [entries]: { get: {} }, [`${entries}/{key}`]: { put: {}, delete: {} } } }) }) as never
+  const memory = { sessionTitles: async (sessionID: string) => { assert.equal(sessionID, "ses_actor"); return { project: [] } } }
+  f.client.session.instructions.entry.put = async (input?: any) => { f.calls.push({ kind: "instructions", input }) }
+  const send = () => applyMissionLifecycle(f.manager as never, f.fence, "ses_coordinator", f.command, new AbortController().signal, undefined, memory as never)
+  await send()
+  assert.deepEqual(f.calls.map(call => call.kind), ["environment", "instructions", "synthetic"])
+  assert.equal(f.calls[1].input.key, "codenomad.memory")
+  memory.sessionTitles = async () => { throw new Error("preparation failed") }
+  const count = f.calls.length
+  await assert.rejects(send(), /preparation failed/)
+  assert.deepEqual(f.calls.slice(count).map(call => call.kind), ["environment"])
+})
 
 for (const mode of ["exact", "missing", "changed", "replaced-during-environment"] as const) test(`frozen immediate source envelope: ${mode}`, async () => {
   const f = fixture("start"), text = "Objective\n\nFrozen untrusted conversation context"

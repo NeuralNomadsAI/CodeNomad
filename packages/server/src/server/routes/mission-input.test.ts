@@ -75,6 +75,30 @@ test("mission inputs refresh profile environment on every admission, including s
   assert.equal(f.calls[4].input.sessionID, "ses_coordinator")
 })
 
+test("mission assignment and report synchronize memory before admission and preserve authority fences", async () => {
+  const f = fixture(), original = f.manager.getSharedServiceConnection
+  const entries = "/api/experimental/session/{sessionID}/instructions/entries"
+  f.manager.getSharedServiceConnection = async () => ({ ...await original(), endpoint: { url: "http://127.0.0.1", auth: { type: "none" } },
+    fetch: async () => Response.json({ openapi: "3.1.0", paths: { [entries]: { get: {} }, [`${entries}/{key}`]: { put: {}, delete: {} } } }) }) as never
+  let allowed = true, value: any = { global: [], project: [] }
+  const authority = { prepare: async () => {}, current: () => { if (!allowed) throw new Error("authority retired"); return true as const } }
+  const memory = { sessionTitles: async () => value }
+  const send = (command: unknown) => admitMissionInput(f.manager as never, f.fence, "ses_coordinator", command, new AbortController().signal, authority, memory as never)
+  await send(f.command)
+  assert.equal(f.gitContext.at(-1)?.input.key, "codenomad.memory")
+  assert.equal(f.gitContext.at(-1)?.input.sessionID, "ses_actor")
+  f.mission.tasks[0].report = { id: "rpt_1", sessionId: "ses_actor", taskKey: "review", outcome: "completed", summary: "Done", evidence: [], next: [], createdAt: 1 }
+  value = null
+  await send({ kind: "synthetic", input: reportInput(f.mission, f.mission.tasks[0].report) })
+  assert.deepEqual(f.gitContext.at(-1), { kind: "remove", input: { sessionID: "ses_coordinator", key: "codenomad.memory" } })
+  const before = f.calls.length
+  memory.sessionTitles = async () => { allowed = false; return {} }
+  const writes = f.gitContext.length
+  await assert.rejects(send(f.command), /policy-unqualified/)
+  assert(f.gitContext.slice(writes).every(call => call.input.key !== "codenomad.memory"))
+  assert.deepEqual(f.calls.slice(before).map(call => call.kind), ["environment"])
+})
+
 test("targeted recovery refuses native waits, then uses environment and one correlated synthetic", async () => {
   const f = fixture()
   f.mission.revision = 7

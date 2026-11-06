@@ -9,6 +9,7 @@ import { MemoryError, type MemoryEntry } from "./model"
 import { resolveMemoryProjectIdentity, type MemoryProjectTarget } from "./project-identity"
 import { decideMemorySave, memoryForAgent, reviewMemoryEntry } from "./rules"
 import type { MemoryNamespace, MemoryStore } from "./store"
+import type { MemoryTitles } from "../workspaces/session-memory-context"
 
 const memoryRevision = (entry: MemoryEntry): string => createHash("sha256").update(JSON.stringify([
   entry.id, entry.title, entry.type, entry.text, entry.createdAt, entry.updatedAt, entry.sessionId,
@@ -80,6 +81,23 @@ export class MemoryService {
   }
 
   async probe(sessionID: string): Promise<void> { await this.sessionTarget(sessionID) }
+
+  async sessionTitles(sessionID: string): Promise<MemoryTitles | null> {
+    const target = await this.sessionTarget(sessionID)
+    if (!this.getSettings().enabled) return null
+    const scopes: MemoryTitles = {}
+    await Promise.all((["global", "project"] as const).map(async scope => {
+      try {
+        const namespace: MemoryNamespace = scope === "global" ? { scope }
+          : { scope, projectId: (await this.projectIdentity(target)).id }
+        scopes[scope] = (await this.store.list(namespace)).map(({ title, type }) => ({ title, type }))
+      } catch { /* An unreadable scope stays absent, rather than looking empty. */ }
+    }))
+    // Revalidate ownership and the current preference after storage awaits.
+    const current = await this.sessionTarget(sessionID)
+    if (JSON.stringify(current) !== JSON.stringify(target)) throw new MemoryError("conflict", "Memory session moved")
+    return this.getSettings().enabled ? scopes : null
+  }
 
   async executeAgent(sessionID: string, input: unknown): Promise<MemoryResult> {
     return this.execute(input, () => this.sessionTarget(sessionID), sessionID)

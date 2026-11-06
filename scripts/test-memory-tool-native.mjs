@@ -33,7 +33,7 @@ const previous = Object.fromEntries(["LOCALAPPDATA", "XDG_RUNTIME_DIR", "WSL_DIS
 process.env.LOCALAPPDATA = env.LOCALAPPDATA
 process.env.XDG_RUNTIME_DIR = env.XDG_RUNTIME_DIR
 delete process.env.WSL_DISTRO_NAME
-let client, invoke, providerError, observedTools = [], child, stopped, output = "", removeBridge, first, second, dropResponse = false
+let client, connection, invoke, providerError, observedTools = [], child, stopped, output = "", removeBridge, first, second, dropResponse = false
 const requests = [], operations = []
 const provider = createServer(async (request, response) => {
   try {
@@ -51,10 +51,14 @@ const provider = createServer(async (request, response) => {
     const input = primary ? invoke : undefined
     if (primary) invoke = undefined
     if (input) assert(observedTools.includes("codenomad_memory"), "Exact native model-visible tool name")
-    const delta = input ? { role: "assistant", tool_calls: [{ index: 0, id: `call_${requests.length}`, type: "function",
+    const launchChild = primary && body.messages.at(-1)?.role === "user" && JSON.stringify(body.messages.at(-1)).includes("LAUNCH_MEMORY_CHILD")
+    if (launchChild) assert(observedTools.includes("subagent"), "Native subagent tool is available")
+    const delta = launchChild ? { role: "assistant", tool_calls: [{ index: 0, id: `call_${requests.length}`, type: "function",
+      function: { name: "subagent", arguments: JSON.stringify({ agent: "general", description: "Memory context", prompt: "MEMORY_CHILD_FIRST_CALL" }) } }] }
+      : input ? { role: "assistant", tool_calls: [{ index: 0, id: `call_${requests.length}`, type: "function",
       function: { name: "codenomad_memory", arguments: JSON.stringify(input) } }] } : { role: "assistant", content: "DONE" }
     response.setHeader("content-type", "text/event-stream")
-    for (const [value, finish_reason] of [[delta, null], [{}, input ? "tool_calls" : "stop"]]) {
+    for (const [value, finish_reason] of [[delta, null], [{}, input || launchChild ? "tool_calls" : "stop"]]) {
       response.write(`data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", model: "fixture", choices: [{ index: 0, delta: value, finish_reason }] })}\n\n`)
     }
     response.end("data: [DONE]\n\n")
@@ -68,6 +72,7 @@ const manager = {
   get: id => id === "owner" ? { id, path: project } : undefined,
   list: () => [{ id: "owner", path: project }],
   getSharedServiceClient: async () => client,
+  getSharedServiceConnection: async () => connection,
   getServiceDirectoryForPath: async (id, directory) => id === "owner" && path.resolve(directory).toLowerCase() === project.toLowerCase() ? project : undefined,
   getServiceWslDistro: () => undefined,
 }
@@ -112,6 +117,7 @@ try {
   const endpoint = { url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], auth: { type: "basic", username: "opencode", password } }
   const boundedFetch = (url, init) => fetch(url, { ...init, signal: AbortSignal.any([...(init?.signal ? [init.signal] : []), AbortSignal.timeout(30_000)]) })
   client = OpenCode.make({ baseUrl: endpoint.url, fetch: boundedFetch, headers: { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` } })
+  connection = { endpoint, client, fetch: boundedFetch, assertCurrent() {} }
   const info = await client.server.info(), location = { directory: project }
   const address = await bridge.listen({ host: "127.0.0.1", port: 0 })
   removeBridge = await publishAutomationBridge({ ...registration, url: `${address}${AUTOMATION_BRIDGE_PATH}` })
@@ -156,6 +162,39 @@ try {
   assert.equal(flagged.flagged, true)
   assert.equal(success(await call({ action: "read", query: flagged.id })).entry, null)
   assert.equal(success(await call({ action: "list" })).entries.length, 1)
+  // The shipped prompt hook crosses the real bridge and policy, including native
+  // children whose initial prompt never passes through the CodeNomad proxy.
+  const start = requests.length, parent = await client.session.create({ location })
+  await client.session.instructions.entry.put({ sessionID: parent.id, key: "other-owner", value: "OTHER_OWNER_CANARY" })
+  await client.session.prompt({ sessionID: parent.id, text: "LAUNCH_MEMORY_CHILD" })
+  await until(async () => (await client.session.list({ location, parentID: parent.id, limit: 20 })).data.length === 1, "shipped-hook child creation")
+  const descendant = (await client.session.list({ location, parentID: parent.id, limit: 20 })).data[0]
+  await client.session.wait({ sessionID: descendant.id }, { signal: AbortSignal.timeout(30_000) })
+  await client.session.wait({ sessionID: parent.id }, { signal: AbortSignal.timeout(30_000) })
+  const childRequest = requests.slice(start).find(body => body.stream && body.messages.at(-1)?.role === "user" && JSON.stringify(body.messages.at(-1)).includes("MEMORY_CHILD_FIRST_CALL"))
+  assert(childRequest, "The real native child called the provider")
+  const childSystem = JSON.stringify(childRequest.messages.filter(message => message.role === "system"))
+  assert.match(childSystem, /CodeNomad agent memory is enabled/)
+  assert.match(childSystem, /Editor/); assert.match(childSystem, /Build/)
+  assert.doesNotMatch(childSystem, /Use Vim\.|Run npm test\.|Hidden canary|\"Unsafe\"/)
+  const childEntries = await client.session.instructions.entry.list({ sessionID: descendant.id })
+  assert.equal(childEntries.filter(entry => entry.key === "codenomad.memory").length, 1)
+  const childValue = JSON.stringify(childEntries.find(entry => entry.key === "codenomad.memory").value)
+  assert.doesNotMatch(childValue, /Unsafe|Use Vim\.|Run npm test\./)
+  await memory.setEnabled(false)
+  await client.session.prompt({ sessionID: parent.id, text: "MEMORY_DISABLED_REFRESH" })
+  await client.session.wait({ sessionID: parent.id }, { signal: AbortSignal.timeout(30_000) })
+  const disabledEntries = await client.session.instructions.entry.list({ sessionID: parent.id })
+  assert(!disabledEntries.some(entry => entry.key === "codenomad.memory"))
+  assert(disabledEntries.some(entry => entry.key === "other-owner"))
+  await memory.setEnabled(true)
+  const unownedDirectory = path.join(root, "unowned")
+  await mkdir(unownedDirectory)
+  const unowned = await client.session.create({ location: { directory: unownedDirectory } })
+  await client.session.prompt({ sessionID: unowned.id, text: "UNOWNED_LOCATION_STAYS_USABLE" })
+  await client.session.wait({ sessionID: unowned.id }, { signal: AbortSignal.timeout(30_000) })
+  assert(!(await client.session.instructions.entry.list({ sessionID: unowned.id })).some(entry => entry.key === "codenomad.memory"))
+  console.log("PASS shipped hook installs bounded safe titles before the native child's first provider request and removes only its memory key after disable")
   assert.deepEqual(success(await call({ action: "delete", id: ack.id, revision: read.revision })), { deleted: true })
   const count = operations.length
   dropResponse = true
@@ -183,7 +222,7 @@ try {
   first = await openPresence()
   await until(async () => { await sample(); return observedTools.includes("codenomad_memory") }, "presence reopening")
   assert.match(await readFile(path.join(config, "plugins", "codenomad-memory.ts"), "utf8"), /[a-f0-9]{64}\.mjs/)
-  console.log(`PASS ${info.version}: exact native tool, model-driven list/read/save/delete, native session provenance, both scopes, disabled/full errors, safe projections, one uncertain write dispatch, standalone bridge and presence withdrawal/reopening`)
+  console.log(`PASS ${info.version}: exact native tool, model-driven list/read/save/delete, native session provenance, both scopes, disabled/full errors, safe projections, shipped native-child instructions, one uncertain write dispatch, standalone bridge and presence withdrawal/reopening`)
 } finally {
   await first?.stop(); await second?.stop(); await removeBridge?.()
   if (child) await stopFixtureChild(child, stopped)

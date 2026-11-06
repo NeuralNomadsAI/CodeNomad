@@ -207,6 +207,41 @@ server provision its content-addressed payload through `DesktopPluginLifecycle`
 once their loopback bridge publication succeeds. Leases keep the tool's
 registration aligned with backend presence, including withdrawal and reopening.
 
+## Session instruction synchronization
+
+`workspaces/session-memory-context.ts` owns the single `codenomad.memory` entry.
+The authorized proxy refreshes it before prompt and command sends. Missions
+assignment/report/recovery inputs and lifecycle resume synthetics refresh it at
+their own admission boundaries. Their instruction client preserves the synchronous
+Missions authority checkpoint at each native put/remove, and full session,
+connection and authority checks run again before the input dispatch.
+
+`MemoryService.sessionTitles` resolves the native session's current authorized
+directory, checks the fresh preference and independently reads both safe scope
+projections. It rechecks session ownership and enablement after the reads.
+Unreadable scopes stay absent; missing folders supply empty title lists.
+Disabling removes only `codenomad.memory`, including when stored scopes are
+malformed. Preparation failures block admission with private-safe errors;
+an authenticated capability result of `unsupported` keeps the feature silent.
+
+The English instruction string always includes the recording rules, even when
+both lists are empty: corrections/preferences, successful unusual approaches,
+costly facts absent from code/docs, one fact per entry, saving before the final
+response with a one-sentence acknowledgement, and reference-only designation of
+an external memory. It directs the agent to read before acting and verify file
+and command claims. Title/type pairs travel as escaped JSON, with Unicode control
+and markup delimiters escaped, inside an 8,000 UTF-16-code-unit budget. Lexical
+sorting and round-robin scope selection make truncation stable; `omittedTitles`
+counts exclusions and the instructions direct the agent to `list` for all titles.
+
+The native plugin awaits `memory-context` through the authenticated bridge before
+every prompt admission, including children outside the proxy. The bridge applies
+the same capability, ownership, preference and scope projection as direct sends.
+Each activation owns and disposes its prompt hook with its tool registration.
+An explicit ownership refusal from every live backend clears the named entry and
+leaves unrelated native Locations usable; missing/ambiguous backends and transport
+failures reject preparation.
+
 ## Optional native instructions capability
 
 `memory/instructions-capability.ts` reads the authenticated `/openapi.json`
@@ -262,6 +297,7 @@ node --import tsx --test packages/server/src/server/routes/memory.test.ts packag
 npm run typecheck --workspace @neuralnomads/codenomad
 node --import tsx scripts/test-memory-instructions-native.mjs <absolute-opencode-executable>
 node --import tsx --test packages/server/src/opencode/memory/*.test.ts
+node --import tsx --test packages/server/src/workspaces/session-memory-context.test.ts packages/server/src/server/__tests__/session-environment.test.ts packages/server/src/server/routes/mission-input.test.ts packages/server/src/server/routes/mission-lifecycle.test.ts packages/server/src/server/routes/mission-authority-checkpoint.test.ts
 npm run build:memory --workspace @neuralnomads/codenomad
 node --import tsx scripts/test-memory-tool-native.mjs <absolute-opencode-executable>
 ```
@@ -274,6 +310,9 @@ loopback synthetic provider. It checks session-local parent entries, first-call
 child instructions through the awaited hook, resumed-child updates, removal of
 only the memory key and rejection of failed preparation with an empty inbox. Its plugin bundle uses
 `packages/server/scripts/native-plugin-build.mjs`.
+The shipped-tool qualification also exercises the real bridge/store projection
+before a native child's first model call, title-only safe instructions, removal
+after disable while preserving another key, and an unrelated native Location.
 
 ## Agent conventions
 

@@ -24,11 +24,22 @@ async function fixture(t: test.TestContext) {
   const app = Fastify(), calls: Array<{ sessionID: string; command: unknown }> = [], definitions: Definition[] = []
   let response: { status: number; body: object } | "lost" = { status: 200, body: { result: { entries: [] } } }
   let probes = 0, disposed = 0
+  let context: unknown = { supported: true, value: "MEMORY TITLES" }, hook: ((event: { sessionID: string }) => Promise<void>) | undefined
+  const instructions: unknown[] = [], contexts: string[] = []
+  let hookDisposed = 0
+  let owned = true
   const registration = createAutomationBridgeRegistration("http://127.0.0.1")
   app.post(AUTOMATION_BRIDGE_PATH, (request, reply) => {
     assert.equal(request.headers["x-codenomad-automation-token"], registration.token)
     const body = request.body as { mode: string; sessionID: string; command: unknown }
-    if (body.mode === "memory-probe") { probes++; return { result: { available: true } } }
+    if (body.mode === "memory-probe") {
+      probes++
+      return owned ? { result: { available: true } } : reply.code(400).send({ code: "invalid" })
+    }
+    if (body.mode === "memory-context") {
+      contexts.push(body.sessionID)
+      return context === "unavailable" ? reply.code(503).send({ code: "unreadable" }) : { result: context }
+    }
     assert.equal(body.mode, "memory-input")
     calls.push({ sessionID: body.sessionID, command: body.command })
     if (response === "lost") { reply.hijack(); reply.raw.destroy(); return }
@@ -40,7 +51,10 @@ async function fixture(t: test.TestContext) {
   await mkdir(presence)
   await writeFile(path.join(presence, `${randomUUID()}.lease`), "")
   const plugin = desktopPlugin(presence)
-  const cleanup = await plugin.setup!({ tool: { transform: async (callback: (editor: { add(definition: Definition): void }) => void) => {
+  const cleanup = await plugin.setup!({ session: {
+    hook: async (kind: string, callback: typeof hook) => { assert.equal(kind, "prompt"); hook = callback; return { dispose() { hookDisposed++ } } },
+    instructions: { entry: { put: async (input: unknown) => { instructions.push(input) }, remove: async (input: unknown) => { instructions.push(input) } } },
+  }, tool: { transform: async (callback: (editor: { add(definition: Definition): void }) => void) => {
     callback({ add: definition => { definitions.push(definition) } })
     return { dispose: async () => { disposed++ } }
   } } } as never) as () => Promise<void>
@@ -58,6 +72,8 @@ async function fixture(t: test.TestContext) {
   assert.equal("sessionId" in tool.input.properties, false)
   assert.equal("sessionID" in tool.input.properties, false)
   return { tool, calls, setResponse(value: typeof response) { response = value }, cleanup,
+    instructions, contexts, setContext(value: unknown) { context = value }, prompt: (sessionID: string) => hook!({ sessionID }), hookDisposed: () => hookDisposed,
+    setOwned(value: boolean) { owned = value },
     probes: () => probes, disposed: () => disposed,
     execute: (input: object) => tool.execute({ scope: "global", ...input }, { sessionID: "ses_native" }) }
 }
@@ -85,6 +101,27 @@ test("native memory tools route every action using only the execution session an
   assert.equal(f.probes(), before, "invalid or forged input never reaches discovery")
   await f.cleanup()
   assert.equal(f.disposed(), 1)
+})
+
+test("awaited prompt hook resolves each native child's own context, removes only its key and follows presence lifetime", async t => {
+  const f = await fixture(t)
+  await f.prompt("ses_native_child")
+  assert.deepEqual(f.contexts, ["ses_native_child"])
+  assert.deepEqual(f.instructions, [{ sessionID: "ses_native_child", key: "codenomad.memory", value: "MEMORY TITLES" }])
+  f.setContext({ supported: true, value: null })
+  await f.prompt("ses_native_child")
+  assert.deepEqual(f.instructions[1], { sessionID: "ses_native_child", key: "codenomad.memory" })
+  f.setContext({ supported: false })
+  await f.prompt("ses_native_child")
+  assert.equal(f.instructions.length, 2)
+  f.setContext("unavailable")
+  await assert.rejects(f.prompt("ses_native_child"))
+  assert.equal(f.instructions.length, 2, "failed preparation rejects the awaited hook without any native instruction write")
+  f.setOwned(false)
+  await f.prompt("ses_unowned")
+  assert.deepEqual(f.instructions[2], { sessionID: "ses_unowned", key: "codenomad.memory" }, "an explicit ownership refusal clears stale memory without blocking unrelated Locations")
+  await f.cleanup()
+  assert.equal(f.hookDisposed(), 1)
 })
 
 test("agent-facing errors preserve capacity titles and never replay uncertain writes", async t => {
