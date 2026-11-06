@@ -280,6 +280,7 @@ export const instanceMessages = {
   "instanceShell.worktree.create.placeholder": "worktree-adı",
   "instanceShell.worktree.create.success": "Worktree {slug} oluşturuldu",
   "instanceShell.worktree.create.error": "Worktree oluşturulamadı",
+  "instanceShell.worktree.create.nestedFolderUnavailable": "Git bu dalda açık klasörü izlemiyor, bu yüzden yeni bir worktree onu içermez.",
   "instanceShell.worktree.delete.action": "Worktree sil",
   "instanceShell.worktree.delete.description": "Bu dal worktree'sini ve yerel klasörünü siler.",
   "instanceShell.worktree.delete.target": "Worktree \"{slug}\"",
