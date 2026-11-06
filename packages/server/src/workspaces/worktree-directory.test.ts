@@ -7,7 +7,7 @@ import path from "node:path"
 import { test } from "node:test"
 import { invalidateWorktreeCache, isPathWithinWorktree, resolveOwnedWorktreePath } from "./worktree-directory"
 import { fixtureCatalogue } from "./__tests__/native-worktree-fixture"
-import { WorktreeInventory } from "./worktree-inventory"
+import { WORKTREE_OWNERSHIP_RESTART_LIMIT, WorktreeInventory } from "./worktree-inventory"
 
 test("concurrent ownership misses share a refresh and cache negative results until invalidation", async (t) => {
   const temp = mkdtempSync(path.join(tmpdir(), "codenomad-inventory-misses-"))
@@ -266,6 +266,26 @@ test("repeated directory-cache invalidations have two retries and one final fres
     workspaceId: temp, workspacePath: temp, directory: temp,
     loadWorktrees: async () => [{ slug: "root", directory: temp, kind: "root" }],
   }))?.slug, "root", "a later stable demand can recover")
+})
+
+test("the strict final fresh read bypasses a warm ordinary negative cache", async t => {
+  const temp = mkdtempSync(path.join(tmpdir(), "codenomad-final-fresh-"))
+  t.after(() => { invalidateWorktreeCache(temp); rmSync(temp, { recursive: true, force: true }) })
+  const root = path.join(temp, "root"), linked = path.join(temp, "linked")
+  mkdirSync(root); mkdirSync(linked)
+  let added = false
+  const refreshes: boolean[] = []
+  const params = { workspaceId: temp, workspacePath: root, directory: linked,
+    loadWorktrees: async (refresh = false) => {
+      refreshes.push(refresh)
+      return [{ slug: "root", directory: root, kind: "root" as const },
+        ...(added ? [{ slug: "linked", directory: linked, kind: "worktree" as const }] : [])]
+    } }
+  assert.equal(await resolveOwnedWorktreePath(params), null)
+  added = true
+  assert.equal((await resolveOwnedWorktreePath({ ...params, strict: true }, { restarts: WORKTREE_OWNERSHIP_RESTART_LIMIT }))?.slug, "linked")
+  assert.equal((await resolveOwnedWorktreePath(params))?.slug, "linked", "ordinary callers cannot inherit a stale final-read negative")
+  assert.deepEqual(refreshes, [false, true, true])
 })
 
 test("ordinary ownership preserves trailing reloads beyond four invalidations", async t => {

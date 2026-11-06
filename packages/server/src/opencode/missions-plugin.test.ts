@@ -284,10 +284,12 @@ test("inspect start and prepare return frozen profiles, task mode and origins wi
     const start = { objective: "Coordinate", template: "custom" as const, profiles: { coordinator: {} } }
     const started = await call("inspect", { start }, "start")
     assert.deepEqual(started.selection, resolveMissionCreationDefaults({ ...start, preferences }))
+    assert.equal("creationDefaults" in started.mission, false, "tool replies expose the selection without its private replay request")
     assert.deepEqual(started.selection.origins, { coordinator: "explicit", roles: { specialist: "preference" }, taskMode: "preference" })
     const request = { requestID: "pilot", objective: "Pilot", template: "custom" as const }
     const prepared = await call("prepare", request)
     assert.deepEqual(prepared.selection, resolveMissionCreationDefaults({ ...request, preferences }))
+    assert.deepEqual(Object.keys(prepared).sort(), ["disposition", "missionID", "status", "runState", "revision", "selection"].sort())
     assert.deepEqual([prepared.disposition, prepared.runState, prepared.selection.profiles.coordinator], ["prepared", "prepared", { agent: "lead" }])
     const bytes = structuredClone([...values])
     preferences = { invalid: true }

@@ -18,8 +18,6 @@ Les Missions associent un plan de projet durable aux conversations natives OpenC
 
 **Créer enregistre une Mission en pause.** Seule l’action ▶ **Démarrer** arme le travail et les calendriers natifs. La création appartient au projet/à la Location sélectionné et enregistre les profils demandés et la politique des sessions de tâches. La validation apparaît près du champ concerné ; un refus indiquant que rien n’a été envoyé conserve le brouillon pour correction. Un coordinateur ponctuel peut aussi préparer une mission de suite distincte : elle apparaît comme **Préparée** et démarre depuis sa propre action ▶.
 
-Les suites préparées par un agent utilisent vos [défauts des nouvelles missions](#profiles) enregistrés pour les profils et les sessions de tâches omis. Hors d'une mission active, utilisez **Créer une mission** dans le panneau Missions.
-
 Les missions ponctuelles enregistrées conservent leurs commandes d’exécution, leur arbre de tâches, leurs conversations et leurs rapports finaux. Les programmations quotidiennes existantes restent dans la liste avec leurs commandes quotidiennes et leurs [règles horaires quotidiennes](#existing-daily-schedules). Sélectionnez l’entrée et utilisez les commandes disponibles pour cet objet.
 
 ### Scénarios {#playbooks}

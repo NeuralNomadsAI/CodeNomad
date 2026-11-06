@@ -229,7 +229,8 @@ test("inspect start freezes resolved choices and replays them after preference f
   const first = await f.control.inspect(coordinator, { start }, "frozen-start")
   const selection = resolveMissionCreationDefaults({ ...start, preferences })
   assert.deepEqual(first.selection, selection)
-  assert.deepEqual(first.mission?.creationDefaults, { request: {}, ...selection })
+  assert.equal("creationDefaults" in first.mission!, false)
+  assert.deepEqual((await f.control.snapshot()).missions[0].creationDefaults, { request: {}, ...selection })
   const before = structuredClone([...f.storage.values])
   preferences = { invalid: true }
   const restarted = fixture({ transport, storage: f.storage, sessions: f.sessions }).control
@@ -338,8 +339,9 @@ test("both creation tools bypass preferences when every slot and the task policy
       profiles: { coordinator: {}, roles: { specialist: {} } } }
     const result = method === "inspect" ? await control.inspect(coordinator, { start: input }, "explicit")
       : await control.prepare(coordinator, { ...input, requestID: "explicit" })
-    assert.deepEqual(result.mission!.creationDefaults?.origins, { coordinator: "explicit", roles: { specialist: "explicit" }, taskMode: "explicit" })
-    assert.equal(result.mission!.creationDefaults?.preferences, undefined)
+    const saved = (await control.snapshot()).missions.find(mission => mission.id === result.mission!.id)!
+    assert.deepEqual(saved.creationDefaults?.origins, { coordinator: "explicit", roles: { specialist: "explicit" }, taskMode: "explicit" })
+    assert.equal(saved.creationDefaults?.preferences, undefined)
     assert.equal(prepares, method === "prepare" ? 1 : 0, "only hand-off creation still requires its backend")
   }
 })

@@ -18,8 +18,6 @@ Missions pair a durable project plan with native OpenCode conversations. The coo
 
 **Create saves a paused Mission.** Work and native calendars are armed only by Play. Creation belongs to the selected project/Location and records the requested profiles and task-session policy. Validation appears beside the affected field; a refusal that says nothing was sent keeps the draft for correction. A one-time coordinator can also prepare a separate follow-up: it appears as **Prepared** and starts from its own ▶ action.
 
-Agent-prepared follow-ups use your saved [new mission defaults](#profiles) for omitted profiles and task-session choices. Outside an active mission, use **Create mission** in the Missions panel.
-
 Saved one-time missions retain their execution controls, task tree, conversations and final reports. Existing daily schedules remain listed with their daily controls and [daily timing rules](#existing-daily-schedules). Select the entry and use the controls available for that object.
 
 ### Playbooks {#playbooks}
@@ -138,6 +136,7 @@ Saving a depth preserves enabled native schedules in the project configuration. 
 **Native default** and **Global** are different: the former requests OpenCode's own defaults, the latter inherits the global choice; choosing native defaults in a playbook scope remains an explicit exception. Catalog availability is checked; a requested profile is not proof of the profile a conversation currently uses. Native permissions and configured depth still govern internal helper calls in either task mode.
 
 Agent-prepared missions use your new-mission defaults for anything the agent leaves out. Choices the agent states explicitly win. Retries keep the original choices, even if you change the defaults. If the required defaults cannot be read or are invalid, creation is refused until you fix them.
+
 Each **Model** list shows what the conversation's **Model** selector shows, under the same names and grouped by provider: hidden models are left out and, while favorites-only filtering is on, so are the other models (see [Model visibility, favorites and Thinking](providers.md#models)). Models without tool support are left out too. A saved model outside the list stays selected. **Unavailable** marks a saved model the selector cannot offer now: it is missing from the project's current catalog, deprecated, or has no tool support.
 
 A refused or unconfirmed choice is never resent: the stored values are shown again, and **Reload** appears only when they cannot be read. If a depth change is unconfirmed, your value is kept; use **Refresh project depth** before another change. Do not interpret **OpenCode effective depth unknown** as zero or disabled.

@@ -11,6 +11,7 @@ type Entry = {
 }
 
 const MAX_AGE_MS = 10_000
+export const WORKTREE_OWNERSHIP_RESTART_LIMIT = 3
 
 /** Demand-driven inventory: display reads keep the last snapshot while refreshing.
  * Directory authorization waits for validation; family transactions force a scan.
@@ -61,7 +62,7 @@ export class WorktreeInventory {
     for (let invalidated = 0; ; invalidated++) {
       const value = await this.load(id, entry)
       if (value) return value
-      if (strict && invalidated >= 3) throw new Error("Worktree ownership inventory changed repeatedly")
+      if (strict && invalidated >= WORKTREE_OWNERSHIP_RESTART_LIMIT) throw new Error("Worktree ownership inventory changed repeatedly")
     }
   }
 

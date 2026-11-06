@@ -8,7 +8,7 @@ import { MissionControlError } from "../missions/control-error"
 import { signNativeRecurrenceControl, type RecurrenceControlProofBody } from "../missions/recurrence-control-proof"
 import { missionRecoveryControlError, missionRecoveryError } from "../missions/recovery-error"
 import { parseMissionCreationDefaultsInput } from "../missions/creation-defaults"
-import { hasExplicitMissionCreationChoices, MISSION_PREFERENCES_UNAVAILABLE, resolveMissionCreationDefaults } from "../missions/profile-defaults"
+import { MISSION_PREFERENCES_UNAVAILABLE, resolveMissionCreationDefaults } from "../missions/profile-defaults"
 import { isConnectionRefused } from "./connection-errors"
 import { PAGE_ACTION_PROPERTIES, PAGE_ACTIONS, parsePageAction, type RefAction } from "../automation/page/parse"
 
@@ -97,26 +97,26 @@ export async function automationBridgeDirectories(options: BridgeDirectoryOption
   const env = options.env ?? process.env
   const primary = automationBridgeDirectory(options)
   if (platform !== "linux" || !env.WSL_DISTRO_NAME) return [primary]
-  const windowsLocalAppData = options.windowsLocalAppData !== undefined ? options.windowsLocalAppData : await resolveWslWindowsLocalAppData(env.WSL_DISTRO_NAME)
+  const windowsLocalAppData = options.windowsLocalAppData !== undefined ? options.windowsLocalAppData : await resolveWslWindowsLocalAppData(env, options.strict)
   if (options.strict && !windowsLocalAppData && windowsLocalAppData !== false) throw new Error("Windows mission backend discovery is unavailable")
   return windowsLocalAppData
     ? [...new Set([primary, path.posix.join(windowsLocalAppData, "CodeNomad", "automation-bridges")])]
     : [primary]
 }
 
-function windowsDiscoveryOutput(file: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => execFile(file, args, { encoding: "utf8", timeout: 2_000, windowsHide: true },
+function windowsDiscoveryOutput(file: string, args: string[], env: NodeJS.ProcessEnv): Promise<string> {
+  return new Promise((resolve, reject) => execFile(file, args, { env, encoding: "utf8", timeout: 2_000, windowsHide: true },
     (error, stdout) => error ? reject(error) : resolve(stdout.trim())))
 }
 
-function resolveWslWindowsLocalAppData(distro: string): Promise<WindowsDiscovery> {
-  const key = `${distro}\0${process.env.PATH}`
-  if (cachedWslWindowsLocalAppData?.key === key && cachedWslWindowsLocalAppData.expiresAt > Date.now()) return Promise.resolve(cachedWslWindowsLocalAppData.value)
+function resolveWslWindowsLocalAppData(env: NodeJS.ProcessEnv, strict = false): Promise<WindowsDiscovery> {
+  const key = `${env.WSL_DISTRO_NAME}\0${env.PATH}`
+  if (cachedWslWindowsLocalAppData?.key === key && (!strict || cachedWslWindowsLocalAppData.expiresAt > Date.now())) return Promise.resolve(cachedWslWindowsLocalAppData.value)
   if (pendingWslWindowsLocalAppData?.key === key) return pendingWslWindowsLocalAppData.promise
   const promise = (async (): Promise<WindowsDiscovery> => {
     try {
-      const windowsPath = await windowsDiscoveryOutput("cmd.exe", ["/d", "/s", "/c", "echo %LOCALAPPDATA%"])
-      const translated = await windowsDiscoveryOutput("wslpath", ["-u", windowsPath])
+      const windowsPath = await windowsDiscoveryOutput("cmd.exe", ["/d", "/s", "/c", "echo %LOCALAPPDATA%"], env)
+      const translated = await windowsDiscoveryOutput("wslpath", ["-u", windowsPath], env)
       return path.posix.isAbsolute(translated) ? translated : null
     } catch (error) {
       return ["ENOENT", "ENOEXEC"].includes((error as NodeJS.ErrnoException).code ?? "") ? false : null
@@ -622,7 +622,6 @@ async function callMissionInput(target: DiscoveredBridgeRegistration, sessionID:
 export async function resolveMissionProfileDefaults(sessionID: string, input: unknown): Promise<unknown> {
   try {
     const request = parseMissionCreationDefaultsInput(input)
-    if (hasExplicitMissionCreationChoices(request)) return resolveMissionCreationDefaults({ ...request, preferences: undefined })
     const targets = await probeBrowserBridges(await registrations({ strict: true }), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS, "mission-preferences")
     if (targets.length === 0) return {
       ...resolveMissionCreationDefaults({ ...request, preferences: undefined }), preferences: MISSION_PREFERENCES_UNAVAILABLE,

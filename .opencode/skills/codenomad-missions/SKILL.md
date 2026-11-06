@@ -16,28 +16,10 @@ Prefer ordinary native delegation for bounded work. Use a mission only when the 
 7. Finish through `mission.report({ final: true, ... })` only when the objective is actually met. Retired work never counts as success; retiring does not interrupt admitted native execution, which can finish on its own or be stopped with `mission.interrupt` when eligible; playbook proof requirements still apply. A retired native task takes no coordinator readout; record what it returned under its replacement or in the final report. Admitted retired work settles through its actor's terminal report or an observed native end.
 
 Use `mission.inspect({ catalog: true })` before selecting a native execution profile.
-For `mission.prepare` and `mission.inspect({ start })`:
-
-- Omit profile slots and `taskMode` to inherit Missions preferences. To bypass
-  preferences, supply the coordinator, every exact template role and `taskMode`;
-  `{}` explicitly selects OpenCode defaults for a slot. Compare fills a missing
-  judge model from the known coordinator model.
-- Read `selection.profiles`, `selection.taskMode` and `selection.origins` in
-  inspections with creation metadata to check saved requested choices and their
-  `explicit`, `preference` or `opencode-default` origins. Check
-  `selection.preferences: "unavailable"` for fallback to OpenCode defaults.
-- Recover unreadable/invalid preferences or ambiguous ownership, or supply every
-  choice explicitly. Update CodeNomad when the reply requires it.
-- Match the starting session's existing profile to the resolved coordinator.
-  Pass `profiles.coordinator` (for example `{}`) to override a differing preference.
-- For `prepare`, keep CodeNomad available and reuse the same `requestID` and
-  original inputs on retry. Check the mission and original conversation before
-  choosing a new identity; never duplicate uncertain work or resume automatically.
-
-The full selection, discovery and recovery contract is in
-[Mission profile selection and creation recovery](../../../dev-docs/MISSIONS.md#mission-profile-selection-and-creation-recovery).
-Outside an active mission, use the Missions editor in CodeNomad; never create an
-intermediate mission merely to gain access to `mission.prepare`.
+Check the mission and original conversation before choosing a new requestID;
+never duplicate uncertain work or resume automatically. Never create an
+intermediate mission merely to gain access to `mission.prepare`. See the
+[selection and recovery contract](../../../dev-docs/MISSIONS.md#mission-profile-selection-and-creation-recovery).
 
 The mission `role` is independent of `execution.agent`. To pin execution, pass
 `execution: { agent: "catalog-agent-id", model: { providerID: "catalog-provider", id: "catalog-model", variant: "optional-catalog-variant" } }`.

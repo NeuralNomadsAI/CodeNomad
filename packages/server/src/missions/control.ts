@@ -8,7 +8,7 @@ import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "./mission-summary"
 import { readMissionContent, type MissionContentRequest, type MissionContentResult } from "./mission-content"
 import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
 import { compactMissionMap, missionTaskPage } from "./mission-compact-map"
-import { missionCreationChoices, sameMissionCreationChoices, parseMissionCreationSelection, missionCreationSelection, type MissionCreationMetadata } from "./creation-defaults"
+import { MISSION_CREATION_REQUEST_CONFLICT, missionCreationChoices, sameMissionCreationChoices, parseMissionCreationSelection, missionCreationSelection, type MissionCreationMetadata } from "./creation-defaults"
 import { MissionCreationIntents } from "./creation-intent"
 import { hasExplicitMissionCreationChoices, resolveMissionCreationDefaults, type MissionCreationSelection } from "./profile-defaults"
 import type { MissionTaskPageResult, MissionTaskRequest } from "./mission-panel-map"
@@ -43,6 +43,7 @@ import { runMissionExclusive } from "./exclusive"
 import { matchesExecution, sameExecution } from "./execution"
 import { sameLocation } from "../opencode/compatibility/location"
 import { missionRecoveryInput, type MissionRecoveryInput } from "./recovery-input"
+import { missionRecoveryControlError } from "./recovery-error"
 import { MissionControlError, MissionCreateNoEffectError, humanDecisionRequired } from "./control-error"
 import { claimedDecisionFields, coordinatorAskedAnswer, coordinatorDecision, decisionInvocationUnavailable, decisionOutcomeRequired,
   decisionQuestionUnbound, receiptMatches, type CoordinatorAskedAnswer, type MissionDecisionProof } from "./decision-gate"
@@ -420,7 +421,7 @@ export class MissionControl {
       return doc && !("deletedAt" in doc) ? doc.oneTime?.creationDefaults : undefined
     })
     if (frozen) {
-      if (!sameMissionCreationChoices(frozen.request, input)) throw new MissionControlError("Creation request ID was already used with a different mission", conflict)
+      if (!sameMissionCreationChoices(frozen.request, input)) throw new MissionControlError(MISSION_CREATION_REQUEST_CONFLICT, conflict)
       return { input: { ...input, profiles: frozen.profiles, taskMode: frozen.taskMode, creationDefaults: frozen }, fromDocument: true }
     }
   }
@@ -455,6 +456,13 @@ export class MissionControl {
     return new MissionControlError(input.creationDefaults?.origins.coordinator === "preference"
       ? "Coordinator differs from the profile selected by Missions preferences. Pass profiles.coordinator (for example {}) to override that preference."
       : "Coordinator does not have the requested native profile", "invalid-execution")
+  }
+
+  private sameCreationChoices(saved: Pick<MissionMap, "profiles" | "taskMode" | "creationDefaults">, input: MissionStartInput,
+    coordinatorModel?: NativeMissionSession["model"]): boolean {
+    return saved.creationDefaults ? sameMissionCreationChoices(saved.creationDefaults.request, input)
+      : sameMissionProfiles(saved.profiles, freezeCompareProfiles(input.template, input.profiles, coordinatorModel))
+        && (saved.taskMode ?? "native") === parseMissionTaskMode(input.taskMode)
   }
 
   private async createCurrent(input: MissionCreateInput): Promise<{ mission: MissionMap }> {
@@ -1000,19 +1008,14 @@ export class MissionControl {
     if (input.start) {
       // Creation keeps the authoritative full read: replay, membership refusal, timestamp.
       let snapshot = await this.snapshot()
-      try { input.start.profiles = parseMissionProfiles(input.start.profiles); validateMissionProfiles(input.start.template, input.start.profiles) }
-      catch { throw new MissionControlError("Invalid Mission profile selection", "invalid-execution") }
       const { requestID, missionID, created } = await this.inspectCreationIdentity(sessionID, operationID)
       const replay = snapshot.missions.find((mission) => mission.id === missionID)
       if (replay) {
         const original = created?.type === "mission.created" && created.creationDefaults ? created : replay
-        const sameChoices = created?.type === "mission.created" && created.creationDefaults
-          ? sameMissionCreationChoices(created.creationDefaults.request, input.start)
-          : sameMissionProfiles(replay.profiles, freezeCompareProfiles(input.start.template, input.start.profiles, replay.profiles?.roles?.comparator?.model))
-            && (replay.taskMode ?? "native") === parseMissionTaskMode(input.start.taskMode)
+        const sameChoices = this.sameCreationChoices(original, input.start, replay.profiles?.roles?.comparator?.model)
         if (original.template !== input.start.template || original.objective !== input.start.objective
           || original.notes !== input.start.notes || !sameChoices) {
-          throw new MissionControlError("Creation request ID was already used with a different mission", "request-conflict")
+          throw new MissionControlError(MISSION_CREATION_REQUEST_CONFLICT, "request-conflict")
         }
         if (this.options.documents && created?.type === "mission.created") {
           if (!sameLocation(created.coordinator.location, caller.location)) throw new MissionControlError("Coordinator moved from its admitted creation location", "foreign-session")
@@ -1118,10 +1121,7 @@ export class MissionControl {
     const missionID = `msn_${stableToken(`${this.options.project.id}\0${requestID}`, 24)}`
     const created = await this.journal.event(missionID, this.eventID(missionID, "created"))
     if (created) {
-      const sameChoices = created.type === "mission.created" && created.creationDefaults
-        ? sameMissionCreationChoices(created.creationDefaults.request, input)
-        : created.type === "mission.created" && (created.taskMode ?? "native") === (input.taskMode ?? "native")
-          && sameMissionProfiles(created.profiles, freezeCompareProfiles(input.template, input.profiles))
+      const sameChoices = created.type === "mission.created" && this.sameCreationChoices(created, input)
       if (created.type !== "mission.created" || created.prepared !== true || created.objective !== input.objective
         || created.title !== input.title || created.notes !== input.notes || created.template !== input.template
         || !sameChoices
@@ -1171,12 +1171,12 @@ export class MissionControl {
           await this.creationIntents.settled(missionID)
           throw error
         }
-        throw new MissionControlError("The prepared mission's outcome is uncertain; retry with the same requestID", "prepare-uncertain")
+        throw missionRecoveryControlError("prepare-uncertain")
       }
       const returnedID = (result as { mission?: { id?: unknown } } | undefined)?.mission?.id
       const mission = returnedID === missionID ? (await this.snapshot()).missions.find(mission => mission.id === missionID) : undefined
       if (!mission || mission.preparedBy?.coordinatorSessionId !== sessionID || mission.preparedBy.missionId !== source.id) {
-        throw new MissionControlError("The prepared mission's outcome is uncertain; retry with the same requestID", "prepare-uncertain")
+        throw missionRecoveryControlError("prepare-uncertain")
       }
       return { mission }
     })
@@ -1865,8 +1865,9 @@ export class MissionControl {
   }
 
   private inspection(mission: MissionMap, sessionID: string): MissionInspection {
+    const { creationDefaults: _creationDefaults, ...view } = mission
     return {
-      mission,
+      mission: view,
       ...(mission.creationDefaults ? { selection: missionCreationSelection(mission) } : {}),
       actor: mission.actors.find((candidate) => candidate.sessionId === sessionID) ?? null,
       templates: missionRecipeCatalog(),

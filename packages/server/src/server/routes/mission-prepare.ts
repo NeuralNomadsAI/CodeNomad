@@ -1,7 +1,6 @@
 import { z } from "zod"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import type { MissionMap, MissionSnapshot } from "../../missions/model"
-import { MissionControlError } from "../../missions/control-error"
 import { isMissionCreateNoEffectError, readMissionMutationError } from "../../missions/rpc-errors"
 import { missionProfilesInputSchema } from "../../missions/playbook-profiles"
 import { missionTaskModeInputSchema } from "../../missions/task-execution-mode"
@@ -61,8 +60,10 @@ export async function prepareCoordinatorMission(manager: Manager, fence: Worktre
       throw refusal("prepare-no-effect")
     if (hasMissionPreparationHold(fence, input.requestID)) throw refusal("prepare-uncertain")
     if (missionRecoveryRejection(error)) throw error
-    if (!creation?.dispatched && error instanceof Error && error.message.startsWith("compare-models-"))
-      throw new MissionControlError(error.message, error.message)
+    if (!creation?.dispatched && error instanceof Error) {
+      if (error.message === "compare-models-required") throw refusal("compare-models-required")
+      if (error.message === "compare-models-identical") throw refusal("compare-models-identical")
+    }
     // An earlier uncertain attempt with this identity stays held: never claim nothing exists.
     if (error instanceof MissionCreationHoldError) {
       if (error.code === "creation-conflict") throw refusal("prepare-conflict")

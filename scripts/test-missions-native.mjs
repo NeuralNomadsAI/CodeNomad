@@ -277,7 +277,9 @@ try {
     const result = JSON.parse(await client.rpc(invocation).invoke({ tool, input, sessionID, callID }, { location }))
     if (result.missionID === undefined) return result
     const { missions } = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
-    return { ...result, mission: missions.find(mission => mission.id === result.missionID) }
+    const mission = missions.find(mission => mission.id === result.missionID)
+    if (mission) delete mission.creationDefaults
+    return { ...result, mission }
   }
   stage = "nonempty owning-backend creation preferences"
   {
@@ -308,17 +310,18 @@ try {
     const origins = { coordinator: "preference", roles: { specialist: "preference" }, taskMode: "preference" }
     const selection = { profiles, taskMode: "independent", origins }
     assert.deepEqual(selected.selection, selection)
-    assert.deepEqual(selected.mission.creationDefaults, { request: {}, ...selection })
+    assert.equal("creationDefaults" in selected.mission, false)
     await play(selected.mission)
     const prepared = await invoke("prepare", { requestID: "preferences-handoff", objective: "Preferred hand-off", template: "custom" },
       caller.id, "preferences-prepare")
     assert.deepEqual(prepared.selection, selection)
-    assert.deepEqual(prepared.mission.creationDefaults, { request: {}, ...selection })
+    assert.equal("creationDefaults" in prepared.mission, false)
     const saved = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
     for (const result of [selected, prepared]) {
       const mission = saved.missions.find(mission => mission.id === result.mission.id)
       assert.deepEqual(mission.profiles, profiles)
       assert.equal(mission.taskMode, "independent")
+      assert.deepEqual(mission.creationDefaults, { request: {}, ...selection })
       assert.deepEqual(mission.creationDefaults.origins, origins)
       assert.equal([mission.creationDefaults.origins.coordinator, ...Object.values(mission.creationDefaults.origins.roles),
         mission.creationDefaults.origins.taskMode].filter(origin => origin === "preference").length, 3)

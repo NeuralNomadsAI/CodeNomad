@@ -18,8 +18,6 @@ Görevler, kalıcı bir proje planını OpenCode'un kendi konuşmalarıyla birle
 
 **Oluştur, duraklatılmış bir Görev kaydeder.** İş ve yerel takvimler yalnızca başlatma eylemiyle etkinleştirilir. Oluşturma seçili proje/Location kapsamındadır ve istenen profillerle görev oturumu ilkesini kaydeder. Doğrulama ilgili alanın yanında görünür; hiçbir şey gönderilmediğini belirten bir ret, taslağı düzeltme için korur. Tek seferlik koordinatör ayrı bir devam görevi de hazırlayabilir: **Hazır** olarak görünür ve kendi ▶ eylemiyle başlar.
 
-Bir ajanın hazırladığı devam görevleri, belirtilmeyen profiller ve görev oturumu seçimleri için kayıtlı [yeni görev varsayılanlarınızı](#profiles) kullanır. Etkin bir görevin dışında, Görevler panelindeki **Görev oluştur** eylemini kullanın.
-
 Kayıtlı tek seferlik görevler yürütme kontrollerini, görev ağacını, konuşmalarını ve nihai raporlarını korur. Mevcut günlük zamanlamalar günlük kontrolleri ve [günlük zamanlama kurallarıyla](#existing-daily-schedules) listede kalır. Kaydı seçip o nesne için sunulan kontrolleri kullanın.
 
 ### İş akışı rehberleri {#playbooks}

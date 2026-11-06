@@ -1,7 +1,7 @@
 import { z } from "zod"
 import type { MissionStartInput } from "./control-types"
 import { MissionControlError } from "./control-error"
-import { missionCreationChoices, missionCreationChoicesSchema, missionCreationTemplateSchema, parseMissionCreationDefaults, sameMissionCreationChoices,
+import { MISSION_CREATION_REQUEST_CONFLICT, missionCreationChoices, missionCreationChoicesSchema, missionCreationTemplateSchema, parseMissionCreationDefaults, sameMissionCreationChoices,
   type MissionCreationMetadata } from "./creation-defaults"
 import { runMissionExclusive } from "./exclusive"
 import type { MissionStorage } from "./journal"
@@ -40,7 +40,7 @@ export class MissionCreationIntents {
   }
 
   private conflict(code: string): never {
-    throw new MissionControlError("Creation request ID was already used with a different mission", code)
+    throw new MissionControlError(MISSION_CREATION_REQUEST_CONFLICT, code)
   }
 
   private async recorded(missionID: string, request: Request, conflict: string): Promise<MissionCreationMetadata | undefined> {

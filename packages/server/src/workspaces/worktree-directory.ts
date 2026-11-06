@@ -2,7 +2,8 @@ import { lstat, realpath } from "fs/promises"
 import path from "node:path"
 import type { LogLike } from "./git-worktrees"
 import type { WorktreeDescriptor } from "../api-types"
-import { discoverCheckoutCommonDirectory } from "../opencode/session-pruning/checkout-identity"
+import { discoverCheckoutCommonDirectory } from "./git-common-directory"
+import { WORKTREE_OWNERSHIP_RESTART_LIMIT } from "./worktree-inventory"
 
 type WorktreeSource = { loadWorktrees: (refresh?: boolean) => Promise<WorktreeDescriptor[]> }
 
@@ -19,7 +20,7 @@ const worktreeLoads = new Map<string, Promise<WorktreeCacheEntry | null>>()
 
 function restartWorktreeRead(budget?: { restarts: number }): void {
   if (!budget) return
-  if (budget.restarts >= 3) throw new Error("Worktree ownership inventory changed repeatedly")
+  if (budget.restarts >= WORKTREE_OWNERSHIP_RESTART_LIMIT) throw new Error("Worktree ownership inventory changed repeatedly")
   budget.restarts++
 }
 
@@ -38,6 +39,7 @@ async function getCachedWorktrees(
   refresh = false,
   budget = params.strict ? { restarts: 0 } : undefined,
 ): Promise<WorktreeCacheEntry> {
+  if (params.strict && budget?.restarts === WORKTREE_OWNERSHIP_RESTART_LIMIT) worktreeCache.delete(params.workspaceId)
   const cached = worktreeCache.get(params.workspaceId)
   const now = Date.now()
   if (cached && cached.expiresAt > now) {
@@ -85,7 +87,7 @@ async function getCachedWorktrees(
     if (!params.strict) return entry!
     if (entry && worktreeCache.get(params.workspaceId) === entry) return entry
     restartWorktreeRead(budget)
-    const finalFreshRead = budget?.restarts === 3
+    const finalFreshRead = budget?.restarts === WORKTREE_OWNERSHIP_RESTART_LIMIT
     return getCachedWorktrees(params, finalFreshRead, budget)
   } finally {
     if (!params.strict && worktreeLoads.get(loadKey) === load) worktreeLoads.delete(loadKey)
@@ -228,7 +230,7 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
       }
     }))).filter((worktree): worktree is NonNullable<typeof worktree> => worktree !== null))
   }
-  const finalFreshRead = budget?.restarts === 3
+  const finalFreshRead = budget?.restarts === WORKTREE_OWNERSHIP_RESTART_LIMIT
   let entry = await getCachedWorktrees(params, finalFreshRead, budget)
   if (!params.strict && entry.resolvedDirectories.has(target)) return entry.resolvedDirectories.get(target)!
   let match = params.strict ? await findStrict(entry.worktrees) : find(entry.worktrees)
@@ -236,7 +238,7 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
     restartWorktreeRead(budget)
     return resolveOwnedWorktreePath(params, budget)
   }
-  if (budget?.restarts !== 3 && !entry.refreshedOnMiss && (!match || (match.slug === "root" && match.normalizedDirectory !== target))) {
+  if (budget?.restarts !== WORKTREE_OWNERSHIP_RESTART_LIMIT && !entry.refreshedOnMiss && (!match || (match.slug === "root" && match.normalizedDirectory !== target))) {
     // Refresh once for this cache lifetime, including sequential misses from
     // distinct foreign event locations. Otherwise every miss discards the last
     // negative result and stalls the serial native event bridge on inventory I/O.

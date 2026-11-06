@@ -18,8 +18,6 @@ Missionen verbinden einen dauerhaften Projektplan mit nativen OpenCode-Unterhalt
 
 **Erstellen speichert eine pausierte Mission.** Erst ▶ **Starten** aktiviert Arbeit und native Kalender. Die Erstellung gehört zum ausgewählten Projekt/zur ausgewählten Location und erfasst die angeforderten Profile und die Aufgabensitzungsrichtlinie. Validierung steht neben dem betroffenen Feld; eine Ablehnung mit dem Hinweis, dass nichts gesendet wurde, erhält den Entwurf zur Korrektur. Ein einmaliger Koordinator kann auch eine separate Folgemission vorbereiten: Sie erscheint als **Vorbereitet** und startet über ihre eigene ▶-Aktion.
 
-Von einem Agenten vorbereitete Folgemissionen verwenden Ihre gespeicherten [Vorgaben für neue Missionen](#profiles) für ausgelassene Profile und Aufgabensitzungen. Verwenden Sie außerhalb einer aktiven Mission **Mission erstellen** im Missionsbereich.
-
 Gespeicherte einmalige Missionen behalten ihre Ausführungssteuerung, ihren Aufgabenbaum, ihre Unterhaltungen und ihre Abschlussberichte. Bestehende tägliche Zeitpläne bleiben mit ihren täglichen Steuerelementen und [täglichen Zeitregeln](#existing-daily-schedules) aufgelistet. Wählen Sie den Eintrag und verwenden Sie die für dieses Objekt verfügbaren Steuerelemente.
 
 ### Playbooks {#playbooks}

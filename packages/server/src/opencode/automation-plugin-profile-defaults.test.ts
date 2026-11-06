@@ -33,7 +33,7 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
     await rm(root, { recursive: true, force: true })
   })
   const registration = createAutomationBridgeRegistration("http://127.0.0.1:54321")
-  let preferences: unknown = [], unreadable = false, denied = false, posts = 0, reads = 0, calls = 0, owned = true, ownershipFailure = false, noWorkspaces = false
+  let preferences: unknown = [], unreadable = false, denied = false, posts = 0, reads = 0, owned = true, ownershipFailure = false, noWorkspaces = false
   let sessionFailure: "missing" | "unavailable" | undefined
   let probeFailure: "network" | "refused" | "timeout" | "http" | "malformed" | "unproven-negative" | undefined
   let inventoryFailure = false
@@ -61,7 +61,6 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
     },
   } as never)
   t.mock.method(globalThis, "fetch", async (_url: unknown, options: RequestInit) => {
-    calls++
     const body = JSON.parse(String(options.body))
     const token = new Headers(options.headers).get("x-codenomad-automation-token")
     if (token !== registration.token) return new Response(JSON.stringify({ result: { available: true } }), { status: 200 })
@@ -91,7 +90,7 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
   const request = () => resolveMissionProfileDefaults("ses_owner", { template: "custom" })
   const unavailable = (error: unknown) => error instanceof MissionControlError
     && error.code === "mission-preferences-unavailable"
-    && error.message === "Reload or correct the Missions preferences before creating a mission"
+    && error.message === "Restore CodeNomad backend discovery and ownership, then reload Missions preferences before creating a mission"
   const fallback = { profiles: { coordinator: {}, roles: { specialist: {} } }, taskMode: "native",
     origins: { coordinator: "opencode-default", roles: { specialist: "opencode-default" }, taskMode: "opencode-default" }, preferences: "unavailable" }
   assert.deepEqual(await request(), fallback, "without a registered owner, the tool reports its explicit fallback")
@@ -203,14 +202,6 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
   preferences = [{ template: "all", profiles: {}, taskMode: "independent" }]
   assert.equal((await request() as { taskMode: string }).taskMode, "independent", "the next bridge call reads fresh preferences")
   preferences = "secret-invalid-value"
-  const beforeExplicit = posts
-  const callsBeforeExplicit = calls
-  const complete = await resolveMissionProfileDefaults("ses_owner", { template: "custom",
-    profiles: { coordinator: {}, roles: { specialist: {} } }, taskMode: "native" }) as any
-  assert.deepEqual(complete.origins, { coordinator: "explicit", roles: { specialist: "explicit" }, taskMode: "explicit" })
-  assert.equal("preferences" in complete, false, "unused preference availability is not invented")
-  assert.equal(posts, beforeExplicit, "complete explicit choices do not reach the broken preference document")
-  assert.equal(calls, callsBeforeExplicit, "complete explicit choices skip every backend probe and request")
   await assert.rejects(request(), (error: unknown) => error instanceof MissionControlError
     && error.code === "mission-preferences-invalid" && error.message === "Correct the Missions preferences before creating a mission")
   unreadable = true
@@ -299,8 +290,26 @@ test("strict WSL discovery caches a failed lookup briefly, then retries", async 
   await assert.rejects(automationBridgeDirectories({ ...options, strict: true }), /Windows mission backend discovery is unavailable/)
   assert.equal(attempts, 1, "uncertainty stays a refusal without repeated launches")
   now += 2_001
+  assert.deepEqual(await automationBridgeDirectories(options), ["/fixture/.config/codenomad/automation-bridges"])
+  assert.equal(attempts, 1, "ordinary discovery retains its failed lookup without retrying")
   await assert.rejects(automationBridgeDirectories({ ...options, strict: true }), /Windows mission backend discovery is unavailable/)
   assert.equal(attempts, 2)
+})
+
+test("Windows discovery keys and launches use the effective environment", async t => {
+  let calls = 0
+  t.mock.method(childProcess, "execFile", (file: string, _args: string[], options: { env: NodeJS.ProcessEnv }, callback: (error: null, stdout: string) => void) => {
+    calls++
+    callback(null, file === "cmd.exe" ? "C:/fixture" : `${options.env.PATH}/windows`)
+  })
+  syncBuiltinESMExports()
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports() })
+  for (const PATH of ["/first", "/second"]) {
+    const options = { platform: "linux" as const, env: { WSL_DISTRO_NAME: "fixture-path", PATH }, home: "/fixture", strict: true }
+    assert.deepEqual(await automationBridgeDirectories(options), ["/fixture/.config/codenomad/automation-bridges", `${PATH}/windows/CodeNomad/automation-bridges`])
+    await automationBridgeDirectories(options)
+  }
+  assert.equal(calls, 4, "each effective PATH has one lookup and one translation")
 })
 
 test("parallel Windows discovery yields the event loop and shares one asynchronous lookup", async t => {

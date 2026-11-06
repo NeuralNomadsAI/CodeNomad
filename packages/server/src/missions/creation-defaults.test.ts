@@ -79,17 +79,20 @@ test("both agent creation paths store the editor's effective Compare judge and f
         "model-b": { model: { providerID: "p", id: "b" } }, comparator } }
       f.setPreferences(origin === "preference" ? [{ template: "compare", profiles }] : [])
       const request = { objective: "Compare", template: "compare" as const, ...(origin === "explicit" ? { profiles } : {}) }
-      const create = () => method === "prepare" ? f.control.prepare(f.coordinator, { ...request, requestID: "compare" })
-        : f.control.inspect(f.coordinator, { start: request }, "compare")
+      const create = async () => {
+        if (method === "inspect") return f.control.inspect(f.coordinator, { start: request }, "compare")
+        const { mission } = await f.control.prepare(f.coordinator, { ...request, requestID: "compare" })
+        return { mission, selection: missionCreationSelection(mission) }
+      }
       const result = await create()
       assert.ok(result.mission)
-      const selected = missionCreationSelection(result.mission)
+      const selected = result.selection
       assert.deepEqual(result.mission.profiles, freezeCompareProfiles("compare", profiles))
       assert.deepEqual(selected?.profiles, result.mission.profiles)
       assert.equal(selected?.origins.roles.comparator, origin)
       const reads = f.reads
       f.invalidate(); f.restart()
-      assert.deepEqual(missionCreationSelection((await create()).mission!), selected)
+      assert.deepEqual((await create()).selection, selected)
       assert.equal(f.reads, reads, "the completed judge model is retained without another preference read")
     }
   }
@@ -112,9 +115,10 @@ test("inspect start recovers frozen preferences from its document before a missi
   assert.ok(validate({ mission: result.mission }), JSON.stringify(validate.errors))
   const document = await f.documents.read(result.mission!.id)
   assert.ok(document && !("deletedAt" in document))
-  assert.deepEqual(document.oneTime?.creationDefaults, result.mission?.creationDefaults)
+  assert.equal("creationDefaults" in result.mission!, false, "inspection exposes only the documented selection")
+  assert.deepEqual(missionCreationSelection({ creationDefaults: document.oneTime?.creationDefaults }), result.selection)
   await f.documents.change(document.id, document.revision, () => true, next => { next.configuration.profiles = {} })
-  assert.deepEqual(missionCreationSelection({ ...result.mission!, profiles: {}, taskMode: "independent" }), result.selection,
+  assert.deepEqual(missionCreationSelection({ creationDefaults: document.oneTime?.creationDefaults, profiles: {}, taskMode: "independent" }), result.selection,
     "the creation receipt keeps its original selection after profile edits")
   await assert.rejects(f.documents.change(document.id, document.revision + 1, () => true, next => {
     next.oneTime!.creationDefaults!.origins.coordinator = "explicit"

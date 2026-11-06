@@ -138,124 +138,6 @@ refuse otherwise. Only one-time coordinators are offered and told about
   receives `mission-not-found` with guidance to use the Missions editor. Never
   create an intermediate mission solely to prepare others.
 
-### Mission profile selection and creation recovery
-
-  Both `mission.prepare` and `mission.inspect({ start })` resolve omitted
-  coordinator/role profiles and `taskMode` from the owning CodeNomad backend's
-  `ui.settings.missionProfileDefaults`. The editor and server share
-  `missions/profile-defaults.ts` and `freezeCompareProfiles`: a playbook's slot overrides the global `all`
-  slot; the global `specialist` supplies task roles, with the Compare judge using
-  the coordinator's model by default. Each supplied profile slot wins whole,
-  including `{}` (OpenCode defaults) or an agent-only profile; `profiles: {}`
-  leaves every slot eligible for preferences. After slot selection, Compare fills
-  any missing judge model from the known coordinator model through shared
-  `freezeCompareProfiles`, including explicit/preference `{}` or agent-only slots;
-  a judge's own model stays unchanged. An explicit `taskMode` wins over
-  the playbook preference, then the global preference; the final fallback is
-  `native`. Missing profile preferences fall back to OpenCode defaults. Supplying
-  the coordinator, every exact role of the selected template and `taskMode` skips
-  backend preferences entirely; `{}` counts as an explicit profile slot. All
-  origins are `explicit`, and preference availability stays unobserved. Partial or
-  omitted selections read the owning backend's preferences.
-
-  Preparation responses and inspections with creation metadata include
-  `selection: { profiles, taskMode, origins }`:
-  the saved coordinator and every role of the selected playbook, plus origins
-  `explicit`, `preference` or `opencode-default` for the coordinator, each role
-  and task mode. A chosen Compare judge slot retains its explicit/preference origin
-  even when its model is inherited; an absent judge slot inherits the coordinator's
-  origin. These are saved requested selectors; catalog validation and native
-  execution checks establish availability and actual execution separately.
-  `inspect({ start })` uses the caller as coordinator and requires its existing
-  native profile to match the resolved coordinator selection. A mismatch whose
-  coordinator origin is `preference` advises passing `profiles.coordinator`
-  (for example `{}`) to override that preference; the existing native-profile
-  check still applies. An explicit-profile mismatch keeps the generic
-  native-profile error.
-
-  `inspect({ start })` reads preferences before entering the project mutation
-  lane. Admission rereads creation events and document defaults under that lane;
-  already recorded choices win over concurrent preference results. Document-mode
-  replay rechecks the coordinator Location and original creation digest.
-
-  When preferences are needed, with no bridge presence or zero proven owning backends, `inspect({ start })`
-  uses explicit inputs and OpenCode defaults for omitted choices (`native` task-mode
-  fallback), with origins `explicit` or `opencode-default` and
-  `selection.preferences: "unavailable"`. The saved
-  `creationDefaults.preferences: "unavailable"` retains that warning on retries,
-  including after a backend appears. Multiple owning backends, failed or incomplete
-  backend discovery, or an unreadable preference document return
-  `mission-preferences-unavailable`; invalid preferences return
-  `mission-preferences-invalid`. These failures refuse creation and ask for
-  recovery or fully explicit choices. Discovery includes the Windows registration
-  directory under WSL. Local discovery checks the filename's publishing PID before
-  reading the file: PIDs outside 1–2³¹−1 and `ESRCH` establish absence; other
-  process-probe errors retain liveness conservatively. Best-effort pruning removes
-  recognized local registrations whose filename or parsed PID establishes absence.
-  A file removed between enumeration and open is absent. Other file-I/O failures
-  retain indeterminate ownership in strict discovery. A local registration whose
-  publishing PID is proven dead is absent even when its contents are unreadable;
-  unreadable state with a live or indeterminate local publisher refuses resolution. A registration
-  whose endpoint refuses the connection is known absent. WSL skips unparseable
-  registrations in the Windows directory (including unsupported schemas, oversized
-  files and invalid URLs): they offer no usable authenticated bridge endpoint or
-  supported contract. Leave these foreign files in place. Windows PIDs belong to
-  their host namespace; valid Windows registrations require endpoint evidence.
-  Timeouts and HTTP/authentication failures from a valid endpoint leave ownership
-  indeterminate and refuse resolution. A typed missing-session reply, an empty
-  backend workspace inventory or a successful ownership read proving an unrelated
-  project establishes non-ownership, including with other workspaces open. Actual
-  Git/WSL ownership-read failures remain indeterminate and refuse resolution.
-  `mission.prepare` requires an owning backend for fenced creation even when
-  profile resolution can use the no-owner fallback. Fully explicit choices make
-  no preference request; preparation still requires its owning backend. Before
-  sending creation provenance, preparation requires the backend's positive
-  `missionCreationDefaults` capability. Missing support returns the update-required
-  refusal before dispatch and releases only newly reserved choices; previous
-  uncertain outcomes remain retained.
-
-  Missing Windows interop executables (`ENOENT`/`ENOEXEC` from `cmd.exe` or
-  `wslpath`) establish absence of reachable Windows backends for that WSL process;
-  local discovery continues. Timeouts, failed commands and uncertain path results
-  refuse strict discovery. Path discovery is asynchronous and concurrent requests
-  share its pending lookup. Failed results are cached for two seconds, then retried
-  so restored interop can become available to a later creation. Legacy backends without negative ownership proof or preference-command support return
-  `mission-preferences-update-required`: update CodeNomad before inheriting defaults.
-  A live backend's preferences stay protected by this refusal.
-
-  The requestID is scoped to the coordinator and mission. Preparations with the
-  same requestID are serialized. Reuse that requestID and the original inputs:
-  a retry first reads the saved creation event/document and returns the saved
-  mission or a conflict. `mission.prepare` alone reserves a standalone durable
-  pre-dispatch intent for the chosen profiles, task mode and origins across
-  uncertain attempts, preference changes and restarts. `inspect({ start })`
-  retains its choices through its journal/document receipt under the native
-  invocation identity.
-
-  A positive preparation result or a definitive refusal proving that the attempt
-  had no effect releases its retained choices. An unknown outcome keeps them; a
-  retry refused during prevalidation leaves the preceding attempt's uncertainty
-  intact. At most 128 unknown preparation choices are retained per project, each
-  for 24 hours from its first reservation; retries preserve that deadline. At
-  capacity, retry the original requestIDs to
-  recover completed preparations and release their slots, or wait for their
-  24-hour retention to expire.
-
-  Capacity scans skip unreadable intent entries while preserving their bytes.
-  Retrying that exact requestID still refuses unreadable evidence, preventing
-  replay of a possibly dispatched preparation; unrelated requests remain usable.
-
-  A clock rollback keeps future-dated intents fresh until their stored creation
-  time has aged through the retention window; retries reuse their saved choices.
-
-  After expiry, preferences may be read anew only when the creation event and
-  document are both absent. A positive receipt or saved document keeps its
-  choices frozen. Expiry affects retained choices alone; native holds and
-  authorization keep their own settlement rules. Check the mission and original
-  conversation before choosing a new requestID for an uncertain outcome. Never
-  duplicate uncertain work or resume automatically after expiry. A held uncertain
-  attempt is reported uncertain.
-
 The human-answer gate's `discover` finds fresh children of the expected parent
 whose `subagent` call carried the exact assignment prompt, and the coordinator's
 answered question fields that bind this task (`fieldDecisionTag` in
@@ -274,6 +156,118 @@ candidates from free text, titles or timing.
 `basedOnRevision`: the server then uses the current revision, or refuses a
 different summary when the latest automatic briefing is still the last event. One replacement task may merge several retired tasks; it names one
 of them in `replacesTaskKey`.
+
+## Mission profile selection and creation recovery
+
+Both `mission.prepare` and `mission.inspect({ start })` resolve omitted
+coordinator/role profiles and `taskMode` from the owning CodeNomad backend's
+`ui.settings.missionProfileDefaults`. The editor and server share
+`missions/profile-defaults.ts` and `freezeCompareProfiles`: a playbook's slot
+overrides the global `all` slot; the global `specialist` supplies task roles,
+with the Compare judge using the coordinator's model by default. Each supplied
+profile slot wins whole, including `{}` (OpenCode defaults) or an agent-only
+profile; `profiles: {}` leaves every slot eligible for preferences. After slot
+selection, Compare fills any missing judge model from the known coordinator
+model through `freezeCompareProfiles`, including explicit/preference `{}` or
+agent-only slots; a judge's own model stays unchanged. An explicit `taskMode`
+wins over the playbook preference, then the global preference; the final fallback
+is `native`. Missing profile preferences fall back to OpenCode defaults.
+Supplying the coordinator, every exact role of the selected template and
+`taskMode` skips backend preferences entirely; `{}` counts as an explicit profile
+slot. All origins are `explicit`, and preference availability stays unobserved.
+Partial or omitted selections read the owning backend's preferences.
+
+Preparation tool replies and inspections with creation metadata expose
+`selection: { profiles, taskMode, origins }`: the saved coordinator and every
+role of the selected playbook, plus origins `explicit`, `preference` or
+`opencode-default` for the coordinator, each role and task mode. The journal,
+document and authoritative backend snapshot retain `creationDefaults`, including
+the original request, for replay; tool replies project that metadata only as
+`selection`. A chosen Compare judge slot retains its explicit/preference origin
+even when its model is inherited; an absent judge slot inherits the coordinator's
+origin. These are saved requested selectors; catalog validation and native
+execution checks establish availability and actual execution separately.
+`inspect({ start })` uses the caller as coordinator and requires its existing
+native profile to match the resolved coordinator selection. A mismatch whose
+coordinator origin is `preference` advises passing `profiles.coordinator`
+(for example `{}`) to override that preference; the existing native-profile
+check still applies. An explicit-profile mismatch keeps the generic
+native-profile error.
+
+`inspect({ start })` reads preferences before entering the project mutation
+lane. Admission rereads creation events and document defaults under that lane;
+already recorded choices win over concurrent preference results. Document-mode
+replay rechecks the coordinator Location and original creation digest.
+
+When preferences are needed, with no bridge presence or zero proven owning
+backends, `inspect({ start })` uses explicit inputs and OpenCode defaults for
+omitted choices (`native` task-mode fallback), with origins `explicit` or
+`opencode-default` and `selection.preferences: "unavailable"`. The saved metadata
+retains that warning on retries, including after a backend appears. Multiple
+owning backends, failed or incomplete backend discovery, or an unreadable
+preference document return `mission-preferences-unavailable`; invalid preferences
+return `mission-preferences-invalid`. Restore backend discovery and session
+ownership, then reload preferences, or supply fully explicit choices.
+
+Strict discovery follows the shared [registration liveness and pruning rules](BROWSER_AUTOMATION.md#integration-and-shared-bridge).
+Unreadable registrations with a live or indeterminate local publisher retain
+indeterminate ownership and refuse resolution. WSL skips unparseable Windows
+registrations (unsupported schemas, oversized files and invalid URLs): they offer
+no usable authenticated endpoint or supported contract. Leave these foreign files
+in place. Valid Windows registrations require endpoint evidence. A refused
+connection establishes absence; timeouts and HTTP/authentication failures leave
+ownership indeterminate. A typed missing-session reply, an empty backend workspace
+inventory or a successful ownership read proving an unrelated project establishes
+non-ownership, including with other workspaces open. Actual Git/WSL ownership-read
+failures remain indeterminate and refuse resolution.
+
+Missing Windows interop executables (`ENOENT`/`ENOEXEC` from `cmd.exe` or
+`wslpath`) establish absence of reachable Windows backends for that WSL process;
+local discovery continues. Timeouts, failed commands and uncertain path results
+refuse strict discovery. Strict requests retry failed path lookups after two
+seconds; ordinary discovery retains its cached result. Legacy backends without
+negative ownership proof or preference-command support return
+`mission-preferences-update-required`: update CodeNomad before inheriting defaults.
+A live backend's preferences stay protected by this refusal.
+
+`mission.prepare` requires an owning backend for fenced creation even when profile
+resolution can use the no-owner fallback. Fully explicit choices make no preference
+request; preparation still requires its owning backend. Before sending creation
+provenance, preparation requires the backend's positive `missionCreationDefaults`
+capability. Missing support returns the update-required refusal before dispatch
+and releases only newly reserved choices; previous uncertain outcomes remain retained.
+
+The requestID is scoped to the coordinator and mission. Preparations with the
+same requestID are serialized. Reuse that requestID and the original inputs:
+a retry first reads the saved creation event/document and returns the saved
+mission or a conflict. `mission.prepare` alone reserves a standalone durable
+pre-dispatch intent for the chosen profiles, task mode and origins across
+uncertain attempts, preference changes and restarts. `inspect({ start })`
+retains its choices through its journal/document receipt under the native
+invocation identity.
+
+A positive preparation result or a definitive refusal proving that the attempt
+had no effect releases its retained choices. An unknown outcome keeps them; a
+retry refused during prevalidation leaves the preceding attempt's uncertainty
+intact. At most 128 unknown preparation choices are retained per project, each
+for 24 hours from its first reservation; retries preserve that deadline. At
+capacity, retry the original requestIDs to recover completed preparations and
+release their slots, or wait for their 24-hour retention to expire.
+
+Capacity scans skip unreadable intent entries while preserving their bytes.
+Retrying that exact requestID still refuses unreadable evidence, preventing
+replay of a possibly dispatched preparation; unrelated requests remain usable.
+
+A clock rollback keeps future-dated intents fresh until their stored creation
+time has aged through the retention window; retries reuse their saved choices.
+
+After expiry, preferences may be read anew only when the creation event and
+document are both absent. A positive receipt or saved document keeps its
+choices frozen. Expiry affects retained choices alone; native holds and
+authorization keep their own settlement rules. Check the mission and original
+conversation before choosing a new requestID for an uncertain outcome. Never
+duplicate uncertain work or resume automatically after expiry. A held uncertain
+attempt is reported uncertain.
 
 ## Human questions and decisions
 

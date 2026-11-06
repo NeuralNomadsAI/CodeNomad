@@ -1,10 +1,9 @@
 import path from "node:path"
 import { readFile, realpath, stat } from "node:fs/promises"
-import { gitLocationOverridden, readGitCommonDirectory } from "./git-common-directory"
+import { discoverCheckoutCommonDirectory, gitLocationOverridden, readGitCommonDirectory } from "./git-common-directory"
 export { readCheckoutIdentity } from "./git-common-directory"
 import { runWorktreeGit as git } from "./git-process"
 import { GitRequiredError } from "./git-requirement"
-import { discoverCheckoutCommonDirectory } from "../opencode/session-pruning/checkout-identity"
 
 export interface LogLike {
   debug?: (obj: any, msg?: string) => void

@@ -18,8 +18,6 @@ Las Misiones combinan un plan de proyecto duradero con conversaciones nativas de
 
 **Crear guarda una Misión en pausa.** Solo ▶ **Iniciar** activa el trabajo y los calendarios nativos. La creación pertenece al proyecto/Location seleccionado y registra los perfiles solicitados y la política de sesiones de tareas. La validación aparece junto al campo afectado; un rechazo que indique que no se envió nada conserva el borrador para corregirlo. Un coordinador puntual también puede preparar un seguimiento independiente: aparece como **Preparada** y se inicia desde su propia acción ▶.
 
-Los seguimientos preparados por un agente usan tus [valores para nuevas misiones](#profiles) guardados para los perfiles y las sesiones de tareas omitidos. Fuera de una misión activa, usa **Crear misión** en el panel Misiones.
-
 Las misiones puntuales guardadas conservan sus controles de ejecución, árbol de tareas, conversaciones e informes finales. Las programaciones diarias existentes siguen en la lista con sus controles diarios y sus [reglas horarias diarias](#existing-daily-schedules). Selecciona la entrada y usa los controles disponibles para ese objeto.
 
 ### Guiones {#playbooks}

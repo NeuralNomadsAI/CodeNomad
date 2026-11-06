@@ -127,7 +127,7 @@ export type MissionNativeReportAuthorization = (request: MissionNativeReportRequ
 
 export interface MissionInspection {
   selection?: MissionCreationSelection
-  mission: MissionMap | null
+  mission: Omit<MissionMap, "creationDefaults"> | null
   actor: MissionActor | null
   templates: ReturnType<typeof missionRecipeCatalog>
   playbook?: MissionRecipe
