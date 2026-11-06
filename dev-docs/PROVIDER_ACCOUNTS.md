@@ -176,6 +176,32 @@ The [membership guide](https://www.kimi.com/code/docs/en/kimi-code/membership.ht
 confirms the shared monthly total and optional weekly quota. Historical `usage` and
 `limits[]` payloads remain supported; ratio entries take precedence on matching windows.
 
+Cursor display keeps the environment token (`CURSOR_ACCESS_TOKEN`, then `CURSOR_TOKEN`)
+and the existing personal-plan `GetCurrentPeriodUsage` / `GetPlanInfo` readings.
+Without a usable personal meter, it reads the private dashboard profile at
+`GET https://api2.cursor.sh/auth/full_stripe_profile`: `membershipType: enterprise`,
+`isTeamMember: true` or a positive `teamId` identifies the team path. That path
+requires a positive integer team ID, reads `GET /auth/usage` and POSTs
+`aiserver.v1.DashboardService/GetHardLimit` with `{teamId}`, Bearer authentication,
+JSON and `Connect-Protocol-Version: 1`. These private endpoints are best-effort.
+The official [Admin API](https://cursor.com/docs/account/teams/admin-api) uses its
+own Basic-auth administrative key.
+
+The [observed usage shape](https://github.com/can1357/oh-my-pi/issues/6381)
+corroborates the legacy `gpt-4` bucket's `numRequests` and nullable `maxRequestUsage`.
+Only that identified bucket is displayed, under `requests:gpt-4`; an absent cap
+keeps a used-only `consumption` count with unknown percentage. `startOfMonth`
+leaves the reset unknown. Unknown buckets are omitted. `hardLimitPerUser` and
+`hardLimit` are USD caps in separate `per_user_limit` / `team_limit` rows with
+numeric `limitUSD`, formatted by the UI's `Intl.NumberFormat`; spend and cap
+percentages remain unknown. Absent, negative or malformed limits are omitted.
+All calls share one 15-second budget combined with the caller's cancellation,
+using the bounded redirect-free JSON transport for GET and POST. Verified partial
+readings remain visible; a response without any readable meter returns
+`cursor-usage-unavailable`. Missing teams, HTTP 403 and expired tokens/HTTP 401
+use distinct translated reasons; HTTP 401 revokes partial readings. Cursor stays
+manual, outside the account-selection registry.
+
 ## Auto-select account
 
 - Opt-in per integration, persisted under CodeNomad's

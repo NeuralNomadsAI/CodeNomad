@@ -70,6 +70,10 @@ Kimi, `kimi-code-plan-cn` (kimi.com), `kimi-code-plan-global` (kimi.ai), `kimi-f
 
 ### İsteğe bağlı kullanım ortamı değişkenleri {#usage-environment}
 
+Cursor Enterprise, özel pano API'lerini kullanılabilirliklerine göre kullanır. Profilde takım üyeliği ve takım kimliği varsa **Kullanım**, tanımlanan `gpt-4` istek grubunu ve sağlanan **Kullanıcı başına sınır** / **Takım sınırı** tutarlarını ayrı ayrı USD olarak gösterir. Harcama bilinmiyorsa yalnızca sınır, istek sınırı bilinmiyorsa yalnızca kullanılan sayı gösterilir. Bilinmeyen gruplar ve sıfırlama tarihleri kullanılamaz kalır. Eksik takım, erişim reddi ve süresi dolmuş belirteç için ayrı mesajlar vardır; doğrulanmış kısmi okumalar görünür kalır.
+
+Aşağıdaki değişkenlerle güncel bir Cursor erişim belirteci sağlayın. Enterprise okumaları takımın pano verilerini okuma izni gerektirir; [Yönetici API'si](https://cursor.com/docs/account/teams/admin-api) ayrı bir yönetim anahtarı kullanır. Süresi dolmuş belirteci güncelleyin ve arka ucu güncel ortamla yeniden başlatın.
+
 Bunları başlatmadan önce **CodeNomad arka uç sürecinin** ortamında ayarlayın. Bunlar tarayıcı ayarı veya model seçimi değil, kullanım okuyucusu kimlik bilgileridir. Oturum **Ortam Değişkenleri** düzenleyicisini değiştirmek çalışan arka ucun bu okuyucular için kullandığı `process.env` değerini güncellemez. Değiştirirken arka ucu amaçlanan ortamda yeniden başlatın; yalnızca kullanım okuyucusu değişkeni için ortak OpenCode hizmetini yeniden başlatmayın.
 
 | Kullanım entegrasyonu | Ortam değişkeni |

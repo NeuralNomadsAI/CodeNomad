@@ -396,6 +396,12 @@ test("only enumerated public reasons, bounded numeric codes and associated fixed
     assert.equal(minimax.unavailableReason, "minimax-limits-not-shared")
     assert.equal(minimax.unavailableAction, undefined)
     assert.equal(minimax.providerErrorCode, undefined)
+    for (const reason of ["cursor-token-expired", "cursor-team-unavailable", "cursor-access-denied", "cursor-usage-unavailable"] as const) {
+      const cursor = await read({ unavailableReason: reason, unavailableAction: "chatgpt-usage", providerErrorCode: "1004" })
+      assert.equal(cursor.unavailableReason, reason)
+      assert.equal(cursor.unavailableAction, undefined)
+      assert.equal(cursor.providerErrorCode, undefined)
+    }
   } finally { provider.fetchQuota = original; clearProviderUsageCache() }
 })
 

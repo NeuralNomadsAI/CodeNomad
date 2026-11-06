@@ -1,6 +1,7 @@
-import type { AuthFile, UsageProvider } from "../types"
-import { fetchJson, getAuthEntry, getString, notConfigured, oauthTokenNeedsRefresh, result, safeFetch, toNumber, toTimestamp, toUsageWindow } from "../shared"
+import type { AuthFile, ProviderUsage, UsageProvider } from "../types"
+import { asObject, getAuthEntry, getString, notConfigured, oauthTokenNeedsRefresh, ProviderHttpError, result, safeFetch, toNumber, toTimestamp, toUsageWindow } from "../shared"
 import { fetchOpenCodeGoQuota, type OpenCodeGoAuth } from "../opencode-go-quota"
+import { fetchBoundedJson } from "../bounded-fetch"
 
 function decodeJwtExpiration(token: string): number | null {
   try {
@@ -13,19 +14,11 @@ function decodeJwtExpiration(token: string): number | null {
   }
 }
 
-async function cursorPost(url: string, token: string): Promise<any> {
-  return fetchJson(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "Connect-Protocol-Version": "1" },
-    body: "{}",
-  })
-}
-
 const cursor: UsageProvider = {
   id: "cursor",
   name: "Cursor",
   aliases: ["cursor"],
-  async fetchQuota() {
+  async fetchQuota(_auth, context) {
     const token = getString(process.env.CURSOR_ACCESS_TOKEN) ?? getString(process.env.CURSOR_TOKEN)
     if (!token) return notConfigured(this.id, this.name)
     const expiresAt = decodeJwtExpiration(token)
@@ -34,26 +27,75 @@ const cursor: UsageProvider = {
         ok: false,
         configured: true,
         error: "Cursor access token expired. Provide a current CURSOR_ACCESS_TOKEN or CURSOR_TOKEN.",
+        unavailableReason: "cursor-token-expired",
       })
     }
-    return safeFetch(this.id, this.name, async () => {
-      const usage = await cursorPost("https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage", token)
-      const plan = await cursorPost("https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo", token).catch(() => null)
-      const source = usage?.planUsage ?? {}
+    const timeout = AbortSignal.timeout(15_000)
+    const signal = context?.signal ? AbortSignal.any([context.signal, timeout]) : timeout
+    let failedStatus: number | undefined
+    const read = async (path: string, body?: object) => asObject(await fetchBoundedJson(`https://api2.cursor.sh/${path}`, {
+      Authorization: `Bearer ${token}`,
+      ...(body ? { "Content-Type": "application/json", "Connect-Protocol-Version": "1" } : {}),
+    }, signal, undefined, body ? { method: "POST", body: JSON.stringify(body) } : {}))
+    const optional = async (path: string, body?: object) => {
+      try { return await read(path, body) } catch (error) {
+        signal.throwIfAborted()
+        if (error instanceof ProviderHttpError) {
+          if (error.status === 401) throw error
+          failedStatus = error.status
+        }
+        return null
+      }
+    }
+    try {
+      const usage = await optional("aiserver.v1.DashboardService/GetCurrentPeriodUsage", {})
+      const source = asObject(usage?.planUsage) ?? {}
       const limit = toNumber(source.limit)
       const remaining = toNumber(source.remaining)
       const explicit = toNumber(source.totalPercentUsed)
-      const resetAt = toTimestamp(usage?.billingCycleEnd ?? plan?.planInfo?.billingCycleEnd)
-      return {
-        windows: {
+      const spend = toNumber(source.totalSpend)
+      if (explicit !== null || (limit !== null && remaining !== null) || spend !== null) {
+        const plan = await optional("aiserver.v1.DashboardService/GetPlanInfo", {})
+        return result(this.id, this.name, { ok: true, configured: true, usage: { windows: {
           billing_cycle: toUsageWindow({
             usedPercent: explicit ?? (limit && remaining !== null ? ((limit - remaining) / limit) * 100 : null),
-            resetAt,
-            valueLabel: toNumber(source.totalSpend) !== null ? `$${(toNumber(source.totalSpend)! / 100).toFixed(2)}` : null,
+            resetAt: toTimestamp(usage?.billingCycleEnd ?? plan?.planInfo?.billingCycleEnd),
+            valueLabel: spend !== null ? `$${(spend / 100).toFixed(2)}` : null,
           }),
-        },
+        } } })
       }
-    })
+      // Private dashboard endpoints: preserve only independently identifiable meters.
+      const profile = await read("auth/full_stripe_profile")
+      const teamId = toNumber(profile?.teamId)
+      const teamMember = profile?.isTeamMember === true || getString(profile?.membershipType)?.toLowerCase() === "enterprise" || teamId !== null
+      if (teamMember && !(teamId !== null && Number.isSafeInteger(teamId) && teamId > 0)) {
+        return result(this.id, this.name, { ok: false, configured: true, unavailableReason: "cursor-team-unavailable" })
+      }
+      if (teamMember && teamId !== null) {
+        const requests = await optional("auth/usage")
+        const hardLimit = await optional("aiserver.v1.DashboardService/GetHardLimit", { teamId })
+        const windows: ProviderUsage["windows"] = {}
+        // gpt-4 is the corroborated legacy bucket; other bucket semantics stay unknown.
+        const bucket = asObject(requests?.["gpt-4"])
+        const used = toNumber(bucket?.numRequests)
+        const max = toNumber(bucket?.maxRequestUsage)
+        if (used !== null && used >= 0) windows["requests:gpt-4"] = {
+          ...toUsageWindow({ usedPercent: max !== null && max > 0 ? used / max * 100 : null }),
+          consumption: { used, ...(max !== null && max >= 0 ? { limit: max } : {}) },
+        }
+        for (const [label, value] of [["per_user_limit", hardLimit?.hardLimitPerUser], ["team_limit", hardLimit?.hardLimit]] as const) {
+          const amount = toNumber(value)
+          if (amount !== null && amount >= 0) windows[label] = { ...toUsageWindow({ usedPercent: null }), limitUSD: amount }
+        }
+        if (Object.keys(windows).length) return result(this.id, this.name, { ok: true, configured: true, usage: { windows } })
+      }
+      return result(this.id, this.name, { ok: false, configured: true, status: failedStatus,
+        unavailableReason: failedStatus === 403 ? "cursor-access-denied" : "cursor-usage-unavailable" })
+    } catch (error) {
+      const status = error instanceof ProviderHttpError ? error.status : undefined
+      return result(this.id, this.name, { ok: false, configured: true, status,
+        unavailableReason: status === 401 ? "cursor-token-expired" : status === 403 ? "cursor-access-denied" : "cursor-usage-unavailable" })
+    }
   },
 }
 

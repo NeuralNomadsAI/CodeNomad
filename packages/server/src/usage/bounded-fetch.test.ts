@@ -36,3 +36,15 @@ test("bounded reads refuse redirects, cap bodies, preserve HTTP status and honor
   response = () => new Response(new ReadableStream({ pull() { aborted.abort() } }))
   await assert.rejects(fetchBoundedJson("https://quota.example", {}, aborted.signal))
 })
+
+test("bounded JSON POSTs retain transport fences and the caller's body", async t => {
+  t.mock.method(globalThis, "fetch", async (_url: string, init: RequestInit) => {
+    assert.equal(init.method, "POST")
+    assert.equal(init.body, '{"teamId":42}')
+    assert.equal(init.redirect, "error")
+    assert.equal(new Headers(init.headers).get("Connect-Protocol-Version"), "1")
+    return Response.json({ hardLimitPerUser: 250 })
+  })
+  assert.deepEqual(await fetchBoundedJson("https://quota.example", { "Connect-Protocol-Version": "1" }, undefined, undefined,
+    { method: "POST", body: '{"teamId":42}' }), { hardLimitPerUser: 250 })
+})

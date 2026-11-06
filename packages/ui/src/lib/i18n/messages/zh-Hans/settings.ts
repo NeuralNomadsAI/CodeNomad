@@ -1,5 +1,13 @@
 export const settingsMessages = {
   "providerUsage.usedCount": "已使用 {used} / {limit}",
+  "providerUsage.usedCountOnly": "已使用 {used}",
+  "providerUsage.windows.requests": "请求",
+  "providerUsage.windows.perUserLimit": "每用户限额",
+  "providerUsage.windows.teamLimit": "团队限额",
+  "providerUsage.cursorTokenExpired": "Cursor 令牌已过期。请更新 CURSOR_ACCESS_TOKEN 或 CURSOR_TOKEN 并重启后端。",
+  "providerUsage.cursorTeamUnavailable": "Cursor 团队不可用。请检查团队成员资格。",
+  "providerUsage.cursorAccessDenied": "Cursor 拒绝访问团队用量。请检查您的权限。",
+  "providerUsage.cursorUsageUnavailable": "Cursor 未提供可读取的用量或限额。",
   "providerUsage.creditsUsed": "已使用 {used} 点数",
   "providerUsage.unlimited": "无限制",
   "providerUsage.copilotPlans.free": "Free",

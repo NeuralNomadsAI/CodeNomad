@@ -1,5 +1,13 @@
 export const settingsMessages = {
   "providerUsage.usedCount": "{used} / {limit} kullanıldı",
+  "providerUsage.usedCountOnly": "{used} kullanıldı",
+  "providerUsage.windows.requests": "İstekler",
+  "providerUsage.windows.perUserLimit": "Kullanıcı başına sınır",
+  "providerUsage.windows.teamLimit": "Takım sınırı",
+  "providerUsage.cursorTokenExpired": "Cursor belirtecinin süresi doldu. CURSOR_ACCESS_TOKEN veya CURSOR_TOKEN değerini güncelleyip arka ucu yeniden başlatın.",
+  "providerUsage.cursorTeamUnavailable": "Cursor takımı kullanılamıyor. Takım üyeliğinizi kontrol edin.",
+  "providerUsage.cursorAccessDenied": "Cursor takım kullanımına erişimi reddetti. İzinlerinizi kontrol edin.",
+  "providerUsage.cursorUsageUnavailable": "Cursor okunabilir kullanım veya sınır bilgisi sağlamadı.",
   "providerUsage.creditsUsed": "{used} kredi kullanıldı",
   "providerUsage.unlimited": "Sınırsız",
   "providerUsage.copilotPlans.free": "Free",

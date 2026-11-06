@@ -1,5 +1,13 @@
 export const settingsMessages = {
   "providerUsage.usedCount": "{used} / {limit} נוצלו",
+  "providerUsage.usedCountOnly": "{used} נוצלו",
+  "providerUsage.windows.requests": "בקשות",
+  "providerUsage.windows.perUserLimit": "מגבלה למשתמש",
+  "providerUsage.windows.teamLimit": "מגבלת צוות",
+  "providerUsage.cursorTokenExpired": "התוקף של אסימון Cursor פג. יש לעדכן את CURSOR_ACCESS_TOKEN או CURSOR_TOKEN ולהפעיל מחדש את שרת הקצה האחורי.",
+  "providerUsage.cursorTeamUnavailable": "צוות Cursor אינו זמין. יש לבדוק את החברות בצוות.",
+  "providerUsage.cursorAccessDenied": "Cursor דחה גישה לנתוני השימוש של הצוות. יש לבדוק את ההרשאות.",
+  "providerUsage.cursorUsageUnavailable": "Cursor לא סיפק נתוני שימוש או מגבלות קריאים.",
   "providerUsage.creditsUsed": "{used} נקודות זכות נוצלו",
   "providerUsage.unlimited": "ללא הגבלה",
   "providerUsage.copilotPlans.free": "Free",

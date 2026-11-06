@@ -96,7 +96,9 @@ export async function getProviderUsage(
     ? { ...options.context, integrationID: options.context?.integrationID ?? requestedProviderId.trim().toLowerCase() } : options.context
   const result = await fetchProvider(provider, options.auth ?? {}, context)
   options.context?.signal?.throwIfAborted()
-  const reason = !result.ok && (result.unavailableReason === "openai-token-sharing-unsupported" || result.unavailableReason === "provider-error" || result.unavailableReason === "minimax-limits-not-shared" || result.unavailableReason === "invalid-base-url")
+  const reason = !result.ok && (result.unavailableReason === "openai-token-sharing-unsupported" || result.unavailableReason === "provider-error" || result.unavailableReason === "minimax-limits-not-shared" || result.unavailableReason === "invalid-base-url"
+    || result.unavailableReason === "cursor-token-expired" || result.unavailableReason === "cursor-team-unavailable"
+    || result.unavailableReason === "cursor-access-denied" || result.unavailableReason === "cursor-usage-unavailable")
     ? result.unavailableReason : undefined
   return {
     requestedProviderId,

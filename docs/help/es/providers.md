@@ -70,6 +70,10 @@ Kimi admite `kimi-code-plan-cn` (kimi.com), `kimi-code-plan-global` (kimi.ai), `
 
 ### Variables de entorno opcionales para Uso {#usage-environment}
 
+Cursor Enterprise utiliza las API privadas del panel según su disponibilidad. Con pertenencia e ID de equipo en el perfil, **Uso** muestra el grupo de solicitudes `gpt-4` identificado y los importes separados **Límite por usuario** / **Límite del equipo** en USD cuando se proporcionan. Si se desconoce el gasto, aparece solo el límite; si se desconoce el límite de solicitudes, aparece solo el recuento usado. Los grupos y fechas de restablecimiento desconocidos quedan sin datos. Equipo ausente, acceso denegado y token caducado tienen mensajes distintos; las lecturas parciales verificadas siguen visibles.
+
+Proporciona un token de acceso de Cursor vigente mediante las variables siguientes. Las lecturas Enterprise requieren permiso para leer los datos del panel del equipo; la [API de administración](https://cursor.com/docs/account/teams/admin-api) usa una clave administrativa independiente. Actualiza el token caducado y reinicia el backend con el entorno actualizado.
+
 Establécelas en el entorno del **proceso del backend de CodeNomad** antes de iniciarlo. Son credenciales de lectores de uso, no ajustes de navegador ni controles de selección de modelo. Cambiar el editor **Variables de entorno** de la sesión no actualiza el `process.env` de un backend en ejecución para estos lectores. Reinicia el backend con el entorno previsto al cambiarlas; no reinicies el servicio compartido de OpenCode solo por una variable del lector de uso.
 
 | Integración de uso | Variable de entorno |

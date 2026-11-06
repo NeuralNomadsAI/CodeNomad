@@ -70,6 +70,10 @@ Kimi unterstützt `kimi-code-plan-cn` (kimi.com), `kimi-code-plan-global` (kimi.
 
 ### Optionale Umgebungsvariablen für Nutzung {#usage-environment}
 
+Cursor Enterprise verwendet private Dashboard-APIs nach Verfügbarkeit. Mit Teammitgliedschaft und Team-ID im Profil zeigt **Nutzung** den erkannten Anfragebereich `gpt-4` sowie separate USD-Beträge für **Limit pro Nutzer** / **Teamlimit**, sofern vorhanden. Bei unbekannten Ausgaben erscheint nur das Limit; bei unbekanntem Anfragelimit nur die verbrauchte Anzahl. Unbekannte Bereiche und Rücksetztermine bleiben unverfügbar. Fehlendes Team, verweigerter Zugriff und abgelaufene Tokens haben eigene Meldungen; verifizierte Teilergebnisse bleiben sichtbar.
+
+Geben Sie über die folgenden Variablen ein aktuelles Cursor-Zugriffstoken an. Enterprise-Abfragen erfordern Leserechte für die Dashboard-Daten des Teams; die [Admin-API](https://cursor.com/docs/account/teams/admin-api) verwendet einen separaten Administrationsschlüssel. Aktualisieren Sie abgelaufene Tokens und starten Sie das Backend mit der aktualisierten Umgebung neu.
+
 Setzen Sie diese vor dem Start in der Umgebung des **CodeNomad-Backend-Prozesses**. Sie sind Zugangsdaten für Nutzungsleser, keine Browsereinstellungen oder Modellauswahl. Änderungen im Sitzungseditor **Umgebungsvariablen** aktualisieren nicht das `process.env` eines laufenden Backends für diese Leser. Starten Sie bei Änderungen das Backend mit der vorgesehenen Umgebung neu; starten Sie nicht nur wegen einer Nutzungslesevariable den gemeinsamen OpenCode-Dienst neu.
 
 | Nutzungsintegration | Umgebungsvariable |

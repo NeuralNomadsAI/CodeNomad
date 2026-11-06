@@ -70,6 +70,10 @@ Kimi supports `kimi-code-plan-cn` (kimi.com), `kimi-code-plan-global` (kimi.ai),
 
 ### Optional usage environment variables {#usage-environment}
 
+Cursor Enterprise uses private dashboard APIs on a best-effort basis. With a team membership and team ID in the profile, **Usage** shows the identified `gpt-4` request bucket and separate **Per-user limit** / **Team limit** amounts in USD when supplied. A cap with unknown spend appears as a cap alone; request counts with an unknown cap appear as used-only counts. Unknown buckets and reset dates stay unavailable. Missing team membership, forbidden access and expired tokens have distinct messages; verified partial readings remain visible.
+
+Supply a current Cursor access token through the variables below. Enterprise reads require permission to read that team's dashboard data; the [Admin API](https://cursor.com/docs/account/teams/admin-api) uses a separate administrative key. Update an expired token and restart the backend with the updated environment.
+
 Set these in the environment of the **CodeNomad backend process** before launching it. They are usage-reader credentials, not browser settings or model-selection controls. Changing the session **Environment Variables** editor does not update a running backend's `process.env` for these readers. Restart the backend under the intended environment when changing them; do not restart the shared OpenCode service just for a usage-reader variable.
 
 | Usage integration | Environment variable |

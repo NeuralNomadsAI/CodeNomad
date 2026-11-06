@@ -20,9 +20,9 @@ export function parseQuotaBaseURL(value: unknown): URL | null {
 // Credential-bearing quota reads. Errors are generic on purpose: callers must
 // never log or return upstream bodies, headers or transport details.
 export async function fetchBoundedJson(url: string, headers: Record<string, string>, signal = AbortSignal.timeout(15_000),
-  maxBytes = MAX_RESPONSE_BYTES): Promise<unknown> {
+  maxBytes = MAX_RESPONSE_BYTES, request: Pick<RequestInit, "method" | "body"> = {}): Promise<unknown> {
   signal.throwIfAborted()
-  const response = await fetch(url, { signal, redirect: "error", headers })
+  const response = await fetch(url, { ...request, signal, redirect: "error", headers })
   if (!response.ok || !response.body) {
     await response.body?.cancel().catch(() => {})
     throw new ProviderHttpError(response.status)

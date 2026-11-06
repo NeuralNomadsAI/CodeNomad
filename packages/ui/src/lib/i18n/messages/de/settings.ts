@@ -1,5 +1,13 @@
 export const settingsMessages = {
   "providerUsage.usedCount": "{used} / {limit} verbraucht",
+  "providerUsage.usedCountOnly": "{used} verbraucht",
+  "providerUsage.windows.requests": "Anfragen",
+  "providerUsage.windows.perUserLimit": "Limit pro Nutzer",
+  "providerUsage.windows.teamLimit": "Teamlimit",
+  "providerUsage.cursorTokenExpired": "Cursor-Token abgelaufen. CURSOR_ACCESS_TOKEN oder CURSOR_TOKEN aktualisieren und das Backend neu starten.",
+  "providerUsage.cursorTeamUnavailable": "Cursor-Team nicht verfügbar. Prüfen Sie Ihre Teammitgliedschaft.",
+  "providerUsage.cursorAccessDenied": "Cursor verweigert den Zugriff auf die Teamnutzung. Prüfen Sie Ihre Teamberechtigungen.",
+  "providerUsage.cursorUsageUnavailable": "Cursor hat keine lesbaren Nutzungsdaten oder Limits bereitgestellt.",
   "providerUsage.creditsUsed": "{used} Credits verbraucht",
   "providerUsage.unlimited": "Unbegrenzt",
   "providerUsage.copilotPlans.free": "Free",

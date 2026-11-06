@@ -70,6 +70,10 @@ Kimi prend en charge `kimi-code-plan-cn` (kimi.com), `kimi-code-plan-global` (ki
 
 ### Variables d’environnement d’utilisation facultatives {#usage-environment}
 
+Cursor Enterprise utilise les API privées du tableau de bord, au mieux de leur disponibilité. Avec une appartenance à l’équipe et un identifiant d’équipe dans le profil, **Utilisation** affiche le groupe de requêtes `gpt-4` identifié et les montants distincts **Plafond par utilisateur** / **Plafond de l’équipe** en USD lorsqu’ils sont fournis. Une dépense inconnue laisse le plafond seul ; un plafond de requêtes inconnu laisse le nombre utilisé seul. Les groupes inconnus et dates de réinitialisation restent indisponibles. Équipe absente, accès refusé et jeton expiré ont des messages distincts ; les lectures partielles vérifiées restent visibles.
+
+Fournissez un jeton d’accès Cursor actuel avec les variables ci-dessous. Les lectures Enterprise nécessitent l’autorisation de lire les données du tableau de bord de l’équipe ; l’[API Admin](https://cursor.com/docs/account/teams/admin-api) utilise une clé d’administration distincte. Actualisez un jeton expiré et redémarrez le backend avec l’environnement mis à jour.
+
 Définissez-les dans l’environnement du **processus backend CodeNomad** avant son lancement. Ce sont des identifiants pour les lecteurs d’utilisation, pas des paramètres navigateur ou commandes de sélection de modèle. Modifier l’éditeur de session **Variables d'environnement** ne met pas à jour le `process.env` d’un backend actif pour ces lecteurs. Redémarrez le backend dans l’environnement voulu pour les changer ; ne redémarrez pas le service OpenCode partagé uniquement pour une variable de lecture d’utilisation.
 
 | Intégration d’utilisation | Variable d’environnement |

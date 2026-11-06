@@ -1,5 +1,13 @@
 export const settingsMessages = {
   "providerUsage.usedCount": "{used} / {limit} प्रयोग भयो",
+  "providerUsage.usedCountOnly": "{used} प्रयोग भयो",
+  "providerUsage.windows.requests": "अनुरोधहरू",
+  "providerUsage.windows.perUserLimit": "प्रति प्रयोगकर्ता सीमा",
+  "providerUsage.windows.teamLimit": "टोलीको सीमा",
+  "providerUsage.cursorTokenExpired": "Cursor टोकनको म्याद सकियो। CURSOR_ACCESS_TOKEN वा CURSOR_TOKEN अद्यावधिक गरी ब्याकएन्ड पुनः सुरु गर्नुहोस्।",
+  "providerUsage.cursorTeamUnavailable": "Cursor टोली उपलब्ध छैन। आफ्नो टोली सदस्यता जाँच गर्नुहोस्।",
+  "providerUsage.cursorAccessDenied": "Cursor ले टोलीको प्रयोगमा पहुँच अस्वीकार गर्‍यो। आफ्ना अनुमतिहरू जाँच गर्नुहोस्।",
+  "providerUsage.cursorUsageUnavailable": "Cursor ले पढ्न मिल्ने प्रयोग वा सीमा उपलब्ध गराएन।",
   "providerUsage.creditsUsed": "{used} क्रेडिट प्रयोग भयो",
   "providerUsage.unlimited": "असीमित",
   "providerUsage.copilotPlans.free": "Free",

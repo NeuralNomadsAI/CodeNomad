@@ -170,6 +170,74 @@ for (const [locale, monthly, monthlyCode, used] of [
   } finally { await page.close() }
 })
 
+for (const [locale, requestsLabel, perUser, team, usedOnly] of [
+  ["en-US", "Requests", "Per-user limit", "Team limit", "7 used"],
+  ["fr-FR", "Requêtes", "Plafond par utilisateur", "Plafond de l’équipe", "7 utilisés"],
+  ["de-DE", "Anfragen", "Limit pro Nutzer", "Teamlimit", "7 verbraucht"],
+  ["es-ES", "Solicitudes", "Límite por usuario", "Límite del equipo", "7 usados"],
+  ["he-IL", "בקשות", "מגבלה למשתמש", "מגבלת צוות", "7 נוצלו"],
+  ["ja-JP", "リクエスト", "ユーザーごとの上限", "チームの上限", "7 使用済み"],
+  ["ne-NP", "अनुरोधहरू", "प्रति प्रयोगकर्ता सीमा", "टोलीको सीमा", "7 प्रयोग भयो"],
+  ["ru-RU", "Запросы", "Лимит на пользователя", "Лимит команды", "7 использовано"],
+  ["tr-TR", "İstekler", "Kullanıcı başına sınır", "Takım sınırı", "7 kullanıldı"],
+  ["zh-CN", "请求", "每用户限额", "团队限额", "已使用 7"],
+]) test(`Cursor Enterprise renders scoped cap-only USD rows and nullable request limits (${locale})`, async () => {
+  const page = await browser.newPage({ locale })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1)
+    const base = { requestedProviderId: "cursor", providerId: "cursor", providerName: "Cursor", supported: true,
+      configured: true, ok: true, fetchedAt: Date.now() }
+    const quotaWindow = { usedPercent: null, remainingPercent: null, windowSeconds: null, resetAt: null }
+    await requests[0].fulfill({ json: { ...base, windows: {
+      "requests:gpt-4": { ...quotaWindow, consumption: { used: 7 } },
+      per_user_limit: { ...quotaWindow, limitUSD: 250.5 }, team_limit: { ...quotaWindow, limitUSD: 5000 },
+    } } })
+    await page.getByText(`${requestsLabel} · gpt-4`, { exact: true }).waitFor()
+    await page.getByText(perUser, { exact: true }).waitFor()
+    await page.getByText(team, { exact: true }).waitFor()
+    const amounts = await page.evaluate(locale => {
+      const money = new Intl.NumberFormat(locale, { style: "currency", currency: "USD" })
+      return [250.5, 5000].map(value => money.format(value))
+    }, locale === "zh-CN" ? "zh-Hans" : locale)
+    for (const amount of amounts) await page.getByText(amount, { exact: true }).waitFor()
+    const seven = await page.evaluate(locale => new Intl.NumberFormat(locale).format(7), locale)
+    await page.getByText(usedOnly.replace("7", seven), { exact: true }).waitFor()
+    assert.equal(await page.getByRole("progressbar").count(), 0, "cap-only rows never imply zero spend")
+    assert.equal(await page.getByText(/0.*\/.*250/).count(), 0)
+    await page.evaluate(() => (window as any).usageFixture.event("provider.updated"))
+    await waitRequests(requests, 2)
+    await requests[1].fulfill({ json: { ...base, windows: {
+      "requests:gpt-4": { ...quotaWindow, usedPercent: 25, remainingPercent: 75, consumption: { used: 25, limit: 100 } },
+    } } })
+    await page.getByRole("progressbar").waitFor()
+    assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "25")
+    assert.equal(await page.getByText(perUser, { exact: true }).count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+for (const [reason, message] of [
+  ["cursor-token-expired", "Cursor token expired. Update CURSOR_ACCESS_TOKEN or CURSOR_TOKEN and restart the backend."],
+  ["cursor-team-unavailable", "Cursor team unavailable. Check your team membership."],
+  ["cursor-access-denied", "Cursor denied access to team usage. Check your team permissions."],
+  ["cursor-usage-unavailable", "Cursor did not provide readable usage or limits."],
+]) test(`Cursor ${reason} revokes meters with its distinct actionable status`, async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1); await fulfill(requests[0], 10)
+    await page.getByRole("progressbar").waitFor()
+    await page.evaluate(() => (window as any).usageFixture.event("provider.updated"))
+    await waitRequests(requests, 2)
+    await requests[1].fulfill({ json: { requestedProviderId: "cursor", providerId: "cursor", providerName: "Cursor", supported: true,
+      configured: true, ok: false, fetchedAt: Date.now(), windows: {}, unavailableReason: reason } })
+    await page.getByRole("status").getByText(message, { exact: true }).waitFor()
+    assert.equal(await page.getByRole("progressbar").count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("free-model usage shows an estimate and estimated reset, then clears them on a provider switch", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   try {
