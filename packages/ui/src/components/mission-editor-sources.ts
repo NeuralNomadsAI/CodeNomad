@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, mapArray, onCleanup, untrack } from "solid-js"
 import { serverApi } from "../lib/api-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { getRootClient } from "../stores/opencode-client"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { buildProjectSessionListOptions } from "../stores/session-list-options"
@@ -31,11 +32,13 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
       const after = cursor()
       if (!props.active() || !directory) return
       const controller = new AbortController(), view = props.captureView()
-      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)])
-      const current = () => view() && !controller.signal.aborted && identity === key
+      const operation = captureBackendOperation(props.instanceId, controller.signal)
+      const signal = AbortSignal.any([operation.signal, AbortSignal.timeout(10_000)])
+      const current = () => operation.current() && view() && identity === key
         && generation === getOpenCodeInstanceGeneration(props.instanceId)
       setLoading(true); setFailed(false)
       const read = async () => {
+        signal.throwIfAborted()
         if (kind === "conversation-message") {
           const page = await getRootClient(props.instanceId).session.list(buildProjectSessionListOptions(after ? { cursor: after } : { directory }), { signal })
           if (page.data.length > 200) throw new Error("Oversized source page")
@@ -58,8 +61,8 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
           ? [...previous[kind] ?? [], ...page.rows.filter(row => !previous[kind]?.some(old => old.id === row.id))] : page.rows })))
         setNext(page.next ?? undefined)
       }).catch(() => { if (current()) { setFailed(true); untrack(() => forget(kind)) } })
-        .finally(() => { if (current()) setLoading(false) })
-      onCleanup(() => controller.abort())
+        .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+      onCleanup(() => { controller.abort(); setLoading(false) })
     })
     onCleanup(() => forget(kind))
     return { next, loading, failed, more: () => setCursor(next()) }

@@ -4,29 +4,29 @@ import { createEventRefreshScheduler } from "../lib/event-refresh-scheduler"
 import { tGlobal } from "../lib/i18n"
 import { showToastNotification } from "../lib/notifications"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { executeCustomCommand } from "./session-actions"
 import { createSessionGoalStore } from "./session-goal-store"
 
 // The signal leaves the shared background budget's queue or aborts the request once the Session is hidden.
-export const sessionGoals = createSessionGoalStore((instanceId, sessionId, signal) => serverApi.fetchSessionGoal(instanceId, sessionId, signal))
+export const sessionGoals = createSessionGoalStore((instanceId, sessionId, signal) => serverApi.fetchSessionGoal(instanceId, sessionId, signal), { signal: id => serverEvents.signalForInstance(id) })
 
 // Changes published while the stream was down are lost: re-read what is shown.
-const reconnects = createEventRefreshScheduler(instanceId => sessionGoals.refreshDemanded(instanceId))
+const reconnects = createEventRefreshScheduler((instanceId, signal) => signal.aborted ? undefined : sessionGoals.refreshDemanded(instanceId))
 
 serverEvents.on("instance.event", (event) => {
   if (event.type !== "instance.event") return
   const native = event.event as { type: string; data?: { sessionID?: unknown } }
   if (native.type === GOAL_CHANGED_EVENT) sessionGoals.applyChanged(event.instanceId, native.data)
   else if (native.type === "session.deleted" && typeof native.data?.sessionID === "string") sessionGoals.forget(event.instanceId, native.data.sessionID)
-  else if (native.type === "server.connected") reconnects.schedule(event.instanceId, "urgent")
+  else if (native.type === "server.connected") reconnects.schedule(event.instanceId, "urgent", serverEvents.signalForInstance(event.instanceId))
 })
 
 serverEvents.on("instance.eventStatus", (event) => {
-  if (event.type === "instance.eventStatus" && event.status === "connected") reconnects.schedule(event.instanceId, "urgent")
+  if (event.type === "instance.eventStatus" && event.status === "connected") reconnects.schedule(event.instanceId, "urgent", serverEvents.signalForInstance(event.instanceId))
 })
 
-serverEvents.onOpen(() => void sessionGoals.refreshDemanded())
+serverEvents.onOpen(backendId => void sessionGoals.refreshDemanded(undefined, backendId))
 
 serverEvents.on("workspace.stopped", (event) => {
   if (event.type !== "workspace.stopped") return

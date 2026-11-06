@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { loading } from "./session-state"
 
 const restored = new Set<string>()

@@ -12,6 +12,8 @@ import type {
   TuiToastShow,
 } from "@opencode/client"
 import { getLogger } from "../lib/logger"
+import { backendEvents } from "../lib/server-events"
+import { parseInstanceKey } from "../lib/backend-identity"
 import { reconcileSessionModel } from "./session-model-reconciliation"
 import { handlePruningEvent } from "./session-pruning-events"
 import type { EventSessionDeleted, NativeSessionEvent } from "../lib/sse-manager"
@@ -69,12 +71,22 @@ const pendingSessionFetches = new Map<string, {
   retry?: SessionRetryState | null
   /** Settles once the session's metadata read ends. */
   settled: Promise<void>
+  signal: AbortSignal
+  current: () => boolean
 }>()
 const nativeLifecycleGenerations = new Map<string, number>()
 // The live backoff countdown of one session; it ends when that session's next
 // attempt starts or its run settles.
 let activeRetryToast: { key: string; handle: ToastHandle } | null = null
-const movedSessionRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const movedSessionRefreshTimers = new Map<string, () => void>()
+
+function captureEventAuthority(instanceId: string) {
+  const signal = backendEvents.signalForInstance(instanceId)
+  const client = instances().get(instanceId)?.client
+  const generation = getOpenCodeInstanceGeneration(instanceId)
+  return { signal, current: () => !signal?.aborted && instances().get(instanceId)?.client === client
+    && getOpenCodeInstanceGeneration(instanceId) === generation }
+}
 
 function advanceNativeLifecycle(instanceId: string, sessionId: string): number {
   const key = `${instanceId}\0${sessionId}`
@@ -105,6 +117,7 @@ function speakCompletedAssistantText(instanceId: string, sessionId: string): voi
 }
 
 function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent): void | Promise<void> {
+  const authority = captureEventAuthority(instanceId)
   if (handlePruningEvent(instanceId, event)) return
   switch (event.type) {
     case "form.created":
@@ -122,7 +135,7 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
     case "session.model.selected":
       if (!sessions().get(instanceId)?.has(event.data.sessionID)) {
         void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
-          .then(() => reconcileSessionModel(instanceId, event.data.sessionID))
+          .then(() => authority.current() ? reconcileSessionModel(instanceId, event.data.sessionID) : undefined)
       } else {
         void reconcileSessionModel(instanceId, event.data.sessionID)
       }
@@ -200,20 +213,23 @@ async function reconcileTerminalNativeSessionStatus(
   sessionId: string,
   options: { failed: boolean; interruptedAt?: number; refreshMessages?: boolean; notify?: boolean; directory?: string },
 ): Promise<void> {
+  const authority = captureEventAuthority(instanceId)
   const generation = advanceNativeLifecycle(instanceId, sessionId)
   // Claim this event before any refresh can expose its badge for acknowledgement.
   const current = sessions().get(instanceId)?.get(sessionId)
   if (current && options.interruptedAt !== undefined) observeSessionInterruption(instanceId, current, options.interruptedAt)
   let activeSessions: Record<string, unknown> | null = null
   try {
-    activeSessions = await getRootClient(instanceId).session.active()
+    if (!authority.current()) return
+    activeSessions = await getRootClient(instanceId).session.active(authority.signal ? { signal: authority.signal } : undefined)
   } catch (error) {
     log.warn("Failed to reconcile terminal session state", { instanceId, sessionId, error })
   }
-  if (!isCurrentNativeLifecycle(instanceId, sessionId, generation)) return
+  if (!authority.current() || !isCurrentNativeLifecycle(instanceId, sessionId, generation)) return
 
   if (activeSessions && Object.prototype.hasOwnProperty.call(activeSessions, sessionId)) {
     withSession(instanceId, sessionId, (session) => { session.generationRecovery = null })
+    if (!authority.current()) return
     const existing = sessions().get(instanceId)?.get(sessionId)
     if (existing) setSessionStatus(instanceId, sessionId, "working", { force: true })
     else ensureSessionStatus(instanceId, sessionId, "working", options.directory)
@@ -223,12 +239,16 @@ async function reconcileTerminalNativeSessionStatus(
   if (options.interruptedAt !== undefined) {
     withSession(instanceId, sessionId, (session) => { session.generationRecovery = "interrupted" })
   }
+  if (!authority.current()) return
   setTerminalNativeSessionStatus(instanceId, sessionId, options.failed, options.directory)
+  if (!authority.current()) return
   refreshSettledSessionMessages(instanceId, sessionId, options.refreshMessages)
+  if (!authority.current()) return
   if (options.notify) notifySessionAttention("sessionDone", instanceId, sessionId)
 }
 
 function refreshSettledSessionMessages(instanceId: string, sessionId: string, force = false): void {
+  const signal = backendEvents.signalForInstance(instanceId)
   // The native reducer can reconcile its own cache after a missing tool terminal
   // event, but our bounded visible message store needs an authoritative load too.
   const store = messageStoreBus.getInstance(instanceId)
@@ -240,7 +260,7 @@ function refreshSettledSessionMessages(instanceId: string, sessionId: string, fo
     })
   })
   if (force || unsettledTools) {
-    void loadMessages(instanceId, sessionId, { force: true }).catch((error) => {
+    void loadMessages(instanceId, sessionId, { force: true, signal }).catch((error) => {
       log.warn("Failed to refresh settled session messages", { instanceId, sessionId, error })
     })
   }
@@ -256,9 +276,11 @@ function setTerminalNativeSessionStatus(instanceId: string, sessionId: string, f
 }
 
 function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]): void {
+  const authority = captureEventAuthority(sourceInstanceId)
   const { sessionID: sessionId, location } = data
   const normalized = normalizeSessionDirectory(location.directory)
   const targetInstanceIds = Array.from(instances().values()).flatMap((instance) => {
+    if (parseInstanceKey(instance.id).backendId !== parseInstanceKey(sourceInstanceId).backendId) return []
     const directories = [
       instance.folder,
       ...getWorktrees(instance.id).flatMap((worktree) => [worktree.directory, worktree.serviceDirectory]),
@@ -285,18 +307,26 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
 
   const affectedInstanceIds = sourceOwnsLocation ? [sourceInstanceId] : [sourceInstanceId, ...targetInstanceIds]
   for (const instanceId of new Set(affectedInstanceIds)) {
-    const pending = movedSessionRefreshTimers.get(instanceId)
-    if (pending) clearTimeout(pending)
-    movedSessionRefreshTimers.set(instanceId, setTimeout(() => {
-      movedSessionRefreshTimers.delete(instanceId)
-      void reloadWorktrees(instanceId).catch(error => {
+    if (!authority.current()) return
+    movedSessionRefreshTimers.get(instanceId)?.()
+    const cancel = () => {
+      clearTimeout(timer)
+      authority.signal?.removeEventListener("abort", cancel)
+      if (movedSessionRefreshTimers.get(instanceId) === cancel) movedSessionRefreshTimers.delete(instanceId)
+    }
+    const timer = setTimeout(() => {
+      cancel()
+      if (!authority.current()) return
+      void reloadWorktrees(instanceId, false, authority.signal).catch(error => {
         log.warn("Failed to refresh moved-session worktrees", { instanceId, error })
-      }).then(() => fetchSessions(instanceId, { reset: true })).then(() => (
-        activeSessionId().get(instanceId) ? refreshSessionCatalog(instanceId) : undefined
+      }).then(() => authority.current() ? fetchSessions(instanceId, { reset: true, signal: authority.signal }) : undefined).then(() => (
+        authority.current() && activeSessionId().get(instanceId) ? refreshSessionCatalog(instanceId) : undefined
       )).catch((error) => {
         log.warn("Failed to reconcile moved sessions", { instanceId, error })
       })
-    }, 100))
+    }, 100)
+    movedSessionRefreshTimers.set(instanceId, cancel)
+    authority.signal?.addEventListener("abort", cancel, { once: true })
   }
 }
 
@@ -357,6 +387,7 @@ function isInstanceGenerationCurrent(instanceId: string, generation: number): bo
 }
 
 async function fetchSessionInfo(instanceId: string, sessionId: string, directory?: string): Promise<Session | null> {
+  const authority = captureEventAuthority(instanceId)
   const instance = instances().get(instanceId)
   if (!instance?.client) return null
 
@@ -365,9 +396,9 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
   const generation = getOpenCodeInstanceGeneration(instanceId)
 
   try {
-    const info = await client.session.get({ sessionID: sessionId })
+    const info = await client.session.get({ sessionID: sessionId }, authority.signal ? { signal: authority.signal } : undefined)
     // A project closed or a client replaced during the read publishes nothing.
-    if (!isInstanceGenerationCurrent(instanceId, generation)) return null
+    if (!authority.current() || !isInstanceGenerationCurrent(instanceId, generation)) return null
     const fetched = createClientSession(info, instanceId)
 
     let updatedInstanceSessions: Map<string, Session> | undefined
@@ -401,6 +432,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       return next
     })
 
+    if (!authority.current()) return null
     reconcilePendingSessionIndicators(instanceId)
 
     const published = updatedInstanceSessions?.get(sessionId)
@@ -420,6 +452,8 @@ function ensureSessionStatus(
   directory?: string,
   retry?: SessionRetryState | null,
 ): Promise<void> {
+  const authority = captureEventAuthority(instanceId)
+  if (!authority.current()) return Promise.resolve()
   const existing = sessions().get(instanceId)?.get(sessionId)
   if (existing) {
     setSessionStatus(instanceId, sessionId, status, { retry })
@@ -429,16 +463,16 @@ function ensureSessionStatus(
   // Reads coalesce within one instance generation: a replaced client reads again.
   const key = `${instanceId}:${getOpenCodeInstanceGeneration(instanceId)}:${sessionId}`
   const existingFetch = pendingSessionFetches.get(key)
-  if (existingFetch) {
+  if (existingFetch?.current() && existingFetch.signal === authority.signal) {
     existingFetch.status = status
     existingFetch.retry = retry
     return existingFetch.settled
   }
 
-  const pendingState: { status: SessionStatus; retry?: SessionRetryState | null; settled: Promise<void> } = { status, retry, settled: Promise.resolve() }
+  const pendingState = { status, retry, settled: Promise.resolve(), signal: authority.signal, current: authority.current }
   const pending = (async () => {
     const fetched = await fetchSessionInfo(instanceId, sessionId, directory)
-    if (!fetched) return
+    if (!fetched || !authority.current()) return
     setSessionStatus(instanceId, sessionId, pendingState.status, { retry: pendingState.retry })
   })()
 
@@ -570,6 +604,7 @@ function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): v
 
 /** Native provider backoff. The next attempt's step events clear it as ordinary work. */
 function handleRetryScheduled(instanceId: string, event: SessionRetryScheduled): void {
+  const authority = captureEventAuthority(instanceId)
   const sessionId = event.data.sessionID
   const generation = advanceNativeLifecycle(instanceId, sessionId)
   const instanceGeneration = getOpenCodeInstanceGeneration(instanceId)
@@ -581,7 +616,7 @@ function handleRetryScheduled(instanceId: string, event: SessionRetryScheduled):
   // published; by then the next attempt may have replaced this backoff, or
   // the project may have closed.
   else void resolved.then(() => {
-    if (isInstanceGenerationCurrent(instanceId, instanceGeneration) && sessions().get(instanceId)?.has(sessionId)
+    if (authority.current() && isInstanceGenerationCurrent(instanceId, instanceGeneration) && sessions().get(instanceId)?.has(sessionId)
       && isCurrentNativeLifecycle(instanceId, sessionId, generation)) showRetryToast(instanceId, sessionId, retry)
   })
 }
@@ -610,6 +645,7 @@ function showRetryToast(instanceId: string, sessionId: string, retry: SessionRet
 }
 
 function handleSessionCompacted(instanceId: string, event: SessionCompactionEnded): void {
+  const authority = captureEventAuthority(instanceId)
   const sessionID = event.data.sessionID
   if (!sessionID) return
 
@@ -619,13 +655,13 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
   const existing = sessions().get(instanceId)?.get(sessionID)
   if (existing) {
     setSessionStatus(instanceId, sessionID, "working", { force: true })
-    announceCompaction(instanceId, event)
+    if (authority.current()) announceCompaction(instanceId, event)
   } else {
     // An unknown session's scope is known once its metadata is read and
     // published; a failed read, a deletion or a closed project announces nothing.
     const instanceGeneration = getOpenCodeInstanceGeneration(instanceId)
     void ensureSessionStatus(instanceId, sessionID, "working", event.location?.directory).then(() => {
-      if (isInstanceGenerationCurrent(instanceId, instanceGeneration) && sessions().get(instanceId)?.has(sessionID)) announceCompaction(instanceId, event)
+      if (authority.current() && isInstanceGenerationCurrent(instanceId, instanceGeneration) && sessions().get(instanceId)?.has(sessionID)) announceCompaction(instanceId, event)
     })
   }
 }

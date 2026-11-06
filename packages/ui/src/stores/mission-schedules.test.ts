@@ -13,7 +13,10 @@ const fixture = { list: async (): Promise<MissionScheduleList> => { throw new Er
    detail: async (_id: string, _signal: AbortSignal, _input?: { requestID?: string }): Promise<MissionScheduleRead> => { throw new Error("unconfigured") },
    control: async (_instance: string, _id: string, _input: any): Promise<MissionScheduleRead> => { throw new Error("unconfigured") },
    settings: async (_instance: string, _id: string, _input: any, _write?: boolean): Promise<any> => { throw new Error("unconfigured") },
-   client: () => ({}), generation: () => 0, enabled: true }
+   client: () => ({}), generation: () => 0, enabled: true,
+   backendEvents: { signalForInstance: (_instance: string) => attachment.signal,
+     on: () => () => {}, forInstance: (_instance: unknown) => ({ onOpen: () => () => {} }) } }
+const attachment = new AbortController()
 ;(globalThis as any).__missionSchedulesTest = fixture
 const hooks = registerHooks({ resolve(specifier, context, next) {
   if (specifier === "solid-js") return next("solid-js/dist/solid.js", context)
@@ -26,12 +29,14 @@ const hooks = registerHooks({ resolve(specifier, context, next) {
      "../stores/alerts": "export const showConfirmDialog = async () => true;",
      "../stores/instances": "export const instances = () => new Map([['instance', { client: globalThis.__missionSchedulesTest.client() }]]);",
      "../stores/opencode-data": "export const getOpenCodeInstanceGeneration = () => globalThis.__missionSchedulesTest.generation();",
-    "../lib/server-events": "export const serverEvents = { on: () => () => {}, onOpen: () => () => {} };",
+    "../lib/server-events": "export const backendEvents = globalThis.__missionSchedulesTest.backendEvents;",
     "./instances": "export const instances = () => new Map([['instance', { client: globalThis.__missionSchedulesTest.client() }]]);",
     "./opencode-data": "export const getOpenCodeInstanceGeneration = () => globalThis.__missionSchedulesTest.generation();",
     "./session-list-restoration": "export const sessionListRestored = () => true;",
     "./missions": "export const isMissionActivityEvent = () => false;",
   }
+   if (context.parentURL?.endsWith("/backend-operation.ts") && specifier === "./backend-events")
+     return { shortCircuit: true, url: `data:text/javascript,${encodeURIComponent(sources["../lib/server-events"])}` }
    if ((context.parentURL?.endsWith("/mission-schedules.ts") || context.parentURL?.endsWith("/mission-schedule-controls.ts")) && sources[specifier])
     return { shortCircuit: true, url: `data:text/javascript,${encodeURIComponent(sources[specifier])}` }
   return next(specifier, context)

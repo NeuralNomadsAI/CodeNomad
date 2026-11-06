@@ -1,4 +1,5 @@
 import { Show, createMemo, createEffect, createSignal, on, onCleanup, type Component, type JSXElement } from "solid-js"
+import { captureBackendOperation } from "../../lib/backend-operation"
 import type { SessionInboxUser, SessionInboxUserPayload } from "@opencode/client"
 import type { Session } from "../../types/session"
 import { createAgentAttachment, createFileAttachment, createSkillAttachment, type Attachment } from "../../types/attachment"
@@ -361,6 +362,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   // the effect runs once per real session change instead of on every mutation
   // of the reactive sessions map (see the hook for the full rationale).
   useActiveSessionMessageLoad({
+    captureOperation: captureBackendOperation,
     isActive: () => Boolean(props.isActive),
     instanceId: () => props.instanceId,
     session,
@@ -379,7 +381,9 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   function handleReloadMessages() {
     const currentSession = session()
     if (!currentSession) return
-    loadMessages(props.instanceId, currentSession.id, { force: true }).catch((error) =>
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
+    loadMessages(props.instanceId, currentSession.id, { force: true, signal: operation.signal }).catch((error) =>
       log.error("Failed to reload messages", error),
     )
   }
@@ -435,14 +439,18 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     delivery: PromptDelivery,
     restoredPayload?: SessionInboxUserPayload,
   ) {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
     if (!isLatestMessageWindow(props.instanceId, props.sessionId)) {
       await loadLatestMessageWindow(props.instanceId, props.sessionId)
     }
+    if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
     const messageCount = visibleMessageCount()
     const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
     const initialPinIntent = startSubmitBottomPinIntent(submittedExchangeTargetCount, { createdMessageCount: messageCount })
     try {
       await sendMessage(props.instanceId, props.sessionId, prompt, attachments, { delivery, restoredPayload })
+      if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
       const latestMessageCount = visibleMessageCount()
       if (latestMessageCount < submittedExchangeTargetCount && !sessionStreamingActive()) {
         setSubmitBottomPinIntent(null)
@@ -453,7 +461,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         })
       }
     } catch (error) {
-      setSubmitBottomPinIntent(null)
+      if (operation.current()) setSubmitBottomPinIntent(null)
       throw error
     }
   }
@@ -468,12 +476,15 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   async function manageQueuedPrompt(item: SessionInboxUser, action: "delivery" | "edit" | "remove") {
     if (queueBusyId()) return
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     setQueueBusyId(item.id)
     try {
       const inbox = instances().get(props.instanceId)?.client?.session.inbox
       if (!inbox) throw new Error("Instance not ready")
       if (action === "remove" || action === "edit") {
-        await inbox.cancel({ sessionID: props.sessionId, inboxID: item.id })
+        await inbox.cancel({ sessionID: props.sessionId, inboxID: item.id }, { signal: operation.signal })
+        if (!operation.current()) return
         if (action === "edit") {
           const displayText = item.payload.metadata?.displayText
           const text = typeof displayText === "string" && displayText ? displayText : item.payload.text
@@ -497,23 +508,28 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           }
         }
       } else if (item.delivery === "queue") {
-        await inbox.update({ sessionID: props.sessionId, inboxID: item.id, delivery: "steer" })
+        await inbox.update({ sessionID: props.sessionId, inboxID: item.id, delivery: "steer" }, { signal: operation.signal })
       } else {
-        await inbox.update({ sessionID: props.sessionId, inboxID: item.id, delivery: "queue" })
+        await inbox.update({ sessionID: props.sessionId, inboxID: item.id, delivery: "queue" }, { signal: operation.signal })
       }
     } catch (error) {
-      showQueueError(error)
+      if (operation.current()) showQueueError(error)
     } finally {
-      await syncOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder).catch(() => undefined)
+      if (operation.current()) await syncOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder).catch(() => undefined)
       setQueueBusyId(undefined)
     }
   }
 
   async function handleRunShell(command: string) {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
     await runShellCommand(props.instanceId, props.sessionId, command)
+    if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
   }
  
   async function handleAbortSession() {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     const currentSession = session()
     if (!currentSession) return
  
@@ -521,6 +537,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       await abortSession(props.instanceId, currentSession.id)
       log.info("Abort requested", { instanceId: props.instanceId, sessionId: currentSession.id })
     } catch (error) {
+      if (!operation.current()) return
       log.error("Failed to abort session", error)
       showAlertDialog(t("sessionView.alerts.abortFailed.message"), {
         title: t("sessionView.alerts.abortFailed.title"),
@@ -531,9 +548,12 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   }
 
   async function handleBackgroundSession() {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     try {
       await backgroundSession(props.instanceId, props.sessionId)
     } catch (error) {
+      if (!operation.current()) return
       log.error("Failed to move blocking tools to background", error)
       showAlertDialog(t("promptInput.background.error.message"), {
         title: t("promptInput.background.error.title"),
@@ -560,12 +580,15 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
 
   async function handleRevert(messageId: string) {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     const instance = instances().get(props.instanceId)
     if (!instance || !instance.client) return
     const restoredText = getUserMessageText(messageId)
 
     try {
       await stageSessionRevert(props.instanceId, props.sessionId, messageId)
+      if (!operation.current()) return
 
       if (restoredText) {
         if (promptInputApi) {
@@ -576,6 +599,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         }
       }
     } catch (error) {
+      if (!operation.current()) return
       log.error("Failed to revert message", error)
       showAlertDialog(t("sessionView.alerts.revertFailed.message"), {
         title: t("sessionView.alerts.revertFailed.title"),
@@ -585,6 +609,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   }
 
   async function handleFork(messageId?: string) {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     if (!messageId) {
       log.warn("Fork requires a message id")
       return
@@ -594,6 +620,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
     try {
       const forkedSession = await forkSession(props.instanceId, props.sessionId, { afterMessageId: messageId })
+      if (!operation.current()) return
 
       renameSession(props.instanceId, forkedSession.id, `Fork: ${parentTitle}`).catch((error) => {
         log.error("Failed to rename forked session", error)
@@ -604,6 +631,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
       await loadMessages(props.instanceId, forkedSession.id).catch((error) => log.error("Failed to load forked session messages", error))
     } catch (error) {
+      if (!operation.current()) return
       log.error("Failed to fork session", error)
       showAlertDialog(t("sessionView.alerts.forkFailed.message"), {
         title: t("sessionView.alerts.forkFailed.title"),

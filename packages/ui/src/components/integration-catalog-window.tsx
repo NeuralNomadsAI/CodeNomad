@@ -4,6 +4,7 @@ import { BookOpen, RefreshCw } from "lucide-solid"
 import type { PluginControlLocation, PluginControlScope } from "../../../server/src/api-types"
 import type { IntegrationView } from "../../../server/src/integration-types"
 import { openExternalUrl } from "../lib/external-url"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { useI18n } from "../lib/i18n"
 import { showToastNotification } from "../lib/notifications"
 import { integrationEpoch, integrations } from "../stores/integrations"
@@ -62,20 +63,24 @@ export function IntegrationCatalogWindow(props: {
     const instanceId = props.instanceId, location = { directory: props.location.directory }
     const owner = identity()
     confirmation = new AbortController()
-    const signal = confirmation.signal
+    const operation = captureBackendOperation(instanceId, confirmation.signal)
+    const signal = operation.signal
+    if (!operation.current()) { confirmation = undefined; return }
     const accepted = await confirmIntegrationAction(t("integrations.install.confirm", { name: entry.displayName, scope: scopeLabel(scope) }), {
       title: t("integrations.install.title"), confirmLabel: t("integrations.catalog.install"), variant: "warning",
       ...(scope === "project" ? { detail: t("instanceServiceStatus.plugins.sources.projectWarning") } : {}),
-      returnFocus: focusTrigger,
+      returnFocus: () => { if (operation.current()) focusTrigger() },
     }, signal)
     confirmation = undefined
-    if (!accepted || signal.aborted || identity() !== owner) return
+    if (!accepted || !operation.current() || identity() !== owner) return
     props.onClose()
     try {
       // Sent once: a lost answer is reconciled by the next read, never replayed.
       await pluginSourcesStore.installIntegration(instanceId, location, entry.id, scope)
+      if (!operation.current()) return
       showToastNotification({ category: "opencode", variant: "info", message: t("integrations.message.installRequested") })
     } catch {
+      if (!operation.current()) return
       showToastNotification({ category: "opencode", variant: "error", message: t("integrations.install.error") })
     }
   }

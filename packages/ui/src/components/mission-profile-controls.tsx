@@ -4,10 +4,11 @@ import { missionRoleProfile, type MissionProfiles } from "../../../server/src/mi
 import type { MissionTemplateId } from "../../../server/src/missions/model"
 import type { MissionTaskMode } from "../lib/mission-defaults"
 import { useI18n } from "../lib/i18n"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { runtimeEnv } from "../lib/runtime-env"
 import { instances } from "../stores/instances"
 import { getRootClient } from "../stores/opencode-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { createRequestLocation, requestLocationOptions, toRequestLocation } from "../stores/request-locations"
 import { knownModelName, preferredModelList, rememberModelNames } from "../stores/model-picker"
@@ -43,7 +44,7 @@ export function MissionProfileControls(props: {
     if (event.type === "instance.event" && event.instanceId === props.instanceId
       && ["config.updated", "plugin.updated", "server.connected"].includes(event.event.type)) invalidate()
   })
-  const reconnect = serverEvents.onOpen(invalidate)
+  const reconnect = serverEvents.forInstance(() => props.instanceId).onOpen(invalidate)
   onCleanup(() => { events(); reconnect() })
 
   createEffect(() => {
@@ -55,8 +56,9 @@ export function MissionProfileControls(props: {
     // the same root proxy as its Providers section.
     if (!demanded() || !instanceId || (!client && runtimeEnv.windowContext !== "preferences")) return
     const location = createRequestLocation(directory), controller = new AbortController()
+    const operation = captureBackendOperation(instanceId, controller.signal)
     let alive = true
-    const current = () => alive && demanded() && identity() === key && instances().get(instanceId)?.client === client
+    const current = () => operation.current() && alive && demanded() && identity() === key && instances().get(instanceId)?.client === client
       && getOpenCodeInstanceGeneration(instanceId) === generation
     // Coalesce visible invalidations; never enqueue a trailing read while hidden.
     const timer = setTimeout(async () => {
@@ -64,7 +66,7 @@ export function MissionProfileControls(props: {
       setLoading(true); setFailed(false)
       try {
         const native = getRootClient(instanceId), request = { location: toRequestLocation(location) }
-        const options = { ...requestLocationOptions(location), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]) }
+        const options = { ...requestLocationOptions(location), signal: AbortSignal.any([operation.signal, AbortSignal.timeout(30_000)]) }
         const [agents, models, providers] = await Promise.all([native.agent.list(request, options), native.model.list(request, options),
           native.provider.list(request, options)])
         if (!current()) return

@@ -1,7 +1,7 @@
 import { serverApi } from "../lib/api-client"
 import { tGlobal } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { showAlertDialog, showChoiceDialog } from "./alerts"
 import { activeAppTabId, closeInstanceTab, detachInstanceTab, getAdjacentAppTabId, getInstanceAppTabId, selectAppTab, selectInstanceTab } from "./app-tabs"
 import { getSessionAttachmentsForInstance } from "./attachments"
@@ -34,7 +34,7 @@ serverEvents.on("workspace.temporaryChanged", (event) => {
   if (event.type !== "workspace.temporaryChanged") return
   const registered = new Set(event.folders)
   for (const instance of instances().values()) {
-    if (backendIdOf(instance) !== LOCAL_BACKEND_ID) continue
+    if (backendIdOf(instance) !== (event.backendId ?? LOCAL_BACKEND_ID)) continue
     if (instance.temporary && !registered.has(instance.folder)) updateInstance(instance.id, { temporary: false })
   }
 })

@@ -2,6 +2,7 @@ import { Show, createSignal, createUniqueId, onCleanup } from "solid-js"
 import { RefreshCw } from "lucide-solid"
 import type { MissionActorActivity, MissionPanelMap } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { useI18n } from "../lib/i18n"
 import { canRecoverMissionReport } from "./mission-native-execution-model"
 import type { ActionOverflowMenuItem } from "./action-overflow-menu"
@@ -73,6 +74,8 @@ export function createMissionRecoveryAction(props: MissionRecoveryButtonProps) {
     return true
   }
   async function recover() {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     if (!eligible() || props.disabled || state()) return
     const requestKey = key()
     const instanceId = props.instanceId
@@ -87,10 +90,10 @@ export function createMissionRecoveryAction(props: MissionRecoveryButtonProps) {
       markAttempt(requestKey, "admitted")
     } catch (failure) {
       markAttempt(requestKey)
-      if (!disposed && key() === requestKey) setError({ key: requestKey, kind: classify(failure) })
+      if (operation.current() && !disposed && key() === requestKey) setError({ key: requestKey, kind: classify(failure) })
       return
     }
-    if (!disposed && key() === requestKey) {
+    if (operation.current() && !disposed && key() === requestKey) {
       // Refresh failures belong to the caller's display-state handling. Never
       // turn them into another native mutation or a misleading admission failure.
       try { await props.onAdmitted() } catch { /* No replay. */ }

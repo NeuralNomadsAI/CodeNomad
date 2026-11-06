@@ -2,6 +2,7 @@ import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-j
 import type { PanelExtensionContext, PanelExtensionSummary } from "../../../../server/src/api-types"
 import { panelExtensionsApi } from "../../lib/panel-extensions-api"
 import { useI18n } from "../../lib/i18n"
+import { captureBackendOperation } from "../../lib/backend-operation"
 import { PANEL_EXTENSION_SANDBOX, panelExtensionDocument } from "./frame-document"
 import { useAssetsChannel } from "./assets-channel"
 import { useWorkItemsChannel } from "./work-items-channel"
@@ -28,7 +29,7 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
   // Each API version carries exactly its own capabilities; API 4 only those its manifest declares.
   const manifest = props.entry.manifest
   const receive = manifest.apiVersion === 2 ? useAssetsChannel({ ...authority, sessionId: () => props.context.sessionId })
-    : manifest.apiVersion === 3 ? useWorkItemsChannel(authority)
+    : manifest.apiVersion === 3 ? useWorkItemsChannel({ ...authority, captureOperation: captureBackendOperation })
       : manifest.apiVersion === 4 ? useApi4Channel({ ...authority, permissions: manifest.permissions, sessionId: props.context.sessionId, host: props.host })
         : () => {}
   void panelExtensionsApi.panel(props.instanceId, manifest.id, props.entry.digest, controller.signal).then(result => {

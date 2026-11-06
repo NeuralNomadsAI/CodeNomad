@@ -37,6 +37,7 @@ import { createMissionScheduleList } from "../../../../mission-schedule-list"
 import { MissionPanelScope } from "../../../../mission-panel-scope"
 import { MissionPanelPaging } from "../../../../mission-panel-paging"
 import { projectScope } from "../../../../../lib/backend-identity"
+import { captureBackendOperation } from "../../../../../lib/backend-operation"
 
 interface MissionControlProps {
   instanceId: string
@@ -183,10 +184,11 @@ const MissionControl: Component<MissionControlProps> = (props) => {
 
   const navigationOrigin = () => {
     const instanceId = props.instanceId, viewScope = scope(), viewCurrent = captureView(), operation = ++intent
+    const backend = captureBackendOperation(instanceId)
     const schedule = passageSchedule(), passage = currentPassage.snapshot()?.passageID
     let epoch = conversationEpoch
-    return { instanceId, scope: viewScope,
-      current: () => viewCurrent() && operation === intent && scope() === viewScope && epoch === conversationEpoch
+    return { instanceId, scope: viewScope, signal: backend.signal,
+      current: () => backend.current() && viewCurrent() && operation === intent && scope() === viewScope && epoch === conversationEpoch
         && passageSchedule() === schedule && (!schedule || currentPassage.snapshot()?.passageID === passage),
       // Adopt only our guarded synchronous batch, never an awaited external change.
       adoptConversation: () => { epoch = conversationEpoch },
@@ -194,6 +196,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   }
 
   const openActor = async (sessionId: string, origin = navigationOrigin(), afterSelection?: () => void): Promise<boolean> => {
+    const backend = captureBackendOperation(origin.instanceId, origin.signal)
     const missionId = mission()?.id
     const scheduleID = passageSchedule(), passageID = currentPassage.snapshot()?.passageID
     const client = instances().get(origin.instanceId)?.client, generation = getOpenCodeInstanceGeneration(origin.instanceId)
@@ -202,7 +205,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         || missionIncludesSession(mission()!.actors, sessionId, selectedFamily())
         || missionDerivedSessionIncludes(props.instanceId, mission()!, sessionId)))
         : missions().some(value => value.id === missionId && includesSession(value, sessionId)))
-    const admitted = () => origin.current() && authorized()
+    const admitted = () => backend.current() && origin.current() && authorized()
       && instances().get(origin.instanceId)?.client === client && getOpenCodeInstanceGeneration(origin.instanceId) === generation
       && !getAuthoritativelyDeletedSessionIdsForInstance(origin.instanceId).has(sessionId)
     if (!admitted()) return false
@@ -210,7 +213,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     // Targeted native hydration preserves authoritative locations and parent
     // metadata, including a cold descendant absent from the display catalog.
     try {
-      await hydrateRestoredSessionChain(origin.instanceId, [sessionId], undefined, admitted)
+      await hydrateRestoredSessionChain(origin.instanceId, [sessionId], backend.signal, admitted)
     } catch {
       if (admitted()) setNavigationError(true)
       return false
@@ -329,16 +332,20 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     get selected() { return unifiedSelection() }, detailId, onEdit: id => openEditor({ kind: "edit", scheduleID: id }),
     onDeleted: id => { if (selectedScheduled() === id) updateMissionProjectView(scope(), { selectedScheduled: undefined }) },
     onOpenConversation: id => void (async () => {
-      const view = captureView(), selected = selectedScheduled(), instanceId = props.instanceId
+      const origin = navigationOrigin(), selected = selectedScheduled(), instanceId = origin.instanceId
+      const client = instances().get(instanceId)?.client
       const generation = getOpenCodeInstanceGeneration(instanceId)
-      const current = () => view() && selectedScheduled() === selected && scheduled.ownsSession(id)
+      const current = () => origin.current() && selectedScheduled() === selected && scheduled.ownsSession(id)
+        && instances().get(instanceId)?.client === client
         && getOpenCodeInstanceGeneration(instanceId) === generation
+        && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(id)
       if (!current()) return
       try {
-        await hydrateRestoredSessionChain(instanceId, [id], undefined, current)
+        await hydrateRestoredSessionChain(instanceId, [id], origin.signal, current)
         if (!current() || !sessions().get(instanceId)?.has(id)) return
-        batch(() => { setActiveSessionFromList(instanceId, id); showSessionChatFor(id, scope()); updateMissionProjectView(scope(), { reader: undefined }) })
-        props.onRevealConversation?.()
+        batch(() => { setActiveSessionFromList(instanceId, id); showSessionChatFor(id, origin.scope); updateMissionProjectView(origin.scope, { reader: undefined }) })
+        origin.adoptConversation()
+        if (origin.current()) props.onRevealConversation?.()
       } catch { if (current()) setNavigationError(true) }
     })() })
   createEffect(() => {

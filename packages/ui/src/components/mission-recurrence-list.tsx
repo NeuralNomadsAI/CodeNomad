@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
 import { serverApi } from "../lib/api-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
 import { MissionActionBar } from "./mission-action-bar"
@@ -43,8 +44,9 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
   // Message key of the last request proven to have had no effect.
   const [refusal, setRefusal] = createSignal<string>()
   const connection = createMemo(() => ({ client: instances().get(props.instanceId)?.client,
+    signal: captureBackendOperation(props.instanceId).signal,
     generation: getOpenCodeInstanceGeneration(props.instanceId) }), undefined,
-    { equals: (a, b) => Boolean(a && a.client === b.client && a.generation === b.generation) })
+    { equals: (a, b) => Boolean(a && a.signal === b.signal && a.client === b.client && a.generation === b.generation) })
   let generation = 0
   // The exact partial request a refresh's own status read just confirmed, in its context.
   let witness: { generation: number; intent: RecurrenceControlIntent } | undefined
@@ -106,6 +108,8 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     else props.refresh()
   }
   const act = async (action: RecurrenceAction, retry?: RecurrenceControlIntent) => {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     if (retry ? !retryCapable() : !capable(action)) return
     const identity = key(), captured = generation, instanceId = props.instanceId
     const intent = retry ?? createRecurrenceControlIntent(props.schedule.id, props.schedule.revision, action, props.directory)
@@ -113,10 +117,10 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     try {
       if (action === "run-now") {
         const result = await serverApi.runMissionRecurrenceNow(instanceId, intent)
-        if (captured === generation && key() === identity && completedRecurrenceManual(result, intent)) settle(intent, identity)
+        if (operation.current() && captured === generation && key() === identity && completedRecurrenceManual(result, intent)) settle(intent, identity)
       } else {
         const result = await serverApi.controlMissionRecurrence(instanceId, intent.scheduleID, { ...intent, ...(retry ? { retry: true } : {}) })
-        if (captured === generation && key() === identity) finish(result, intent, identity)
+        if (operation.current() && captured === generation && key() === identity) finish(result, intent, identity)
       }
     } catch (error) {
       // A proven no-effect refusal releases this new request and refreshes the row;
@@ -124,13 +128,15 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
       // leaves the original partial request held.
       const refusal = retry ? undefined : recurrenceControlRefusalKey(error)
       // The exact request is released wherever it is; only its own context sees the message.
-      if (refusal) settle(intent, identity, refusal, captured === generation)
+      if (refusal) settle(intent, identity, refusal, operation.current() && captured === generation)
     }
     finally { if (captured === generation) setBusy(false) }
   }
   /** Read-only status read. A refresh (`reconcile`) records a witness only when its
    * own completed read, still in this context, leaves the exact request partial. */
   const check = async (reconcile = false): Promise<boolean> => {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return false
     const intent = heldIntent(), identity = key(), captured = generation
     witness = undefined
     // A refresh's own row read must not skip it; the explicit button keeps the full gate.
@@ -141,13 +147,13 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
       if (intent.action === "run-now") {
         const result = await serverApi.missionRecurrenceRunNowStatus(props.instanceId, intent)
         const rejected = rejectedRecurrenceControl(result, intent)
-        if (captured === generation && key() === identity) {
+        if (operation.current() && captured === generation && key() === identity) {
           if (completedRecurrenceManual(result, intent) || rejected) settle(intent, identity, rejected)
           else props.refresh()
         }
       } else {
         const result = await serverApi.missionRecurrenceControlStatus(props.instanceId, intent.scheduleID, intent)
-        if (captured === generation && key() === identity) {
+        if (operation.current() && captured === generation && key() === identity) {
           finish(result, intent, identity)
           if (reconcile && partialRecurrenceControl(result, intent)) witness = { generation, intent }
         }
@@ -164,12 +170,13 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
       ? act(read.intent.action, read.intent) : Promise.resolve()
   }
   const stop = async () => {
+    const operation = captureBackendOperation(props.instanceId)
     if (!capable("stop")) return
     const identity = key(), revision = props.schedule.revision, captured = generation
     const confirmed = await showConfirmDialog(t("missions.simple.confirmStop", { title: props.schedule.title }), { variant: "warning",
       confirmLabel: t("missions.simple.stop"), cancelLabel: t("missions.simple.cancel") })
     // The confirmation described this exact schedule revision.
-    if (confirmed && captured === generation && key() === identity && props.schedule.revision === revision) await act("stop")
+    if (operation.current() && confirmed && captured === generation && key() === identity && props.schedule.revision === revision) await act("stop")
   }
   // "check" reconciles a paused pending passage; its label differs from the control-outcome status check.
   const label = (action: RecurrenceAction) => t(action === "check" ? "missionsPanel.action.checkPassage" : action === "run-now"

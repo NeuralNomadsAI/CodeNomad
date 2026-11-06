@@ -4,6 +4,7 @@ import { MAX_MISSION_MODELS, parseMissionModel, type UserMissionModel } from "..
 import { useConfig } from "../stores/preferences"
 import { showConfirmDialog } from "../stores/alerts"
 import { ConfigOwnerReconciliationPendingError } from "../lib/storage"
+import { captureBackendOperation } from "../lib/backend-operation"
 import ActionOverflowMenu from "./action-overflow-menu"
 import { MissionBodyPending } from "./mission-reader-body"
 
@@ -24,6 +25,8 @@ function createMissionModelActions(props: LibraryProps) {
   const settle = (error: unknown) => { if (alive) { if (error instanceof ConfigOwnerReconciliationPendingError) setReconciliationPending(true); else setFailed(true) } }
   /** Resolves the saved ID once acknowledged (including an unreadable-owner acknowledgement), never retrying. */
   const save = async (name: string, draft: MissionModelBrief): Promise<string | undefined> => {
+    const operation = captureBackendOperation("")
+    if (!operation.current()) return
     if (disabled() || !name.trim()) return
     begin()
     let acknowledged: string | undefined
@@ -35,11 +38,13 @@ function createMissionModelActions(props: LibraryProps) {
         throw error
       }
       acknowledged = record.id
-    } catch (error) { settle(error) }
+    } catch (error) { if (operation.current()) settle(error) }
     finally { if (alive) setPending(false) }
-    return alive ? acknowledged : undefined
+    return operation.current() && alive ? acknowledged : undefined
   }
   const remove = async (model: UserMissionModel): Promise<boolean> => {
+    const operation = captureBackendOperation("")
+    if (!operation.current()) return false
     if (disabled()) return false
     const expected = config.missionPreferenceSnapshot("missionModels")
     begin()
@@ -47,19 +52,23 @@ function createMissionModelActions(props: LibraryProps) {
       const confirmed = await showConfirmDialog(t("missions.models.removeConfirm", { name: model.name }), {
         variant: "warning", confirmLabel: t("missions.models.remove"), cancelLabel: t("missions.control.cancel"), dismissible: false,
       })
-      if (!confirmed || !alive || props.disabled) return false
+      if (!confirmed || !operation.current() || !alive || props.disabled) return false
       await config.removeUserMissionModel(model.id, expected)
-      return alive
-    } catch (error) { settle(error); return false }
+      return operation.current() && alive
+    } catch (error) { if (operation.current()) settle(error); return false }
     finally { if (alive) setPending(false) }
   }
   const reload = async () => {
+    const operation = captureBackendOperation("")
+    if (!operation.current()) return
     if (pending() || !active()) return
     begin()
-    try { await config.reloadMissionPreferences() } catch { if (alive) setFailed(true) }
+    try { await config.reloadMissionPreferences() } catch { if (operation.current() && alive) setFailed(true) }
     finally { if (alive) setPending(false) }
   }
   const reset = async () => {
+    const operation = captureBackendOperation("")
+    if (!operation.current()) return
     if (pending() || props.disabled || !config.isUiConfigLoaded()) return
     const expected = config.missionPreferenceSnapshot("missionModels")
     begin()
@@ -67,8 +76,8 @@ function createMissionModelActions(props: LibraryProps) {
       const confirmed = await showConfirmDialog(t("missions.models.resetConfirm"), {
         variant: "warning", confirmLabel: t("missions.models.reset"), cancelLabel: t("missions.control.cancel"), dismissible: false,
       })
-      if (confirmed && alive && !props.disabled) await config.resetMissionModels(expected)
-    } catch (error) { settle(error) }
+      if (operation.current() && confirmed && alive && !props.disabled) await config.resetMissionModels(expected)
+    } catch (error) { if (operation.current()) settle(error) }
     finally { if (alive) setPending(false) }
   }
   /** Inline recovery offers only an explicit authoritative reload, never a replayed write. */

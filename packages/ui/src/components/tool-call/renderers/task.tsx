@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import { Dynamic } from "solid-js/web"
+import { captureBackendOperation } from "../../../lib/backend-operation"
 import { Copy } from "lucide-solid"
 import type { ToolState } from "../../../types/tool-state"
 import type { ToolRenderer } from "../types"
@@ -204,10 +205,13 @@ export const taskRenderer: ToolRenderer = {
     function retryChildSessionLoad() {
       const id = childSessionId()
       if (!id || isActive?.() === false) return
-      void loadMessages(instanceId, id, { force: true }).catch(() => {})
+      const operation = captureBackendOperation(instanceId)
+      if (!operation.current()) return
+      void loadMessages(instanceId, id, { force: true, signal: operation.signal }).catch(() => {})
     }
 
     useActiveSessionMessageLoad({
+      captureOperation: captureBackendOperation,
       isActive: () => Boolean(childSessionId()) && isActive?.() !== false,
       instanceId: () => instanceId,
       session: () => {
@@ -394,6 +398,7 @@ export const taskRenderer: ToolRenderer = {
     const stepsTruncated = () => resolveTaskStepTruncation(childSourceActive(), childStepsOverflow(), legacySummary().truncated)
 
     const childTaskCopy = useTaskStepCopy({
+      captureOperation: signal => captureBackendOperation(instanceId, signal),
       childSessionId,
       isActive: () => isActive?.() ?? true,
       beginTraversal: id => beginMessageHistoryTraversal(instanceId, id),

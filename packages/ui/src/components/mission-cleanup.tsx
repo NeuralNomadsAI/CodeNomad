@@ -1,6 +1,7 @@
 import { For, Show, createComputed, createMemo, createSignal, onCleanup } from "solid-js"
 import type { MissionCleanup } from "../../../server/src/missions/model"
 import { serverApi } from "../lib/api-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { deletionErrorKey, missionCleanupPending } from "../lib/mission-cleanup"
 import { useI18n } from "../lib/i18n"
 import { MissionDisclosure } from "./mission-disclosure"
@@ -43,7 +44,9 @@ export function MissionCleanupPanel(props: {
     if (!saved || !missionCleanupPending(saved)) return
     const instanceId = props.instanceId
     const viewCurrent = captureView(), operation = ++attempt
-    const current = () => alive && operation === attempt && viewCurrent() && Boolean(rows().get(key) && missionCleanupPending(rows().get(key)!))
+    const backend = captureBackendOperation(instanceId)
+    const current = () => backend.current() && alive && operation === attempt && viewCurrent() && Boolean(rows().get(key) && missionCleanupPending(rows().get(key)!))
+    if (!current()) return
     setPending(key); setError("")
     try {
       // Display data is never destructive authority. Reconcile the original

@@ -6,6 +6,7 @@ interface RetryOptions {
   timeoutMs?: number
   shouldRetry?: (error: Error, attempt: number) => boolean
   wait?: (delayMs: number) => Promise<void>
+  signal?: AbortSignal
 }
 
 export async function retryWithBackoff<T>(
@@ -18,20 +19,27 @@ export async function retryWithBackoff<T>(
     maxDelayMs = 5000,
     backoffMultiplier = 2,
     timeoutMs,
+    signal,
     shouldRetry = () => true,
-    wait = (delayMs: number) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+    wait = (delayMs: number) => new Promise<void>((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); reject(signal?.reason) }
+      const timer = setTimeout(() => { signal?.removeEventListener("abort", abort); resolve() }, delayMs)
+      signal?.addEventListener("abort", abort, { once: true })
+    }),
   } = options
 
   let lastError: Error | null = null
   let delayMs = initialDelayMs
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    signal?.throwIfAborted()
     try {
       if (timeoutMs) {
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), timeoutMs)
         try {
-          const result = await fn(controller.signal)
+          const result = await fn(signal ? AbortSignal.any([signal, controller.signal]) : controller.signal)
+          signal?.throwIfAborted()
           clearTimeout(timer)
           return result
         } catch (error) {
@@ -40,13 +48,18 @@ export async function retryWithBackoff<T>(
         }
       }
 
-      return await fn()
+      const result = await fn(signal)
+      signal?.throwIfAborted()
+      return result
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error))
       lastError = err
+      signal?.throwIfAborted()
 
       if (attempt < maxAttempts && shouldRetry(err, attempt)) {
+        signal?.throwIfAborted()
         await wait(delayMs)
+        signal?.throwIfAborted()
         delayMs = Math.min(delayMs * backoffMultiplier, maxDelayMs)
       } else {
         throw err

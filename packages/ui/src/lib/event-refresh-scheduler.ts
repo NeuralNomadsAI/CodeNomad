@@ -12,7 +12,8 @@ export function eventRefreshDue(urgency: RefreshUrgency, now: number, settledAt:
   return urgency === "activity" && settledAt !== undefined ? Math.max(due, settledAt + ACTIVITY_REFRESH_INTERVAL_MS) : due
 }
 
-interface KeyState { timer?: ReturnType<typeof setTimeout>; due?: number; running: boolean; dirty?: RefreshUrgency; settledAt?: number }
+interface KeyState { timer?: ReturnType<typeof setTimeout>; due?: number; running: boolean; dirty?: RefreshUrgency; settledAt?: number;
+  controller: AbortController; parent?: AbortSignal; release: () => void }
 
 /**
  * Event-driven display revalidation: one timer and one in-flight run per key.
@@ -21,7 +22,7 @@ interface KeyState { timer?: ReturnType<typeof setTimeout>; due?: number; runnin
  * read. Demand arriving during a run reschedules once from its settlement. No
  * polling: without events nothing runs.
  */
-export function createEventRefreshScheduler(run: (key: string) => Promise<unknown> | unknown, clock: {
+export function createEventRefreshScheduler(run: (key: string, signal: AbortSignal) => Promise<unknown> | unknown, clock: {
   now?: () => number
   setTimer?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (timer: ReturnType<typeof setTimeout>) => void
@@ -30,23 +31,43 @@ export function createEventRefreshScheduler(run: (key: string) => Promise<unknow
   const setTimer = clock.setTimer ?? ((callback, ms) => setTimeout(callback, ms))
   const clearTimer = clock.clearTimer ?? (timer => clearTimeout(timer))
   const states = new Map<string, KeyState>()
+  const cancel = (key: string, state = states.get(key)) => {
+    if (!state || states.get(key) !== state) return
+    states.delete(key)
+    if (state.timer) clearTimer(state.timer)
+    state.release()
+    state.controller.abort()
+  }
 
   const fire = (key: string, state: KeyState) => {
+    if (states.get(key) !== state || state.controller.signal.aborted) return
     state.timer = undefined
     state.due = undefined
     state.running = true
-    void Promise.resolve().then(() => run(key)).catch(() => undefined).finally(() => {
+    void Promise.resolve().then(() => {
+      if (states.get(key) !== state || state.controller.signal.aborted) return
+      return run(key, state.controller.signal)
+    }).catch(() => undefined).finally(() => {
+      if (states.get(key) !== state || state.controller.signal.aborted) return
       state.running = false
       state.settledAt = now()
       const dirty = state.dirty
       state.dirty = undefined
-      if (dirty && states.get(key) === state) schedule(key, dirty)
+      if (dirty) schedule(key, dirty, state.parent)
     })
   }
 
-  const schedule = (key: string, urgency: RefreshUrgency): void => {
+  const schedule = (key: string, urgency: RefreshUrgency, signal?: AbortSignal): void => {
+    if (signal?.aborted) return
     let state = states.get(key)
-    if (!state) states.set(key, state = { running: false })
+    if (state && state.parent !== signal) { cancel(key, state); state = states.get(key) }
+    if (!state) {
+      const owned: KeyState = { running: false, controller: new AbortController(), parent: signal, release: () => {} }
+      const abort = () => cancel(key, owned)
+      owned.release = () => signal?.removeEventListener("abort", abort)
+      states.set(key, state = owned)
+      signal?.addEventListener("abort", abort, { once: true })
+    }
     if (state.running) {
       if (state.dirty !== "urgent") state.dirty = urgency
       return
@@ -63,9 +84,7 @@ export function createEventRefreshScheduler(run: (key: string) => Promise<unknow
     schedule,
     /** Forget pending demand; an in-flight run settles without rescheduling. */
     cancel(key: string): void {
-      const state = states.get(key)
-      if (state?.timer) clearTimer(state.timer)
-      states.delete(key)
+      cancel(key)
     },
   }
 }

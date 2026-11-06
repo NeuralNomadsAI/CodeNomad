@@ -4,10 +4,12 @@ import { instances } from "./instances"
 import { createMissionTaskSessions } from "./mission-task-session-reads"
 import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
+import { captureBackendOperation } from "../lib/backend-operation"
 
 const store = createMissionTaskSessions({
   connection: instanceId => instances().get(instanceId)?.client,
   generation: getOpenCodeInstanceGeneration,
+  signal: id => captureBackendOperation(id).signal,
   root: getRootClient,
   warn: (message, details) => getLogger("session").warn(message, details),
 })

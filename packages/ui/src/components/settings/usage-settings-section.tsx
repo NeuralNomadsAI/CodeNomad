@@ -3,7 +3,8 @@ import { RefreshCw } from "lucide-solid"
 import type { ServiceUsageSnapshot } from "../../../../server/src/api-types"
 import { useI18n } from "../../lib/i18n"
 import { serverApi } from "../../lib/api-client"
-import { serverEvents } from "../../lib/server-events"
+import { captureBackendOperation } from "../../lib/backend-operation"
+import { backendEvents as serverEvents } from "../../lib/server-events"
 import { isExecutionTerminalEvent } from "../../lib/native-execution-events"
 import { activeInstanceId } from "../../stores/instances"
 import { createEventRefreshScheduler, type RefreshUrgency } from "../../lib/event-refresh-scheduler"
@@ -27,15 +28,16 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
     let count = selected ?? 30, disposed = false, revision = 0, invalidation = 0, restore = true, connected = true
     let periodKnown = selected !== undefined, freshEpoch = -1
     let controller: AbortController | undefined
+    const operation = captureBackendOperation(id, undefined, () => !disposed)
     setDays(count); setSnapshot(undefined); setError(false); setBusy(false); setStale(true)
     if (!id) return
-    const current = (epoch: number) => !disposed && untrack(visible) && epoch === revision
+    const current = (epoch: number) => operation.current() && untrack(visible) && epoch === revision
     const load = async () => {
-      if (disposed || !untrack(visible) || !connected) return
+      if (!operation.current() || !untrack(visible) || !connected) return
       controller?.abort()
       const epoch = ++revision, observed = invalidation
       controller = new AbortController()
-      const signal = controller.signal
+      const signal = AbortSignal.any([controller.signal, operation.signal])
       let verified: Pick<ServiceUsageSnapshot, "owner" | "identity" | "connection"> | undefined
       setBusy(true)
       // These are independent reads: optional discovery/restoration never gates
@@ -94,6 +96,7 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
     }
     const scheduler = createEventRefreshScheduler(load)
     const invalidate = (urgency: RefreshUrgency = "urgent") => {
+      if (!operation.current()) return
       invalidation++; setStale(true)
       if (untrack(visible) && connected) scheduler.schedule("stats", urgency)
     }
@@ -117,8 +120,8 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
       connectionStatus = key; connected = payload.status === "connected"; revoke()
       if (payload.status === "connected") invalidate()
     })
-    const reconnect = serverEvents.onOpen(() => { connected = true; revoke(); invalidate() })
-    const transport = serverEvents.onTransportStatus(status => { if (status === "disconnected") { connected = false; revoke() } })
+    const reconnect = serverEvents.forInstance(() => id).onOpen(() => { connected = true; revoke(); invalidate() })
+    const transport = serverEvents.forInstance(() => id).onTransportStatus(status => { if (status === "disconnected") { connected = false; revoke() } })
     createEffect(() => {
       if (visible()) invalidate()
       else { revision++; controller?.abort(); scheduler.cancel("stats"); setBusy(false); setStale(true) }

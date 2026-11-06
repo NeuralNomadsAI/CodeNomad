@@ -1,10 +1,10 @@
 import { createSignal } from "solid-js"
 import type { WorkspaceDirectoryChange } from "../../../server/src/api-types"
 import { normalizeSessionDirectory } from "../stores/session-list-options"
-import { serverEvents } from "./server-events"
+import { backendEvents as serverEvents } from "./server-events"
 
 interface Snapshot { version: number; full: number; roots: Map<string, number>; paths: Map<string, number> }
-interface Pending { timer: ReturnType<typeof setTimeout>; all: boolean; changes: Map<string, WorkspaceDirectoryChange> }
+interface Pending { timer: ReturnType<typeof setTimeout>; all: boolean; changes: Map<string, WorkspaceDirectoryChange>; release: () => void }
 const [filesystemInvalidations, setFilesystemInvalidations] = createSignal<Map<string, Snapshot>>(new Map())
 const pending = new Map<string, Pending>(), lastPassive = new Map<string, number>()
 const PASSIVE_INTERVAL_MS = 5_000
@@ -44,15 +44,26 @@ export function invalidateFilesystemCaches(instanceId: string): void {
 /** Passive observations merge before any consumer is invalidated: a short quiet-case
  * delay, then at most one publication per five seconds during continuous activity. */
 export function queueFilesystemInvalidation(instanceId: string, changes?: readonly WorkspaceDirectoryChange[]): void {
+  const signal = serverEvents.signalForInstance(instanceId)
+  if (signal.aborted) return
   if (changes && !changes.length) return
   let queued = pending.get(instanceId)
   if (!queued) {
     const last = lastPassive.get(instanceId)
     const next: Pending = { timer: setTimeout(() => {
+      if (signal.aborted || pending.get(instanceId) !== next) return
       pending.delete(instanceId)
+      next.release()
       lastPassive.set(instanceId, performance.now())
       publish(instanceId, next.all ? undefined : [...next.changes.values()])
-    }, last === undefined ? 100 : Math.max(100, PASSIVE_INTERVAL_MS - (performance.now() - last))), all: false, changes: new Map() }
+    }, last === undefined ? 100 : Math.max(100, PASSIVE_INTERVAL_MS - (performance.now() - last))), all: false, changes: new Map(), release: () => {} }
+    const abort = () => {
+      clearTimeout(next.timer)
+      if (pending.get(instanceId) === next) pending.delete(instanceId)
+      next.release()
+    }
+    next.release = () => signal.removeEventListener("abort", abort)
+    signal.addEventListener("abort", abort, { once: true })
     pending.set(instanceId, next)
     queued = next
   }
@@ -80,7 +91,7 @@ serverEvents.on("workspace.filesChanged", event => {
 serverEvents.on("workspace.stopped", event => {
   if (event.type !== "workspace.stopped") return
   const queued = pending.get(event.workspaceId)
-  if (queued) clearTimeout(queued.timer)
+  if (queued) { clearTimeout(queued.timer); queued.release() }
   pending.delete(event.workspaceId); lastPassive.delete(event.workspaceId)
   setFilesystemInvalidations(previous => { const next = new Map(previous); next.delete(event.workspaceId); return next })
 })

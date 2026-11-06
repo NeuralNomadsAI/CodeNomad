@@ -6,6 +6,8 @@ import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { serverApi } from "../../../src/lib/api-client"
+import { createBackendClient } from "../../../src/lib/backend-client"
+import { backendEvents } from "../../../src/lib/backend-events"
 import { addInstance } from "../../../src/stores/instances"
 import { updateMissionProjectView } from "../../../src/stores/mission-view-state"
 import { settleAbandonedSessionListRestoration } from "../../../src/stores/session-list-restoration"
@@ -14,6 +16,8 @@ import "../../../src/index.css"
 const folder = "C:\\Exact\\History\\"
 const mode = new URLSearchParams(location.search).get("mode")
 const reads: string[] = [], schedules: string[] = [], recurrences: string[] = []
+// A remote view owns an explicitly attached backend, even with mocked HTTP.
+backendEvents.attach("lab", createBackendClient({ id: "lab", baseUrl: location.origin }).events)
 serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
 serverApi.fetchStateOwner = async () => ({}) as any
 serverApi.readInstanceData = async key => {

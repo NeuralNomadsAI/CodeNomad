@@ -20,6 +20,7 @@ import {
 } from "../stores/worktrees"
 import { sessions } from "../stores/sessions"
 import { useI18n } from "../lib/i18n"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { canOpenWorkspacePaths, openWorkspacePath } from "../lib/workspace-open"
 
 const log = getLogger("session")
@@ -322,6 +323,8 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   })
 
   const handleChange = async (value: WorktreeOption | null) => {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     if (worktreesUnavailable()) return
     if (!value) return
     if (value.kind === "action") {
@@ -561,15 +564,22 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   }
                   onClick={() => {
                     const slug = createSlug().trim()
+                    const parent = parentId(), source = currentSlug(), instanceId = props.instanceId
+                    const operation = captureBackendOperation(instanceId)
+                    if (!operation.current()) return
                     void (async () => {
                       setIsCreating(true)
-                      const created = await createWorktree(props.instanceId, slug, currentSlug())
-                      await reloadWorktrees(props.instanceId)
-                      await setWorktreeSlugForParentSession(props.instanceId, parentId(), created.slug)
+                      const created = await createWorktree(instanceId, slug, source)
+                      if (!operation.current()) return
+                      await reloadWorktrees(instanceId)
+                      if (!operation.current()) return
+                      await setWorktreeSlugForParentSession(instanceId, parent, created.slug)
+                      if (!operation.current()) return
                       setCreateOpen(false)
                       showToastNotification({ category: "files", message: t("instanceShell.worktree.create.success", { slug }), variant: "success" })
                     })()
                       .catch((error) => {
+                        if (!operation.current()) return
                         log.warn("Failed to create worktree", error)
                         showToastNotification({ category: "files",
                           message: error instanceof Error ? error.message : t("instanceShell.worktree.create.error"),
@@ -637,6 +647,8 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                   disabled={isDeleting() || !deleteTarget()}
                   onClick={() => {
                     const target = deleteTarget()
+                    const operation = captureBackendOperation(props.instanceId)
+                    if (!operation.current()) return
                     if (!target) {
                       closeDeleteDialog()
                       return
@@ -646,6 +658,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       setIsDeleting(true)
                       setDeleteError(null)
                       await deleteWorktree(props.instanceId, target.slug, { force: forceDelete() })
+                      if (!operation.current()) return
 
                       closeDeleteDialog()
                       showToastNotification({ category: "files",
@@ -654,6 +667,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       })
                     })()
                       .catch((error) => {
+                        if (!operation.current()) return
                         log.warn("Failed to delete worktree", error)
                         setDeleteError(error instanceof Error ? error.message : t("instanceShell.worktree.delete.error.fallback"))
                       })

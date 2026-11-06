@@ -3,12 +3,13 @@ import { DropdownMenu } from "@kobalte/core/dropdown-menu"
 import { Download, MoreHorizontal, PackageSearch, RefreshCw, Trash2 } from "lucide-solid"
 import type { PluginConfiguredSource, PluginControlLocation, PluginControlScope, PluginRuntimeSource } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { showToastNotification } from "../lib/notifications"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { isPluginPackagePending, runPluginPackageAction } from "../stores/plugin-package-actions"
 import { pluginSourcesStore } from "../stores/plugin-sources"
 import { confirmIntegrationAction } from "./integration-confirmation"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 
 type RemovableSource = PluginConfiguredSource & { scope: PluginControlScope }
 type Item =
@@ -54,7 +55,7 @@ export function PluginRowActions(props: {
     props.sessionId, props.source?.type === "package" ? props.source.target : null, props.active !== false,
     props.consentEpoch, props.removable]))
   createEffect(() => { ownership(); generation++; cancel() })
-  onCleanup(serverEvents.onTransportStatus(status => { if (status === "disconnected") cancel() }))
+  onCleanup(serverEvents.forInstance(() => props.instanceId).onTransportStatus(status => { if (status === "disconnected") cancel() }))
   onCleanup(serverEvents.on("instance.eventStatus", event => { if (event.type === "instance.eventStatus" && event.instanceId === props.instanceId) cancel() }))
   onCleanup(() => {
     disposed = true; generation++; cancel()
@@ -88,9 +89,11 @@ export function PluginRowActions(props: {
 
   const runPackage = (item: Extract<Item, { kind: "package" }>) => {
     if (packageBusy() || props.active === false) return
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     const owner = presentationOwner()
     void runPluginPackageAction(props.instanceId, { ...props.location }, item.target, item.action).catch(() => {
-      if (!disposed && owner === presentationOwner()) showToastNotification({ category: "opencode", variant: "error", message: t("settings.pluginPackages.error", { target: item.target }) })
+      if (operation.current() && !disposed && owner === presentationOwner()) showToastNotification({ category: "opencode", variant: "error", message: t("settings.pluginPackages.error", { target: item.target }) })
     })
   }
   const runRemove = async (source: RemovableSource) => {
@@ -101,26 +104,33 @@ export function PluginRowActions(props: {
     const feedbackOwner = presentationOwner()
     surface = trigger?.closest<HTMLElement>(".plugin-controls, .integration-section")
     confirmation = new AbortController()
-    const signal = confirmation.signal
+    const operation = captureBackendOperation(instanceId, confirmation.signal)
+    const signal = operation.signal
+    if (!operation.current()) { confirmation = undefined; return }
     const action = t("instanceServiceStatus.plugins.sources.remove", { scope: scopeLabel(source.scope) })
     const accepted = await confirmIntegrationAction(t("instanceServiceStatus.plugins.sources.removeWarning"), {
       title: `${action} — ⁨${props.name}⁩`,
       detail: `${props.hidePaths ? "" : source.target + "\n"}${source.scope === "global" ? t("instanceServiceStatus.plugins.sources.removeGlobalWarning") + "\n" : ""}${t("instanceServiceStatus.plugins.sources.removeRecovery")}`,
       confirmLabel: action, variant: "warning",
-      expiresAfterMs: PLUGIN_SOURCE_CONFIRM_EXPIRY_MS, returnFocus: () => { if (presentationOwner() === feedbackOwner) restoreFocus() },
+      expiresAfterMs: PLUGIN_SOURCE_CONFIRM_EXPIRY_MS, returnFocus: () => { if (operation.current() && presentationOwner() === feedbackOwner) restoreFocus() },
     }, signal)
     confirmation = undefined
-    if (!accepted || signal.aborted || captured !== generation || ownership() !== owner) return
+    if (!accepted || !operation.current() || captured !== generation || ownership() !== owner) return
     admittedOwner = feedbackOwner
     void pluginSourcesStore.remove(instanceId, location, selected).catch(error => {
-      if (!surface?.isConnected || presentationOwner() !== feedbackOwner) return
+      if (!operation.current() || !surface?.isConnected || presentationOwner() !== feedbackOwner) return
       const stale = error instanceof HttpResponseError && error.status === 409
       showToastNotification({ category: "opencode", variant: "error", message: t(stale
         ? "instanceServiceStatus.plugins.sources.errors.removeStale"
          : "instanceServiceStatus.plugins.sources.errors.remove", { name: props.hidePaths ? props.name : source.target, scope: scopeLabel(source.scope) }) })
     })
   }
-  const run = (item: Item) => item.kind === "package" ? runPackage(item) : item.kind === "remove" ? (afterClose = () => runRemove(item.source)) : props.refresh?.()
+  const run = (item: Item) => {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
+    return item.kind === "package" ? runPackage(item) : item.kind === "remove"
+      ? (afterClose = () => { if (operation.current()) return runRemove(item.source) }) : props.refresh?.()
+  }
 
   const icon = (item: Item, pulse = false) => item.kind === "package"
     ? (item.action === "update"

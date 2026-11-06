@@ -1,4 +1,5 @@
 import type { LocationRef } from "@opencode/client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { activeSessionId, agents, providers, sessions } from "./session-state"
 import { uiState, getAgentModelPreference } from "./preferences"
 import { instances } from "./instances"
@@ -43,6 +44,8 @@ async function getDefaultModel(
   instanceId: string,
   agentName?: string,
 ): Promise<{ providerId: string; modelId: string }> {
+  const { signal } = captureBackendOperation(instanceId)
+  signal.throwIfAborted()
   const instanceProviders = providers().get(instanceId) || []
   const instanceAgents = agents().get(instanceId) || []
   const agentId = agentName ? resolveAgentId(instanceAgents, agentName) : ""
@@ -57,6 +60,7 @@ async function getDefaultModel(
     }
 
     const stored = await getAgentModelPreference(instanceId, agentId)
+    signal.throwIfAborted()
     if (isModelValid(instanceId, stored)) {
       return stored
     }
@@ -95,7 +99,8 @@ async function getDefaultModel(
     if (instance?.client) {
       const response = await getRootClient(instanceId).model.default({
         location: toRequestLocation(getActiveCatalogLocation(instanceId)),
-      }, requestLocationOptions(getActiveCatalogLocation(instanceId))).catch(() => null)
+      }, { ...requestLocationOptions(getActiveCatalogLocation(instanceId)), signal }).catch(() => null)
+      signal.throwIfAborted()
       if (response?.data) {
         return { providerId: response.data.providerID, modelId: response.data.id }
       }

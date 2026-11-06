@@ -2,6 +2,7 @@ import { batch, createEffect, createMemo, createSignal, onCleanup, untrack } fro
 import { unifiedScheduleHolds as holds, unifiedScheduleHold, changedUnifiedScheduleHolds as bump,
   type UnifiedMissionSchedule, type UnifiedScheduleAction as Action, type UnifiedScheduleHold as Hold } from "../stores/mission-schedules"
 import { serverApi } from "../lib/api-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
@@ -33,11 +34,13 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
   const publishing = () => held()?.phase === "publication"
   const [capability, setCapability] = createSignal<"loading" | "available" | "activatable" | "missing">("loading")
   const capabilityOwner = createMemo(() => ({ key: identity(), active: props.active(),
+    signal: captureBackendOperation(props.instanceId).signal,
     client: instances().get(props.instanceId)?.client, generation: getOpenCodeInstanceGeneration(props.instanceId) }), undefined,
-    { equals: (a, b) => !!a && a.key === b.key && a.active === b.active && a.client === b.client && a.generation === b.generation })
+    { equals: (a, b) => !!a && a.signal === b.signal && a.key === b.key && a.active === b.active && a.client === b.client && a.generation === b.generation })
   const capture = () => {
     const owner = capabilityOwner()
-    return () => alive && props.active() && capabilityOwner() === owner
+    const operation = captureBackendOperation(props.instanceId)
+    return () => operation.current() && alive && props.active() && capabilityOwner() === owner
   }
   let previousOwner: ReturnType<typeof capabilityOwner> | undefined
   createEffect(() => {
@@ -70,10 +73,13 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
        || capability() === "available" || action !== "run-now" && capability() === "activatable")
     && (!held() || action === "check" && held()!.phase === "control" && held()!.partial && !held()!.original)
   async function receipt(key: string, hold: Hold, current: () => boolean) {
+    if (!current()) return
     const doc = props.document(), result = await serverApi.fetchMissionSchedule(props.instanceId, doc.id,
       { directory: props.directory, requestID: hold.requestID }).catch(error => {
         const result = partialReceipt(error); if (result) return result; throw error
       })
+    // A dispatched intent owns its exact receipt independently of the view.
+    // Only further reads and view publication require the live operation.
     if (exactMissionScheduleControl(result, hold, doc.id)) {
       if (holds.get(key) !== hold) return
       const revision = result.document?.revision
@@ -93,7 +99,7 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
   }
   async function reconcile() {
     const hold = held(), key = identity(), current = capture()
-    if (!hold || busy() || !props.active()) return
+    if (!current() || !hold || busy() || !props.active()) return
     setBusy(true)
     try {
       if (hold.phase === "publication") { if (current()) props.refresh(); return }
@@ -111,6 +117,7 @@ export function createMissionScheduleControls(props: { instanceId: string; proje
   async function act(action: Action) {
     if (!capable(action)) return
     const current = capture(), key = identity(), original = props.document(), previous = held()
+    if (!current()) return
     setBusy(true); setFeedback(undefined)
     let dispatched: Hold | undefined
     try {

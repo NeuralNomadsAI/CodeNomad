@@ -1,4 +1,5 @@
 import { serverApi } from "../lib/api-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { tGlobal } from "../lib/i18n"
 import type { HistoryCandidate, HistoryPage, HistoryQuery } from "../../../server/src/opencode/session-pruning/history-contract"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
@@ -7,14 +8,15 @@ import type { RankedHistoryResult } from "../../../server/src/server/routes/sess
 import { HttpResponseError } from "../lib/retryable-file-search"
 
 export async function findRankedHistoryMatches(instanceId: string, query: string, includeTechnical: boolean, signal: AbortSignal, cursor?: string) {
-  signal.throwIfAborted()
+  const operation = captureBackendOperation(instanceId, signal)
+  operation.signal.throwIfAborted()
   const generation = getOpenCodeInstanceGeneration(instanceId)
   const result = await serverApi.queryRankedHistory(instanceId, { version: 1, query, includeTechnical, limit: 40, ...(cursor ? { cursor } : {}) }, signal)
     .catch(error => {
       if (cursor && error instanceof HttpResponseError && error.status === 400) return { status: "restart_required" as const }
       throw error
     })
-  signal.throwIfAborted()
+  operation.signal.throwIfAborted()
   if (generation !== getOpenCodeInstanceGeneration(instanceId)) throw new Error(tGlobal("session.pruning.conflict"))
   if (cursor && (result.status === "unsupported" || result.status === "blocked" && result.reason === "unsupported_storage")) return { status: "restart_required" as const }
   if (result.status === "blocked") throw new Error(tGlobal(`session.pruning.${result.reason}`))
@@ -30,6 +32,7 @@ export function rankedHistoryNoticeKeys(result: RankedHistoryResult | undefined)
 }
 
 export async function readHistoryPage(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryPage> {
+  signal = captureBackendOperation(instanceId, signal).signal
   signal?.throwIfAborted()
   const result = await serverApi.querySessionHistory(instanceId, input, signal)
   signal?.throwIfAborted()
@@ -38,10 +41,12 @@ export async function readHistoryPage(instanceId: string, input: HistoryQuery, s
 }
 
 export async function walkHistory(instanceId: string, input: HistoryQuery, visit: (page: HistoryPage) => void, signal?: AbortSignal) {
+  signal = captureBackendOperation(instanceId, signal).signal
   let cursor: string | undefined
   const seen = new Set<string>()
   do {
     const page = await readHistoryPage(instanceId, { ...input, cursor }, signal)
+    signal.throwIfAborted()
     visit(page)
     cursor = page.cursor ?? undefined
     if (cursor && seen.has(cursor)) throw new Error(tGlobal("session.pruning.conflict"))
@@ -51,6 +56,7 @@ export async function walkHistory(instanceId: string, input: HistoryQuery, visit
 
 export async function findHistoryMatches(instanceId: string, input: HistoryQuery, signal: AbortSignal,
   progress?: (page: HistoryPage) => void): Promise<HistoryPage> {
+  signal = captureBackendOperation(instanceId, signal).signal
   const seen = new Set<string>(input.cursor ? [input.cursor] : [])
   let cursor = input.cursor
   const result: HistoryPage = { status: "page", scanned: 0, tools: 0, reasoning: 0, skipped: 0, hits: [], candidates: [], cursor: null }
@@ -76,6 +82,7 @@ export interface SessionTechnicalPartDeletionPlan {
   instanceId: string
   sessionId: string
   generation: number
+  signal?: AbortSignal
   toolCount: number
   reasoningCount: number
   candidates: HistoryCandidate[]
@@ -84,7 +91,9 @@ export interface SessionTechnicalPartDeletionPlan {
 
 export async function planSessionTechnicalPartDeletion(instanceId: string, sessionId: string,
   options?: { signal?: AbortSignal; progress?: (messages: number) => void }): Promise<SessionTechnicalPartDeletionPlan> {
-  const plan: SessionTechnicalPartDeletionPlan = { instanceId, sessionId, generation: getOpenCodeInstanceGeneration(instanceId), toolCount: 0, reasoningCount: 0, candidates: [], skipped: 0 }
+  const { signal } = captureBackendOperation(instanceId, options?.signal)
+  signal.throwIfAborted()
+  const plan: SessionTechnicalPartDeletionPlan = { instanceId, sessionId, signal, generation: getOpenCodeInstanceGeneration(instanceId), toolCount: 0, reasoningCount: 0, candidates: [], skipped: 0 }
   let scanned = 0
   await walkHistory(instanceId, { sessionID: sessionId, purpose: "prune", query: "", includeTechnical: true }, page => {
     if (plan.generation !== getOpenCodeInstanceGeneration(instanceId)) throw new Error(tGlobal("session.pruning.conflict"))
@@ -95,19 +104,25 @@ export async function planSessionTechnicalPartDeletion(instanceId: string, sessi
     plan.skipped += page.skipped
     scanned += page.scanned
     options?.progress?.(scanned)
-  }, options?.signal)
+  }, signal)
   return plan
 }
 
 export async function executeSessionTechnicalPartDeletion(plan: SessionTechnicalPartDeletionPlan,
   options?: { signal?: AbortSignal; progress?: (completed: number, total: number) => void }): Promise<string[]> {
+  const attachment = captureBackendOperation(plan.instanceId)
+  const { signal } = captureBackendOperation(plan.instanceId, plan.signal
+    ? AbortSignal.any([plan.signal, ...(options?.signal ? [options.signal] : [])]) : options?.signal)
   const failures: string[] = []
+  let dispatched = false
   try {
     for (let offset = 0; offset < plan.candidates.length; offset += 16) {
-      options?.signal?.throwIfAborted()
+      signal.throwIfAborted()
       if (plan.generation !== getOpenCodeInstanceGeneration(plan.instanceId)) throw new Error(tGlobal("session.pruning.conflict"))
       const candidates = plan.candidates.slice(offset, offset + 16)
-      const response = await serverApi.pruneSessionHistory(plan.instanceId, { sessionID: plan.sessionId, candidates }, options?.signal)
+      dispatched = true
+      const response = await serverApi.pruneSessionHistory(plan.instanceId, { sessionID: plan.sessionId, candidates }, signal)
+      signal.throwIfAborted()
       if (plan.generation !== getOpenCodeInstanceGeneration(plan.instanceId)) throw new Error(tGlobal("session.pruning.conflict"))
       for (const entry of response.results) {
         if (entry.result.status === "blocked") failures.push(tGlobal(`session.pruning.${entry.result.reason}`))
@@ -118,7 +133,7 @@ export async function executeSessionTechnicalPartDeletion(plan: SessionTechnical
   } finally {
     // Also invalidate after an ambiguous timeout/cancellation. Never fetch every
     // pruned message back into the UI: the ordinary active window reconciles.
-    if (plan.generation === getOpenCodeInstanceGeneration(plan.instanceId)) {
+    if (dispatched && attachment.current() && plan.generation === getOpenCodeInstanceGeneration(plan.instanceId)) {
       refreshSessionContent(plan.instanceId, plan.sessionId)
     }
   }

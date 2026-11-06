@@ -18,13 +18,15 @@ export const shouldShowProviderUsageWindow = (label: string, showCreditBalance: 
 // The display snapshot is local to the mounted panel. Do not restore a global
 // browser cache before the server can revalidate the native selected account.
 export function createProviderUsageState(
-  fetchUsage: (source: ProviderUsageSource) => Promise<ProviderUsageResponse>,
+  fetchUsage: (source: ProviderUsageSource, signal?: AbortSignal) => Promise<ProviderUsageResponse>,
   publish: (value: ProviderUsageResponse | null | undefined) => void,
+  capture?: (source: ProviderUsageSource) => { signal: AbortSignal; current: () => boolean },
 ) {
   let current: ProviderUsageSource | null = null
   let generation = 0
+  let controller: AbortController | undefined
   let running: { generation: number; again: boolean; promise: Promise<void> } | null = null
-  const invalidate = () => { generation++; running = null; publish(undefined) }
+  const invalidate = () => { controller?.abort(); controller = undefined; generation++; running = null; publish(undefined) }
   const refresh = (): Promise<void> => {
     const source = current
     if (!source) return Promise.resolve()
@@ -32,6 +34,10 @@ export function createProviderUsageState(
       running.again = true
       return running.promise
     }
+    const requestController = controller = new AbortController()
+    const operation = capture?.(source)
+    const signal = operation ? AbortSignal.any([requestController.signal, operation.signal]) : requestController.signal
+    if (signal.aborted || operation && !operation.current()) return Promise.resolve()
     const request = { generation, again: false, promise: Promise.resolve() }
     running = request
     request.promise = (async () => {
@@ -39,14 +45,15 @@ export function createProviderUsageState(
         do {
           request.again = false
           try {
-            const value = await fetchUsage(source)
-            if (generation === request.generation) publish(value)
+            const value = await fetchUsage(source, signal)
+            if (!signal.aborted && generation === request.generation && (!operation || operation.current())) publish(value)
           } catch {
-            if (generation === request.generation) publish(null)
+            if (!signal.aborted && generation === request.generation && (!operation || operation.current())) publish(null)
           }
-        } while (request.again && generation === request.generation)
+        } while (request.again && !signal.aborted && generation === request.generation && (!operation || operation.current()))
       } finally {
         if (running === request) running = null
+        if (controller === requestController) controller = undefined
       }
     })()
     return request.promise
@@ -59,6 +66,6 @@ export function createProviderUsageState(
     },
     invalidate,
     refresh,
-    dispose() { current = null; generation++; running = null },
+    dispose() { controller?.abort(); controller = undefined; current = null; generation++; running = null },
   }
 }

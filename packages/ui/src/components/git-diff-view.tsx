@@ -2,6 +2,8 @@ import { Show, Suspense, createEffect, createMemo, createSignal, lazy, on, onCle
 import { WrapText, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { serverApi } from "../lib/api-client"
+import { captureBackendOperation } from "../lib/backend-operation"
+import { backendEvents } from "../lib/server-events"
 import { previewReads } from "../lib/background-read-queue"
 import { loadMonaco } from "../lib/monaco/setup"
 import type { GitImageDiff } from "../../../server/src/git-history-types"
@@ -46,24 +48,27 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
     if (!props.active) return
     if (loading()) { pending = true; return }
     const request = controller = new AbortController(), target = props.target
+    const operation = captureBackendOperation(props.instanceId, request.signal)
+    const signal = operation.signal
+    if (!operation.current()) return
     void loadMonaco().catch(() => {})
     setLoading(true)
     setError(null)
     try {
-      const result = await previewReads.run<{ before: string; after: string; isBinary?: boolean; image?: GitImageDiff }>(request.signal, () => target.commit
-        ? serverApi.fetchGitCommitDiff(props.instanceId, target.slug, target.commit, target.path, request.signal)
+      const result = await previewReads.run<{ before: string; after: string; isBinary?: boolean; image?: GitImageDiff }>(signal, () => target.commit
+        ? serverApi.fetchGitCommitDiff(props.instanceId, target.slug, target.commit, target.path, signal)
         : serverApi.fetchWorktreeGitDiff(props.instanceId, target.slug, {
           path: target.path, originalPath: target.originalPath, scope: target.scope ?? "unstaged",
-        }, request.signal), "visible")
-      if (request.signal.aborted) return
+        }, signal), "visible")
+      if (!operation.current()) return
       if (result.isBinary && !result.image) { setContent(null); setError(t("instanceShell.gitChanges.binaryViewer")) }
       else setContent(result)
     } catch (cause) {
-      if (!request.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause))
+      if (operation.current()) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       if (controller === request) {
         setLoading(false)
-        if (pending) { pending = false; void load() }
+        if (pending && operation.current()) { pending = false; void load() }
       }
     }
   }
@@ -82,6 +87,10 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
     void load()
   }))
   createEffect(on(() => props.active, active => { if (!active) cancel(); else void load() }, { defer: true }))
+  createEffect(on(() => backendEvents.signalForInstance(props.instanceId), signal => {
+    cancel()
+    if (!signal.aborted) void load()
+  }, { defer: true }))
   const refresh = createDebouncedRefresh(() => void load())
   createEffect(on(() => filesystemInvalidationVersion(props.instanceId), () => {
     if (props.active && !props.target.commit) refresh.trigger()

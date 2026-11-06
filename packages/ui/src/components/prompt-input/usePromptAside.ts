@@ -2,6 +2,8 @@ import { createEffect, createSignal, on, onCleanup, type Accessor } from "solid-
 import { useI18n } from "../../lib/i18n"
 import { getOpencodeErrorMessage } from "../../lib/opencode-api"
 import { getRootClient } from "../../stores/opencode-client"
+import { captureBackendOperation } from "../../lib/backend-operation"
+import { backendEvents } from "../../lib/server-events"
 
 // Match OpenCode's native /btw instructions. session.generate performs a single
 // generation with session context; it does not run a tool loop or append messages.
@@ -46,6 +48,7 @@ export function usePromptAside(options: {
     },
   ))
   onCleanup(cancel)
+  createEffect(on(() => backendEvents.signalForInstance(options.instanceId()), cancel, { defer: true }))
 
   async function ask() {
     const text = question().trim()
@@ -53,8 +56,10 @@ export function usePromptAside(options: {
     const controller = new AbortController()
     const instanceId = options.instanceId()
     const sessionId = options.sessionId()
+    const operation = captureBackendOperation(instanceId, controller.signal)
+    if (!operation.current()) return
     request = controller
-    const current = () => request === controller && !controller.signal.aborted
+    const current = () => request === controller && operation.current()
       && options.active() && options.instanceId() === instanceId && options.sessionId() === sessionId
     setPending(true)
     setAnswer("")
@@ -63,7 +68,7 @@ export function usePromptAside(options: {
       const result = await getRootClient(instanceId).session.generate({
         sessionID: sessionId,
         prompt: `${instructions}\n\n${text}`,
-      }, { signal: controller.signal })
+      }, { signal: operation.signal })
       if (!current()) return
       const textAnswer = result.text.trim()
       if (!textAnswer) setError(t("promptInput.btw.empty"))

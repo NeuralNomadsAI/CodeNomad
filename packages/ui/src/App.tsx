@@ -89,7 +89,7 @@ import {
   ensureSidecarsLoaded,
   openSidecarTab,
 } from "./stores/sidecars"
-import { projectScope } from "./lib/backend-identity"
+import { projectScope, parseInstanceKey, backendIdOf } from "./lib/backend-identity"
 import {
   activeAppTab,
   activeAppTabId,
@@ -112,12 +112,17 @@ async function withForegroundRefreshTimeout<T>(
   promise: Promise<T>,
   label: string,
   onTimeout?: () => void,
+  signal?: AbortSignal,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
+  let abort = () => {}
   try {
     return await Promise.race([
       promise,
       new Promise<never>((_, reject) => {
+        abort = () => { onTimeout?.(); reject(signal?.reason) }
+        signal?.addEventListener("abort", abort, { once: true })
+        if (signal?.aborted) { abort(); return }
         timer = setTimeout(() => {
           onTimeout?.()
           reject(new Error(`${label} timed out`))
@@ -126,6 +131,7 @@ async function withForegroundRefreshTimeout<T>(
     ])
   } finally {
     if (timer !== undefined) clearTimeout(timer)
+    signal?.removeEventListener("abort", abort)
   }
 }
 
@@ -332,9 +338,9 @@ const App: Component = () => {
   })
 
   useForegroundRefresh({
-    onRefresh: async () => {
-      // The SSE transport is global: a reconnect can mean missed events for
-      // EVERY loaded workspace/session, not just the one on screen. So we:
+    onRefresh: async (backendId, signal) => {
+      signal.throwIfAborted()
+      // A reconnect reconciles every loaded workspace/session of its backend:
       //  1. Re-fetch the session list for every instance (status/titles).
       //  2. Force-reload whatever session is active AFTER the fetch settles
       //     (so a session switch during the await still lands on the right
@@ -343,10 +349,11 @@ const App: Component = () => {
       //     re-fetches lazily on next activation instead of returning stale
       //     content (a non-forced load short-circuits once "loaded").
       const instanceIds = Array.from(instances().values())
-        .filter((instance) => instance.status === "ready" && Boolean(instance.client))
+        .filter((instance) => backendIdOf(instance) === backendId && instance.status === "ready" && Boolean(instance.client))
         .map((instance) => instance.id)
       const sessionListResults = await Promise.allSettled(
         instanceIds.map((id) => {
+          signal.throwIfAborted()
           let invalidateSessions = () => {}
           let invalidatePendingRequests = () => {}
           return withForegroundRefreshTimeout(
@@ -354,18 +361,21 @@ const App: Component = () => {
               let sessionError: unknown
               try {
                 await fetchSessions(id, {
+                  signal,
                   strictStatus: true,
                   registerInvalidation: (invalidate) => { invalidateSessions = invalidate },
                 })
               } catch (error) {
                 sessionError = error
               }
+              signal.throwIfAborted()
               await Promise.all([
-                reloadWorktrees(id),
-                syncPendingRequests(id, (invalidate) => { invalidatePendingRequests = invalidate }),
-                refreshVolatileInstanceState(id),
-                syncLoadedSessionInboxes(id),
+                reloadWorktrees(id, false, signal),
+                syncPendingRequests(id, (invalidate) => { invalidatePendingRequests = invalidate }, undefined, signal),
+                refreshVolatileInstanceState(id, undefined, signal),
+                syncLoadedSessionInboxes(id, signal),
               ])
+              signal.throwIfAborted()
               if (sessionError) throw sessionError
             })(),
             `Foreground refresh for ${id}`,
@@ -373,11 +383,14 @@ const App: Component = () => {
               invalidateSessions()
               invalidatePendingRequests()
             },
+            signal,
           )
         }),
       )
+      signal.throwIfAborted()
       const failedInstanceIds: string[] = []
       sessionListResults.forEach((result, i) => {
+        signal.throwIfAborted()
         reconcilePendingSessionIndicators(instanceIds[i])
         if (result.status === "rejected") {
           failedInstanceIds.push(instanceIds[i])
@@ -388,14 +401,17 @@ const App: Component = () => {
       const activeInst = activeInstance()
       const activeSession = activeSessionIdForInstance()
       const hasActive = Boolean(
-        activeInst?.status === "ready" && activeInst.client && activeSession && activeSession !== "info",
+        activeInst?.status === "ready" && backendIdOf(activeInst) === backendId && activeInst.client && activeSession && activeSession !== "info",
       )
       const canReloadActive = hasActive && !failedInstanceIds.includes(activeInst!.id)
 
       // Invalidate every loaded session except the active one (force-reloaded
       // below). Snapshot the map first; invalidate mutates it via setState.
       for (const [instId, sessionSet] of messagesLoaded().entries()) {
+        signal.throwIfAborted()
+        if (parseInstanceKey(instId).backendId !== backendId) continue
         for (const sId of sessionSet) {
+          signal.throwIfAborted()
           if (canReloadActive && instId === activeInst!.id && sId === activeSession) continue
           invalidateSessionMessageLoad(instId, sId)
         }
@@ -403,18 +419,22 @@ const App: Component = () => {
 
       let activeReloadFailed = false
       if (canReloadActive) {
+        signal.throwIfAborted()
         const statusBefore = getSessionStatus(activeInst!.id, activeSession!)
         try {
           let invalidateMessages = () => {}
           await withForegroundRefreshTimeout(
             loadMessages(activeInst!.id, activeSession!, {
+              signal,
               force: true,
               registerInvalidation: (invalidate) => { invalidateMessages = invalidate },
             }),
             `Active-session refresh for ${activeInst!.id}:${activeSession!}`,
             () => invalidateMessages(),
+            signal,
           )
         } catch (error) {
+          signal.throwIfAborted()
           activeReloadFailed = true
           log.error("Foreground refresh: active session reload failed", {
             instanceId: activeInst!.id,
@@ -422,6 +442,7 @@ const App: Component = () => {
             error,
           })
         }
+        signal.throwIfAborted()
         const statusAfter = getSessionStatus(activeInst!.id, activeSession!)
         log.info("Foreground refresh: active session reloaded", {
           instanceId: activeInst!.id,

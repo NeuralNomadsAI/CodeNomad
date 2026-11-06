@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js"
 import type { CommandInfo, LocationRef, OpenCodeClient } from "@opencode/client"
 import { requestLocationOptions, toRequestLocation } from "./request-locations"
+import { backendEvents } from "../lib/server-events"
 
 const [commandMap, setCommandMap] = createSignal<Map<string, CommandInfo[]>>(new Map())
 const commandRequestIds = new Map<string, number>()
@@ -11,6 +12,8 @@ export async function fetchCommands(
   client: OpenCodeClient,
   location?: LocationRef,
 ): Promise<boolean> {
+  const signal = backendEvents.signalForInstance(instanceId)
+  if (signal?.aborted) return false
   const requestId = ++nextCommandRequestId
   commandRequestIds.set(instanceId, requestId)
   let commands: CommandInfo[]
@@ -19,7 +22,7 @@ export async function fetchCommands(
   } catch {
     return false
   }
-  if (commandRequestIds.get(instanceId) !== requestId) return false
+  if (signal?.aborted || commandRequestIds.get(instanceId) !== requestId) return false
   setCommandMap((prev) => {
     const next = new Map(prev)
     next.set(instanceId, commands)

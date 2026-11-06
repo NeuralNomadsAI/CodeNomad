@@ -1,8 +1,9 @@
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { getRootClient } from "./opencode-client"
 import { createShellApi, createShellStore, type ShellRefreshEvent } from "./shell-store"
 
-const shellStore = createShellStore((instanceId) => createShellApi(getRootClient(instanceId)))
+const shellStore = createShellStore((instanceId) => createShellApi(getRootClient(instanceId)), id => captureBackendOperation(id).signal)
 
 serverEvents.on("instance.event", (event) => {
   if (event.type !== "instance.event" || !event.event.type.startsWith("shell.")) return
@@ -15,3 +16,5 @@ serverEvents.on("instance.eventStatus", (event) => {
 })
 
 export { shellStore }
+
+serverEvents.onOpen(backendId => shellStore.refreshBackend(backendId))

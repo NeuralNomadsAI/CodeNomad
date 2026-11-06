@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
+import type { captureBackendOperation } from "../backend-operation"
 
 /**
  * Dependencies for {@link useActiveSessionMessageLoad}. Everything is injected
@@ -28,6 +29,7 @@ export interface ActiveSessionMessageLoadDeps {
   waitForHydration: (instanceId: string) => Promise<void>
   /** Optional error sink for a rejected load. */
   onError?: (error: unknown) => void
+  captureOperation?: typeof captureBackendOperation
 }
 
 /**
@@ -70,12 +72,18 @@ export function useActiveSessionMessageLoad(deps: ActiveSessionMessageLoadDeps):
     if (!binding) return
     const [instanceId, sessionId] = binding.split("\u0000")
     const controller = new AbortController()
+    const operation = deps.captureOperation?.(instanceId, controller.signal)
+    const signal = operation?.signal ?? controller.signal
+    if (signal.aborted) return
     let invalidate: (() => void) | undefined
     let settled = false
+    const revoke = () => { if (!settled) invalidate?.() }
+    signal.addEventListener("abort", revoke, { once: true })
     onCleanup(() => {
       // Release the old request's loading authority synchronously so a rapid
       // return can start immediately, before the aborted promise settles.
       if (!settled) invalidate?.()
+      signal.removeEventListener("abort", revoke)
       controller.abort()
     })
     // The readiness gate reads app-wide state (the instances map). Tracking it
@@ -85,16 +93,16 @@ export function useActiveSessionMessageLoad(deps: ActiveSessionMessageLoadDeps):
       .then(() => {
         // Re-check after the async gate: the user may have switched away or to
         // a different session while metadata was hydrating.
-        if (controller.signal.aborted
+        if (signal.aborted
           || !deps.isActive()
           || deps.instanceId() !== instanceId
           || deps.session()?.id !== sessionId
           || (deps.shouldLoad && !untrack(deps.shouldLoad))) return
         return Promise.resolve(deps.loadMessages(instanceId, sessionId, {
-          signal: controller.signal, registerInvalidation: callback => { invalidate = callback },
+          signal, registerInvalidation: callback => { invalidate = callback },
         }))
       })
-      .catch((error) => { if (!controller.signal.aborted) deps.onError?.(error) })
+      .catch((error) => { if (!signal.aborted) deps.onError?.(error) })
       .finally(() => { settled = true })
   })
 }

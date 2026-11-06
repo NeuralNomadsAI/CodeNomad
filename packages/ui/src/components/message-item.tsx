@@ -8,6 +8,7 @@ import type { MessageRecord } from "../stores/message-v2/types"
 import MessagePart from "./message-part"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { isTauriHost } from "../lib/runtime-env"
 import { useSpeech } from "../lib/hooks/use-speech"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
@@ -349,6 +350,8 @@ export default function MessageItem(props: MessageItemProps) {
   const recordSettled = createMemo(() => props.record.status === "complete" || props.record.status === "error")
 
   const handleDeleteTechnicalParts = async () => {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     if (deletingTechnicalParts() || (props.record.status !== "complete" && props.record.status !== "error")) return
     const counts = technicalPartCounts()
     if (counts.tools + counts.reasoning === 0) return
@@ -360,7 +363,7 @@ export default function MessageItem(props: MessageItemProps) {
       confirmLabel: t("messageItem.actions.deleteTechnicalParts.confirmLabel"),
       variant: "warning",
     })
-    if (!confirmed) return
+    if (!confirmed || !operation.current()) return
     setDeletingTechnicalParts(true)
     try {
       const byMessage = new Map<string, TechnicalCleanupPart[]>()
@@ -368,9 +371,11 @@ export default function MessageItem(props: MessageItemProps) {
         byMessage.set(part.messageId, [...(byMessage.get(part.messageId) ?? []), part])
       }
       for (const [messageId, parts] of byMessage) {
+        if (!operation.current()) return
         await deleteMessageTechnicalParts(props.instanceId, props.sessionId, messageId, parts.map((part) => part.partId))
       }
     } catch (error) {
+      if (!operation.current()) return
       showAlertDialog(t("messageItem.actions.deleteTechnicalParts.failedMessage"), {
         title: t("messageItem.actions.deleteTechnicalParts.failedTitle"),
         detail: error instanceof Error ? error.message : String(error),

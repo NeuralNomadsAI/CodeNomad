@@ -3,6 +3,7 @@ import Switch from "@suid/material/Switch"
 import type { Instance, RawMcpStatus } from "../types/instance"
 import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import { useI18n } from "../lib/i18n"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { getLogger } from "../lib/logger"
 import { PluginActivationControls } from "./plugin-activation-controls"
 import { createIntegrationContext } from "./integration-context"
@@ -79,6 +80,8 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
   }
 
   const toggleMcpServer = async (serverName: string, shouldEnable: boolean) => {
+    const operation = captureBackendOperation(instance().id)
+    if (!operation.current()) return
     const client = instance().client
     if (!client?.mcp) return
     const action: "connect" | "disconnect" = shouldEnable ? "connect" : "disconnect"
@@ -89,11 +92,11 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
         ? { directory: resolved.directory }
         : { directory: instance().folder }
       if (shouldEnable) {
-        await client.mcp.connect({ server: serverName, location })
+        await client.mcp.connect({ server: serverName, location }, { signal: operation.signal })
       } else {
-        await client.mcp.disconnect({ server: serverName, location })
+        await client.mcp.disconnect({ server: serverName, location }, { signal: operation.signal })
       }
-      await refreshMetadata()
+      if (operation.current()) await refreshMetadata()
     } catch (error) {
       log.error("Failed to toggle MCP server", { serverName, action, error })
     } finally {

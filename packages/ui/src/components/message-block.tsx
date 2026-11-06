@@ -17,6 +17,7 @@ import { messageStoreBus } from "../stores/message-v2/bus"
 import { ensureSessionAncestorsExpanded, sessions, setActiveSessionFromList } from "../stores/sessions"
 import { selectInstanceTab } from "../stores/app-tabs"
 import { useI18n, type I18nContextValue } from "../lib/i18n"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { withHotkey } from "../lib/hotkeys"
 import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
@@ -381,11 +382,14 @@ function ToolCallItem(props: ToolCallItemProps) {
   }
 
   const handleDelete = async () => {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     if (deleting() || (record()?.status !== "complete" && record()?.status !== "error")) return
     setDeleting(true)
     try {
       await deleteMessagePart(props.instanceId, props.sessionId, props.messageId, props.partId)
     } catch (error) {
+      if (!operation.current()) return
       showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
         title: t("messagePart.actions.deleteFailedTitle"),
         detail: error instanceof Error ? error.message : String(error),
@@ -1137,11 +1141,14 @@ function ExplorationGroup(props: ExplorationGroupProps) {
     return status === "complete" || status === "error"
   })
   const handleDeleteGroup = async () => {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     if (deletingGroup() || !canDeleteGroup()) return
     setDeletingGroup(true)
     try {
       await deleteTechnicalPartGroup(props.instanceId, props.sessionId, groupTools())
     } catch (error) {
+      if (!operation.current()) return
       showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
         title: t("messagePart.actions.deleteFailedTitle"),
         detail: error instanceof Error ? error.message : String(error),
@@ -1376,10 +1383,13 @@ function ReasoningGroupCard(props: {
   })
   const handleDeleteGroup = async () => {
     if (deletingGroup() || !canDeleteGroup()) return
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     setDeletingGroup(true)
     try {
       await deleteTechnicalPartGroup(props.instanceId, props.sessionId, summaryParts())
     } catch (error) {
+      if (!operation.current()) return
       showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
         title: t("messagePart.actions.deleteFailedTitle"),
         detail: error instanceof Error ? error.message : String(error),
@@ -1662,10 +1672,13 @@ function ReasoningCard(props: ReasoningCardProps) {
   const handleDelete = async () => {
     const partId = typeof props.part.id === "string" ? props.part.id : ""
     if (!partId || deleting() || (props.status !== "complete" && props.status !== "error")) return
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     setDeleting(true)
     try {
       await deleteMessagePart(props.instanceId, props.sessionId, props.messageId, partId)
     } catch (error) {
+      if (!operation.current()) return
       showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
         title: t("messagePart.actions.deleteFailedTitle"),
         detail: error instanceof Error ? error.message : String(error),

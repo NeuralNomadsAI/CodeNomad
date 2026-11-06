@@ -1,4 +1,5 @@
 import { createSignal, untrack } from "solid-js"
+import { parseInstanceKey } from "../lib/backend-identity"
 import type { IntegrationsResponse } from "../../../server/src/integration-types"
 
 /** Native events after which shown integrations are read again: integration RPC events, plugin and configuration changes. */
@@ -21,6 +22,8 @@ interface Entry {
   directory: string
   demand: number
   generation: number
+  authority?: AbortSignal
+  releaseAuthority?: () => void
   reading?: { dirty: boolean; controller: AbortController; promise: Promise<void> }
 }
 
@@ -33,32 +36,65 @@ interface Entry {
  */
 export function createIntegrationsStore(
   read: (instanceId: string, directory: string, signal: AbortSignal) => Promise<IntegrationsResponse>,
-  clock: { setTimer?: (callback: () => void, ms: number) => unknown; clearTimer?: (timer: unknown) => void } = {},
+  clock: { setTimer?: (callback: () => void, ms: number) => unknown; clearTimer?: (timer: unknown) => void;
+    signal?: (instanceId: string) => AbortSignal | undefined } = {},
 ) {
   const setTimer = clock.setTimer ?? ((callback, ms) => setTimeout(callback, ms))
   const clearTimer = clock.clearTimer ?? (timer => clearTimeout(timer as ReturnType<typeof setTimeout>))
   const [snapshots, setSnapshots] = createSignal<ReadonlyMap<string, IntegrationsSnapshot>>(new Map())
   const entries = new Map<string, Entry>()
   const timers = new Map<string, unknown>()
+  const timerAuthorities = new Map<string, AbortSignal | undefined>()
   const key = (instanceId: string, directory: string) => `${instanceId}\0${directory}`
   const publish = (stateKey: string, snapshot: IntegrationsSnapshot) => setSnapshots(current => new Map(current).set(stateKey, snapshot))
+  const cancelTimer = (instanceId: string) => {
+    const timer = timers.get(instanceId)
+    timers.delete(instanceId); timerAuthorities.delete(instanceId)
+    if (timer !== undefined) clearTimer(timer)
+  }
+  const bind = (stateKey: string, entry: Entry) => {
+    const authority = clock.signal?.(entry.instanceId)
+    if (entry.authority === authority && entry.releaseAuthority) return authority
+    entry.releaseAuthority?.()
+    const old = entry.reading
+    entry.reading = undefined
+    entry.authority = authority
+    old?.controller.abort()
+    const abort = () => {
+      if (entry.authority !== authority) return
+      entry.generation++
+      const reading = entry.reading
+      entry.reading = undefined
+      if (timerAuthorities.get(entry.instanceId) === authority) cancelTimer(entry.instanceId)
+      reading?.controller.abort()
+      const previous = snapshots().get(stateKey)
+      if (entry.authority === authority && previous?.status === "ready") publish(stateKey, { ...previous, stale: true })
+    }
+    authority?.addEventListener("abort", abort, { once: true })
+    entry.releaseAuthority = () => { authority?.removeEventListener("abort", abort); entry.releaseAuthority = undefined }
+    return authority
+  }
 
   const refreshEntry = (stateKey: string, entry: Entry): Promise<void> => {
     if (entry.demand === 0) return Promise.resolve()
+    const authority = bind(stateKey, entry)
+    if (authority?.aborted) return Promise.resolve()
     if (entry.reading) {
       entry.reading.dirty = true
       return entry.reading.promise
     }
     const reading = { dirty: false, controller: new AbortController(), promise: Promise.resolve() }
+    const signal = authority ? AbortSignal.any([authority, reading.controller.signal]) : reading.controller.signal
     entry.reading = reading
     reading.promise = (async () => {
       try {
         do {
           reading.dirty = false
           const generation = entry.generation
-          const answer = await read(entry.instanceId, entry.directory, reading.controller.signal).then(
+          if (signal.aborted) return
+          const answer = await read(entry.instanceId, entry.directory, signal).then(
             (response): IntegrationsSnapshot => ({ status: "ready", response }), (): IntegrationsSnapshot => ({ status: "error" }))
-          if (reading.controller.signal.aborted || entries.get(stateKey) !== entry) return
+          if (signal.aborted || entries.get(stateKey) !== entry) return
           if (generation !== entry.generation) continue
           const previous = snapshots().get(stateKey)
           publish(stateKey, answer.status === "error" && previous?.status === "ready" ? { ...previous, stale: true, refreshError: true } : answer)
@@ -70,12 +106,14 @@ export function createIntegrationsStore(
     return reading.promise
   }
 
-  const refreshDemanded = (instanceId?: string): Promise<void> => Promise.all([...entries].map(([stateKey, entry]) =>
-    instanceId === undefined || entry.instanceId === instanceId ? refreshEntry(stateKey, entry) : undefined)).then(() => undefined)
+  const refreshDemanded = (instanceId?: string, backendId?: string): Promise<void> => Promise.all([...entries].map(([stateKey, entry]) =>
+    (instanceId === undefined || entry.instanceId === instanceId) && (backendId === undefined || parseInstanceKey(entry.instanceId).backendId === backendId)
+      ? refreshEntry(stateKey, entry) : undefined)).then(() => undefined)
 
-  const invalidate = (instanceId?: string): void => {
+  const invalidate = (instanceId?: string, backendId?: string): void => {
     for (const [stateKey, entry] of entries) {
       if (instanceId !== undefined && entry.instanceId !== instanceId) continue
+      if (backendId !== undefined && parseInstanceKey(entry.instanceId).backendId !== backendId) continue
       entry.generation++
       const previous = snapshots().get(stateKey)
       if (previous?.status === "ready") publish(stateKey, { ...previous, stale: true })
@@ -105,30 +143,35 @@ export function createIntegrationsStore(
         tracked.demand -= 1
         if (tracked.demand > 0) return
         tracked.reading?.controller.abort()
+        tracked.releaseAuthority?.()
         tracked.reading = undefined
         if (entries.get(stateKey) === tracked) entries.delete(stateKey)
+        if (![...entries.values()].some(value => value.instanceId === instanceId && value.demand)) cancelTimer(instanceId)
       }
     },
     refreshDemanded,
     invalidate,
     /** A native event of `instanceId`: schedules one coalesced read of its demanded Locations when it may change them. */
     applyEvent(instanceId: string, type: string): void {
+      const authority = clock.signal?.(instanceId)
+      if (authority?.aborted) return
       if (!isIntegrationRefreshEvent(type)) return
       invalidate(instanceId)
       if (timers.has(instanceId)) return
       if (![...entries.values()].some(entry => entry.instanceId === instanceId)) return
       timers.set(instanceId, setTimer(() => {
-        timers.delete(instanceId)
+        if (authority?.aborted || timerAuthorities.get(instanceId) !== authority) return
+        timers.delete(instanceId); timerAuthorities.delete(instanceId)
         void refreshDemanded(instanceId)
       }, INTEGRATION_EVENT_COALESCE_MS))
+      timerAuthorities.set(instanceId, authority)
     },
     clearInstance(instanceId: string): void {
-      const timer = timers.get(instanceId)
-      if (timer !== undefined) clearTimer(timer)
-      timers.delete(instanceId)
+      cancelTimer(instanceId)
       for (const [stateKey, entry] of [...entries]) {
         if (entry.instanceId !== instanceId) continue
         entry.reading?.controller.abort()
+        entry.releaseAuthority?.()
         entries.delete(stateKey)
       }
       setSnapshots(current => new Map([...current].filter(([stateKey]) => !stateKey.startsWith(`${instanceId}\0`))))

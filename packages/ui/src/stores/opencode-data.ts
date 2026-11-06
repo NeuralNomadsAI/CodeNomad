@@ -7,6 +7,8 @@ import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { MESSAGE_WINDOW_PAGE_SIZE } from "./message-v2/message-window"
 import { messageStoreBus } from "./message-v2/bus"
 import { sseManager } from "../lib/sse-manager"
+import { backendEvents } from "../lib/server-events"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { getLogger } from "../lib/logger"
 import { isExecutionTerminalEvent } from "../lib/native-execution-events"
 import { createCompactionDeltaBuffer } from "./compaction-delta-buffer"
@@ -21,6 +23,7 @@ import { cancelTranscriptProjections, flushTranscriptProjections } from "./openc
 const log = getLogger("session")
 
 type DataEntry = {
+  operation: ReturnType<typeof captureBackendOperation>
   data: Data
   emit: (event: OpenCodeEvent) => void
   syncMessages: (sessionId: string, messages: SessionMessageInfo[], isCurrent: () => boolean) => Promise<boolean>
@@ -88,6 +91,7 @@ const MAX_TRANSCRIPT_RETRY_DELAY_MS = 1000
 // The page size of the SDK's own `message.sync`.
 const SDK_MESSAGE_PAGE_SIZE = 20
 const entries = new Map<string, DataEntry>()
+const dataAuthorities = new WeakMap<Data, ReturnType<typeof captureBackendOperation>>()
 const transcriptEntries = new Map<string, TranscriptEntry>()
 const mutationRevisions = new Map<string, ReturnType<typeof createSignal<number>>>()
 const messageRevisions = new Map<string, number>()
@@ -147,6 +151,8 @@ export function getOpenCodeInstanceGeneration(instanceId: string): number {
 }
 
 function createDataEntry(instanceId: string, directory: string): DataEntry {
+  const controller = new AbortController()
+  const operation = captureBackendOperation(instanceId, controller.signal)
   const listeners = new Set<(event: { name: OpenCodeEvent["type"]; details: OpenCodeEvent }) => void>()
   const messageSnapshots = new Map<string, SessionMessageInfo[]>()
   // Bumped only by events that make a fetched page obsolete.
@@ -166,7 +172,23 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
       },
     }
     const api = () => {
-      const client = getRootClient(instanceId)
+      // SDK-owned reconciliation publishes after its request resolves. Fence
+      // every native read before returning it to that reducer as well.
+      const fence = (target: any): any => new Proxy(target, { get(value, key) {
+        const member = Reflect.get(value, key)
+        if (typeof member === "function") return async (input: unknown, options?: { signal?: AbortSignal }) => {
+          operation.signal.throwIfAborted()
+          const signal = options?.signal ? AbortSignal.any([operation.signal, options.signal]) : operation.signal
+          const result = key === "active"
+            ? await member.call(value, { ...(input as object), signal })
+            : await member.call(value, input, { ...options, signal })
+          operation.signal.throwIfAborted()
+          return result
+        }
+        return member && typeof member === "object" ? fence(member) : member
+      } })
+      operation.signal.throwIfAborted()
+      const client = fence(getRootClient(instanceId))
       return new Proxy(client, {
         get(target, property, receiver) {
           if (property !== "message") return Reflect.get(target, property, receiver)
@@ -180,7 +202,7 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                 // and restarts the read; streamed events only extend it, so the
                 // page merges with the rows they created or changed.
                 for (;;) {
-                  if (disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
+                  if (!operation.current() || disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
                     throw new Error("Stale read from disposed OpenCode projection")
                   }
                   // A current native page can already contain buffered text.
@@ -192,7 +214,7 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                   const revision = destructiveRevisions.get(input.sessionID) ?? 0
                   const since = snapshotRows(data.session.message.list(input.sessionID))
                   const response = await (client.message.list as any)(input, options)
-                  if (disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
+                  if (!operation.current() || disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
                     throw new Error("Stale read from disposed OpenCode projection")
                   }
                   compactionDeltas.flush(instanceId, input.sessionID)
@@ -215,7 +237,9 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
       },
       onError: (error) => log.warn("Failed to refresh OpenCode projection", { instanceId, error }),
     })
+    dataAuthorities.set(data, operation)
     const emit = (details: OpenCodeEvent) => {
+      if (!operation.current()) return
       // Isolated fresh-entry resyncs already fence their entire transaction.
       // Only destructive events applied to this reducer restart its own reads.
       const sessionId = eventSessionId(details)
@@ -241,23 +265,26 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
       for (const listener of listeners) listener({ name: details.type, details })
     }
     return {
+      operation,
       data,
       emit(details: OpenCodeEvent) {
         emit(details)
       },
       async syncMessages(sessionId: string, messages: SessionMessageInfo[], isCurrent: () => boolean) {
+        if (!operation.current() || !isCurrent()) return false
         messageSnapshots.set(sessionId, messages)
         try {
           data.session.message.invalidate(sessionId)
           await data.session.message.sync(sessionId)
-          return isCurrent()
+          return operation.current() && isCurrent()
         } finally {
           messageSnapshots.delete(sessionId)
         }
       },
       async syncAuthoritative(sessionId: string, isCurrent: () => boolean) {
+        if (!operation.current() || !isCurrent()) return false
         const client = getRootClient(instanceId)
-        const activeRequest = client.session.active()
+        const activeRequest = client.session.active({ signal: operation.signal })
         data.session.invalidate(sessionId)
         data.session.pending.invalidate(sessionId)
         data.session.message.invalidate(sessionId)
@@ -271,12 +298,13 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
           data.session.form.sync(sessionId),
           activeRequest,
         ])
-        if (!isCurrent()) return false
+        if (!operation.current() || !isCurrent()) return false
         data.session.setStatus(sessionId, sessionId in active ? "running" : "idle")
         return true
       },
       dispose() {
         disposed = true
+        controller.abort()
         dispose()
       },
     }
@@ -284,17 +312,21 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
 }
 
 function ensureData(instanceId: string, directory: string) {
+  captureBackendOperation(instanceId)
   const existing = entries.get(instanceId)
-  if (existing) return existing
+  if (existing?.operation.current()) return existing
+  existing?.dispose()
   const entry = createDataEntry(instanceId, directory)
   entries.set(instanceId, entry)
   return entry
 }
 
 function ensureTranscript(instanceId: string, sessionId: string, directory: string) {
+  captureBackendOperation(instanceId)
   const key = messageRevisionKey(instanceId, sessionId)
   const existing = transcriptEntries.get(key)
-  if (existing) return existing
+  if (existing?.entry.operation.current()) return existing
+  if (existing) { invalidateTranscript(existing); existing.entry.dispose() }
   const transcript: TranscriptEntry = {
     entry: createDataEntry(instanceId, directory),
     entryRevision: createSignal(0),
@@ -330,7 +362,7 @@ function getOpenCodeFullDataRevision(instanceId: string, sessionId: string): num
 }
 
 function isTranscriptCurrent(instanceId: string, sessionId: string, transcript: TranscriptEntry): boolean {
-  return transcriptEntries.get(messageRevisionKey(instanceId, sessionId)) === transcript
+  return transcript.entry.operation.current() && transcriptEntries.get(messageRevisionKey(instanceId, sessionId)) === transcript
     && getOpenCodeInstanceGeneration(instanceId) === transcript.generation
 }
 
@@ -368,6 +400,7 @@ function scheduleAuthoritativeResync(
   clearTranscriptRetry(transcript)
   const run = () => {
     transcript.retryTimer = undefined
+    if (!isTranscriptCurrent(instanceId, sessionId, transcript)) return
     void resyncAuthoritativeTranscript(instanceId, sessionId, transcript)
   }
   transcript.retryTimer = setTimeout(run, delay)
@@ -808,16 +841,20 @@ export function getOpenCodeMutationRevision(instanceId: string, sessionId: strin
 }
 
 export function getOpenCodeSessionInbox(instanceId: string, sessionId: string, directory: string) {
+  if (!captureBackendOperation(instanceId).current()) return []
   instanceDataRevision(instanceId)[0]()
   const transcript = ensureTranscript(instanceId, sessionId, directory)
   transcript.entryRevision[0]()
   return transcript.entry.data.session.pending.list(sessionId)
 }
 
-export async function syncOpenCodeSessionInbox(instanceId: string, sessionId: string, directory: string): Promise<void> {
+export async function syncOpenCodeSessionInbox(instanceId: string, sessionId: string, directory: string, signal?: AbortSignal): Promise<void> {
+  signal = captureBackendOperation(instanceId, signal).signal
+  if (signal.aborted) return
   const transcript = ensureTranscript(instanceId, sessionId, directory)
   const admitted = new Set(transcript.entry.data.session.pending.list(sessionId).map((item) => item.id))
   await transcript.entry.data.session.pending.sync(sessionId)
+  if (signal.aborted || !isTranscriptCurrent(instanceId, sessionId, transcript)) return
   // An item the reducer admitted that the authoritative inbox no longer lists
   // was delivered or cancelled without events; a delivery's user message may
   // never be admitted either. The disappearance owes the settlement read that
@@ -860,12 +897,14 @@ export async function seedOpenCodeSessionMessages(
   directory: string,
   page: SessionMessageInfo[],
 ): Promise<void> {
+  const operation = captureBackendOperation(instanceId)
+  if (!operation.current()) return
   const transcript = ensureTranscript(instanceId, sessionId, directory)
   if (transcript.rotating || transcript.resyncing || transcript.needsAuthoritativeResync || transcript.reconnectResync) return
   if (transcript.entry.data.session.message.list(sessionId).length) return
   try {
     // The loaded page (oldest first) gives the SDK's own latest page without another read.
-    await transcript.entry.syncMessages(sessionId, page.slice(-SDK_MESSAGE_PAGE_SIZE), () => true)
+    await transcript.entry.syncMessages(sessionId, page.slice(-SDK_MESSAGE_PAGE_SIZE), () => operation.current() && isTranscriptCurrent(instanceId, sessionId, transcript))
   } catch (error) {
     log.warn("Failed to seed OpenCode session messages", { instanceId, sessionId, error })
   }
@@ -882,6 +921,7 @@ export function projectOpenCodeMessages(
   preserveOmitted = true,
   confirmPending = true,
 ): void {
+  if (dataAuthorities.get(data)?.current() === false) return
   const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
   if (transcript && (transcript.entry.data !== data
     || transcript.needsAuthoritativeResync
@@ -966,6 +1006,7 @@ export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent
  * admitted execution supersedes the publication; same-round activity does
  * not. */
 function completeSettlementRead(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+  const signal = backendEvents.signalForInstance(instanceId)
   const epoch = transcript.executionEpoch
   void transcript.entry.data.session.message.sync(sessionId)
     .catch(() => undefined)
@@ -973,9 +1014,10 @@ function completeSettlementRead(instanceId: string, sessionId: string, transcrip
       // Publish unless a newer execution superseded this settlement:
       // same-round activity (a late terminal tool event) must not
       // suppress the repair.
-      if (!isTranscriptCurrent(instanceId, sessionId, transcript)
+      if (signal?.aborted || !isTranscriptCurrent(instanceId, sessionId, transcript)
         || transcript.executionEpoch !== epoch) return
       projectOpenCodeMessages(instanceId, sessionId, transcript.entry.data, true)
+      if (signal?.aborted) return
       retireDrainedTranscript(instanceId, sessionId, transcript)
     })
 }

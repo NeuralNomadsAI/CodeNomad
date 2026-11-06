@@ -4,6 +4,7 @@ import type { ShellInfo } from "@opencode/client"
 
 import { createAnsiStreamRenderer, hasAnsi } from "../lib/ansi"
 import { useI18n } from "../lib/i18n"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { appendShellOutput } from "../stores/shell-store"
 import { shellStore } from "../stores/shells"
 
@@ -31,6 +32,8 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
     if (!props.open || !shell || !directory) return
 
     let active = true
+    const operation = captureBackendOperation(props.instanceId, undefined, () => active)
+    if (!operation.current()) return
     let cursor = 0
     let raw = ""
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -42,9 +45,10 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
       setOutputHtml(renderer.render(raw))
     }
     const poll = async () => {
+      if (!operation.current()) return
       try {
         const result = await shellStore.output(props.instanceId, directory, shell.id, cursor, workspaceID)
-        if (!active) return
+        if (!operation.current()) return
         cursor = result.cursor
         if (result.output) {
           const next = appendShellOutput(raw, result.output)
@@ -56,11 +60,11 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
           setTruncated(true)
         }
       } catch {
-        if (!active) return
+        if (!operation.current()) return
         setOutput(t("backgroundProcessOutputDialog.loadErrorFallback"))
       } finally {
-        if (!active) return
-        setLoading(false)
+        if (active) setLoading(false)
+        if (!operation.current()) return
         timer = setTimeout(poll, 1000)
       }
     }
@@ -73,6 +77,7 @@ export function ShellOutputDialog(props: ShellOutputDialogProps) {
     void poll()
     onCleanup(() => {
       active = false
+      setLoading(false)
       if (timer) clearTimeout(timer)
     })
   })

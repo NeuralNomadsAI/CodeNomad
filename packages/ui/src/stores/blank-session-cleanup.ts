@@ -1,4 +1,5 @@
 import { getLogger } from "../lib/logger"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { getAttachments } from "./attachments"
 import { instances } from "./instances"
 import { messageStoreBus } from "./message-v2/bus"
@@ -11,6 +12,7 @@ import { getChildSessions, getSessionDraftPrompt, loading, sessions } from "./se
 // session. Keep this destructive admission separate from the explicit deep-clean
 // command, which also offers to remove completed subagents and unused forks.
 export async function cleanupBlankSession(instanceId: string, sessionId: string): Promise<boolean> {
+  const operation = captureBackendOperation(instanceId)
   const instanceClient = instances().get(instanceId)?.client
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!instanceClient || !session) return false
@@ -19,7 +21,7 @@ export async function cleanupBlankSession(instanceId: string, sessionId: string)
   const mutationRevision = getOpenCodeMutationRevision(instanceId, sessionId)
   const store = messageStoreBus.getOrCreate(instanceId)
   const revision = store.getSessionRevision(sessionId)
-  const current = () => instances().get(instanceId)?.client === instanceClient
+  const current = () => operation.current() && instances().get(instanceId)?.client === instanceClient
     && getOpenCodeInstanceGeneration(instanceId) === generation
     && sessions().get(instanceId)?.get(sessionId) === session
     && getOpenCodeMessageRevision(instanceId, sessionId) === messageRevision
@@ -40,17 +42,18 @@ export async function cleanupBlankSession(instanceId: string, sessionId: string)
     const client = getRootClient(instanceId)
     // No type/revert/visibility filter: even a hidden system message or a
     // staged-away prompt means the session is not blank. Do not use display caches.
-    const messages = await client.message.list({ sessionID: sessionId, limit: 1 })
+    const options = { signal: operation.signal }
+    const messages = await client.message.list({ sessionID: sessionId, limit: 1 }, options)
     if (!current() || !Array.isArray(messages.data) || messages.data.length || messages.cursor?.next) return false
 
-    const info = await client.session.get({ sessionID: sessionId })
+    const info = await client.session.get({ sessionID: sessionId }, options)
     if (!current() || info.id !== sessionId || !info.projectID
       || info.projectID !== session.projectID || info.location.directory !== session.location.directory
       || info.revert || info.fork) return false
     const [inbox, children, active] = await Promise.all([
-      client.session.inbox.list({ sessionID: sessionId }),
-      client.session.list({ parentID: sessionId, project: info.projectID, limit: 1 }),
-      client.session.active(),
+      client.session.inbox.list({ sessionID: sessionId }, options),
+      client.session.list({ parentID: sessionId, project: info.projectID, limit: 1 }, options),
+      client.session.active(options),
     ])
     if (!Array.isArray(inbox) || inbox.length
       || !Array.isArray(children.data) || children.data.length || children.cursor?.next
@@ -59,7 +62,7 @@ export async function cleanupBlankSession(instanceId: string, sessionId: string)
     // Other clients may have sent while ancillary reads were pending, before
     // their SSE reached this window. Refresh the empty-message proof last.
     if (!current()) return false
-    const latest = await client.message.list({ sessionID: sessionId, limit: 1 })
+    const latest = await client.message.list({ sessionID: sessionId, limit: 1 }, options)
     if (!Array.isArray(latest.data) || latest.data.length || latest.cursor?.next) return false
 
     // Recheck local activity, drafts and connection authority immediately before

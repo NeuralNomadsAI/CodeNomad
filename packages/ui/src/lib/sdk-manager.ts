@@ -3,6 +3,8 @@ import { backgroundReads } from "./background-read-queue"
 import { authenticatedFetch, localHttp } from "./auth-recovery"
 import { resolveBackendUrl, type BackendHttp } from "./backend-transport"
 import { prioritizedRead } from "./prioritized-read"
+import { backendEvents } from "./backend-events"
+import { parseInstanceKey } from "./backend-identity"
 import { SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../../../server/src/api-types"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
 
@@ -27,7 +29,7 @@ export class SDKManager {
     }
 
     const baseUrl = this.backend.url(`${normalizeProxyPath(proxyPath)}/`)
-    const client = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl, isForeground, this.backend.fetch) })
+    const client = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl, isForeground, this.backend.fetch, instanceId) })
 
     this.clients.set(key, client)
 
@@ -50,8 +52,14 @@ export function buildInstanceBaseUrl(proxyPath: string, apiBase = localHttp.base
   return resolveBackendUrl(apiBase, `${normalized}/`, "append-trimmed")
 }
 
-export function createInstanceFetch(baseUrl: string, isForeground: () => boolean = () => false, fetcher: typeof fetch = authenticatedFetch): typeof globalThis.fetch {
+export function createInstanceFetch(baseUrl: string, isForeground: () => boolean = () => false, fetcher: typeof fetch = authenticatedFetch, instanceId?: string): typeof globalThis.fetch {
   return (input, init) => {
+    const parents = [init?.signal, input instanceof Request ? input.signal : undefined].filter((signal): signal is AbortSignal => Boolean(signal))
+    const parent = parents.length ? AbortSignal.any(parents) : new AbortController().signal
+    // Standalone clients are client-owned; UI operations already carry their
+    // admission signal. Bind an active stream too without starting one here.
+    const attachment = instanceId === undefined ? undefined : backendEvents.signal(parseInstanceKey(instanceId).backendId)
+    const signal = attachment ? AbortSignal.any([attachment, parent]) : parent
     const requestUrl = new URL(input instanceof Request ? input.url : input)
     const basePath = new URL(baseUrl, requestUrl).pathname.replace(/\/+$/, "") + "/"
     // The pinned client preserves baseUrl's proxy prefix. Strip it only for
@@ -62,22 +70,29 @@ export function createInstanceFetch(baseUrl: string, isForeground: () => boolean
     // Transcript pages: CodeNomad defers their large tool images to session-media paths.
     const requestInit = method === "GET" && /^\/api\/session\/[^/]+\/message\/?$/.test(apiPath) ? withDeferredMedia(input, init) : init
     const read = async () => {
+      signal.throwIfAborted()
       const response = await fetcher(input, {
         ...requestInit,
         credentials: init?.credentials ?? "include",
+        signal,
       })
+      signal.throwIfAborted()
       if (response.status === 426) {
         const { reportOpenCodeSetupRequired } = await import("../stores/opencode-setup")
+        signal.throwIfAborted()
         reportOpenCodeSetupRequired()
       }
       if (response.status === 502) {
         const body = await response.clone().json().catch(() => undefined)
+        signal.throwIfAborted()
         if (body?.error === SESSION_ENVIRONMENT_FAILED_ERROR_CODE) {
           const { tGlobal } = await import("./i18n")
+          signal.throwIfAborted()
           throw new Error(tGlobal("envEditor.applyFailed"))
         }
         if (body?.error === "PROVIDER_ACCOUNT_SELECTION_FAILED") {
           const { tGlobal } = await import("./i18n")
+          signal.throwIfAborted()
           throw new Error(tGlobal("settings.accounts.error"))
         }
       }
@@ -86,13 +101,13 @@ export function createInstanceFetch(baseUrl: string, isForeground: () => boolean
     // Project identity gates the visible cross-worktree session list. Promote
     // this dependency with selection rather than leaving it behind Git scans.
     if (method === "GET" && /^\/api\/location\/?$/.test(apiPath)) {
-      return prioritizedRead(isForeground, init?.signal ?? (input instanceof Request ? input.signal : new AbortController().signal), read)
+      return prioritizedRead(isForeground, signal, read)
     }
     // Catalogues from every restored project used to consume all HTTP/1.1
     // connections before the saved session/message reads could even dispatch.
     // Share the secondary budget with inventory scans, including reconnects.
     if (method === "GET" && /^\/api\/(?:project|location|agent(?:\/[^/]+)?|provider|model(?:\/default)?|command|shell|session\/active)\/?$/.test(apiPath)) {
-      return backgroundReads.run(init?.signal ?? (input instanceof Request ? input.signal : new AbortController().signal), read)
+      return backgroundReads.run(signal, read)
     }
     return read()
   }

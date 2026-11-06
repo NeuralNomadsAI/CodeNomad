@@ -1,13 +1,15 @@
 import { serverApi } from "../lib/api-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { createEventRefreshScheduler, type RefreshUrgency } from "../lib/event-refresh-scheduler"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { createMissionPanelInventory } from "./mission-panel-inventory"
 import { instances } from "./instances"
-import { projectScope } from "../lib/backend-identity"
+import { projectScope, parseInstanceKey } from "../lib/backend-identity"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { createRoot, createComputed, untrack } from "solid-js"
 
 export const missionStore = createMissionPanelInventory({
+  signal: id => captureBackendOperation(id).signal,
   scope: instanceId => { const instance = instances().get(instanceId); return instance ? projectScope(instance) : instanceId },
   projectID: instanceId => instances().get(instanceId)?.metadata?.project?.id,
   capture: instanceId => {
@@ -28,8 +30,8 @@ export const missionStore = createMissionPanelInventory({
 
 // Every native status change of a large running family is an invalidation:
 // activity revalidates at a bounded rate, journal changes promptly.
-const refreshes = createEventRefreshScheduler((instanceId) => {
-  if (missionStore.demandedInstanceIds().includes(instanceId)) return missionStore.refresh(instanceId, false)
+const refreshes = createEventRefreshScheduler((instanceId, signal) => {
+  if (missionStore.demandedInstanceIds().includes(instanceId)) return missionStore.refresh(instanceId, false, signal)
 })
 
 export function activateMissionDemand(instanceId: string): void {
@@ -66,7 +68,7 @@ export function isMissionActivityEvent(event: { type: string }): boolean {
 }
 
 function scheduleRefresh(instanceId: string, urgency: RefreshUrgency): void {
-  if (missionStore.demandedInstanceIds().includes(instanceId)) refreshes.schedule(instanceId, urgency)
+  if (missionStore.demandedInstanceIds().includes(instanceId)) refreshes.schedule(instanceId, urgency, captureBackendOperation(instanceId).signal)
 }
 
 serverEvents.on("instance.event", (event) => {
@@ -82,9 +84,9 @@ serverEvents.on("instance.eventStatus", (event) => {
   scheduleRefresh(event.instanceId, "urgent")
 })
 
-serverEvents.onOpen(() => {
-  for (const instanceId of missionStore.trackedInstanceIds()) missionStore.invalidateTasks(instanceId)
-  for (const instanceId of missionStore.demandedInstanceIds()) scheduleRefresh(instanceId, "urgent")
+serverEvents.onOpen(backendId => {
+  for (const instanceId of missionStore.trackedInstanceIds()) if (parseInstanceKey(instanceId).backendId === backendId) missionStore.invalidateTasks(instanceId)
+  for (const instanceId of missionStore.demandedInstanceIds()) if (parseInstanceKey(instanceId).backendId === backendId) scheduleRefresh(instanceId, "urgent")
 })
 
 serverEvents.on("workspace.stopped", (event) => {

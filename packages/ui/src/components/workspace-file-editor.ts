@@ -4,6 +4,7 @@ import { invalidateFilesystemCaches } from "../lib/filesystem-events"
 import { showToastNotification } from "../lib/notifications"
 import { showConfirmDialog } from "../stores/alerts"
 import type { FilePreviewTarget } from "../stores/files-preview"
+import type { captureBackendOperation } from "../lib/backend-operation"
 
 // Retain unsaved text when the reader closes or another file/session is opened.
 // Readers of the same draft share its baseline and pending-write state, so a
@@ -22,6 +23,7 @@ export const decodeWorkspaceText = (result: { encoding?: string; contents: strin
 export function useWorkspaceFileEditor(options: {
   instanceId: string; target: Accessor<FilePreviewTarget>; active: Accessor<boolean>
   t: (key: string, vars?: Record<string, any>) => string; onError: (message: string) => void
+  captureOperation?: typeof captureBackendOperation
 }) {
   const [localText, setText] = createSignal("")
   const [localOriginal, setOriginal] = createSignal<string | undefined>()
@@ -58,13 +60,15 @@ export function useWorkspaceFileEditor(options: {
   async function save(value = text()) {
     if (saving() || !options.active() || original() === undefined || !dirty()) return
     const target = options.target(), identity = key(), version = generation, baseline = original()
-    const current = () => !disposed && version === generation && target === options.target() && options.active()
+    const operation = options.captureOperation?.(options.instanceId)
+    const current = () => !disposed && version === generation && target === options.target() && options.active() && (operation?.current() ?? true)
+    if (!current()) return
     const writing = draft()!
     writing.update(previous => ({ ...previous, pending: true }))
     setSaving(true)
     try {
       // An unavailable conflict check must never silently permit an overwrite.
-      const disk = decodeWorkspaceText(await serverApi.previewWorkspaceFile(options.instanceId, target.path, target.directory))
+      const disk = decodeWorkspaceText(await serverApi.previewWorkspaceFile(options.instanceId, target.path, target.directory, operation?.signal))
       if (!current()) return
       if (disk !== baseline && disk !== value) {
         const confirmed = await showConfirmDialog(options.t("instanceShell.rightPanel.actions.conflict.message", { path: target.path }), {
@@ -73,7 +77,8 @@ export function useWorkspaceFileEditor(options: {
         })
         if (!confirmed || !current()) return
       }
-      if (disk !== value) await serverApi.writeWorkspaceFile(options.instanceId, target.path, value, { directory: target.directory })
+      if (disk !== value) await serverApi.writeWorkspaceFile(options.instanceId, target.path, value, { directory: target.directory, signal: operation?.signal })
+      if (operation && !operation.current()) return
       const latest = drafts.get(identity)
       if (latest) {
         latest.update(previous => ({ ...previous, original: value }))

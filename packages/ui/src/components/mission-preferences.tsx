@@ -13,6 +13,7 @@ import { MissionSubagentDepth } from "./mission-subagent-depth"
 import { showConfirmDialog } from "../stores/alerts"
 import { MissionModelLibrary } from "./mission-model-library"
 import { ConfigOwnerReconciliationPendingError } from "../lib/storage"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 
 /** The next document, or undefined when the stored value this edit was made from has changed. */
@@ -46,6 +47,7 @@ const [profilesOpen, setProfilesOpen] = createSignal(false)
 const [queued, setQueued] = createSignal<DefaultsEdit[]>([])
 const [failed, setFailed] = createSignal(false), [reloading, setReloading] = createSignal(false)
 let writes = Promise.resolve()
+let writeSignal: AbortSignal | undefined
 
 export function MissionPreferences(props: { instanceId: string; directory?: string; active: () => boolean }) {
   const { t } = useI18n(), config = useConfig()
@@ -59,17 +61,23 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
   const disabled = () => !props.active() || reloading() || (!writing() && (!config.isUiConfigLoaded() || !config.missionDefaultsValid()))
   /** Applies the edit to the value stored at its turn, compare-and-swapped against that value; never replayed. */
   const commit = (edit: DefaultsEdit, repair = false) => {
+    const operation = captureBackendOperation("")
+    if (!operation.current()) return
     setFailed(false); setQueued(edits => [...edits, edit])
-    writes = writes.then(async () => {
+    const previous = writeSignal === operation.signal ? writes : Promise.resolve()
+    writeSignal = operation.signal
+    writes = previous.then(async () => {
       try {
+        operation.signal.throwIfAborted()
         const next = edit(normalizeMissionDefaults(config.preferences().missionProfileDefaults))
         if (!next) throw new Error("Mission defaults changed since this edit")
         await config.saveMissionDefaults(next, config.missionPreferenceSnapshot("missionProfileDefaults"), repair)
       } catch (error) {
+        if (!operation.current()) return
         // Show what is actually stored (read-only). Later edits recheck what they were made from.
         if (!(error instanceof ConfigOwnerReconciliationPendingError)) setFailed(true)
         await config.reloadMissionPreferences().catch(() => {})
-      } finally { setQueued(edits => edits.slice(1)) }
+      } finally { setQueued(edits => edits.filter(queued => queued !== edit)) }
     })
   }
   // A recovery or reset button may disappear or turn disabled once it worked; keep focus in the form.
@@ -77,21 +85,27 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
     if (!document.activeElement || document.activeElement === document.body) target()?.focus()
   })
   const reload = async () => {
+    const operation = captureBackendOperation("")
+    if (!operation.current()) return
     if (writing() || reloading() || !props.active()) return
     setReloading(true); setFailed(false)
-    try { await config.reloadMissionPreferences() } catch {} finally { setReloading(false); refocus(() => scopeSelect) }
+    try { await config.reloadMissionPreferences() } catch {} finally { setReloading(false); if (operation.current()) refocus(() => scopeSelect) }
   }
   const confirm = (message: string, confirmLabel: string) => showConfirmDialog(message, {
     variant: "warning", confirmLabel, cancelLabel: t("missions.control.cancel"), dismissible: false,
   })
   const scopeLabel = (scope: MissionDefaultScope) => t(scope === "all" ? "missions.defaults.allPlaybooks" : `missions.control.template.${scope}`)
   const resetProfiles = async () => {
+    const operation = captureBackendOperation("")
     const scope = template()
     if (!(await confirm(t("missions.defaults.resetProfilesConfirm", { scope: scopeLabel(scope) }), t("missions.preferences.reset")))) return
+    if (!operation.current()) return
     commit(withProfiles(scope)); refocus(() => profilesFold?.querySelector("select"))
   }
   const repair = async () => {
+    const operation = captureBackendOperation("")
     if (!(await confirm(t("missions.defaults.repairConfirm"), t("missions.defaults.reset")))) return
+    if (!operation.current()) return
     commit(() => [], true); refocus(() => scopeSelect)
   }
   return <div class="mission-preferences">

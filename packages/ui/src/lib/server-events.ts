@@ -11,6 +11,8 @@ import { getLogger } from "./logger"
 import { retryWithBackoff, isRetryableError } from "./retry-utils"
 import { createStreamStalenessWatchdog } from "./stream-staleness"
 import { authRecovery, type AuthRecovery } from "./auth-recovery"
+import { backendEvents } from "./backend-events"
+export { backendEvents } from "./backend-events"
 
 const RETRY_BASE_DELAY = 1000
 const RETRY_MAX_DELAY = 10000
@@ -34,6 +36,10 @@ export class ServerEvents {
   private readonly api: ServerEventsOptions["api"]
   private readonly auth: ServerEventsOptions["auth"]
   private started = false
+  private disposed = false
+  private cleanup: (() => void)[] = []
+  private disposeHandlers = new Set<() => void>()
+  private lifetime = new AbortController()
   private handlers = new Map<WorkspaceEventType | "*", Set<(event: WorkspaceEventPayload) => void>>()
   private openHandlers = new Set<() => void>()
   private statusHandlers = new Set<(status: WorkspaceEventTransportStatus) => void>()
@@ -51,36 +57,46 @@ export class ServerEvents {
   }
 
   start(): void {
-    if (this.started) return
+    if (this.started || this.disposed) return
     this.started = true
-    this.auth.onRestored(() => this.restart("authentication restored"))
+    this.cleanup.push(this.auth.onRestored(() => this.restart("authentication restored")))
     if (typeof window !== "undefined") {
+      const rendererWindow = window
       // Minimal renderer globals (tests, embedded previews) may define window
       // without event APIs; the probes are enhancements, never requirements.
-      window.addEventListener?.("online", () => this.probeStale("network online"))
+      const online = () => this.probeStale("network online")
+      window.addEventListener?.("online", online)
+      this.cleanup.push(() => rendererWindow.removeEventListener?.("online", online))
       if (typeof document !== "undefined") {
-        document.addEventListener?.("visibilitychange", () => {
+        const rendererDocument = document
+        const visible = () => {
           if (document.visibilityState === "visible") {
             this.probeStale("visibility restored")
           }
-        })
+        }
+        document.addEventListener?.("visibilitychange", visible)
+        this.cleanup.push(() => rendererDocument.removeEventListener?.("visibilitychange", visible))
       }
       void this.connect()
     }
   }
 
   private async connect() {
+    if (this.disposed) return
     const generation = ++this.connectGeneration
     this.clearReconnectTimer()
 
     if (this.connection) {
-      this.emitTransportStatus("disconnected")
-      this.connection.disconnect()
+      const connection = this.connection
       this.connection = null
+      connection.disconnect()
+      this.emitTransportStatus("disconnected")
+      if (this.disposed || generation !== this.connectGeneration) return
       this.watchdog.setConnected(false)
     }
 
     logSse("Connecting to backend events stream")
+    let opening: (() => void)[] = []
 
     try {
       const connection = await connectWorkspaceEvents({
@@ -99,6 +115,7 @@ export class ServerEvents {
           if (generation !== this.connectGeneration) {
             return
           }
+          if (status === "connected") opening = [...this.openHandlers]
           this.emitTransportStatus(status)
         },
         onOpen: () => {
@@ -108,7 +125,7 @@ export class ServerEvents {
           this.watchdog.activity()
           logSse("Events stream connected")
           this.retryDelay = RETRY_BASE_DELAY
-          this.notify(this.openHandlers, undefined, "open")
+          this.notify(this.openHandlers, undefined, "open", generation, opening)
         },
         onPing: (payload) => {
           if (generation !== this.connectGeneration) {
@@ -125,10 +142,11 @@ export class ServerEvents {
               initialDelayMs: 100,
               maxDelayMs: 2000,
               timeoutMs: 10000,
+              signal: this.lifetime.signal,
               shouldRetry: (error) => isRetryableError(error),
             },
           ).catch((error) => {
-            log.warn("Failed to send client connection pong after retries", error)
+            if (!this.lifetime.signal.aborted) log.warn("Failed to send client connection pong after retries", error)
           })
         },
       }, this.api)
@@ -154,25 +172,32 @@ export class ServerEvents {
   }
 
   private scheduleReconnect() {
+    if (this.disposed) return
+    const previousGeneration = this.connectGeneration
     // EventSource hides HTTP status. Probe our own auth endpoint so a server
     // restart is recoverable even when the user has not made another API call.
-    void this.auth.check()
+    void this.auth.check(this.lifetime.signal)
+    if (this.disposed || previousGeneration !== this.connectGeneration) return
     if (this.retryTimer) {
       return
     }
 
-    this.connectGeneration += 1
+    const generation = ++this.connectGeneration
 
     if (this.connection) {
-      this.connection.disconnect()
+      const connection = this.connection
       this.connection = null
+      connection.disconnect()
     }
+    if (this.disposed || generation !== this.connectGeneration) return
 
     this.watchdog.setConnected(false)
     this.emitTransportStatus("disconnected")
+    if (this.disposed || generation !== this.connectGeneration) return
 
     logSse("Events stream disconnected, scheduling reconnect", { delayMs: this.retryDelay })
     this.retryTimer = setTimeout(() => {
+      if (this.disposed || generation !== this.connectGeneration) return
       this.retryTimer = null
       this.retryDelay = Math.min(this.retryDelay * 2, RETRY_MAX_DELAY)
       void this.connect()
@@ -189,12 +214,16 @@ export class ServerEvents {
   }
 
   private dispatch(event: WorkspaceEventPayload) {
-    this.notify(this.handlers.get("*"), event, event.type)
-    this.notify(this.handlers.get(event.type), event, event.type)
+    const generation = this.connectGeneration
+    this.notify(this.handlers.get("*"), event, event.type, generation)
+    this.notify(this.handlers.get(event.type), event, event.type, generation)
   }
 
-  private notify<T>(handlers: Set<(value: T) => void> | undefined, value: T, kind: string): void {
-    handlers?.forEach((handler) => {
+  private notify<T>(handlers: Set<(value: T) => void> | undefined, value: T, kind: string, generation = this.connectGeneration,
+    recipients = [...handlers ?? []]): void {
+    for (const handler of recipients) {
+      if (generation !== this.connectGeneration || this.disposed && kind !== "dispose") break
+      if (!handlers?.has(handler)) continue
       try {
         handler(value)
       } catch (error) {
@@ -202,7 +231,7 @@ export class ServerEvents {
         // interrupt the connection lifecycle. Do not replay failed handlers.
         log.error("Backend event subscriber failed", { kind, error })
       }
-    })
+    }
   }
 
   private dispatchBatch(events: WorkspaceEventPayload[]) {
@@ -211,8 +240,10 @@ export class ServerEvents {
     }
 
     logSse("event batch", { size: events.length })
+    const generation = this.connectGeneration
     solidBatch(() => {
       for (const event of events) {
+        if (this.disposed || generation !== this.connectGeneration) break
         this.dispatch(event)
       }
     })
@@ -254,20 +285,49 @@ export class ServerEvents {
   }
 
   restart(reason = "manual restart"): void {
+    if (this.disposed) return
+    const generation = ++this.connectGeneration
     this.retryDelay = RETRY_BASE_DELAY
     this.clearReconnectTimer()
     this.watchdog.setConnected(false)
 
     if (this.connection) {
-      this.emitTransportStatus("disconnected")
-      this.connection.disconnect()
+      const connection = this.connection
       this.connection = null
+      connection.disconnect()
+      this.emitTransportStatus("disconnected")
     }
+    if (this.disposed || generation !== this.connectGeneration) return
 
     logSse("Restarting backend events stream", { reason })
     void this.connect()
   }
+
+  dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
+    this.connectGeneration++
+    this.clearReconnectTimer()
+    this.connection?.disconnect()
+    this.connection = null
+    this.watchdog.dispose()
+    this.lifetime.abort()
+    this.cleanup.forEach(cleanup => cleanup())
+    this.cleanup = []
+    this.notify(this.disposeHandlers, undefined, "dispose")
+    this.disposeHandlers.clear()
+    this.handlers.clear()
+    this.openHandlers.clear()
+    this.statusHandlers.clear()
+  }
+
+  onDispose(handler: () => void): () => void {
+    if (this.disposed) { handler(); return () => {} }
+    this.disposeHandlers.add(handler)
+    return () => { this.disposeHandlers.delete(handler) }
+  }
 }
 
 export const serverEvents = new ServerEvents({ api: serverApi, auth: authRecovery })
+backendEvents.attach("local", serverEvents)
 serverEvents.start()
