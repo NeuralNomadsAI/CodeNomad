@@ -45,8 +45,7 @@
   merges are manual. Composite actions that follow their upstream
   `stable`/latest major stay on those supported references.
 - Electron's integrated Node is the Electron backend runtime, so the exact
-  `electron` pin (`packages/electron-app/package.json`) selects it: Electron 45
-  runs Node 24. Dependabot proposes Electron toolchain updates (`electron`,
+  `electron` pin (`packages/electron-app/package.json`) selects it. Dependabot proposes Electron toolchain updates (`electron`,
   `electron-builder`, `electron-vite`, no other npm dependency) weekly against
   `dev`: minor and patch updates in one grouped PR, each major in its own PR.
   Keep the pin within Electron's supported majors (the latest three). Before
@@ -55,10 +54,10 @@
   platform minimums against the declared ones (`BUILD.md`, `docs/help`), and the
   update passes the existing CI: the real-Electron tests, the Electron-mode
   first-installation fixture and the npm `engines` smoke check of every build.
-- The `electron` package downloads its binary on first use rather than at
-  install. CI jobs that run Electron fetch it right after `npm ci` with
-  `npx --no install-electron`, before parallel tests or command substitutions
-  read its path.
+- The `electron` package downloads its binary on first use. CI jobs that run or
+  package Electron fetch it right after `npm ci` with `npx --no install-electron`,
+  before parallel tests or command substitutions read its path; the Electron
+  app's `dev` and `preview` scripts and `scripts/dev.sh` run it first.
 - **Bundled Runtime Maintenance** runs daily (07:23 UTC, subject to GitHub's
   scheduling delays) and on manual dispatch, on the default branch only.
   It selects newer LTS releases within the pinned Node major only. It never

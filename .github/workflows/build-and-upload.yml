@@ -99,6 +99,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
 
+      - name: Install the Electron binary
+        run: npx --no install-electron
+
       - name: Build macOS binaries (Electron)
         run: npm run build:mac --workspace @neuralnomads/codenomad-electron-app
 
@@ -267,6 +270,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
 
+      - name: Install the Electron binary
+        run: npx --no install-electron
+
       - name: Build Windows binaries (Electron)
         run: npm run build:win --workspace @neuralnomads/codenomad-electron-app
 
@@ -358,6 +364,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
+
+      - name: Install the Electron binary
+        run: npx --no install-electron
 
       - name: Build Linux binaries (Electron)
         run: npm run build:linux --workspace @neuralnomads/codenomad-electron-app
