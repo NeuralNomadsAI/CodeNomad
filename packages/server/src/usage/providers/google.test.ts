@@ -65,7 +65,7 @@ test("discovers an existing project only when packed context is absent; never on
     return String(input).endsWith(":loadCodeAssist") ? Response.json({ cloudaicompanionProject: "fake-discovered" })
       : Response.json({ buckets: [{ modelId: "gemini-2.5-pro", remainingFraction: 0 }] })
   })
-  const reading = await googleUsage.fetchQuota(auth({ refresh: "fake-refresh" }), signal)
+  const reading = await googleUsage.fetchQuota(auth({ refresh: "fake-refresh" }), { signal })
   assert.equal(reading.ok, true)
   assert.equal(selectGoogleModelWindows(reading)["usage:gemini-2.5-pro"].usedPercent, 100)
   assert.deepEqual(requests.map(request => request.url), ["https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", quota])
@@ -96,7 +96,7 @@ test("missing project, malformed quota, HTTP errors, redirects, timeout and over
   respond = () => Response.json({ currentTier: { id: "free-tier" } })
   assert.equal((await googleUsage.fetchQuota(auth({ refresh: "fake-project-missing" }))).ok, false)
   const before = calls
-  assert.equal((await googleUsage.fetchQuota(auth(), AbortSignal.abort())).ok, false)
+  assert.equal((await googleUsage.fetchQuota(auth(), { signal: AbortSignal.abort() })).ok, false)
   for (const methodID of ["oauth", "unknown"]) {
     const reading = await googleUsage.fetchQuota(auth({ methodID }))
     assert.equal(reading.configured, true)

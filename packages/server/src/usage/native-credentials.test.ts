@@ -29,6 +29,16 @@ test("Google's server-only projection keeps its client method and complete selec
   assert.deepEqual(projectCredential(entry), { ...value, credentialID: entry.id })
 })
 
+test("projects only Copilot's raw enterprise destination metadata, retaining invalid values for rejection", () => {
+  for (const enterpriseUrl of ["company.ghe.com", "https://github.example.com/", "https://user@company.ghe.com", "", null, 443]) {
+    const entry: CredentialEntry = { id: "copilot", integrationID: "github-copilot", active: true, label: "Enterprise",
+      value: { type: "oauth", methodID: "device", access: "synthetic", refresh: "synthetic", expires: 0,
+        metadata: { enterpriseUrl, apiEndpoint: "https://unrelated.example.com", unrelated: "omit" } } }
+    assert.deepEqual(projectCredential(entry), { type: "oauth", methodID: "device", access: "synthetic", refresh: "synthetic", expires: 0, enterpriseUrl })
+    assert.equal(projectCredential({ ...entry, integrationID: "anthropic" })?.enterpriseUrl, undefined)
+  }
+})
+
 async function daemon(status: number) {
   const server = createServer((_req, res) => {
     res.statusCode = status

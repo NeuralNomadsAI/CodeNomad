@@ -1,14 +1,30 @@
 import { ProviderHttpError } from "./shared"
+import { isIP } from "node:net"
 
 const MAX_RESPONSE_BYTES = 65_536
 
+/** Credential destinations: HTTPS FQDN, no userinfo, explicit port, query or fragment. */
+export function parseQuotaBaseURL(value: unknown): URL | null {
+  if (typeof value !== "string" || value.length > 2048 || /[\s\u0000-\u001f\u007f\\]/.test(value)) return null
+  const match = /^https:\/\/([a-z0-9.-]+)(\/[^?#]*)?$/i.exec(value)
+  if (!match) return null
+  try {
+    const url = new URL(value)
+    const host = url.hostname
+    if (isIP(host) || host.length > 253 || !host.includes(".") || host.endsWith(".localhost")) return null
+    if (!host.split(".").every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label))) return null
+    return url
+  } catch { return null }
+}
+
 // Credential-bearing quota reads. Errors are generic on purpose: callers must
 // never log or return upstream bodies, headers or transport details.
-export async function fetchBoundedJson(url: string, headers: Record<string, string>, signal: AbortSignal,
-  maxBytes = MAX_RESPONSE_BYTES, init: RequestInit = {}): Promise<unknown> {
+export async function fetchBoundedJson(url: string, headers: Record<string, string>, signal = AbortSignal.timeout(15_000),
+  maxBytes = MAX_RESPONSE_BYTES, request: Pick<RequestInit, "method" | "body"> & { errorCodes?: readonly string[] } = {}): Promise<unknown> {
   signal.throwIfAborted()
-  const response = await fetch(url, { ...init, headers, signal, redirect: "error" })
-  if (!response.ok || !response.body) {
+  const { errorCodes, ...init } = request
+  const response = await fetch(url, { ...init, signal, redirect: "error", headers })
+  if ((!response.ok && !errorCodes) || !response.body) {
     await response.body?.cancel().catch(() => {})
     throw new ProviderHttpError(response.status)
   }
@@ -27,17 +43,19 @@ export async function fetchBoundedJson(url: string, headers: Record<string, stri
       chunks.push(chunk.value)
     }
     signal.throwIfAborted()
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"))
+    const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"))
+    if (!response.ok) {
+      const code = payload?.code ?? payload?.error?.code
+      throw new ProviderHttpError(response.status, errorCodes?.includes(code) ? code : undefined)
+    }
+    return payload
+  } catch (error) {
+    // Malformed/oversized error bodies still retain their HTTP status, never their contents.
+    if (!response.ok && !(error instanceof ProviderHttpError)) throw new ProviderHttpError(response.status)
+    throw error
   } finally {
     signal.removeEventListener("abort", abort)
     await reader.cancel().catch(() => {})
     reader.releaseLock()
   }
-}
-
-export function postBoundedJson(url: string, headers: Record<string, string>, body: URLSearchParams | Record<string, unknown>,
-  signal: AbortSignal): Promise<unknown> {
-  const form = body instanceof URLSearchParams
-  return fetchBoundedJson(url, { ...headers, "Content-Type": form ? "application/x-www-form-urlencoded" : "application/json" },
-    signal, MAX_RESPONSE_BYTES, { method: "POST", body: form ? body : JSON.stringify(body) })
 }

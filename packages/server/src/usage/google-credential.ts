@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { postBoundedJson } from "./bounded-fetch"
+import { fetchBoundedJson } from "./bounded-fetch"
 import { asObject, getString } from "./shared"
 import type { AuthFile } from "./types"
 
@@ -78,10 +78,11 @@ export function createGoogleTokenReader() {
     if (!credential.refresh || pending.size >= MAX_IDENTITIES) throw new Error("Google usage unavailable")
     const request = (async () => {
       const started = Date.now()
-      const payload = asObject(await postBoundedJson("https://oauth2.googleapis.com/token", {}, new URLSearchParams({
-        grant_type: "refresh_token", refresh_token: credential.refresh!,
-        ...googleOAuthClients.get(credential.methodID),
-      }), signal))
+      const payload = asObject(await fetchBoundedJson("https://oauth2.googleapis.com/token",
+        { "Content-Type": "application/x-www-form-urlencoded" }, signal, undefined, { method: "POST", body: new URLSearchParams({
+          grant_type: "refresh_token", refresh_token: credential.refresh!,
+          ...googleOAuthClients.get(credential.methodID),
+        }) }))
       const access = getString(payload?.access_token)
       const seconds = payload?.expires_in
       const expires = typeof seconds === "number" ? started + seconds * 1000 : NaN

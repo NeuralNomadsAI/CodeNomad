@@ -30,6 +30,10 @@ La interfaz se actualiza sin reiniciar una conversación. El hebreo usa disposic
 
 Si los colores se vuelven difíciles de leer, selecciona una paleta integrada o restablece la editada. Cambiar de paleta puede pedir que descartes ediciones de color sin guardar; no descarta un borrador de conversación.
 
+## Mantener el ordenador activo {#keep-computer-awake}
+
+En **Configuración → General**, **Mantener el ordenador activo mientras CodeNomad esté en ejecución** está desactivado por defecto. Actívalo para impedir la suspensión del sistema mientras haya una ventana local de CodeNomad abierta (aunque esté minimizada), incluso si ninguna sesión está trabajando; la pantalla puede seguir apagándose. Si se desactiva, CodeNomad mantiene el ordenador activo solo mientras una sesión está trabajando. La **i** junto al título explica este comportamiento. La opción aparece solo en las ventanas locales de la aplicación de escritorio y en Preferencias; está oculta en las vistas de navegador y remotas.
+
 ## Paneles y secciones de Estado {#panels-status}
 
 Arrastra el borde interior de un panel acoplado para cambiar su tamaño. El tirador permanece resaltado y mantiene la captura del puntero durante todo el arrastre, incluso si el puntero sobrepasa el borde. Suelta para terminar.

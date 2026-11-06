@@ -40,7 +40,7 @@ Paths are under `packages/ui/src/` or `packages/server/src/` unless stated.
 - **OpenCode integrations** (`opencode/integrations/`, `integration-types.ts`; fixtures `scripts/fixtures/fake-integration/`, `scripts/fixtures/fake-npm-registry.mjs`): `dev-docs/OPENCODE_INTEGRATIONS.md`.
 - **Remote Control and Remote Access settings**: `dev-docs/REMOTE_CONTROL.md`; **SideCars**: `dev-docs/architecture.md`.
 - **Browser previews and automation**: `dev-docs/BROWSER_AUTOMATION.md`, `dev-docs/BROWSER_DEVICE_EMULATION.md`.
-- **Desktop hosts**: data profiles `dev-docs/DESKTOP_DATA_PROFILES.md`; updates and update feed `dev-docs/TAURI_UPDATER.md`; Tao/Tauri backports `packages/tauri-app/vendor/README.md`; bundled Node/npm `dev-docs/RUNTIME_MAINTENANCE.md`.
+- **Desktop hosts**: data profiles `dev-docs/DESKTOP_DATA_PROFILES.md`; updates and update feed `dev-docs/TAURI_UPDATER.md`; Tao/Tauri backports `packages/tauri-app/vendor/README.md`; desktop runtimes (Tauri's bundled Node, Electron's integrated Node, both hosts' bundled npm) `dev-docs/RUNTIME_MAINTENANCE.md`.
 - **Public help** (`docs/help/`, help entry points): `dev-docs/USER_HELP.md`.
 
 ## Multi-Language Support (i18n)

@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process"
 import { getProcessStartIdentityAsync, type AsyncProcessStartIdentityLookup } from "./client-state-process-identity"
+import { windowsProcessTreeScript, windowsTerminateProcessTreeScript } from "./windows-process-tree"
+import { windowsCimProcessTreeScript, windowsManagedTerminateScript } from "./windows-process-fallback"
 
 export const CLI_SHUTDOWN_COMMAND = "codenomad:shutdown\n"
 export const CLI_STOP_DEADLINE_MS = 30_000
@@ -45,10 +47,11 @@ interface AsyncCommandResult {
   error?: Error
 }
 
-type AsyncCommandRunner = (
+export type AsyncCommandRunner = (
   command: string,
   args: readonly string[],
-  options: { encoding: "utf8"; timeout: number; windowsHide?: boolean; env?: NodeJS.ProcessEnv },
+  options: { encoding: "utf8"; timeout: number; windowsHide?: boolean; env?: NodeJS.ProcessEnv;
+    windowsFallbackScript?: string; windowsNativeReadyOnly?: boolean },
 ) => Promise<AsyncCommandResult> | AsyncCommandResult
 
 interface ForceCapturedProcessTreeOptions {
@@ -78,7 +81,7 @@ export function mergeCapturedProcessTrees(
   return { platform: captured.platform, members: [...members.values()] }
 }
 
-function runCommand(
+export function runCommand(
   command: string,
   args: readonly string[],
   options: { encoding: "utf8"; timeout: number; windowsHide?: boolean; env?: NodeJS.ProcessEnv },
@@ -91,15 +94,19 @@ function runCommand(
 }
 
 async function captureProcessRows(
+  rootPid: number,
   platform: NodeJS.Platform,
   runList: AsyncCommandRunner,
   timeoutMs: number,
+  allowWindowsFallback: boolean,
 ): Promise<ProcessRow[] | undefined> {
   if (timeoutMs <= 0) return undefined
   const result = platform === "win32"
     ? await runList("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
-        "Get-CimInstance Win32_Process | ForEach-Object { '{0}|{1}|win32:{2}' -f $_.ProcessId, $_.ParentProcessId, ([datetime]$_.CreationDate).ToUniversalTime().Ticks }"],
-        { encoding: "utf8", timeout: timeoutMs, windowsHide: true })
+        windowsProcessTreeScript(rootPid)],
+        { encoding: "utf8", timeout: timeoutMs, windowsHide: true,
+          windowsNativeReadyOnly: !allowWindowsFallback,
+          windowsFallbackScript: allowWindowsFallback ? windowsCimProcessTreeScript(rootPid) : undefined })
     : platform === "linux"
       // Keep the bounded /proc scan in one shell: per-PID cat/cut/sed forks
       // can exhaust the capture deadline on a busy host.
@@ -159,8 +166,10 @@ export async function captureProcessTree(
   platform: NodeJS.Platform = process.platform,
   runList: AsyncCommandRunner = runCommand,
   timeoutMs = 1_500,
+  allowWindowsFallback = true,
 ): Promise<CapturedProcessTree | undefined> {
-  const rows = await captureProcessRows(platform, runList, timeoutMs)
+  if (!Number.isInteger(rootPid) || rootPid <= 0) return undefined
+  const rows = await captureProcessRows(rootPid, platform, runList, timeoutMs, allowWindowsFallback)
   return rows ? processTreeFromRows(rootPid, platform, rows) : undefined
 }
 
@@ -172,7 +181,7 @@ export async function captureInitialProcessTree(
   deadlineAt = Date.now() + 3_000,
 ): Promise<{ tree?: CapturedProcessTree; rootStartIdentity?: string }> {
   const fallbackIdentity = Promise.resolve(lookup(rootPid, Math.min(1_500, deadlineAt - Date.now())))
-  const captured = await captureProcessTree(rootPid, platform, runList, Math.min(1_500, deadlineAt - Date.now()))
+  const captured = await captureProcessTree(rootPid, platform, runList, Math.min(1_500, deadlineAt - Date.now()), false)
   const rootStartIdentity = await fallbackIdentity
   const tree = rootStartIdentity
     ? mergeCapturedProcessTrees(undefined, captured, rootPid, rootStartIdentity)
@@ -200,56 +209,20 @@ export async function forceCapturedProcessTree(
       return (error as NodeJS.ErrnoException).code === "ESRCH"
     }
   }
+  if (tree.platform === "win32") {
+    const script = windowsTerminateProcessTreeScript(tree.members)
+    const timeout = Math.min(5_000, remainingMs())
+    if (!script || timeout <= 0) return false
+    const result = await runTerminate("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+      encoding: "utf8", timeout, windowsHide: true, windowsNativeReadyOnly: true,
+      windowsFallbackScript: windowsManagedTerminateScript(tree.members),
+    })
+    // Both batches retain the handles they check, stop and confirm. The cmdlet
+    // fallback also refreshes membership inside this same remaining budget.
+    return remainingMs() > 0 && result.status === 0 && !result.error && result.stdout.trim() === "confirmed"
+  }
   for (const member of [...tree.members].reverse()) {
     if (remainingMs() <= 0) return false
-    if (tree.platform === "win32") {
-      const expectedTicks = member.startIdentity.match(/^win32:(\d+)$/)?.[1]
-      if (!expectedTicks) {
-        confirmed = false
-        continue
-      }
-      const timeout = Math.min(1_500, remainingMs())
-      if (timeout <= 0) return false
-      const script = `$source = @'
-using System;
-using System.Runtime.InteropServices;
-public static class CodeNomadProcessHandle {
-  [StructLayout(LayoutKind.Sequential)] public struct FileTime { public uint Low; public uint High; }
-  [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
-  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetProcessTimes(IntPtr process, out FileTime creation, out FileTime exit, out FileTime kernel, out FileTime user);
-  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool TerminateProcess(IntPtr process, uint exitCode);
-  [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr handle);
-}
-'@
-Add-Type -TypeDefinition $source
-$handle = [CodeNomadProcessHandle]::OpenProcess(0x1001, $false, ${member.pid})
-if ($handle -eq [IntPtr]::Zero) { exit 3 }
-try {
-  $creation = [CodeNomadProcessHandle+FileTime]::new()
-  $exit = [CodeNomadProcessHandle+FileTime]::new()
-  $kernel = [CodeNomadProcessHandle+FileTime]::new()
-  $user = [CodeNomadProcessHandle+FileTime]::new()
-  if (-not [CodeNomadProcessHandle]::GetProcessTimes($handle, [ref]$creation, [ref]$exit, [ref]$kernel, [ref]$user)) { exit 4 }
-  $fileTime = ([long]$creation.High -shl 32) -bor $creation.Low
-  $nativeTicks = [DateTime]::FromFileTimeUtc($fileTime).Ticks
-  $expectedTicks = [long]::Parse('${expectedTicks}')
-  $nativeTicks -= $nativeTicks % 10
-  if ($nativeTicks -ne $expectedTicks) { 'mismatch'; exit 0 }
-  if (-not [CodeNomadProcessHandle]::TerminateProcess($handle, 1)) { exit 5 }
-  'terminated'
-} finally {
-  [void][CodeNomadProcessHandle]::CloseHandle($handle)
-}`
-      const result = await runTerminate("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-        encoding: "utf8",
-        timeout,
-        windowsHide: true,
-      })
-      const outcome = result.status === 0 ? result.stdout.trim() : ""
-      if (outcome === "mismatch") continue
-      if (outcome !== "terminated" && !isGone(member.pid)) confirmed = false
-      continue
-    }
     const identity = await currentIdentity(member.pid, Math.min(1_500, remainingMs()))
     if (!identity) {
       if (!isGone(member.pid)) confirmed = false

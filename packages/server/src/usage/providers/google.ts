@@ -1,5 +1,5 @@
 import type { ProviderUsageWindow } from "../../api-types"
-import { postBoundedJson } from "../bounded-fetch"
+import { fetchBoundedJson } from "../bounded-fetch"
 import { createGoogleTokenReader, googleCredential, googleQuotaIdentityGuard } from "../google-credential"
 import { asObject, getString, notConfigured, result, toTimestamp, toUsageWindow } from "../shared"
 import type { AuthFile, ProviderResult, ProviderUsage, UsageProvider } from "../types"
@@ -34,13 +34,13 @@ export function selectGoogleModelWindows(reading: ProviderResult, modelId?: stri
 
 export const googleUsage: UsageProvider = {
   id: "google", name: "Gemini CLI", aliases: ["google"],
-  async fetchQuota(auth, signal) {
+  async fetchQuota(auth, context) {
     const entry = asObject(auth.google)
     if (!entry) return notConfigured("google", "Gemini CLI")
     const name = entry.methodID === "antigravity" ? "Antigravity" : "Gemini CLI"
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), QUOTA_TIMEOUT_MS)
-    signal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+    const signal = context?.signal ? AbortSignal.any([context.signal, controller.signal]) : controller.signal
     try {
       const credential = googleCredential(auth)
       if (!credential) throw new Error("Google usage unavailable")
@@ -51,16 +51,18 @@ export const googleUsage: UsageProvider = {
         return result("google", name, { configured: true, ok: true,
           usage: await antigravityQuota(access, credential.project!, signal, safeIdentity) })
       }
-      const headers = { Authorization: `Bearer ${access}` }
+      const headers = { Authorization: `Bearer ${access}`, "Content-Type": "application/json" }
       let project = credential.project
       if (!project) {
         // Read existing setup only; quota display never onboards an account.
-        const setup = asObject(await postBoundedJson("https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", headers,
-          { metadata: { ideType: "IDE_UNSPECIFIED", platform: "PLATFORM_UNSPECIFIED", pluginType: "GEMINI" } }, signal))
+        const setup = asObject(await fetchBoundedJson("https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", headers,
+          signal, undefined, { method: "POST", body: JSON.stringify({ metadata: {
+            ideType: "IDE_UNSPECIFIED", platform: "PLATFORM_UNSPECIFIED", pluginType: "GEMINI" } }) }))
         project = getString(setup?.cloudaicompanionProject)
       }
       if (!project) throw new Error("Google usage unavailable")
-      const payload = asObject(await postBoundedJson("https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota", headers, { project }, signal))
+      const payload = asObject(await fetchBoundedJson("https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota", headers,
+        signal, undefined, { method: "POST", body: JSON.stringify({ project }) }))
       if (!Array.isArray(payload?.buckets)) throw new Error("Google usage unavailable")
       const models: NonNullable<ProviderUsage["models"]> = {}
       for (const raw of payload.buckets) {

@@ -1,9 +1,46 @@
 # Bundled runtime maintenance
 
-- `.node-version` is an exact pin shared by CI and both desktop packages.
-  `scripts/prepare-node-runtime.cjs` copies npm, including its dependencies,
-  from that official Node archive. A new application release is required to
-  deliver any runtime change to installed applications.
+- `.node-version` exactly pins CI and Tauri's bundled Node. Electron runs the
+  backend with its own Node (`process.execPath`, `ELECTRON_RUN_AS_NODE=1`), so
+  its Node version follows Electron. The backend also gets `ELECTRON_NO_ASAR=1`
+  (`electron/main/backend-runtime.ts`): otherwise Electron's fs treats project
+  `*.asar` files as archives (listed as folders, unreadable, locked on Windows).
+  The backend and its server runtime child load nothing from `app.asar`; the
+  server lives in `resources/server`. The shared OpenCode daemon never inherits
+  either variable (`DAEMON_EXCLUDED_ENVIRONMENT`), and launchers of Electron GUI
+  test apps remove both. `scripts/prepare-node-runtime.cjs` copies
+  npm and its dependencies from the pinned official Node archive for both hosts;
+  Electron requests npm-only resources. Qualify the server and that npm version
+  against Electron's Node when updating either runtime. A new application release
+  delivers runtime changes to installed applications.
+- npm lifecycle scripts call `node` by name. Tauri's bundled `node` answers to it
+  from PATH, even though Tauri also sets `ELECTRON_RUN_AS_NODE=1`. A runtime
+  executable not named `node` (Electron's) receives a temporary `node` command
+  pointing to it instead. Installation and native upgrade scope it to their
+  child environment and clean it after completion; interrupted installers retain
+  their adapter and prefix lock for safe manual recovery. The command lives in an
+  installer directory inside the npm prefix (`.codenomad-npm-*` for direct npm,
+  `.codenomad-upgrade-*` beside the native upgrade's npm shim), never the system
+  temporary directory, which may be mounted noexec.
+- On Windows the Electron backend (a GUI-subsystem executable started with
+  piped stdio) has no console, so each console program it starts without
+  `windowsHide` opens its own visible console window. Every server child process
+  that may start a console program sets `windowsHide: true`; a call that must not
+  (a browser launch, the standalone CLI's terminal, POSIX-only commands) carries a
+  `console-window: <reason>` comment, and `child-process-windows-hide.test.ts`
+  enforces both. npm offers no such option for its lifecycle shell, so Electron's
+  npm on Windows, and every lifecycle `node` command it runs, loads
+  `hide-child-windows.cjs` from the installer directory with `--require`. That
+  preload makes every asynchronous spawn hide its window: the lifecycle shell then
+  gets a console without a window, which its own console children share.
+  Synchronous spawns inside npm or lifecycle scripts are outside the preload and
+  keep their own options.
+- The packaged-resources smoke (`scripts/smoke-packaged-resources.cjs`, run by
+  every Electron build and the release Linux package checks) fails unless the
+  bundled npm's `engines.node` accepts the Node version the server runtime
+  reports; npm itself only warns. `npm-lifecycle.test.ts` and the Electron step
+  of the PR OpenCode compatibility matrix run real npm lifecycle scripts through
+  the development Electron executable on Windows, Linux and macOS.
 - Dependabot checks GitHub Actions weekly and proposes updates against `dev`;
   merges are manual. Composite actions that follow their upstream
   `stable`/latest major stay on those supported references.

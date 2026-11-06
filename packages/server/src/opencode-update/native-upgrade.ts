@@ -1,11 +1,11 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
-import os from "node:os"
+import { rm, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { executeInstaller } from "./npm-runtime"
-import { InstallationInterruptedError } from "./installation-lock"
+import { executeInstaller, npmNeedsNodeCommand, writeNpmNodeCommand } from "./npm-runtime"
+import { createInstallerDirectory, InstallationInterruptedError } from "./installation-lock"
 
-/** Let OpenCode retain its running Windows image while using our bundled npm
- * and the already verified shared prefix, not an unrelated system installation. */
+/** Let OpenCode retain its running Windows image while using our npm (in Electron resources,
+ * or beside the Node runtime) and the already verified shared prefix, not an unrelated system
+ * installation. */
 export async function upgradeSharedOpenCode(options: {
   binary: string
   version: string
@@ -16,15 +16,18 @@ export async function upgradeSharedOpenCode(options: {
   platform: NodeJS.Platform
   execute?: typeof executeInstaller
 }): Promise<void> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-upgrade-"))
+  const directory = await createInstallerDirectory(options.prefix, "upgrade")
   let retain = false
   try {
     const windows = options.platform === "win32"
+    const env = { ...options.env }
+    const runtimeArgs = npmNeedsNodeCommand(options.node, options.platform)
+      ? await writeNpmNodeCommand(directory, options.node, env, options.platform) : []
+    // Electron's npm on Windows loads the preload that hides its children's consoles.
     const shim = windows
-      ? '@echo off\r\n"%CODENOMAD_UPGRADE_NODE%" "%CODENOMAD_UPGRADE_NPM%" %*\r\n'
+      ? `@echo off\r\n"%CODENOMAD_UPGRADE_NODE%" ${runtimeArgs.length ? '--require "%CODENOMAD_NPM_PRELOAD%" ' : ""}"%CODENOMAD_UPGRADE_NPM%" %*\r\n`
       : '#!/bin/sh\nexec "$CODENOMAD_UPGRADE_NODE" "$CODENOMAD_UPGRADE_NPM" "$@"\n'
     await writeFile(path.join(directory, windows ? "npm.cmd" : "npm"), shim, { mode: 0o700 })
-    const env = { ...options.env }
     // npm config keys are case-insensitive, even on POSIX. Do not allow an
     // inherited prefix or registry to redirect this verified installation.
     for (const key of Object.keys(env)) {

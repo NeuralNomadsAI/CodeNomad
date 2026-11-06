@@ -4,6 +4,7 @@ import { spawn } from "child_process"
 import { existsSync, readFileSync } from "fs"
 import path, { join } from "path"
 import { fileURLToPath } from "url"
+import electron from "electron"
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url))
 const appDir = join(__dirname, "..")
@@ -161,6 +162,8 @@ async function build(platform) {
         join(appDir, "dist", "renderer"),
         "--target",
         job.nodeTarget,
+        "--electron",
+        electron,
       ], {
         cwd: workspaceRoot,
         shell: false,

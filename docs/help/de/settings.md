@@ -30,6 +30,10 @@ Die Oberfläche aktualisiert sich ohne Unterhaltungsneustart. Hebräisch verwend
 
 Werden Farben schwer lesbar, wählen Sie eine integrierte Palette oder setzen die bearbeitete zurück. Ein Palettenwechsel kann zum Verwerfen ungespeicherter Farbänderungen auffordern; er verwirft keinen Unterhaltungsentwurf.
 
+## Computer wach halten {#keep-computer-awake}
+
+Unter **Einstellungen → Allgemein** ist **Computer wach halten, solange CodeNomad läuft** standardmäßig deaktiviert. Aktivieren Sie die Option, um den Ruhezustand zu verhindern, solange ein lokales CodeNomad-Fenster geöffnet ist (auch minimiert), auch wenn keine Sitzung arbeitet; der Bildschirm kann sich weiterhin ausschalten. Wenn deaktiviert, hält CodeNomad den Computer nur wach, während eine Sitzung arbeitet. Das **i** neben dem Titel erklärt dieses Verhalten. Die Option erscheint nur in lokalen Desktop-App-Fenstern und im nativen Einstellungsfenster; in Browser-/Remote-Ansichten ist sie ausgeblendet.
+
 ## Panels und Statusabschnitte {#panels-status}
 
 Ziehen Sie am inneren Rand eines angedockten Panels, um seine Größe zu ändern. Der Griff bleibt während des Ziehens hervorgehoben und behält die Zeigererfassung, auch wenn der Zeiger den Rand verlässt. Lassen Sie los, um abzuschließen.

@@ -1,4 +1,4 @@
-import { postBoundedJson } from "../bounded-fetch"
+import { fetchBoundedJson } from "../bounded-fetch"
 import { asObject, getString, toTimestamp, toUsageWindow } from "../shared"
 import type { ProviderUsage } from "../types"
 
@@ -16,7 +16,9 @@ const FAMILIES = new Map([
 /** Requires saved project context; never discovers, invents or onboards a project. */
 export async function antigravityQuota(access: string, project: string, signal: AbortSignal,
   safeIdentity: (value: string) => boolean): Promise<ProviderUsage> {
-  const payload = asObject(await postBoundedJson(QUOTA_URL, { Authorization: `Bearer ${access}`, "User-Agent": USER_AGENT }, { project }, signal))
+  const payload = asObject(await fetchBoundedJson(QUOTA_URL,
+    { Authorization: `Bearer ${access}`, "User-Agent": USER_AGENT, "Content-Type": "application/json" },
+    signal, undefined, { method: "POST", body: JSON.stringify({ project }) }))
   if (!Array.isArray(payload?.groups) || !payload.groups.length) throw new Error("Google usage unavailable")
   const windows: ProviderUsage["windows"] = {}
   for (const raw of payload.groups) {

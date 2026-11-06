@@ -156,6 +156,6 @@ test("saved project priority is managed then ordinary; missing context and abort
     assert.equal(reading.configured, true)
     assert.equal(reading.ok, false)
   }
-  assert.equal((await googleUsage.fetchQuota(auth(), AbortSignal.abort())).ok, false)
+  assert.equal((await googleUsage.fetchQuota(auth(), { signal: AbortSignal.abort() })).ok, false)
   assert.equal(bodies.length, 3)
 })
