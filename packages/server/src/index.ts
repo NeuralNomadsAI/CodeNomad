@@ -699,25 +699,27 @@ async function main() {
     shutdown: () =>
       orchestrateServerShutdown(
         {
-          stopInstanceEventBridge: () => instanceEventBridge.shutdown(),
+          stopInstanceEventBridge: async () => {
+            instanceEventBridge.shutdown()
+            await Promise.all([yoloManager.stop(), permissionReceipts.stop()])
+          },
           stopSidecars: () => sidecarManager.shutdown(),
           stopClientConnections: () => clientConnectionManager.shutdown(),
           stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
           stopRemoteControl: () => remoteControlManager.shutdown(),
           stopWorkspaces: async () => {
-            instanceEventBridge.shutdown()
-            yoloManager.stop()
+            // Accepted HTTP mutations can confirm receipts after observers stop.
+            await yoloManager.stop()
             await permissionReceipts.stop()
-            await workspaceManager.shutdown()
+            const results = await Promise.allSettled([
+              workspaceManager.shutdown(), pruningLifecycle.stop(), automationLifecycle.stop(), missionsLifecycle.stop(),
+              removeAutomationBridge?.(),
+            ])
+            nativeParent.close()
+            const failures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : [])
+            if (failures.length) throw new AggregateError(failures, "Workspace and plugin cleanup failed")
           },
           stopHttpServers: async () => {
-            await pruningLifecycle.stop()
-            await automationLifecycle.stop()
-            await missionsLifecycle.stop()
-            nativeParent.close()
-            await removeAutomationBridge?.()
-            yoloManager.stop()
-            await permissionReceipts.stop()
             const results = await Promise.allSettled(servers.map((srv) => srv.stop()))
             const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
             if (failures.length > 0) {
