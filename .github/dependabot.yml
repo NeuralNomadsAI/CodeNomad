@@ -1,5 +1,35 @@
 version: 2
 updates:
+  # Only the Tauri family (dev-docs/RUNTIME_MAINTENANCE.md), from the Cargo
+  # workspace root holding Cargo.lock. Runtime crates are lockfile-only updates.
+  # Vendored Tao and updater copies are path patches that Dependabot leaves alone;
+  # an update needing newer ones fails the vendored-patch check until re-vendored
+  # (packages/tauri-app/vendor/README.md). Minor and patch updates arrive
+  # together; each major update gets its own PR.
+  - package-ecosystem: cargo
+    directory: /packages/tauri-app
+    target-branch: dev
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    allow:
+      - dependency-name: tauri
+      - dependency-name: tauri-build
+      - dependency-name: tauri-plugin-*
+      - dependency-name: tauri-runtime*
+        dependency-type: indirect
+      - dependency-name: wry
+        dependency-type: indirect
+    groups:
+      tauri:
+        patterns:
+          - tauri
+          - tauri-*
+          - wry
+        update-types:
+          - minor
+          - patch
+
   - package-ecosystem: github-actions
     directory: /
     target-branch: dev
