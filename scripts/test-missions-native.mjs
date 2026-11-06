@@ -297,7 +297,8 @@ try {
       await assert.rejects(invoke("inspect", { start: { objective: "Refuse coordinator mismatch", template: "custom" } },
         caller.id, "preferences-mismatch"))
       assert.ok(preferenceReads > reads, "The mismatch was resolved against nonempty owner preferences")
-      assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location }), before)
+      const after = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
+      assert.deepEqual({ ...after, generatedAt: before.generatedAt }, before)
       assert.deepEqual(rows(), retained, "Coordinator mismatch writes no creation event, document or retained intent")
       assert.equal(requests.length, turns, "Coordinator mismatch admits no provider turn")
     } finally { database.close() }
