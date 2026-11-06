@@ -45,8 +45,9 @@
   merges are manual. Composite actions that follow their upstream
   `stable`/latest major stay on those supported references.
 - Electron's integrated Node is the Electron backend runtime, so the exact
-  `electron` pin (`packages/electron-app/package.json`) selects it. Dependabot proposes Electron toolchain updates (`electron`,
-  `electron-builder`, `electron-vite`, no other npm dependency) weekly against
+  `electron` pin (`packages/electron-app/package.json`) selects it. Dependabot
+  proposes Electron toolchain updates (`electron`, `electron-builder`,
+  `electron-vite`, no other npm dependency) weekly against
   `dev`: minor and patch updates in one grouped PR, each major in its own PR.
   Keep the pin within Electron's supported majors (the latest three). Before
   merging, the maintainer qualifies the upstream breaking changes of every major
@@ -87,6 +88,6 @@ Run `npm run check:runtime` locally for the same read-only assessment.
 
 ## Agent conventions
 
-- Keep the `electron` devDependency an exact version; Dependabot is limited to the Electron toolchain, and adding other npm ecosystems or dependencies to it is a separate decision.
+- Keep the `electron` devDependency an exact version; Dependabot is limited to the Electron toolchain, and adding other ecosystems or npm dependencies to Dependabot is a separate decision.
 - Bundled runtime maintenance keeps `.node-version` exact and proposes only same-major LTS upgrades as regular, non-draft PRs without automatic merge. The scheduled npm CLI/dependency audit is warning-only: never independently replace bundled npm, auto-fix dependencies, merge or publish from that check, and never report a failed audit as clean. Application runtime changes require reviewed builds/releases.
 - Documents reference `.node-version` and never restate the pinned Node or bundled npm version: maintenance updates only that file.
