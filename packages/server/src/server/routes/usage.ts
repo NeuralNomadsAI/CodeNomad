@@ -5,6 +5,7 @@ import { readLocationRef } from "../../opencode/compatibility/location"
 import { createNativeCodexUsage } from "../../usage/native-codex"
 import { claudeCodeAuthEntry, claudeCodeCredential, type ClaudeCodeHost } from "../../usage/claude-credential"
 import { readUsageCredentials } from "../../usage/native-credentials"
+import { readUsageProviderSettings } from "../../usage/native-settings"
 import { getProviderUsage, resolveUsageProvider } from "../../usage/service"
 import { estimateOpenCodeFreeUsage, isOpenCodeFreeModel, openCodeFreeWindow } from "../../usage/opencode-free-estimate"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
@@ -74,16 +75,17 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
               providerId: params.data.providerId, modelId }, signal)
             : null
           const auth = !native && provider ? await readUsageCredentials(connection, signal) : {}
+          const settings = !native && provider
+            ? await readUsageProviderSettings(connection, params.data.providerId, location.directory, signal) : undefined
           signal.throwIfAborted()
           if (provider?.id === "opencode-go") {
             // Go quota follows the session provider's own login (a Go key or the
             // Console sign-in), and only for the Go provider: pay-as-you-go Zen
             // sessions keep the env-cookie behaviour and never send Console
             // credentials to the Go usage endpoint.
-            const integrationID = await connection.client.provider.get({ providerID: params.data.providerId, location: { directory: location.directory } }, { signal })
-              .then(info => info.location.directory === location.directory && info.data.id === params.data.providerId
-                && (info.data.id === "opencode-go" || info.data.canonical === "opencode-go")
-                ? info.data.integrationID ?? info.data.id : undefined, () => undefined)
+            const info = settings?.provider
+            const integrationID = info && (info.id === "opencode-go" || info.canonical === "opencode-go")
+              ? info.integrationID ?? info.id : undefined
             for (const alias of ["opencode-go", "opencode"]) if (alias !== integrationID) delete auth[alias]
             signal.throwIfAborted()
           }
@@ -93,7 +95,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
             auth["claude-code"] = claudeCodeAuthEntry(await claudeCodeCredential(await claudeCodeHost(manager, instanceId, signal), signal))
             signal.throwIfAborted()
           }
-          const usage = native ?? await getProviderUsage(params.data.providerId, { modelId, auth })
+          const usage = native ?? await getProviderUsage(params.data.providerId, { modelId, auth, context: settings?.context })
           // Session movement, workspace eviction and reconnect fence publication too.
           const current = await connection.client.session.get({ sessionID: sessionId }, { signal })
           const currentLocation = readLocationRef(current.location)

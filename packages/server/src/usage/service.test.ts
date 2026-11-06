@@ -5,7 +5,7 @@ import path from "node:path"
 import test from "node:test"
 
 import { clearProviderUsageCache, getProviderUsage, resolveUsageProvider, selectModelWindows } from "./service"
-import type { ProviderResult } from "./types"
+import type { ProviderReadContext, ProviderResult } from "./types"
 
 const providerIds = [
   "codex",
@@ -23,7 +23,6 @@ const providerIds = [
   "opencode-go",
   "cursor",
   "command-code",
-  "crof",
   "deepseek",
   "neuralwatt",
   "claude",
@@ -45,6 +44,9 @@ test("maps OpenCode provider aliases to their usage provider", () => {
   assert.equal(resolveUsageProvider("openai")?.id, "codex")
   assert.equal(resolveUsageProvider("copilot")?.id, "github-copilot")
   assert.equal(resolveUsageProvider("grok")?.id, "xai")
+  for (const alias of ["kimi", "kimi-code-plan-cn", "kimi-code-plan-global"]) {
+    assert.equal(resolveUsageProvider(alias)?.id, "kimi-for-coding")
+  }
   for (const providerId of ["google", "google.oauth", "gemini", "antigravity"]) {
     assert.equal(resolveUsageProvider(providerId), null)
   }
@@ -123,6 +125,23 @@ test("adds a matched model's scoped limits to the plan windows", () => {
   assert.deepEqual(Object.keys(selectModelWindows(result, "claude-sonnet-5-5")), ["5h", "7d"])
 })
 
+test("Kimi session integration priority participates in the display cache identity", async t => {
+  const keys: string[] = []
+  t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    keys.push(new Headers(init.headers).get("Authorization")!)
+    return Response.json({ usages: { limit_month_total: { used_ratio: keys.length / 10 } } })
+  })
+  const auth = { "kimi-code-plan-cn": "synthetic-cn", "kimi-code-plan-global": "synthetic-global" }
+  clearProviderUsageCache()
+  try {
+    assert.equal((await getProviderUsage("kimi-code-plan-cn", { auth })).windows.monthly.usedPercent, 10)
+    assert.equal((await getProviderUsage("kimi-code-plan-cn", { auth })).windows.monthly.usedPercent, 10)
+    assert.equal((await getProviderUsage(" KIMI-CODE-PLAN-GLOBAL ", { auth })).windows.monthly.usedPercent, 20)
+    assert.equal((await getProviderUsage("kimi", { auth, context: { integrationID: "kimi-code-plan-cn" } })).windows.monthly.usedPercent, 30)
+    assert.deepEqual(keys, ["Bearer synthetic-cn", "Bearer synthetic-global", "Bearer synthetic-cn"])
+  } finally { clearProviderUsageCache() }
+})
+
 test("never serves a cached snapshot across a credential switch", async () => {
   const previousFetch = globalThis.fetch
   const keys: string[] = []
@@ -168,14 +187,56 @@ test("selects model-specific windows by normalized model id", () => {
 })
 
 test("returns a stable unsupported response without making a provider request", async () => {
-  const response = await getProviderUsage("unknown-provider", { modelId: "model" })
-  assert.equal(response.supported, false)
-  assert.equal(response.configured, false)
-  assert.equal(response.providerId, null)
-  assert.deepEqual(response.windows, {})
-  for (const providerId of ["google", "google.oauth", "gemini", "antigravity"]) {
-    assert.equal((await getProviderUsage(providerId)).supported, false)
+  const previousFetch = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = async () => {
+    calls += 1
+    throw new Error("Unexpected provider request")
   }
+  try {
+    const auth = { "unknown-provider": { key: "synthetic-key" } }
+    assert.equal(resolveUsageProvider("unknown-provider"), null)
+    const response = await getProviderUsage("unknown-provider", { modelId: "model", auth })
+    assert.equal(response.supported, false)
+    assert.equal(response.configured, false)
+    assert.equal(response.providerId, null)
+    assert.deepEqual(response.windows, {})
+    assert.deepEqual(auth, { "unknown-provider": { key: "synthetic-key" } })
+    for (const providerId of ["google", "google.oauth", "gemini", "antigravity"]) {
+      assert.equal((await getProviderUsage(providerId)).supported, false)
+    }
+    assert.equal(calls, 0)
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+})
+
+test("Copilot publishes numeric consumption and plan while Enterprise metadata fences its display cache", async () => {
+  const previousFetch = globalThis.fetch
+  const endpoints: string[] = []
+  clearProviderUsageCache()
+  globalThis.fetch = async input => {
+    endpoints.push(String(input))
+    return Response.json({ copilot_plan: "enterprise", quota_snapshots: {
+      premium_interactions: { entitlement: 100, quota_remaining: 74.25, percent_remaining: 74.25 },
+    } })
+  }
+  try {
+    const credential = { type: "oauth", access: "synthetic-copilot-cache" }
+    const publicUsage = await getProviderUsage("github-copilot", { auth: { "github-copilot": credential } })
+    assert.equal(publicUsage.copilotPlan, "enterprise")
+    assert.deepEqual(publicUsage.windows.premium.consumption, { used: 25.75, limit: 100 })
+    await getProviderUsage("github-copilot", { auth: { "github-copilot": { ...credential, enterpriseUrl: "company.ghe.com" } } })
+    const invalid = await getProviderUsage("github-copilot", {
+      auth: { "github-copilot": { ...credential, enterpriseUrl: "https://company.ghe.com:443" } },
+    })
+    assert.equal(invalid.unavailableReason, "invalid-base-url")
+    assert.deepEqual(invalid.windows, {})
+    assert.equal(invalid.copilotPlan, undefined)
+    assert.deepEqual(endpoints, ["https://api.github.com/copilot_internal/user", "https://api.company.ghe.com/copilot_internal/user"])
+    assert.equal(JSON.stringify(invalid).includes("synthetic-copilot-cache"), false)
+    assert.equal(JSON.stringify(invalid).includes("company.ghe.com"), false)
+  } finally { globalThis.fetch = previousFetch; clearProviderUsageCache() }
 })
 
 test("shows NeuralWatt allowance percentage instead of the key name", async () => {
@@ -257,7 +318,7 @@ test("deduplicates simultaneous canonical and alias provider requests", async ()
   globalThis.fetch = async () => {
     calls += 1
     await gate
-    return Response.json({ quota_snapshots: { chat: { entitlement: 100, remaining: 50 } } })
+    return Response.json({ quota_snapshots: { chat: { entitlement: 100, quota_remaining: 50 } } })
   }
   clearProviderUsageCache()
 
@@ -275,4 +336,93 @@ test("deduplicates simultaneous canonical and alias provider requests", async ()
     clearProviderUsageCache()
     globalThis.fetch = previousFetch
   }
+})
+
+test("effective native settings fence snapshots while signals stay outside cache identity", async () => {
+  const provider = resolveUsageProvider("openrouter")!
+  const original = provider.fetchQuota
+  const contexts: Array<ProviderReadContext | undefined> = []
+  provider.fetchQuota = async (_auth, context) => {
+    contexts.push(context)
+    return { providerId: provider.id, providerName: provider.name, configured: true, ok: true, fetchedAt: 1,
+      usage: { windows: { credits: { usedPercent: null, remainingPercent: null, resetAt: null, windowSeconds: null, valueLabel: String(contexts.length) } } } }
+  }
+  clearProviderUsageCache()
+  try {
+    const context: ProviderReadContext = { signal: new AbortController().signal, settingsStatus: "available",
+      settings: { baseURL: "https://quota.example/v1", apiKey: "synthetic-setting" } }
+    const read = (context?: ProviderReadContext) => getProviderUsage("openrouter", { auth: { openrouter: { key: "synthetic-stored" } }, context })
+    assert.equal((await read(context)).windows.credits.valueLabel, "1")
+    assert.equal(contexts[0], context)
+    assert.equal((await read({ ...context, signal: new AbortController().signal })).windows.credits.valueLabel, "1")
+    assert.equal((await read({ ...context, settings: { ...context.settings, baseURL: "https://other.example/prefix" } })).windows.credits.valueLabel, "2")
+    assert.equal((await read({ ...context, settings: { ...context.settings, apiKey: "synthetic-other" } })).windows.credits.valueLabel, "3")
+    assert.equal((await read({ ...context, settingsStatus: "unresolved", settings: {} })).windows.credits.valueLabel, "4")
+    const aborted = new AbortController(); aborted.abort()
+    await assert.rejects(read({ ...context, signal: aborted.signal }))
+    assert.equal(contexts.length, 4)
+    assert.equal(JSON.stringify(await read(context)).includes("synthetic"), false)
+  } finally { provider.fetchQuota = original; clearProviderUsageCache() }
+})
+
+test("only enumerated public reasons, bounded numeric codes and associated fixed actions leave a reader", async () => {
+  const provider = resolveUsageProvider("openrouter")!
+  const original = provider.fetchQuota
+  const base: ProviderResult = { providerId: provider.id, providerName: provider.name, configured: true, ok: false,
+    fetchedAt: 1, error: "secret-token upstream body", status: 401,
+    usage: { windows: { stale: { usedPercent: 99, remainingPercent: 1, windowSeconds: null, resetAt: null } } } }
+  const read = async (extra: Partial<ProviderResult>) => {
+    clearProviderUsageCache()
+    provider.fetchQuota = async () => ({ ...base, ...extra })
+    const response = await getProviderUsage("openrouter")
+    assert.deepEqual(response.windows, {})
+    assert.equal(JSON.stringify(response).includes("secret"), false)
+    assert.equal("error" in response || "status" in response, false)
+    return response
+  }
+  try {
+    const valid = await read({ unavailableReason: "provider-error", providerErrorCode: "1001", unavailableAction: "chatgpt-usage" })
+    assert.equal(valid.unavailableReason, "provider-error")
+    assert.equal(valid.providerErrorCode, "1001")
+    assert.equal(valid.unavailableAction, undefined)
+    for (const code of ["secret-token", "1001\n", "123456789", "<script>"]) {
+      assert.equal((await read({ unavailableReason: "provider-error", providerErrorCode: code })).providerErrorCode, undefined)
+    }
+    assert.equal((await read({ unavailableReason: "secret-token" as never })).unavailableReason, undefined)
+    const linked = await read({ unavailableReason: "openai-token-sharing-unsupported", unavailableAction: "chatgpt-usage" })
+    assert.equal(linked.unavailableAction, "chatgpt-usage")
+    const expired = await read({ unavailableReason: "opencode-go-key-expired", unavailableAction: "opencode-go-new-key" })
+    assert.equal(expired.unavailableReason, "opencode-go-key-expired")
+    assert.equal(expired.unavailableAction, "opencode-go-new-key")
+    assert.equal((await read({ unavailableReason: "opencode-go-key-expired", unavailableAction: "chatgpt-usage" })).unavailableAction, undefined)
+    assert.equal((await read({ unavailableReason: "provider-error", unavailableAction: "opencode-go-new-key" })).unavailableAction, undefined)
+    assert.equal((await read({ unavailableAction: "chatgpt-usage" })).unavailableAction, undefined)
+    const minimax = await read({ unavailableReason: "minimax-limits-not-shared", unavailableAction: "chatgpt-usage", providerErrorCode: "1004" })
+    assert.equal(minimax.unavailableReason, "minimax-limits-not-shared")
+    assert.equal(minimax.unavailableAction, undefined)
+    assert.equal(minimax.providerErrorCode, undefined)
+    for (const reason of ["cursor-token-expired", "cursor-team-unavailable", "cursor-access-denied", "cursor-usage-unavailable"] as const) {
+      const cursor = await read({ unavailableReason: reason, unavailableAction: "chatgpt-usage", providerErrorCode: "1004" })
+      assert.equal(cursor.unavailableReason, reason)
+      assert.equal(cursor.unavailableAction, undefined)
+      assert.equal(cursor.providerErrorCode, undefined)
+    }
+  } finally { provider.fetchQuota = original; clearProviderUsageCache() }
+})
+
+test("cancellation during a reader prevents publication and warming its cache", async () => {
+  const provider = resolveUsageProvider("openrouter")!
+  const original = provider.fetchQuota
+  const controller = new AbortController()
+  let calls = 0
+  provider.fetchQuota = async () => {
+    if (++calls === 1) controller.abort()
+    return { providerId: provider.id, providerName: provider.name, ok: true, configured: true, usage: null, fetchedAt: 1 }
+  }
+  clearProviderUsageCache()
+  try {
+    await assert.rejects(getProviderUsage("openrouter", { context: { signal: controller.signal } }))
+    assert.equal((await getProviderUsage("openrouter")).ok, true)
+    assert.equal(calls, 2)
+  } finally { provider.fetchQuota = original; clearProviderUsageCache() }
 })

@@ -206,19 +206,32 @@ export interface ProviderUsageWindow {
   windowSeconds: number | null
   resetAt: number | null
   valueLabel?: string
+  balanceUSD?: { remaining: number; total?: number }
+  limitUSD?: number
+  consumption?: { used: number; limit?: number } | { creditsUsed: number } | { unlimited: true }
 }
+
+export type ProviderUsageUnavailableReason = "openai-token-sharing-unsupported" | "provider-error" | "minimax-limits-not-shared" | "invalid-base-url"
+  | "cursor-token-expired" | "cursor-team-unavailable" | "cursor-access-denied" | "cursor-usage-unavailable"
+  | "opencode-go-key-expired"
+export type ProviderUsageUnavailableAction = "chatgpt-usage" | "opencode-go-new-key"
 
 export interface ProviderUsageResponse {
   requestedProviderId: string
   providerId: string | null
   providerName: string
+  copilotPlan?: "free" | "pro" | "proPlus" | "business" | "enterprise" | "student" | "max"
   modelId?: string
   supported: boolean
   configured: boolean
   ok: boolean
   windows: Record<string, ProviderUsageWindow>
   fetchedAt: number
-  unavailableReason?: "openai-token-sharing-unsupported"
+  unavailableReason?: ProviderUsageUnavailableReason
+  /** Public numeric business code, at most eight digits; never an upstream message. */
+  providerErrorCode?: string
+  /** UI-owned fixed destination, admitted only for its associated reason. */
+  unavailableAction?: ProviderUsageUnavailableAction
   /** Computed locally from recorded activity because the provider publishes no counter. */
   estimated?: true
 }

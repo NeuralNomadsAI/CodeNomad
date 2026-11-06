@@ -33,7 +33,7 @@
 | GitHub Copilot | 可读取高级请求配额的 OAuth；企业端点凭据不是可读取候选。 |
 | 编码计划 | 基于密钥的 `zai-coding-plan`、`zhipuai-coding-plan`、`kimi-for-coding`、`minimax-coding-plan`、`minimax-cn-coding-plan`。 |
 
-仅当前账户配额耗尽才触发切换；仅有额度更充足的替代账户不会触发。读取会检查显式保存的凭据，不激活候选或交换刷新令牌。Codex、Copilot 和编码计划要求候选明确可用。Go、Console 和 Claude 可以使用配额未知的候选，除非近期原生配额失败将其标记为耗尽。OpenCode Go 用量端点和 Console OAuth 用量仍未获上游验证，因此不保证可用。
+仅当前账户配额耗尽才触发切换；仅有额度更充足的替代账户不会触发。读取会检查显式保存的凭据，不激活候选或交换刷新令牌。Codex、Copilot 和编码计划要求候选明确可用。Go、Console 和 Claude 可以使用配额未知的候选，除非近期原生配额失败将其标记为耗尽。OpenCode Go 读数取决于可用 API 和凭据权限。
 
 这**不是运行中的故障转移**。它既不重试失败请求，也不重放提示词、命令或修改操作。不会轮换环境连接、任意提供商、按量付费余额或外部 Claude Code 登录。准备选择期间会尊重手动账户更改；不存在跨客户端账户锁。发生配额/认证错误时，请检查**活动账户**，刷新用量，必要时通过凭据所属方登录，然后再有意识地发送。
 
@@ -52,13 +52,29 @@
 
 对于 OpenCode Zen 免费模型，**用量**根据此服务自 00:00 UTC 起记录的步骤数估算消耗，以假定的每天 200 次请求为参考，并将下一个 UTC 午夜作为预计重置时间。步骤数近似请求数；其他流量和动态 IP 限制可能使其与实际配额用量不同。
 
-OpenAI 不为某一种 ChatGPT 登录方式提供用量：此时用量面板会说明这一点，而不显示配额窗口。聊天仍可正常使用，重新连接同一登录也不会恢复该读数。
+OpenAI 不为某一种 ChatGPT 登录方式提供用量：此时用量面板会说明这一点，而不显示配额窗口。选择[查看 ChatGPT 用量](https://chatgpt.com/settings/usage)，即可在 ChatGPT 中查看应用用量，并管理应用对您的套餐和额度的访问。聊天仍可正常使用，重新连接同一登录也不会恢复该读数。
 
 用量跟随所选原生凭据。通过 `anthropic`/`claude` 使用 Claude 时，采用 OpenCode 的 Anthropic OAuth。OpenCode 的 **Claude Agent** 提供商（`claude-agent`）和 `claude-code` 提供商使用守护进程主机上的 Claude Code 登录，包括其 WSL 发行版：先用 `CLAUDE_CODE_OAUTH_TOKEN`，再用已存储登录，文件存储由 `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` 或 `~/.claude` 决定；本地 macOS 可使用钥匙串。CodeNomad 不会用一种 Claude 登录替代另一种。
 
 提供商登录过期时，通过其所属方——OpenCode、Claude Code 或 Codex CLI——刷新/登录，再刷新 CodeNomad。CodeNomad 不交换外部所有的刷新令牌。CodeNomad 服务器登录过期是另一回事：重新连接/登录 CodeNomad，不要假定失败的提供商请求会重发。参阅[故障排查](troubleshooting.md)。
 
+当 MiniMax 成功响应但未提供限额时，**用量**会显示 **MiniMax 不公开其限额**，而不是配额数值。
+
+OpenRouter 的 **密钥限额** 显示密钥支出上限及其剩余美元金额；没有支出上限的密钥不显示此行。API 允许访问时，账户额度会单独显示。用量使用提供商配置的 `baseURL`（保留路径前缀），未配置时使用 `https://openrouter.ai/api/v1`。请使用不含凭据、显式端口、查询或片段的公共 HTTPS 主机名；IP 地址和 localhost 会被拒绝。URL 无效或网关不支持 `/key` 时，用量不可用；密钥仅发送至配置的目标，重定向会被拒绝。
+
+对于 z.ai 和 Zhipu，用量优先使用配置的 `apiKey`，包括由 OpenCode 在其主机上解析的 `{env:…}` 和 `{file:…}` 值；该密钥不可用时使用已保存的凭据。既没有密钥也没有已保存凭据时，提供商显示为未配置。业务错误会以本地化的提供商错误及可用的数字代码代替配额值。套餐积分使用五小时和每周窗口；MCP 工具拥有单独的配额。
+
+GitHub Copilot 的**用量**以**已使用 已用量 / 上限**显示消耗；对于无限配额，若 GitHub 提供已消耗点数则显示该数值，否则显示**无限制**。高级请求保留自己的标签。底部会显示已识别的套餐名称。Enterprise 连接根据已保存连接的主机名或 HTTPS 根 URL，访问 `https://api.<host>/copilot_internal/user`。请使用不含凭据、显式端口（包括 `:443`）、`/` 以外路径、查询或片段的完整主机名；IP 地址和 localhost 会在发送令牌前被拒绝。重定向会被拒绝。目标无效或服务器不提供此 API 时，用量不可用。Enterprise 连接仍不参与自动账户选择。
+
+Kimi 支持 `kimi-code-plan-cn`（kimi.com）、`kimi-code-plan-global`（kimi.ai）、`kimi-for-coding` 和 `kimi`。**用量**会优先使用当前对话的集成，在同一个总时限内依次尝试各集成中已保存的当前有效密钥。可用的五小时、每周、**每月**和**每月编程**限额显示已使用百分比。每月限额遵循提供商给出的重置日期；任一每月限额耗尽的 `kimi-for-coding` 账户均不能作为自动选择的可用候选，即使较短时间窗口仍有余量。
+
+OpenCode Go API 密钥显示可用的已用百分比和重置时间。通过 OpenCode Console 登录时，若具有账单读取权限，也会读取以美元计的独立钱包余额。启用**提供商额度余额**可显示该余额（默认关闭）；Go 配额与 Extra Usage 分别显示。只有余额时，自动选择仍将配额视为未知。当出现 **OpenCode Go 密钥已过期。** 时，选择[在 OpenCode Console 中创建新密钥并替换旧密钥](https://opencode.ai/console/login)。在 **Account → Personal API keys** 中创建密钥（或请管理员提供服务账户密钥），然后通过提供商连接流程替换已保存的密钥。过期密钥需要替换。
+
 ### 可选用量环境变量 {#usage-environment}
+
+Cursor Enterprise 尽力通过私有仪表板 API 读取数据。个人资料包含团队成员资格和团队 ID 时，**用量**会显示已识别的 `gpt-4` 请求用量，以及 API 提供的独立 **每用户限额** / **团队限额**（USD）。支出未知时仅显示限额，请求限额未知时仅显示已使用数量。未知用量组和重置日期保持不可用。团队缺失、访问被拒和令牌过期有各自的提示；已验证的部分数据仍会显示。
+
+请通过下列变量提供有效的 Cursor 访问令牌。Enterprise 读取需要团队仪表板数据的读取权限；[管理 API](https://cursor.com/docs/account/teams/admin-api) 使用独立的管理密钥。请更新过期令牌，并以更新后的环境重启后端。
 
 启动前在 **CodeNomad 后端进程**环境中设置以下变量。它们是用量读取器凭据，而非浏览器设置或模型选择控件。更改会话**环境变量**编辑器不会更新运行中后端供这些读取器使用的 `process.env`。更改时请以目标环境重启后端；不要仅为用量读取器变量重启共享 OpenCode 服务。
 
