@@ -1,31 +1,36 @@
 version: 2
 updates:
-  # Only the Tauri family (dev-docs/RUNTIME_MAINTENANCE.md), from the Cargo
-  # workspace root holding Cargo.lock. The runtime crates are direct dependencies
-  # of the runtime regression fixture, whose requirements follow; Wry is a
-  # lockfile-only update. Vendored Tao and updater copies are path patches that Dependabot leaves alone;
-  # an update needing newer ones fails the vendored-patch check until re-vendored
-  # (packages/tauri-app/vendor/README.md). Minor and patch updates arrive
-  # together; each major update gets its own PR.
+  # Every Rust dependency of the Tauri workspace (dev-docs/RUNTIME_MAINTENANCE.md),
+  # from the Cargo workspace root holding Cargo.lock. No `allow` list: it would
+  # also filter security updates. Security fixes arrive in one grouped PR. Version
+  # updates group the Tauri family (whose runtime crates are direct dependencies
+  # of the runtime regression fixture) apart from the other crates; minor and
+  # patch updates arrive together, each major in its own PR. Vendored Tao and
+  # updater copies are path patches that Dependabot leaves alone; an update
+  # needing newer ones fails the vendored-patch check until re-vendored
+  # (packages/tauri-app/vendor/README.md).
   - package-ecosystem: cargo
     directory: /packages/tauri-app
     target-branch: dev
     schedule:
       interval: weekly
-    open-pull-requests-limit: 3
-    allow:
-      - dependency-name: tauri
-      - dependency-name: tauri-build
-      - dependency-name: tauri-plugin-*
-      - dependency-name: tauri-runtime*
-      - dependency-name: wry
-        dependency-type: indirect
+    open-pull-requests-limit: 5
     groups:
+      cargo-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
       tauri:
         patterns:
           - tauri
           - tauri-*
           - wry
+        update-types:
+          - minor
+          - patch
+      cargo-dependencies:
+        patterns:
+          - "*"
         update-types:
           - minor
           - patch
@@ -37,22 +42,23 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
 
-  # Only the Electron toolchain and the Tauri JavaScript packages
-  # (dev-docs/RUNTIME_MAINTENANCE.md). The root entry covers the workspace
-  # manifests and the root lockfile. Minor and patch updates arrive together per
-  # toolchain; each major update gets its own PR.
+  # Every npm dependency of the workspaces (dev-docs/RUNTIME_MAINTENANCE.md); the
+  # root entry covers the workspace manifests and the root lockfile. No `allow`
+  # list: it would also filter security updates. Security fixes arrive in one
+  # grouped PR. Version updates group the Electron toolchain, the Tauri
+  # JavaScript packages and the other dependencies apart; minor and patch updates
+  # arrive together per group, each major in its own PR.
   - package-ecosystem: npm
     directory: /
     target-branch: dev
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-    allow:
-      - dependency-name: electron
-      - dependency-name: electron-builder
-      - dependency-name: electron-vite
-      - dependency-name: "@tauri-apps/*"
     groups:
+      npm-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
       electron-toolchain:
         patterns:
           - electron
@@ -64,6 +70,12 @@ updates:
       tauri-js:
         patterns:
           - "@tauri-apps/*"
+        update-types:
+          - minor
+          - patch
+      npm-dependencies:
+        patterns:
+          - "*"
         update-types:
           - minor
           - patch

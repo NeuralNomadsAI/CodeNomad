@@ -41,13 +41,18 @@
   reports; npm itself only warns. `npm-lifecycle.test.ts` and the Electron step
   of the PR OpenCode compatibility matrix run real npm lifecycle scripts through
   the development Electron executable on Windows, Linux and macOS.
-- Dependabot proposes Tauri crate updates weekly against `dev` from the Cargo
-  workspace `packages/tauri-app`, limited to `tauri`, `tauri-build`,
-  `tauri-plugin-*`, `tauri-runtime*` (also the requirements of the runtime
-  regression fixture, `tests/windows-runner-refcount`) and lockfile-only `wry`
-  updates: minor and patch updates in one grouped PR, each major in its own PR;
-  merges are manual. Before merging, the maintainer reviews the Tauri, runtime,
-  Wry, Tao and plugin release notes of every version crossed, re-qualifies the
+- Dependabot covers every dependency of the Cargo workspace `packages/tauri-app`
+  and of the npm workspaces (root lockfile), weekly against `dev`. An `allow`
+  list would also filter security updates, so neither entry has one. Security
+  fixes arrive in one grouped PR per ecosystem (`cargo-security`,
+  `npm-security`). Version updates are grouped by toolchain: the Tauri family
+  (`tauri`, `tauri-*`, `wry`, including the runtime regression fixture's
+  `tests/windows-runner-refcount` requirements), the Electron toolchain, the
+  `@tauri-apps/*` packages, then every other crate or npm dependency; minor and
+  patch updates of a group arrive together, each major in its own PR. Merges are
+  manual.
+- For a Tauri crate update, the maintainer reviews the Tauri, runtime, Wry, Tao
+  and plugin release notes of every version crossed, re-qualifies the
   vendored crates (`packages/tauri-app/vendor/README.md`) and keeps
   `@tauri-apps/api` and the plugin JavaScript packages (`packages/ui/package.json`)
   on the crates' major/minor: the CLI's version check runs from
@@ -68,9 +73,7 @@
 - Electron's integrated Node is the Electron backend runtime, so the exact
   `electron` pin (`packages/electron-app/package.json`) selects it. Dependabot
   proposes Electron toolchain updates (`electron`, `electron-builder`,
-  `electron-vite`) weekly against
-  `dev`: minor and patch updates in one grouped PR, each major in its own PR.
-  Keep the pin within Electron's supported majors (the latest three). Before
+  `electron-vite`) in the `electron-toolchain` group. Keep the pin within Electron's supported majors (the latest three). Before
   merging, the maintainer qualifies the upstream breaking changes of every major
   crossed (<https://www.electronjs.org/docs/latest/breaking-changes>) and its
   platform minimums against the declared ones (`BUILD.md`, `docs/help`), and the
@@ -109,7 +112,7 @@ Run `npm run check:runtime` locally for the same read-only assessment.
 
 ## Agent conventions
 
-- Keep the `electron` devDependency an exact version; Dependabot's npm entry is limited to the Electron toolchain and the `@tauri-apps/*` packages; adding other npm dependencies or ecosystems to Dependabot is a separate decision.
+- Keep the `electron` devDependency an exact version. Never add an `allow` list to a Dependabot entry: it also filters security updates. Narrow version updates with groups instead.
 - Bundled runtime maintenance keeps `.node-version` exact and proposes only same-major LTS upgrades as regular, non-draft PRs without automatic merge. The scheduled npm CLI/dependency audit is warning-only: never independently replace bundled npm, auto-fix dependencies, merge or publish from that check, and never report a failed audit as clean. Application runtime changes require reviewed builds/releases.
 - Documents reference `.node-version` and never restate the pinned Node or bundled npm version: maintenance updates only that file.
 - Documents never restate Tauri crate or CLI versions: they point to `packages/tauri-app/Cargo.toml`/`Cargo.lock` and the `@tauri-apps/*` entries of `packages/tauri-app/package.json` and `packages/ui/package.json`. Never merge a Tauri update whose vendored crates fail re-qualification or whose `@tauri-apps/*` packages trail the crates' minor.
