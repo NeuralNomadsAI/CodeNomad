@@ -1,4 +1,6 @@
 export const settingsMessages = {
+  "settings.behavior.keepComputerAwake.title": "Computer wach halten, solange CodeNomad läuft",
+  "settings.behavior.keepComputerAwake.info": "Verhindert den Ruhezustand, solange ein lokales CodeNomad-Fenster geöffnet ist (auch minimiert); der Bildschirm kann sich weiterhin ausschalten. Wenn deaktiviert, hält CodeNomad den Computer nur wach, während eine Sitzung arbeitet.",
   "providerUsage.estimated": "(estimation)",
   "providerUsage.estimatedReset": "Geschätzte Rücksetzung {time}",
   "settings.behavior.autoExpandActiveSubsessions.title": "Untersitzungen automatisch aufklappen",

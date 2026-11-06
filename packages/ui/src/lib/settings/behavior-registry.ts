@@ -344,6 +344,18 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       get: (p) => p.followUpBehavior === "queue",
       set: (next) => updatePreferences?.({ followUpBehavior: (next ? "queue" : "steer") satisfies FollowUpBehavior }),
     },
+    {
+      kind: "toggle",
+      id: "behavior.keepComputerAwake",
+      titleKey: "settings.behavior.keepComputerAwake.title",
+      infoKey: "settings.behavior.keepComputerAwake.info",
+      get: (p) => p.keepComputerAwake === true,
+      set: async (next) => {
+        if (await updatePreferences?.({ keepComputerAwake: next }) === false) {
+          throw new Error("Failed to persist keep-awake behavior")
+        }
+      },
+    },
   ]
 }
 
