@@ -307,6 +307,7 @@ export const instanceMessages = {
   "instanceShell.worktree.create.placeholder": "worktree-name",
   "instanceShell.worktree.create.success": "已创建 worktree {slug}",
   "instanceShell.worktree.create.error": "无法创建 worktree",
+  "instanceShell.worktree.create.nestedFolderUnavailable": "Git 在此分支上未跟踪打开的文件夹，因此新的 worktree 不会包含它。",
   "instanceShell.worktree.openInFileManager.action": "在文件管理器中打开",
   "instanceShell.worktree.openInFileManager.error": "无法在文件管理器中打开 worktree",
   "instanceShell.worktree.delete.action": "删除 worktree",
