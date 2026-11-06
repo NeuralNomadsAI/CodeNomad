@@ -86,16 +86,21 @@ export class MemoryService {
     const target = await this.sessionTarget(sessionID)
     if (!this.getSettings().enabled) return null
     const scopes: MemoryTitles = {}
+    let projectId: string | undefined
     await Promise.all((["global", "project"] as const).map(async scope => {
       try {
         const namespace: MemoryNamespace = scope === "global" ? { scope }
           : { scope, projectId: (await this.projectIdentity(target)).id }
+        if (namespace.scope === "project") projectId = namespace.projectId
         scopes[scope] = (await this.store.list(namespace)).map(({ title, type }) => ({ title, type }))
       } catch { /* An unreadable scope stays absent, rather than looking empty. */ }
     }))
     // Revalidate ownership and the current preference after storage awaits.
     const current = await this.sessionTarget(sessionID)
     if (JSON.stringify(current) !== JSON.stringify(target)) throw new MemoryError("conflict", "Memory session moved")
+    if (projectId !== undefined && (await this.projectIdentity(current)).id !== projectId)
+      throw new MemoryError("conflict", "Memory project changed")
+    if (JSON.stringify(await this.sessionTarget(sessionID)) !== JSON.stringify(target)) throw new MemoryError("conflict", "Memory session moved")
     return this.getSettings().enabled ? scopes : null
   }
 
@@ -110,8 +115,10 @@ export class MemoryService {
   private async namespace(operation: MemoryOperation, target: () => Promise<MemoryProjectTarget>, agent: boolean): Promise<MemoryNamespace> {
     // Even global agent calls must have a current native owner.
     const authorized = agent || operation.scope === "project" ? await target() : undefined
-    return operation.scope === "global" ? { scope: "global" }
-      : { scope: "project", projectId: (await this.projectIdentity(authorized!)).id }
+    if (operation.scope === "global") return { scope: "global" }
+    const projectId = (await this.projectIdentity(authorized!)).id
+    if (JSON.stringify(await target()) !== JSON.stringify(authorized)) throw new MemoryError("conflict", "Memory project changed")
+    return { scope: "project", projectId }
   }
 
   private async execute(input: unknown, target: () => Promise<MemoryProjectTarget>, sessionID?: string): Promise<MemoryResult> {
@@ -122,22 +129,29 @@ export class MemoryService {
       throw new MemoryError("invalid", "Editing memory requires its ID and revision")
     const namespace = await this.namespace(operation, target, agent)
     if (agent && !this.getSettings().enabled) throw new MemoryError("disabled", "Memory is disabled")
+    const revalidate = async () => {
+      const current = await this.namespace(operation, target, agent)
+      if (JSON.stringify(current) !== JSON.stringify(namespace)) throw new MemoryError("conflict", "Memory project changed")
+      if ((agent || operation.action === "save" || operation.action === "delete") && !this.getSettings().enabled)
+        throw new MemoryError("disabled", "Memory is disabled")
+    }
     if (operation.action === "list" || operation.action === "read") {
       // Capture before the read: a concurrent later write stays unread next visit.
       const observedAt = new Date().toISOString()
       const all = await this.store.listForUI(namespace)
       const entries = agent ? memoryForAgent(all) : all
+      const cleanupWritable = !agent && operation.action === "list" && this.getSettings().enabled
+        && entries.some(entry => !reviewMemoryEntry(entry).flagged) && await this.store.cleanupWritable(namespace)
+      await revalidate()
       if (operation.action === "list") return { entries: agent
         ? entries.map(entry => { const { text: _text, ...header } = versioned(entry); return header })
         : entries.map(reviewed), ...(!agent ? { scopeKey: namespace.scope === "global" ? "global" : namespace.projectId, observedAt,
-          cleanupWritable: this.getSettings().enabled && entries.some(entry => !reviewMemoryEntry(entry).flagged) && await this.store.cleanupWritable(namespace) } : {}) }
+          cleanupWritable: this.getSettings().enabled && cleanupWritable } : {}) }
       const entry = entries.find(entry => entry.id === operation.query) ?? entries.find(entry => entry.title === operation.query)
       return { entry: entry ? agent ? versioned(entry) : reviewed(entry) : null }
     }
     const result = await this.store.mutate<MemoryResult>(namespace, async entries => {
-      const current = await this.namespace(operation, target, agent)
-      if (JSON.stringify(current) !== JSON.stringify(namespace)) throw new MemoryError("conflict", "Memory project changed")
-      if (!this.getSettings().enabled) throw new MemoryError("disabled", "Memory is disabled")
+      await revalidate()
       const existing = "id" in operation ? entries.find(entry => entry.id === operation.id) : undefined
       if (operation.id !== undefined && (!existing || memoryRevision(existing) !== operation.revision))
         throw new MemoryError("conflict", "Memory changed; read it again before retrying")
@@ -154,6 +168,7 @@ export class MemoryService {
       }
     })
     this.invalidate()
+    await revalidate()
     return result
   }
 

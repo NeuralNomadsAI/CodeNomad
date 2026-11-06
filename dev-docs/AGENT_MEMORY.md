@@ -110,7 +110,10 @@ to the repository. Its owner records a nonce, PID, native process-start identity
 hostname and platform. The shared `host-lifetime/process-identity.ts` adapter
 qualifies the process generation: Linux boot ID/start ticks, Windows creation
 ticks or the macOS native creation identity. The current process caches its own
-qualified identity; failed qualification remains retryable. macOS execution uses
+qualified identity. When its native probe is unavailable, it retains a private
+random `memory-self:` generation nonce for its lifetime. Its own lookups recognize
+that nonce; another process preserves such an owner while its PID is live or
+unknown, and recovers it after a confirmed exit. macOS execution uses
 the bundled process-identity helper built by `build:host-helpers`.
 
 Contenders wait up to 30 seconds for a matching live owner. A confirmed exit or a
@@ -211,7 +214,10 @@ owner patches.
 Reads return content-derived SHA-256 revisions over all entry fields. Explicit-ID
 saves and deletes require the displayed revision; stale or missing entries yield
 `conflict`. Mutations revalidate current session/project ownership under the
-repository lock before publication. Implicit agent saves retain duplicate
+repository lock before publication. Reads, lists and mutation acknowledgements
+revalidate ownership, the resolved namespace and agent enablement after storage
+awaits, including the UI writability probe. Session title preparation also
+revalidates the project identity after its scope reads. Implicit agent saves retain duplicate
 replacement policy. UI entries include freshly computed `flagged` and, when
 flagged, `warning: suspected_injection`. Agent lists contain safe headers and
 revisions; reads contain safe text; save acknowledgements contain only ID,
@@ -224,6 +230,8 @@ current location against the backend's authorized directories, independently of
 desktop/browser capabilities; `memory-input` repeats ownership at execution.
 Discovery requires exactly one owning backend. UI paths use ordinary browser
 authentication; native admission grants access only to the private bridge path.
+WSL Windows-registry discovery runs asynchronous, cancellable interop commands;
+a qualified path is cached, and cancelled or failed discovery remains retryable.
 After successful commits/settings changes, `memory.changed` invalidates readers
 without carrying entry content, titles, IDs or directory information.
 
@@ -319,6 +327,8 @@ the badges visit-local. The frontier belongs to the current UI storage origin.
 The editor changes existing entries; **Save** and **Forget** send the displayed
 ID and revision, preserving agent session provenance. **Forget** requires an
 explicit confirmation. **Cancel** resets fields to the selected saved entry.
+Confirmation retains the entry ID, displayed revision and context lifetime:
+unchanged refreshes preserve consent, while a changed revision reports a conflict.
 Dirty drafts use the shared Settings leave guard; scope changes and cleanup
 confirmation also check it. Revision conflicts retain the draft and offer
 **Reload**, with confirmation before discarding edits. Flagged entries stay

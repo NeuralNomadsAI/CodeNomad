@@ -3,7 +3,7 @@ import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/
 import path from "node:path"
 import { hostname } from "node:os"
 import { setTimeout as delay } from "node:timers/promises"
-import { lookupProcess, ownerState, type ProcessLookup, type ProcessState } from "../host-lifetime/process-identity"
+import { lookupProcess, type ProcessLookup, type ProcessState } from "../host-lifetime/process-identity"
 import { validateOwner, type Owner } from "../host-lifetime/protocol"
 import { MemoryError } from "./model"
 
@@ -13,9 +13,21 @@ const WAIT_MS = 30_000
 let self: Promise<ProcessState> | undefined
 
 async function selfState(): Promise<ProcessState> {
-  const result = await (self ??= lookupProcess(process.pid))
-  if (result.state !== "live") self = undefined
-  return result
+  // ponytail: nonce fallback waits for PID exit; use a native Windows helper if
+  // recovery of reused PIDs must also work without a process-inspection tool.
+  return self ??= lookupProcess(process.pid).then(result => result.state === "live" ? result
+    : { state: "live", startIdentity: `memory-self:${randomUUID()}` })
+}
+
+async function memoryOwnerState(owner: Owner, lookup: ProcessLookup): Promise<"live" | "dead" | "unknown"> {
+  validateOwner(owner)
+  const found = await lookup(owner.pid)
+  if (found.state !== "live") return found.state
+  if (found.startIdentity === owner.startIdentity) return "live"
+  // A process-local nonce is qualified only by that process. Another live PID
+  // cannot disprove its generation; only a confirmed exit permits recovery.
+  if ([found.startIdentity, owner.startIdentity].some(id => id.startsWith("memory-self:"))) return "unknown"
+  return "dead"
 }
 
 function sharingViolation(error: unknown): boolean {
@@ -40,7 +52,7 @@ async function pruneRecoveryMarkers(lock: string, lookup: ProcessLookup): Promis
       if (owner.nonce !== name.slice(base.length + 1) || !Number.isSafeInteger(owner.pid) || owner.pid < 1
         || owner.host !== HOST || owner.platform !== process.platform) return
       if (owner.startIdentity !== undefined) validateOwner(owner as Owner)
-      const state = owner.startIdentity !== undefined ? await ownerState(owner as Owner, lookup)
+      const state = owner.startIdentity !== undefined ? await memoryOwnerState(owner as Owner, lookup)
         : (await lookup(owner.pid)).state === "dead" ? "dead" : "unknown"
       if (state !== "dead") return
     } catch (error) {
@@ -127,7 +139,7 @@ export async function lockMemoryRepository(directory: string, lookup: ProcessLoo
           throw new MemoryError("conflict", "Memory repository owner is on another host")
         if (!checked || checked.nonce !== previous.nonce || Date.now() - checked.at >= 1000) {
           const state = previous.startIdentity !== undefined
-            ? await ownerState(previous as Owner, localLookup)
+            ? await memoryOwnerState(previous as Owner, localLookup)
             : (await localLookup(previous.pid)).state === "dead" ? "dead" : "unknown"
           checked = { nonce: previous.nonce, state, at: Date.now() }
         }

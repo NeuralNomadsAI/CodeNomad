@@ -13,12 +13,13 @@ export function AgentMemoryEditor(props: { review: ReturnType<typeof createAgent
   let titleField: HTMLInputElement | undefined
   const items = createMemo(() => [{ key: "forget", label: t("settings.memory.forget"), disabled: blocked(), onSelect: async () => {
     const entry = selected().entry
+    const consent = review.consentSignal()
     if (!(await showConfirmDialog(t("settings.memory.forgetConfirm", { title: entry.title }), {
       confirmLabel: t("settings.memory.forget"), cancelLabel: t("settings.memory.cancel"),
       returnFocus: () => titleField?.focus(),
-    }, review.consentSignal()))) return
-    if (review.draft()?.entry !== entry) return
-    await review.remove()
+    }, consent))) return
+    if (consent.aborted || review.draft()?.entry.id !== entry.id) return
+    await review.remove(entry.revision)
     document.querySelector<HTMLSelectElement>("#agent-memory select")?.focus()
   } }])
   return <form id={props.id} class="agent-memory-editor" aria-label={selected().entry.title} onSubmit={event => {

@@ -401,6 +401,50 @@ test("Forget uses the action menu, Cancel gets focus and successful deletion res
     assert.equal(f.requests.filter(value => value.operation?.action === "delete").length, 1)
   } finally { await page.close() }
 })
+for (const changed of [false, true]) test(`Forget confirmation survives an unchanged refresh and refuses a changed revision (${changed})`, async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  try {
+    await open(page); await page.getByRole("button", { name: /Project A/ }).click()
+    await page.getByRole("button", { name: "Actions for Project A", exact: true }).click()
+    await page.getByRole("menuitem", { name: "Forget", exact: true }).click()
+    const dialog = page.getByRole("dialog")
+    await dialog.waitFor()
+    if (changed) Object.assign(f.data["project-a"][0], { revision: "b".repeat(64), text: "Updated elsewhere" })
+    const refreshed = page.waitForResponse(response => response.url().endsWith("/api/memory") && response.request().postDataJSON().operation.action === "list")
+    await page.evaluate(() => (window as any).fixture.event({ type: "memory.changed" }))
+    await (await refreshed).finished()
+    // Wait for the list continuation to replace the selected saved-entry object.
+    await page.waitForFunction(changed => (document.querySelector("#agent-memory textarea") as HTMLTextAreaElement)?.value ===
+      (changed ? "Updated elsewhere" : "Useful text for Project A") && !document.querySelector("#agent-memory [aria-busy=true]"), changed)
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    await dialog.getByRole("button", { name: "Forget", exact: true }).click()
+    if (changed) {
+      await page.getByRole("alert").getByText(en["settings.memory.error.conflict"], { exact: true }).waitFor()
+      assert.equal(f.requests.filter(value => value.operation?.action === "delete").length, 0)
+      assert.equal(await text(page).inputValue(), "Updated elsewhere")
+    } else {
+      await page.getByText(en["settings.memory.empty"], { exact: true }).waitFor()
+      assert.equal(f.requests.filter(value => value.operation?.action === "delete").length, 1)
+    }
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+test("Forget consent is revoked across projects even when the next entry has the same ID and revision", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  f.data["project-b"][0].id = "a"
+  try {
+    await open(page); await page.getByRole("button", { name: /Project A/ }).click()
+    await page.getByRole("button", { name: "Actions for Project A", exact: true }).click()
+    await page.getByRole("menuitem", { name: "Forget", exact: true }).click()
+    await page.getByRole("dialog").waitFor()
+    await page.evaluate(() => (window as any).fixture.context({ instanceId: "project-b", workspacePath: "C:/project-b", location: { directory: "/repo-b" } }))
+    await page.getByRole("dialog").waitFor({ state: "detached" })
+    await page.getByRole("button", { name: /Project B/ }).click()
+    assert.equal(await title(page).inputValue(), "Project B")
+    assert.equal(f.requests.filter(value => value.operation?.action === "delete").length, 0)
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
 test("ten locales have the same labels; Hebrew layout keeps fields and actions inside the viewport", async () => {
   for (const locale of ["fr", "de", "es", "he", "ja", "ne", "ru", "tr", "zh-Hans"]) {
     const { agentMemoryMessages } = await import(`../../src/lib/i18n/messages/${locale}/agent-memory.ts`)

@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto"
-import { execFileSync, spawn } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 import { mkdir, open, opendir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -26,7 +26,7 @@ const MAX_BRIDGE_RESPONSE_BYTES = 8 * 1024 * 1024
 const PROBE_CONCURRENCY = 4
 const REGISTRATION_NAME = /^(\d+)-\d+-[A-Za-z0-9_-]+\.json$/
 const WINDOWS_INTEROP = Symbol("windowsInterop")
-let cachedWslWindowsLocalAppData: string | null | undefined
+let cachedWslWindowsLocalAppData: string | undefined
 
 export type DeveloperAction =
   | { action: "inspect"; ref?: string; query?: string }
@@ -91,30 +91,40 @@ export function automationBridgeDirectories(options: {
       ? paths.join(env.XDG_RUNTIME_DIR, "codenomad", "automation-bridges")
       : paths.join(home, ".config", "codenomad", "automation-bridges")
   if (platform !== "linux" || !env.WSL_DISTRO_NAME) return [primary]
-  const windowsLocalAppData = options.windowsLocalAppData ?? resolveWslWindowsLocalAppData()
+  const windowsLocalAppData = options.windowsLocalAppData
   return windowsLocalAppData
     ? [...new Set([primary, path.posix.join(windowsLocalAppData, "CodeNomad", "automation-bridges")])]
     : [primary]
 }
 
-function resolveWslWindowsLocalAppData(): string | undefined {
-  if (cachedWslWindowsLocalAppData !== undefined) return cachedWslWindowsLocalAppData ?? undefined
+export async function discoverAutomationBridgeDirectories(signal?: AbortSignal,
+  options: Parameters<typeof automationBridgeDirectories>[0] = {}): Promise<string[]> {
+  signal?.throwIfAborted()
+  if ((options.platform ?? process.platform) !== "linux" || !(options.env ?? process.env).WSL_DISTRO_NAME)
+    return automationBridgeDirectories(options)
+  const windowsLocalAppData = options.windowsLocalAppData ?? await resolveWslWindowsLocalAppData(signal)
+  signal?.throwIfAborted()
+  return automationBridgeDirectories({ ...options, windowsLocalAppData })
+}
+
+async function resolveWslWindowsLocalAppData(signal?: AbortSignal): Promise<string | undefined> {
+  if (cachedWslWindowsLocalAppData !== undefined) return cachedWslWindowsLocalAppData
+  const command = (file: string, args: string[]) => new Promise<string>((resolve, reject) => {
+    execFile(file, args, { encoding: "utf8", timeout: 2_000, windowsHide: true, maxBuffer: MAX_REGISTRATION_BYTES, signal },
+      (error, stdout) => error ? reject(error) : resolve(stdout.trim()))
+  })
   try {
-    const windowsPath = execFileSync("cmd.exe", ["/d", "/s", "/c", "echo %LOCALAPPDATA%"], {
-      encoding: "utf8",
-      timeout: 2_000,
-      windowsHide: true,
-    }).trim()
-    // console-window: runs inside WSL (Linux).
-    const translated = execFileSync("wslpath", ["-u", windowsPath], {
-      encoding: "utf8",
-      timeout: 2_000,
-    }).trim()
-    cachedWslWindowsLocalAppData = path.posix.isAbsolute(translated) ? translated : null
+    const windowsPath = await command("cmd.exe", ["/d", "/s", "/c", "echo %LOCALAPPDATA%"])
+    signal?.throwIfAborted()
+    const translated = await command("wslpath", ["-u", windowsPath])
+    signal?.throwIfAborted()
+    if (path.posix.isAbsolute(translated)) cachedWslWindowsLocalAppData = translated
   } catch {
-    cachedWslWindowsLocalAppData = null
+    signal?.throwIfAborted()
+    // Interop can become available later; retain only a qualified path.
+    return undefined
   }
-  return cachedWslWindowsLocalAppData ?? undefined
+  return cachedWslWindowsLocalAppData
 }
 
 export function createAutomationBridgeRegistration(url: string): AutomationBridgeRegistration {
@@ -294,15 +304,17 @@ export async function verifyHumanAnswerBridge(body: import("../missions/human-an
   return false
 }
 
-async function registrations(pruneStale = true): Promise<DiscoveredBridgeRegistration[]> {
+async function registrations(pruneStale = true, signal?: AbortSignal): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
-  const directories = automationBridgeDirectories()
+  const directories = await discoverAutomationBridgeDirectories(signal)
   for (const [directoryIndex, directory] of directories.entries()) {
+    signal?.throwIfAborted()
     let entries: Array<{ name: string; startedAt: number }> = []
     const entryLimit = directoryIndex === 0 ? MAX_LOCAL_REGISTRY_FILES : MAX_REGISTRATIONS
     try {
       const stream = await opendir(directory)
       for await (const entry of stream) {
+        signal?.throwIfAborted()
         if (!entry.isFile()) continue
         const match = REGISTRATION_NAME.exec(entry.name)
         if (!match) continue
@@ -313,11 +325,13 @@ async function registrations(pruneStale = true): Promise<DiscoveredBridgeRegistr
         }
       }
     } catch {
+      signal?.throwIfAborted()
       continue
     }
     entries.sort((left, right) => right.startedAt - left.startedAt)
     entries.length = Math.min(entries.length, entryLimit)
     for (const entry of entries) {
+      signal?.throwIfAborted()
       const target = path.join(directory, entry.name)
       const registration = await readRegistration(target) as DiscoveredBridgeRegistration | undefined
       if (!registration) continue
@@ -582,7 +596,7 @@ export async function requestMemoryContext(sessionID: string, signal?: AbortSign
 
 async function sendMemoryBridge(sessionID: string, mode: "memory-input" | "memory-context", command?: MemoryOperation, signal?: AbortSignal): Promise<unknown> {
   signal?.throwIfAborted()
-  const active = await registrations()
+  const active = await registrations(true, signal)
   signal?.throwIfAborted()
   const targets: DiscoveredBridgeRegistration[] = []
   let unowned = 0

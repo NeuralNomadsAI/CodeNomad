@@ -78,6 +78,33 @@ test("an unavailable own start identity publishes no lock", async t => {
   assert.deepEqual(await readdir(path.dirname(target)), [])
 })
 
+test("Windows without PowerShell retains a safe own nonce and preserves live owners until confirmed exit", {
+  skip: process.platform !== "win32", timeout: 20_000,
+}, async t => {
+  const target = await directory(t)
+  const module = new URL("./lock.ts", import.meta.url).href
+  const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+    import { lockMemoryRepository } from ${JSON.stringify(module)};
+    process.env.SystemRoot = ${JSON.stringify(path.join(path.dirname(target), "no-windows-tools"))};
+    const release = await lockMemoryRepository(${JSON.stringify(target)});
+    await release();
+    await lockMemoryRepository(${JSON.stringify(target)});
+    console.log('ready'); process.stdin.resume();
+  `], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] })
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill() })
+  let stderr = ""
+  child.stderr.on("data", value => { stderr += value })
+  await Promise.race([once(child.stdout, "data"), once(child, "exit").then(() => { throw new Error(stderr || "Owner exited before readiness") })])
+  const original = await readFile(`${target}.lock/owner`, "utf8")
+  assert.match(JSON.parse(original).startIdentity, /^memory-self:[a-f0-9-]{36}$/)
+  // A native identity for the same live PID is incomparable to its private nonce.
+  await assert.rejects(lockMemoryRepository(target, async () => ({ state: "live", startIdentity: "win32:12345" })),
+    { code: "conflict", message: "Memory repository owner is unavailable" })
+  assert.equal(await readFile(`${target}.lock/owner`, "utf8"), original)
+  const exited = once(child, "exit"); child.kill(); await exited
+  await (await lockMemoryRepository(target))()
+})
+
 test("the thirty-second contention deadline is retryable and preserves the live owner", async t => {
   const target = await directory(t)
   const lookup = async () => ({ state: "live" as const, startIdentity: "same-process" })

@@ -38,6 +38,10 @@ Packaged Electron main/preload/renderer, UI and server builds emit source maps. 
 
 An active backend publishes an ephemeral registration with a per-process 256-bit token and removes it on graceful shutdown. Tool definitions captured earlier still go through execution-time checks, which refuse calls after backend shutdown or when the inspected native window, run or document changed; selecting another project or conversation keeps them valid. A WSL OpenCode plugin also discovers Windows registrations and reaches the Windows-only loopback listener through Windows interop under default WSL2 NAT. Provisioning migrates only recognizable generated entries and never overwrites a user-authored plugin.
 
+Windows registry-path discovery in WSL uses asynchronous interop with bounded commands.
+Memory admission cancellation reaches both discovery commands and registry scans;
+only a qualified path is retained across calls.
+
 `codenomad.act({ action: "restart" })` asks the host pinned by the latest successful inspection to relaunch gracefully, ignores the old registration, waits for the same native identity with a new run, re-inspects it for the invoking session and returns that inspection. It never switches to another worktree build.
 
 - The HTTP bridge and CDP endpoint use IPv4 loopback only. The bridge requires its random token. Raw CDP has no authentication and can execute code in authenticated renderer pages, so it trusts local processes; the bridge keeps its token and session/window selection checks.

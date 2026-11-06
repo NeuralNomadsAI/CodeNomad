@@ -105,9 +105,10 @@ export function createAgentMemoryReview(context: () => MemoryContext | undefined
     if (!(await discard()) || current !== generation || disposed) return
     scopeChosen = true; setScope(next)
   }
-  const mutate = async (remove = false) => {
+  const mutate = async (remove = false, revision?: string) => {
     const current = generation, key = owner(), selected = draft(), targetScope = scope(), target = targetScope === "project" ? context() : undefined
     if (!selected || busy() || !available()) return
+    if (revision !== undefined && selected.entry.revision !== revision) { setError(new AgentMemoryError("conflict")); return }
     setBusy(true); setError(undefined)
     try {
       const result = await agentMemoryApi.operation<{ revision: string; flagged: boolean }>(remove
@@ -138,7 +139,7 @@ export function createAgentMemoryReview(context: () => MemoryContext | undefined
     consentSignal: () => consent.signal,
     dirty: () => dirty(draft()), valid: () => !!draft() && memoryTitleValid(draft()!.title) && memoryCharacters(draft()!.text) <= 2000,
     edit: (patch: Partial<Pick<Draft, "title" | "text" | "type">>) => { const current = draft(); if (current) remember({ ...current, ...patch }) },
-    save: () => mutate(), remove: () => mutate(true),
+    save: () => mutate(), remove: (revision: string) => mutate(true, revision),
     cancel: () => { const entry = draft()?.entry; remember(entry ? { entry, title: entry.title, type: entry.type, text: entry.text } : undefined) },
     reload: async () => { const current = generation; if (await discard() && current === generation && !disposed) { remember(undefined); setError(undefined); await load() } },
   }
