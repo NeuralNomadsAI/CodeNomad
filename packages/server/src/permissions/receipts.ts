@@ -116,7 +116,7 @@ export class PermissionReceipts {
       for (const value of locations) {
         if (!current()) return
         const location = readLocationRef(value)
-        if (!await this.manager.ownsLocation(event.instanceId, location, connection.client, undefined, "event")) continue
+        if (!await this.manager.ownsLocation(event.instanceId, location, connection.client, { purpose: "event" })) continue
         if (!current()) return
         const pending = await connection.client.permission.request.list({ location: { directory: location.directory } }, {
           ...locationRequestOptions(location), signal: AbortSignal.timeout(10_000),
@@ -129,7 +129,7 @@ export class PermissionReceipts {
           try { session = await connection.client.session.get({ sessionID: request.sessionId }, { signal: AbortSignal.timeout(10_000) }) }
           catch (error) { if (isSessionNotFoundError(error)) continue; throw error }
           if (!current()) return
-          if (!await this.manager.ownsLocation(event.instanceId, session.location, connection.client, undefined, "event")) continue
+          if (!await this.manager.ownsLocation(event.instanceId, session.location, connection.client, { purpose: "event" })) continue
           if (!current()) return
           await this.store.capture(scope, request)
         }

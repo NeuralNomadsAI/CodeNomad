@@ -192,11 +192,11 @@ describe("workspace manager shared service lifecycle", () => {
       }
       assert.equal(await manager.ownsDirectory(workspace.id, clone), false)
       assert.equal(await manager.ownsLocation(workspace.id, { directory: clone }), false)
-      assert.equal(await manager.ownsLocation(workspace.id, { directory: clone }, undefined, undefined, "request", true), false)
+      assert.equal(await manager.ownsLocation(workspace.id, { directory: clone }, undefined, { strict: true }), false)
       assert.equal(scans, 0)
       assert.equal(await manager.ownsDirectory(workspace.id, linked), true)
       assert.equal(scans, 1)
-      assert.equal(await manager.ownsLocation(workspace.id, { directory: linked }, undefined, undefined, "request", true), true)
+      assert.equal(await manager.ownsLocation(workspace.id, { directory: linked }, undefined, { strict: true }), true)
       let registered = [repo, linked]
       let refreshes = 0
       const client = {
@@ -219,7 +219,7 @@ describe("workspace manager shared service lifecycle", () => {
       assert.equal(await manager.getWorktreeIdentityForPath(workspace.id, linked, "event"), undefined)
       assert.equal(refreshes, 0, "event identity must remain registered-only after invalidation")
       assert.equal(scans, 1)
-    } finally { await manager.shutdown(); await rm(root, { recursive: true, force: true }) }
+    } finally { await manager.shutdown(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
   })
 
   it("owns a checkout of another repository nested inside the opened folder, under the root's identity", async () => {
@@ -249,11 +249,11 @@ describe("workspace manager shared service lifecycle", () => {
       service.client = async () => client
       // Pending recovery follows this ownership; it must match prompts and live events.
       for (const purpose of ["request", "event"] as const) {
-        assert.equal(await manager.ownsLocation(workspace.id, { directory: nested }, undefined, undefined, purpose), true)
+        assert.equal(await manager.ownsLocation(workspace.id, { directory: nested }, undefined, { purpose }), true)
         assert.equal(await manager.getServiceDirectoryForPath(workspace.id, nested, purpose), await realpath(nested))
         assert.equal(await manager.getWorktreeIdentityForPath(workspace.id, nested, purpose), canonicalWorktreeIdentity(await realpath(repo)))
       }
-    } finally { await manager.shutdown(); await rm(root, { recursive: true, force: true }) }
+    } finally { await manager.shutdown(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
   })
 
   it("distinguishes proven unrelated ownership from physical and Git identity read failures", async () => {
@@ -266,14 +266,14 @@ describe("workspace manager shared service lifecycle", () => {
       await mkdir(unrelated)
       const { workspace } = await manager.create(root)
       manager.getWorktrees = async () => { throw new Error("unexpected ownership expansion") }
-      const owns = (directory: string, strict = true) => manager.ownsLocation(workspace.id, { directory }, undefined, undefined, "request", strict)
+      const owns = (directory: string, strict = true) => manager.ownsLocation(workspace.id, { directory }, undefined, { strict })
       assert.equal(await owns(root), true)
       assert.equal(await owns(unrelated), false, "absence of a checkout is a proven negative")
       await assert.rejects(owns(path.join(temp, "missing")), { code: "ENOENT" })
       await writeFile(path.join(root, ".git", "commondir"), "missing-common-directory\n")
       assert.equal(await owns(unrelated, false), false, "ordinary boolean consumers retain their fallback")
       await assert.rejects(owns(unrelated), { code: "ENOENT" })
-    } finally { await manager.shutdown(); await rm(temp, { recursive: true, force: true }) }
+    } finally { await manager.shutdown(); await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
   })
 
   it("rejects failed WSL host and service translations in strict ownership reads", async () => {
@@ -288,7 +288,7 @@ describe("workspace manager shared service lifecycle", () => {
     })
     try {
       const { workspace } = await manager.create(process.cwd())
-      const owns = (strict: boolean) => manager.ownsLocation(workspace.id, { directory: "/mnt/d/workspace" }, undefined, undefined, "request", strict)
+      const owns = (strict: boolean) => manager.ownsLocation(workspace.id, { directory: "/mnt/d/workspace" }, undefined, { strict })
       assert.equal(await owns(true), true)
       translateHost = false
       assert.equal(await owns(false), false)
@@ -731,7 +731,7 @@ describe("workspace manager shared service lifecycle", () => {
       await assert.rejects(() => harness.manager.reserveWorktreeDeletion(worktree), /open as another workspace/)
       await harness.manager.delete(workspace.id)
     } finally {
-      await rm(temp, { recursive: true, force: true })
+      await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   })
 

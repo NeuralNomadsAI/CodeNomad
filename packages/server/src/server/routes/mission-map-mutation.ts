@@ -45,7 +45,7 @@ export async function prepareMissionMapMutation(input: {
     throw new MissionMapMutationError(403, "Mission directory is invalid")
   }
   const requested = input.directory ? { directory: input.directory } : base
-  if (!await wait(manager.ownsLocation(workspaceID, requested, client, signal))) {
+  if (!await wait(manager.ownsLocation(workspaceID, requested, client, { signal }))) {
     throw new MissionMapMutationError(403, "Mission directory does not belong to workspace")
   }
   const directory = await wait(manager.getServiceDirectoryForPath(workspaceID, requested.directory))
@@ -53,7 +53,7 @@ export async function prepareMissionMapMutation(input: {
   const location = { directory }, options = { location, ...locationRequestOptions(location) }
   try {
     const resolved = await wait(client.location.get({ location }, { ...locationRequestOptions(location), signal }))
-    if (!sameLocation(location, resolved) || !await wait(manager.ownsLocation(workspaceID, resolved, client, signal))) {
+    if (!sameLocation(location, resolved) || !await wait(manager.ownsLocation(workspaceID, resolved, client, { signal }))) {
       throw new MissionMapMutationError(403, "Native mission location differs from owned directory")
     }
     const inventory = await wait(client.plugin.list({ location }, { ...locationRequestOptions(location), signal }))

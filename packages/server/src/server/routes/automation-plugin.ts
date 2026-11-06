@@ -113,7 +113,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     try {
       const workspaces = deps.workspaceManager.list()
       owned = await lifetime.wait(Promise.any(workspaces.map(async workspace => {
-        try { if (await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, signal, "request", preferenceProbe)) return true }
+        try { if (await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, { signal, strict: preferenceProbe })) return true }
         catch { ownershipReadFailed = true }
         throw new Error("Not an owner")
       }))).catch(() => false)

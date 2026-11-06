@@ -8,7 +8,7 @@ import { MissionControlError } from "../missions/control-error"
 import { signNativeRecurrenceControl, type RecurrenceControlProofBody } from "../missions/recurrence-control-proof"
 import { missionRecoveryError } from "../missions/recovery-error"
 import { parseMissionCreationDefaultsInput } from "../missions/creation-defaults"
-import { hasExplicitMissionCreationChoices, resolveMissionCreationDefaults } from "../missions/profile-defaults"
+import { hasExplicitMissionCreationChoices, MISSION_PREFERENCES_UNAVAILABLE, resolveMissionCreationDefaults } from "../missions/profile-defaults"
 import { isConnectionRefused } from "./connection-errors"
 import { PAGE_ACTION_PROPERTIES, PAGE_ACTIONS, parsePageAction, type RefAction } from "../automation/page/parse"
 
@@ -182,16 +182,30 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-async function readRegistration(target: string): Promise<AutomationBridgeRegistration | undefined> {
+function registrationFile(name: string, local: boolean) {
+  const match = REGISTRATION_NAME.exec(name)
+  if (!match) return undefined
+  const pid = Number(match[2])
+  return { name, startedAt: Number(match[1]), deadPublisher: local && Number.isSafeInteger(pid) && pid > 0 && !isProcessAlive(pid) }
+}
+
+type RegistrationFile = NonNullable<ReturnType<typeof registrationFile>>
+
+async function readRegistration(target: string, { throwReadErrors = false } = {}): Promise<AutomationBridgeRegistration | undefined> {
+  const buffer = Buffer.alloc(MAX_REGISTRATION_BYTES + 1)
+  let bytesRead = 0
   try {
     const file = await open(target, "r")
-    const buffer = Buffer.alloc(MAX_REGISTRATION_BYTES + 1)
-    let bytesRead = 0
     try {
       bytesRead = (await file.read(buffer, 0, buffer.length, 0)).bytesRead
     } finally {
       await file.close()
     }
+  } catch (error) {
+    if (throwReadErrors) throw error
+    return undefined
+  }
+  try {
     if (bytesRead > MAX_REGISTRATION_BYTES) return undefined
     const value = JSON.parse(buffer.subarray(0, bytesRead).toString("utf8")) as Partial<AutomationBridgeRegistration>
     if (value.version !== 1 || typeof value.url !== "string" || typeof value.token !== "string"
@@ -208,12 +222,12 @@ async function readRegistration(target: string): Promise<AutomationBridgeRegistr
 async function pruneDeadLocalRegistrations(directory: string): Promise<void> {
   try {
     const stream = await opendir(directory)
-    const entries: Array<{ name: string; startedAt: number }> = []
+    const entries: RegistrationFile[] = []
     for await (const entry of stream) {
       if (!entry.isFile()) continue
-      const match = REGISTRATION_NAME.exec(entry.name)
-      if (!match) continue
-      entries.push({ name: entry.name, startedAt: Number(match[1]) })
+      const file = registrationFile(entry.name, true)
+      if (!file) continue
+      entries.push(file)
       if (entries.length > MAX_LOCAL_REGISTRY_FILES * 2) {
         entries.sort((left, right) => right.startedAt - left.startedAt)
         entries.length = MAX_LOCAL_REGISTRY_FILES
@@ -223,10 +237,8 @@ async function pruneDeadLocalRegistrations(directory: string): Promise<void> {
     entries.length = Math.min(entries.length, MAX_LOCAL_REGISTRY_FILES)
     for (const entry of entries) {
       const target = path.join(directory, entry.name)
-      const publishingPID = Number(REGISTRATION_NAME.exec(entry.name)![2])
       const registration = await readRegistration(target)
-      if (Number.isSafeInteger(publishingPID) && publishingPID > 0 && !isProcessAlive(publishingPID)
-        || registration && !isProcessAlive(registration.pid)) await rm(target, { force: true })
+      if (entry.deadPublisher || registration && !isProcessAlive(registration.pid)) await rm(target, { force: true })
     }
   } catch {
     // Registry cleanup is best effort; publication and discovery still proceed.
@@ -296,19 +308,19 @@ export async function verifyHumanAnswerBridge(body: import("../missions/human-an
   return false
 }
 
-async function registrations(pruneStale = true, strict = false): Promise<DiscoveredBridgeRegistration[]> {
+async function registrations({ pruneStale = true, strict = false } = {}): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
   const directories = automationBridgeDirectories({ strict })
   for (const [directoryIndex, directory] of directories.entries()) {
-    let entries: Array<{ name: string; startedAt: number }> = []
+    let entries: RegistrationFile[] = []
     const entryLimit = directoryIndex === 0 ? MAX_LOCAL_REGISTRY_FILES : MAX_REGISTRATIONS
     try {
       const stream = await opendir(directory)
       for await (const entry of stream) {
         if (!entry.isFile()) continue
-        const match = REGISTRATION_NAME.exec(entry.name)
-        if (!match) continue
-        entries.push({ name: entry.name, startedAt: Number(match[1]) })
+        const file = registrationFile(entry.name, directoryIndex === 0)
+        if (!file) continue
+        entries.push(file)
         if (strict && entries.length > entryLimit) throw new Error("Mission backend discovery exceeded its bound")
         if (entries.length > entryLimit * 2) {
           entries.sort((left, right) => right.startedAt - left.startedAt)
@@ -323,14 +335,15 @@ async function registrations(pruneStale = true, strict = false): Promise<Discove
     entries.length = Math.min(entries.length, entryLimit)
     for (const entry of entries) {
       const target = path.join(directory, entry.name)
-      const publishingPID = Number(REGISTRATION_NAME.exec(entry.name)![2])
-      if (directoryIndex === 0 && Number.isSafeInteger(publishingPID) && publishingPID > 0 && !isProcessAlive(publishingPID)) {
+      if (entry.deadPublisher) {
         if (pruneStale) await rm(target, { force: true }).catch(() => undefined)
         continue
       }
-      const registration = await readRegistration(target) as DiscoveredBridgeRegistration | undefined
+      const registration = await readRegistration(target, { throwReadErrors: strict }) as DiscoveredBridgeRegistration | undefined
       if (!registration) {
-        if (strict) throw new Error("Mission backend registration is unreadable")
+        // A malformed foreign advertisement supplies no usable bridge contract.
+        // Its PID belongs to Windows; preserve the file for its own publisher.
+        if (strict && directoryIndex === 0) throw new Error("Mission backend registration is unreadable")
         continue
       }
       if (directoryIndex === 0 && !isProcessAlive(registration.pid)) {
@@ -349,7 +362,7 @@ async function registrations(pruneStale = true, strict = false): Promise<Discove
  * from the selected live backend's existing authenticated bridge as well. */
 export async function verifyRecurrenceBridge(body: RecurrenceControlProofBody, proof: string): Promise<boolean> {
   if (!/^[a-f0-9]{64}$/.test(proof)) return false
-  for (const registration of await registrations(false)) {
+  for (const registration of await registrations({ pruneStale: false })) {
     const digest = Buffer.from(signNativeRecurrenceControl(body, registration.token), "hex")
     if (!timingSafeEqual(digest, Buffer.from(proof, "hex"))) continue
     try {
@@ -549,8 +562,8 @@ async function probeBrowserBridges(
   mode: "browser-claim" | "browser-probe",
   timeoutMs = PROBE_TIMEOUT_MS,
   purpose?: "mission" | "mission-preferences",
-  strict = false,
 ): Promise<DiscoveredBridgeRegistration[]> {
+  const strict = purpose === "mission-preferences"
   const found: DiscoveredBridgeRegistration[] = []
   for (let index = 0; index < active.length && found.length < 2; index += PROBE_CONCURRENCY) {
     const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async (registration) => {
@@ -572,42 +585,48 @@ async function probeBrowserBridges(
   return found.slice(0, 2)
 }
 
-export async function sendMissionInput(sessionID: string,
-  kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root" | "prepare" | "task-sessions" | "interrupt" | "profile-defaults", input: unknown): Promise<unknown> {
+async function callMissionInput(target: DiscoveredBridgeRegistration, sessionID: string, kind: string, input: unknown): Promise<unknown> {
+  const response = await callBridge(target, { mode: "mission-input", sessionID, command: { kind, input } }, REQUEST_TIMEOUT_MS)
+  if (response.status !== 200) {
+    const recovery = missionRecoveryError(response.body.code)
+    if (recovery && recovery.status === response.status) throw new MissionControlError(recovery.message, recovery.code)
+    throw new Error("CodeNomad could not admit the mission input; inspect ownership/environment and retry the same task")
+  }
+  return response.body.result
+}
+
+export async function resolveMissionProfileDefaults(sessionID: string, input: unknown): Promise<unknown> {
   try {
-    const defaultsInput = kind === "profile-defaults" ? parseMissionCreationDefaultsInput(input) : undefined
-    if (defaultsInput && hasExplicitMissionCreationChoices(defaultsInput)) return resolveMissionCreationDefaults({ ...defaultsInput, preferences: undefined })
-    // `purpose` lets a backend without native browsers claim the session for dispatch only.
-    let targets: DiscoveredBridgeRegistration[]
-    try {
-      const strict = kind === "profile-defaults"
-      targets = await probeBrowserBridges(await registrations(true, strict), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS,
-        strict ? "mission-preferences" : "mission", strict)
-      if (defaultsInput && targets.length === 0) return {
-        ...resolveMissionCreationDefaults({ ...defaultsInput, preferences: undefined }), preferences: "unavailable",
-      }
-      if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
-    } catch (error) {
-      if (kind === "prepare") {
-        const refusal = missionRecoveryError("prepare-refused")!
-        throw new MissionControlError(refusal.message, refusal.code)
-      }
-      throw error
+    const request = parseMissionCreationDefaultsInput(input)
+    if (hasExplicitMissionCreationChoices(request)) return resolveMissionCreationDefaults({ ...request, preferences: undefined })
+    const targets = await probeBrowserBridges(await registrations({ strict: true }), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS, "mission-preferences")
+    if (targets.length === 0) return {
+      ...resolveMissionCreationDefaults({ ...request, preferences: undefined }), preferences: MISSION_PREFERENCES_UNAVAILABLE,
     }
-    const response = await callBridge(targets[0], { mode: "mission-input", sessionID, command: { kind, input } }, REQUEST_TIMEOUT_MS)
-    if (response.status !== 200) {
-      const recovery = missionRecoveryError(response.body.code)
-      if (recovery && recovery.status === response.status) throw new MissionControlError(recovery.message, recovery.code)
-      throw new Error("CodeNomad could not admit the mission input; inspect ownership/environment and retry the same task")
-    }
-    return response.body.result
+    if (targets.length !== 1) throw new Error("Mission preferences require exactly one owning CodeNomad backend")
+    return await callMissionInput(targets[0], sessionID, "profile-defaults", input)
   } catch (error) {
-    if (kind === "profile-defaults" && !(error instanceof MissionControlError && missionRecoveryError(error.code))) {
-      const unavailable = missionRecoveryError("mission-preferences-unavailable")!
-      throw new MissionControlError(unavailable.message, unavailable.code)
+    if (error instanceof MissionControlError && missionRecoveryError(error.code)) throw error
+    const unavailable = missionRecoveryError("mission-preferences-unavailable")!
+    throw new MissionControlError(unavailable.message, unavailable.code)
+  }
+}
+
+export async function sendMissionInput(sessionID: string,
+  kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root" | "prepare" | "task-sessions" | "interrupt", input: unknown): Promise<unknown> {
+  let targets: DiscoveredBridgeRegistration[]
+  try {
+    // A backend without native browsers can still claim the session for dispatch.
+    targets = await probeBrowserBridges(await registrations(), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS, "mission")
+    if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
+  } catch (error) {
+    if (kind === "prepare") {
+      const refusal = missionRecoveryError("prepare-refused")!
+      throw new MissionControlError(refusal.message, refusal.code)
     }
     throw error
   }
+  return callMissionInput(targets[0], sessionID, kind, input)
 }
 
 export async function executeBrowserTool(sessionID: string, input: unknown) {

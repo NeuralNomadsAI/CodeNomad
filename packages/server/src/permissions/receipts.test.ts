@@ -112,7 +112,7 @@ test("initial connection and reconnect recover every loaded owned Location, incl
   const requested: string[] = []
   let generation = 1
   Object.assign(f.manager, {
-    ownsLocation: async (_id: string, location: { directory: string }, _client: unknown, _signal: unknown, purpose?: string) => {
+    ownsLocation: async (_id: string, location: { directory: string }, _client: unknown, { purpose }: { purpose?: string } = {}) => {
       if (purpose) assert.equal(purpose, "event")
       return directories.includes(location.directory)
     },

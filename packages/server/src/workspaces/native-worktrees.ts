@@ -35,10 +35,11 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
     gitUnavailable = error
   }
   if (!isGitRepo) {
-    if (!gitUnavailable && await discoverCheckoutCommonDirectory(workspacePath) !== undefined) throw new Error("Git checkout discovery failed")
+    const discoveryUnverified = !gitUnavailable && await discoverCheckoutCommonDirectory(workspacePath)
+      .then(common => common !== undefined, () => true)
     return { ...(gitUnavailable ? { gitAvailable: false } : { isGitRepo }),
       worktrees: [{ slug: "root", directory: workspacePath, serviceDirectory: location.directory, kind: "root",
-        ...(gitUnavailable ? { directoryOnly: true } : {}) }] }
+        ...(gitUnavailable ? { directoryOnly: true } : discoveryUnverified ? { discoveryUnverified: true } : {}) }] }
   }
   const local = await readCheckout(workspacePath)
   const current = await client.location.get({ location: { directory: location.directory } }, locationRequestOptions(location))

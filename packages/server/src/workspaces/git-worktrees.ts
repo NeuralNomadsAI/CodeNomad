@@ -32,8 +32,10 @@ export async function sharesGitCommonDirectory(left: string, right: string, stri
   try {
     // Strict discovery preserves verified absence separately from ambiguous/read failures.
     const read = strict ? discoverCheckoutCommonDirectory : readGitCommonDirectory
-    const [a, b] = await Promise.all([read(left), read(right)])
-    return a !== undefined && a === b
+    const [a, b] = await Promise.allSettled([read(left), read(right)])
+    if (a.status === "rejected") throw a.reason
+    if (b.status === "rejected") throw b.reason
+    return a.value !== undefined && a.value === b.value
   } catch (error) {
     if (strict) throw error
     return false

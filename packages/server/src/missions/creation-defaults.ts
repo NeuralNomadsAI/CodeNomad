@@ -2,7 +2,7 @@ import { z } from "zod"
 import type { MissionMap, MissionTemplateId } from "./model"
 import { missionProfileRoles, missionProfilesInputSchema, missionProfilesSchema, sameMissionProfiles, validateMissionProfiles } from "./playbook-profiles"
 import { missionTaskModeInputSchema, missionTaskModeSchema } from "./task-execution-mode"
-import { MISSION_DEFAULT_ORIGINS, type MissionCreationSelection } from "./profile-defaults"
+import { MISSION_DEFAULT_ORIGINS, MISSION_PREFERENCES_UNAVAILABLE, type MissionCreationSelection } from "./profile-defaults"
 import { MissionControlError } from "./control-error"
 import { parseExecution } from "./execution"
 
@@ -26,7 +26,7 @@ export function parseMissionCreationDefaultsInput(input: unknown) {
   return parsed.data
 }
 const originsSchema = z.object({ coordinator: origin, roles: z.record(z.string(), origin), taskMode: origin }).strict()
-const preferencesSchema = z.literal("unavailable").optional()
+const preferencesSchema = z.literal(MISSION_PREFERENCES_UNAVAILABLE).optional()
 export const missionCreationDefaultsSchema = z.object({ request: missionCreationChoicesSchema, profiles: missionProfilesInputSchema,
   taskMode: missionTaskModeInputSchema, origins: originsSchema, preferences: preferencesSchema }).strict()
 const resolutionSchema = z.object({ profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema,
@@ -75,8 +75,8 @@ export const missionCreationDefaultsWire = {
   type: "object", properties: {
     request: { type: "object", properties: { profiles: missionProfilesSchema, taskMode: missionTaskModeSchema }, additionalProperties: false },
     profiles: missionProfilesSchema, taskMode: missionTaskModeSchema,
-    preferences: { type: "string", enum: ["unavailable"] },
+    preferences: { type: "string", enum: [MISSION_PREFERENCES_UNAVAILABLE] },
     origins: { type: "object", properties: { coordinator: originWire, taskMode: originWire,
-      roles: { type: "object", maxProperties: 6, additionalProperties: originWire } }, required: ["coordinator", "roles", "taskMode"], additionalProperties: false },
+      roles: { type: "object", maxProperties: Math.max(...Object.values(missionProfileRoles).map(roles => roles.length)), additionalProperties: originWire } }, required: ["coordinator", "roles", "taskMode"], additionalProperties: false },
   }, required: ["request", "profiles", "taskMode", "origins"], additionalProperties: false,
 } as const

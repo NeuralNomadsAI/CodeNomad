@@ -1,13 +1,23 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { missionProfileRoles, type MissionProfiles } from "./playbook-profiles"
-import { globalMissionTaskMode, hasExplicitMissionCreationChoices, missionTaskModeFor, MissionPreferencesError, resolveMissionCreationDefaults, type MissionProfileDefault } from "./profile-defaults"
+import { globalMissionTaskMode, hasExplicitMissionCreationChoices, missionTaskModeFor, MissionPreferencesError, normalizeMissionDefaults, resolveMissionCreationDefaults, validMissionDefaults, type MissionProfileDefault } from "./profile-defaults"
 import type { MissionTemplateId } from "./model"
+import { missionTaskModeInputSchema } from "./task-execution-mode"
 
 const coordinator = { agent: "coordinator", model: { providerID: "p", id: "coordinator", variant: "high" } }
 const specialist = { agent: "worker", model: { providerID: "p", id: "worker", variant: "low" } }
 const preferences: MissionProfileDefault[] = [{ template: "all", profiles: { coordinator, roles: { specialist } }, taskMode: "independent" }]
 const templates = Object.keys(missionProfileRoles) as MissionTemplateId[]
+
+test("preference task modes use the creation input schema while omission stays absent", () => {
+  for (const taskMode of [undefined, ...missionTaskModeInputSchema.options, null, "automatic", 0, true, {}, []]) {
+    const entry = { template: "all", profiles: {}, ...(taskMode === undefined ? {} : { taskMode }) }
+    const valid = taskMode === undefined || missionTaskModeInputSchema.safeParse(taskMode).success
+    assert.equal(validMissionDefaults([entry]), valid)
+    assert.deepEqual(normalizeMissionDefaults([entry]), valid ? [entry] : [])
+  }
+})
 
 test("explicit creation choices require the coordinator, every playbook role and task mode, including empty slots", () => {
   for (const template of templates) {

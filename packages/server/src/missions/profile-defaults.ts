@@ -1,13 +1,14 @@
 import { parseMissionProfiles, missionProfileRoles, freezeCompareProfiles, validateMissionProfiles, type MissionProfiles } from "./playbook-profiles"
 import type { MissionTemplateId } from "./model"
 import type { MissionExecution } from "./execution"
-import { parseMissionTaskMode, type MissionTaskMode } from "./task-execution-mode"
+import { missionTaskModeInputSchema, parseMissionTaskMode, type MissionTaskMode } from "./task-execution-mode"
 
 export type { MissionTaskMode } from "./task-execution-mode"
 /** `all` is the global default; a mission type entry is an exception overriding it. */
 export type MissionDefaultScope = "all" | MissionTemplateId
 export interface MissionProfileDefault { template: MissionDefaultScope; profiles: MissionProfiles; taskMode?: MissionTaskMode }
 export const MISSION_DEFAULT_ORIGINS = ["explicit", "preference", "opencode-default"] as const
+export const MISSION_PREFERENCES_UNAVAILABLE = "unavailable"
 export type MissionDefaultOrigin = typeof MISSION_DEFAULT_ORIGINS[number]
 const scopes: MissionDefaultScope[] = ["all", "custom", "debug", "wayfinder", "delivery", "compare"]
 // The global default carries one task profile, like the Flexible specialist.
@@ -21,7 +22,7 @@ export function normalizeMissionDefaults(value: unknown): MissionProfileDefault[
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return []
     const template = entry.template as MissionDefaultScope
     if (Object.keys(entry).some(key => !["template", "profiles", "taskMode"].includes(key))
-      || (entry.taskMode !== undefined && !["native", "independent"].includes(entry.taskMode))
+      || (entry.taskMode !== undefined && !missionTaskModeInputSchema.safeParse(entry.taskMode).success)
       || !scopes.includes(template) || result.some(item => item.template === template)) return []
     try {
       const profiles = parseMissionProfiles(entry.profiles)
@@ -87,7 +88,7 @@ export class MissionPreferencesError extends Error {
 }
 
 export interface MissionCreationSelection {
-  preferences?: "unavailable"
+  preferences?: typeof MISSION_PREFERENCES_UNAVAILABLE
   profiles: Required<MissionProfiles>
   taskMode: MissionTaskMode
   origins: { coordinator: MissionDefaultOrigin; roles: Record<string, MissionDefaultOrigin>; taskMode: MissionDefaultOrigin }

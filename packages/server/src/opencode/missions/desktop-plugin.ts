@@ -3,7 +3,7 @@ import type { NativeMissionSession } from "../../missions/control-types"
 import { followPresence } from "../desktop-plugin-presence"
 import { setupMissionsBusiness, setupMissionsPlugin, type MissionBusinessRoute } from "../missions-plugin"
 import { selectNativePassageBusiness, prepareNativePassageSession, retireNativePassageBusiness } from "./native-passage-business"
-import { sendMissionInput } from "../automation-plugin"
+import { resolveMissionProfileDefaults, sendMissionInput } from "../automation-plugin"
 import { isCleanupReason } from "../../missions/cleanup-projection"
 import { MissionJournal } from "../../missions/journal"
 import { MissionJournalIndex } from "../../missions/journal-index"
@@ -42,7 +42,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
           synthetic: (coordinatorID, input) => sendMissionInput(coordinatorID, "synthetic", input),
           lifecycle: (coordinatorID, input) => sendMissionInput(coordinatorID, "lifecycle", input),
           prepare: (coordinatorID, input) => sendMissionInput(coordinatorID, "prepare", input),
-          resolveCreationDefaults: (sessionID, input) => sendMissionInput(sessionID, "profile-defaults", input),
+          resolveCreationDefaults: resolveMissionProfileDefaults,
           observeTask: (coordinatorID, input) => sendMissionInput(coordinatorID, "task-sessions", input),
           interruptTask: (coordinatorID, input) => sendMissionInput(coordinatorID, "interrupt", input),
           cleanup: async (coordinatorID, input) => {

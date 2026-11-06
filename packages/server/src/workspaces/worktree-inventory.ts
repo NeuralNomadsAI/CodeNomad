@@ -57,7 +57,7 @@ export class WorktreeInventory {
     this.entries.delete(id)
   }
 
-  private load(id: string, entry: Entry): Promise<WorktreeListResponse> {
+  private load(id: string, entry: Entry, restarts = 0): Promise<WorktreeListResponse> {
     if (entry.pending) return entry.pending
     const revision = entry.revision
     const previous = entry.value
@@ -66,8 +66,9 @@ export class WorktreeInventory {
       if (revision !== entry.revision) {
         // A mutation overtook the scan. Serialize one trailing validation rather
         // than publishing obsolete data or starting overlapping Git process fans.
+        if (restarts >= 3) throw new Error("Worktree ownership inventory changed repeatedly")
         entry.pending = undefined
-        return this.load(id, entry)
+        return this.load(id, entry, restarts + 1)
       }
       entry.value = value
       entry.expiresAt = this.now() + MAX_AGE_MS

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { MissionCreationIntents, MISSION_CREATION_INTENT_RETENTION_MS } from "./creation-intent"
+import { MissionCreationIntents, MISSION_CREATION_INTENT_LIMIT, MISSION_CREATION_INTENT_RETENTION_MS } from "./creation-intent"
 import type { MissionStorage } from "./journal"
 import type { MissionJsonValue } from "./model"
 import { resolveMissionCreationDefaults } from "./profile-defaults"
@@ -51,12 +51,18 @@ test("lost intent acknowledgement retains the original data and guards run befor
 
 test("pending intentions are bounded and settled evidence releases its capacity place", async () => {
   const f = fixture()
-  for (let index = 0; index < 128; index++) await f.intents.save(`msn_${index}`, request, defaults, missing, () => {}, "request-conflict")
-  await assert.rejects(f.intents.save("msn_over", request, defaults, missing, () => {}, "request-conflict"), (error: any) => error.code === "creation-capacity")
-  assert.equal(f.values.size, 128)
+  for (let index = 0; index < MISSION_CREATION_INTENT_LIMIT; index++) await f.intents.save(`msn_${index}`, request, defaults, missing, () => {}, "request-conflict")
+  assert.deepEqual(await f.intents.save("msn_0", request, defaults, missing, () => {}, "request-conflict"), defaults, "an exact retry works at capacity")
+  await assert.rejects(f.intents.save("msn_over", request, defaults, missing, () => {}, "request-conflict"), (error: any) => {
+    assert.equal(error.code, "creation-capacity")
+    assert.ok(error.message.startsWith(`${MISSION_CREATION_INTENT_LIMIT} Mission preparation choices are retained.`))
+    assert.ok(error.message.includes(`up to ${MISSION_CREATION_INTENT_RETENTION_MS / (60 * 60 * 1_000)} hours`))
+    return true
+  })
+  assert.equal(f.values.size, MISSION_CREATION_INTENT_LIMIT)
   await f.intents.settled("msn_0")
   await f.intents.save("msn_over", request, defaults, missing, () => {}, "request-conflict")
-  assert.equal(f.values.size, 128)
+  assert.equal(f.values.size, MISSION_CREATION_INTENT_LIMIT)
 })
 
 test("damaged intent bytes stay intact and refuse before another preference read or write", async () => {
@@ -70,11 +76,11 @@ test("damaged intent bytes stay intact and refuse before another preference read
 
 test("uncertain choices expire without extending their lifetime on an identical retry", async () => {
   const f = fixture()
-  for (let index = 0; index < 128; index++) await f.intents.save(`msn_${index}`, request, defaults, missing, () => {}, "request-conflict")
+  for (let index = 0; index < MISSION_CREATION_INTENT_LIMIT; index++) await f.intents.save(`msn_${index}`, request, defaults, missing, () => {}, "request-conflict")
   f.advance(MISSION_CREATION_INTENT_RETENTION_MS - 1)
   assert.deepEqual(await f.intents.read("msn_0", request, missing, "request-conflict"), defaults)
   await f.intents.save("msn_0", request, defaults, missing, () => {}, "request-conflict")
-  f.advance(2)
+  f.advance(1)
   await f.intents.save("msn_new", request, defaults, missing, () => {}, "request-conflict")
   assert.equal(f.values.size, 1)
   assert.equal(await f.intents.read("msn_0", request, missing, "request-conflict"), undefined)

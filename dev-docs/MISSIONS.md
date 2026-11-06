@@ -180,17 +180,23 @@ refuse otherwise. Only one-time coordinators are offered and told about
   backend discovery, or an unreadable preference document return
   `mission-preferences-unavailable`; invalid preferences return
   `mission-preferences-invalid`. These failures refuse creation and ask for
-  recovery. Discovery includes the Windows registry under WSL. A stale registration
-  whose connection is refused has no listener and counts as absent; timeouts,
-  HTTP/authentication failures and unreadable registration state with indeterminate
-  ownership refuse preference resolution. A local registration whose filename's
-  publishing PID is proven dead is absent even when its contents are unreadable;
-  cross-host PIDs require endpoint evidence. A typed missing-session reply, an empty
+  recovery or fully explicit choices. Discovery includes the Windows registration
+  directory under WSL. A local registration whose filename's publishing PID is
+  proven dead is absent even when its contents are unreadable; unreadable state
+  with a live or indeterminate local publisher refuses resolution. A registration
+  whose endpoint refuses the connection is known absent. WSL skips unparseable
+  registrations in the Windows directory (including unsupported schemas, oversized
+  files and invalid URLs): they offer no usable authenticated bridge endpoint or
+  supported contract. Leave these foreign files in place. Windows PIDs belong to
+  their host namespace; valid Windows registrations require endpoint evidence.
+  Timeouts and HTTP/authentication failures from a valid endpoint leave ownership
+  indeterminate and refuse resolution. A typed missing-session reply, an empty
   backend workspace inventory or a successful ownership read proving an unrelated
   project establishes non-ownership, including with other workspaces open. Actual
   Git/WSL ownership-read failures remain indeterminate and refuse resolution.
   `mission.prepare` requires an owning backend for fenced creation even when
-  profile resolution can use the no-owner fallback.
+  profile resolution can use the no-owner fallback. Fully explicit choices make
+  no preference request; preparation still requires its owning backend.
 
   The requestID is scoped to the coordinator and mission. Preparations with the
   same requestID are serialized. Reuse that requestID and the original inputs:

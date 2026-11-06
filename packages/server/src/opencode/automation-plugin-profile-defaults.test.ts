@@ -12,7 +12,7 @@ import { PassThrough } from "node:stream"
 import { MissionControlError } from "../missions/control-error"
 import { registerAutomationPluginRoute } from "../server/routes/automation-plugin"
 import { setupMissionsPlugin } from "./missions-plugin"
-import { AUTOMATION_BRIDGE_PATH, automationBridgeDirectories, createAutomationBridgeRegistration, publishAutomationBridge, sendMissionInput } from "./automation-plugin"
+import { AUTOMATION_BRIDGE_PATH, automationBridgeDirectories, createAutomationBridgeRegistration, publishAutomationBridge, resolveMissionProfileDefaults, sendMissionInput } from "./automation-plugin"
 
 test("profile defaults distinguish absent owners from ambiguous, failed and unreadable owners", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-profile-default-bridge-"))
@@ -51,8 +51,7 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
         return { location: { directory: "/repo" } }
       } } }),
       list: () => { if (inventoryFailure) throw new Error("secret inventory failure"); return noWorkspaces ? [] : [{ id: "owner" }] },
-      ownsLocation: async (_id: string, _location: unknown, _client: unknown, _signal: AbortSignal, _purpose: string, strict: boolean) => {
-        if (strict) assert.equal(_purpose, "request")
+      ownsLocation: async (_id: string, _location: unknown, _client: unknown, { strict }: { strict?: boolean }) => {
         if (ownershipFailure) { if (strict) throw new Error("Ownership unavailable"); return false }
         return owned
       },
@@ -81,19 +80,19 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
       headers: { "x-codenomad-automation-token": token! }, payload: body })
     return new Response(response.body, { status: response.statusCode })
   })
-  const request = () => sendMissionInput("ses_owner", "profile-defaults", { template: "custom" })
+  const request = () => resolveMissionProfileDefaults("ses_owner", { template: "custom" })
   const unavailable = (error: unknown) => error instanceof MissionControlError
     && error.code === "mission-preferences-unavailable"
     && error.message === "Reload or correct the Missions preferences before creating a mission"
   const fallback = { profiles: { coordinator: {}, roles: { specialist: {} } }, taskMode: "native",
     origins: { coordinator: "opencode-default", roles: { specialist: "opencode-default" }, taskMode: "opencode-default" }, preferences: "unavailable" }
   assert.deepEqual(await request(), fallback, "without a registered owner, the tool reports its explicit fallback")
-  const explicit = await sendMissionInput("ses_owner", "profile-defaults", { template: "custom", profiles: { coordinator: { agent: "lead" } }, taskMode: "independent" }) as any
+  const explicit = await resolveMissionProfileDefaults("ses_owner", { template: "custom", profiles: { coordinator: { agent: "lead" } }, taskMode: "independent" }) as any
   assert.deepEqual(explicit.profiles.coordinator, { agent: "lead" })
   assert.equal(explicit.origins.coordinator, "explicit")
   assert.equal(explicit.origins.taskMode, "explicit")
   assert.equal(explicit.preferences, "unavailable")
-  await assert.rejects(sendMissionInput("ses_owner", "profile-defaults", { template: "debug", profiles: { roles: { specialist: {} } } }),
+  await assert.rejects(resolveMissionProfileDefaults("ses_owner", { template: "debug", profiles: { roles: { specialist: {} } } }),
     (error: unknown) => error instanceof MissionControlError && error.code === "invalid-execution")
   await assert.rejects(sendMissionInput("ses_owner", "prepare", {}), (error: unknown) => error instanceof MissionControlError
     && error.code === "prepare-refused", "a prepare with no owner has not been dispatched")
@@ -120,7 +119,7 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
     rpc: { register: async (_definition: unknown, registered: unknown) => { handlers = registered; return { dispose: async () => {}, events: { emit: async () => {} } } } },
   } as never, {
     prompt: async () => assert.fail("Creation never prompts"), synthetic: async () => assert.fail("Creation never resumes"),
-    resolveCreationDefaults: (id, input) => sendMissionInput(id, "profile-defaults", input),
+    resolveCreationDefaults: resolveMissionProfileDefaults,
     prepare: (id, input) => sendMissionInput(id, "prepare", input),
   })
   t.after(cleanup)
@@ -189,7 +188,7 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
   preferences = "secret-invalid-value"
   const beforeExplicit = posts
   const callsBeforeExplicit = calls
-  const complete = await sendMissionInput("ses_owner", "profile-defaults", { template: "custom",
+  const complete = await resolveMissionProfileDefaults("ses_owner", { template: "custom",
     profiles: { coordinator: {}, roles: { specialist: {} } }, taskMode: "native" }) as any
   assert.deepEqual(complete.origins, { coordinator: "explicit", roles: { specialist: "explicit" }, taskMode: "explicit" })
   assert.equal("preferences" in complete, false, "unused preference availability is not invented")
@@ -242,7 +241,7 @@ test("strict WSL discovery retries a failed cached Windows registry lookup", t =
   assert.equal(attempts, 2, "an old failed lookup is not reused as negative ownership evidence")
 })
 
-test("WSL Windows probes ignore curl connection refusal but retain timeout, HTTP and auth refusals", async t => {
+test("WSL Windows discovery skips unusable advertisements and refused endpoints, retaining live failures", async t => {
   const platform = Object.getOwnPropertyDescriptor(process, "platform")!
   const previous = { WSL_DISTRO_NAME: process.env.WSL_DISTRO_NAME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR }
   Object.defineProperty(process, "platform", { value: "linux", configurable: true })
@@ -257,18 +256,22 @@ test("WSL Windows probes ignore curl connection refusal but retain timeout, HTTP
     syncBuiltinESMExports()
   })
   const registration = createAutomationBridgeRegistration("http://127.0.0.1:1")
-  const bytes = Buffer.from(JSON.stringify(registration))
+  let bytes = Buffer.from(JSON.stringify(registration)), probes = 0, readFailed = false
+  t.mock.method(process, "kill", () => assert.fail("Windows publisher PIDs cannot be checked from WSL"))
+  t.mock.method(fs, "rm", async () => assert.fail("WSL leaves foreign advertisements to their publisher"))
   t.mock.method(childProcess, "execFileSync", () => "/fixture-windows")
   t.mock.method(fs, "opendir", async (directory: string) => (async function* () {
     if (directory.startsWith("/fixture-windows/")) yield {
       name: `${registration.startedAt}-${registration.pid}-windows.json`, isFile: () => true,
     }
   })())
-  t.mock.method(fs, "open", async () => ({
-    read: async (buffer: Buffer) => { bytes.copy(buffer); return { bytesRead: bytes.length } }, close: async () => {},
-  }))
+  t.mock.method(fs, "open", async () => {
+    if (readFailed) throw Object.assign(new Error("Permission denied"), { code: "EACCES" })
+    return { read: async (buffer: Buffer) => { bytes.copy(buffer); return { bytesRead: bytes.length } }, close: async () => {} }
+  })
   let exit = 7, status = 0, diagnostic = "* connect to 127.0.0.1 port 1 failed: Connection refused"
   t.mock.method(childProcess, "spawn", (command: string, args: string[]) => {
+    probes++
     assert.equal(command, "curl.exe")
     assert.deepEqual(args.slice(args.indexOf("--noproxy"), args.indexOf("--noproxy") + 2), ["--noproxy", "*"])
     const child = Object.assign(new EventEmitter(), {
@@ -282,7 +285,7 @@ test("WSL Windows probes ignore curl connection refusal but retain timeout, HTTP
     return child
   })
   syncBuiltinESMExports()
-  const request = () => sendMissionInput("ses_wsl", "profile-defaults", { template: "custom" })
+  const request = () => resolveMissionProfileDefaults("ses_wsl", { template: "custom" })
   assert.equal((await request() as any).preferences, "unavailable", "curl's connection-refused diagnostic proves no Windows listener")
   for (diagnostic of ["* connect to 127.0.0.1 port 1 failed: Permission denied (10013)", "curl: (7) Could not connect to server"]) {
     await assert.rejects(request(), (error: unknown) => error instanceof MissionControlError && error.code === "mission-preferences-unavailable",
@@ -292,4 +295,14 @@ test("WSL Windows probes ignore curl connection refusal but retain timeout, HTTP
     ;({ exit, status } = failure)
     await assert.rejects(request(), (error: unknown) => error instanceof MissionControlError && error.code === "mission-preferences-unavailable")
   }
+  const beforeInvalid = probes
+  for (const value of [JSON.stringify({ ...registration, version: 0 }), "x".repeat(4097),
+    JSON.stringify({ ...registration, url: "http://example.invalid" }), "{unparseable"]) {
+    bytes = Buffer.from(value)
+    assert.equal((await request() as any).preferences, "unavailable", "an unusable foreign advertisement supplies no current bridge contract")
+  }
+  assert.equal(probes, beforeInvalid, "unusable advertisements never select a bridge or admit work")
+  readFailed = true
+  await assert.rejects(request(), (error: unknown) => error instanceof MissionControlError && error.code === "mission-preferences-unavailable",
+    "a failed file read may hide a valid owner and stays distinct from malformed foreign content")
 })

@@ -355,7 +355,7 @@ export class InstanceEventBridge {
 
     const resolve = () => location.workspaceID === undefined
       ? this.options.workspaceManager.ownsDirectory(instanceId, location.directory, "event")
-      : this.options.workspaceManager.ownsLocation(instanceId, location, undefined, signal, "event")
+      : this.options.workspaceManager.ownsLocation(instanceId, location, undefined, { signal, purpose: "event" })
     const owns = Promise.resolve().then(resolve).catch(() => current() ? resolve() : false)
     const entry = { expiresAt: Number.POSITIVE_INFINITY, owns }
     this.locationOwners.set(key, entry)

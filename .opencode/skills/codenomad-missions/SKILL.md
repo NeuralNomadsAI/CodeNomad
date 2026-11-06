@@ -26,27 +26,21 @@ missing judge model inherits the known coordinator model, including explicit or
 preference `{}` and agent-only slots; a judge's own model stays unchanged.
 `profiles: {}` inherits all slots. Supplying the coordinator, every exact role of
 the selected template and `taskMode` skips backend preferences entirely; `{}` counts
-as an explicit profile slot. All origins are `explicit`, and preference availability
-stays unobserved. Unused unreadable or invalid preferences are irrelevant. Partial
-or omitted selections read owning-backend preferences. With absent preferences,
+as an explicit profile slot; all origins are `explicit`. Partial or omitted
+selections read the owning CodeNomad backend's preferences. With absent preferences,
 profiles use OpenCode defaults and task mode uses `native`.
 Read the creation response's `selection.profiles`, `selection.taskMode` and
 `selection.origins` to check the saved coordinator and every playbook role:
 `explicit`, `preference` or `opencode-default`. A chosen judge slot keeps its
 explicit/preference origin even with an inherited model; an absent judge slot
-inherits the coordinator's origin. When preferences are needed, with no bridge presence or zero proven owning
-backends, `inspect({ start })` uses explicit inputs and OpenCode defaults for omitted
+inherits the coordinator's origin. When preferences are needed and no owning
+CodeNomad backend is present, `inspect({ start })` uses explicit inputs and OpenCode defaults for omitted
 choices (`native` task-mode fallback), returning `selection.preferences: "unavailable"` and only `explicit`
 or `opencode-default` origins. Saved `creationDefaults.preferences: "unavailable"`
-retains the warning on retries even after a backend appears. Multiple owners,
-failed/incomplete backend discovery or unreadable/invalid preferences refuse
-creation; report the error and arrange recovery before retrying. A stale registration
-with connection refused counts as absent; timeouts, HTTP/authentication errors and
-unreadable registration state with indeterminate ownership refuse resolution. A
-successful ownership read proving an unrelated project establishes non-ownership
-even with other workspaces open; actual Git/WSL ownership-read failures refuse resolution.
-`mission.prepare`
-requires an owning backend for fenced creation even with fallback profile choices.
+retains the warning on retries even after a backend appears. Ambiguous ownership
+or unreadable/invalid preferences block inheritance: recover preferences or supply
+the coordinator, every exact template role and `taskMode` explicitly.
+`mission.prepare` requires an owning backend even with fully explicit choices.
 `inspect({ start })` requires the caller's existing coordinator profile to match
 the resolved selection. When a coordinator preference differs, pass
 `profiles.coordinator` (for example `{}`) to override that preference; the existing

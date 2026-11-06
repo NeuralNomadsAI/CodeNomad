@@ -95,7 +95,7 @@ export class MissionCreationIntents {
       current()
       const saved = await this.readCurrent(missionID, request, created, conflict)
       if (saved) return saved
-      if (await this.activeCount() >= MISSION_CREATION_INTENT_LIMIT) throw new MissionControlError("128 Mission preparation choices are retained. Retry the original requestIDs to recover completed preparations, or wait up to 24 hours for these choices to expire. Check uncertain outcomes before creating replacements.", "creation-capacity")
+      if (await this.activeCount() >= MISSION_CREATION_INTENT_LIMIT) throw new MissionControlError(`${MISSION_CREATION_INTENT_LIMIT} Mission preparation choices are retained. Retry the original requestIDs to recover completed preparations, or wait up to ${MISSION_CREATION_INTENT_RETENTION_MS / (60 * 60 * 1_000)} hours for these choices to expire. Check uncertain outcomes before creating replacements.`, "creation-capacity")
       current()
       await this.storage.set(this.prefix + missionID, JSON.parse(JSON.stringify({ version: 1, request, defaults, createdAt: this.now() })) as MissionJsonValue, current)
       return defaults

@@ -7,7 +7,7 @@ import { missionCreationDefaultsSchema, missionCreationDefaultsWire, missionCrea
 import type { MissionStorage } from "./journal"
 import type { MissionJsonValue } from "./model"
 import { NativeMissionDocumentStore, type MissionDocumentStorage } from "./mission-document-store"
-import { MISSION_DEFAULT_ORIGINS, resolveMissionCreationDefaults } from "./profile-defaults"
+import { MISSION_DEFAULT_ORIGINS, MISSION_PREFERENCES_UNAVAILABLE, resolveMissionCreationDefaults } from "./profile-defaults"
 import { CODENOMAD_MISSIONS_RPC } from "./rpc"
 import { freezeCompareProfiles, missionProfileRoles } from "./playbook-profiles"
 
@@ -213,5 +213,36 @@ test("creation origin schemas share the resolver's exact origin set", () => {
     const valid = origin !== "guessed"
     assert.equal(missionCreationDefaultsSchema.safeParse(metadata).success, valid)
     assert.equal(validate(metadata), valid, JSON.stringify(validate.errors))
+  }
+})
+
+test("creation wire origins fit every playbook and reject more than the largest role list", () => {
+  const rolesWire = missionCreationDefaultsWire.properties.origins.properties.roles
+  const maximum = Math.max(...Object.values(missionProfileRoles).map(roles => roles.length))
+  assert.equal(rolesWire.maxProperties, maximum)
+  const validate = new Ajv().compile(missionCreationDefaultsWire)
+  for (const template of Object.keys(missionProfileRoles) as (keyof typeof missionProfileRoles)[]) {
+    const metadata = { request: {}, ...resolveMissionCreationDefaults({ template, preferences: [] }) }
+    assert.ok(validate(metadata), JSON.stringify(validate.errors))
+    assert.deepEqual(parseMissionCreationDefaults(template, metadata), metadata)
+    const extra = { ...metadata, origins: { ...metadata.origins, roles: { ...metadata.origins.roles, unknown: "explicit" } } }
+    assert.throws(() => parseMissionCreationDefaults(template, extra))
+  }
+  const validateRoles = new Ajv().compile(rolesWire)
+  const roles = Object.fromEntries(Array.from({ length: maximum }, (_, index) => [`role-${index}`, "explicit"]))
+  assert.ok(validateRoles(roles))
+  assert.equal(validateRoles({ ...roles, extra: "explicit" }), false)
+})
+
+test("creation preference availability has one shared schema and wire value", () => {
+  const validate = new Ajv().compile(missionCreationDefaultsWire)
+  const metadata = { request: {}, ...resolveMissionCreationDefaults({ template: "custom", preferences: [] }) }
+  assert.equal(missionCreationDefaultsSchema.shape.preferences.unwrap().value, MISSION_PREFERENCES_UNAVAILABLE)
+  assert.deepEqual(missionCreationDefaultsWire.properties.preferences.enum, [MISSION_PREFERENCES_UNAVAILABLE])
+  for (const preferences of [undefined, MISSION_PREFERENCES_UNAVAILABLE, "available", "", null]) {
+    const input = { ...metadata, ...(preferences === undefined ? {} : { preferences }) }
+    const valid = preferences === undefined || preferences === MISSION_PREFERENCES_UNAVAILABLE
+    assert.equal(missionCreationDefaultsSchema.safeParse(input).success, valid)
+    assert.equal(validate(input), valid, JSON.stringify(validate.errors))
   }
 })

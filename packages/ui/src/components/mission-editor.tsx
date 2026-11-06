@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js"
 import type { MissionPanelMap } from "../../../server/src/api-types"
-import { compareModelError, freezeCompareProfiles, sameCompareModel, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
+import { compareModelError, sameCompareModel, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { deletionErrorKey, missionCleanupPending, MissionDeletionError } from "../lib/mission-cleanup"
@@ -12,7 +12,7 @@ import { copyMissionProfiles, holdMissionCreation, missionCreationHold, missionC
 import { MissionProfileControls } from "./mission-profile-controls"
 import { missionProfileRoles, profilesForTemplate } from "./mission-profile-controls-data"
 import { useConfig } from "../stores/preferences"
-import { missionDefaultsFor, missionTaskModeFor, normalizeMissionDefaults, type MissionTaskMode } from "../lib/mission-defaults"
+import { effectiveMissionProfiles, missionTaskModeFor, normalizeMissionDefaults, type MissionTaskMode } from "../lib/mission-defaults"
 import type { MissionProfileDefault } from "../lib/mission-defaults"
 import { retainSubmittedMissionModel, submittedMissionModel, type UserMissionModel } from "../lib/mission-model-library"
 import { MissionBriefPicker, MissionBriefSave } from "./mission-model-library"
@@ -117,7 +117,7 @@ export function MissionEditor(props: {
   const [defaultsRefreshing, setDefaultsRefreshing] = createSignal(false)
   const [defaultsFailed, setDefaultsFailed] = createSignal(false)
   const creationReady = () => defaultsReady() && (kind !== "create" || Boolean(held || recurrenceHold) || config.isUiConfigLoaded())
-  const effectiveProfiles = () => freezeCompareProfiles(template(), profiles())
+  const effectiveProfiles = () => effectiveMissionProfiles(template(), { profiles: profiles() }).payload
   const compareError = () => template() === "compare" ? compareModelError(profiles()) : undefined
   const judgeWarning = () => template() === "compare" && ["model-a", "model-b"].some(role =>
     sameCompareModel(effectiveProfiles()?.roles?.comparator?.model, profiles()?.roles?.[role]?.model))
@@ -130,7 +130,7 @@ export function MissionEditor(props: {
   createEffect(() => {
     if (defaultsReady() || !config.isUiConfigLoaded() || !config.missionDefaultsValid()) return
     const loaded = normalizeMissionDefaults(config.preferences().missionProfileDefaults)
-    setDefaults(loaded); setProfiles(missionDefaultsFor(loaded, template())); setTaskMode(missionTaskModeFor(loaded, template()))
+    setDefaults(loaded); setProfiles(effectiveMissionProfiles(template(), { defaults: loaded }).draft); setTaskMode(missionTaskModeFor(loaded, template()))
     setDefaultsReady(true)
   })
   const [recurrenceUncertain, setUncertain] = createSignal(Boolean(recurrenceHold))
@@ -241,7 +241,7 @@ export function MissionEditor(props: {
       if (!current()) return
       if (!config.missionDefaultsValid()) throw new Error("Invalid mission defaults")
       const loaded = normalizeMissionDefaults(config.preferences().missionProfileDefaults)
-      setDefaults(loaded); setProfiles(missionDefaultsFor(loaded, template())); setTaskMode(missionTaskModeFor(loaded, template()))
+      setDefaults(loaded); setProfiles(effectiveMissionProfiles(template(), { defaults: loaded }).draft); setTaskMode(missionTaskModeFor(loaded, template()))
       setCustomProfiles(false); setCustomTaskMode(false); setDefaultsReady(true)
     } catch { if (current()) setDefaultsFailed(true) }
     finally { if (current()) setDefaultsRefreshing(false) }
@@ -435,14 +435,16 @@ export function MissionEditor(props: {
           setObjective(model.objective); setTitleOverride(undefined); setNotes(model.notes); setTemplate(model.template); setSelectedModel({ id: model.id, name: model.name })
           setCustomProfiles(model.profiles !== undefined)
           setCustomTaskMode(model.taskMode !== undefined); setTaskMode(model.taskMode ?? missionTaskModeFor(defaults(), model.template))
-          setProfiles(model.profiles === undefined ? missionDefaultsFor(defaults(), model.template) : copyMissionProfiles(model.profiles))
+          setProfiles(effectiveMissionProfiles(model.template, model.profiles === undefined
+            ? { defaults: defaults() } : { profiles: copyMissionProfiles(model.profiles) }).draft)
         }} /></Show>
       {/* The selected playbook's one-sentence description stays visible under its selector. */}
       <div class="mission-create-template">
         <label>{t("missions.control.template")}
           <select aria-label={t("missions.control.template")} aria-describedby={ids.templateDescription} value={template()} disabled={structuralLocked() || kind === "edit" && !schedule.document()?.edit.template} onChange={e => {
             const next = e.currentTarget.value as MissionPanelMap["template"]
-            setTemplate(next); setProfiles(customProfiles() ? profilesForTemplate(profiles(), next) : missionDefaultsFor(defaults(), next))
+            setTemplate(next); setProfiles(effectiveMissionProfiles(next, customProfiles()
+              ? { profiles: profilesForTemplate(profiles(), next) } : { defaults: defaults() }).draft)
             if (!customTaskMode()) setTaskMode(missionTaskModeFor(defaults(), next))
           }}>
             <For each={["custom", "debug", "wayfinder", "delivery", "compare"] as const}>{id => <option value={id}>{t(`missions.control.template.${id}`)}</option>}</For>

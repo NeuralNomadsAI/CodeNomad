@@ -61,14 +61,14 @@ export async function prepareMissionCreation(input: {
   if (!connection) throw new MissionCreationPreparationError(503, "Mission plugin unavailable")
   const client = connection.client
   let location = request.directory ? { directory: request.directory } : base
-  if (!await wait(manager.ownsLocation(workspaceID, location, client, signal))) {
+  if (!await wait(manager.ownsLocation(workspaceID, location, client, { signal }))) {
     throw new MissionCreationPreparationError(403, "Mission directory does not belong to workspace")
   }
   const directory = await wait(manager.getServiceDirectoryForPath(workspaceID, location.directory))
   if (!directory) throw new MissionCreationPreparationError(503, "Mission plugin unavailable")
   location = { directory }
   const resolved = await wait(client.location.get({ location }, { ...locationRequestOptions(location), signal }))
-  if (!sameLocation(location, resolved) || !await wait(manager.ownsLocation(workspaceID, resolved, client, signal))) {
+  if (!sameLocation(location, resolved) || !await wait(manager.ownsLocation(workspaceID, resolved, client, { signal }))) {
     throw new MissionCreationPreparationError(403, "Native mission location differs from owned directory")
   }
   const baseResolved = await wait(client.location.get({ location: { directory: base.directory } }, { ...locationRequestOptions(base), signal }))
@@ -89,7 +89,7 @@ export async function prepareMissionCreation(input: {
   if (request.coordinatorSessionId) {
     const coordinator = await wait(client.session.get({ sessionID: request.coordinatorSessionId }, { signal }))
     if (coordinator.id !== request.coordinatorSessionId || coordinator.parentID || coordinator.projectID !== projectID
-      || !await wait(manager.ownsLocation(workspaceID, coordinator.location, client, signal))) {
+      || !await wait(manager.ownsLocation(workspaceID, coordinator.location, client, { signal }))) {
       throw new MissionCreationPreparationError(403, "Coordinator session does not belong to workspace project")
     }
     locations.push(coordinator.location)
