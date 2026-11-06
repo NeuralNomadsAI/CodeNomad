@@ -145,12 +145,13 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (meth
 }
 
 /** After an HTTP(S) navigation, Chromium's renderer defers compositor commits until the first
- * (contentful) paint, for at most 500 ms, and drops key and click input meanwhile (Blink paint
- * holding: `LocalFrameView` and `WidgetInputHandlerManager::DispatchEvent`). A hidden or
- * software-composited page can take that long to paint, so its first trusted input waits until the
- * page has painted or the limit has passed since it became interactive. The page's answer only
- * delays input, by at most `INPUT_ACCEPTANCE_MAX_WAIT_MS`. */
-export async function awaitInputAcceptance(session: PageSession): Promise<void> {
+ * (contentful) paint, for at most about 500 ms after rendering starts, and drops key, click and
+ * wheel input meanwhile (Blink paint holding: `LocalFrameView` and
+ * `WidgetInputHandlerManager::DispatchEvent`). A hidden or software-composited page can take that
+ * long to paint, so its first trusted input waits until the page has painted or roughly that limit
+ * has passed, approximated from the moment it became interactive. The page's answer only delays
+ * input, by at most `INPUT_ACCEPTANCE_MAX_WAIT_MS`. */
+async function awaitInputAcceptance(session: PageSession): Promise<void> {
   const started = Date.now()
   for (;;) {
     const result = await session.channel.send("Runtime.evaluate", { expression: INPUT_ACCEPTANCE_DELAY, returnByValue: true })
