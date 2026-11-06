@@ -31,7 +31,7 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
   const fence = new WorktreeDeletionFence(drainTimeout)
   const storage = new Map<string, any>(), sessions = new Map<string, any>(), tools = new Map<string, any>()
   let handlers: any, creates = 0, writes = 0, current = true, rpcCreates = 0
-  let lostAck = false, failedPublication = false, wrongProfile = false, documentCapabilities = true
+  let lostAck = false, failedPublication = false, wrongProfile = false, documentCapabilities = true, failedIntentCleanup = false
   let preferences: unknown, preferenceReads = 0
   let rejectionTransform: ((error: any) => any) | undefined
   let creationGate: ReturnType<typeof deferred> | undefined, publicationGate: ReturnType<typeof deferred> | undefined
@@ -85,6 +85,7 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
   const context: any = {
     location: { directory, project: { id: projectID, canonical: directory } }, session,
     storage: { get: async (key: string) => structuredClone(storage.get(key)), set: async (key: string, value: any) => {
+      if (failedIntentCleanup && key.includes("/creation-intents/") && value === null) throw new Error("Intention cleanup unavailable")
       publicationStarted.resolve(); await publicationGate?.promise
       if (failedPublication) throw new Error("Publication unavailable")
       writes++; storage.set(key, structuredClone(value))
@@ -129,6 +130,7 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
     get preferenceReads() { return preferenceReads },
     setPreferences: (value: unknown) => { preferences = value },
     setDocumentCapabilities: (value: boolean) => { documentCapabilities = value },
+    failIntentCleanup: () => { failedIntentCleanup = true },
     loseAck: () => { lostAck = true }, failPublication: () => { failedPublication = true },
     mismatchProfile: () => { wrongProfile = true },
     transformRejection: (transform: (error: any) => any) => { rejectionTransform = transform },
@@ -310,6 +312,21 @@ test("a lost prepare acknowledgement is reported uncertain, never as nothing cre
     assert.equal(f.preferenceReads, reads, "invalid current preferences cannot invalidate a saved creation")
     assert.equal(f.rpcCreates, 1, "the retry never asks for a second creation")
   } finally { await f.close() }
+})
+
+test("an intention cleanup failure preserves creation success and releases the native admission hold", async () => {
+  const f = await fixture()
+  try {
+    const { coordinator } = await specialist(f)
+    f.failIntentCleanup()
+    const prepare = () => f.tools.get("prepare").execute({ requestID: "cleanup", objective: "Pilot", template: "custom" },
+      { sessionID: coordinator.id, id: "cleanup-prepare", progress: async () => {} })
+    const first = JSON.parse((await prepare()).content)
+    assert.equal(first.disposition, "prepared")
+    assert.deepEqual(JSON.parse((await prepare()).content), first)
+    assert.equal(f.rpcCreates, 1)
+    assert.equal(await f.fence.run(physical, [physical], async () => "released"), "released")
+  } finally { await assert.rejects(f.close(), /Intention cleanup unavailable/) }
 })
 
 test("an uncertain prepare before any creation document retains its original selection across preference changes", async () => {

@@ -5,7 +5,8 @@ import type { MissionActor, MissionJsonValue, MissionMap, MissionReportOutcome, 
 import type { TaskContractReference } from "./task-declaration"
 import type { MissionRecipe, missionRecipeCatalog } from "./recipes"
 import type { MissionProfiles } from "./playbook-profiles"
-import type { MissionCreationChoices, MissionCreationDefaults, MissionCreationSelection } from "./creation-defaults"
+import type { MissionCreationChoices, MissionCreationMetadata } from "./creation-defaults"
+import type { MissionCreationSelection } from "./profile-defaults"
 
 export interface NativeMissionSession extends MissionExecution {
   id: string
@@ -138,7 +139,7 @@ export interface MissionInspection {
 
 export interface MissionCreateInput extends MissionStartInput {
   /** Original agent request and frozen preference provenance, supplied by the owning backend. */
-  creationDefaults?: MissionCreationDefaults
+  creationDefaults?: MissionCreationMetadata
   /** Optional short label (1–60 characters, trimmed). */
   title?: string
   prepared?: boolean
@@ -202,7 +203,7 @@ export interface MissionInputTransport {
 /** A coordinator's paused hand-off mission: what the Mission editor submits, never Play. */
 export interface MissionPrepareRequest {
   /** Trusted resolved creation metadata, carried only through the backend transport. */
-  creationDefaults?: MissionCreationDefaults
+  creationDefaults?: MissionCreationMetadata
   requestID: string
   objective: string
   title?: string

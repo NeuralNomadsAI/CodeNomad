@@ -3,6 +3,7 @@ import { MissionControlError } from "./control-error"
 // Only fixed, non-sensitive recovery and coordinator-action failures may cross the desktop bridge.
 // Never pass native messages, request bodies or environment errors through it.
 const errors = {
+  "invalid-execution": { status: 409, message: "Correct the requested profiles, taskMode or playbook before creating a mission" },
   "recovery-busy": { status: 409, message: "Native work or a wait prevents targeted recovery" },
   "recovery-unknown": { status: 503, message: "Native activity is unknown; recovery was not admitted" },
   "recovery-conflict": { status: 409, message: "Mission changed; reload before targeted recovery" },
@@ -10,6 +11,7 @@ const errors = {
   "task-not-retired": { status: 409, message: "Retire the task with mission.revise before stopping its work" },
   "task-reused": { status: 409, message: "An open task continues this task's conversation; retire that task first" },
   "prepare-refused": { status: 409, message: "The mission could not be prepared; nothing was created" },
+  "prepare-no-effect": { status: 409, message: "The preparation request was refused without effects; correct the request and retry" },
   "prepare-conflict": { status: 409, message: "This requestID already prepared a different mission" },
   "prepare-uncertain": { status: 409, message: "The prepared mission's outcome is uncertain; retry with the same requestID" },
   "mission-preferences-invalid": { status: 409, message: "Correct the Missions preferences before creating a mission" },

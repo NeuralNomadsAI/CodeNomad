@@ -178,7 +178,7 @@ export interface MissionPlanChange {
 }
 
 export interface MissionMap {
-  creationDefaults?: import("./creation-defaults").MissionCreationDefaults
+  creationDefaults?: import("./creation-defaults").MissionCreationMetadata
   document?: import("./mission-document-one-time").MissionDocumentSummary
   version: typeof MISSION_SCHEMA_VERSION
   id: string
@@ -307,7 +307,7 @@ interface MissionEventBase {
 }
 
 export interface MissionCreatedEvent extends MissionEventBase {
-  creationDefaults?: import("./creation-defaults").MissionCreationDefaults
+  creationDefaults?: import("./creation-defaults").MissionCreationMetadata
   type: "mission.created"
   projectCanonical: string
   title?: string

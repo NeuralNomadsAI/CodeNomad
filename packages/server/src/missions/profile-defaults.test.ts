@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { missionProfileRoles, type MissionProfiles } from "./playbook-profiles"
-import { MissionPreferencesError, resolveMissionCreationDefaults, type MissionProfileDefault } from "./profile-defaults"
+import { globalMissionTaskMode, missionTaskModeFor, MissionPreferencesError, resolveMissionCreationDefaults, type MissionProfileDefault } from "./profile-defaults"
 import type { MissionTemplateId } from "./model"
 
 const coordinator = { agent: "coordinator", model: { providerID: "p", id: "coordinator", variant: "high" } }
@@ -91,6 +91,22 @@ test("task mode resolves explicit, template, global, then native with the matchi
       { template: "debug", profiles: {}, taskMode }] })
     assert.equal(typed.taskMode, taskMode)
     assert.equal(typed.origins.taskMode, "preference")
+  }
+})
+
+test("editor task-mode helpers match creation selection through template, global and native fallbacks", () => {
+  for (const global of [undefined, "native", "independent"] as const) {
+    for (const specific of [undefined, "native", "independent"] as const) {
+      const preferences: MissionProfileDefault[] = [
+        { template: "all", profiles: {}, taskMode: global }, { template: "debug", profiles: {}, taskMode: specific },
+      ]
+      const selected = resolveMissionCreationDefaults({ template: "debug", preferences })
+      assert.equal(selected.taskMode, specific ?? global ?? "native")
+      assert.equal(selected.origins.taskMode, specific !== undefined || global !== undefined ? "preference" : "opencode-default")
+      assert.equal(missionTaskModeFor(preferences, "debug"), selected.taskMode)
+      assert.equal(globalMissionTaskMode(preferences), global ?? "native")
+      assert.equal(missionTaskModeFor(preferences, "wayfinder"), globalMissionTaskMode(preferences))
+    }
   }
 })
 

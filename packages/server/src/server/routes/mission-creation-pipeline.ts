@@ -13,7 +13,7 @@ import { locationRequestOptions, sameLocation } from "../../opencode/compatibili
 import { assertSynchronousAuthorityGuard } from "../../missions/authority-synchronous"
 import { admitMissionCreationLocations } from "./mission-creation-admission"
 import { MissionCreationHoldError, missionCreationDigest } from "./mission-creation-holds"
-import type { MissionCreationDefaults } from "../../missions/creation-defaults"
+import type { MissionCreationMetadata } from "../../missions/creation-defaults"
 
 export const missionCreationRequestSchema = z.object({
   objective: z.string().trim().min(1).max(20_000), title: z.string().trim().min(1).max(MISSION_TITLE_MAX).regex(MISSION_TITLE_PATTERN).optional(), notes: z.string().max(20_000).optional(),
@@ -40,7 +40,7 @@ export async function prepareMissionCreation(input: {
   expectedProjectID?: string
   /** Trusted coordinator hand-off from the authenticated plugin bridge, never HTTP input. */
   preparedBy?: { missionID: string; coordinatorSessionID: string }
-  creationDefaults?: MissionCreationDefaults
+  creationDefaults?: MissionCreationMetadata
 }) {
   const { manager, workspaceID, signal } = input
   const wait = input.wait ?? (<T>(operation: Promise<T>) => operation)

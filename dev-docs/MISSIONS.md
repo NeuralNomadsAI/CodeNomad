@@ -140,7 +140,7 @@ refuse otherwise. Only one-time coordinators are offered and told about
 
   Both `mission.prepare` and `mission.inspect({ start })` resolve omitted
   coordinator/role profiles and `taskMode` from the owning CodeNomad backend's
-  `ui.missionProfileDefaults`. The editor and server share
+  `ui.settings.missionProfileDefaults`. The editor and server share
   `missions/profile-defaults.ts`: a playbook's slot overrides the global `all`
   slot; the global `specialist` supplies task roles, with the Compare judge using
   the coordinator's model by default. Each supplied profile slot wins whole,
@@ -160,18 +160,42 @@ refuse otherwise. Only one-time coordinators are offered and told about
   origin. These are saved requested selectors; catalog validation and native
   execution checks establish availability and actual execution separately.
   `inspect({ start })` uses the caller as coordinator and requires its existing
-  native profile to match the resolved coordinator selection. An unreadable
+  native profile to match the resolved coordinator selection. A mismatch whose
+  coordinator origin is `preference` advises passing `profiles.coordinator`
+  (for example `{}`) to override that preference; the existing native-profile
+  check still applies. An explicit-profile mismatch keeps the generic
+  native-profile error. An unreadable
   preference document or unavailable backend returns
   `mission-preferences-unavailable`; invalid preferences return
   `mission-preferences-invalid`. Both refuse creation and ask for preference
   recovery, including when profiles were supplied explicitly.
 
-  The requestID is scoped to the coordinator and mission. A retry first reads the
-  journal's creation event and returns the saved mission or a conflict. Reuse the
-  same requestID and original inputs: a durable pre-dispatch intent retains the
-  chosen profiles, task mode and origins across uncertain attempts, preference
-  changes and restarts. `inspect({ start })` retains these choices under its
-  native invocation identity too. A held uncertain attempt is reported uncertain.
+  The requestID is scoped to the coordinator and mission. Preparations with the
+  same requestID are serialized. Reuse that requestID and the original inputs:
+  a retry first reads the saved creation event/document and returns the saved
+  mission or a conflict. `mission.prepare` alone reserves a standalone durable
+  pre-dispatch intent for the chosen profiles, task mode and origins across
+  uncertain attempts, preference changes and restarts. `inspect({ start })`
+  retains its choices through its journal/document receipt under the native
+  invocation identity.
+
+  A positive preparation result or a definitive refusal proving that the attempt
+  had no effect releases its retained choices. An unknown outcome keeps them; a
+  retry refused during prevalidation leaves the preceding attempt's uncertainty
+  intact. At most 128 unknown preparation choices are retained per project, each
+  for 24 hours from its first reservation; retries preserve that deadline. An
+  entry without a timestamp receives the current time on its first read or prune
+  and expires 24 hours later. At capacity, retry the original requestIDs to
+  recover completed preparations and release their slots, or wait for their
+  24-hour retention to expire.
+
+  After expiry, preferences may be read anew only when the creation event and
+  document are both absent. A positive receipt or saved document keeps its
+  choices frozen. Expiry affects retained choices alone; native holds and
+  authorization keep their own settlement rules. Check the mission and original
+  conversation before choosing a new requestID for an uncertain outcome. Never
+  duplicate uncertain work or resume automatically after expiry. A held uncertain
+  attempt is reported uncertain.
 
 The human-answer gate's `discover` finds fresh children of the expected parent
 whose `subagent` call carried the exact assignment prompt, and the coordinator's

@@ -1,13 +1,13 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import Ajv from "ajv"
-import { MissionControl } from "./control"
+import { MissionControl, MissionControlError } from "./control"
 import type { MissionInputTransport, NativeMissionSession } from "./control-types"
-import { missionCreationSelection, parseMissionCreationDefaults } from "./creation-defaults"
+import { missionCreationDefaultsSchema, missionCreationDefaultsWire, missionCreationSelection, parseMissionCreationDefaults } from "./creation-defaults"
 import type { MissionStorage } from "./journal"
 import type { MissionJsonValue } from "./model"
 import { NativeMissionDocumentStore, type MissionDocumentStorage } from "./mission-document-store"
-import { resolveMissionCreationDefaults } from "./profile-defaults"
+import { MISSION_DEFAULT_ORIGINS, resolveMissionCreationDefaults } from "./profile-defaults"
 import { CODENOMAD_MISSIONS_RPC } from "./rpc"
 import { freezeCompareProfiles } from "./playbook-profiles"
 
@@ -16,7 +16,7 @@ function fixture() {
   const coordinator = "ses_coordinator"
   const sessions = new Map<string, NativeMissionSession>([[coordinator,
     { id: coordinator, agent: "lead", projectID: "project", location: { directory: "/repo" } }]])
-  let failJournal = false, failDocument = false, reads = 0, created = 0
+  let failJournal = false, failDocument = false, refusePreparation = false, reads = 0, created = 0
   let preferences: unknown = [{ template: "all", profiles: { coordinator: { agent: "lead" }, roles: { specialist: { agent: "worker" } } } }]
   const storage: MissionStorage & MissionDocumentStorage = {
     get: async key => structuredClone(values.get(key)),
@@ -40,8 +40,10 @@ function fixture() {
   const transport: MissionInputTransport = {
     prompt: async () => assert.fail("Creation never prompts"), synthetic: async () => assert.fail("Creation never resumes"),
     resolveCreationDefaults: async (_id, input) => { reads++; return resolveMissionCreationDefaults({ ...input, preferences }) },
-    prepare: async (id, input) => control.create({ ...input, prepared: true,
-      preparedBy: { missionID: input.missionID, coordinatorSessionID: id } }),
+    prepare: async (id, input) => {
+      if (refusePreparation) throw new MissionControlError("Nothing created by this call", "prepare-refused")
+      return control.create({ ...input, prepared: true, preparedBy: { missionID: input.missionID, coordinatorSessionID: id } })
+    },
   }
   const options: ConstructorParameters<typeof MissionControl>[0] = {
     project: { id: "project", canonical: "/repo", location: { directory: "/repo" } }, storage,
@@ -55,6 +57,7 @@ function fixture() {
   let control = new MissionControl(options)
   return { get control() { return control }, coordinator, documents, values, sessions, get reads() { return reads }, get created() { return created },
     fail: () => { failJournal = true }, failBeforeDocument: () => { failDocument = true },
+    refusePreparation: () => { refusePreparation = true },
     setPreferences: (value: unknown) => { preferences = value }, invalidate: () => { preferences = null }, restart: () => { control = new MissionControl(options) } }
 }
 
@@ -122,7 +125,7 @@ test("prepare recovers its frozen document before journal publication without re
   await f.control.create({ requestID: "source", objective: "Source", template: "custom", coordinatorSessionID: f.coordinator })
   const request = { requestID: "pilot", objective: "Pilot", template: "custom" as const }
   f.fail()
-  await assert.rejects(f.control.prepare(f.coordinator, request), /Journal write unavailable/)
+  await assert.rejects(f.control.prepare(f.coordinator, request), (error: any) => error.code === "prepare-uncertain")
   assert.equal(f.reads, 1)
   assert.equal(f.created, 1)
   f.invalidate(); f.restart()
@@ -139,7 +142,7 @@ test("the pre-dispatch creation intention survives a failure before the first do
   await f.control.create({ requestID: "source", objective: "Source", template: "custom", coordinatorSessionID: f.coordinator })
   const request = { requestID: "before-document", objective: "Pilot", template: "custom" as const }
   f.failBeforeDocument()
-  await assert.rejects(f.control.prepare(f.coordinator, request), /Document write unavailable/)
+  await assert.rejects(f.control.prepare(f.coordinator, request), (error: any) => error.code === "prepare-uncertain")
   assert.equal(f.reads, 1)
   assert.equal(f.created, 0)
   f.invalidate(); f.restart()
@@ -156,4 +159,52 @@ test("creation provenance validates its exact roles and leaves historical missio
   assert.throws(() => parseMissionCreationDefaults("debug", metadata))
   assert.throws(() => parseMissionCreationDefaults("custom", { ...metadata, origins: { ...metadata.origins, coordinator: "guessed" } }))
   assert.equal(missionCreationSelection({ profiles: {}, taskMode: "native" }), undefined)
+})
+
+test("inspect start creates no standalone intention on mismatch, document refusal or journal failure", async () => {
+  const f = fixture()
+  const start = { objective: "Inspect", template: "custom" as const }
+  f.setPreferences([{ template: "all", profiles: { coordinator: { agent: "different" } } }])
+  await assert.rejects(f.control.inspect(f.coordinator, { start }, "mismatch"), /Missions preferences.*profiles\.coordinator/)
+  f.setPreferences([])
+  f.failBeforeDocument()
+  await assert.rejects(f.control.inspect(f.coordinator, { start }, "document"), /Document write unavailable/)
+  f.fail()
+  await assert.rejects(f.control.inspect(f.coordinator, { start }, "journal"), /Journal write unavailable/)
+  await assert.rejects(f.control.inspect(f.coordinator, { start: { ...start, objective: "Conflict" } }, "journal"), (error: any) => error.code === "request-conflict")
+  assert.equal([...f.values.keys()].filter(key => key.includes("/creation-intents/")).length, 0)
+})
+
+test("a retained document preserves uncertainty after the standalone choices expire", async () => {
+  const f = fixture()
+  await f.control.create({ requestID: "source", objective: "Source", template: "custom", coordinatorSessionID: f.coordinator })
+  const request = { requestID: "document-retry", objective: "Pilot", template: "custom" as const }
+  f.fail()
+  await assert.rejects(f.control.prepare(f.coordinator, request), (error: any) => error.code === "prepare-uncertain")
+  for (const [key, value] of f.values) if (key.includes("/creation-intents/") && value && typeof value === "object" && !Array.isArray(value)) {
+    f.values.set(key, { ...value, createdAt: 0 })
+  }
+  const reads = f.reads, roots = f.created
+  f.invalidate(); f.refusePreparation()
+  await assert.rejects(f.control.prepare(f.coordinator, request), (error: any) => error.code === "prepare-uncertain")
+  assert.equal(f.reads, reads)
+  assert.equal(f.created, roots)
+  assert.equal([...f.values.keys()].filter(key => key.includes("/creation-intents/")).length, 1)
+})
+
+test("creation origin schemas share the resolver's exact origin set", () => {
+  const schema = missionCreationDefaultsSchema.shape.origins.shape
+  const wire = missionCreationDefaultsWire.properties.origins.properties
+  for (const origins of [schema.coordinator.options, schema.taskMode.options, schema.roles.valueSchema.options,
+    wire.coordinator.enum, wire.taskMode.enum, wire.roles.additionalProperties.enum]) {
+    assert.deepEqual(origins, MISSION_DEFAULT_ORIGINS)
+  }
+  const validate = new Ajv().compile(missionCreationDefaultsWire)
+  const selection = resolveMissionCreationDefaults({ template: "custom", preferences: [] })
+  for (const origin of [...MISSION_DEFAULT_ORIGINS, "guessed"]) {
+    const metadata = { request: {}, ...selection, origins: { coordinator: origin, taskMode: origin, roles: { specialist: origin } } }
+    const valid = origin !== "guessed"
+    assert.equal(missionCreationDefaultsSchema.safeParse(metadata).success, valid)
+    assert.equal(validate(metadata), valid, JSON.stringify(validate.errors))
+  }
 })

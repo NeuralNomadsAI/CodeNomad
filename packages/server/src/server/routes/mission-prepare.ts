@@ -2,7 +2,7 @@ import { z } from "zod"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import type { MissionMap, MissionSnapshot } from "../../missions/model"
 import { MissionControlError } from "../../missions/control-error"
-import { readMissionMutationError } from "../../missions/rpc-errors"
+import { isMissionCreateNoEffectError, readMissionMutationError } from "../../missions/rpc-errors"
 import { missionProfilesInputSchema } from "../../missions/playbook-profiles"
 import { missionTaskModeInputSchema } from "../../missions/task-execution-mode"
 import { MISSION_TITLE_MAX } from "../../missions/mission-title"
@@ -10,7 +10,7 @@ import { locationRequestOptions } from "../../opencode/compatibility/location"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { prepareMissionCreation, type MissionCreationPipelineManager } from "./mission-creation-pipeline"
-import { MissionCreationHoldError } from "./mission-creation-holds"
+import { hasMissionPreparationHold, MissionCreationHoldError } from "./mission-creation-holds"
 import { parseMissionCreationDefaults } from "../../missions/creation-defaults"
 import { missionRecoveryRejection } from "../../missions/recovery-error"
 
@@ -29,25 +29,26 @@ type Manager = MissionCreationPipelineManager & Pick<WorkspaceManager, "list">
 export async function prepareCoordinatorMission(manager: Manager, fence: WorktreeDeletionFence, coordinatorID: string, command: unknown,
   signal: AbortSignal): Promise<{ mission: MissionMap }> {
   const { input } = commandSchema.parse(command)
-  const owner = await Promise.any(manager.list().map(async workspace => {
-    const connection = await manager.getSharedServiceConnection(workspace.id)
-    if (!connection) throw new Error("Workspace unavailable")
-    const coordinator = await connection.client.session.get({ sessionID: coordinatorID }, { signal })
-    if (coordinator.id !== coordinatorID || coordinator.parentID
-      || !await manager.ownsLocation(workspace.id, coordinator.location, connection.client)) throw new Error("Foreign coordinator")
-    return { connection, workspace, coordinator }
-  })).catch(() => undefined)
-  if (!owner) throw new Error("Missing mission owner")
-  const { connection, workspace, coordinator } = owner
-  const snapshot = await connection.client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, {
-    location: { directory: coordinator.location.directory }, ...locationRequestOptions(coordinator.location), signal,
-  }) as MissionSnapshot
-  const source = snapshot.missions.find(mission => mission.id === input.missionID)
-  if (!source || snapshot.projectID !== coordinator.projectID || source.coordinatorSessionId !== coordinatorID || source.status !== "active") {
-    throw new MissionControlError("Only an active mission's coordinator may prepare a hand-off", "prepare-refused")
-  }
   let creation: Awaited<ReturnType<typeof prepareMissionCreation>> | undefined
   try {
+    if (hasMissionPreparationHold(fence, input.requestID)) throw new MissionControlError("The prepared mission's outcome is uncertain; retry with the same requestID", "prepare-uncertain")
+    const owner = await Promise.any(manager.list().map(async workspace => {
+      const connection = await manager.getSharedServiceConnection(workspace.id)
+      if (!connection) throw new Error("Workspace unavailable")
+      const coordinator = await connection.client.session.get({ sessionID: coordinatorID }, { signal })
+      if (coordinator.id !== coordinatorID || coordinator.parentID
+        || !await manager.ownsLocation(workspace.id, coordinator.location, connection.client)) throw new Error("Foreign coordinator")
+      return { connection, workspace, coordinator }
+    })).catch(() => undefined)
+    if (!owner) throw new MissionControlError("The mission could not be prepared; nothing was created", "prepare-refused")
+    const { connection, workspace, coordinator } = owner
+    const snapshot = await connection.client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, {
+      location: { directory: coordinator.location.directory }, ...locationRequestOptions(coordinator.location), signal,
+    }) as MissionSnapshot
+    const source = snapshot.missions.find(mission => mission.id === input.missionID)
+    if (!source || snapshot.projectID !== coordinator.projectID || source.coordinatorSessionId !== coordinatorID || source.status !== "active") {
+      throw new MissionControlError("Only an active mission's coordinator may prepare a hand-off", "prepare-refused")
+    }
     creation = await prepareMissionCreation({ manager, fence, workspaceID: workspace.id, signal,
       expectedProjectID: coordinator.projectID, preparedBy: { missionID: source.id, coordinatorSessionID: coordinatorID },
       ...(input.creationDefaults === undefined ? {} : { creationDefaults: parseMissionCreationDefaults(input.template, input.creationDefaults) }),
@@ -56,6 +57,9 @@ export async function prepareCoordinatorMission(manager: Manager, fence: Worktre
         ...(input.profiles === undefined ? {} : { profiles: input.profiles }), ...(input.taskMode === undefined ? {} : { taskMode: input.taskMode }) } })
     return await creation.execute()
   } catch (error) {
+    if (creation && isMissionCreateNoEffectError(error, input.requestID, creation.missionID))
+      throw new MissionControlError("The preparation request was refused without effects; correct the request and retry", "prepare-no-effect")
+    if (hasMissionPreparationHold(fence, input.requestID)) throw new MissionControlError("The prepared mission's outcome is uncertain; retry with the same requestID", "prepare-uncertain")
     if (missionRecoveryRejection(error)) throw error
     if (!creation?.dispatched && error instanceof Error && error.message.startsWith("compare-models-"))
       throw new MissionControlError(error.message, error.message)

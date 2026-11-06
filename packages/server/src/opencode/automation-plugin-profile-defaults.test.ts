@@ -58,6 +58,8 @@ test("profile defaults preserve typed refusals through the authenticated bridge 
     && error.code === "mission-preferences-unavailable"
     && error.message === "Reload or correct the Missions preferences before creating a mission"
   await assert.rejects(request(), unavailable, "zero owners must expose a preference refusal")
+  await assert.rejects(sendMissionInput("ses_owner", "prepare", {}), (error: unknown) => error instanceof MissionControlError
+    && error.code === "prepare-refused", "a prepare with no owner has not been dispatched")
   await assert.rejects(sendMissionInput("ses_owner", "prompt", {}), /exactly one owning/, "other commands keep their error")
 
   removals.push(await publishAutomationBridge(registration))
@@ -83,5 +85,7 @@ test("profile defaults preserve typed refusals through the authenticated bridge 
   const before = posts
   removals.push(await publishAutomationBridge(createAutomationBridgeRegistration("http://127.0.0.1:54322")))
   await assert.rejects(request(), unavailable, "multiple owners must expose the same fixed preference refusal")
+  await assert.rejects(sendMissionInput("ses_owner", "prepare", {}), (error: unknown) => error instanceof MissionControlError
+    && error.code === "prepare-refused", "an ambiguous prepare has not been dispatched")
   assert.equal(posts, before, "ambiguous ownership reads no preferences")
 })

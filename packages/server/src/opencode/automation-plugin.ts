@@ -548,8 +548,17 @@ export async function sendMissionInput(sessionID: string,
   kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root" | "prepare" | "task-sessions" | "interrupt" | "profile-defaults", input: unknown): Promise<unknown> {
   try {
     // `purpose` lets a backend without native browsers claim the session for dispatch only.
-    const targets = await probeBrowserBridges(await registrations(), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS, "mission")
-    if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
+    let targets: DiscoveredBridgeRegistration[]
+    try {
+      targets = await probeBrowserBridges(await registrations(), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS, "mission")
+      if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
+    } catch (error) {
+      if (kind === "prepare") {
+        const refusal = missionRecoveryError("prepare-refused")!
+        throw new MissionControlError(refusal.message, refusal.code)
+      }
+      throw error
+    }
     const response = await callBridge(targets[0], { mode: "mission-input", sessionID, command: { kind, input } }, REQUEST_TIMEOUT_MS)
     if (response.status !== 200) {
       const recovery = missionRecoveryError(response.body.code)

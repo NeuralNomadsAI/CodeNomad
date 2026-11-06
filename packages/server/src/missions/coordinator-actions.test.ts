@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { MissionControl, MissionControlError } from "./control"
+import { MissionCreateNoEffectError } from "./control-error"
+import { stableToken } from "./receipt-identity"
 import type { MissionInputTransport, MissionSessionAdapter, NativeMissionSession } from "./control-types"
 import type { HumanDecisionCandidate, HumanDecisionDiscovery, NativeHumanAnswerGate } from "./human-answer"
 import type { MissionStorage } from "./journal"
@@ -25,6 +27,7 @@ class MemoryStorage implements MissionStorage {
 const coordinator = "ses_coordinator"
 
 function fixture(options: { transport?: Partial<MissionInputTransport>; humanGate?: NativeHumanAnswerGate;
+  validateProfiles?: ConstructorParameters<typeof MissionControl>[0]["validateProfiles"];
   storage?: MemoryStorage; sessions?: Map<string, NativeMissionSession> } = {}) {
   const sessions = options.sessions ?? new Map<string, NativeMissionSession>([[coordinator,
     { id: coordinator, projectID: "project-1", title: "Coordinator", location: { directory: "/repo" } }]])
@@ -41,7 +44,7 @@ function fixture(options: { transport?: Partial<MissionInputTransport>; humanGat
   const storage = options.storage ?? new MemoryStorage()
   const transport = options.transport && { prompt: async () => {}, synthetic: async () => {}, ...options.transport } as MissionInputTransport
   const control = new MissionControl({ project: { id: "project-1", canonical: "/repo", location: { directory: "/repo" } },
-    storage, sessions: adapter, transport, humanGate: options.humanGate, now: () => now++ })
+    storage, sessions: adapter, transport, validateProfiles: options.validateProfiles, humanGate: options.humanGate, now: () => now++ })
   const start = async (template: "wayfinder" | "custom" = "wayfinder") => (await control.inspect(coordinator,
     { start: { objective: "Chart the pilot", template } }, "start")).mission!
   const declare = (taskKey: string, role = "research") =>
@@ -138,7 +141,7 @@ test("a prepare retry after a lost reply returns the saved hand-off without anot
   control = f.control
   await f.start()
   const request = { requestID: "pilot", objective: "Run the pilot", template: "custom" as const }
-  await assert.rejects(control.prepare(coordinator, request), /reply lost/)
+  await assert.rejects(control.prepare(coordinator, request), (error: any) => error.code === "prepare-uncertain")
   const before = structuredClone([...f.storage.values])
   const frozen = resolveMissionCreationDefaults({ template: "custom", preferences })
   const resolvedReads = reads
@@ -158,7 +161,7 @@ test("a prepare retry after a lost reply returns the saved hand-off without anot
   assert.equal(reads, resolvedReads, "conflicting requests also leave preferences unread")
 })
 
-test("a later preparation refusal preserves its original profile intention", async () => {
+test("a definite refusal releases its choice and the same request can use corrected preferences", async () => {
   let control!: MissionControl, refused = false, reads = 0
   let worker = "worker-before"
   const f = fixture({ transport: {
@@ -176,8 +179,8 @@ test("a later preparation refusal preserves its original profile intention", asy
   const previousReads = reads
   worker = "worker-after"
   const result = await control.prepare(coordinator, request)
-  assert.equal(reads, previousReads)
-  assert.deepEqual(result.mission.creationDefaults?.profiles?.roles?.specialist, { agent: "worker-before" })
+  assert.equal(reads, previousReads + 1)
+  assert.deepEqual(result.mission.creationDefaults?.profiles?.roles?.specialist, { agent: "worker-after" })
 })
 
 test("inspect start freezes resolved choices and replays them after preference failure and reinstantiation", async () => {
@@ -206,7 +209,7 @@ test("inspect start freezes resolved choices and replays them after preference f
 test("resolved coordinator mismatches and identical preferred Compare models fail before persistence or prepare", async () => {
   const preferences = [{ template: "all", profiles: { coordinator: { agent: "lead" } } }]
   const f = fixture({ transport: { resolveCreationDefaults: async (_sessionID, input) => resolveMissionCreationDefaults({ ...input, preferences }) } })
-  await assert.rejects(f.control.inspect(coordinator, { start: { objective: "Mismatch", template: "custom" } }, "mismatch"), /differs from the requested native profile/)
+  await assert.rejects(f.control.inspect(coordinator, { start: { objective: "Mismatch", template: "custom" } }, "mismatch"), /Missions preferences.*profiles\.coordinator.*\{\}/)
   assert.equal(f.storage.values.size, 0)
   const model = { providerID: "p", id: "same" }
   const compare = fixture({ transport: {
@@ -248,6 +251,72 @@ test("prepare outside a mission points to the editor without resolving preferenc
   await assert.rejects(f.control.prepare(coordinator, { requestID: "pilot", objective: "Pilot", template: "custom" }), /Missions editor.*do not create a mission only to prepare others/)
   assert.equal(f.storage.values.size, 0)
   assert.equal(f.sessions.size, 1)
+})
+
+test("128 definite preparation refusals leave capacity available for the next request", async () => {
+  for (const certificate of [false, true]) {
+    let control!: MissionControl, refuse = true
+    const f = fixture({ transport: {
+      resolveCreationDefaults: async (_id, input) => resolveMissionCreationDefaults({ ...input, preferences: [] }),
+      prepare: async (id, input) => {
+        if (refuse) {
+          if (certificate) throw new MissionCreateNoEffectError(input.requestID, `msn_${stableToken(`project-1\0${input.requestID}`, 24)}`)
+          throw new MissionControlError("Nothing created", "prepare-refused")
+        }
+        return control.create({ ...input, prepared: true, preparedBy: { missionID: input.missionID, coordinatorSessionID: id } })
+      },
+    } })
+    control = f.control
+    await f.start("custom")
+    for (let index = 0; index < 128; index++) {
+      await assert.rejects(control.prepare(coordinator, { requestID: `refused-${index}`, objective: "Pilot", template: "custom" }),
+        (error: any) => error.code === (certificate ? "request-conflict" : "prepare-refused"))
+    }
+    assert.equal([...f.storage.values.keys()].filter(key => key.includes("/creation-intents/")).length, 0)
+    refuse = false
+    assert.equal((await control.prepare(coordinator, { requestID: "allowed", objective: "Pilot", template: "custom" })).mission.runState, "prepared")
+  }
+})
+
+test("an explicit cross-playbook profile fails before reading user preferences", async () => {
+  const f = fixture({ transport: {
+    resolveCreationDefaults: async () => assert.fail("The agent must correct its own input first"),
+    prepare: async () => assert.fail("Invalid input cannot reach preparation"),
+  } })
+  await f.control.create({ requestID: "source", objective: "Source", template: "custom", coordinatorSessionID: coordinator })
+  const before = structuredClone([...f.storage.values])
+  await assert.rejects(f.control.prepare(coordinator, { requestID: "bad", objective: "Debug", template: "debug", profiles: { roles: { specialist: {} } } }),
+    (error: any) => error.code === "invalid-execution" && !/preferences/.test(error.message))
+  assert.deepEqual([...f.storage.values], before)
+})
+
+test("an explicit empty coordinator slot overrides a mismatching coordinator preference", async () => {
+  const f = fixture({ transport: { resolveCreationDefaults: async (_id, input) => resolveMissionCreationDefaults({ ...input,
+    preferences: [{ template: "all", profiles: { coordinator: { agent: "other" } } }] }) } })
+  const result = await f.control.inspect(coordinator, { start: { objective: "Explicit default", template: "custom", profiles: { coordinator: {} } } }, "override")
+  assert.deepEqual(result.selection?.profiles.coordinator, {})
+  assert.equal(result.selection?.origins.coordinator, "explicit")
+})
+
+test("a failed local catalog preflight cannot relabel an earlier unknown preparation", async () => {
+  let failCatalog = false, calls = 0, reads = 0
+  const f = fixture({
+    validateProfiles: async () => { if (failCatalog) throw new Error("Catalog unavailable") },
+    transport: {
+      resolveCreationDefaults: async (_id, input) => { reads++; return resolveMissionCreationDefaults({ ...input, preferences: [] }) },
+      prepare: async () => { calls++; throw new MissionControlError("Unknown native outcome", "prepare-uncertain") },
+    },
+  })
+  await f.start("custom")
+  const request = { requestID: "unknown", objective: "Pilot", template: "custom" as const }
+  await assert.rejects(f.control.prepare(coordinator, request), (error: any) => error.code === "prepare-uncertain")
+  const previousReads = reads
+  failCatalog = true
+  await assert.rejects(f.control.prepare(coordinator, request), (error: any) => error.code === "prepare-uncertain")
+  await assert.rejects(f.control.prepare(coordinator, { ...request, objective: "Another pilot" }), (error: any) => error.code === "prepare-conflict")
+  assert.equal(reads, previousReads)
+  assert.equal(calls, 1)
+  assert.equal([...f.storage.values.keys()].filter(key => key.includes("/creation-intents/")).length, 1)
 })
 
 test("a retired native task's conversations are observed and stopped only through validated bridge replies", async () => {

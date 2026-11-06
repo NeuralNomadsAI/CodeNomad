@@ -3,6 +3,7 @@ import test, { type TestContext } from "node:test"
 import Fastify from "fastify"
 import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
 import { registerAutomationPluginRoute } from "./automation-plugin"
+import { readMissionProfileDefaults } from "./mission-profile-defaults"
 
 function fixture(t: TestContext, read?: () => unknown) {
   const app = Fastify()
@@ -53,21 +54,34 @@ test("invalid preference values fail closed with a fixed redacted code", async t
     const response = await request()
     assert.equal(response.statusCode, 409)
     assert.deepEqual(response.json(), { code: "mission-preferences-invalid", error: "Correct the Missions preferences before creating a mission" })
+    const explicit = await request({ template: "custom", profiles: { coordinator: {} }, taskMode: "native" })
+    assert.equal(explicit.json().code, "mission-preferences-invalid")
   }
 })
 
 test("profile default command validates all input before reading preferences", async t => {
-  const request = fixture(t, () => assert.fail("Invalid input must not read preferences"))
+  let reads = 0
+  const request = fixture(t, () => { reads++; return { settings: { missionProfileDefaults: null } } })
   for (const input of [null, {}, { template: "other" }, { template: "custom", extra: true },
     { template: "custom", taskMode: "other" }, { template: "custom", coordinatorModel: { providerID: "p" } },
-    { template: "custom", profiles: { extra: true } },
+    { template: "custom", profiles: null }, { template: "custom", profiles: { extra: true } },
     { template: "custom", profiles: { roles: { developer: {} } } },
     { template: "custom", profiles: { coordinator: { model: { providerID: "p" } } } }]) {
     const response = await request(input)
     assert.equal(response.statusCode, 409)
-    assert.equal(response.json().code, "mission-preferences-invalid")
+    assert.equal(response.json().code, "invalid-execution")
+    assert.match(response.json().error, /profiles|taskMode|playbook/i)
+    assert.doesNotMatch(response.json().error, /preferences/i)
   }
-  assert.equal((await request({ template: "custom" }, { extra: true })).json().code, "mission-preferences-invalid")
+  assert.equal((await request({ template: "custom" }, { extra: true })).json().code, "invalid-execution")
+  assert.equal(reads, 0)
+})
+
+test("profile resolution preserves unexpected errors rather than labelling them invalid preferences", () => {
+  const failure = Object.assign(new Error("Unexpected resolver failure"), { name: "MissionPreferencesError", code: "mission-preferences-invalid" })
+  const preferences = new Proxy([], { get() { throw failure } })
+  assert.throws(() => readMissionProfileDefaults({ getRawConfigOwner: () => ({ settings: { missionProfileDefaults: preferences } }) } as never,
+    { kind: "profile-defaults", input: { template: "custom" } }), error => error === failure)
 })
 
 test("missing or unreadable preference readers expose only the fixed unavailable error", async t => {

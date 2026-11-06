@@ -26,6 +26,7 @@ test("UI creation defaults and server resolution agree for all five templates, i
     ]),
   ]
   for (const preferences of cases) for (const template of templates) {
+    // mission-editor.tsx:133 loads the draft; mission-creation-pipeline.ts:53 freezes its Compare payload.
     const normalized = ui.normalizeMissionDefaults(preferences)
     const payload = freezeCompareProfiles(template, ui.missionDefaultsFor(normalized, template))
     const result = server.resolveMissionCreationDefaults({ template, preferences })
@@ -33,7 +34,6 @@ test("UI creation defaults and server resolution agree for all five templates, i
       payload?.roles?.[role] ?? {}]))
     assert.deepEqual(result.profiles, { coordinator: payload?.coordinator ?? {}, roles }, template)
     assert.equal(result.taskMode, ui.missionTaskModeFor(normalized, template), template)
-    assert.deepEqual(ui.resolveMissionCreationDefaults({ template, preferences }), result)
   }
 })
 

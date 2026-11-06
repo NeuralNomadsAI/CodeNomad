@@ -1,7 +1,7 @@
 import { z } from "zod"
 import { MissionControlError } from "../../missions/control-error"
 import { missionProfilesInputSchema, validateMissionProfiles } from "../../missions/playbook-profiles"
-import { resolveMissionCreationDefaults } from "../../missions/profile-defaults"
+import { MissionPreferencesError, resolveMissionCreationDefaults } from "../../missions/profile-defaults"
 import { missionRecoveryError } from "../../missions/recovery-error"
 import { missionTaskModeInputSchema } from "../../missions/task-execution-mode"
 import { isPlainObject } from "../../settings/merge-patch"
@@ -26,10 +26,10 @@ function refusal(code: "mission-preferences-invalid" | "mission-preferences-unav
 /** Read the UI owner's raw document afresh for each creation; never persist resolved choices. */
 export function readMissionProfileDefaults(settings: Partial<Pick<SettingsService, "getRawConfigOwner">> | undefined, command: unknown) {
   const parsed = commandSchema.safeParse(command)
-  if (!parsed.success) throw refusal("mission-preferences-invalid")
+  if (!parsed.success) throw new MissionControlError("Correct the profile-defaults request: use a supported template, valid profiles and taskMode, and a complete coordinatorModel", "invalid-execution")
   const { input } = parsed.data
   try { validateMissionProfiles(input.template, input.profiles) }
-  catch { throw refusal("mission-preferences-invalid") }
+  catch { throw new MissionControlError("Correct profiles.roles to use roles from the selected playbook", "invalid-execution") }
   let preferences: unknown
   try {
     if (!settings?.getRawConfigOwner) throw new Error("Missing preference reader")
@@ -38,5 +38,8 @@ export function readMissionProfileDefaults(settings: Partial<Pick<SettingsServic
     preferences = isPlainObject(owner.settings) ? owner.settings.missionProfileDefaults : undefined
   } catch { throw refusal("mission-preferences-unavailable") }
   try { return resolveMissionCreationDefaults({ ...input, preferences }) }
-  catch { throw refusal("mission-preferences-invalid") }
+  catch (error) {
+    if (error instanceof MissionPreferencesError) throw refusal("mission-preferences-invalid")
+    throw error
+  }
 }

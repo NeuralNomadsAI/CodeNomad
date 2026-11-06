@@ -33,8 +33,26 @@ explicit/preference origin even with an inherited model; an absent judge slot
 inherits the coordinator's origin. Unreadable/invalid preferences refuse creation; report
 the error and arrange recovery of the Missions preferences before retrying.
 `inspect({ start })` requires the caller's existing coordinator profile to match
-the resolved selection. For `prepare`, reuse the same requestID and original
-inputs: saved choices stay frozen across retries and preference changes.
+the resolved selection. When a coordinator preference differs, pass
+`profiles.coordinator` (for example `{}`) to override that preference; the existing
+profile is still checked against the resolved selection. An explicit-profile
+mismatch receives the generic native-profile error.
+
+For `prepare`, reuse the same requestID and original inputs; same-requestID
+preparations are serialized. Its standalone intent retains choices for an unknown
+outcome, releasing them on a positive result or a definitive no-effect refusal.
+A retry's prevalidation refusal leaves an earlier attempt's uncertainty intact.
+The project retains at most 128 unknown choices for 24 hours from first
+reservation; retries preserve that deadline. An entry without a timestamp gets
+one on its first read/prune and expires 24 hours later. At capacity, retry original
+requestIDs to recover receipts and release slots, or wait for expiry. After expiry,
+preferences may be read anew only with both creation event and document absent;
+a positive receipt or saved document keeps its choices frozen. `inspect({ start })`
+retains choices through its journal/document receipt under its native invocation
+identity. Native holds and authorization keep their own settlement rules after
+choice expiry. Check the mission and original conversation before using a new
+requestID; never duplicate uncertain work or resume automatically after expiry.
+
 Outside an active mission, use the Missions editor in CodeNomad; never create an
 intermediate mission merely to gain access to `mission.prepare`.
 

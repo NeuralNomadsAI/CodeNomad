@@ -7,6 +7,8 @@ export type { MissionTaskMode } from "./task-execution-mode"
 /** `all` is the global default; a mission type entry is an exception overriding it. */
 export type MissionDefaultScope = "all" | MissionTemplateId
 export interface MissionProfileDefault { template: MissionDefaultScope; profiles: MissionProfiles; taskMode?: MissionTaskMode }
+export const MISSION_DEFAULT_ORIGINS = ["explicit", "preference", "opencode-default"] as const
+export type MissionDefaultOrigin = typeof MISSION_DEFAULT_ORIGINS[number]
 const scopes: MissionDefaultScope[] = ["all", "custom", "debug", "wayfinder", "delivery", "compare"]
 // The global default carries one task profile, like the Flexible specialist.
 const scopeRoles = (scope: MissionDefaultScope): readonly string[] => missionProfileRoles[scope === "all" ? "custom" : scope]
@@ -47,11 +49,20 @@ export function validMissionDefaults(value: unknown): boolean {
 
 /** Type exception ?? global default ?? native. */
 export function missionTaskModeFor(value: readonly MissionProfileDefault[], template: MissionTemplateId): MissionTaskMode {
-  return value.find(item => item.template === template)?.taskMode ?? globalMissionTaskMode(value)
+  return resolveTaskMode(value, template).taskMode
 }
 
 export function globalMissionTaskMode(value: readonly MissionProfileDefault[]): MissionTaskMode {
-  return value.find(item => item.template === "all")?.taskMode ?? "native"
+  return resolveTaskMode(value, "all").taskMode
+}
+
+function resolveTaskMode(value: readonly MissionProfileDefault[], template: MissionDefaultScope, explicit?: MissionTaskMode): {
+  taskMode: MissionTaskMode; origin: MissionDefaultOrigin
+} {
+  const preferred = value.find(item => item.template === template)?.taskMode
+    ?? (template === "all" ? undefined : value.find(item => item.template === "all")?.taskMode)
+  return { taskMode: parseMissionTaskMode(explicit === undefined ? preferred : explicit),
+    origin: explicit !== undefined ? "explicit" : preferred !== undefined ? "preference" : "opencode-default" }
 }
 
 /** Resolve a copy when the creation form opens. Existing missions never consult defaults. */
@@ -75,8 +86,7 @@ export class MissionPreferencesError extends Error {
   }
 }
 
-export type MissionDefaultOrigin = "explicit" | "preference" | "opencode-default"
-export interface MissionCreationDefaults {
+export interface MissionCreationSelection {
   profiles: Required<MissionProfiles>
   taskMode: MissionTaskMode
   origins: { coordinator: MissionDefaultOrigin; roles: Record<string, MissionDefaultOrigin>; taskMode: MissionDefaultOrigin }
@@ -89,7 +99,7 @@ export function resolveMissionCreationDefaults(input: {
   profiles?: MissionProfiles
   taskMode?: MissionTaskMode
   coordinatorModel?: MissionExecution["model"]
-}): MissionCreationDefaults {
+}): MissionCreationSelection {
   if (!validMissionDefaults(input.preferences)) throw new MissionPreferencesError()
   const preferences = normalizeMissionDefaults(input.preferences)
   const defaults = missionDefaultsFor(preferences, input.template)
@@ -110,12 +120,10 @@ export function resolveMissionCreationDefaults(input: {
     roles[role] = selected.execution
     origins[role] = selected.origin
   }
-  const preferredTaskMode = preferences.find(item => item.template === input.template)?.taskMode
-    ?? preferences.find(item => item.template === "all")?.taskMode
+  const taskMode = resolveTaskMode(preferences, input.template, input.taskMode)
   return structuredClone({
     profiles: freezeCompareProfiles(input.template, { coordinator: coordinator.execution, roles }, input.coordinatorModel) as Required<MissionProfiles>,
-    taskMode: parseMissionTaskMode(input.taskMode === undefined ? preferredTaskMode : input.taskMode),
-    origins: { coordinator: coordinator.origin, roles: origins,
-      taskMode: input.taskMode !== undefined ? "explicit" : preferredTaskMode !== undefined ? "preference" : "opencode-default" },
+    taskMode: taskMode.taskMode,
+    origins: { coordinator: coordinator.origin, roles: origins, taskMode: taskMode.origin },
   })
 }
