@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createSignal, onCleanup, untrack } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import type { PermissionReceipt } from "../../../server/src/api-types"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { backendEvents as serverEvents } from "../lib/server-events"
 import { useI18n } from "../lib/i18n"
@@ -74,7 +74,7 @@ export default function PermissionReceipts(props: PermissionReceiptsProps) {
           return
         }
         const generation = permissionReceiptGeneration()
-        const page = await serverApi.fetchPermissionReceipts(instanceId, sessionId, scope, untrack(next), operation.signal)
+        const page = await backendOf(instanceId).api.fetchPermissionReceipts(instanceId, sessionId, scope, untrack(next), operation.signal)
         if (!operation.current() || permissionReceiptGeneration() !== generation) return
         const snapshot = {
           receipts: [...untrack(() => state.receipts), ...page.receipts.filter(receipt => ownsPermissionReceipt(receipt, sessionId, scope))],

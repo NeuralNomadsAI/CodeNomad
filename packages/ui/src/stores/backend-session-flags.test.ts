@@ -7,6 +7,7 @@ import { createSession, deleteSession, isCreatingSession } from "./session-api"
 import { loading, sessions, sessionInfoByInstance, setProviders, setSessions } from "./session-state"
 import { messageStoreBus } from "./message-v2/bus"
 import type { Session } from "../types/session"
+import { registerLocalBackendFixture } from "../../tests/contracts/local-backend-fixture"
 
 const source = {
   on: () => () => {}, onOpen: () => () => {},
@@ -30,11 +31,12 @@ async function until(predicate: () => boolean) {
 
 for (const operation of ["create", "delete"] as const) {
   for (const outcome of ["success", "failure"] as const) {
-    test(`${operation} ${outcome}: revoked owner clears only its own loading flag`, async () => {
+    test(`${operation} ${outcome}: revoked owner clears only its own loading flag`, async t => {
       // Both sequences use the same backend/client across detach and reattach.
       // First exercise abandoned loading; then keep owner B pending while A settles.
       for (const replacement of [false, true]) {
         const backendId = `flags_${operation}_${outcome}_${replacement}`
+        registerLocalBackendFixture(t, backendId)
         const instanceId = `${backendId}~ws`
         const targetId = "target"
         const requests: ReturnType<typeof deferred>[] = []
@@ -51,7 +53,7 @@ for (const operation of ["create", "delete"] as const) {
           active: unexpected, update: unexpected, prompt: unexpected, interrupt: unexpected,
         } } as any
         let detach = backendEvents.attach(backendId, source)
-        ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+        ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/ws/instance`, client)
         addInstance({ id: instanceId, backendId, folder: "/repo", port: 0, pid: 0,
           proxyPath: "", status: "ready", client })
         setProviders(previous => new Map(previous).set(instanceId, [{ id: "fixture", name: "Fixture",

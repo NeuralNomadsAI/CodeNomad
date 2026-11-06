@@ -5,6 +5,7 @@ import { SDKManager, sdkManager } from "./sdk-manager"
 import { createServerMetaCache, localServerMeta, type ServerMetaCache } from "./server-meta"
 import { ServerEvents, serverEvents } from "./server-events"
 import { ServerStorage, storage } from "./storage"
+import { parseInstanceKey } from "./backend-identity"
 
 export type { BackendId }
 
@@ -63,7 +64,10 @@ export const localBackend: BackendClient = Object.freeze({
 
 export const backends: ReadonlyMap<BackendId, BackendClient> = new Map([[localBackend.id, localBackend]])
 
-/** Every instance belongs to the local backend until instances carry their backend. */
-export function backendOf(_instanceId: string): BackendClient {
-  return localBackend
+/** Resolve the owner from the opaque UI key; a missing backend never falls back to local. */
+export function backendOf(instanceId: string): BackendClient {
+  const { backendId } = parseInstanceKey(instanceId)
+  const backend = backends.get(backendId)
+  if (!backend) throw new Error(`Backend unavailable: ${backendId}`)
+  return backend
 }

@@ -2,7 +2,6 @@ import { createSignal } from "solid-js"
 import type { Instance, LogEntry } from "../types/instance"
 import type { PermissionReply, PermissionRequest } from "../types/permission"
 import { getPermissionSessionId, mergePermissionRequest } from "../types/permission"
-import { sdkManager } from "../lib/sdk-manager"
 import { consumeFormAnswerInteraction, type FormAnswerInteraction } from "../lib/form-answer-interaction"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
@@ -10,7 +9,7 @@ import { backendEvents as serverEvents } from "../lib/server-events"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import type { BackendEventPayload } from "../lib/backend-events"
-import { backends } from "../lib/backend-client"
+import { backends, backendOf } from "../lib/backend-client"
 import type { WorkspaceDescriptor, WorkspaceLogEntry } from "../../../server/src/api-types"
 import { PENDING_RECONCILIATION_HEADER, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS } from "../../../server/src/api-types"
 import { ensureInstanceConfigLoaded } from "./instance-config"
@@ -720,12 +719,12 @@ function attachClient(descriptor: WorkspaceDescriptor) {
   }
 
   if (instance.client) {
-    sdkManager.destroyClientsForInstance(descriptor.id)
+    backendOf(descriptor.id).sdk.destroyClientsForInstance(descriptor.id)
     destroyOpenCodeData(descriptor.id)
     cancelTranscriptProjections(descriptor.id)
   }
 
-  const client = sdkManager.createClient(descriptor.id, nextProxyPath, () => activeInstanceId() === descriptor.id)
+  const client = backendOf(descriptor.id).sdk.createClient(descriptor.id, nextProxyPath, () => activeInstanceId() === descriptor.id)
   updateInstance(descriptor.id, {
     client,
     port: nextPort ?? 0,
@@ -799,7 +798,7 @@ function releaseInstanceResources(instanceId: string) {
   if (!instance) return
 
   if (instance.client) {
-    sdkManager.destroyClientsForInstance(instanceId)
+    backends.get(parseInstanceKey(instanceId).backendId)?.sdk.destroyClientsForInstance(instanceId)
   }
   destroyOpenCodeData(instanceId)
   cancelTranscriptProjections(instanceId)
@@ -889,7 +888,7 @@ async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => b
     try {
       // Directory/Git authorization has a longer broker budget than native queue
       // reads. Let it finish, with a small transport margin, before aborting.
-      const next = await withPendingRequestTimeout(instanceId, (signal) => serverApi.getPendingRequests(instanceId, batch, signal, optional), true, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS + 5_000)
+      const next = await withPendingRequestTimeout(instanceId, (signal) => backendOf(instanceId).api.getPendingRequests(instanceId, batch, signal, optional), true, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS + 5_000)
       if (!isCurrent()) throw pendingRequestSyncSuperseded
       if (next.supported === false) return next
       if (next.supported !== true) throw new Error("Invalid pending request snapshot")
@@ -2183,7 +2182,7 @@ function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: str
   const current = () => operation.current() && yoloOperations.get(key) === operation
   const wasEnabled = isPermissionAutoAcceptEnabled(instanceId, sessionId)
   togglePermissionAutoAccept(instanceId, sessionId)
-  void serverApi
+  void backendOf(instanceId).api
     .toggleYolo(instanceId, sessionId)
     .then((state) => {
       if (!current()) return
@@ -2217,7 +2216,7 @@ export function ensureYoloStateSynced(instanceId: string, sessionId: string): vo
   syncedYoloSessions.add(key)
   yoloOperations.set(key, operation)
   const current = () => operation.current() && yoloOperations.get(key) === operation
-  void serverApi
+  void backendOf(instanceId).api
     .getYoloState(instanceId, sessionId)
     .then((state) => {
       if (!current()) return

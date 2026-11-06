@@ -7,6 +7,7 @@ import { backendEvents, type ServerEvents } from "../lib/server-events"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { createEventRefreshScheduler } from "../lib/event-refresh-scheduler"
 import { serverApi } from "../lib/api-client"
+import { registerLocalBackendFixture } from "../../tests/contracts/local-backend-fixture"
 import { receiptReads } from "../lib/background-read-queue"
 import { createMissionStore } from "./mission-store"
 import { createMissionPanelInventory } from "./mission-panel-inventory"
@@ -238,6 +239,7 @@ test("shell admission, late lists and sent remove followups keep the captured at
 })
 
 test("permission receipt queue admission and late pagination never cross attachment lifetimes", async t => {
+  registerLocalBackendFixture(t, "demand_receipts")
   const backend = attachment(t, "demand_receipts")
   const original = serverApi.fetchPermissionReceipts
   t.after(() => { serverApi.fetchPermissionReceipts = original })

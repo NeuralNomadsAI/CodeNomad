@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "./opencode-data"
 import { sessions } from "./session-state"
@@ -31,7 +31,7 @@ export function createTimelinePreviews(props: { instanceId: Accessor<string>; se
         })
         for (let offset = 0; offset < missing.length; offset += 12) {
           if (!current()) return
-          const result = await serverApi.fetchOutlinePreviews(instanceId, sessionID, missing.slice(offset, offset + 12), operation.signal)
+          const result = await backendOf(instanceId).api.fetchOutlinePreviews(instanceId, sessionID, missing.slice(offset, offset + 12), operation.signal)
           if (!current() || result.status !== "previews") return
           for (const entry of result.entries) {
             const key = `${scope}\0${entry.id}`

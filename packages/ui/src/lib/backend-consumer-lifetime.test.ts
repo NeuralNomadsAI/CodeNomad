@@ -12,6 +12,7 @@ import { filesystemInvalidationVersion } from "./filesystem-events"
 import { sessionGoals } from "../stores/session-goal"
 import { serverApi } from "./api-client"
 import { TrailingResyncCoordinator } from "./trailing-resync"
+import { registerLocalBackendFixture } from "../../tests/contracts/local-backend-fixture"
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve))
 function source() {
@@ -22,6 +23,7 @@ const emit = (source: ServerEvents, event: unknown) => Reflect.get(source, "disp
 const open = (source: ServerEvents) => Reflect.get(source, "notify").call(source, Reflect.get(source, "openHandlers"), undefined, "open")
 const catalog = { integrations: [], catalog: { state: "fresh" } }
 function attach(t: TestContext, id: string, events = source()) {
+  registerLocalBackendFixture(t, id)
   const detach = backendEvents.attach(id, events)
   t.after(() => { detach(); events.dispose() })
   return { events, detach }
@@ -88,7 +90,7 @@ test("unknown session recovery never joins the old attachment even with the same
   t.after(() => { removeInstance(id, { authoritative: false }); sdkManager.destroyClientsForInstance(id) })
   const resolvers: ((value: unknown) => void)[] = []
   const client = { session: { get: async () => new Promise(resolve => { resolvers.push(resolve) }) } }
-  ;(Reflect.get(sdkManager, "clients") as Map<string, unknown>).set(`${id}:/workspaces/${id}/instance`, client)
+  ;(Reflect.get(sdkManager, "clients") as Map<string, unknown>).set(`${id}:/workspaces/ws/instance`, client)
   addInstance({ id, backendId: "session_coalesce", folder: "/repo", port: 0, pid: 0, proxyPath: "", status: "ready", client: client as never })
   setSessions(current => new Map(current).set(id, new Map()))
   const event = { id: "e", type: "session.execution.started", created: 1, durable: { aggregateID: "s", seq: 1, version: 1 },

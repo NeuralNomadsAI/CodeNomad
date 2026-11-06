@@ -1,4 +1,4 @@
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { tGlobal } from "../lib/i18n"
 import type { HistoryCandidate, HistoryPage, HistoryQuery } from "../../../server/src/opencode/session-pruning/history-contract"
@@ -11,7 +11,7 @@ export async function findRankedHistoryMatches(instanceId: string, query: string
   const operation = captureBackendOperation(instanceId, signal)
   operation.signal.throwIfAborted()
   const generation = getOpenCodeInstanceGeneration(instanceId)
-  const result = await serverApi.queryRankedHistory(instanceId, { version: 1, query, includeTechnical, limit: 40, ...(cursor ? { cursor } : {}) }, signal)
+  const result = await backendOf(instanceId).api.queryRankedHistory(instanceId, { version: 1, query, includeTechnical, limit: 40, ...(cursor ? { cursor } : {}) }, signal)
     .catch(error => {
       if (cursor && error instanceof HttpResponseError && error.status === 400) return { status: "restart_required" as const }
       throw error
@@ -34,7 +34,7 @@ export function rankedHistoryNoticeKeys(result: RankedHistoryResult | undefined)
 export async function readHistoryPage(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryPage> {
   signal = captureBackendOperation(instanceId, signal).signal
   signal?.throwIfAborted()
-  const result = await serverApi.querySessionHistory(instanceId, input, signal)
+  const result = await backendOf(instanceId).api.querySessionHistory(instanceId, input, signal)
   signal?.throwIfAborted()
   if (result.status !== "page") throw new Error(tGlobal(`session.pruning.${result.reason}`))
   return result
@@ -121,7 +121,7 @@ export async function executeSessionTechnicalPartDeletion(plan: SessionTechnical
       if (plan.generation !== getOpenCodeInstanceGeneration(plan.instanceId)) throw new Error(tGlobal("session.pruning.conflict"))
       const candidates = plan.candidates.slice(offset, offset + 16)
       dispatched = true
-      const response = await serverApi.pruneSessionHistory(plan.instanceId, { sessionID: plan.sessionId, candidates }, signal)
+      const response = await backendOf(plan.instanceId).api.pruneSessionHistory(plan.instanceId, { sessionID: plan.sessionId, candidates }, signal)
       signal.throwIfAborted()
       if (plan.generation !== getOpenCodeInstanceGeneration(plan.instanceId)) throw new Error(tGlobal("session.pruning.conflict"))
       for (const entry of response.results) {

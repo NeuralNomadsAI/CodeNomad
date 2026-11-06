@@ -13,6 +13,7 @@ import { hydrateRestoredSessionChain, loadLatestMessageWindow } from "./session-
 import { sessions, setSessions } from "./session-state"
 import { getPendingWorktreeSlug, reloadWorktrees, setWorktreeSlugForParentSession } from "./worktrees"
 import { createClientSession } from "../types/session"
+import { registerLocalBackendFixture } from "../../tests/contracts/local-backend-fixture"
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve))
 function deferred<T>() {
@@ -22,12 +23,13 @@ function deferred<T>() {
 }
 function fixture(t: TestContext, name: string) {
   const backendId = `runtime_${name}`, id = `${backendId}~workspace`, directory = "/repo"
+  registerLocalBackendFixture(t, backendId)
   const source: Pick<ServerEvents, "on" | "onOpen" | "onDispose" | "onTransportStatus"> = {
     on: () => () => {}, onOpen: () => () => {}, onDispose: () => () => {}, onTransportStatus: () => () => {},
   }
   let detach = backendEvents.attach(backendId, source)
   const client = { session: {} } as any
-  ;(sdkManager as any).clients.set(`${id}:/workspaces/${encodeURIComponent(id)}/instance`, client)
+  ;(sdkManager as any).clients.set(`${id}:/workspaces/workspace/instance`, client)
   addInstance({ id, backendId, folder: directory, port: 0, pid: 0, proxyPath: "", status: "ready", client })
   t.after(() => { detach(); removeInstance(id, { authoritative: false }); sdkManager.destroyClientsForInstance(id)
     setSessions(previous => { const next = new Map(previous); next.delete(id); return next }) })
