@@ -341,8 +341,9 @@ fully and never discard unknown fields or relax history checks.
   input.
 - Catalogs update through resource-specific events. `session.message.content.updated`
   is replay-only (never published live), so live invalidation ignores it.
-- Pruning preview stays query-only and TUI refresh synchronization stays in
-  place: the plugin API has no `session.message`, and publication can race.
+- Pruning preview stays query-only, and the CodeNomad transcript invalidates and
+  rereads after a prune: the plugin API has no `session.message`, and publication
+  can race.
 - Keep these older-identity authority checks; the synthetic migration seed alone
   never justifies removing them.
 
