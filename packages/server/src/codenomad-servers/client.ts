@@ -50,7 +50,7 @@ export class CodeNomadServerClient {
     if (secret?.cookie) for (const [name, value] of cookiePairs([secret.cookie])) this.#cookies.set(name, value)
     this.#transport = createExplicitTransport({
       origin, signal: this.#controller.signal,
-      allowHttp: true, skipTlsVerify: options.skipTlsVerify,
+      skipTlsVerify: options.skipTlsVerify,
       headers: (): Record<string, string> => (this.#cookies.size ? { cookie: [...this.#cookies].map(([name, value]) => `${name}=${value}`).join("; ") } : {}),
       onSetCookie: values => this.capture(values),
     }, options.resolve)

@@ -33,15 +33,13 @@ export function createExplicitTransport(options: {
   credentials?: { username: string; password: string }
   signal?: AbortSignal
   ca?: string
-  /** Saved CodeNomad profiles explicitly permit direct HTTP and optional private TLS. */
-  allowHttp?: boolean
   skipTlsVerify?: boolean
   /** Backend-held cookies, set after filtering. */
   headers?: () => Record<string, string>
   /** Receives Set-Cookie values; they never reach the returned response. */
   onSetCookie?: (values: string[]) => void
 }, resolve?: ResolveAddresses) {
-  const origin = normalizeExplicitOrigin(options.origin, options.allowHttp)
+  const origin = normalizeExplicitOrigin(options.origin)
   if (options.ca !== undefined) throw new ExplicitEndpointError("custom_ca_unsupported")
   // Copy secret inputs; subsequent caller mutation cannot retarget credentials.
   const credentials = options.credentials ? { ...options.credentials } : undefined
@@ -56,7 +54,7 @@ export function createExplicitTransport(options: {
       if (url.origin !== origin || url.username || url.password || url.hash) throw new ExplicitEndpointError("invalid_origin")
       signal = AbortSignal.any([lifetime, request.signal])
       signal.throwIfAborted()
-      const address = await abortable(resolveExplicitAddress(origin, resolve, options.allowHttp), signal)
+      const address = await abortable(resolveExplicitAddress(origin, resolve), signal)
       signal.throwIfAborted()
       agent = new Agent({ connect: {
         rejectUnauthorized: !options.skipTlsVerify,

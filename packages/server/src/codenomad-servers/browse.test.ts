@@ -125,7 +125,7 @@ test("revoked password retries once and clears private identity; profiles are re
   f.profiles[0]!.baseUrl = `${f.remote.origin}/api/auth/login`
   assert.deepEqual((await f.call("browse")).json(), { error: "unreachable" })
   assert.equal(f.remote.state.requests.length, before)
-  assert.equal(normalizeExplicitOrigin("http://192.168.1.25:8080", true), "http://192.168.1.25:8080")
+  assert.equal(normalizeExplicitOrigin("http://192.168.1.25:8080"), "http://192.168.1.25:8080")
 })
 
 test("anonymous direct servers need no secrets; removed and changed profiles cannot reuse credentials", async t => {
@@ -210,7 +210,7 @@ test("transport strips Origin, caller cookies and response cookies, and fences e
   t.after(() => other.close())
   const captured: string[] = []
   remote.state.overrides.set("/api/auth/status", { status: 200, body: { authenticated: true }, headers: { "set-cookie": "private-session=value; Domain=foreign.test; Path=/" } })
-  const transport = createExplicitTransport({ origin: remote.origin, allowHttp: true,
+  const transport = createExplicitTransport({ origin: remote.origin,
     headers: () => ({ Origin: remote.origin, cookie: "private-cookie=value" }), onSetCookie: values => captured.push(...values) })
   const response = await transport.fetch(`${remote.origin}/api/auth/status`, { headers: { origin: "http://foreign.test", cookie: "caller-cookie=value" } })
   assert.equal(response.headers.get("set-cookie"), null)

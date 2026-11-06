@@ -31,7 +31,7 @@ export class RemoteServerBrowseManager {
     const values = this.settings.getOwner("state", "ui").remoteServers
     const profile = Array.isArray(values) ? values.map(value => Profile.safeParse(value)).find(value => value.success && value.data.id === id) : undefined
     if (!profile?.success) { this.remove(id); throw new CodeNomadServerError("unknown_server") }
-    const origin = normalizeExplicitOrigin(profile.data.baseUrl, true)
+    const origin = normalizeExplicitOrigin(profile.data.baseUrl)
     return { ...profile.data, origin, key: `${origin}|${profile.data.skipTlsVerify}` }
   }
 
