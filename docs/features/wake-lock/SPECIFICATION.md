@@ -4,7 +4,7 @@
 
 By default, CodeNomad requests a wake lock only for qualifying active work that is already running and can continue without continuous foreground interaction. A session qualifies while working or compacting and able to continue without waiting for new user input or permission.
 
-With **Keep the computer awake while CodeNomad is running** (`ui.settings.keepComputerAwake`, default `false`) enabled, a local application window also holds the lock for as long as it remains open, including while minimized. Remote windows and the Preferences window follow only the session rule. The wake lock prevents idle system sleep where supported; the display may still turn off.
+With **Keep the computer awake while CodeNomad is running** (`ui.settings.keepComputerAwake`, default `false`) enabled, a local application window also holds the lock for as long as it remains open, including while minimized. Remote windows ignore the preference; Electron remote windows can still hold the lock for their own qualifying sessions. Tauri remote windows lack native wake-lock access. The Preferences window renders settings only and never requests a lock. The wake lock prevents idle system sleep where supported; the display may still turn off.
 
 ## Platform Behavior
 
