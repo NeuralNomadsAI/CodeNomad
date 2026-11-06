@@ -56,8 +56,9 @@ command. On Windows, that alias is skipped only when the npm `.cmd` script
 positively invokes the package's `.cjs` target; a customized `.cmd` wrapper
 keeps PATH priority and the automatic npm updater never overwrites it.
 
-Default host installation uses the desktop Node runtime and bundled npm to run a standard global npm
-installation of `@opencode/cli`. Existing writable npm installations on PATH are
+Default host installation runs the npm beside the backend's Node runtime (Electron's
+integrated Node or Tauri's bundled Node on desktop, the server's own Node standalone)
+to run a standard global npm installation of `@opencode/cli`. Existing writable npm installations on PATH are
 reused after verifying their manifest and launcher identity; standalone/curl,
 Homebrew and custom installations remain user-managed. With no PATH installation,
 the user prefix is `%APPDATA%/npm` on Windows and `~/.local` on POSIX, or an explicit
