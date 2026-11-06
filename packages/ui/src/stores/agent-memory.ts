@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from "solid-js"
-import type { MemoryContext, MemoryUIEntry } from "../../../server/src/memory/api"
+import type { MemoryContext, MemoryUIEntry } from "../../../server/src/api-types"
 import { agentMemoryApi, AgentMemoryError } from "../lib/agent-memory-api"
 import { serverEvents } from "../lib/server-events"
 import { showConfirmDialog } from "./alerts"

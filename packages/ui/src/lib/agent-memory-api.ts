@@ -1,5 +1,4 @@
-import type { MemoryContext, MemoryOperation, MemorySettings, MemoryUIListResult } from "../../../server/src/memory/api"
-import type { MemoryErrorCode } from "../../../server/src/memory/model"
+import type { MemoryContext, MemoryOperation, MemorySettings, MemoryUIListResult, MemoryErrorCode } from "../../../server/src/api-types"
 import { authenticatedFetch } from "./auth-recovery"
 import { CODENOMAD_API_BASE } from "./api-base"
 

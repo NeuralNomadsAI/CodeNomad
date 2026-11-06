@@ -568,8 +568,8 @@ export async function sendMemoryInput(sessionID: string, command: MemoryOperatio
   return sendMemoryBridge(sessionID, "memory-input", command) as Promise<MemoryResult>
 }
 
-export async function requestMemoryContext(sessionID: string): Promise<import("../workspaces/session-memory-context").MemoryInstructionContext> {
-  return sendMemoryBridge(sessionID, "memory-context") as Promise<import("../workspaces/session-memory-context").MemoryInstructionContext>
+export async function requestMemoryContext(sessionID: string): Promise<import("../memory/contract").MemoryInstructionContext> {
+  return sendMemoryBridge(sessionID, "memory-context") as Promise<import("../memory/contract").MemoryInstructionContext>
 }
 
 async function sendMemoryBridge(sessionID: string, mode: "memory-input" | "memory-context", command?: MemoryOperation): Promise<unknown> {

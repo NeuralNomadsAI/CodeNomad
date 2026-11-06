@@ -1,12 +1,13 @@
 import type { OpenCodeClient } from "@opencode/client"
 import type { MemoryService } from "../memory/service"
 import type { MemoryScope, MemoryEntryType } from "../memory/model"
+import type { MemoryInstructionContext } from "../memory/contract"
+export type { MemoryInstructionContext } from "../memory/contract"
 import { readMemoryInstructionsCapability } from "../memory/instructions-capability"
 import type { ServiceConnection } from "./opencode-service"
 
 export const MEMORY_INSTRUCTIONS_KEY = "codenomad.memory"
 export type MemoryTitles = Partial<Record<MemoryScope, Array<{ title: string; type: MemoryEntryType }>>>
-export type MemoryInstructionContext = { supported: false } | { supported: true; value: string | null }
 const RULES = `CodeNomad agent memory is enabled. Use codenomad_memory to maintain your own persistent memory.
 Save when the user corrects you or expresses a preference, when an unusual approach worked, or when a costly fact is absent from code and documentation. Keep one piece of information per entry. Save before your final response and mention the save in one sentence. Use global for facts about the user and project for project-specific knowledge.
 If you maintain another memory (for example .claude/.../MEMORY.md), save a reference entry pointing to that file instead of copying its contents. Never discover or import external memory automatically.

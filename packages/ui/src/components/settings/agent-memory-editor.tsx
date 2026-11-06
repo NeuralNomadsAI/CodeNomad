@@ -1,5 +1,5 @@
 import { createMemo, createUniqueId, Show } from "solid-js"
-import type { MemoryUIEntry } from "../../../../server/src/memory/api"
+import type { MemoryUIEntry } from "../../../../server/src/api-types"
 import { useI18n } from "../../lib/i18n"
 import { memoryCharacters, memoryTitleValid, type createAgentMemoryReview } from "../../stores/agent-memory"
 import { showConfirmDialog } from "../../stores/alerts"

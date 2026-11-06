@@ -7,7 +7,7 @@ import type {
   RecentFolder,
 } from "./config/schema"
 import type { FormInfo, OpenCodeEvent, PermissionRequest } from "@opencode/client"
-export type { MemoryOperation, MemoryContext, MemorySettings, MemoryVersionedEntry, MemoryUIEntry, MemoryListEntry, MemoryResult, MemoryApiError } from "./memory/api"
+export type { MemoryScope, MemoryEntryType, MemoryContent, MemoryEntryHeader, MemoryEntry, MemoryErrorCode, MemoryOperation, MemoryContext, MemorySettings, MemoryVersionedEntry, MemoryUIEntry, MemoryListEntry, MemoryUIListResult, MemoryResult, MemoryApiError } from "./memory/contract"
 export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionContext, PanelExtensionCatalog, PanelExtensionCatalogEntry } from "./panel-extensions/contract"
 export type { ForgeRepository, ForgeWorkItem, ForgeWorkItemKind, ForgeWorkItemsResult } from "./panel-extensions/contract"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"

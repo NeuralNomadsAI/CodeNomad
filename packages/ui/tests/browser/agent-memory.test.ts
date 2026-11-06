@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { chromium, type Browser, type Page, type Route } from "playwright"
-import type { MemoryUIEntry } from "../../../server/src/memory/api"
+import type { MemoryUIEntry } from "../../../server/src/api-types"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { fixtureEventStream } from "./fixture-event-stream"

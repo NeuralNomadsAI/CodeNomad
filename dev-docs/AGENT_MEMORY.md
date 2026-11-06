@@ -2,7 +2,9 @@
 
 ## Entry model
 
-`packages/server/src/memory/model.ts` owns the shared server contract:
+`packages/server/src/memory/contract.ts` owns the dependency-free shared data
+contract, exported to UI clients through `packages/server/src/api-types.ts`.
+`memory/model.ts` owns server-side validation and limits:
 
 - Scopes: `global` (60 entries) and `project` (200 entries).
 - Types: `fact`, `preference`, `reference`.
@@ -154,8 +156,8 @@ filesystem targets.
 
 ## Authorized HTTP operations
 
-`memory/api.ts` owns the UI/tool operation contract and is re-exported by
-`api-types.ts`. `POST /api/memory` takes `{ operation, context? }`; operations
+`memory/api.ts` validates the shared UI/tool operation contract from
+`memory/contract.ts`. `POST /api/memory` takes `{ operation, context? }`; operations
 are `list`, `read` with `query` (exact ID first, then title), `save` with `content`,
 and `delete`. Every operation names `scope: global | project`. Project UI calls
 carry the existing Preferences context as `{ workspaceId, directory? }`; the
@@ -292,6 +294,7 @@ these native update semantics.
 ## Validation
 
 ```text
+node --import tsx --test packages/ui/tests/contracts/agent-memory-types.test.ts
 node --import tsx --test packages/server/src/memory/*.test.ts packages/server/src/forge/forge.test.ts
 node --import tsx --test packages/server/src/server/routes/memory.test.ts packages/server/src/server/standalone-bridge.test.ts
 npm run typecheck --workspace @neuralnomads/codenomad

@@ -1,27 +1,7 @@
 import { z } from "zod"
-
-export type MemoryScope = "global" | "project"
-export type MemoryEntryType = "fact" | "preference" | "reference"
+import type { MemoryContent, MemoryEntry, MemoryErrorCode } from "./contract"
+export type { MemoryScope, MemoryEntryType, MemoryContent, MemoryEntryHeader, MemoryEntry, MemoryErrorCode } from "./contract"
 export const MEMORY_LIMITS = { global: 60, project: 200, title: 60, text: 2000, instructions: 8000 } as const
-
-export interface MemoryContent {
-  title: string
-  type: MemoryEntryType
-  text: string
-}
-
-export interface MemoryEntryHeader {
-  id: string
-  title: string
-  type: MemoryEntryType
-  createdAt: string
-  updatedAt: string
-  sessionId: string
-}
-
-export interface MemoryEntry extends MemoryEntryHeader { text: string }
-
-export type MemoryErrorCode = "disabled" | "full" | "conflict" | "invalid" | "unreadable" | "git_unavailable" | "malformed"
 
 /** Safe business error; callers translate the code for the UI. Never attach raw Git/config errors. */
 export class MemoryError extends Error {
