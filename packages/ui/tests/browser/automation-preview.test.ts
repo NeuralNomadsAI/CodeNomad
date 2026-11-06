@@ -67,7 +67,9 @@ test("the shared engine drives a real Electron preview through the guarded nativ
     const before = await diagnose()
     await running.evaluate(() => (globalThis as any).automationPreview.focusGuest())
     await execute({ action: "press", key: "a", ref: title }).catch(() => undefined)
-    console.error("automation-preview key diagnostics", JSON.stringify({ before, afterGuestFocus: await diagnose(), stderr }, null, 2))
+    const afterGuestFocus = await diagnose()
+    const paths = await running.evaluate(() => (globalThis as any).automationPreview.probeKeys()).catch(probe => String(probe))
+    console.error("automation-preview key diagnostics", JSON.stringify({ before, afterGuestFocus, paths, stderr }, null, 2))
     throw error
   })
   assert.equal(keyed.found, true, "keys reach a newly opened guest with no preceding pointer click")
