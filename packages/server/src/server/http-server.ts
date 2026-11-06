@@ -38,6 +38,8 @@ import { registerSpeechRoutes } from "./routes/speech"
 import { registerOpenCodeUpdateRoutes } from "./routes/opencode-update"
 import { registerRemoteControlRoutes } from "./routes/remote-control"
 import { registerRemoteServerRoutes } from "./routes/remote-servers"
+import { registerRemoteServerBrowseRoutes } from "./routes/remote-server-browse"
+import { RemoteServerBrowseManager } from "../codenomad-servers/browse-manager"
 import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
@@ -397,6 +399,9 @@ export function createHttpServer(deps: HttpServerDeps) {
     workspaceManager: deps.workspaceManager,
   })
   registerRemoteServerRoutes(app, { logger: apiLogger })
+  const remoteServerBrowse = new RemoteServerBrowseManager(deps.settings)
+  registerRemoteServerBrowseRoutes(app, { manager: remoteServerBrowse, getSelfOrigins })
+  app.addHook("onClose", async () => remoteServerBrowse.close())
   registerRemoteProxyRoutes(app, { logger: proxyLogger, sessionManager: deps.remoteProxySessionManager })
   registerRemoteControlRoutes(app, { manager: deps.remoteControlManager })
   registerSpeechRoutes(app, { speechService: deps.speechService })

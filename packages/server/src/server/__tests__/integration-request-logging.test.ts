@@ -39,6 +39,13 @@ function harness(level: "debug" | "trace") {
 }
 
 for (const level of ["debug", "trace"] as const) {
+  test(`${level}: remote server connection credentials never enter request logs`, async t => {
+    const f = harness(level)
+    t.after(() => f.app.close())
+    f.app.post('/api/remote-servers/:id/connect', () => ({ ok: true }))
+    await f.app.inject({ method: 'POST', url: '/api/remote-servers/saved/connect', payload: { username: secret, password: secret, pairingLink: secret } })
+    f.check()
+  })
   test(`${level}: plugin source configuration and error diagnostics remain private`, async t => {
     const f = harness(level)
     t.after(() => f.app.close())

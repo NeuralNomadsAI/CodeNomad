@@ -19,9 +19,6 @@ export type RemoteServerInput = {
   skipTlsVerify: boolean
 }
 
-// Pairing links wait in this renderer until the user opens the saved server.
-const pendingPairingEntries = new Map<string, string>()
-
 /** A failed probe, with the server's reason code (`tls_error` for a certificate that failed the check). */
 export class RemoteServerProbeError extends Error {
   constructor(message: string, readonly code?: string) {
@@ -65,11 +62,10 @@ export function useRemoteServerProfiles() {
       baseUrl: probe.normalizedUrl,
       skipTlsVerify,
     })
-    if (saved && saved.baseUrl !== profile.baseUrl) pendingPairingEntries.delete(profile.id)
     return { profile, entryUrl: pairing?.entryUrl }
   }
 
-  const saveServer = async (input: RemoteServerInput, requestedWindow: boolean, windowOptions: RemoteWindowOpenOptions = {}) => {
+  const saveServer = async (input: RemoteServerInput, requestedWindow: boolean, windowOptions: RemoteWindowOpenOptions = {}, entryUrl?: string) => {
     const pairing = splitPairingLink(input.baseUrl)
     const openWindow = requestedWindow
     if (openWindow && !canOpenRemoteWindows()) {
@@ -77,7 +73,6 @@ export function useRemoteServerProfiles() {
     }
 
     const { profile } = await saveProfile(input)
-    if (pairing) pendingPairingEntries.set(profile.id, pairing.entryUrl)
 
     if (openWindow) {
       const proxySession =
@@ -86,8 +81,13 @@ export function useRemoteServerProfiles() {
           : undefined
 
       try {
-        await openRemoteServerWindow(profile, pendingPairingEntries.get(profile.id) ?? proxySession?.windowUrl, proxySession?.sessionId, windowOptions)
-        pendingPairingEntries.delete(profile.id)
+        let target = pairing?.entryUrl ?? entryUrl ?? proxySession?.windowUrl
+        if (proxySession && entryUrl) {
+          const bootstrap = new URL(proxySession.windowUrl), entry = new URL(entryUrl)
+          bootstrap.searchParams.set("returnTo", `${entry.pathname}${entry.search}`)
+          target = bootstrap.toString()
+        }
+        await openRemoteServerWindow(profile, target, proxySession?.sessionId, windowOptions)
       } catch (error) {
         if (proxySession) void serverApi.deleteRemoteProxySession(proxySession.sessionId).catch(() => {})
         throw error
@@ -98,14 +98,14 @@ export function useRemoteServerProfiles() {
     return profile
   }
 
-  const connectSavedServer = async (id: string) => {
+  const connectSavedServer = async (id: string, entryUrl?: string) => {
     if (!canOpenRemoteWindows() || connectingServerId()) return
     const target = remoteServers().find((server) => server.id === id)
     if (!target) return
 
     setConnectingServerId(id)
     try {
-      await saveServer(target, true)
+      await saveServer(target, true, {}, entryUrl)
     } catch (error) {
       showAlertDialog(error instanceof Error ? error.message : String(error), {
         title: t("folderSelection.servers.errorTitle"),
@@ -118,28 +118,29 @@ export function useRemoteServerProfiles() {
 
   /** A saved server opens a project tab, or its own window when it cannot (unverified certificate, no tabs here). */
   const openServer = (profile: RemoteServerProfile, entryUrl?: string, blankId: string | null = activeBlankTabId() ?? null) => {
-    entryUrl ??= pendingPairingEntries.get(profile.id)
     if (opensRemoteProjectTab(profile)) {
       openRemoteProject(profile.id, entryUrl ? { entryUrl } : {}, blankId)
-      pendingPairingEntries.delete(profile.id)
       void markRemoteServerConnected(profile.id).catch(() => {})
     } else {
-      void connectSavedServer(profile.id)
+      void connectSavedServer(profile.id, entryUrl)
     }
   }
 
-  /** Saves a server; only an explicit Connect opens it. Pairing entries stay in memory until then. */
+  /** Saves a server; backend browsing credentials stay with the local server. */
   const submitServer = async (input: RemoteServerInput, open: boolean) => {
     const blankId = activeBlankTabId() ?? null
     const { profile, entryUrl } = await saveProfile(input)
-    if (entryUrl) pendingPairingEntries.set(profile.id, entryUrl)
+    if (entryUrl) await serverApi.connectRemoteServer(profile.id, { pairingLink: entryUrl })
     if (open) openServer(profile, entryUrl, blankId)
     return profile
   }
 
   // A removed server's project tabs close with it.
-  const removeServer = (id: string) => {
-    pendingPairingEntries.delete(id)
+  const removeServer = async (id: string) => {
+    try { await serverApi.forgetRemoteServer(id) } catch {
+      showAlertDialog(t("folderSelection.servers.dialog.errorConnect"), { variant: "warning" })
+      return
+    }
     closeRemoteProjectTabsForServer(id)
     removeRemoteServerProfile(id)
   }

@@ -1,4 +1,7 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.back": "Gözat'a dön",
+  "remoteBrowse.pairingUnavailable": "Sunucu tarafında Uzaktan Kontrol eşleştirmesi kullanılamıyor.",
+  "remoteBrowse.tlsError": "Sertifika doğrulaması başarısız.",
   "folderSelection.language.ariaLabel": "Dil",
   "folderSelection.logoAlt": "CodeNomad logosu",
   "folderSelection.tagline": "AI ile kod yazmaya başlamak için bir klasör seçin",

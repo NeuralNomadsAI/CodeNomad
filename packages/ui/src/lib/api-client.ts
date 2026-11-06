@@ -45,6 +45,7 @@ import type {
   RemoteProxySessionCreateResponse,
   RemoteServerProbeRequest,
   RemoteServerProbeResponse,
+  RemoteServerBrowseResponse,
   RemoteControlDevice,
   RemoteControlPairing,
   RemoteControlStartResponse,
@@ -245,6 +246,15 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 
 
 export const serverApi = {
+  browseRemoteServer(id: string, path?: string, signal?: AbortSignal): Promise<RemoteServerBrowseResponse> {
+    return request(`/api/remote-servers/${encodeURIComponent(id)}/browse`, { method: "POST", body: JSON.stringify({ path }), signal })
+  },
+  connectRemoteServer(id: string, credentials: { username?: string; password?: string; pairingLink?: string }): Promise<{ ok: boolean }> {
+    return request(`/api/remote-servers/${encodeURIComponent(id)}/connect`, { method: "POST", body: JSON.stringify(credentials) })
+  },
+  forgetRemoteServer(id: string): Promise<{ ok: boolean }> {
+    return request(`/api/remote-servers/${encodeURIComponent(id)}/forget`, { method: "POST", body: "{}" })
+  },
   fetchPermissionReceipts(instanceId: string, sessionId: string, scope: { messageId: string } | { unanchored: true }, cursor?: string, signal?: AbortSignal): Promise<PermissionReceiptPage> {
     const params = new URLSearchParams("messageId" in scope ? { messageId: scope.messageId } : { unanchored: "true" })
     if (cursor) params.set("cursor", cursor)

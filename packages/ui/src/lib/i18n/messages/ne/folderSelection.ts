@@ -1,4 +1,7 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.back": "ब्राउजमा फर्कनुहोस्",
+  "remoteBrowse.pairingUnavailable": "सर्भरबाट Remote Control pairing उपलब्ध छैन।",
+  "remoteBrowse.tlsError": "प्रमाणपत्र जाँच असफल भयो।",
   "folderSelection.language.ariaLabel": "भाषा",
 
   "folderSelection.logoAlt": "CodeNomad लोगो",

@@ -21,3 +21,4 @@ serverApi.probeRemoteServer = async ({ baseUrl, skipTlsVerify }) => {
   fixture.probes.push(`${baseUrl} skipTls=${Boolean(skipTlsVerify)}`)
   return { ok: true, reachable: true, normalizedUrl: baseUrl.replace(/\/$/, ""), skipTlsVerify: Boolean(skipTlsVerify), requiresAuth: true, authenticated: false }
 }
+serverApi.connectRemoteServer = async () => { throw Object.assign(new Error("pairing_unavailable"), { status: 409 }) }

@@ -1,0 +1,5 @@
+.remote-server-browser { min-width: 0; max-height: 55dvh; overflow: auto; }
+.remote-server-browser .browse-menu-meta { max-width: 45%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.remote-server-signin { display: grid; gap: var(--space-sm); padding: var(--space-sm); }
+.remote-server-signin input { background: var(--surface-field); }
+.remote-server-path { padding: var(--space-sm); overflow-wrap: anywhere; color: var(--text-muted); font-size: var(--font-size-sm); }

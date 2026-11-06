@@ -59,6 +59,13 @@ export default function ServerAddField(props: ServerAddFieldProps) {
       reset()
       props.onAdded?.(profile.id)
     } catch (failure) {
+      if (failure instanceof Error && failure.message === "pairing_unavailable") {
+        reset()
+        setError(t("remoteBrowse.pairingUnavailable"))
+        const saved = remoteServers().find(server => server.baseUrl === link.baseUrl)
+        if (saved) props.onAdded?.(saved.id)
+        return
+      }
       setError(failure instanceof Error && failure.message ? failure.message : t("folderSelection.servers.dialog.errorConnect"))
       const tls = failure instanceof RemoteServerProbeError && failure.code === "tls_error" && link.kind === "address"
       setTlsFailedFor(tls ? link.baseUrl : undefined)

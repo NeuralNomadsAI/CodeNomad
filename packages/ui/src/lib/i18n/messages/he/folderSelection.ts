@@ -1,4 +1,7 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.back": "חזרה לעיון",
+  "remoteBrowse.pairingUnavailable": "צימוד שליטה מרחוק בצד השרת אינו זמין.",
+  "remoteBrowse.tlsError": "בדיקת התעודה נכשלה.",
   "folderSelection.language.ariaLabel": "שפה",
 
   "folderSelection.logoAlt": "לוגו CodeNomad",

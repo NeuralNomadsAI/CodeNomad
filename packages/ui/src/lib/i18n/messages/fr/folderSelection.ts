@@ -1,4 +1,7 @@
 export const folderSelectionMessages = {
+  "remoteBrowse.back": "Retour à Parcourir",
+  "remoteBrowse.pairingUnavailable": "Appairage Remote Control côté serveur indisponible.",
+  "remoteBrowse.tlsError": "Échec de la vérification du certificat.",
   "folderSelection.language.ariaLabel": "Langue",
 
   "folderSelection.logoAlt": "Logo CodeNomad",

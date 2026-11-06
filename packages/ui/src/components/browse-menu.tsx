@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, createUniqueId, onMount } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onMount } from "solid-js"
 import { ChevronRight, Globe, Laptop, Server } from "lucide-solid"
 import type { RemoteServerProfile, SideCar } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
@@ -8,6 +8,9 @@ import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles
 import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { openSidecar } from "../stores/sidecar-open"
 import ServerAddField from "./server-add-field"
+import RemoteServerBrowser from "./remote-server-browser"
+import { openRemoteProject, opensRemoteProjectTab } from "../stores/remote-project-open"
+import { embeddedProjectUrl } from "../lib/embed-mode"
 import { remoteServers as savedServers } from "../stores/preferences"
 import { ensureSidecarsLoaded, sidecars } from "../stores/sidecars"
 
@@ -38,6 +41,8 @@ export const browseEntryCount = () => 1 + (canOpenRemoteWindows() ? savedServers
 export default function BrowseMenu(props: BrowseMenuProps) {
   const { t } = useI18n()
   const { remoteServers, openServer } = useRemoteServerProfiles()
+  const [selectedServer, setSelectedServer] = createSignal<RemoteServerProfile>()
+  createEffect(() => { if (selectedServer() && !remoteServers().some(profile => profile.id === selectedServer()!.id)) setSelectedServer(undefined) })
   const bodyId = createUniqueId()
   let toggleRef: HTMLButtonElement | undefined
   let bodyRef: HTMLDivElement | undefined
@@ -75,11 +80,20 @@ export default function BrowseMenu(props: BrowseMenuProps) {
     else if (event.key === "ArrowUp") move(index - 1)
     else if (event.key === "Home" && !inField) move(0)
     else if (event.key === "End" && !inField) move(items.length - 1)
-    else if (event.key === "Escape" && !props.alwaysOpen) {
+    else if (event.key === "Escape" && selectedServer()) {
+      event.preventDefault()
+      backToRoot()
+    } else if (event.key === "Escape" && !props.alwaysOpen) {
       event.preventDefault()
       setExpanded(false)
       toggleRef?.focus()
     }
+  }
+
+  function backToRoot() {
+    const id = selectedServer()?.id
+    setSelectedServer(undefined)
+    queueMicrotask(() => bodyRef?.querySelector<HTMLElement>(`[data-remote-server="${CSS.escape(id ?? "")}"]`)?.focus())
   }
 
   const sidecarRunning = (sidecar: SideCar) => sidecar.status === "running"
@@ -97,6 +111,12 @@ export default function BrowseMenu(props: BrowseMenuProps) {
       <Show when={open()}>
         <div id={bodyId} class="browse-menu-body" ref={bodyRef} role="group" aria-label={t("folderSelection.browseMenu.title")}
           onKeyDown={handleKeyDown}>
+          <Show when={selectedServer()}>{(profile) => <RemoteServerBrowser profile={profile()} onBack={backToRoot}
+            onSelect={(folder) => run(() => {
+              if (opensRemoteProjectTab(profile())) openRemoteProject(profile().id, { folder })
+              else openServer(profile(), embeddedProjectUrl(profile().baseUrl, folder))
+            })} />}</Show>
+          <Show when={!selectedServer()}>
           <button type="button" class="browse-menu-row" data-browse-nav disabled={props.isLoading}
             title={withHotkey(t("folderSelection.browseMenu.thisComputer"), "browse-folder")}
             onClick={() => run(props.onBrowseLocal)}>
@@ -106,7 +126,7 @@ export default function BrowseMenu(props: BrowseMenuProps) {
           <For each={servers()}>
             {(profile) => (
               <button type="button" class="browse-menu-row" data-browse-nav data-remote-server={profile.id}
-                disabled={props.isLoading} title={profile.baseUrl} onClick={() => run(() => openServer(profile))}
+                disabled={props.isLoading} title={profile.baseUrl} onClick={() => setSelectedServer(profile)}
                 aria-label={t("folderSelection.remoteProject.openProject", { name: displayName(profile) })}>
                 <Server class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
                 <bdi class="browse-menu-name" dir="auto">{displayName(profile)}</bdi>
@@ -127,6 +147,7 @@ export default function BrowseMenu(props: BrowseMenuProps) {
           <Show when={canOpenRemoteWindows()}>
             <ServerAddField navAttribute="data-browse-nav" disabled={props.isLoading}
               onAdded={(id) => queueMicrotask(() => bodyRef?.querySelector<HTMLElement>(`[data-remote-server="${CSS.escape(id)}"]`)?.focus())} />
+          </Show>
           </Show>
         </div>
       </Show>

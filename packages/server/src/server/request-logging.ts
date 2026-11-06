@@ -37,7 +37,7 @@ export function registerRequestLogging(app: FastifyInstance, apiLogger: Logger) 
         ...base,
         params: redactSecrets(request.params),
         query: redactSecrets(request.query),
-        body: typeof request.body === "string" || request.url.startsWith("/api/panel-extensions") ? "<redacted>" : redactSecrets(request.body),
+        body: typeof request.body === "string" || request.url.startsWith("/api/panel-extensions") || request.url.startsWith("/api/remote-servers/") ? "<redacted>" : redactSecrets(request.body),
       }, "HTTP request payload")
     }
     done()
@@ -54,6 +54,6 @@ export function redactSecrets(value: unknown): unknown {
     || isHumanAnswerProofPayload(value as Record<string, unknown>)) return "<redacted>"
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
     key,
-    /(authorization|cookie|key|code|token|password|secret|principal)/i.test(key) ? "<redacted>" : redactSecrets(entry),
+    /(authorization|cookie|key|code|token|password|secret|principal|pairingLink)/i.test(key) ? "<redacted>" : redactSecrets(entry),
   ]))
 }
