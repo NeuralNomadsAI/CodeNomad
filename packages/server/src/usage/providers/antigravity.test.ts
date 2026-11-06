@@ -44,6 +44,49 @@ test("Antigravity explicit 5h and weekly windows preserve separate family pools 
   assert.equal(JSON.stringify(reading).includes("fake-private"), false)
 })
 
+test("Antigravity nested remaining counters take precedence for both windows with per-field top-level fallback", async t => {
+  let payload = summary([
+    bucket({ remainingFraction: undefined, remaining: { remainingFraction: 0.74, resetTime: "2026-11-06T00:00:00Z" }, resetTime: "invalid" }),
+    bucket({ window: "weekly", remaining: { remainingFraction: 0.36, resetTime: "2026-11-12T00:00:00Z" } }),
+  ])
+  t.mock.method(globalThis, "fetch", async () => Response.json(payload))
+  const reading = await googleUsage.fetchQuota(auth())
+  assert.equal(reading.ok, true)
+  const windows = selectGoogleModelWindows(reading)
+  assert.deepEqual(Object.keys(windows), ["5h:Gemini", "weekly:Gemini"])
+  assert.equal(windows["5h:Gemini"].usedPercent, 26)
+  assert.equal(windows["weekly:Gemini"].usedPercent, 64)
+  assert.equal(windows["5h:Gemini"].resetAt, Date.parse("2026-11-06T00:00:00Z"))
+  assert.equal(windows["weekly:Gemini"].resetAt, Date.parse("2026-11-12T00:00:00Z"))
+  payload = summary([
+    bucket({ remaining: { resetTime: "2026-11-06T00:00:00Z" } }),
+    bucket({ window: "weekly", remaining: { remainingFraction: 0.5 }, resetTime: "2026-11-12T00:00:00Z" }),
+  ])
+  const fallback = selectGoogleModelWindows(await googleUsage.fetchQuota(auth()))
+  assert.equal(fallback["5h:Gemini"].usedPercent, 25)
+  assert.equal(fallback["5h:Gemini"].resetAt, Date.parse("2026-11-06T00:00:00Z"))
+  assert.equal(fallback["weekly:Gemini"].usedPercent, 50)
+  assert.equal(fallback["weekly:Gemini"].resetAt, Date.parse("2026-11-12T00:00:00Z"))
+})
+
+test("disabled buckets are skipped before validation and never duplicate or replace active windows", async t => {
+  let payload = summary([
+    bucket({ disabled: true, remainingFraction: "invalid", resetTime: "invalid" }),
+    bucket({ disabled: false }),
+    bucket({ window: "weekly", remainingFraction: 0.5 }),
+    bucket({ window: "weekly", disabled: true, remainingFraction: 0 }),
+  ])
+  t.mock.method(globalThis, "fetch", async () => Response.json(payload))
+  const reading = await googleUsage.fetchQuota(auth())
+  assert.equal(reading.ok, true)
+  const windows = selectGoogleModelWindows(reading)
+  assert.deepEqual(Object.keys(windows), ["5h:Gemini", "weekly:Gemini"])
+  assert.equal(windows["5h:Gemini"].usedPercent, 25)
+  assert.equal(windows["weekly:Gemini"].usedPercent, 50)
+  payload = summary([bucket({ disabled: true, remainingFraction: 0 })])
+  assert.equal((await googleUsage.fetchQuota(auth())).ok, false)
+})
+
 test("only declared windows are mapped; absent fractions and absent windows never become zero or invented buckets", async t => {
   let payload: unknown
   t.mock.method(globalThis, "fetch", async () => Response.json(payload))
@@ -68,8 +111,10 @@ test("malformed, ambiguous or unknown summaries and transport failures are unkno
     {}, { groups: [] }, { groups: {} }, { groups: [null] }, { groups: [{ buckets: {} }] }, summary([null]),
     summary([bucket({ remainingFraction: undefined })]),
     ...[-1, 2, "0.5", null, {}].map(remainingFraction => summary([bucket({ remainingFraction })])),
+    ...[-1, 2, "0.5", null, {}].map(remainingFraction => summary([bucket({ remaining: { remainingFraction } })])),
     ...["daily", "monthly", "18000", "unknown", undefined, 18_000, {}].map(window => summary([bucket({ window, bucketId: "gemini-weekly" })])),
     ...[null, 1, "not-a-date", "2026-99-99T00:00:00Z"].map(resetTime => summary([bucket({ resetTime })])),
+    ...[null, 1, "not-a-date", "2026-99-99T00:00:00Z"].map(resetTime => summary([bucket({ remaining: { resetTime } })])),
     summary([bucket(), bucket()]), summary([bucket()], "fake-secret-family"), summary([bucket()], 1), summary([bucket()], null),
     { groups: [{ buckets: [bucket()] }, { buckets: [bucket({ window: "weekly" })] }] },
     { groups: [{ displayName: "Gemini", buckets: [bucket()] }, { displayName: "Gemini Models", buckets: [bucket()] }] },

@@ -32,17 +32,20 @@ export async function antigravityQuota(access: string, project: string, signal: 
     for (const rawBucket of group.buckets) {
       const bucket = asObject(rawBucket)
       if (!bucket) throw new Error("Google usage unavailable")
+      if (bucket.disabled === true) continue
       if ([bucket.bucketId, bucket.displayName, bucket.window]
         .some(value => typeof value === "string" && !safeIdentity(value))) continue
       const window = getString(bucket.window)?.toLowerCase()
       if (window !== "5h" && window !== "weekly") continue
-      const fraction = bucket.remainingFraction
+      const remaining = asObject(bucket.remaining)
+      const fraction = remaining?.remainingFraction === undefined ? bucket.remainingFraction : remaining.remainingFraction
       if (fraction !== undefined && (typeof fraction !== "number" || !Number.isFinite(fraction) || fraction < 0 || fraction > 1)) {
         throw new Error("Google usage unavailable")
       }
-      const resetAt = typeof bucket.resetTime === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/.test(bucket.resetTime)
-        ? toTimestamp(bucket.resetTime) : null
-      if (bucket.resetTime !== undefined && resetAt === null) throw new Error("Google usage unavailable")
+      const resetTime = remaining?.resetTime === undefined ? bucket.resetTime : remaining.resetTime
+      const resetAt = typeof resetTime === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/.test(resetTime)
+        ? toTimestamp(resetTime) : null
+      if (resetTime !== undefined && resetAt === null) throw new Error("Google usage unavailable")
       const key = family ? `${window}:${family}` : window
       if (!safeIdentity(key)) continue
       if (windows[key]) throw new Error("Google usage unavailable")
