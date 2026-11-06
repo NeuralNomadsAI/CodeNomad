@@ -6,3 +6,26 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+
+  # Only the Electron toolchain (dev-docs/RUNTIME_MAINTENANCE.md). The root
+  # entry covers the workspace manifests and the root lockfile. Minor and patch
+  # updates arrive together; each major update gets its own PR.
+  - package-ecosystem: npm
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    allow:
+      - dependency-name: electron
+      - dependency-name: electron-builder
+      - dependency-name: electron-vite
+    groups:
+      electron-toolchain:
+        patterns:
+          - electron
+          - electron-builder
+          - electron-vite
+        update-types:
+          - minor
+          - patch
