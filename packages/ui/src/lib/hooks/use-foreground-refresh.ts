@@ -48,9 +48,14 @@ export function useForegroundRefresh(options: ForegroundRefreshOptions): void {
       }
       controllerFor(backendId).handle(status)
     })
+    const removed = serverEvents.onDetach(backendId => {
+      controllers.get(backendId)?.dispose()
+      controllers.delete(backendId)
+    })
     onCleanup(() => {
       controllers.forEach(controller => controller.dispose())
       unsubscribe()
+      removed()
     })
   })
 }

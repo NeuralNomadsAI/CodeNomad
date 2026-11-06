@@ -37,6 +37,8 @@ export class ServerEvents {
   private started = false
   private disposed = false
   private cleanup: (() => void)[] = []
+  private disposeHandlers = new Set<() => void>()
+  private lifetime = new AbortController()
   private handlers = new Map<WorkspaceEventType | "*", Set<(event: WorkspaceEventPayload) => void>>()
   private openHandlers = new Set<() => void>()
   private statusHandlers = new Set<(status: WorkspaceEventTransportStatus) => void>()
@@ -134,10 +136,11 @@ export class ServerEvents {
               initialDelayMs: 100,
               maxDelayMs: 2000,
               timeoutMs: 10000,
+              signal: this.lifetime.signal,
               shouldRetry: (error) => isRetryableError(error),
             },
           ).catch((error) => {
-            log.warn("Failed to send client connection pong after retries", error)
+            if (!this.lifetime.signal.aborted) log.warn("Failed to send client connection pong after retries", error)
           })
         },
       }, this.api)
@@ -165,7 +168,7 @@ export class ServerEvents {
   private scheduleReconnect() {
     // EventSource hides HTTP status. Probe our own auth endpoint so a server
     // restart is recoverable even when the user has not made another API call.
-    void this.auth.check()
+    void this.auth.check(this.lifetime.signal)
     if (this.retryTimer) {
       return
     }
@@ -286,8 +289,20 @@ export class ServerEvents {
     this.connection?.disconnect()
     this.connection = null
     this.watchdog.dispose()
+    this.lifetime.abort()
     this.cleanup.forEach(cleanup => cleanup())
     this.cleanup = []
+    this.notify(this.disposeHandlers, undefined, "dispose")
+    this.disposeHandlers.clear()
+    this.handlers.clear()
+    this.openHandlers.clear()
+    this.statusHandlers.clear()
+  }
+
+  onDispose(handler: () => void): () => void {
+    if (this.disposed) { handler(); return () => {} }
+    this.disposeHandlers.add(handler)
+    return () => { this.disposeHandlers.delete(handler) }
   }
 }
 

@@ -63,3 +63,7 @@ serverEvents.on("workspace.stopped", event => {
   reconnects.cancel(event.workspaceId)
   integrations.clearInstance(event.workspaceId)
 })
+serverEvents.onDetach(backendId => {
+  integrationBindings.clearBackend(backendId)
+  setConnectionEpoch(current => { const next = new Map(current); next.delete(backendId); return next })
+})

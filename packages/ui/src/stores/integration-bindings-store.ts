@@ -120,6 +120,15 @@ export function createIntegrationBindingsStore(
         setSnapshots(current => { const next = new Map(current); next.delete(id); return next })
       }
     },
+    clearBackend(backendId: string): void {
+      for (const instanceId of new Set([...entries.values()].map(entry => entry.target.instanceId))) {
+        if (parseInstanceKey(instanceId).backendId === backendId) this.clearInstance(instanceId)
+      }
+      for (const instanceId of disconnected) {
+        if (parseInstanceKey(instanceId).backendId === backendId) disconnected.delete(instanceId)
+      }
+      disconnectedBackends.delete(backendId)
+    },
     /** An admitted mutation runs once; uncertain outcomes also reconcile its captured target, if still shown. */
     async run(target: IntegrationBindingTarget, mutation: () => Promise<void>): Promise<void> {
       const id = key(target)

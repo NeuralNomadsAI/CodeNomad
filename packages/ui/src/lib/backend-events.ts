@@ -26,6 +26,7 @@ export class BackendEvents {
   private handlers = new Map<WorkspaceEventType | "*", Set<(event: BackendEventPayload) => void>>()
   private opens = new Set<(backendId: BackendId) => void>()
   private statuses = new Set<(status: WorkspaceEventTransportStatus, backendId: BackendId) => void>()
+  private removals = new Set<(backendId: BackendId) => void>()
 
   /** Reads the current target at delivery, so a switched view never observes another backend's lifecycle. */
   forInstance(instanceId: () => string | undefined) {
@@ -40,7 +41,7 @@ export class BackendEvents {
     }
   }
 
-  attach(backendId: BackendId, source: Pick<ServerEvents, "on" | "onOpen" | "onTransportStatus">): () => void {
+  attach(backendId: BackendId, source: Pick<ServerEvents, "on" | "onOpen" | "onTransportStatus" | "onDispose">): () => void {
     if (!isBackendId(backendId)) throw new TypeError(`Invalid backend id: ${backendId}`)
     if (this.sources.has(backendId)) throw new Error(`Events already attached for backend ${backendId}`)
     const off = [
@@ -56,9 +57,17 @@ export class BackendEvents {
       if (this.sources.get(backendId) !== detach) return
       this.sources.delete(backendId)
       off.forEach(unsubscribe => unsubscribe())
+      this.notify(this.statuses, handler => handler("disconnected", backendId))
+      this.notify(this.removals, handler => handler(backendId))
     }
     this.sources.set(backendId, detach)
+    off.push(source.onDispose(detach))
     return detach
+  }
+
+  onDetach(handler: (backendId: BackendId) => void): () => void {
+    this.removals.add(handler)
+    return () => { this.removals.delete(handler) }
   }
 
   private notify<T>(handlers: Set<T> | undefined, invoke: (handler: T) => void) {

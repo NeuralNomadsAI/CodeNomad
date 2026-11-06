@@ -18,17 +18,17 @@ export function createAuthRecovery(base: string | undefined, fetcher: typeof fet
     if (wasRequired) for (const handler of restored) handler()
   }
 
-  function check(): Promise<void> {
+  function check(signal?: AbortSignal): Promise<void> {
     if (checking) return checking
     const current = generation
     const pending = (async () => {
       try {
         const response = await fetcher(url("/api/auth/status"), {
-          credentials: "include", cache: "no-store", signal: AbortSignal.timeout(8000),
+          credentials: "include", cache: "no-store", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000),
         })
         if (!response.ok) return
         const status = await response.json()
-        if (current !== generation) return
+        if (current !== generation || signal?.aborted) return
         if (status?.authenticated === false) {
           setPairingRequired(status.pairingRequired === true)
           setRequired(true)

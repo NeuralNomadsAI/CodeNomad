@@ -62,12 +62,13 @@ export class SSEManager {
   private readonly connection = createSignal<Map<string, ConnectionStatus>>(new Map())
   private readonly transport = createSignal<WorkspaceEventTransportStatus>("connecting")
   private readonly callbacks: SSEManager
+  private readonly cleanup: (() => void)[] = []
 
   constructor(readonly backendId = LOCAL_BACKEND_ID, callbacks?: SSEManager) {
     this.callbacks = callbacks ?? this
     log.info("sseManager initialized: listening for SSE disconnect and reconnect")
 
-    serverEvents.on("instance.eventStatus", (event) => {
+    this.cleanup.push(serverEvents.on("instance.eventStatus", (event) => {
       if ((event.backendId ?? LOCAL_BACKEND_ID) !== this.backendId) return
       const payload = event as InstanceStatusPayload
       this.updateConnectionStatus(payload.instanceId, payload.status)
@@ -78,20 +79,26 @@ export class SSEManager {
         const reason = payload.reason ?? "Instance disconnected"
         void this.callbacks.onConnectionLost?.(payload.instanceId, reason)
       }
-    })
+    }))
 
-    serverEvents.on("instance.event", (event) => {
+    this.cleanup.push(serverEvents.on("instance.event", (event) => {
       if ((event.backendId ?? LOCAL_BACKEND_ID) !== this.backendId) return
       const payload = event as InstanceEventPayload
       this.updateConnectionStatus(payload.instanceId, "connected")
       this.handleEvent(payload.instanceId, payload.event as SSEEvent)
-    })
+    }))
 
-    serverEvents.onTransportStatus((status, backendId) => {
+    this.cleanup.push(serverEvents.onTransportStatus((status, backendId) => {
       if (backendId !== this.backendId) return
       log.info("SSE transport status changed", { status })
       this.transport[1](status)
-    })
+    }))
+  }
+
+  dispose(): void {
+    this.cleanup.splice(0).forEach(off => off())
+    this.transport[1]("disconnected")
+    this.connection[1](new Map())
   }
 
   seedStatus(instanceId: string, status: ConnectionStatus) {
@@ -179,13 +186,15 @@ export class SSEManager {
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>
 
   getStatus(instanceId: string): ConnectionStatus | null {
-    const manager = getSseManager(parseInstanceKey(instanceId).backendId)
+    managerRevision()
+    const manager = managers.get(parseInstanceKey(instanceId).backendId)
+    if (!manager) return null
     return deriveDisplayConnectionStatus(manager.connection[0]().get(instanceId) ?? null, manager.transport[0]())
   }
 
   getStatuses() {
     managerRevision()
-    if (this !== sseManager || managers.size === 1) return this.connection[0]()
+    if (this !== sseManager) return this.connection[0]()
     return new Map([...managers.values()].flatMap(manager => [...manager.connection[0]()]))
   }
 }
@@ -207,3 +216,8 @@ export function getSseManager(backendId: string): SSEManager {
 // Create the backend owner before dispatching its first typed event or transport status.
 serverEvents.on("*", event => { getSseManager(event.backendId ?? LOCAL_BACKEND_ID) })
 serverEvents.onTransportStatus((_status, backendId) => { getSseManager(backendId) })
+serverEvents.onDetach(backendId => {
+  managers.get(backendId)?.dispose()
+  managers.delete(backendId)
+  setManagerRevision(value => value + 1)
+})
