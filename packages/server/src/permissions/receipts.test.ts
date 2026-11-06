@@ -162,8 +162,12 @@ test("initial connection and reconnect recover every loaded owned Location, incl
     if (++captures % directories.length === 0) captured()
   } })
   Object.assign(f.manager, {
-    ownsLocation: async (_id: string, location: { directory: string }, _client: unknown, _signal: unknown, purpose?: string) => {
-      if (purpose) assert.equal(purpose, "event")
+    ownsLocation: async (_id: string, location: { directory: string }, _client: unknown, { purpose, signal }: { purpose?: string; signal?: AbortSignal } = {}) => {
+      if (purpose) {
+        assert.equal(purpose, "event")
+        assert.ok(signal instanceof AbortSignal)
+        assert.equal(signal.aborted, false)
+      }
       return directories.includes(location.directory)
     },
   })

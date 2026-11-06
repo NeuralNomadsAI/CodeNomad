@@ -179,8 +179,12 @@ try {
   receipt.runtime = { version: info.version, pid: info.pid, url }
   rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   let variables = { MISSION_FIXTURE: "first" }
+  let preferenceReads = 0, uiPreferences = {}
+  const settings = { getOwner: () => ({ environmentVariables: variables }),
+    getRawConfigOwner: owner => { assert.equal(owner, "ui"); preferenceReads++; return structuredClone(uiPreferences) },
+    readEnvironmentForAdmission: async () => ({ ...variables }) }
   manager = new WorkspaceManager({ rootDir: root, logger: pino({ level: "silent" }), eventBus: new EventBus(),
-    settings: { getOwner: () => ({ environmentVariables: variables }), readEnvironmentForAdmission: async () => ({ ...variables }) },
+    settings,
     binaryResolver: { resolveDefault: () => ({ path: cli, label: "Isolated missions" }) },
     hostServiceLifecycleFactory: () => ({ discover: async () => endpoint, ensure: async () => endpoint }),
   })
@@ -220,7 +224,7 @@ try {
   const worktreeDeletionFence = new WorktreeDeletionFence()
   registerMissionRoutes(bridge, { workspaceManager: manager, worktreeDeletionFence, auth })
   registerAutomationPluginRoute(bridge, { workspaceManager: manager, worktreeDeletionFence,
-    authManager: auth, bridgeToken: registration.token, nativeParent: {}, developerCdp: {} })
+    authManager: auth, settings, bridgeToken: registration.token, nativeParent: {}, developerCdp: {} })
   await bridge.listen({ host: "127.0.0.1", port: 0 })
   registration.url = `http://127.0.0.1:${bridge.server.address().port}/api/opencode-plugin/automation`
   removeBridge = await publishAutomationBridge(registration)
@@ -273,9 +277,75 @@ try {
     const result = JSON.parse(await client.rpc(invocation).invoke({ tool, input, sessionID, callID }, { location }))
     if (result.missionID === undefined) return result
     const { missions } = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
-    return { ...result, mission: missions.find(mission => mission.id === result.missionID) }
+    const mission = missions.find(mission => mission.id === result.missionID)
+    if (mission) delete mission.creationDefaults
+    return { ...result, mission }
+  }
+  stage = "nonempty owning-backend creation preferences"
+  {
+    const caller = await client.session.create({ location, title: "Private preference preflight", agent: "build",
+      model: { providerID: "fixture", id: "fixture" } })
+    const profiles = { coordinator: { agent: "build", model: { providerID: "fixture", id: "fixture" } },
+      roles: { specialist: { agent: "reviewer", model: { providerID: "fixture", id: "selected", variant: "careful" } } } }
+    const preferred = { template: "all", profiles, taskMode: "independent" }
+    uiPreferences = { settings: { missionProfileDefaults: [{ ...preferred, profiles: { ...profiles, coordinator: { agent: "reviewer" } } }] } }
+    const before = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
+    const { DatabaseSync } = await import("node:sqlite")
+    const database = new DatabaseSync(process.env.OPENCODE_DB, { readOnly: true })
+    try {
+      database.exec("PRAGMA busy_timeout = 10000")
+      const rows = () => database.prepare("SELECT key, value FROM kv WHERE key LIKE ? ORDER BY key").all("%codenomad-missions/%")
+      const retained = rows(), reads = preferenceReads, turns = requests.length
+      await assert.rejects(invoke("inspect", { start: { objective: "Refuse coordinator mismatch", template: "custom" } },
+        caller.id, "preferences-mismatch"))
+      assert.ok(preferenceReads > reads, "The mismatch was resolved against nonempty owner preferences")
+      const after = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
+      assert.deepEqual({ ...after, generatedAt: before.generatedAt }, before)
+      assert.deepEqual(rows(), retained, "Coordinator mismatch writes no creation event, document or retained intent")
+      assert.equal(requests.length, turns, "Coordinator mismatch admits no provider turn")
+    } finally { database.close() }
+    uiPreferences = { settings: { missionProfileDefaults: [preferred] } }
+    const start = { objective: "Persist owning-backend preferences", template: "custom" }
+    const selected = await invoke("inspect", { start }, caller.id, "preferences-create")
+    const origins = { coordinator: "preference", roles: { specialist: "preference" }, taskMode: "preference" }
+    const selection = { profiles, taskMode: "independent", origins }
+    assert.deepEqual(selected.selection, selection)
+    assert.equal("creationDefaults" in selected.mission, false)
+    await play(selected.mission)
+    const prepared = await invoke("prepare", { requestID: "preferences-handoff", objective: "Preferred hand-off", template: "custom" },
+      caller.id, "preferences-prepare")
+    assert.deepEqual(prepared.selection, selection)
+    assert.equal("creationDefaults" in prepared.mission, false)
+    const saved = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
+    for (const result of [selected, prepared]) {
+      const mission = saved.missions.find(mission => mission.id === result.mission.id)
+      assert.deepEqual(mission.profiles, profiles)
+      assert.equal(mission.taskMode, "independent")
+      assert.deepEqual(mission.creationDefaults, { request: {}, ...selection })
+      assert.deepEqual(mission.creationDefaults.origins, origins)
+      assert.equal([mission.creationDefaults.origins.coordinator, ...Object.values(mission.creationDefaults.origins.roles),
+        mission.creationDefaults.origins.taskMode].filter(origin => origin === "preference").length, 3)
+    }
+    uiPreferences = {}
+    const reads = preferenceReads
+    assert.deepEqual((await invoke("inspect", { start }, caller.id, "preferences-create")).selection, selection)
+    assert.deepEqual((await invoke("prepare", { requestID: "preferences-handoff", objective: "Preferred hand-off", template: "custom" },
+      caller.id, "preferences-prepare")).selection, selection)
+    assert.equal(preferenceReads, reads, "Saved provenance and choices replay without consulting changed preferences")
+    const finished = await invoke("report", { missionID: selected.mission.id, outcome: "completed", summary: "Preferences verified", final: true },
+      caller.id, "preferences-finish")
+    assert.equal(finished.mission.status, "completed")
+    for (const mission of [prepared.mission, finished.mission]) {
+      const deletion = { missionID: mission.id, requestID: `preferences-delete-${mission.id}`, expectedRevision: mission.revision }
+      assertDocumentDeletion(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(deletion, { location }), deletion, mission.objective)
+    }
+    assert.equal((await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions.length, before.missions.length)
+    gate("nonempty owner preferences: coordinator mismatch has no effects, both creation paths persist profiles/policy/provenance and replay frozen choices")
   }
   const inspected = await invoke("inspect", { catalog: true, start: { objective: "Native integration", template: "custom" } })
+  assert.equal(inspected.selection.preferences, undefined, "The owning fixture backend supplied readable preferences")
+  assert.ok(preferenceReads > 0, "Agent creation exercised the owning backend's raw UI reader")
+  assert.equal(inspected.selection.origins.coordinator, "opencode-default")
   assert(inspected.catalog.agents.some(agent => agent.id === "reviewer"))
   assert(inspected.catalog.models.some(model => model.id === "selected" && model.variants.includes("careful")))
   gate("native catalog and configured variant discovery")

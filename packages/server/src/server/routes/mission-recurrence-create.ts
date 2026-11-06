@@ -103,7 +103,7 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
         }
       }
       const client = connection.client, requested = input.directory ? { directory: input.directory } : base
-      if (!await lifetime.wait(manager.ownsLocation(workspaceID, requested, client, lifetime.signal))) {
+      if (!await lifetime.wait(manager.ownsLocation(workspaceID, requested, client, { signal: lifetime.signal }))) {
         return reply.code(403).send({ error: "Recurrence directory is not owned" })
       }
       const directory = await lifetime.wait(manager.getServiceDirectoryForPath(workspaceID, requested.directory))
@@ -114,7 +114,7 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
         client.location.get({ location: { directory: base.directory } }, { ...locationRequestOptions(base), signal: lifetime.signal }),
       ]))
       check()
-      if (!sameLocation(resolved, location) || !await lifetime.wait(manager.ownsLocation(workspaceID, resolved, client, lifetime.signal))
+      if (!sameLocation(resolved, location) || !await lifetime.wait(manager.ownsLocation(workspaceID, resolved, client, { signal: lifetime.signal }))
         || resolved.project.id !== baseResolved.project.id || resolved.project.canonical !== baseResolved.project.canonical) {
         return reply.code(403).send({ error: "Recurrence project is not owned" })
       }
@@ -139,7 +139,7 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
           check()
           if (session.id !== sessionID || session.projectID !== resolved.project.id
             || !sameLocation(session.location, location)
-            || !await manager.ownsLocation(workspaceID, session.location, client, lifetime.signal)) return false
+            || !await manager.ownsLocation(workspaceID, session.location, client, { signal: lifetime.signal })) return false
           check()
         }
         return true
@@ -167,7 +167,7 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
           manager.getWorktreeIdentityForPath(workspaceID, directory),
         ])
         if (canonicalAuthority(currentRoot) !== canonicalAuthority(root) || currentCheckout !== physicalCheckout
-          || !await manager.ownsLocation(workspaceID, location, client, lifetime.signal)
+          || !await manager.ownsLocation(workspaceID, location, client, { signal: lifetime.signal })
           || !readCurrent()) throw new Error("Recurrence physical root changed")
         check()
       }
