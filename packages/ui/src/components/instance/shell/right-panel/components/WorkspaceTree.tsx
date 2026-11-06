@@ -77,7 +77,7 @@ export function WorkspaceTree(props: {
       get icon() { return <Eye class="w-3.5 h-3.5" /> }, disabled: !props.canOpen,
       checked: props.previewPath === row.path, onSelect: () => props.onOpen(row.path),
     })
-    if (canOpenWorkspacePaths()) {
+    if (canOpenWorkspacePaths(props.instanceId)) {
       if (row.type === "directory") {
         const isMacApp = isMacDesktop && row.path.toLowerCase().endsWith(".app")
         items.push(

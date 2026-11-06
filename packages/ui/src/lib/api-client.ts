@@ -309,14 +309,17 @@ export function createServerApi(ctx: BackendHttp) {
     },
 
     fetchWorktrees(id: string, fresh = false, signal?: AbortSignal): Promise<WorktreeListResponse> {
+      id = parseInstanceKey(id).workspaceId
       return request<WorktreeListResponse>(`/api/workspaces/${encodeURIComponent(id)}/worktrees${fresh ? "?fresh=true" : ""}`, { signal })
     },
 
     fetchLocalGitBranches(id: string, directory: string, signal?: AbortSignal): Promise<{ branches: string[] }> {
+      id = parseInstanceKey(id).workspaceId
       return request(`/api/workspaces/${encodeURIComponent(id)}/git-branches?${new URLSearchParams({ directory })}`, { signal })
     },
 
     createWorktree(id: string, payload: WorktreeCreateRequest): Promise<{ slug: string; directory: string; branch?: string }> {
+      id = parseInstanceKey(id).workspaceId
       return request<{ slug: string; directory: string; branch?: string }>(`/api/workspaces/${encodeURIComponent(id)}/worktrees`, {
         method: "POST",
         body: JSON.stringify(payload),
@@ -324,6 +327,7 @@ export function createServerApi(ctx: BackendHttp) {
     },
 
     deleteWorktree(id: string, slug: string, options?: { force?: boolean }): Promise<void> {
+      id = parseInstanceKey(id).workspaceId
       const params = new URLSearchParams()
       if (options?.force) {
         params.set("force", "true")
@@ -335,6 +339,7 @@ export function createServerApi(ctx: BackendHttp) {
     },
 
     moveSessionFamily(id: string, sessionId: string, payload: WorktreeSessionMoveRequest): Promise<WorktreeSessionMoveResponse> {
+      id = parseInstanceKey(id).workspaceId
       return request<WorktreeSessionMoveResponse>(`/api/workspaces/${encodeURIComponent(id)}/sessions/${encodeURIComponent(sessionId)}/worktree`, {
         method: "POST",
         body: JSON.stringify(payload),
@@ -528,6 +533,7 @@ export function createServerApi(ctx: BackendHttp) {
       })
     },
     listWorkspaceFiles(id: string, relativePath = ".", directory?: string, signal?: AbortSignal): Promise<FileSystemEntry[]> {
+      id = parseInstanceKey(id).workspaceId
       const params = new URLSearchParams({ path: relativePath })
       if (directory) params.set("directory", directory)
       return request<FileSystemEntry[]>(`/api/workspaces/${encodeURIComponent(id)}/files?${params.toString()}`, { signal })
@@ -537,6 +543,7 @@ export function createServerApi(ctx: BackendHttp) {
       query: string,
       opts?: { limit?: number; type?: "file" | "directory" | "all"; signal?: AbortSignal; directory?: string },
     ): Promise<WorkspaceFileSearchResponse> {
+      id = parseInstanceKey(id).workspaceId
       const trimmed = query.trim()
       if (!trimmed) {
         return Promise.resolve([])
@@ -556,10 +563,12 @@ export function createServerApi(ctx: BackendHttp) {
       return opts?.signal ? retryFileSearch(search, opts.signal) : search()
     },
     previewWorkspaceFile(id: string, relativePath: string, directory: string, signal?: AbortSignal): Promise<WorkspaceFileResponse> {
+      id = parseInstanceKey(id).workspaceId
       const params = new URLSearchParams({ path: relativePath, directory })
       return request(`/api/workspaces/${encodeURIComponent(id)}/files/preview?${params}`, { signal })
     },
     readWorkspaceFile(id: string, relativePath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<WorkspaceFileResponse> {
+      id = parseInstanceKey(id).workspaceId
       const params = new URLSearchParams({ path: relativePath })
       if (options?.encoding) {
         params.set("encoding", options.encoding)
@@ -569,6 +578,7 @@ export function createServerApi(ctx: BackendHttp) {
       )
     },
     writeWorkspaceFile(id: string, relativePath: string, contents: string, options?: { worktree?: string; directory?: string; signal?: AbortSignal }): Promise<void> {
+      id = parseInstanceKey(id).workspaceId
       const params = new URLSearchParams({ path: relativePath })
       if (options?.directory) params.set("directory", options.directory)
       if (options?.worktree && options.worktree !== "root") {
@@ -584,22 +594,27 @@ export function createServerApi(ctx: BackendHttp) {
       )
     },
     fetchWorktreeGitStatus(id: string, slug: string, signal?: AbortSignal, options?: { hideWhitespace?: boolean }): Promise<WorktreeGitStatusResponse> {
+      id = parseInstanceKey(id).workspaceId
       return request<WorktreeGitStatusResponse>(
         `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-status${options?.hideWhitespace ? "?hideWhitespace=1" : ""}`,
         { signal },
       )
     },
     fetchGitHistory(id: string, slug: string, offset = 0, head?: string, signal?: AbortSignal): Promise<GitHistoryPage> {
+      id = parseInstanceKey(id).workspaceId
       const query = new URLSearchParams({ offset: String(offset), ...(head ? { head } : {}) })
       return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-history?${query}`, { signal })
     },
     fetchGitCommit(id: string, slug: string, commit: string, signal?: AbortSignal): Promise<GitCommitDetails> {
+      id = parseInstanceKey(id).workspaceId
       return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-history/${encodeURIComponent(commit)}`, { signal })
     },
     fetchGitCommitDiff(id: string, slug: string, commit: string, path: string, signal?: AbortSignal): Promise<GitCommitDiff> {
+      id = parseInstanceKey(id).workspaceId
       return request(`/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-history/${encodeURIComponent(commit)}?${new URLSearchParams({ path })}`, { signal })
     },
     fetchWorktreeGitDiff(id: string, slug: string, requestPayload: WorktreeGitDiffRequest, signal?: AbortSignal): Promise<WorktreeGitDiffResponse> {
+      id = parseInstanceKey(id).workspaceId
       const params = new URLSearchParams({ path: requestPayload.path, scope: requestPayload.scope })
       if (requestPayload.originalPath) {
         params.set("originalPath", requestPayload.originalPath)
@@ -610,6 +625,7 @@ export function createServerApi(ctx: BackendHttp) {
       )
     },
     stageWorktreeGitPaths(id: string, slug: string, payload: WorktreeGitPathsRequest, signal?: AbortSignal): Promise<WorktreeGitMutationResponse> {
+      id = parseInstanceKey(id).workspaceId
       return request<WorktreeGitMutationResponse>(
         `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-stage`,
         {
@@ -620,6 +636,7 @@ export function createServerApi(ctx: BackendHttp) {
       )
     },
     unstageWorktreeGitPaths(id: string, slug: string, payload: WorktreeGitPathsRequest, signal?: AbortSignal): Promise<WorktreeGitMutationResponse> {
+      id = parseInstanceKey(id).workspaceId
       return request<WorktreeGitMutationResponse>(
         `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-unstage`,
         {
@@ -630,6 +647,7 @@ export function createServerApi(ctx: BackendHttp) {
       )
     },
     initializeWorkspaceGit(id: string, directory: string, signal?: AbortSignal): Promise<WorktreeGitMutationResponse> {
+      id = parseInstanceKey(id).workspaceId
       return request<WorktreeGitMutationResponse>(`/api/workspaces/${encodeURIComponent(id)}/git-init`, {
         method: "POST",
         body: JSON.stringify({ directory }),
@@ -637,6 +655,7 @@ export function createServerApi(ctx: BackendHttp) {
       })
     },
     commitWorktreeGitChanges(id: string, slug: string, payload: WorktreeGitCommitRequest, signal?: AbortSignal): Promise<WorktreeGitCommitResponse> {
+      id = parseInstanceKey(id).workspaceId
       return request<WorktreeGitCommitResponse>(
         `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-commit`,
         {

@@ -251,6 +251,7 @@ test("a detached workspace-list response cannot remove its retained project", as
 })
 
 test("a detached worktree read neither publishes nor starts its queued follow-up", async t => {
+  registerLocalBackendFixture(t, "tree_owner")
   const a = owner(t), instance = workspace("tree_owner~ws")
   const detach = backendEvents.attach("tree_owner", a.events)
   t.after(detach)
@@ -335,6 +336,7 @@ test("a recovery requested synchronously from cancellation starts under its repl
 })
 
 test("worktree coalescence preserves a request from a replaced client", async t => {
+  registerLocalBackendFixture(t, "tree_replaced")
   const a = owner(t), instance = workspace("tree_replaced~ws")
   t.after(backendEvents.attach("tree_replaced", a.events))
   addInstance(instance)

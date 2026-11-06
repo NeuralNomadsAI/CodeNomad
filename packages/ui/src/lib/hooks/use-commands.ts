@@ -157,7 +157,7 @@ export function useCommands(options: UseCommandsOptions) {
         description: () => tGlobal("commands.openWorkspace.folder.description"),
         category: "Instance",
         keywords: () => splitKeywords("commands.openWorkspace.folder.keywords"),
-        disabled: () => !activeInstance(),
+        disabled: () => !activeInstance() || !canOpenWorkspacePaths(activeInstance()!.id),
         action: () => openActiveWorkspace("default"),
       })
       commandRegistry.register({
@@ -166,7 +166,7 @@ export function useCommands(options: UseCommandsOptions) {
         description: () => tGlobal("commands.openWorkspace.terminal.description"),
         category: "Instance",
         keywords: () => splitKeywords("commands.openWorkspace.terminal.keywords"),
-        disabled: () => !activeInstance(),
+        disabled: () => !activeInstance() || !canOpenWorkspacePaths(activeInstance()!.id),
         action: () => openActiveWorkspace("terminal"),
       })
       const editors: Array<[WorkspaceEditor, string]> = [
@@ -182,7 +182,7 @@ export function useCommands(options: UseCommandsOptions) {
           description: () => tGlobal("commands.openWorkspace.editor.description", { editor: name }),
           category: "Instance",
           keywords: () => [name, ...splitKeywords("commands.openWorkspace.editor.keywords")],
-          disabled: () => !activeInstance(),
+          disabled: () => !activeInstance() || !canOpenWorkspacePaths(activeInstance()!.id),
           action: () => openActiveWorkspace("editor", editor),
         })
       }

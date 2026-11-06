@@ -1,5 +1,6 @@
 import { isDesktopHost, isLocalWindow, isTauriHost } from "./runtime-env"
 import type { ViewMenuState } from "./native/view-menu"
+import { LOCAL_BACKEND_ID, parseInstanceKey } from "./backend-identity"
 
 export type WorkspaceOpenTarget = "default" | "reveal" | "terminal" | "editor"
 export type WorkspaceEditor = "vscode" | "cursor" | "zed" | "vscodium"
@@ -12,12 +13,13 @@ export interface WorkspaceOpenRequest {
   editor?: WorkspaceEditor
 }
 
-export function canOpenWorkspacePaths(): boolean {
+export function canOpenWorkspacePaths(instanceId?: string): boolean {
   return isDesktopHost() && isLocalWindow()
+    && (!instanceId || parseInstanceKey(instanceId).backendId === LOCAL_BACKEND_ID)
 }
 
 export async function openWorkspacePath(request: WorkspaceOpenRequest): Promise<void> {
-  if (!canOpenWorkspacePaths()) throw new Error("Native workspace actions are unavailable")
+  if (!canOpenWorkspacePaths(request.instanceId)) throw new Error("Native workspace actions are unavailable")
 
   if (isTauriHost()) {
     const invoke = window.__TAURI__?.core?.invoke

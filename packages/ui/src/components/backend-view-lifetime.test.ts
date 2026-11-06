@@ -9,6 +9,7 @@ import { BackgroundReadQueue } from "../lib/background-read-queue"
 // Execute the real view functions, with imports supplied explicitly. No JSX or
 // application singleton is needed to test their asynchronous authority boundary.
 function view(path: string, imports: Record<string, unknown>) {
+  imports = { backendOf: () => ({ api: imports.serverApi }), ...imports }
   const source = ts.createSourceFile(path, readFileSync(new URL(path, import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const body = ts.factory.updateSourceFile(source, source.statements.filter(statement => !ts.isImportDeclaration(statement)))
   const code = ts.transpileModule(ts.createPrinter().printFile(body), {

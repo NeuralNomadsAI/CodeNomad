@@ -3,7 +3,7 @@ import { Save, WrapText, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { withHotkey } from "../lib/hotkeys"
 import { useTheme } from "../lib/theme"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { backendEvents } from "../lib/server-events"
 import { previewReads } from "../lib/background-read-queue"
@@ -42,7 +42,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
     setError(null)
     try {
       const result = await previewReads.run(operation.signal,
-        () => serverApi.previewWorkspaceFile(props.instanceId, target.path, target.directory, operation.signal), "visible")
+        () => backendOf(props.instanceId).api.previewWorkspaceFile(props.instanceId, target.path, target.directory, operation.signal), "visible")
       if (!operation.current() || editor.dirty() || editor.saving()) return
       const mime = imageTypes[target.path.split(".").pop()!.toLowerCase()]
       if (mime && result.encoding === "base64") setContent({ image: `data:${mime};base64,${result.contents}` })

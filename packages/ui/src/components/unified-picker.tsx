@@ -2,7 +2,7 @@ import { Component, createSignal, createEffect, createMemo, For, Show, on, onCle
 import { captureBackendOperation } from "../lib/backend-operation"
 import type { Agent } from "../types/session"
 import type { CommandInfo, SkillInfo } from "@opencode/client"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { useI18n } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
 import { backendEvents as serverEvents } from "../lib/server-events"
@@ -115,6 +115,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
   let lastCommandQuery = ""
   let inflightWorkspaceId: string | null = null
   let inflightSnapshotPromise: Promise<FileItem[]> | null = null
+  let inflightSnapshotSignal: AbortSignal | undefined
   let activeRequestId = 0
   let queryDebounceTimer: ReturnType<typeof setTimeout> | null = null
  
@@ -134,14 +135,14 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
   }
  
   async function fetchWorkspaceSnapshot(workspaceId: string): Promise<FileItem[]> {
-    if (inflightWorkspaceId === workspaceId && inflightSnapshotPromise) {
-      return inflightSnapshotPromise
-    }
- 
     const operation = captureBackendOperation(workspaceId)
     operation.signal.throwIfAborted()
+    if (inflightWorkspaceId === workspaceId && inflightSnapshotSignal === operation.signal && inflightSnapshotPromise) {
+      return inflightSnapshotPromise
+    }
+    inflightSnapshotSignal = operation.signal
     inflightWorkspaceId = workspaceId
-    inflightSnapshotPromise = serverApi
+    const request = backendOf(workspaceId).api
       .listWorkspaceFiles(workspaceId, ".", props.directory, operation.signal)
       .then((entries) => mapEntriesToFileItems(entries))
       .then((snapshot) => {
@@ -158,13 +159,15 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
         throw error
       })
       .finally(() => {
-        if (operation.current() && inflightWorkspaceId === workspaceId) {
+        if (inflightSnapshotPromise === request) {
           inflightWorkspaceId = null
           inflightSnapshotPromise = null
+          inflightSnapshotSignal = undefined
         }
       })
  
-    return inflightSnapshotPromise
+    inflightSnapshotPromise = request
+    return request
   }
  
   async function ensureWorkspaceSnapshot(workspaceId: string) {
@@ -204,7 +207,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
         return
       }
 
-      const results = await serverApi.searchWorkspaceFiles(workspaceId, normalizedQuery, {
+      const results = await backendOf(workspaceId).api.searchWorkspaceFiles(workspaceId, normalizedQuery, {
         limit: SEARCH_RESULT_LIMIT,
         signal: operation.signal,
         directory: props.directory,

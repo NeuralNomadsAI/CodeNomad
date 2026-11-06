@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, mapArray, onCleanup, untrack } from "solid-js"
 import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { getRootClient } from "../stores/opencode-client"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
@@ -45,7 +46,7 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
           return { rows: page.data.filter(row => !isReservedMissionScheduleSessionID(row.id)).map(row => ({ id: row.id, label: row.title || row.id })), next: page.cursor?.next }
         }
         if (kind === "branch-commits") {
-          const page = await serverApi.fetchLocalGitBranches(props.instanceId, directory, signal)
+          const page = await backendOf(props.instanceId).api.fetchLocalGitBranches(props.instanceId, directory, signal)
           if (!Array.isArray(page.branches) || page.branches.length > 200
             || page.branches.some(ref => typeof ref !== "string" || !ref.startsWith("refs/heads/") || ref.length > 1024)) throw new Error("Invalid local branch page")
           return { rows: page.branches.map(ref => ({ id: ref, label: ref.slice("refs/heads/".length) })), next: undefined }

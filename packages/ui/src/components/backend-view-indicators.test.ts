@@ -166,6 +166,7 @@ for (const outcome of ["success", "failure", "cancellation"] as const) {
       getRootClient: () => client, serverApi: { fetchMissionScheduleSourcePage: () => {} } }
     // Branch sources avoid loading unrelated native session/cursor adapters.
     Object.assign(scope.serverApi, { fetchLocalGitBranches: () => { const request = deferred(); requests.push(request); return request.promise } })
+    Object.assign(scope, { backendOf: () => ({ api: scope.serverApi }) })
     const create = method("./mission-editor-sources.ts", "createMissionEditorSources", scope)
     let dispose!: () => void
     const reader = createRoot(close => { dispose = close; return create({ instanceId: "i", projectID: "p", directory: () => "/repo",

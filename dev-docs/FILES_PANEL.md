@@ -137,6 +137,16 @@ insertion into the composer remain available.
 
 ## Backend boundaries
 
+The tree, file reader/editor, search, Git readers/mutations and worktree actions
+use `backendOf(instanceId).api`; HTTP receives the raw workspace id and the
+backend's physical directory. Listed-directory watches and filesystem events
+belong to that same backend. Image previews retain that backend's returned
+base64 bytes. Missing owners fail without a local fallback. Native open/reveal,
+terminal and editor actions are local-backend-only in both desktop hosts; the
+shared workspace-target adapter refuses a remote instance before IPC. Native
+folder selection/drop stays with local project creation; device attachments
+transfer their bytes rather than resolving a backend path on the desktop.
+
 Listings register their watch before reading the directory, because native
 filesystem events miss some browsed folders; this path needs no initialized
 OpenCode client. Each `workspace.filesChanged` batch carries the workspace ID and
