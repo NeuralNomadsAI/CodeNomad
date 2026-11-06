@@ -22,11 +22,11 @@ const log = getLogger("sse")
 
 /** Synchronous fan-in; subscribing never starts or restarts a source. */
 export class BackendEvents {
-  private sources = new Map<BackendId, () => void>()
+  private sources = new Map<BackendId, { detach: () => void; controller: AbortController }>()
   private handlers = new Map<WorkspaceEventType | "*", Set<(event: BackendEventPayload) => void>>()
   private opens = new Set<(backendId: BackendId) => void>()
   private statuses = new Set<(status: WorkspaceEventTransportStatus, backendId: BackendId) => void>()
-  private removals = new Set<(backendId: BackendId) => void>()
+  private removals = new Set<(backendId: BackendId, signal: AbortSignal) => void>()
 
   /** Reads the current target at delivery, so a switched view never observes another backend's lifecycle. */
   forInstance(instanceId: () => string | undefined) {
@@ -44,36 +44,51 @@ export class BackendEvents {
   attach(backendId: BackendId, source: Pick<ServerEvents, "on" | "onOpen" | "onTransportStatus" | "onDispose">): () => void {
     if (!isBackendId(backendId)) throw new TypeError(`Invalid backend id: ${backendId}`)
     if (this.sources.has(backendId)) throw new Error(`Events already attached for backend ${backendId}`)
+    const controller = new AbortController()
+    const active = () => this.sources.get(backendId)?.controller === controller && !controller.signal.aborted
     const off = [
       source.on("*", event => {
         const scoped = scopeBackendEvent(backendId, event)
-        this.notify(this.handlers.get("*"), handler => handler(scoped))
-        this.notify(this.handlers.get(event.type), handler => handler(scoped))
+        this.notify(this.handlers.get("*"), handler => handler(scoped), active)
+        this.notify(this.handlers.get(event.type), handler => handler(scoped), active)
       }),
-      source.onOpen(() => this.notify(this.opens, handler => handler(backendId))),
-      source.onTransportStatus(status => this.notify(this.statuses, handler => handler(status, backendId))),
+      source.onOpen(() => this.notify(this.opens, handler => handler(backendId), active)),
+      source.onTransportStatus(status => this.notify(this.statuses, handler => handler(status, backendId), active)),
     ]
     const detach = () => {
-      if (this.sources.get(backendId) !== detach) return
+      if (!active()) return
       this.sources.delete(backendId)
       off.forEach(unsubscribe => unsubscribe())
-      this.notify(this.statuses, handler => handler("disconnected", backendId))
-      this.notify(this.removals, handler => handler(backendId))
+      controller.abort()
+      const removed = () => !this.sources.has(backendId)
+      this.notify(this.statuses, handler => handler("disconnected", backendId), removed)
+      this.notify(this.removals, handler => handler(backendId, controller.signal), () => true)
     }
-    this.sources.set(backendId, detach)
+    this.sources.set(backendId, { detach, controller })
     off.push(source.onDispose(detach))
     return detach
   }
 
-  onDetach(handler: (backendId: BackendId) => void): () => void {
+  /** Capture once when admitting backend-owned work; never reacquire after an await. */
+  signal(backendId: BackendId): AbortSignal | undefined {
+    return this.sources.get(backendId)?.controller.signal
+  }
+
+  signalForInstance(instanceId: string): AbortSignal | undefined {
+    return this.signal(parseInstanceKey(instanceId).backendId)
+  }
+
+  onDetach(handler: (backendId: BackendId, signal: AbortSignal) => void): () => void {
     this.removals.add(handler)
     return () => { this.removals.delete(handler) }
   }
 
-  private notify<T>(handlers: Set<T> | undefined, invoke: (handler: T) => void) {
-    handlers?.forEach(handler => {
+  private notify<T>(handlers: Set<T> | undefined, invoke: (handler: T) => void, active: () => boolean) {
+    for (const handler of [...handlers ?? []]) {
+      if (!active()) break
+      if (!handlers?.has(handler)) continue
       try { invoke(handler) } catch (error) { log.error("Backend event subscriber failed", { error }) }
-    })
+    }
   }
 
   on(type: WorkspaceEventType | "*", handler: (event: BackendEventPayload) => void): () => void {

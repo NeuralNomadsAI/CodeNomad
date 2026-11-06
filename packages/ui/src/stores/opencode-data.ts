@@ -7,6 +7,7 @@ import { normalizeSessionMessage } from "./message-v2/normalizers"
 import { MESSAGE_WINDOW_PAGE_SIZE } from "./message-v2/message-window"
 import { messageStoreBus } from "./message-v2/bus"
 import { sseManager } from "../lib/sse-manager"
+import { backendEvents } from "../lib/server-events"
 import { getLogger } from "../lib/logger"
 import { isExecutionTerminalEvent } from "../lib/native-execution-events"
 import { createCompactionDeltaBuffer } from "./compaction-delta-buffer"
@@ -814,10 +815,12 @@ export function getOpenCodeSessionInbox(instanceId: string, sessionId: string, d
   return transcript.entry.data.session.pending.list(sessionId)
 }
 
-export async function syncOpenCodeSessionInbox(instanceId: string, sessionId: string, directory: string): Promise<void> {
+export async function syncOpenCodeSessionInbox(instanceId: string, sessionId: string, directory: string, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return
   const transcript = ensureTranscript(instanceId, sessionId, directory)
   const admitted = new Set(transcript.entry.data.session.pending.list(sessionId).map((item) => item.id))
   await transcript.entry.data.session.pending.sync(sessionId)
+  if (signal?.aborted) return
   // An item the reducer admitted that the authoritative inbox no longer lists
   // was delivered or cancelled without events; a delivery's user message may
   // never be admitted either. The disappearance owes the settlement read that
@@ -966,6 +969,7 @@ export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent
  * admitted execution supersedes the publication; same-round activity does
  * not. */
 function completeSettlementRead(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+  const signal = backendEvents.signalForInstance(instanceId)
   const epoch = transcript.executionEpoch
   void transcript.entry.data.session.message.sync(sessionId)
     .catch(() => undefined)
@@ -973,9 +977,10 @@ function completeSettlementRead(instanceId: string, sessionId: string, transcrip
       // Publish unless a newer execution superseded this settlement:
       // same-round activity (a late terminal tool event) must not
       // suppress the repair.
-      if (!isTranscriptCurrent(instanceId, sessionId, transcript)
+      if (signal?.aborted || !isTranscriptCurrent(instanceId, sessionId, transcript)
         || transcript.executionEpoch !== epoch) return
       projectOpenCodeMessages(instanceId, sessionId, transcript.entry.data, true)
+      if (signal?.aborted) return
       retireDrainedTranscript(instanceId, sessionId, transcript)
     })
 }

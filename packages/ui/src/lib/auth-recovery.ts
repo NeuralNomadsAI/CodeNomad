@@ -9,18 +9,26 @@ export function createAuthRecovery(base: string | undefined, fetcher: typeof fet
   const [pairingRequired, setPairingRequired] = createSignal(false)
   const restored = new Set<() => void>()
   let generation = 0
-  let checking: Promise<void> | undefined
+  let nextProbe = 0, publishedProbe = 0
+  const checking = new Map<AbortSignal | undefined, Promise<void>>()
   const url = (path: string) => resolveBackendUrl(base, path)
 
-  function authenticated() {
+  function authenticated(signal?: AbortSignal) {
+    const current = generation
     const wasRequired = required()
     setRequired(false)
-    if (wasRequired) for (const handler of restored) handler()
+    if (wasRequired) for (const handler of [...restored]) {
+      if (signal?.aborted || current !== generation) break
+      if (restored.has(handler)) handler()
+    }
   }
 
   function check(signal?: AbortSignal): Promise<void> {
-    if (checking) return checking
+    if (signal?.aborted) return Promise.resolve()
+    const existing = checking.get(signal)
+    if (existing) return existing
     const current = generation
+    const probe = ++nextProbe
     const pending = (async () => {
       try {
         const response = await fetcher(url("/api/auth/status"), {
@@ -28,23 +36,26 @@ export function createAuthRecovery(base: string | undefined, fetcher: typeof fet
         })
         if (!response.ok) return
         const status = await response.json()
-        if (current !== generation || signal?.aborted) return
+        if (current !== generation || signal?.aborted || probe < publishedProbe) return
+        if (typeof status?.authenticated !== "boolean") return
+        publishedProbe = probe
         if (status?.authenticated === false) {
           setPairingRequired(status.pairingRequired === true)
+          if (current !== generation || signal?.aborted) return
           setRequired(true)
         }
-        else if (status?.authenticated === true) authenticated()
+        else if (status?.authenticated === true) authenticated(signal)
       } catch { /* Offline/unreachable is not evidence of an expired login. */ }
     })()
-    checking = pending
-    void pending.finally(() => { if (checking === pending) checking = undefined })
+    checking.set(signal, pending)
+    void pending.finally(() => { if (checking.get(signal) === pending) checking.delete(signal) })
     return pending
   }
 
   async function signIn(username: string, password: string): Promise<"ok" | "credentials" | "unavailable"> {
     // Fence probes started before this login, including their response bodies.
     const current = ++generation
-    checking = undefined
+    checking.clear()
     try {
       const response = await fetcher(url("/api/auth/login"), {
         method: "POST", credentials: "include", cache: "no-store",
@@ -58,7 +69,7 @@ export function createAuthRecovery(base: string | undefined, fetcher: typeof fet
       if (current !== generation || body?.ok !== true) return "unavailable"
       // A probe issued while login was in flight may still carry the old cookie.
       generation++
-      checking = undefined
+      checking.clear()
       authenticated()
       return "ok"
     } catch { return "unavailable" }
@@ -76,7 +87,8 @@ export type AuthRecovery = ReturnType<typeof createAuthRecovery>
 export function createAuthenticatedFetch(auth: AuthRecovery, fetcher: typeof fetch = (input, init) => globalThis.fetch(input, init)): typeof fetch {
   return async (input, init) => {
     const response = await fetcher(input, init)
-    if (response.status === 401) void auth.check()
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined)
+    if (response.status === 401 && !signal?.aborted) void auth.check(signal ?? undefined)
     return response
   }
 }

@@ -482,27 +482,41 @@ let restoreCreationRequestSequence = 0
 const restoreCreationCommitGates = new RestoreWorkspaceCommitGates<RestoreWorkspaceDescriptor>()
 
 const connectionResyncs = new TrailingResyncCoordinator(
-  async (instanceId) => {
+  async (instanceId, signal) => {
     await waitForSettledPrerequisite(initialHydrations.get(instanceId))
+    signal.throwIfAborted()
     const instance = instances().get(instanceId)
     if (!instance?.client || instance.status !== "ready") return
+    const current = () => !signal.aborted && instances().get(instanceId)?.client === instance.client
     let sessionError: unknown
     try {
-      await fetchSessions(instanceId, { reset: true })
+      await fetchSessions(instanceId, { reset: true, signal })
     } catch (error) {
       sessionError = error
     }
+    signal.throwIfAborted()
+    if (!current()) return
     await Promise.all([
-      reloadWorktrees(instanceId),
-      syncPendingRequests(instanceId),
-      refreshVolatileInstanceState(instanceId),
-      syncLoadedSessionInboxes(instanceId),
+      reloadWorktrees(instanceId, false, signal),
+      syncPendingRequests(instanceId, undefined, undefined, signal),
+      refreshVolatileInstanceState(instanceId, undefined, signal),
+      syncLoadedSessionInboxes(instanceId, signal),
     ])
+    signal.throwIfAborted()
+    if (!current()) return
     if (sessionError) throw sessionError
     const loadedMessages = messagesLoaded().get(instanceId) ?? new Set<string>()
-    for (const sessionId of loadedMessages) invalidateSessionMessageLoad(instanceId, sessionId)
+    for (const sessionId of loadedMessages) {
+      signal.throwIfAborted()
+      if (!current()) return
+      invalidateSessionMessageLoad(instanceId, sessionId)
+    }
     const activeId = activeSessionId().get(instanceId)
-    if (activeId && loadedMessages.has(activeId)) await loadMessages(instanceId, activeId, { force: true })
+    signal.throwIfAborted()
+    if (!current()) return
+    if (activeId && loadedMessages.has(activeId)) await loadMessages(instanceId, activeId, { force: true, signal })
+    signal.throwIfAborted()
+    if (!current()) return
     reconcilePendingSessionIndicators(instanceId)
   },
   (instanceId, error) => {
@@ -512,17 +526,19 @@ const connectionResyncs = new TrailingResyncCoordinator(
 const connectionResyncGate = new ConnectionResyncGate()
 
 function resyncConnectedInstance(instanceId: string): void {
-  void connectionResyncs.request(instanceId)
+  void connectionResyncs.request(instanceId, serverEvents.signalForInstance(instanceId))
 }
 
-async function syncLoadedSessionInboxes(instanceId: string): Promise<void> {
+async function syncLoadedSessionInboxes(instanceId: string, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return
   const instance = instances().get(instanceId)
   if (!instance?.client || instance.status !== "ready") return
   const loaded = messagesLoaded().get(instanceId) ?? new Set<string>()
   await Promise.all(Array.from(loaded, async (sessionId) => {
+    if (signal?.aborted) return
     const directory = sessions().get(instanceId)?.get(sessionId)?.location.directory ?? instance.folder
     try {
-      await syncOpenCodeSessionInbox(instanceId, sessionId, directory)
+      await syncOpenCodeSessionInbox(instanceId, sessionId, directory, signal)
     } catch (error) {
       log.warn("Failed to resync session inbox after connection", { instanceId, sessionId, error })
     }
@@ -530,14 +546,16 @@ async function syncLoadedSessionInboxes(instanceId: string): Promise<void> {
 }
 
 const allInstanceRefreshTargets: readonly InstanceRefreshTarget[] = ["agents", "providers", "commands", "metadata", "filesystem"]
-const volatileInstanceRefreshes = new Map<string, { promise: Promise<void>; pending: Set<InstanceRefreshTarget> }>()
+const volatileInstanceRefreshes = new Map<string, { promise: Promise<void>; pending: Set<InstanceRefreshTarget>; signal?: AbortSignal; client: Instance["client"] }>()
 
 function refreshVolatileInstanceState(
   instanceId: string,
   targets: readonly InstanceRefreshTarget[] = allInstanceRefreshTargets,
+  signal = serverEvents.signalForInstance(instanceId),
 ): Promise<void> {
+  if (signal?.aborted) return Promise.resolve()
   const existing = volatileInstanceRefreshes.get(instanceId)
-  if (existing) {
+  if (existing && !existing.signal?.aborted && existing.client === instances().get(instanceId)?.client) {
     for (const target of targets) existing.pending.add(target)
     return existing.promise
   }
@@ -545,12 +563,14 @@ function refreshVolatileInstanceState(
   if (!instance?.client || instance.status !== "ready") return Promise.resolve()
   const client = instance.client
 
-  const state = { promise: Promise.resolve(), pending: new Set(targets) }
+  const state = { promise: Promise.resolve(), pending: new Set(targets), signal, client }
   state.promise = (async () => {
     do {
+      if (signal?.aborted || instances().get(instanceId)?.client !== client) return
       const current = new Set(state.pending)
       state.pending.clear()
       if (current.has("filesystem")) invalidateFilesystemCaches(instanceId)
+      if (signal?.aborted) return
       const requests: Promise<unknown>[] = []
       const location = getActiveCatalogLocation(instanceId)
       if (current.has("agents")) requests.push(fetchAgents(instanceId, location, true))
@@ -560,6 +580,7 @@ function refreshVolatileInstanceState(
         requests.push(loadInstanceMetadata(instance, { force: true, location }))
       }
       await Promise.all(requests)
+      if (signal?.aborted || instances().get(instanceId)?.client !== client) return
     } while (state.pending.size)
   })().finally(() => {
     if (volatileInstanceRefreshes.get(instanceId) === state) volatileInstanceRefreshes.delete(instanceId)
@@ -1092,21 +1113,29 @@ function syncPendingRequests(
   instanceId: string,
   registerInvalidation?: (invalidate: () => void) => void,
   targetLocations?: RequestLocation[],
+  signal?: AbortSignal,
 ): Promise<void> {
+  if (signal?.aborted) return Promise.resolve()
+  const owned = (promise: Promise<void>, invalidate: () => void) => {
+    registerInvalidation?.(invalidate)
+    if (!signal) return promise
+    signal?.addEventListener("abort", invalidate, { once: true })
+    if (signal?.aborted) invalidate()
+    return promise.finally(() => signal?.removeEventListener("abort", invalidate))
+  }
   const generation = pendingRequestSyncGenerations.get(instanceId)
   if (generation === undefined) return Promise.resolve()
   if (!targetLocations && deferPendingDiscovery(instanceId)) return Promise.resolve()
   const existing = pendingRequestSyncs.get(instanceId)
   if (existing?.generation === generation) {
     if (!targetLocations && existing.targeted) { deferredPendingDiscovery.add(instanceId); resumePendingDiscovery() }
-    registerInvalidation?.(() => {
+    return owned(existing.promise, () => {
       if (pendingRequestSyncs.get(instanceId)?.token !== existing.token) return
       existing.token.cancelled = true
       abortPendingRequestWork(instanceId)
       invalidatePendingRequestSync(instanceId)
       pendingRequestSyncs.delete(instanceId)
     })
-    return existing.promise
   }
   const token = { cancelled: false }
   if (!targetLocations) deferredPendingDiscovery.delete(instanceId)
@@ -1114,14 +1143,13 @@ function syncPendingRequests(
     if (pendingRequestSyncs.get(instanceId)?.promise === promise) pendingRequestSyncs.delete(instanceId)
   })
   pendingRequestSyncs.set(instanceId, { generation, targeted: Boolean(targetLocations), token, promise })
-  registerInvalidation?.(() => {
+  return owned(promise, () => {
     if (pendingRequestSyncs.get(instanceId)?.token !== token) return
     token.cancelled = true
     abortPendingRequestWork(instanceId)
     invalidatePendingRequestSync(instanceId)
     pendingRequestSyncs.delete(instanceId)
   })
-  return promise
 }
 
 function schedulePendingRequestReconciliation(instanceId: string, location?: RequestLocation): void {
@@ -1247,7 +1275,9 @@ function clearReloadableInstanceState(instanceId: string): void {
 async function refreshWorkspaceList(
   backendId: BackendId = LOCAL_BACKEND_ID,
   api: Pick<typeof serverApi, "fetchWorkspaces"> = serverApi,
+  signal = serverEvents.signal(backendId),
 ): Promise<void> {
+  if (signal?.aborted) return
   // Preferences imports shared controls, but does not own workspace/session
   // hydration. Its provider editor receives an explicit location from the host.
   if (!usesClientState()) return
@@ -1256,8 +1286,8 @@ async function refreshWorkspaceList(
   const removalCandidates = new Set([...instances().values()]
     .filter((instance) => backendIdOf(instance) === backendId).map(({ id }) => id))
   try {
-    const listed = await api.fetchWorkspaces()
-    if (!workspaceListReconciliationFence.isCurrent(requestFence)) return
+    const listed = await api.fetchWorkspaces(signal)
+    if (signal?.aborted || !workspaceListReconciliationFence.isCurrent(requestFence)) return
     // Workspaces are keyed by instance key: the workspace id itself for the local backend.
     const workspaces = listed.map((workspace) => {
       const id = instanceKey(backendId, workspace.id)
@@ -1265,6 +1295,7 @@ async function refreshWorkspaceList(
     })
     const remoteIds = new Set(workspaces.map(({ id }) => id))
     for (const workspace of workspaces) {
+      if (signal?.aborted) return
       if (!workspaceListReconciliationFence.allows(requestFence, workspace.id)) continue
       restoreCreatedWorkspaceCleanup.trackPendingRequest(workspace)
       if (restoreCreationCommitGates.deferRefreshWorkspace(workspace)) continue
@@ -1279,6 +1310,7 @@ async function refreshWorkspaceList(
     for (const instanceId of getUnavailableWorkspaceIds(
       unchangedCandidates, remoteIds, (id) => restoreCreatedWorkspaceCleanup.owns(id),
     )) {
+      if (signal?.aborted) return
       releaseInstanceResources(instanceId)
       removeInstance(instanceId, { authoritative: false })
     }

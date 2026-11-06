@@ -63,15 +63,28 @@ export class SSEManager {
   private readonly transport = createSignal<WorkspaceEventTransportStatus>("connecting")
   private readonly callbacks: SSEManager
   private readonly cleanup: (() => void)[] = []
+  private disposed = false
+  readonly signal?: AbortSignal
 
   constructor(readonly backendId = LOCAL_BACKEND_ID, callbacks?: SSEManager) {
     this.callbacks = callbacks ?? this
+    this.signal = serverEvents.signal(backendId)
+    const removed = () => {
+      const owned = managers.get(backendId) === this
+      if (owned) managers.delete(backendId)
+      this.dispose()
+      if (owned) setManagerRevision(value => value + 1)
+    }
+    this.signal?.addEventListener("abort", removed, { once: true })
+    this.cleanup.push(() => this.signal?.removeEventListener("abort", removed))
     log.info("sseManager initialized: listening for SSE disconnect and reconnect")
 
     this.cleanup.push(serverEvents.on("instance.eventStatus", (event) => {
+      if (this.disposed || this.signal?.aborted) return
       if ((event.backendId ?? LOCAL_BACKEND_ID) !== this.backendId) return
       const payload = event as InstanceStatusPayload
       this.updateConnectionStatus(payload.instanceId, payload.status)
+      if (this.disposed) return
       if (payload.status === "disconnected") {
         if (payload.reason === "workspace stopped") {
           return
@@ -82,23 +95,32 @@ export class SSEManager {
     }))
 
     this.cleanup.push(serverEvents.on("instance.event", (event) => {
+      if (this.disposed || this.signal?.aborted) return
       if ((event.backendId ?? LOCAL_BACKEND_ID) !== this.backendId) return
       const payload = event as InstanceEventPayload
       this.updateConnectionStatus(payload.instanceId, "connected")
+      if (this.disposed) return
       this.handleEvent(payload.instanceId, payload.event as SSEEvent)
     }))
 
     this.cleanup.push(serverEvents.onTransportStatus((status, backendId) => {
+      if (this.disposed || this.signal?.aborted) return
       if (backendId !== this.backendId) return
       log.info("SSE transport status changed", { status })
-      this.transport[1](status)
+      this.seedTransportStatus(status)
     }))
   }
 
   dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
     this.cleanup.splice(0).forEach(off => off())
     this.transport[1]("disconnected")
     this.connection[1](new Map())
+  }
+
+  seedTransportStatus(status: WorkspaceEventTransportStatus): void {
+    if (!this.disposed) this.transport[1](status)
   }
 
   seedStatus(instanceId: string, status: ConnectionStatus) {
@@ -117,6 +139,7 @@ export class SSEManager {
 
     log.info("Received event", { type: event.type, event })
     this.callbacks.onInvalidation?.(instanceId, event as V2Event)
+    if (this.disposed || this.signal?.aborted) return
 
     switch (event.type) {
       case "session.created":
@@ -206,6 +229,11 @@ const [managerRevision, setManagerRevision] = createSignal(0)
 /** Each backend owns connection state; the ordinary store hooks receive globally scoped instance keys. */
 export function getSseManager(backendId: string): SSEManager {
   let manager = managers.get(backendId)
+  if (manager && manager.signal !== serverEvents.signal(backendId)) {
+    managers.delete(backendId)
+    manager.dispose()
+    manager = managers.get(backendId)
+  }
   if (!manager) {
     managers.set(backendId, manager = new SSEManager(backendId, sseManager))
     setManagerRevision(value => value + 1)
@@ -215,9 +243,11 @@ export function getSseManager(backendId: string): SSEManager {
 
 // Create the backend owner before dispatching its first typed event or transport status.
 serverEvents.on("*", event => { getSseManager(event.backendId ?? LOCAL_BACKEND_ID) })
-serverEvents.onTransportStatus((_status, backendId) => { getSseManager(backendId) })
-serverEvents.onDetach(backendId => {
-  managers.get(backendId)?.dispose()
+serverEvents.onTransportStatus((status, backendId) => { if (serverEvents.signal(backendId)) getSseManager(backendId).seedTransportStatus(status) })
+serverEvents.onDetach((backendId, signal) => {
+  const manager = managers.get(backendId)
+  if (manager?.signal !== signal) return
   managers.delete(backendId)
+  manager?.dispose()
   setManagerRevision(value => value + 1)
 })

@@ -295,8 +295,8 @@ export function createServerApi(ctx: BackendHttp) {
       return request<ProviderUsageResponse>(`/api/usage/${encodeURIComponent(providerId)}${query ? `?${query}` : ""}`)
     },
 
-    fetchWorktrees(id: string, fresh = false): Promise<WorktreeListResponse> {
-      return request<WorktreeListResponse>(`/api/workspaces/${encodeURIComponent(id)}/worktrees${fresh ? "?fresh=true" : ""}`)
+    fetchWorktrees(id: string, fresh = false, signal?: AbortSignal): Promise<WorktreeListResponse> {
+      return request<WorktreeListResponse>(`/api/workspaces/${encodeURIComponent(id)}/worktrees${fresh ? "?fresh=true" : ""}`, { signal })
     },
 
     fetchLocalGitBranches(id: string, directory: string, signal?: AbortSignal): Promise<{ branches: string[] }> {

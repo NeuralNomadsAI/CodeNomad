@@ -72,6 +72,7 @@ import { seedSessionMessagesV2, reconcilePendingPermissionsV2 } from "./message-
 import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
+import { backendEvents } from "../lib/server-events"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { buildProviderCatalog } from "../lib/model-catalog"
 import { getRootClient } from "./opencode-client"
@@ -111,8 +112,8 @@ const catalogLocations = new Map<string, string>()
 const catalogRefreshes = new Map<string, { key: string; promise: Promise<void>; pending: boolean }>()
 const agentRequestIds = new Map<string, number>()
 const providerRequestIds = new Map<string, number>()
-const agentRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
-const providerRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
+const agentRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean; current: () => boolean }>()
+const providerRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean; current: () => boolean }>()
 const sessionPageRequests = new Map<string, Promise<void>>()
 const sessionExhaustionRequests = new Map<string, Promise<void>>()
 const sessionPageTraversals = new Map<string, { cursors: Set<string>; pages: number }>()
@@ -138,9 +139,10 @@ function messagePageKey(instanceId: string, sessionId: string): string {
 }
 
 function captureInstanceRequestAuthority(instanceId: string): () => boolean {
+  const signal = backendEvents.signalForInstance(instanceId)
   const generation = getOpenCodeInstanceGeneration(instanceId)
   const client = instances().get(instanceId)?.client
-  return () => getOpenCodeInstanceGeneration(instanceId) === generation
+  return () => !signal?.aborted && getOpenCodeInstanceGeneration(instanceId) === generation
     && instances().get(instanceId)?.client === client
 }
 
@@ -1388,19 +1390,21 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
 }
 
 function fetchAgents(instanceId: string, location = getActiveCatalogLocation(instanceId), refresh = false): Promise<boolean> {
+  const current = captureInstanceRequestAuthority(instanceId)
   const key = `${instanceId}\0${catalogLocationKey(location)}`
   const existing = agentRefreshes.get(key)
-  if (existing) {
+  if (existing?.current()) {
     if (refresh) existing.pending = true
     return existing.promise
   }
-  const state = { promise: Promise.resolve(false), pending: false, cancelled: false }
+  const state = { promise: Promise.resolve(false), pending: false, cancelled: false, current }
   state.promise = (async () => {
     let result: boolean
     do {
+      if (!current()) return false
       state.pending = false
       result = await loadAgents(instanceId, location)
-    } while (state.pending && !state.cancelled)
+    } while (current() && state.pending && !state.cancelled)
     return result
   })().finally(() => {
     if (agentRefreshes.get(key) === state) agentRefreshes.delete(key)
@@ -1424,8 +1428,10 @@ async function loadAgents(instanceId: string, location: LocationRef): Promise<bo
     log.info(`[HTTP] GET /agent.list for instance ${instanceId}`)
     const requestLocation = toRequestLocation(location)
     const response = await rootClient.agent.list({ location: requestLocation }, requestLocationOptions(location))
+    if (!generationCurrent()) return false
     const agentsById = new Map((response.data ?? []).map((agent) => [agent.id, agent]))
     await Promise.all(["build", "plan"].filter((id) => !agentsById.has(id)).map(async (id) => {
+      if (!generationCurrent()) return
       try {
         const result = await rootClient.agent.get({ agentID: id, location: requestLocation }, requestLocationOptions(location))
         agentsById.set(result.data.id, result.data)
@@ -1454,6 +1460,7 @@ async function loadAgents(instanceId: string, location: LocationRef): Promise<bo
       next.set(instanceId, agentList)
       return next
     })
+    if (!generationCurrent()) return false
     setAgentCatalogLocations((prev) => new Map(prev).set(instanceId, catalogLocationKey(location)))
     return true
   } catch (error) {
@@ -1463,19 +1470,21 @@ async function loadAgents(instanceId: string, location: LocationRef): Promise<bo
 }
 
 function fetchProviders(instanceId: string, location = getActiveCatalogLocation(instanceId), refresh = false): Promise<boolean> {
+  const current = captureInstanceRequestAuthority(instanceId)
   const key = `${instanceId}\0${catalogLocationKey(location)}`
   const existing = providerRefreshes.get(key)
-  if (existing) {
+  if (existing?.current()) {
     if (refresh) existing.pending = true
     return existing.promise
   }
-  const state = { promise: Promise.resolve(false), pending: false, cancelled: false }
+  const state = { promise: Promise.resolve(false), pending: false, cancelled: false, current }
   state.promise = (async () => {
     let result: boolean
     do {
+      if (!current()) return false
       state.pending = false
       result = await loadProviders(instanceId, location)
-    } while (state.pending && !state.cancelled)
+    } while (current() && state.pending && !state.cancelled)
     return result
   })().finally(() => {
     if (providerRefreshes.get(key) === state) providerRefreshes.delete(key)

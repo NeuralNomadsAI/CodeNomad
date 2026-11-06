@@ -39,6 +39,7 @@ export async function retryWithBackoff<T>(
         const timer = setTimeout(() => controller.abort(), timeoutMs)
         try {
           const result = await fn(signal ? AbortSignal.any([signal, controller.signal]) : controller.signal)
+          signal?.throwIfAborted()
           clearTimeout(timer)
           return result
         } catch (error) {
@@ -47,14 +48,18 @@ export async function retryWithBackoff<T>(
         }
       }
 
-      return await fn(signal)
+      const result = await fn(signal)
+      signal?.throwIfAborted()
+      return result
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error))
       lastError = err
       signal?.throwIfAborted()
 
       if (attempt < maxAttempts && shouldRetry(err, attempt)) {
+        signal?.throwIfAborted()
         await wait(delayMs)
+        signal?.throwIfAborted()
         delayMs = Math.min(delayMs * backoffMultiplier, maxDelayMs)
       } else {
         throw err

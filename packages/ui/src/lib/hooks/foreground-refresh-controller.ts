@@ -1,6 +1,7 @@
 import type { WorkspaceEventTransportStatus } from "../event-transport"
 
 interface ForegroundRefreshControllerOptions {
+  signal?: AbortSignal
   retryDelaysMs?: readonly number[]
   onError?: (error: unknown) => void
   setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>
@@ -8,7 +9,7 @@ interface ForegroundRefreshControllerOptions {
 }
 
 export function createForegroundRefreshController(
-  onRefresh: () => void | Promise<void>,
+  onRefresh: (signal: AbortSignal) => void | Promise<void>,
   options: ForegroundRefreshControllerOptions = {},
 ) {
   const retryDelaysMs = options.retryDelaysMs ?? [1_000, 3_000]
@@ -21,6 +22,7 @@ export function createForegroundRefreshController(
   let retryAttempt = 0
   let retryTimer: ReturnType<typeof setTimeout> | undefined
   let disposed = false
+  const lifetime = new AbortController()
 
   const cancelRetry = () => {
     if (retryTimer === undefined) return
@@ -34,12 +36,13 @@ export function createForegroundRefreshController(
     refreshInFlight = true
     let succeeded = false
     try {
-      await onRefresh()
+      await onRefresh(lifetime.signal)
+      if (disposed) return
       recoveredGeneration = Math.max(recoveredGeneration, targetGeneration)
       retryAttempt = 0
       succeeded = true
     } catch (error) {
-      options.onError?.(error)
+      if (!disposed) options.onError?.(error)
     } finally {
       refreshInFlight = false
     }
@@ -59,12 +62,22 @@ export function createForegroundRefreshController(
     }, delayMs)
   }
 
+  const dispose = () => {
+    disposed = true
+    lifetime.abort()
+    cancelRetry()
+    options.signal?.removeEventListener("abort", dispose)
+  }
+  options.signal?.addEventListener("abort", dispose, { once: true })
+  if (options.signal?.aborted) dispose()
+
   return {
     invalidate() {
       dirtyGeneration += 1
       void runRefresh()
     },
     handle(status: WorkspaceEventTransportStatus) {
+      if (disposed) return
       if (status === "disconnected") {
         connected = false
         dirtyGeneration += 1
@@ -78,9 +91,6 @@ export function createForegroundRefreshController(
       cancelRetry()
       void runRefresh()
     },
-    dispose() {
-      disposed = true
-      cancelRetry()
-    },
+    dispose,
   }
 }

@@ -494,6 +494,7 @@ jobs:
           packages/ui/src/stores/backend-instance-identity.test.ts
           packages/ui/src/lib/backend-events.test.ts
           packages/ui/src/lib/backend-event-lifecycle.test.ts
+          packages/ui/src/lib/backend-event-authority.test.ts
           packages/ui/src/stores/backend-workspace-list-refresh.test.ts
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/preferences-favorites-mode.test.ts

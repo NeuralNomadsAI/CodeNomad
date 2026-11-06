@@ -6,7 +6,7 @@ import { createForegroundRefreshController } from "./foreground-refresh-controll
 const log = getLogger("foreground-refresh")
 
 interface ForegroundRefreshOptions {
-  onRefresh: (backendId: string) => void | Promise<void>
+  onRefresh: (backendId: string, signal: AbortSignal) => void | Promise<void>
 }
 
 // On mobile, backgrounding the app suspends JS execution and the SSE
@@ -25,35 +25,42 @@ interface ForegroundRefreshOptions {
 // disconnected.
 export function useForegroundRefresh(options: ForegroundRefreshOptions): void {
   onMount(() => {
-    const controllers = new Map<string, ReturnType<typeof createForegroundRefreshController>>()
-    const controllerFor = (backendId: string) => {
-      let controller = controllers.get(backendId)
-      if (controller) return controller
-      controller = createForegroundRefreshController(
-        async () => {
+    const controllers = new Map<string, { authority: AbortSignal; controller: ReturnType<typeof createForegroundRefreshController> }>()
+    const controllerFor = (backendId: string, authority: AbortSignal) => {
+      const existing = controllers.get(backendId)
+      if (existing?.authority === authority) return existing.controller
+      existing?.controller.dispose()
+      const controller = createForegroundRefreshController(
+        async signal => {
+          signal.throwIfAborted()
           log.info("SSE transport reconnected - refreshing session state")
-          await options.onRefresh(backendId)
+          await options.onRefresh(backendId, signal)
+          signal.throwIfAborted()
           log.info("Foreground refresh complete")
         },
         {
+          signal: authority,
           onError: (error) => log.error("Foreground refresh failed - retrying while connected", error),
         },
       )
-      controllers.set(backendId, controller)
+      controllers.set(backendId, { controller, authority })
       return controller
     }
     const unsubscribe = serverEvents.onTransportStatus((status, backendId) => {
+      const authority = serverEvents.signal(backendId)
+      if (!authority) return
       if (status === "disconnected") {
         log.info("SSE transport disconnected — will refresh on reconnect")
       }
-      controllerFor(backendId).handle(status)
+      controllerFor(backendId, authority).handle(status)
     })
-    const removed = serverEvents.onDetach(backendId => {
-      controllers.get(backendId)?.dispose()
+    const removed = serverEvents.onDetach((backendId, signal) => {
+      if (controllers.get(backendId)?.authority !== signal) return
+      controllers.get(backendId)?.controller.dispose()
       controllers.delete(backendId)
     })
     onCleanup(() => {
-      controllers.forEach(controller => controller.dispose())
+      controllers.forEach(({ controller }) => controller.dispose())
       unsubscribe()
       removed()
     })

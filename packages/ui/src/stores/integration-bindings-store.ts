@@ -10,6 +10,8 @@ interface Entry {
   target: IntegrationBindingTarget
   demand: number
   generation: number
+  signal?: AbortSignal
+  releaseAuthority?: () => void
   timer?: unknown
   reading?: { controller: AbortController; promise: Promise<void>; dirty: boolean }
 }
@@ -17,14 +19,15 @@ interface Entry {
 /** Live authority exists only while the exact conversation/Location is demanded. Invalidations revoke it immediately. */
 export function createIntegrationBindingsStore(
   read: (target: IntegrationBindingTarget, signal: AbortSignal) => Promise<IntegrationBindingResponse>,
-  clock: { setTimer?: (callback: () => void, ms: number) => unknown; clearTimer?: (timer: unknown) => void } = {},
+  clock: { setTimer?: (callback: () => void, ms: number) => unknown; clearTimer?: (timer: unknown) => void;
+    signal?: (target: IntegrationBindingTarget) => AbortSignal | undefined } = {},
 ) {
   const setTimer = clock.setTimer ?? ((callback, ms) => setTimeout(callback, ms))
   const clearTimer = clock.clearTimer ?? (timer => clearTimeout(timer as ReturnType<typeof setTimeout>))
   const entries = new Map<string, Entry>()
   const disconnected = new Set<string>()
   const disconnectedBackends = new Set<string>()
-  const connected = (entry: Entry) => !disconnectedBackends.has(parseInstanceKey(entry.target.instanceId).backendId) && !disconnected.has(entry.target.instanceId)
+  const connected = (entry: Entry) => !entry.signal?.aborted && !disconnectedBackends.has(parseInstanceKey(entry.target.instanceId).backendId) && !disconnected.has(entry.target.instanceId)
   const [snapshots, setSnapshots] = createSignal<ReadonlyMap<string, IntegrationBindingResponse>>(new Map())
   const [busy, setBusy] = createSignal<ReadonlySet<string>>(new Set())
   const publish = (id: string, value: IntegrationBindingResponse) => setSnapshots(current => new Map(current).set(id, value))
@@ -51,6 +54,15 @@ export function createIntegrationBindingsStore(
     if (entry.timer !== undefined) clearTimer(entry.timer)
     entry.timer = undefined
   }
+  const drop = (id: string, entry: Entry) => {
+    if (entries.get(id) !== entry) return
+    entries.delete(id)
+    cancelTimer(entry)
+    entry.releaseAuthority?.()
+    entry.reading?.controller.abort()
+    // Aborting IO can synchronously acquire a replacement under the same key.
+    if (!entries.has(id)) setSnapshots(current => { const next = new Map(current); next.delete(id); return next })
+  }
   const reconcile = (id: string, entry: Entry, immediate: boolean) => {
     invalidate(id, entry)
     if (!connected(entry)) return
@@ -63,9 +75,18 @@ export function createIntegrationBindingsStore(
     busy(target: IntegrationBindingTarget): boolean { return busy().has(key(target)) },
     demand(target: IntegrationBindingTarget): () => void {
       const id = key(target)
+      const signal = clock.signal?.(target)
+      if (signal?.aborted) return () => {}
       let entry = entries.get(id)
+      if (entry && entry.signal !== signal) { drop(id, entry); entry = entries.get(id) }
+      if (signal?.aborted) return () => {}
       if (!entry) {
-        entries.set(id, entry = { target: { ...target }, demand: 0, generation: 0 })
+        entries.set(id, entry = { target: { ...target }, demand: 0, generation: 0, signal })
+        const owned = entry
+        const abort = () => drop(id, owned)
+        signal?.addEventListener("abort", abort, { once: true })
+        entry.releaseAuthority = () => signal?.removeEventListener("abort", abort)
+        if (signal?.aborted) abort()
         void refresh(id, entry)
       }
       const tracked = entry
@@ -75,8 +96,7 @@ export function createIntegrationBindingsStore(
         if (released) return
         released = true
         if (--tracked.demand > 0 || entries.get(id) !== tracked) return
-        cancelTimer(tracked); tracked.reading?.controller.abort(); entries.delete(id)
-        setSnapshots(current => { const next = new Map(current); next.delete(id); return next })
+        drop(id, tracked)
       }
     },
     /** An explicit new authoritative read of one demanded target; its previous answer is revoked first. */
@@ -112,22 +132,22 @@ export function createIntegrationBindingsStore(
         }
       }
     },
-    clearInstance(instanceId: string): void {
+    clearInstance(instanceId: string, signal?: AbortSignal): void {
       disconnected.delete(instanceId)
       for (const [id, entry] of entries) {
         if (entry.target.instanceId !== instanceId) continue
-        cancelTimer(entry); entry.reading?.controller.abort(); entries.delete(id)
-        setSnapshots(current => { const next = new Map(current); next.delete(id); return next })
+        if (signal && entry.signal !== signal) continue
+        drop(id, entry)
       }
     },
-    clearBackend(backendId: string): void {
-      for (const instanceId of new Set([...entries.values()].map(entry => entry.target.instanceId))) {
-        if (parseInstanceKey(instanceId).backendId === backendId) this.clearInstance(instanceId)
-      }
+    clearBackend(backendId: string, signal?: AbortSignal): void {
+      disconnectedBackends.delete(backendId)
       for (const instanceId of disconnected) {
         if (parseInstanceKey(instanceId).backendId === backendId) disconnected.delete(instanceId)
       }
-      disconnectedBackends.delete(backendId)
+      for (const instanceId of new Set([...entries.values()].map(entry => entry.target.instanceId))) {
+        if (parseInstanceKey(instanceId).backendId === backendId) this.clearInstance(instanceId, signal)
+      }
     },
     /** An admitted mutation runs once; uncertain outcomes also reconcile its captured target, if still shown. */
     async run(target: IntegrationBindingTarget, mutation: () => Promise<void>): Promise<void> {
@@ -140,7 +160,7 @@ export function createIntegrationBindingsStore(
       finally {
         setBusy(current => { const next = new Set(current); next.delete(id); return next })
         const current = entries.get(id)
-        if (current) void reconcile(id, current, true)
+        if (current && current === entry && !current.signal?.aborted) void reconcile(id, current, true)
       }
     },
   }

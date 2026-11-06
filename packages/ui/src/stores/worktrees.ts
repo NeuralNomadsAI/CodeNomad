@@ -9,7 +9,8 @@ import { showToastNotification } from "../lib/notifications"
 import { tGlobal } from "../lib/i18n"
 import { normalizeSessionDirectory } from "./session-list-options"
 import { prioritizedRead } from "../lib/prioritized-read"
-import { activeInstanceId } from "./instances"
+import { activeInstanceId, instances } from "./instances"
+import type { Instance } from "../types/instance"
 
 const log = getLogger("api")
 
@@ -20,6 +21,7 @@ const worktreeRequests = new Map<string, Promise<void>>()
 const pendingWorktreeRefreshes = new Set<string>()
 const freshWorktreeRequests = new Map<string, Promise<void>>()
 const worktreeReads = new Map<string, Promise<void>>()
+const worktreeOwners = new WeakMap<Promise<void>, { client: Instance["client"] | undefined; folder: string | undefined; signal?: AbortSignal }>()
 const worktreeReadyRefreshes = new Map<string, Promise<void>>()
 const familyMoveRequests = new Map<string, Promise<void>>()
 const unreconciledFamilyMoves = new Map<string, { instanceId: string; directories: string[]; settled: boolean; request: Promise<void> }>()
@@ -28,10 +30,16 @@ const defaultDirectories = new Map<string, string>()
 
 type WorktreeReadyRefresh = (instanceId: string) => Promise<void>
 
-async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh = false): Promise<void> {
+async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh = false, signal = serverEvents.signalForInstance(instanceId)): Promise<void> {
+  if (signal?.aborted) return
+  const instance = instances().get(instanceId)
+  let ownedRead: Promise<void> | undefined
+  const current = () => !signal?.aborted && instances().get(instanceId)?.client === instance?.client
+    && instances().get(instanceId)?.folder === instance?.folder
   const requests = fresh ? freshWorktreeRequests : worktreeRequests
   const existing = requests.get(instanceId)
-  if (existing) {
+  const owner = existing && worktreeOwners.get(existing)
+  if (existing && owner?.client === instance?.client && owner?.folder === instance?.folder && owner?.signal === signal) {
     if (!initial && !fresh) pendingWorktreeRefreshes.add(instanceId)
     return existing
   }
@@ -40,12 +48,14 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh 
     // read/publication shares one lane. An older cached response cannot land last.
     const previous = worktreeReads.get(instanceId)
     const read = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+      if (!current()) return
       try {
         const response = await prioritizedRead(
           () => activeInstanceId() === instanceId,
-          new AbortController().signal,
-          () => serverApi.fetchWorktrees(instanceId, fresh),
+          signal ?? new AbortController().signal,
+          () => { signal?.throwIfAborted(); return serverApi.fetchWorktrees(instanceId, fresh, signal) },
         )
+        if (!current()) return
         if (response.defaultDirectory) defaultDirectories.set(instanceId, response.defaultDirectory)
         else defaultDirectories.delete(instanceId)
         setWorktreesByInstance((prev) => {
@@ -53,6 +63,7 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh 
           next.set(instanceId, response.worktrees ?? [])
           return next
         })
+        if (!current()) return
 
         setGitRepoStatusByInstance((prev) => {
           const next = new Map(prev)
@@ -60,6 +71,10 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh 
           return next
         })
       } catch (error) {
+        if (!current()) {
+          if (!signal?.aborted && (!initialRead || fresh)) throw error
+          return
+        }
         log.warn(initialRead ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
         if (!initialRead || fresh) throw error
         // A fresh read may have published while this initial display read waited.
@@ -70,6 +85,7 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh 
           next.set(instanceId, [])
           return next
         })
+        if (!current()) return
 
         // Preserve any previous value; if unknown, keep it unknown.
         setGitRepoStatusByInstance((prev) => {
@@ -81,6 +97,7 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh 
       }
     })
     worktreeReads.set(instanceId, read)
+    ownedRead = read
     return read.finally(() => {
       if (worktreeReads.get(instanceId) === read) worktreeReads.delete(instanceId)
     })
@@ -91,9 +108,11 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh 
   const task = Promise.resolve().then(async () => {
     let initialRead = initial
     do {
+      if (!current()) return
       if (!fresh) pendingWorktreeRefreshes.delete(instanceId)
       try {
         await load(initialRead)
+        if (!current()) return
       } catch (error) {
         if (fresh || !pendingWorktreeRefreshes.has(instanceId)) throw error
       }
@@ -102,7 +121,17 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh 
   })
 
   requests.set(instanceId, task)
+  worktreeOwners.set(task, { client: instance?.client, folder: instance?.folder, signal })
+  const abort = () => {
+    if (requests.get(instanceId) === task) {
+      requests.delete(instanceId)
+      pendingWorktreeRefreshes.delete(instanceId)
+    }
+    if (worktreeReads.get(instanceId) === ownedRead) worktreeReads.delete(instanceId)
+  }
+  signal?.addEventListener("abort", abort, { once: true })
   await task.finally(() => {
+    signal?.removeEventListener("abort", abort)
     if (requests.get(instanceId) === task) {
       requests.delete(instanceId)
     }
@@ -122,9 +151,9 @@ async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
   await queueWorktreeRequest(instanceId, true)
 }
 
-async function reloadWorktrees(instanceId: string, fresh = false): Promise<void> {
+async function reloadWorktrees(instanceId: string, fresh = false, signal?: AbortSignal): Promise<void> {
   if (!instanceId) return
-  await queueWorktreeRequest(instanceId, false, fresh)
+  await queueWorktreeRequest(instanceId, false, fresh, signal)
 }
 
 serverEvents.on("workspace.worktreesChanged", (event) => {
@@ -150,7 +179,9 @@ async function handleWorktreeReady(
   })
 
   const previous = worktreeReadyRefreshes.get(instanceId)
+  const signal = serverEvents.signalForInstance(instanceId)
   const task = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+    if (signal?.aborted) return
     await refreshWorktrees(instanceId)
   })
 

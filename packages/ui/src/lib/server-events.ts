@@ -81,17 +81,21 @@ export class ServerEvents {
   }
 
   private async connect() {
+    if (this.disposed) return
     const generation = ++this.connectGeneration
     this.clearReconnectTimer()
 
     if (this.connection) {
-      this.emitTransportStatus("disconnected")
-      this.connection.disconnect()
+      const connection = this.connection
       this.connection = null
+      connection.disconnect()
+      this.emitTransportStatus("disconnected")
+      if (this.disposed || generation !== this.connectGeneration) return
       this.watchdog.setConnected(false)
     }
 
     logSse("Connecting to backend events stream")
+    let opening: (() => void)[] = []
 
     try {
       const connection = await connectWorkspaceEvents({
@@ -110,6 +114,7 @@ export class ServerEvents {
           if (generation !== this.connectGeneration) {
             return
           }
+          if (status === "connected") opening = [...this.openHandlers]
           this.emitTransportStatus(status)
         },
         onOpen: () => {
@@ -119,7 +124,7 @@ export class ServerEvents {
           this.watchdog.activity()
           logSse("Events stream connected")
           this.retryDelay = RETRY_BASE_DELAY
-          this.notify(this.openHandlers, undefined, "open")
+          this.notify(this.openHandlers, undefined, "open", generation, opening)
         },
         onPing: (payload) => {
           if (generation !== this.connectGeneration) {
@@ -166,25 +171,32 @@ export class ServerEvents {
   }
 
   private scheduleReconnect() {
+    if (this.disposed) return
+    const previousGeneration = this.connectGeneration
     // EventSource hides HTTP status. Probe our own auth endpoint so a server
     // restart is recoverable even when the user has not made another API call.
     void this.auth.check(this.lifetime.signal)
+    if (this.disposed || previousGeneration !== this.connectGeneration) return
     if (this.retryTimer) {
       return
     }
 
-    this.connectGeneration += 1
+    const generation = ++this.connectGeneration
 
     if (this.connection) {
-      this.connection.disconnect()
+      const connection = this.connection
       this.connection = null
+      connection.disconnect()
     }
+    if (this.disposed || generation !== this.connectGeneration) return
 
     this.watchdog.setConnected(false)
     this.emitTransportStatus("disconnected")
+    if (this.disposed || generation !== this.connectGeneration) return
 
     logSse("Events stream disconnected, scheduling reconnect", { delayMs: this.retryDelay })
     this.retryTimer = setTimeout(() => {
+      if (this.disposed || generation !== this.connectGeneration) return
       this.retryTimer = null
       this.retryDelay = Math.min(this.retryDelay * 2, RETRY_MAX_DELAY)
       void this.connect()
@@ -201,12 +213,16 @@ export class ServerEvents {
   }
 
   private dispatch(event: WorkspaceEventPayload) {
-    this.notify(this.handlers.get("*"), event, event.type)
-    this.notify(this.handlers.get(event.type), event, event.type)
+    const generation = this.connectGeneration
+    this.notify(this.handlers.get("*"), event, event.type, generation)
+    this.notify(this.handlers.get(event.type), event, event.type, generation)
   }
 
-  private notify<T>(handlers: Set<(value: T) => void> | undefined, value: T, kind: string): void {
-    handlers?.forEach((handler) => {
+  private notify<T>(handlers: Set<(value: T) => void> | undefined, value: T, kind: string, generation = this.connectGeneration,
+    recipients = [...handlers ?? []]): void {
+    for (const handler of recipients) {
+      if (generation !== this.connectGeneration || this.disposed && kind !== "dispose") break
+      if (!handlers?.has(handler)) continue
       try {
         handler(value)
       } catch (error) {
@@ -214,7 +230,7 @@ export class ServerEvents {
         // interrupt the connection lifecycle. Do not replay failed handlers.
         log.error("Backend event subscriber failed", { kind, error })
       }
-    })
+    }
   }
 
   private dispatchBatch(events: WorkspaceEventPayload[]) {
@@ -223,8 +239,10 @@ export class ServerEvents {
     }
 
     logSse("event batch", { size: events.length })
+    const generation = this.connectGeneration
     solidBatch(() => {
       for (const event of events) {
+        if (this.disposed || generation !== this.connectGeneration) break
         this.dispatch(event)
       }
     })
@@ -267,15 +285,18 @@ export class ServerEvents {
 
   restart(reason = "manual restart"): void {
     if (this.disposed) return
+    const generation = ++this.connectGeneration
     this.retryDelay = RETRY_BASE_DELAY
     this.clearReconnectTimer()
     this.watchdog.setConnected(false)
 
     if (this.connection) {
-      this.emitTransportStatus("disconnected")
-      this.connection.disconnect()
+      const connection = this.connection
       this.connection = null
+      connection.disconnect()
+      this.emitTransportStatus("disconnected")
     }
+    if (this.disposed || generation !== this.connectGeneration) return
 
     logSse("Restarting backend events stream", { reason })
     void this.connect()
