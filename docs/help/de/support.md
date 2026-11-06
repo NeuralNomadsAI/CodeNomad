@@ -31,7 +31,7 @@ Bei Problemen mit nativer OpenCode-Konfiguration statt CodeNomad-Steuerung beach
 
 ## Aus Quellcode bauen {#build-from-source}
 
-Verwenden Sie Node.js **24.20.0** gemäß `.node-version`, npm, Git und eine kompatible OpenCode-CLI. Führen Sie die Befehle aus einem Entwicklungs-Checkout aus:
+Verwenden Sie die in `.node-version` festgelegte Node.js-Version, npm, Git und eine kompatible OpenCode-CLI. Führen Sie die Befehle aus einem Entwicklungs-Checkout aus:
 
 ```sh
 git clone --branch dev https://github.com/NeuralNomadsAI/CodeNomad.git
