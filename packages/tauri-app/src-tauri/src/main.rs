@@ -42,6 +42,8 @@ mod window_zoom;
 mod windows_browser_accelerators;
 #[cfg(windows)]
 mod windows_notification_identity;
+#[cfg(windows)]
+mod windows_session_end;
 mod workspace_open;
 
 use cli_manager::{CliProcessManager, CliStatus};

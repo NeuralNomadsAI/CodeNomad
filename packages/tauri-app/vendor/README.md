@@ -96,6 +96,16 @@ with recursive locks or silently drop nested input.
 [tao#1215]: https://github.com/tauri-apps/tao/pull/1215
 [tao#1182]: https://github.com/tauri-apps/tao/pull/1182
 
+### Windows session end
+
+Tao's hidden thread event target (window class `Tao Thread Event Target`) calls
+`std::process::exit(0)` on `WM_ENDSESSION`, and Windows may deliver the message
+to it before any application window. `windows_session_end.rs` subclasses that
+window too: CodeNomad's bounded session-end flush and backend cleanup run first,
+then the message reaches Tao. Application windows consume the message as before.
+`windows_session_end_tests.rs` checks the ordering, the lookup and that the
+vendored Tao still exits from the named target.
+
 ## Updater Windows launch handoff
 
 `tauri-plugin-updater-2.14.1/` is the published MIT/Apache-2.0 crate (licenses
