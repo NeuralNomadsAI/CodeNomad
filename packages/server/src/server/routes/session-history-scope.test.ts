@@ -8,9 +8,9 @@ import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuat
 import { historyDirectories, ownedHistorySessions } from "./session-history-scope"
 import { registerWorktreeRoutes } from "./worktrees"
 
-test("unverified root-only inventories remain available to ordinary history and worktree routes", async () => {
+test("root-only inventories remain available to ordinary history and worktree routes", async () => {
   const inventory: WorktreeListResponse = { isGitRepo: false, worktrees: [
-    { slug: "root", directory: "/repo", serviceDirectory: "/repo", kind: "root", discoveryUnverified: true },
+    { slug: "root", directory: "/repo", serviceDirectory: "/repo", kind: "root" },
   ] }
   const manager = {
     get: () => ({ id: "workspace" }),

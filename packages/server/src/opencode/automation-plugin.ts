@@ -6,7 +6,7 @@ import path from "node:path"
 import type { Plugin } from "@opencode/plugin"
 import { MissionControlError } from "../missions/control-error"
 import { signNativeRecurrenceControl, type RecurrenceControlProofBody } from "../missions/recurrence-control-proof"
-import { missionRecoveryError } from "../missions/recovery-error"
+import { missionRecoveryControlError, missionRecoveryError } from "../missions/recovery-error"
 import { parseMissionCreationDefaultsInput } from "../missions/creation-defaults"
 import { hasExplicitMissionCreationChoices, MISSION_PREFERENCES_UNAVAILABLE, resolveMissionCreationDefaults } from "../missions/profile-defaults"
 import { isConnectionRefused } from "./connection-errors"
@@ -92,13 +92,13 @@ export function automationBridgeDirectories(options: {
       : paths.join(home, ".config", "codenomad", "automation-bridges")
   if (platform !== "linux" || !env.WSL_DISTRO_NAME) return [primary]
   const windowsLocalAppData = options.windowsLocalAppData !== undefined ? options.windowsLocalAppData : resolveWslWindowsLocalAppData(options.strict)
-  if (options.strict && !windowsLocalAppData) throw new Error("Windows mission backend discovery is unavailable")
+  if (options.strict && !windowsLocalAppData && windowsLocalAppData !== false) throw new Error("Windows mission backend discovery is unavailable")
   return windowsLocalAppData
     ? [...new Set([primary, path.posix.join(windowsLocalAppData, "CodeNomad", "automation-bridges")])]
     : [primary]
 }
 
-function resolveWslWindowsLocalAppData(strict = false): string | undefined {
+function resolveWslWindowsLocalAppData(strict = false): string | false | undefined {
   if (cachedWslWindowsLocalAppData !== undefined && (!strict || cachedWslWindowsLocalAppData !== null)) return cachedWslWindowsLocalAppData ?? undefined
   try {
     const windowsPath = execFileSync("cmd.exe", ["/d", "/s", "/c", "echo %LOCALAPPDATA%"], {
@@ -111,8 +111,9 @@ function resolveWslWindowsLocalAppData(strict = false): string | undefined {
       timeout: 2_000,
     }).trim()
     cachedWslWindowsLocalAppData = path.posix.isAbsolute(translated) ? translated : null
-  } catch {
+  } catch (error) {
     cachedWslWindowsLocalAppData = null
+    if (["ENOENT", "ENOEXEC"].includes((error as NodeJS.ErrnoException).code ?? "")) return false
   }
   return cachedWslWindowsLocalAppData ?? undefined
 }
@@ -174,6 +175,7 @@ async function writeAtomic(target: string, content: string): Promise<void> {
 }
 
 function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0 || pid > 0x7fffffff) return false
   try {
     process.kill(pid, 0)
     return true
@@ -186,12 +188,12 @@ function registrationFile(name: string, local: boolean) {
   const match = REGISTRATION_NAME.exec(name)
   if (!match) return undefined
   const pid = Number(match[2])
-  return { name, startedAt: Number(match[1]), deadPublisher: local && Number.isSafeInteger(pid) && pid > 0 && !isProcessAlive(pid) }
+  return { name, startedAt: Number(match[1]), deadPublisher: local && !isProcessAlive(pid) }
 }
 
 type RegistrationFile = NonNullable<ReturnType<typeof registrationFile>>
 
-async function readRegistration(target: string, { throwReadErrors = false } = {}): Promise<AutomationBridgeRegistration | undefined> {
+async function readRegistration(target: string, { throwReadErrors = false } = {}): Promise<AutomationBridgeRegistration | null | undefined> {
   const buffer = Buffer.alloc(MAX_REGISTRATION_BYTES + 1)
   let bytesRead = 0
   try {
@@ -202,6 +204,7 @@ async function readRegistration(target: string, { throwReadErrors = false } = {}
       await file.close()
     }
   } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
     if (throwReadErrors) throw error
     return undefined
   }
@@ -339,7 +342,8 @@ async function registrations({ pruneStale = true, strict = false } = {}): Promis
         if (pruneStale) await rm(target, { force: true }).catch(() => undefined)
         continue
       }
-      const registration = await readRegistration(target, { throwReadErrors: strict }) as DiscoveredBridgeRegistration | undefined
+      const registration = await readRegistration(target, { throwReadErrors: strict }) as DiscoveredBridgeRegistration | null | undefined
+      if (registration === null) continue
       if (!registration) {
         // A malformed foreign advertisement supplies no usable bridge contract.
         // Its PID belongs to Windows; preserve the file for its own publisher.
@@ -570,6 +574,7 @@ async function probeBrowserBridges(
       try {
         const response = await callBridge(registration, { mode, sessionID, ...(purpose ? { purpose } : {}) }, timeoutMs)
         if (response.status === 200 && (!strict || (response.body.result as { available?: unknown } | undefined)?.available === true)) return registration
+        if (strict && response.status === 404 && response.body.code === undefined) throw missionRecoveryControlError("mission-preferences-update-required")
         if (strict && !(response.status === 404 && response.body.code === "mission-not-owner")) throw new Error("Mission backend ownership is unavailable")
         return undefined
       } catch (error) {
@@ -588,8 +593,11 @@ async function probeBrowserBridges(
 async function callMissionInput(target: DiscoveredBridgeRegistration, sessionID: string, kind: string, input: unknown): Promise<unknown> {
   const response = await callBridge(target, { mode: "mission-input", sessionID, command: { kind, input } }, REQUEST_TIMEOUT_MS)
   if (response.status !== 200) {
-    const recovery = missionRecoveryError(response.body.code)
-    if (recovery && recovery.status === response.status) throw new MissionControlError(recovery.message, recovery.code)
+    const recovery = missionRecoveryError(response.body.code, response.body.error)
+    if (recovery && recovery.status === response.status) throw missionRecoveryControlError(recovery.code, response.body.error)
+    if (kind === "profile-defaults" && [400, 404, 405, 501, 502].includes(response.status)) {
+      throw missionRecoveryControlError("mission-preferences-update-required")
+    }
     throw new Error("CodeNomad could not admit the mission input; inspect ownership/environment and retry the same task")
   }
   return response.body.result
@@ -607,8 +615,7 @@ export async function resolveMissionProfileDefaults(sessionID: string, input: un
     return await callMissionInput(targets[0], sessionID, "profile-defaults", input)
   } catch (error) {
     if (error instanceof MissionControlError && missionRecoveryError(error.code)) throw error
-    const unavailable = missionRecoveryError("mission-preferences-unavailable")!
-    throw new MissionControlError(unavailable.message, unavailable.code)
+    throw missionRecoveryControlError("mission-preferences-unavailable")
   }
 }
 
@@ -621,8 +628,7 @@ export async function sendMissionInput(sessionID: string,
     if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
   } catch (error) {
     if (kind === "prepare") {
-      const refusal = missionRecoveryError("prepare-refused")!
-      throw new MissionControlError(refusal.message, refusal.code)
+      throw missionRecoveryControlError("prepare-refused")
     }
     throw error
   }

@@ -87,6 +87,14 @@ export class MissionPreferencesError extends Error {
   }
 }
 
+/** Shared draft selection and creation-time Compare model composition. */
+export function effectiveMissionProfiles(template: MissionTemplateId,
+  input: { defaults: readonly MissionProfileDefault[] } | { profiles: MissionProfiles | undefined },
+  coordinatorModel?: MissionExecution["model"]) {
+  const draft = "defaults" in input ? missionDefaultsFor(input.defaults, template) : input.profiles
+  return { draft, payload: freezeCompareProfiles(template, draft, coordinatorModel) }
+}
+
 export interface MissionCreationSelection {
   preferences?: typeof MISSION_PREFERENCES_UNAVAILABLE
   profiles: Required<MissionProfiles>
@@ -112,7 +120,7 @@ export function resolveMissionCreationDefaults(input: {
 }): MissionCreationSelection {
   if (!validMissionDefaults(input.preferences)) throw new MissionPreferencesError()
   const preferences = normalizeMissionDefaults(input.preferences)
-  const defaults = missionDefaultsFor(preferences, input.template)
+  const { draft: defaults } = effectiveMissionProfiles(input.template, { defaults: preferences })
   const explicit = parseMissionProfiles(input.profiles)
   validateMissionProfiles(input.template, explicit)
   const slot = (requested?: MissionExecution, preferred?: MissionExecution): { execution: MissionExecution; origin: MissionDefaultOrigin } => ({
@@ -132,7 +140,7 @@ export function resolveMissionCreationDefaults(input: {
   }
   const taskMode = resolveTaskMode(preferences, input.template, input.taskMode)
   return structuredClone({
-    profiles: freezeCompareProfiles(input.template, { coordinator: coordinator.execution, roles }, input.coordinatorModel) as Required<MissionProfiles>,
+    profiles: effectiveMissionProfiles(input.template, { profiles: { coordinator: coordinator.execution, roles } }, input.coordinatorModel).payload as Required<MissionProfiles>,
     taskMode: taskMode.taskMode,
     origins: { coordinator: coordinator.origin, roles: origins, taskMode: taskMode.origin },
   })

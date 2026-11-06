@@ -40,6 +40,8 @@ or `opencode-default` origins. Saved `creationDefaults.preferences: "unavailable
 retains the warning on retries even after a backend appears. Ambiguous ownership
 or unreadable/invalid preferences block inheritance: recover preferences or supply
 the coordinator, every exact template role and `taskMode` explicitly.
+If the reply requires a CodeNomad update, update the backend before inheriting
+preferences, or supply every choice explicitly.
 `mission.prepare` requires an owning backend even with fully explicit choices.
 `inspect({ start })` requires the caller's existing coordinator profile to match
 the resolved selection. When a coordinator preference differs, pass
@@ -52,7 +54,8 @@ preparations are serialized. Its standalone intent retains choices for an unknow
 outcome, releasing them on a positive result or a definitive no-effect refusal.
 A retry's prevalidation refusal leaves an earlier attempt's uncertainty intact.
 The project retains at most 128 unknown choices for 24 hours from first
-reservation; retries preserve that deadline. At capacity, retry original
+reservation; retries preserve that deadline. A clock rollback keeps recorded
+choices fresh until their saved timestamp ages through retention. At capacity, retry original
 requestIDs to recover receipts and release slots, or wait for expiry. After expiry,
 preferences may be read anew only with both creation event and document absent;
 a positive receipt or saved document keeps its choices frozen. `inspect({ start })`

@@ -12,7 +12,7 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { prepareMissionCreation, type MissionCreationPipelineManager } from "./mission-creation-pipeline"
 import { hasMissionPreparationHold, MissionCreationHoldError } from "./mission-creation-holds"
 import { missionCreationTemplateSchema, parseMissionCreationDefaults } from "../../missions/creation-defaults"
-import { missionRecoveryError, missionRecoveryRejection } from "../../missions/recovery-error"
+import { missionRecoveryControlError as refusal, missionRecoveryRejection } from "../../missions/recovery-error"
 
 const commandSchema = z.object({ kind: z.literal("prepare"), input: z.object({
   missionID: z.string().min(1).max(100), requestID: z.string().min(1).max(128),
@@ -23,11 +23,6 @@ const commandSchema = z.object({ kind: z.literal("prepare"), input: z.object({
 }).strict() }).strict()
 
 type Manager = MissionCreationPipelineManager & Pick<WorkspaceManager, "list">
-
-function refusal(code: "prepare-refused" | "prepare-no-effect" | "prepare-conflict" | "prepare-uncertain"): MissionControlError {
-  const error = missionRecoveryError(code)!
-  return new MissionControlError(error.message, error.code)
-}
 
 /** A running coordinator's paused hand-off: the same prepared creation pipeline,
  * fences and holds as the UI editor, at the coordinator's own Location. Never Play. */

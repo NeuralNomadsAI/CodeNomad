@@ -422,11 +422,11 @@ export class WorkspaceManager {
     now: () => this.now(),
   })
 
-  private async ownershipWorktrees(id: string, refresh: boolean | undefined, purpose: "request" | "event") {
+  private async ownershipWorktrees(id: string, refresh: boolean | undefined, purpose: "request" | "event", strict = false) {
     const mode = refresh ? "fresh" : "validated"
     return (await (purpose === "event"
-      ? this.eventWorktreeInventory.read(id, mode)
-      : this.getWorktrees(id, mode))).worktrees
+      ? this.eventWorktreeInventory.read(id, mode, { strict })
+      : strict ? this.worktreeInventory.read(id, mode, { strict }) : this.getWorktrees(id, mode))).worktrees
   }
 
   invalidateWorktrees(mode: "lazy" | "blocking" = "lazy"): void {
@@ -502,7 +502,7 @@ export class WorkspaceManager {
       workspacePath: record.path,
       directory: hostDirectory,
       strict,
-      loadWorktrees: (refresh) => this.ownershipWorktrees(record.id, refresh, purpose),
+      loadWorktrees: (refresh) => this.ownershipWorktrees(record.id, refresh, purpose, strict),
       logger: this.options.logger,
     })
   }

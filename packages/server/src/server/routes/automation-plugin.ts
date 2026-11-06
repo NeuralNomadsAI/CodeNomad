@@ -16,7 +16,7 @@ import { interruptMissionTask, observeMissionTask } from "./mission-task-native"
 import { requestAdmission } from "../request-admission"
 import { MissionCreationHoldError } from "./mission-creation-holds"
 import { DeveloperInspectionTargets } from "../../automation/developer-inspection-targets"
-import { missionRecoveryError, missionRecoveryRejection } from "../../missions/recovery-error"
+import { missionRecoveryControlError, missionRecoveryRejection } from "../../missions/recovery-error"
 import { verifyMissionHumanAnswer } from "./mission-human-answer"
 import { verifyHumanRecurrenceRequest } from "./mission-recurrence-proof"
 import { BrowserPage } from "../../automation/browser-page"
@@ -89,8 +89,8 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     const commandKind = body?.command && typeof body.command === "object" && "kind" in body.command ? body.command.kind : undefined
     const preferenceProbe = body.mode === "browser-claim" && body.purpose === "mission-preferences"
     const preferenceUnavailable = () => {
-      const failure = missionRecoveryError("mission-preferences-unavailable")!
-      return reply.code(failure.status).send({ error: failure.message, code: failure.code })
+      const failure = missionRecoveryControlError("mission-preferences-unavailable")
+      return reply.code(503).send({ error: failure.message, code: failure.code })
     }
     const notOwner = (error: string) => reply.code(404).send({ error, ...(preferenceProbe ? { code: "mission-not-owner" } : {}) })
     const lifecycle = commandKind === "lifecycle" || commandKind === "interrupt"

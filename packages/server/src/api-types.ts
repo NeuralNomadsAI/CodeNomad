@@ -240,8 +240,6 @@ export interface WorktreeDescriptor {
   registeredDirectory?: string
   /** Degraded mode: only this exact physical directory authorizes sessions. */
   directoryOnly?: boolean
-  /** Filesystem discovery could not verify Git checkout absence. Strict ownership rejects this snapshot. */
-  discoveryUnverified?: boolean
   kind: WorktreeKind
   /** False for the opened folder and Git's main checkout. */
   removable?: boolean

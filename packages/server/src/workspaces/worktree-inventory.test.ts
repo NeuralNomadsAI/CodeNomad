@@ -118,7 +118,7 @@ it("fences a scan overtaken by a mutation and serializes a trailing validation",
 it("bounds repeatedly invalidated scans and permits a later stable demand", async () => {
   const f = fixture()
   await seed(f)
-  const read = f.cache.read("repo", "fresh")
+  const read = f.cache.read("repo", "fresh", { strict: true })
   const rejected = assert.rejects(read, /inventory changed repeatedly/)
   for (let i = 1; i <= 4; i++) {
     await turn()
@@ -135,6 +135,20 @@ it("bounds repeatedly invalidated scans and permits a later stable demand", asyn
   f.scans[5].resolve(snapshot("recovered"))
   assert.deepEqual(await recovered, snapshot("recovered"))
   assert.deepEqual(f.changes, ["repo"])
+})
+
+it("ordinary inventory keeps trailing reloads beyond the strict budget", async () => {
+  const f = fixture()
+  const read = f.cache.read("repo", "validated")
+  for (let i = 0; i < 4; i++) {
+    await turn()
+    f.cache.invalidate("repo")
+    f.scans[i].resolve(snapshot("obsolete"))
+  }
+  await turn()
+  assert.equal(f.scans.length, 5)
+  f.scans[4].resolve(snapshot("current"))
+  assert.deepEqual(await read, snapshot("current"))
 })
 
 it("keeps the last good display snapshot on failure with demand-driven retry backoff", async () => {

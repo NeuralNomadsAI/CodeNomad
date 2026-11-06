@@ -5,10 +5,11 @@ import { missionTaskModeInputSchema, missionTaskModeSchema } from "./task-execut
 import { MISSION_DEFAULT_ORIGINS, MISSION_PREFERENCES_UNAVAILABLE, type MissionCreationSelection } from "./profile-defaults"
 import { MissionControlError } from "./control-error"
 import { parseExecution } from "./execution"
+import { MISSION_DEFAULTS_REQUEST_INVALID } from "./recovery-error"
+export { MISSION_DEFAULTS_REQUEST_INVALID } from "./recovery-error"
 
 const origin = z.enum(MISSION_DEFAULT_ORIGINS)
 export const missionCreationTemplateSchema = z.enum(Object.keys(missionProfileRoles) as [MissionTemplateId, ...MissionTemplateId[]])
-export const MISSION_DEFAULTS_REQUEST_INVALID = "Correct the profile-defaults request: use a supported template, valid profiles and taskMode, and a complete coordinatorModel"
 export const missionCreationChoicesSchema = z.object({ profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.optional() }).strict()
 const defaultsInputSchema = missionCreationChoicesSchema.extend({
   template: missionCreationTemplateSchema,

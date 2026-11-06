@@ -7,7 +7,6 @@ import { locationRequestOptions } from "../opencode/compatibility/location"
 import { readCheckout, readCheckoutIdentity, readWorktreeAnnotations, createCheckoutRootVerifier, resolveRepoRoot, prepareWorktreeBranch, attachWorktreeBranch } from "./git-worktrees"
 import { ensureCodenomadGitExclude } from "./worktree-map"
 import { GitRequiredError } from "./git-requirement"
-import { discoverCheckoutCommonDirectory } from "../opencode/session-pruning/checkout-identity"
 
 export interface NativeWorktreeContext {
   client: OpenCodeClient
@@ -35,11 +34,9 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
     gitUnavailable = error
   }
   if (!isGitRepo) {
-    const discoveryUnverified = !gitUnavailable && await discoverCheckoutCommonDirectory(workspacePath)
-      .then(common => common !== undefined, () => true)
     return { ...(gitUnavailable ? { gitAvailable: false } : { isGitRepo }),
       worktrees: [{ slug: "root", directory: workspacePath, serviceDirectory: location.directory, kind: "root",
-        ...(gitUnavailable ? { directoryOnly: true } : discoveryUnverified ? { discoveryUnverified: true } : {}) }] }
+        ...(gitUnavailable ? { directoryOnly: true } : {}) }] }
   }
   const local = await readCheckout(workspacePath)
   const current = await client.location.get({ location: { directory: location.directory } }, locationRequestOptions(location))

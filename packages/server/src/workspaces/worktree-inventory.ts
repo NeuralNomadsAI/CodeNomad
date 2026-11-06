@@ -7,7 +7,7 @@ type Entry = {
   retryAt: number
   revision: number
   requireValidation?: boolean
-  pending?: Promise<WorktreeListResponse>
+  pending?: Promise<WorktreeListResponse | null>
 }
 
 const MAX_AGE_MS = 10_000
@@ -26,7 +26,7 @@ export class WorktreeInventory {
     now?: () => number
   }) {}
 
-  async read(id: string, mode: ReadMode = "cached"): Promise<WorktreeListResponse> {
+  async read(id: string, mode: ReadMode = "cached", { strict = false } = {}): Promise<WorktreeListResponse> {
     let entry = this.entries.get(id)
     if (!entry) {
       entry = { expiresAt: 0, retryAt: 0, revision: 0 }
@@ -35,10 +35,10 @@ export class WorktreeInventory {
     const now = this.now()
     if (mode !== "fresh" && entry.value && entry.expiresAt > now) return entry.value
     if (mode === "cached" && entry.value && !entry.requireValidation) {
-      if (!entry.pending && entry.retryAt <= now) void this.load(id, entry).catch(error => this.options.failed(id, error))
+      if (!entry.pending && entry.retryAt <= now) void this.validated(id, entry).catch(error => this.options.failed(id, error))
       return entry.value
     }
-    return this.load(id, entry)
+    return this.validated(id, entry, strict)
   }
 
   // Invalidation is lazy: retain the display snapshot, but fence any running scan.
@@ -57,18 +57,24 @@ export class WorktreeInventory {
     this.entries.delete(id)
   }
 
-  private load(id: string, entry: Entry, restarts = 0): Promise<WorktreeListResponse> {
+  private async validated(id: string, entry: Entry, strict = false): Promise<WorktreeListResponse> {
+    for (let invalidated = 0; ; invalidated++) {
+      const value = await this.load(id, entry)
+      if (value) return value
+      if (strict && invalidated >= 3) throw new Error("Worktree ownership inventory changed repeatedly")
+    }
+  }
+
+  private load(id: string, entry: Entry): Promise<WorktreeListResponse | null> {
     if (entry.pending) return entry.pending
     const revision = entry.revision
     const previous = entry.value
-    const task = Promise.resolve().then(() => this.options.load(id)).then(async value => {
+    const task = Promise.resolve().then(() => this.options.load(id)).then(value => {
       if (this.entries.get(id) !== entry) throw new Error("Workspace inventory was disposed")
       if (revision !== entry.revision) {
         // A mutation overtook the scan. Serialize one trailing validation rather
         // than publishing obsolete data or starting overlapping Git process fans.
-        if (restarts >= 3) throw new Error("Worktree ownership inventory changed repeatedly")
-        entry.pending = undefined
-        return this.load(id, entry, restarts + 1)
+        return null
       }
       entry.value = value
       entry.expiresAt = this.now() + MAX_AGE_MS

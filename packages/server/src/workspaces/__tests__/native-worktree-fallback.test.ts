@@ -48,14 +48,14 @@ test("native inventory preserves root fallback while strict readers reject unver
       assert.deepEqual(inventory, {
         ...(missingGit ? { gitAvailable: false } : { isGitRepo: false }),
         worktrees: [{ slug: "root", directory: folder, serviceDirectory: folder, kind: "root",
-          ...(missingGit ? { directoryOnly: true } : { discoveryUnverified: true }) }],
+          ...(missingGit ? { directoryOnly: true } : {}) }],
       })
       let reads = 0
       const params = { workspaceId: folder, workspacePath: folder, directory: folder,
         loadWorktrees: async () => { reads++; return inventory.worktrees } }
       assert.equal((await resolveOwnedWorktreePath(params)).slug, "root")
       for (let i = 0; i < 2; i++) await assert.rejects(resolveOwnedWorktreePath({ ...params, strict: true }), expectedError)
-      assert.equal(reads, 1, "strict readers must reject the cached shared-inventory marker")
+      assert.equal(reads, 1, "strict readers qualify cached fallback without changing the public inventory")
       if (folder === (ceiling ? nested : repo)) {
         assert.equal(Boolean(await resolveOwnedWorktreePath({ ...params, directory: folder + "/child" })), !missingGit)
       }
@@ -64,7 +64,7 @@ test("native inventory preserves root fallback while strict readers reject unver
     assert.deepEqual(await listNativeWorktrees(context(nonGit)), {
       ...(missingGit ? { gitAvailable: false } : { isGitRepo: false }),
       worktrees: [{ slug: "root", directory: nonGit, serviceDirectory: nonGit, kind: "root",
-        ...(missingGit ? { directoryOnly: true } : ceiling ? { discoveryUnverified: true } : {}) }],
+        ...(missingGit ? { directoryOnly: true } : {}) }],
     })
     if (!ceiling) assert.equal(await sharesGitCommonDirectory(repo, linked, true), true)
     else await assert.rejects(sharesGitCommonDirectory(repo, linked, true), /Git discovery is configured/)

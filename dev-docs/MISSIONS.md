@@ -141,7 +141,8 @@ refuse otherwise. Only one-time coordinators are offered and told about
   Both `mission.prepare` and `mission.inspect({ start })` resolve omitted
   coordinator/role profiles and `taskMode` from the owning CodeNomad backend's
   `ui.settings.missionProfileDefaults`. The editor and server share
-  `missions/profile-defaults.ts`: a playbook's slot overrides the global `all`
+  `missions/profile-defaults.ts`, including `effectiveMissionProfiles` for editable
+  drafts and frozen creation payloads: a playbook's slot overrides the global `all`
   slot; the global `specialist` supplies task roles, with the Compare judge using
   the coordinator's model by default. Each supplied profile slot wins whole,
   including `{}` (OpenCode defaults) or an agent-only profile; `profiles: {}`
@@ -198,6 +199,13 @@ refuse otherwise. Only one-time coordinators are offered and told about
   profile resolution can use the no-owner fallback. Fully explicit choices make
   no preference request; preparation still requires its owning backend.
 
+  Missing Windows interop executables (`ENOENT`/`ENOEXEC` from `cmd.exe` or
+  `wslpath`) establish absence of reachable Windows backends for that WSL process;
+  local discovery continues. Uncertain launch failures refuse resolution. Legacy
+  backends without negative ownership proof or preference-command support return
+  `mission-preferences-update-required`: update CodeNomad before inheriting defaults.
+  A live backend's preferences stay protected by this refusal.
+
   The requestID is scoped to the coordinator and mission. Preparations with the
   same requestID are serialized. Reuse that requestID and the original inputs:
   a retry first reads the saved creation event/document and returns the saved
@@ -215,6 +223,9 @@ refuse otherwise. Only one-time coordinators are offered and told about
   capacity, retry the original requestIDs to
   recover completed preparations and release their slots, or wait for their
   24-hour retention to expire.
+
+  A clock rollback keeps future-dated intents fresh until their stored creation
+  time has aged through the retention window; retries reuse their saved choices.
 
   After expiry, preferences may be read anew only when the creation event and
   document are both absent. A positive receipt or saved document keeps its

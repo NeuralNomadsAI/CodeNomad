@@ -179,8 +179,12 @@ try {
   receipt.runtime = { version: info.version, pid: info.pid, url }
   rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   let variables = { MISSION_FIXTURE: "first" }
+  let preferenceReads = 0
+  const settings = { getOwner: () => ({ environmentVariables: variables }),
+    getRawConfigOwner: owner => { assert.equal(owner, "ui"); preferenceReads++; return {} },
+    readEnvironmentForAdmission: async () => ({ ...variables }) }
   manager = new WorkspaceManager({ rootDir: root, logger: pino({ level: "silent" }), eventBus: new EventBus(),
-    settings: { getOwner: () => ({ environmentVariables: variables }), readEnvironmentForAdmission: async () => ({ ...variables }) },
+    settings,
     binaryResolver: { resolveDefault: () => ({ path: cli, label: "Isolated missions" }) },
     hostServiceLifecycleFactory: () => ({ discover: async () => endpoint, ensure: async () => endpoint }),
   })
@@ -220,7 +224,7 @@ try {
   const worktreeDeletionFence = new WorktreeDeletionFence()
   registerMissionRoutes(bridge, { workspaceManager: manager, worktreeDeletionFence, auth })
   registerAutomationPluginRoute(bridge, { workspaceManager: manager, worktreeDeletionFence,
-    authManager: auth, bridgeToken: registration.token, nativeParent: {}, developerCdp: {} })
+    authManager: auth, settings, bridgeToken: registration.token, nativeParent: {}, developerCdp: {} })
   await bridge.listen({ host: "127.0.0.1", port: 0 })
   registration.url = `http://127.0.0.1:${bridge.server.address().port}/api/opencode-plugin/automation`
   removeBridge = await publishAutomationBridge(registration)
@@ -276,6 +280,9 @@ try {
     return { ...result, mission: missions.find(mission => mission.id === result.missionID) }
   }
   const inspected = await invoke("inspect", { catalog: true, start: { objective: "Native integration", template: "custom" } })
+  assert.equal(inspected.selection.preferences, undefined, "The owning fixture backend supplied readable preferences")
+  assert.ok(preferenceReads > 0, "Agent creation exercised the owning backend's raw UI reader")
+  assert.equal(inspected.selection.origins.coordinator, "opencode-default")
   assert(inspected.catalog.agents.some(agent => agent.id === "reviewer"))
   assert(inspected.catalog.models.some(model => model.id === "selected" && model.variants.includes("careful")))
   gate("native catalog and configured variant discovery")

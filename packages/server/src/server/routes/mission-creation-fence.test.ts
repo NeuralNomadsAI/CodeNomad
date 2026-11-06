@@ -8,7 +8,7 @@ import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
 import { setupMissionsPlugin } from "../../opencode/missions-plugin"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { prepareMissionCreation } from "./mission-creation-pipeline"
-import { missionRecoveryError } from "../../missions/recovery-error"
+import { missionRecoveryControlError, missionRecoveryError } from "../../missions/recovery-error"
 import { MissionControlError } from "../../missions/control-error"
 
 const directory = "C:/private-fixture/worktree"
@@ -99,8 +99,8 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
     const response = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH, headers: { "x-codenomad-automation-token": "private-token" },
       payload: { mode: "mission-input", sessionID, command: { kind, input } } })
     if (response.statusCode !== 200) {
-      const error = missionRecoveryError(response.json().code)
-      if (error && error.status === response.statusCode) throw new MissionControlError(error.message, error.code)
+      const error = missionRecoveryError(response.json().code, response.json().error)
+      if (error && error.status === response.statusCode) throw missionRecoveryControlError(error.code, response.json().error)
       throw new Error(response.json().error)
     }
     return response.json().result

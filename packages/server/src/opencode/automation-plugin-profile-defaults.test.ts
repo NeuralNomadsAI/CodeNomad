@@ -10,6 +10,7 @@ import fs from "node:fs/promises"
 import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
 import { MissionControlError } from "../missions/control-error"
+import { MISSION_DEFAULTS_REQUEST_INVALID } from "../missions/recovery-error"
 import { registerAutomationPluginRoute } from "../server/routes/automation-plugin"
 import { setupMissionsPlugin } from "./missions-plugin"
 import { AUTOMATION_BRIDGE_PATH, automationBridgeDirectories, createAutomationBridgeRegistration, publishAutomationBridge, resolveMissionProfileDefaults, sendMissionInput } from "./automation-plugin"
@@ -37,6 +38,7 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
   let probeFailure: "network" | "refused" | "timeout" | "http" | "malformed" | "unproven-negative" | undefined
   let inventoryFailure = false
   let failureCode: string | undefined
+  let bridgeError = "secret backend detail", legacy = false
   registerAutomationPluginRoute(app, {
     authManager: { isLoopbackRequest: () => true }, bridgeToken: registration.token, nativeParent: {}, developerCdp: {},
     settings: { getRawConfigOwner: () => {
@@ -74,7 +76,8 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
       posts++
       assert.equal(body.command.kind, "profile-defaults")
       if (denied) return new Response(JSON.stringify({ error: "secret backend refusal" }), { status: 403 })
-      if (failureCode) return new Response(JSON.stringify({ code: failureCode, error: "secret backend detail" }), { status: 409 })
+      if (legacy) return new Response(JSON.stringify({ error: "Unknown mission command" }), { status: 400 })
+      if (failureCode) return new Response(JSON.stringify({ code: failureCode, error: bridgeError }), { status: 409 })
     }
     const response = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
       headers: { "x-codenomad-automation-token": token! }, payload: body })
@@ -181,7 +184,9 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
   inventoryFailure = false
   probeFailure = "refused"
   assert.deepEqual(await request(), fallback, "a stale Windows or local registration with no listener is absent")
-  for (probeFailure of ["network", "timeout", "http", "malformed", "unproven-negative"] as const) await assert.rejects(request(), unavailable, "a registered backend failure refuses fallback")
+  for (probeFailure of ["network", "timeout", "http", "malformed"] as const) await assert.rejects(request(), unavailable, "a registered backend failure refuses fallback")
+  probeFailure = "unproven-negative"
+  await assert.rejects(request(), (error: unknown) => error instanceof MissionControlError && error.code === "mission-preferences-update-required")
   probeFailure = undefined
   preferences = [{ template: "all", profiles: {}, taskMode: "independent" }]
   assert.equal((await request() as { taskMode: string }).taskMode, "independent", "the next bridge call reads fresh preferences")
@@ -208,6 +213,16 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
       && error.code === code && error.message.startsWith("Choose ") && !error.message.includes("secret"))
   }
   failureCode = undefined
+  legacy = true
+  await assert.rejects(request(), (error: unknown) => error instanceof MissionControlError
+    && error.code === "mission-preferences-update-required" && error.message.includes("Update CodeNomad"),
+    "a legacy owner cannot be discarded without silently losing its preferences")
+  legacy = false
+  failureCode = "invalid-execution"
+  bridgeError = MISSION_DEFAULTS_REQUEST_INVALID
+  await assert.rejects(request(), (error: unknown) => error instanceof MissionControlError && error.message === MISSION_DEFAULTS_REQUEST_INVALID)
+  failureCode = undefined
+  bridgeError = "secret backend detail"
   const before = posts
   removals.push(await publishAutomationBridge(createAutomationBridgeRegistration("http://127.0.0.1:54322")))
   await assert.rejects(request(), unavailable, "multiple owners must expose the same fixed preference refusal")
@@ -241,6 +256,22 @@ test("strict WSL discovery retries a failed cached Windows registry lookup", t =
   assert.equal(attempts, 2, "an old failed lookup is not reused as negative ownership evidence")
 })
 
+test("unavailable Windows interop proves absence, while uncertain launches still refuse", t => {
+  const options = { platform: "linux" as const, env: { WSL_DISTRO_NAME: "fixture" }, home: "/fixture" }
+  let missing = "cmd.exe", code = "ENOENT"
+  t.mock.method(childProcess, "execFileSync", (command: string) => {
+    if (command === missing) throw Object.assign(new Error("fixture launch failure"), { code })
+    return "C:/fixture"
+  })
+  syncBuiltinESMExports()
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports() })
+  for (missing of ["cmd.exe", "wslpath"]) for (code of ["ENOENT", "ENOEXEC"]) {
+    assert.deepEqual(automationBridgeDirectories({ ...options, strict: true }), ["/fixture/.config/codenomad/automation-bridges"])
+  }
+  code = "ETIMEDOUT"
+  assert.throws(() => automationBridgeDirectories({ ...options, strict: true }), /Windows mission backend discovery is unavailable/)
+})
+
 test("WSL Windows discovery skips unusable advertisements and refused endpoints, retaining live failures", async t => {
   const platform = Object.getOwnPropertyDescriptor(process, "platform")!
   const previous = { WSL_DISTRO_NAME: process.env.WSL_DISTRO_NAME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR }
@@ -256,17 +287,21 @@ test("WSL Windows discovery skips unusable advertisements and refused endpoints,
     syncBuiltinESMExports()
   })
   const registration = createAutomationBridgeRegistration("http://127.0.0.1:1")
-  let bytes = Buffer.from(JSON.stringify(registration)), probes = 0, readFailed = false
-  t.mock.method(process, "kill", () => assert.fail("Windows publisher PIDs cannot be checked from WSL"))
-  t.mock.method(fs, "rm", async () => assert.fail("WSL leaves foreign advertisements to their publisher"))
+  let bytes = Buffer.from(JSON.stringify(registration)), probes = 0, readFailed = false, readCode = "EACCES"
+  let local = false, filePID = registration.pid, pruned = 0
+  t.mock.method(process, "kill", (pid: number) => {
+    assert.ok(local && pid <= 0x7fffffff, "only representable local PIDs may be probed")
+    return true
+  })
+  t.mock.method(fs, "rm", async () => { assert.ok(local, "WSL leaves foreign advertisements to their publisher"); pruned++ })
   t.mock.method(childProcess, "execFileSync", () => "/fixture-windows")
   t.mock.method(fs, "opendir", async (directory: string) => (async function* () {
-    if (directory.startsWith("/fixture-windows/")) yield {
-      name: `${registration.startedAt}-${registration.pid}-windows.json`, isFile: () => true,
+    if (directory.startsWith(local ? "/fixture-linux/" : "/fixture-windows/")) yield {
+      name: `${registration.startedAt}-${filePID}-windows.json`, isFile: () => true,
     }
   })())
   t.mock.method(fs, "open", async () => {
-    if (readFailed) throw Object.assign(new Error("Permission denied"), { code: "EACCES" })
+    if (readFailed) throw Object.assign(new Error("fixture file read failure"), { code: readCode })
     return { read: async (buffer: Buffer) => { bytes.copy(buffer); return { bytesRead: bytes.length } }, close: async () => {} }
   })
   let exit = 7, status = 0, diagnostic = "* connect to 127.0.0.1 port 1 failed: Connection refused"
@@ -305,4 +340,12 @@ test("WSL Windows discovery skips unusable advertisements and refused endpoints,
   readFailed = true
   await assert.rejects(request(), (error: unknown) => error instanceof MissionControlError && error.code === "mission-preferences-unavailable",
     "a failed file read may hide a valid owner and stays distinct from malformed foreign content")
+  readCode = "ENOENT"
+  assert.equal((await request() as any).preferences, "unavailable", "a vanished Windows file is absent")
+  local = true
+  assert.equal((await request() as any).preferences, "unavailable", "a vanished local file is absent")
+  assert.equal(pruned, 0)
+  filePID = 0x80000000
+  assert.equal((await request() as any).preferences, "unavailable", "an unrepresentable PID cannot keep an advertisement alive")
+  assert.equal(pruned, 1)
 })

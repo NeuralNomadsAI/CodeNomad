@@ -86,6 +86,17 @@ test("uncertain choices expire without extending their lifetime on an identical 
   assert.equal(await f.intents.read("msn_0", request, missing, "request-conflict"), undefined)
 })
 
+test("clock rollback keeps recorded choices fresh instead of replaying preference resolution", async () => {
+  const f = fixture()
+  await f.intents.save("msn_clock", request, defaults, missing, () => {}, "request-conflict")
+  const before = structuredClone([...f.values])
+  f.advance(-60_000)
+  assert.deepEqual(await f.intents.read("msn_clock", request, missing, "request-conflict"), defaults)
+  const changed = { ...defaults, taskMode: "independent" as const }
+  assert.deepEqual(await f.intents.save("msn_clock", request, changed, missing, () => {}, "request-conflict"), defaults)
+  assert.deepEqual([...f.values], before)
+})
+
 test("settled choices release capacity on adapters without key removal", async () => {
   const f = fixture()
   f.storage.remove = undefined

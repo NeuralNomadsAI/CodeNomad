@@ -2,13 +2,14 @@ import { lstat, realpath } from "fs/promises"
 import path from "node:path"
 import type { LogLike } from "./git-worktrees"
 import type { WorktreeDescriptor } from "../api-types"
+import { discoverCheckoutCommonDirectory } from "../opencode/session-pruning/checkout-identity"
 
 type WorktreeSource = { loadWorktrees: (refresh?: boolean) => Promise<WorktreeDescriptor[]> }
 
 type WorktreeCacheEntry = {
   expiresAt: number
   refreshedOnMiss: boolean
-  worktrees: Array<{ slug: string; directory: string; normalizedDirectory: string; worktreeDirectory: string; directoryOnly?: boolean; discoveryUnverified?: boolean }>
+  worktrees: Array<{ slug: string; directory: string; normalizedDirectory: string; worktreeDirectory: string; directoryOnly?: boolean; verifyCheckoutAbsence: boolean }>
   resolvedDirectories: Map<string, { slug: string; directory: string; worktreeDirectory: string } | null>
 }
 
@@ -16,9 +17,10 @@ const WORKTREE_CACHE_TTL_MS = 10_000
 const worktreeCache = new Map<string, WorktreeCacheEntry>()
 const worktreeLoads = new Map<string, Promise<WorktreeCacheEntry | null>>()
 
-function restartWorktreeRead(budget: { restarts: number }): boolean {
+function restartWorktreeRead(budget?: { restarts: number }): void {
+  if (!budget) return
   if (budget.restarts >= 3) throw new Error("Worktree ownership inventory changed repeatedly")
-  return ++budget.restarts === 3
+  budget.restarts++
 }
 
 async function normalizeDirectoryPath(directory: string): Promise<string> {
@@ -32,9 +34,9 @@ async function normalizeDirectoryPath(directory: string): Promise<string> {
 }
 
 async function getCachedWorktrees(
-  params: WorktreeSource & { workspaceId: string; workspacePath: string; logger?: LogLike },
+  params: WorktreeSource & { workspaceId: string; workspacePath: string; logger?: LogLike; strict?: boolean },
   refresh = false,
-  budget = { restarts: 0 },
+  budget = params.strict ? { restarts: 0 } : undefined,
 ): Promise<WorktreeCacheEntry> {
   const cached = worktreeCache.get(params.workspaceId)
   const now = Date.now()
@@ -42,11 +44,14 @@ async function getCachedWorktrees(
     return cached
   }
 
-  let load = worktreeLoads.get(params.workspaceId)
+  // Strict demands never inherit an ordinary caller's unbounded trailing reads.
+  // Both channels share the last validated snapshot and native single-scan work.
+  const loadKey = params.strict ? `${params.workspaceId}\0strict` : params.workspaceId
+  let load = worktreeLoads.get(loadKey)
   if (!load) {
     let scan!: Promise<WorktreeCacheEntry | null>
     scan = (async () => {
-      const worktrees = await params.loadWorktrees(refresh)
+      const worktrees = await Promise.resolve().then(() => params.loadWorktrees(refresh))
       const entry: WorktreeCacheEntry = {
         expiresAt: Date.now() + WORKTREE_CACHE_TTL_MS,
         refreshedOnMiss: false,
@@ -57,24 +62,26 @@ async function getCachedWorktrees(
             normalizedDirectory: await normalizeDirectoryPath(wt.directory),
             worktreeDirectory: await normalizeDirectoryPath(wt.registeredDirectory ?? wt.directory),
             directoryOnly: wt.directoryOnly,
-            discoveryUnverified: wt.discoveryUnverified,
+            verifyCheckoutAbsence: wt.kind === "root" && !wt.registeredDirectory && !wt.directoryOnly,
           })),
         ),
         resolvedDirectories: new Map(),
       }
       // Share one scan, never another caller's retry chain or budget.
-      if (worktreeLoads.get(params.workspaceId) !== scan) return null
+      if (worktreeLoads.get(loadKey) !== scan || worktreeCache.get(params.workspaceId) !== cached) return null
       worktreeCache.set(params.workspaceId, entry)
       return entry
     })().finally(() => {
-      if (worktreeLoads.get(params.workspaceId) === scan) worktreeLoads.delete(params.workspaceId)
+      if (worktreeLoads.get(loadKey) === scan) worktreeLoads.delete(loadKey)
     })
-    worktreeLoads.set(params.workspaceId, scan)
+    worktreeLoads.set(loadKey, scan)
     load = scan
   }
   const entry = await load
   if (entry && worktreeCache.get(params.workspaceId) === entry) return entry
-  return getCachedWorktrees(params, restartWorktreeRead(budget), budget)
+  restartWorktreeRead(budget)
+  const finalFreshRead = budget?.restarts === 3
+  return getCachedWorktrees(params, finalFreshRead, budget)
 }
 
 export function invalidateWorktreeCache(workspaceId?: string): void {
@@ -84,6 +91,7 @@ export function invalidateWorktreeCache(workspaceId?: string): void {
   } else {
     worktreeCache.delete(workspaceId)
     worktreeLoads.delete(workspaceId)
+    worktreeLoads.delete(`${workspaceId}\0strict`)
   }
 }
 
@@ -190,14 +198,17 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
   directory: string
   strict?: boolean
   logger?: LogLike
-}, budget = { restarts: 0 }): Promise<{ slug: string; directory: string; worktreeDirectory: string } | null> {
+}, budget = params.strict ? { restarts: 0 } : undefined): Promise<{ slug: string; directory: string; worktreeDirectory: string } | null> {
   const target = params.strict ? await realpath(params.directory) : await resolveDirectoryPath(params.directory)
   if (!target) return null
   const find = async (worktrees: WorktreeCacheEntry["worktrees"]) => {
-    if (params.strict && worktrees.some(worktree => worktree.directoryOnly || worktree.discoveryUnverified)) throw new Error("Git ownership inventory unavailable")
+    if (params.strict && worktrees.some(worktree => worktree.directoryOnly)) throw new Error("Git ownership inventory unavailable")
     return (params.strict
     ? (await Promise.all(worktrees.map(async worktree => {
       const worktreeDirectory = await realpath(worktree.worktreeDirectory)
+      if (worktree.verifyCheckoutAbsence && !await discoverCheckoutCommonDirectory(worktreeDirectory).then(common => common === undefined, () => false)) {
+        throw new Error("Git ownership inventory unavailable")
+      }
       try {
         return { ...worktree, worktreeDirectory, normalizedDirectory: await realpath(worktree.directory) }
       } catch (error) {
@@ -210,14 +221,15 @@ export async function resolveOwnedWorktreePath(params: WorktreeSource & {
     .filter((worktree) => worktree.directoryOnly ? worktree.normalizedDirectory === target : isPathWithinWorktree(worktree.normalizedDirectory, target))
     .sort((left, right) => right.normalizedDirectory.length - left.normalizedDirectory.length)[0]
   }
-  let entry = await getCachedWorktrees(params, budget.restarts === 3, budget)
+  const finalFreshRead = budget?.restarts === 3
+  let entry = await getCachedWorktrees(params, finalFreshRead, budget)
   if (!params.strict && entry.resolvedDirectories.has(target)) return entry.resolvedDirectories.get(target)!
   let match = await find(entry.worktrees)
   if (worktreeCache.get(params.workspaceId) !== entry) {
     restartWorktreeRead(budget)
     return resolveOwnedWorktreePath(params, budget)
   }
-  if (budget.restarts < 3 && !entry.refreshedOnMiss && (!match || (match.slug === "root" && match.normalizedDirectory !== target))) {
+  if (budget?.restarts !== 3 && !entry.refreshedOnMiss && (!match || (match.slug === "root" && match.normalizedDirectory !== target))) {
     // Refresh once for this cache lifetime, including sequential misses from
     // distinct foreign event locations. Otherwise every miss discards the last
     // negative result and stalls the serial native event bridge on inventory I/O.

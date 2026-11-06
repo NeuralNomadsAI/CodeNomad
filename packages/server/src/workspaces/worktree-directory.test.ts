@@ -236,7 +236,7 @@ test("repeated directory-cache invalidations have two retries and one final fres
   t.after(() => { invalidateWorktreeCache(temp); rmSync(temp, { recursive: true, force: true }) })
   const refreshes: boolean[] = []
   await assert.rejects(resolveOwnedWorktreePath({
-    workspaceId: temp, workspacePath: temp, directory: temp,
+    workspaceId: temp, workspacePath: temp, directory: temp, strict: true,
     loadWorktrees: async (refresh = false) => {
       refreshes.push(refresh)
       await Promise.resolve()
@@ -247,7 +247,7 @@ test("repeated directory-cache invalidations have two retries and one final fres
   assert.deepEqual(refreshes, [false, false, false, true])
   refreshes.length = 0
   const absent = await resolveOwnedWorktreePath({
-    workspaceId: temp, workspacePath: temp, directory: path.join(temp, "foreign"),
+    workspaceId: temp, workspacePath: temp, directory: temp, strict: true,
     loadWorktrees: async (refresh = false) => {
       refreshes.push(refresh)
       await Promise.resolve()
@@ -262,6 +262,55 @@ test("repeated directory-cache invalidations have two retries and one final fres
     workspaceId: temp, workspacePath: temp, directory: temp,
     loadWorktrees: async () => [{ slug: "root", directory: temp, kind: "root" }],
   }))?.slug, "root", "a later stable demand can recover")
+})
+
+test("ordinary ownership preserves trailing reloads beyond four invalidations", async t => {
+  const temp = mkdtempSync(path.join(tmpdir(), "codenomad-ordinary-reloads-"))
+  t.after(() => { invalidateWorktreeCache(temp); rmSync(temp, { recursive: true, force: true }) })
+  let reads = 0
+  const result = await resolveOwnedWorktreePath({ workspaceId: temp, workspacePath: temp, directory: temp,
+    loadWorktrees: async () => {
+      if (++reads <= 4) invalidateWorktreeCache(temp)
+      return [{ slug: "root", directory: temp, kind: "root" }]
+    } })
+  assert.equal(result?.slug, "root")
+  assert.equal(reads, 5)
+})
+
+test("strict ownership stays bounded while an ordinary demand keeps trailing native scans", async t => {
+  const temp = mkdtempSync(path.join(tmpdir(), "codenomad-mixed-ownership-"))
+  const snapshot = { worktrees: [{ slug: "root", directory: temp, kind: "root" as const }] }
+  const scans: Array<(value: typeof snapshot) => void> = []
+  let started = () => {}, draining = false, readers = 0
+  const inventory = new WorktreeInventory({ load: async () => {
+    if (draining) return snapshot
+    return new Promise<typeof snapshot>(resolve => { scans.push(resolve); started() })
+  }, changed() {}, failed() {} })
+  const params = (strict: boolean) => ({ workspaceId: temp, workspacePath: temp, directory: temp, strict,
+    loadWorktrees: async () => { readers++; started(); return (await inventory.read(temp, "validated", { strict })).worktrees } })
+  const ordinary = resolveOwnedWorktreePath(params(false))
+  const strict = resolveOwnedWorktreePath(params(true))
+  const rejected = assert.rejects(strict, /inventory changed repeatedly/)
+  t.after(async () => {
+    draining = true
+    for (const resolve of scans) resolve(snapshot)
+    await Promise.allSettled([ordinary, strict])
+    invalidateWorktreeCache(temp)
+    rmSync(temp, { recursive: true, force: true })
+  })
+  while (readers < 2) await new Promise<void>(resolve => { started = resolve })
+  for (let i = 0; i < 4; i++) {
+    while (scans.length < i + 1) await new Promise<void>(resolve => { started = resolve })
+    assert.equal(scans.length, i + 1, "both readers share one native scan")
+    inventory.invalidate(temp)
+    invalidateWorktreeCache(temp)
+    scans[i](snapshot)
+  }
+  await rejected
+  while (scans.length < 5) await new Promise<void>(resolve => { started = resolve })
+  assert.equal(scans.length, 5)
+  scans[4](snapshot)
+  assert.equal((await ordinary)?.slug, "root")
 })
 
 test("concurrent pending-scan handoffs retain each ownership demand's retry budget", async t => {
@@ -279,7 +328,7 @@ test("concurrent pending-scan handoffs retain each ownership demand's retry budg
     rmSync(temp, { recursive: true, force: true })
   })
   const params = {
-    workspaceId: temp, workspacePath: temp, directory: temp,
+    workspaceId: temp, workspacePath: temp, directory: temp, strict: true,
     loadWorktrees: async () => {
       active++
       try {

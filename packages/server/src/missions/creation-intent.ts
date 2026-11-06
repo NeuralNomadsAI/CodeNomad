@@ -6,10 +6,11 @@ import { missionCreationChoices, missionCreationChoicesSchema, missionCreationTe
 import { runMissionExclusive } from "./exclusive"
 import type { MissionStorage } from "./journal"
 import type { MissionEvent, MissionJsonValue } from "./model"
+import { MISSION_TITLE_MAX } from "./mission-title"
 
 type Request = MissionStartInput & { title?: string }
 const requestSchema = missionCreationChoicesSchema.extend({ objective: z.string().min(1).max(20_000),
-  title: z.string().min(1).max(60).optional(), notes: z.string().max(20_000).optional(),
+  title: z.string().min(1).max(MISSION_TITLE_MAX).optional(), notes: z.string().max(20_000).optional(),
   template: missionCreationTemplateSchema }).strict()
 const intentSchema = z.object({ version: z.literal(1), request: requestSchema, defaults: z.unknown(),
   createdAt: z.number().finite().nonnegative() }).strict()
@@ -68,7 +69,7 @@ export class MissionCreationIntents {
   }
 
   private expired(createdAt: number): boolean {
-    return this.now() - createdAt >= MISSION_CREATION_INTENT_RETENTION_MS || createdAt > this.now()
+    return this.now() - createdAt >= MISSION_CREATION_INTENT_RETENTION_MS
   }
 
   private async activeCount(): Promise<number> {
