@@ -10,7 +10,7 @@
 
 | פלטפורמה | גרסת Electron | גרסת Tauri | הערות לפלטפורמה |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel או Apple Silicon | ZIP, Intel או Apple Silicon | סביבת הריצה הכלולה מחייבת macOS 13.5 ואילך. |
+| macOS | ZIP, Intel או Apple Silicon | ZIP, Intel או Apple Silicon | macOS 13.5 ואילך (נדרש עבור ה־Node ש־Tauri כולל; Electron מצהיר על אותו מינימום). |
 | Windows | ZIP, x64 | מתקין, x64 | Windows 10 ואילך; Tauri משתמש ב־WebView2. |
 | Linux | חבילת Debian, x64 | AppImage, x64 | נבנה ונבדק ב־Ubuntu 24.04; תאימות להפצות ישנות יותר אינה מובטחת. |
 
@@ -47,7 +47,7 @@ chmod +x CodeNomad-Tauri-linux-x64-<version>.AppImage
 | --- | --- | --- |
 | OpenCode CLI | מארח ההרצה שנבחר, לרבות הפצת WSL שנבחרה כשמתאים | מינימום **2.2.3**; **2.2.5** היא הגרסה המומלצת/שנבדקה. גרסאות חדשות או מותאמות עוברות אימות חוזים ולא חסימה מפני שלא נבדקו. |
 | Git | ב־`PATH` של חשבון שרת הקצה של CodeNomad | נדרש לזהות מאגר, לפעולות Git ול־worktrees. |
-| Node.js/npm | מארח שרת עצמאי ובנייה מקוד מקור | Node.js 24 LTS; בניות שחזוריות מקוד מקור משתמשות ב־`.node-version` (**24.20.0**). כלול במשאבי הריצה/ההתקנה לשולחן העבודה. |
+| Node.js/npm | מארח שרת עצמאי ובנייה מקוד מקור | Node.js 24 LTS; בניות שחזוריות מקוד מקור משתמשות ב־`.node-version` (**24.20.0**). גרסאות שולחן העבודה כוללות סביבה משלהן: ה־Node המשולב של Electron או ה־Node ש־Tauri כולל, עם npm. |
 | תיקיית סביבת עבודה | דיסק נגיש לשרת הקצה | תיקייה פיזית שנפתחה במפורש, לא תיקייה מקומית למכשיר שהוסקה מדפדפן מרוחק. |
 
 ב־Windows התקינו [Git for Windows](https://gitforwindows.org/) עם גישה משורת הפקודה/יישומי צד שלישי. די בהתקנה למשתמש יחיד בתיקייה שהמשתמש רשאי לכתוב בה. ב־macOS/Linux השתמשו ב־[הוראות Git לפלטפורמה](https://git-scm.com/downloads).

@@ -3,7 +3,7 @@ import path from "node:path"
 import { executeInstaller, npmNeedsNodeCommand, writeNpmNodeCommand } from "./npm-runtime"
 import { createInstallerDirectory, InstallationInterruptedError } from "./installation-lock"
 
-/** Let OpenCode retain its running Windows image while using our bundled npm
+/** Let OpenCode retain its running Windows image while using the npm beside our Node runtime
  * and the already verified shared prefix, not an unrelated system installation. */
 export async function upgradeSharedOpenCode(options: {
   binary: string

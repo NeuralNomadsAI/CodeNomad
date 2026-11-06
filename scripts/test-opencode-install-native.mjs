@@ -86,5 +86,5 @@ try {
     assert.match(execFileSync(binary, ["--version"], { encoding: "utf8", env }), new RegExp(MINIMUM_OPENCODE_VERSION.replaceAll(".", "\\.")))
     console.log("PASS: Windows live-executable repair deferred before npm; original installation retained")
   }
-  console.log(`PASS: shared user npm installation with isolated bundled Node, no system Node PATH; backend and terminal both resolve ${MINIMUM_OPENCODE_VERSION}`)
+  console.log(`PASS: shared user npm installation with an isolated ${selected.electron ? "Electron" : "Node"} runtime, no system Node PATH; backend and terminal both resolve ${MINIMUM_OPENCODE_VERSION}`)
 } finally { await rm(root, { recursive: true, force: true }) }

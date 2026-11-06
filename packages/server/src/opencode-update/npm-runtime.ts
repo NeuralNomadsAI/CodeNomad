@@ -4,7 +4,8 @@ import { rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { createInstallerDirectory, InstallationInterruptedError } from "./installation-lock"
 
-/** npm from the pinned Node archive, in Electron resources or beside Tauri's Node. */
+/** npm in Electron resources, or beside the Node runtime: Tauri's bundled Node or a
+ * standalone server's own Node. */
 export function bundledNpm(execPath = process.execPath,
   resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath,
   target = `${process.platform}-${process.arch}`): string | undefined {

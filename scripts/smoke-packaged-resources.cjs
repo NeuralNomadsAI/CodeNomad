@@ -98,7 +98,7 @@ function smokeServer(resourcesRoot, target, electron) {
   if (!electron && version !== MANAGED_NODE_VERSION) {
     throw new Error(`Packaged Node version ${version} does not match ${MANAGED_NODE_VERSION}`)
   }
-  console.log(`packaged Node version ok: ${version}`)
+  console.log(`${electron ? "Electron's integrated" : "packaged"} Node version ok: ${version}`)
   // npm only warns about an unsupported engine; Electron's Node must satisfy it.
   const npmRoot = path.dirname(path.dirname(npm))
   const engine = JSON.parse(fs.readFileSync(path.join(npmRoot, "package.json"), "utf8")).engines?.node

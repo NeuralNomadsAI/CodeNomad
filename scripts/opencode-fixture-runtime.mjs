@@ -18,7 +18,7 @@ export async function fixtureRuntime(root) {
     assert.match(version, /^\d+\.\d+\.\d+/, "Electron fixture requires an Electron executable")
   }
   const npm = bundledNpm(node, resources)
-  assert.ok(npm, "Fixture requires bundled npm")
+  assert.ok(npm, "Fixture requires npm beside its runtime or in its resources")
   const tools = path.join(root, "tools")
   await mkdir(tools, { recursive: true })
   if (process.platform !== "win32") await symlink("/bin/sh", path.join(tools, "sh"))
