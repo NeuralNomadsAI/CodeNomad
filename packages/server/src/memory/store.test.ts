@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url"
 import test from "node:test"
 import { MemoryError, type MemoryEntry } from "./model"
 import { MemoryGit } from "./git"
+import { GitProbeUnavailableError } from "../workspaces/git-requirement"
 import { atomicMemoryWrite, decodeMemoryEntry, encodeMemoryEntry, MemoryStore } from "./store"
 
 const global = { scope: "global" } as const
@@ -28,6 +29,16 @@ async function temporary(t: test.TestContext): Promise<string> {
 
 const storeModule = new URL("./store.ts", import.meta.url).href
 const gitModule = new URL("./git.ts", import.meta.url).href
+
+test("a transient Git probe is retryable and leaves entries and journals untouched", async t => {
+  const config = await temporary(t)
+  class UnavailableGit extends MemoryGit {
+    override async initialize() { throw new GitProbeUnavailableError({ code: null, killed: true }) }
+  }
+  const store = new MemoryStore(config, new UnavailableGit(path.join(config, "memory")))
+  await assert.rejects(save(store), { code: "conflict" })
+  assert.deepEqual(await readdir(config), [])
+})
 
 test("cleanup writability probes leave entry bytes and Git history unchanged and refuse read-only entries", async t => {
   const store = new MemoryStore(await temporary(t))

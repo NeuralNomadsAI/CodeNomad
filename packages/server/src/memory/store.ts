@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { GitProbeUnavailableError } from "../workspaces/git-requirement"
 import { lstat, mkdir, open, readdir, rename, rm } from "node:fs/promises"
 import path from "node:path"
 import { isMap, parseDocument, stringify } from "yaml"
@@ -254,6 +255,7 @@ export class MemoryStore {
       await this.recover()
       return await action()
     } catch (error) {
+      if (error instanceof GitProbeUnavailableError) throw new MemoryError("conflict", "Git availability could not be checked. Retry the operation.")
       if (error instanceof MemoryError || (error as { code?: string }).code === "git_required") throw error
       throw new MemoryError("unreadable", "Memory storage is unavailable")
     } finally {

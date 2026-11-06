@@ -137,7 +137,10 @@ contenders can observe only the currently held lock, keeping cleanup safe across
 concurrent arrivals. Failed maintenance retains markers for the next acquisition.
 
 `memory/git.ts` uses `runGitProcess` and `requireHostGit`. Missing host Git keeps
-the shared `git_required` failure contract. Git commands explicitly name the
+the shared `git_required` failure contract. A timed-out, killed, unsuccessful or
+invalid availability probe yields a retryable memory `conflict`, preserving the
+five-second probe deadline and leaving publication for a later attempt.
+Git commands explicitly name the
 private repository and worktree, clear inherited `GIT_*` overrides, ignore
 system/global Git configuration and use the local identity `CodeNomad Memory
 <memory@codenomad.local>`. Template hooks, runtime hooks, signing, automatic GC,
