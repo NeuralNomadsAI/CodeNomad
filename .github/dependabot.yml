@@ -36,3 +36,34 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+
+  # Only the Electron toolchain and the Tauri JavaScript packages
+  # (dev-docs/RUNTIME_MAINTENANCE.md). The root entry covers the workspace
+  # manifests and the root lockfile. Minor and patch updates arrive together per
+  # toolchain; each major update gets its own PR.
+  - package-ecosystem: npm
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    allow:
+      - dependency-name: electron
+      - dependency-name: electron-builder
+      - dependency-name: electron-vite
+      - dependency-name: "@tauri-apps/*"
+    groups:
+      electron-toolchain:
+        patterns:
+          - electron
+          - electron-builder
+          - electron-vite
+        update-types:
+          - minor
+          - patch
+      tauri-js:
+        patterns:
+          - "@tauri-apps/*"
+        update-types:
+          - minor
+          - patch

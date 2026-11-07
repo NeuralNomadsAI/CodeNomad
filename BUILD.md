@@ -25,10 +25,15 @@ For a runtime update, run the server and desktop tests with the pinned Node,
 then rebuild and smoke-test the packaged applications on Windows, macOS, and
 Linux. Check the upstream platform requirements before changing the pin or the
 Electron version: Tauri's bundled Node 24 requires macOS 13.5 or later, and
-Electron 39 requires macOS 12 or later. Both macOS bundles declare 13.5 so the
-two desktop builds share one minimum; keep them aligned. Keep the version exact
+the pinned Electron (`packages/electron-app/package.json`) requires macOS 13
+or later and Windows 10 or later. Both macOS bundles declare 13.5 so the two
+desktop builds share one minimum; keep them aligned. Keep the version exact
 rather than resolving `latest` or `lts/*` at build time so release inputs remain
 reproducible.
+
+The `electron` package downloads its binary on first use. The Electron app's
+`dev` and `preview` scripts fetch it first; `npx --no install-electron` fetches
+it ahead of parallel tests or scripts that read its path.
 
 ## Quick Start
 
@@ -264,7 +269,7 @@ bun run build:binaries
 A: Yes, but native binaries (e.g., DMG) require the target OS.
 
 **Q: How large are the binaries?**  
-A: Approximately 100-150 MB (includes Electron runtime).
+A: About 200 MB for the Electron Windows ZIP (includes the Electron runtime).
 
 **Q: Do I need code signing?**  
 A: Not required, but recommended for public distribution to avoid security warnings.

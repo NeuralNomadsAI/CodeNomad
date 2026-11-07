@@ -99,6 +99,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
 
+      - name: Install the Electron binary
+        run: npx --no install-electron
+
       - name: Build macOS binaries (Electron)
         run: npm run build:mac --workspace @neuralnomads/codenomad-electron-app
 
@@ -267,6 +270,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
 
+      - name: Install the Electron binary
+        run: npx --no install-electron
+
       - name: Build Windows binaries (Electron)
         run: npm run build:win --workspace @neuralnomads/codenomad-electron-app
 
@@ -358,6 +364,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --workspaces --include=optional
+
+      - name: Install the Electron binary
+        run: npx --no install-electron
 
       - name: Build Linux binaries (Electron)
         run: npm run build:linux --workspace @neuralnomads/codenomad-electron-app
@@ -467,6 +476,12 @@ jobs:
           app_asar="$resources_dir/app.asar"
           if [ ! -f "$app_asar" ]; then
             echo "Electron deb does not contain resources/app.asar" >&2
+            exit 1
+          fi
+          # Electron addresses Linux dock badges (LauncherEntry) to its desktopName.
+          desktop_name=$(node -e "process.stdout.write(JSON.parse(require('@electron/asar').extractFile(process.argv[1], 'package.json')).desktopName ?? '')" "$app_asar")
+          if [ "$desktop_name" != "CodeNomad.desktop" ]; then
+            echo "Electron desktopName '$desktop_name' must name the deb's CodeNomad.desktop" >&2
             exit 1
           fi
           node - "$app_asar" <<'NODE'
