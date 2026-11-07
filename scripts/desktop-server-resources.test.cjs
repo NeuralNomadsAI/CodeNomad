@@ -59,7 +59,7 @@ test("integrity-pins the full server production closure in the root lock", () =>
 
   assert.ok(closure.size > 100)
   assert.equal(lock.packages["node_modules/fastify"].version, "4.29.1")
-  assert.equal(lock.packages["node_modules/undici"].version, "6.28.1")
+  assert.equal(lock.packages["node_modules/undici"].version, "6.29.1")
   assert.equal(lock.packages["packages/server/node_modules/commander"].version, "12.1.0")
   assert.equal(lock.packages["packages/server/node_modules/fuzzysort"].version, "2.0.4")
   assert.equal(closure.has("node_modules/@opencode/plugin"), false, "the opt-in pruning plugin API is not a server production dependency")
