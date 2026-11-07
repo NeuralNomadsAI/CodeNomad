@@ -35,7 +35,10 @@ Missions schedules qualify the consumed Schedule API, effective
 of general runtime admission: [native contracts](MISSIONS_NATIVE_CONTRACTS.md#schedule-integration-qualification)
 and [transport](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md). Recognition uses the
 consumed capabilities, including on future versions. Schedule delivery qualification
-uses the recommended 2.2.5 runtime; keep results in PR/CI evidence.
+uses the minimum/latest CI matrix, including cold scheduled passage admission with
+the retained product bundle and CodeNomad backend closed; keep results in PR/CI evidence.
+Context hooks retain native message IDs; Missions consumes the transport's
+[native read/authority contract](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#context-read-authority-and-bounds).
 
 ### Native Codex subscription usage
 
@@ -144,6 +147,8 @@ connections and Missions authority checks keep their blocking contracts. See
   discovery and event-relay mitigations.
 
 ### Replay contract
+
+Stored-part coverage: [history query storage contract](SESSION_HISTORY_QUERIES.md#stored-part-coverage).
 
 Text/reasoning/tool/step provider data is one `native` field (on a key shared by
 a tool call and its result, the result wins). Summary compactions reference
