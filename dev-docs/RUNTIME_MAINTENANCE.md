@@ -13,15 +13,24 @@
 - `.npm-version` exactly pins both hosts' npm, independently of the Node archive,
   so fixes in npm's own dependency tree ship without waiting for a Node release
   that bundles them. `scripts/bundled-npm.cjs` downloads that registry
-  package (the tarball carries npm's bundled dependencies and license), requires
-  the registry's canonical tarball URL and sha512 `dist.integrity`, and extracts
-  regular files and directories only. `scripts/prepare-node-runtime.cjs` places
+  package (the tarball carries npm's bundled dependencies and license) over HTTPS
+  from `registry.npmjs.org`, requires the registry's canonical tarball URL and a
+  matching sha512 `dist.integrity` from the same registry's metadata, and checks
+  the extracted name, version, `bin/npm-cli.js` and every bundled dependency.
+  That proves the bytes are what the registry publishes for that version (npm
+  never reuses a published version), not an independent publisher signature.
+  Extraction is the same system `tar` that unpacks POSIX Node archives
+  (Windows' own `System32\tar.exe`, never a GNU tar from PATH); it refuses `..`
+  members and strips a leading `/`, and the extracted tree is refused unless it holds
+  only npm's `package/` directory of regular files and directories, so links and
+  devices fail closed. `scripts/prepare-node-runtime.cjs` places
   it where `bundledNpm()` (`opencode-update/npm-runtime.ts`) looks: beside Tauri's
   Node as in the official archive (`node_modules/npm` on Windows,
   `lib/node_modules/npm` on POSIX) or in Electron's npm-only resources
   (`node/<target>/npm`). Before writing any resources it fails when that npm's
   `engines.node` rejects the Node it will run under: `.node-version` for Tauri,
-  the installed Electron executable's `process.versions.node` for Electron.
+  the installed Electron executable's `process.versions.node` for Electron
+  (fetched by `npx --no install-electron`).
   `scripts/verify-bundled-node.cjs` checks the packaged npm version against the pin.
 - npm lifecycle scripts call `node` by name. Tauri's bundled `node` answers to it
   from PATH, even though Tauri also sets `ELECTRON_RUN_AS_NODE=1`. A runtime
@@ -131,6 +140,6 @@ Run `npm run check:runtime` locally for the same read-only assessment.
 ## Agent conventions
 
 - Keep the `electron` devDependency an exact version; Dependabot's npm entry is limited to the Electron toolchain and the `@tauri-apps/*` packages; adding other npm dependencies or ecosystems to Dependabot is a separate decision.
-- Bundled runtime maintenance keeps `.node-version` and `.npm-version` exact. It proposes only same-major Node LTS upgrades and newer npm releases whose `engines.node` accepts `.node-version` and the pinned Electron's Node, each as a regular, non-draft PR changing that one pin, without automatic merge; a major npm proposal says so in its title and body. Never bundle npm from another source than the verified `.npm-version` registry package, resolve `latest` at build time, skip the engines guard, auto-fix dependencies, merge or publish from the check, or report a failed audit as clean. Application runtime changes require reviewed builds/releases.
+- Bundled runtime maintenance keeps `.node-version` and `.npm-version` exact. It proposes only same-major Node LTS upgrades and newer npm releases whose `engines.node` accepts `.node-version` and the pinned Electron's Node, each as a regular, non-draft PR changing that one pin, without automatic merge; a major npm proposal says so in its title and body. Never bundle npm from another source than the verified `.npm-version` registry package, extract it with anything but the system `tar` plus the extracted-tree check, resolve `latest` at build time, skip the engines guard, auto-fix dependencies, merge or publish from the check, or report a failed audit as clean. Application runtime changes require reviewed builds/releases.
 - Documents reference `.node-version` and `.npm-version` and never restate the pinned Node or bundled npm version: maintenance updates only those files.
 - Documents never restate Tauri crate or CLI versions: they point to `packages/tauri-app/Cargo.toml`/`Cargo.lock` and the `@tauri-apps/*` entries of `packages/tauri-app/package.json` and `packages/ui/package.json`. Never merge a Tauri update whose vendored crates fail re-qualification or whose `@tauri-apps/*` packages trail the crates' minor.

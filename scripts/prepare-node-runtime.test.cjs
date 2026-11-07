@@ -6,8 +6,8 @@ const yaml = require("yaml")
 const os = require("node:os")
 const crypto = require("node:crypto")
 const zlib = require("node:zlib")
-const { MANAGED_NODE_VERSION, assembleRuntime, installedElectronNodeVersion, npmRelativePath, prepareBundledNodeRuntime } = require("./prepare-node-runtime.cjs")
-const { NPM_VERSION, extractNpmTarball } = require("./bundled-npm.cjs")
+const { MANAGED_NODE_VERSION, assembleRuntime, extractArchive, installedElectronNodeVersion, npmRelativePath, prepareBundledNodeRuntime } = require("./prepare-node-runtime.cjs")
+const { NPM_VERSION, extractedPackage } = require("./bundled-npm.cjs")
 
 const root = path.resolve(__dirname, "..")
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8")
@@ -51,10 +51,11 @@ test("both hosts' npm is pinned exactly and separately from the Node archive", (
   assert.equal(NPM_VERSION, read(".npm-version").trim())
 })
 
-// A registry tarball: ustar entries under package/, as npm publishes them.
+// Test fixtures only: ustar entries as npm publishes them, plus hostile entries
+// no archiver writes on request. Extraction itself is the system tar's.
 function tarball(entries) {
   const blocks = []
-  for (const { name, data = "", mode = 0o644, type = "0" } of entries) {
+  for (const { name, data = "", mode = 0o644, type = "0", link = "" } of entries) {
     const body = Buffer.from(data)
     const header = Buffer.alloc(512)
     header.write(name, 0, 100)
@@ -62,6 +63,7 @@ function tarball(entries) {
     header.write(`${body.length.toString(8).padStart(11, "0")}\0`, 124)
     header.write("        ", 148)
     header.write(type, 156)
+    header.write(link, 157, 100)
     header.write("ustar\u000000", 257)
     header.write(`${header.reduce((sum, byte) => sum + byte, 0).toString(8).padStart(6, "0")}\0 `, 148)
     blocks.push(header, body, Buffer.alloc((512 - (body.length % 512)) % 512))
@@ -166,25 +168,36 @@ test("both hosts refuse an npm whose engines reject the Node it will run under",
   assert.equal(fs.existsSync(path.join(tauri, "node")), false)
 })
 
+function extractFixture(t, entries) {
+  const work = withResources(t)
+  fs.writeFileSync(path.join(work, "fixture.tgz"), tarball(entries))
+  fs.mkdirSync(path.join(work, "out"))
+  return { work, extract: () => { extractArchive(path.join(work, "fixture.tgz"), path.join(work, "out")); return extractedPackage(path.join(work, "out")) } }
+}
+
 test("npm package extraction refuses links, escapes and foreign roots", t => {
-  for (const name of ["package/../escape.js", "package/link", "package/hard", "other/file.js", "/package/absolute.js"]) {
-    const destination = withResources(t)
-    const type = name === "package/link" ? "2" : name === "package/hard" ? "1" : "0"
-    assert.throws(() => extractNpmTarball(tarball([{ name: "package/package.json", data: "{}" }, { name, type }]), destination),
-      /Unexpected npm package path|Unsupported npm package entry type/)
-    assert.equal(fs.existsSync(path.join(destination, "..", "escape.js")), false)
+  const valid = { name: "package/package.json", data: "{}" }
+  for (const entry of [{ name: "package/../escape.js" }, { name: "package/link", type: "2", link: "../../escape.js" },
+    { name: "other/file.js" }, { name: "/absolute.js" }]) {
+    const { work, extract } = extractFixture(t, [valid, entry])
+    // Either the system tar refuses the member or the extracted tree is refused.
+    assert.throws(extract, undefined, entry.name)
+    assert.equal(fs.existsSync(path.join(work, "escape.js")), false)
+    assert.equal(fs.existsSync(path.join(path.parse(work).root, "absolute.js")), false)
   }
 })
 
-test("npm package extraction follows pax long paths", t => {
-  const destination = withResources(t)
+test("npm package extraction keeps executable bits and follows pax long paths", t => {
   const long = `package/node_modules/${"a".repeat(80)}/${"b".repeat(80)}/index.js`
   const body = ` path=${long}\n`
   let length = body.length + 1
   while (String(length).length + body.length !== length) length = String(length).length + body.length
-  extractNpmTarball(tarball([{ name: "PaxHeader/index.js", type: "x", data: `${length}${body}` }, { name: "package/truncated", data: "pax" }]), destination)
-  assert.equal(fs.readFileSync(path.join(destination, ...long.slice("package/".length).split("/")), "utf8"), "pax")
-  assert.equal(fs.existsSync(path.join(destination, "truncated")), false)
+  const { extract } = extractFixture(t, [{ name: "package/bin/npm-cli.js", data: "cli", mode: 0o755 },
+    { name: "PaxHeader/index.js", type: "x", data: `${length}${body}` }, { name: "package/truncated", data: "pax" }])
+  const npmRoot = extract()
+  assert.equal(fs.readFileSync(path.join(npmRoot, ...long.slice("package/".length).split("/")), "utf8"), "pax")
+  assert.equal(fs.existsSync(path.join(npmRoot, "truncated")), false)
+  if (process.platform !== "win32") assert.equal(fs.statSync(path.join(npmRoot, "bin/npm-cli.js")).mode & 0o111, 0o111)
 })
 
 test("Electron's integrated Node version comes from the installed executable", () => {

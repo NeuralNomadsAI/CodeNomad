@@ -1,9 +1,11 @@
 // Both desktop hosts bundle this exact npm, pinned in .npm-version separately
-// from the Node archive and verified against the registry's sha512 integrity.
+// from the Node archive. The registry tarball is accepted only when its sha512
+// matches the integrity the same registry publishes for that version: this
+// proves the bytes are the registry's published package (and HTTPS protects the
+// transfer), not an independent publisher signature.
 const crypto = require("crypto")
 const fs = require("fs")
 const path = require("path")
-const zlib = require("zlib")
 
 const NPM_REGISTRY = "https://registry.npmjs.org"
 
@@ -27,58 +29,21 @@ function verifyIntegrity(buffer, integrity) {
   if (!expected.includes(actual)) throw new Error("Integrity mismatch for the npm package")
 }
 
-function tarString(block, start, length) {
-  const end = block.indexOf(0, start)
-  return block.toString("utf8", start, end === -1 || end > start + length ? start + length : end)
-}
-
-function paxPath(data) {
-  let offset = 0
-  let result
-  while (offset < data.length) {
-    const space = data.indexOf(0x20, offset)
-    const length = Number(data.toString("utf8", offset, space))
-    if (space === -1 || !Number.isSafeInteger(length) || length <= 0) throw new Error("Invalid npm package header")
-    const record = data.toString("utf8", space + 1, offset + length - 1)
-    if (record.startsWith("path=")) result = record.slice(5)
-    offset += length
-  }
-  return result
-}
-
-/** Extracts an npm registry tarball's `package/` files and directories, refusing links and escapes. */
-function extractNpmTarball(tarball, destination) {
-  const archive = zlib.gunzipSync(tarball)
-  let offset = 0
-  let longName
-  let files = 0
-  while (offset + 512 <= archive.length) {
-    const header = archive.subarray(offset, offset + 512)
-    if (header.every(byte => byte === 0)) break
-    const size = parseInt(tarString(header, 124, 12).trim() || "0", 8)
-    const type = String.fromCharCode(header[156] || 0x30)
-    if (!Number.isSafeInteger(size) || size < 0) throw new Error("Invalid npm package entry size")
-    const data = archive.subarray(offset + 512, offset + 512 + size)
-    offset += 512 + Math.ceil(size / 512) * 512
-    if (type === "x") { longName = paxPath(data); continue }
-    if (type === "L") { longName = tarString(data, 0, data.length); continue }
-    if (type === "g") continue
-    const prefix = tarString(header, 345, 155)
-    const name = longName ?? (prefix ? `${prefix}/${tarString(header, 0, 100)}` : tarString(header, 0, 100))
-    longName = undefined
-    const relative = path.posix.normalize(name.replace(/^package\//, ""))
-    if (!name.startsWith("package/") || relative.startsWith("..") || path.posix.isAbsolute(relative) || /[\\:]/.test(relative)) {
-      throw new Error(`Unexpected npm package path: ${name}`)
+/** The system tar refuses absolute and `..` member paths; this also refuses any
+ * link, device or other root than npm's `package/` that it may have written. */
+function extractedPackage(extractRoot) {
+  const roots = fs.readdirSync(extractRoot)
+  if (roots.length !== 1 || roots[0] !== "package") throw new Error(`Unexpected npm package contents: ${roots.join(", ")}`)
+  const pending = [path.join(extractRoot, "package")]
+  while (pending.length) {
+    const directory = pending.pop()
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name)
+      if (entry.isDirectory()) pending.push(file)
+      else if (!entry.isFile()) throw new Error(`Unsupported npm package entry: ${path.relative(extractRoot, file)}`)
     }
-    const target = path.join(destination, ...relative.split("/"))
-    if (type === "5") { fs.mkdirSync(target, { recursive: true }); continue }
-    if (type !== "0" && type !== "7") throw new Error(`Unsupported npm package entry type ${type}: ${name}`)
-    const mode = parseInt(tarString(header, 100, 8).trim() || "644", 8)
-    fs.mkdirSync(path.dirname(target), { recursive: true })
-    fs.writeFileSync(target, data, { mode: mode & 0o111 ? 0o755 : 0o644 })
-    files++
   }
-  if (!files) throw new Error("The npm package is empty")
+  return path.join(extractRoot, "package")
 }
 
 function readPackage(npmRoot) {
@@ -95,25 +60,31 @@ function checkNpmEngine(npmRoot, nodeVersion, runtimeLabel) {
   return engine
 }
 
-/** Downloads the pinned npm into `destination` (an empty directory) after verifying it. */
-async function downloadPinnedNpm(request, destination, version = NPM_VERSION) {
+/** Downloads, verifies and extracts the pinned npm under `workRoot` (an empty
+ * directory) with `extract(archive, destination)`; returns the package root. */
+async function downloadPinnedNpm({ request, extract, workRoot, version = NPM_VERSION }) {
   const manifest = JSON.parse((await request(`${NPM_REGISTRY}/npm/${version}`)).toString("utf8"))
   if (manifest.name !== "npm" || manifest.version !== version || manifest.dist?.tarball !== npmTarballUrl(version)) {
     throw new Error(`Unexpected registry metadata for npm ${version}`)
   }
   const tarball = await request(manifest.dist.tarball)
   verifyIntegrity(tarball, manifest.dist.integrity)
-  extractNpmTarball(tarball, destination)
-  const extracted = readPackage(destination)
-  if (extracted.name !== "npm" || extracted.version !== version || !fs.existsSync(path.join(destination, "bin", "npm-cli.js"))) {
+  const archive = path.join(workRoot, `npm-${version}.tgz`)
+  const extractRoot = path.join(workRoot, "npm-package")
+  fs.writeFileSync(archive, tarball)
+  fs.mkdirSync(extractRoot)
+  extract(archive, extractRoot)
+  const npmRoot = extractedPackage(extractRoot)
+  const extracted = readPackage(npmRoot)
+  if (extracted.name !== "npm" || extracted.version !== version || !fs.existsSync(path.join(npmRoot, "bin", "npm-cli.js"))) {
     throw new Error(`The npm ${version} package is incomplete`)
   }
   for (const dependency of extracted.bundleDependencies ?? []) {
-    if (!fs.existsSync(path.join(destination, "node_modules", ...dependency.split("/"), "package.json"))) {
+    if (!fs.existsSync(path.join(npmRoot, "node_modules", ...dependency.split("/"), "package.json"))) {
       throw new Error(`The npm ${version} package is missing its bundled dependency ${dependency}`)
     }
   }
-  return destination
+  return npmRoot
 }
 
-module.exports = { NPM_VERSION, checkNpmEngine, downloadPinnedNpm, extractNpmTarball, npmTarballUrl, readExactVersion, verifyIntegrity }
+module.exports = { NPM_VERSION, checkNpmEngine, downloadPinnedNpm, extractedPackage, npmTarballUrl, readExactVersion, verifyIntegrity }

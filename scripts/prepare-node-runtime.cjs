@@ -109,8 +109,8 @@ function find7zip() {
   }
 }
 
-function run(command, args) {
-  const result = spawnSync(command, args, { stdio: "inherit" })
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, { stdio: "inherit", windowsHide: true, ...options })
   if (result.status !== 0) {
     if (result.error) throw result.error
     throw new Error(`${command} ${args.join(" ")} exited with code ${result.status || 1}`)
@@ -127,7 +127,11 @@ function extractArchive(archivePath, destination) {
     run(sevenZip, ["x", archivePath, `-o${destination}`, "-y"])
     return
   }
-  run("tar", ["-xzf", archivePath, "-C", destination])
+  // Windows' own bsdtar, never a GNU tar from PATH that reads `C:` as a remote
+  // host; relative names from the archive's directory for the same reason.
+  const tar = process.platform === "win32" ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe") : "tar"
+  const cwd = path.dirname(archivePath)
+  run(tar, ["-xzf", path.basename(archivePath), "-C", path.relative(cwd, destination) || "."], { cwd })
 }
 
 /** Where bundledNpm() looks: beside Tauri's Node as in the official archive, or
@@ -160,7 +164,7 @@ function installedElectronNodeVersion(electron = require("electron")) {
   })
   const version = String(result.stdout ?? "").trim()
   if (result.error || result.status !== 0 || !/^\d+\.\d+\.\d+$/.test(version)) {
-    throw new Error(`Could not read the Node version of the installed Electron (${electron})`)
+    throw new Error(`Could not read the Node version of the installed Electron (${electron}); fetch it with npx --no install-electron`)
   }
   return version
 }
@@ -184,15 +188,15 @@ async function prepareBundledNodeRuntime(options) {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), `codenomad-node-${target}-`))
   const archivePath = path.join(tempRoot, spec.archive)
   const extractRoot = path.join(tempRoot, "extract")
-  const npmRoot = path.join(tempRoot, "npm")
+  const npmWork = path.join(tempRoot, "npm")
 
   try {
     fs.rmSync(nodeRoot, { recursive: true, force: true })
 
     // The engine guard runs before anything is written to the resources.
     console.log(`[node-runtime] downloading npm ${NPM_VERSION}`)
-    fs.mkdirSync(npmRoot)
-    await downloadPinnedNpm(get, npmRoot)
+    fs.mkdirSync(npmWork)
+    const npmRoot = await downloadPinnedNpm({ request: get, extract: extractArchive, workRoot: npmWork })
     const runtimeNode = options.npmOnly ? options.runtimeNodeVersion || installedElectronNodeVersion() : nodeVersion
     const engine = checkNpmEngine(npmRoot, runtimeNode, options.npmOnly ? "Electron's integrated runtime" : "Tauri's bundled runtime")
     console.log(`[node-runtime] npm ${NPM_VERSION} engine ok: Node ${runtimeNode} satisfies ${engine}`)
@@ -235,6 +239,7 @@ async function prepareBundledNodeRuntime(options) {
 module.exports = {
   MANAGED_NODE_VERSION,
   assembleRuntime,
+  extractArchive,
   installedElectronNodeVersion,
   npmRelativePath,
   prepareBundledNodeRuntime,
