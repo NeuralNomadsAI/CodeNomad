@@ -9,6 +9,7 @@ import { childActivityKind, childActivityLabel } from "./session-child-activity"
 import LoadErrorState from "./load-error-state"
 import SessionRenameDialog from "./session-rename-dialog"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
+import SessionExpander from "./session-expander"
 import { useSessionRowOverflow } from "./session-row-overflow"
 import { showToastNotification } from "../lib/notifications"
 import { useI18n } from "../lib/i18n"
@@ -98,6 +99,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   const [virtualizerHandle, setVirtualizerHandle] = createSignal<VirtualizerHandle>()
   const [focusedSessionId, setFocusedSessionId] = createSignal<string>()
   const [menuSessionId, setMenuSessionId] = createSignal<string>()
+  const [expanderMenuSessionId, setExpanderMenuSessionId] = createSignal<string>()
   let attachmentFrame: number | undefined
 
   const setListElement = (element: HTMLDivElement) => {
@@ -277,7 +279,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   })
   const keptMountedIndexes = createMemo(() => {
     const indexes = new Set<number>()
-    for (const sessionId of [focusedSessionId(), menuSessionId()]) {
+    for (const sessionId of [focusedSessionId(), menuSessionId(), expanderMenuSessionId()]) {
       const index = sessionId ? visibleProjection().indexById.get(sessionId) : undefined
       if (index !== undefined) indexes.add(index)
     }
@@ -601,8 +603,14 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
 
     const isActive = () => props.activeSessionId === sessionId()
-    // A collapsed parent's chevron carries its subsessions' visible status.
-    const childActivity = () => rowProps.hasChildren && !rowProps.expanded ? descendantActivity().get(sessionId()) : undefined
+    // A parent's chevron carries its subsessions' visible status, expanded or not.
+    const childActivity = () => rowProps.hasChildren ? descendantActivity().get(sessionId()) : undefined
+    // The row and descendants whose Idle or Interrupted badge "Mark as read" clears.
+    const readableHierarchy = () => [rowProps.session, ...getDescendantSessions(props.instanceId, sessionId())]
+      .filter(session => session.status === "idle" && !session.pendingPermission && !session.pendingForm
+        && (isSessionInterruptionUnseen(props.instanceId, session)
+          || shouldShowSessionStatus(props.instanceId, session.id, now(), preferences().keepUnseenSubagentIdleStatus)))
+      .map(session => session.id)
     // Observe activity independently of expansion: folding a busy branch is not
     // a new activity transition. Visible descendants follow the same rule.
     const activityKind = createMemo(() => {
@@ -780,17 +788,18 @@ const SessionList: Component<SessionListProps> = (props) => {
             when={rowProps.hasChildren}
             fallback={<span class="session-item-expander session-item-expander--spacer" aria-hidden="true" />}
           >
-            <button
-              type="button"
+            <SessionExpander
               class={`session-item-expander opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
-              onClick={() => rowProps.onToggleExpand?.()}
-              aria-expanded={Boolean(rowProps.expanded)}
-              aria-label={expanderLabel(rowProps.expanded ? "collapseAriaLabel" : "expandAriaLabel")}
+              expanded={Boolean(rowProps.expanded)}
+              activity={childActivity() ? childActivityKind(childActivity()!) : undefined}
+              label={expanderLabel(rowProps.expanded ? "collapseAriaLabel" : "expandAriaLabel")}
               title={expanderLabel(rowProps.expanded ? "collapseTitle" : "expandTitle")}
-              data-child-activity={childActivity() ? childActivityKind(childActivity()!) : undefined}
-            >
-              <ChevronRight class="disclosure-chevron w-3.5 h-3.5" />
-            </button>
+              markReadLabel={t("sessionList.expand.markRead")}
+              markReadDisabled={readableHierarchy().length === 0}
+              onToggle={() => rowProps.onToggleExpand?.()}
+              onMarkRead={() => batch(() => readableHierarchy().forEach(clearSessionStatus))}
+              onOpenChange={(open) => setExpanderMenuSessionId(open ? sessionId() : undefined)}
+            />
           </Show>
           <button
             type="button"

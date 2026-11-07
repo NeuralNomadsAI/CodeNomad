@@ -42,15 +42,30 @@
   of the PR OpenCode compatibility matrix run real npm lifecycle scripts through
   the development Electron executable on Windows, Linux and macOS.
 - Dependabot covers every dependency of the Cargo workspace `packages/tauri-app`
-  and of the npm workspaces (root lockfile), weekly against `dev`. An `allow`
-  list would also filter security updates, so neither entry has one. Security
-  fixes arrive in one grouped PR per ecosystem (`cargo-security`,
-  `npm-security`). Version updates are grouped by toolchain: the Tauri family
+  and of the npm workspaces (root lockfile), with weekly version checks against
+  the default branch (`dev`). Keep `target-branch` omitted for npm and Cargo so
+  security updates share the configuration. Each entry's `allow` rule uses
+  `dependency-type: all` and permits routine minor/patch updates; Cargo includes
+  transitive crates. npm additionally allows
+  `electron` major proposals to keep supported runtime majors visible. Other
+  routine major migrations require an explicit maintainer decision.
+  [`allow.update-types`](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference#update-types-allow)
+  filters version updates only: security fixes remain eligible for every package,
+  including fixes requiring a major. Matching allow rules combine their permitted
+  update types. Security PRs target the default branch (`dev`) as advisories arise;
+  keep repository/organization-level
+  [grouped security updates](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/configure-security-updates#grouping-dependabot-security-updates-into-a-single-pull-request)
+  disabled so unrelated fixes arrive individually and one conflict cannot hold
+  the others. Review related
+  dependency versions together before merging.
+- Routine minor/patch updates are grouped by toolchain: the Tauri family
   (`tauri`, `tauri-*`, `wry`, including the runtime regression fixture's
   `tests/windows-runner-refcount` requirements), the Electron toolchain, the
   `@tauri-apps/*` packages, then every other crate or npm dependency; minor and
-  patch updates of a group arrive together, each major in its own PR. Merges are
-  manual.
+  patch updates of a group arrive together. The first matching group wins, so the
+  remaining-dependency catchalls follow the toolchain groups. Groups explicitly
+  apply to version updates; `allow.update-types` controls which versions are
+  proposed. Electron majors arrive individually. Every merge is manual.
 - For a Tauri crate update, the maintainer reviews the Tauri, runtime, Wry, Tao
   and plugin release notes of every version crossed, re-qualifies the
   vendored crates (`packages/tauri-app/vendor/README.md`) and keeps
@@ -73,7 +88,9 @@
 - Electron's integrated Node is the Electron backend runtime, so the exact
   `electron` pin (`packages/electron-app/package.json`) selects it. Dependabot
   proposes Electron toolchain updates (`electron`, `electron-builder`,
-  `electron-vite`) in the `electron-toolchain` group. Keep the pin within Electron's supported majors (the latest three). Before
+  `electron-vite`) weekly against `dev`: minor and patch updates in the
+  `electron-toolchain` group, and `electron` majors individually.
+  Keep the pin within Electron's supported majors (the latest three). Before
   merging, the maintainer qualifies the upstream breaking changes of every major
   crossed (<https://www.electronjs.org/docs/latest/breaking-changes>) and its
   platform minimums against the declared ones (`BUILD.md`, `docs/help`), and the
@@ -112,7 +129,7 @@ Run `npm run check:runtime` locally for the same read-only assessment.
 
 ## Agent conventions
 
-- Keep the `electron` devDependency an exact version. Never add an `allow` list to a Dependabot entry: it also filters security updates. Narrow version updates with groups instead.
+- Keep the `electron` devDependency an exact version. Preserve all-package security coverage with `dependency-type: all`; restrict routine majors through `allow.update-types`, with the explicit `electron` major exception. Never add package/version ignores that hide security fixes, blanket security groups or automatic merges. General-library majors and new ecosystems require a maintainer decision. Run `node --test .github/scripts/dependabot-policy.test.cjs` when editing the policy.
 - Bundled runtime maintenance keeps `.node-version` exact and proposes only same-major LTS upgrades as regular, non-draft PRs without automatic merge. The scheduled npm CLI/dependency audit is warning-only: never independently replace bundled npm, auto-fix dependencies, merge or publish from that check, and never report a failed audit as clean. Application runtime changes require reviewed builds/releases.
 - Documents reference `.node-version` and never restate the pinned Node or bundled npm version: maintenance updates only that file.
 - Documents never restate Tauri crate or CLI versions: they point to `packages/tauri-app/Cargo.toml`/`Cargo.lock` and the `@tauri-apps/*` entries of `packages/tauri-app/package.json` and `packages/ui/package.json`. Never merge a Tauri update whose vendored crates fail re-qualification or whose `@tauri-apps/*` packages trail the crates' minor.

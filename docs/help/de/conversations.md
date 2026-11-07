@@ -9,7 +9,7 @@ Kopfzeilen von Denkprozessen und Werkzeugen zeigen, wie lange jeder Schritt geda
 ## Unterhaltungen finden und navigieren {#navigate-conversations}
 
 1. Wählen Sie eine Zeile unter **Sitzungen** oder verwenden Sie **Neue Sitzung**, um eine übergeordnete Unterhaltung zu beginnen.
-2. Klicken Sie auf den Pfeil einer übergeordneten Sitzung, um deren Untersitzungen auf- oder einzuklappen und ihre Abzeichen beizubehalten. Ein eingeklappter Pfeil zeigt den dringendsten Zustand seiner Nachfahren: wartet auf Eingabe, arbeitet, wird komprimiert oder ist inaktiv; seine zugängliche Beschriftung zählt sie.
+2. Klicken Sie auf den Pfeil einer übergeordneten Sitzung, um deren Untersitzungen auf- oder einzuklappen und ihre Abzeichen beizubehalten. Ob auf- oder eingeklappt, zeigt der Pfeil den dringendsten Zustand seiner Nachfahren: wartet auf Eingabe, arbeitet, wird komprimiert oder ist inaktiv; seine zugängliche Beschriftung zählt sie. Klicken Sie ihn mit der rechten Maustaste an und wählen Sie **Als gelesen markieren**, um die Abzeichen **Bereit** und **Unterbrochen** der Unterhaltung und aller Untersitzungen auf einmal zu entfernen.
 3. Grenzen Sie die Liste mit **Sitzungen suchen...**, **Hauptsitzungen** / **Untersitzungen**, dem Worktree-Filter und der Sortierung nach **Aktivität**, **Name** oder **Worktree** ein. Ziehen Sie in Suchergebnissen über die Kontrollkästchen der Zeilen, um mehrere Unterhaltungen auf einmal aus- oder abzuwählen.
 4. Verwenden Sie **Zurück** und **Vorwärts** in der Seitenleiste, um zuvor angezeigte Unterhaltungen erneut aufzurufen.
 
