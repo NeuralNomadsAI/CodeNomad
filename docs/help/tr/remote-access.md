@@ -83,7 +83,7 @@ Bir istemci bir sertifika uyarısı bildirirse, durdurun ve ana bilgisayar adın
 
 ## Uzak sunucuyu kaydedin {#saved-servers}
 
-1. Ana sayfa veya boş **Proje aç** sekmesinde **Gözat** bölümünü açıp **Sunucu adresi veya bağlantısı** alanına adres veya bağlantı girin. Hızlı başlatıcıda önce **Başka bir proje aç…** seçin. Yapıştırmak hemen ekler; Enter yazılan metni onaylar. Sunucu kaydedilir, satırı odaklanır ve seçici yerinde kalır; bağlantı tarama için yerel arka ucu da eşleştirir. Taramak için satıra tıklayın. **Ayarlar → Sunucular** aynı alanı sunar.
+1. Ana sayfadaki **Gözat** bölümünde veya boş sekmenin sağ panelinde **Sunucu adresi veya bağlantısı** alanına adres veya bağlantı girin. Yapıştırmak hemen ekler; Enter yazılan metni onaylar. Sunucu kaydedilir, satırı odaklanır ve seçici yerinde kalır; bağlantı tarama için yerel arka ucu da eşleştirir. Taramak için satıra tıklayın. **Ayarlar → Sunucular** aynı alanı sunar.
 2. Güvenilir HTTPS kaynağı kullanın. Sertifika ve erişilemeyen sunucu hataları çevrilmiştir; bilgi denetimi teknik ayrıntıları isteğe bağlı gösterir. **TLS doğrulamasını atla** açık seçim gerektirir: yalnızca güvenilir sunucuda kullanıp yeniden onaylayın. Açma eylemi, proje seçilirken profilin ayrı pencere kullanacağını belirtir.
 3. Sunucu adı oturum açarken ve gezinirken görünür kalır; alanlar etiketlidir, **Son kullanılanlar** ve **Klasörler** ayrıdır. Eşleştirme hataları sunucuyu adlandırır. **Ayarlar → Sunucular** içindeki **Sunucuyu düzenle** URL ve adı değiştirir; `i` düğmeleri URL/TLS yardımını istek üzerine gösterir.
 
@@ -99,7 +99,7 @@ Yeni bir Uzaktan Kontrol bağlantısı yapıştırmak tünel kökenini kaydeder 
 
 Masaüstü uygulamasında (Electron veya Windows'ta Tauri), kayıtlı bir sunucu projelerinden birini yerel projelerinizin yanında bu pencerenin bir sekmesinde de açabilir:
 
-1. Ana sayfa veya boş sekmede **Gözat** bölümünden sunucu seçin. Hızlı başlatıcıda önce **Başka bir proje aç…** kullanın. Sunucu eklemek için **Sunucu adresi veya bağlantısı** alanını kullanıp satırına tıklayın.
+1. Ana sayfa veya boş sekmede **Gözat** bölümünden sunucu seçin. Sunucu eklemek için **Sunucu adresi veya bağlantısı** alanını kullanıp satırına tıklayın.
 2. Adı görünen sunucu **Son kullanılanlar** ve **Klasörler** bölümlerini yerinde gösterir. Gerekirse etiketli formda oturum açın. Son proje seçin veya gezinip **Bu klasörü aç** kullanın. **Gözat'a dön** sunucuları gösterir.
 3. Klasör seçimi boş sekmenin yerine yeni uzak örnek oluşturur ve **Son kullanılanlar** listesine ekler. Ayrı **Aç** eylemi mevcut örneğe geçer. TLS ve Tauri macOS/Linux dahil ayrı pencere kullanılacağı seçim anında belirtilir. Bilinen sınır: arka uç taraması ve yerel görünüm bağımsız kimlik doğrular.
 

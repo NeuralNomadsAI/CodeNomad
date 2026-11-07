@@ -4,6 +4,7 @@ import { removeRemoteProjectRecent, removeSideCarRecent, useConfig } from "../st
 import { launchableRecents, openRemoteProject } from "../stores/remote-project-open"
 import { recentKey, type LaunchableRecent } from "../lib/remote-project-recents"
 import BrowseMenu, { browseEntryCount } from "./browse-menu"
+import EntryCount from "./entry-count"
 import ActionOverflowMenu from "./action-overflow-menu"
 import { joinRecentOpenTarget, recentAccessibleName, recentOpenTarget } from "../lib/recent-open-target"
 import { ensureSidecarsLoaded } from "../stores/sidecars"
@@ -53,7 +54,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const [selectedIndex, setSelectedIndex] = createSignal(0)
   const [hoveredRecentActionPath, setHoveredRecentActionPath] = createSignal<string | null>(null)
   const [focusedRecentActionPath, setFocusedRecentActionPath] = createSignal<string | null>(null)
-  const [focusMode, setFocusMode] = createSignal<"recent" | "new" | null>("recent")
+  const [focusMode, setFocusMode] = createSignal<"recent" | "new" | null>(null)
   const [renameProjectTarget, setRenameProjectTarget] = createSignal<{ path: string; name: string; label: string } | null>(null)
   const [isRenamingProject, setIsRenamingProject] = createSignal(false)
   // The canonical selector shared by Home and blank tabs.
@@ -66,7 +67,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
     if (!active) return
     setHomeTab(allRecents().length ? "recent" : "browse")
     requestAnimationFrame(() => {
-      if (props.active !== false) (searchRef ?? homeRootRef?.querySelector<HTMLElement>('[data-home-tab="browse"]'))?.focus()
+      if (props.active !== false) searchRef?.focus()
     })
   }))
 
@@ -76,7 +77,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
   const isLoading = () => Boolean(props.isLoading)
 
   function getActiveListLength() {
-    return homeTab() === "recent" ? folders().length : 0
+    return props.blank || homeTab() === "recent" ? folders().length : 0
   }
 
   function scrollToIndex(index: number) {
@@ -331,6 +332,8 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
         onDragOver={folderDrop.bind.onDragOver}
         onDragLeave={folderDrop.bind.onDragLeave}
         onDrop={folderDrop.bind.onDrop}
+        onPointerMove={() => setFocusMode(null)}
+        onKeyDown={(event) => { if (event.key === "Tab") setFocusMode("recent") }}
       >
         <div
            class="folder-home-shell w-full pb-2 flex flex-col"
@@ -373,12 +376,10 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           </div>
           </Show>
           <div class="folder-home-hero text-center shrink-0">
-            <Show when={!props.blank} fallback={<h1 class="folder-home-blank-title">{t("folderSelection.openProject")}</h1>}>
             <div class="folder-home-identity">
-              <BrandLogo alt={t("folderSelection.logoAlt")} class="folder-home-logo" />
-              <h1 class="text-3xl font-semibold text-primary">CodeNomad</h1>
+              <div class="mb-3 flex justify-center"><BrandLogo alt={t("folderSelection.logoAlt")} class="folder-home-logo" /></div>
+              <h1 class="mb-2 text-3xl font-semibold text-primary">CodeNomad</h1>
             </div>
-            </Show>
             <Show when={!props.blank}>
             <div class="mt-3 flex justify-center gap-2">
               <a href={helpUrl(locale(), "sponsor")} class="selector-button selector-button-secondary w-auto px-3 py-1.5 inline-flex items-center justify-center gap-1.5"
@@ -438,10 +439,27 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
 
           <div class="folder-home-content flex-1 min-h-0 flex flex-col gap-4">
             <div class="folder-home-main flex-1 gap-4">
-              <div class="folder-home-list-column order-1 lg:order-2 flex flex-col gap-4 flex-1 min-h-0">
-                <div class="folder-home-list-panel panel window-shell flex flex-col">
+              <Show when={!props.blank}>
+                <div class="folder-home-create-column flex flex-col gap-4">
+                  <div class="panel shrink-0">
+                    <div class="folder-home-creation-actions panel-body flex flex-col gap-3">
+                      <NewTabActions home isLoading={isLoading()} onClone={openCloneDialog} onNewTemporary={props.onNewTemporaryInstance} />
+                    </div>
+                    <div class="panel-section w-full">
+                      <button type="button" onClick={() => openSettings("opencode")} class="panel-section-header w-full justify-between">
+                        <div class="flex items-center gap-2"><Settings class="w-4 h-4 icon-muted" aria-hidden="true" /><span class="text-sm font-medium text-secondary">{t("folderSelection.opencode")}</span></div><ChevronRight class="w-4 h-4 icon-muted" aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                  <div class="panel shrink-0"><div class="panel-body flex items-center justify-center"><VersionPill /></div></div>
+                </div>
+              </Show>
+              <div class="folder-home-list-column flex flex-col gap-4 flex-1 min-h-0">
+                <div class="folder-home-list-panel panel flex flex-col" classList={{ "window-shell": props.blank }}>
                   <div class="panel-header !gap-0 !p-0">
-                    <div class="folder-home-tabs" role="tablist" onKeyDown={handleTabKeyDown}>
+                    <Show when={props.blank}><div class="px-4 py-3"><h2 class="panel-title text-base">{t("newInstanceLauncher.recentTitle")}</h2><EntryCount count={allRecents().length} /></div></Show>
+                    <Show when={!props.blank}>
+                    <div class="grid grid-cols-2 gap-0 overflow-hidden border border-base" role="tablist" onKeyDown={handleTabKeyDown}>
                       <For each={["recent", "browse"] as const}>
                         {(tab) => (
                           <button
@@ -454,27 +472,30 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                             aria-selected={homeTab() === tab}
                             aria-controls={panelId(tab)}
                             tabIndex={homeTab() === tab ? 0 : -1}
-                            class="folder-home-tab"
+                            class="folder-home-header-tab px-4 py-3 text-left transition-colors"
+                            classList={{ "border-r border-base": tab === "recent" }}
+                            style={{ "background-color": homeTab() === tab ? "var(--surface-control)" : "var(--surface-secondary)" }}
                             onClick={() => setHomeTab(tab)}
                           >
-                            <span>
+                            <span class="panel-title text-base" style={{ color: homeTab() === tab ? "var(--text-primary)" : "var(--text-secondary)" }}>
                               {t(tab === "recent" ? "newInstanceLauncher.recentTitle" : "folderSelection.browseMenu.title")}
                             </span>
-                            <span class="badge-shape neutral-badge" aria-hidden="true">{tab === "recent" ? allRecents().length : browseEntryCount()}</span>
+                            <EntryCount count={tab === "recent" ? allRecents().length : browseEntryCount()} />
                           </button>
                         )}
                       </For>
                     </div>
+                    </Show>
                   </div>
 
-                  <Show when={homeTab() === "browse"}>
+                  <Show when={!props.blank && homeTab() === "browse"}>
                     <div id={panelId("browse")} role="tabpanel" aria-labelledby={tabId("browse")} class="flex flex-col flex-1 min-h-0">
                       <BrowseMenu isLoading={isLoading()} onBrowseLocal={() => void handleBrowse()} />
                     </div>
                   </Show>
 
-                  <Show when={homeTab() === "recent"}>
-                  <div id={panelId("recent")} role="tabpanel" aria-labelledby={tabId("recent")} class="flex flex-col flex-1 min-h-0">
+                  <Show when={props.blank || homeTab() === "recent"}>
+                  <div id={panelId("recent")} role={props.blank ? "region" : "tabpanel"} aria-label={props.blank ? t("newInstanceLauncher.recentTitle") : undefined} aria-labelledby={props.blank ? undefined : tabId("recent")} class="flex flex-col flex-1 min-h-0">
                     <div class="window-toolbar new-instance-launcher-search">
                       <Search class="w-4 h-4 icon-muted" aria-hidden="true" />
                       <input
@@ -531,7 +552,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                               data-sidecar={folder.sidecar?.sidecarId}
                               onMouseEnter={() => {
                                 if (isLoading()) return
-                                setFocusMode("recent")
+                                setFocusMode(null)
                                 setSelectedIndex(index())
                               }}
                             >
@@ -546,7 +567,6 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                     title={recentAccessibleName(folder)}
                                     onClick={() => openRecent(folder)}
                                     onFocus={() => {
-                                      setFocusMode("recent")
                                       setSelectedIndex(index())
                                     }}
                                   />
@@ -568,7 +588,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                             return (
                                               <button
                                                 type="button"
-                                                class="window-action folder-home-open-instance-button folder-home-row-action pointer-events-auto"
+                                                class="folder-home-open-instance-button folder-home-row-action pointer-events-auto"
                                                 disabled={isLoading()}
                                                 aria-label={`${t("folderSelection.recent.switchToOpenProject")} · ${recentAccessibleName(folder)}`}
                                                 title={t("folderSelection.recent.switchToOpenProject")}
@@ -600,7 +620,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                         <Show when={folder.remote}>
                                           {(remote) => <bdi class="flex-shrink-0 truncate" dir="auto" style={{ "max-width": "40%" }}>{remote().serverName}</bdi>}
                                         </Show>
-                                        <Show when={!folder.remote && !folder.sidecar}><span class="truncate">{t("folderSelection.browseMenu.thisComputer")} ·</span></Show>
+                                        <Show when={props.blank && !folder.remote && !folder.sidecar}><span class="truncate">{t("folderSelection.browseMenu.thisComputer")} ·</span></Show>
                                         <Show when={!folder.sidecar} fallback={<span class="flex-1 min-w-0 truncate">{t("folderSelection.recent.sidecar")}</span>}>
                                           <span class="font-mono truncate-start flex-1 min-w-0" dir="ltr">
                                             {getDisplayPath(folder.path)}
@@ -611,8 +631,29 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                     </div>
                                   </div>
                                 </div>
-                                <ActionOverflowMenu items={actions()} label={`${t("folderSelection.recent.actions")} · ${recentAccessibleName(folder)}`}
-                                  onOpenChange={(open) => setRecentActionFocused(key, open)} />
+                                <Show when={props.blank} fallback={
+                                  <>
+                                    <Show when={!folder.remote && !folder.sidecar}>
+                                      <button type="button" class="folder-home-row-action p-2 transition-all hover:bg-surface-hover opacity-70 hover:opacity-100"
+                                        disabled={isLoading()} title={t("folderSelection.recent.rename")}
+                                        onClick={(event) => openProjectRename(folder.path, folder.projectName, event)}
+                                        onMouseEnter={() => setRecentActionHovered(key, true)} onMouseLeave={() => setRecentActionHovered(key, false)}
+                                        onFocus={() => setRecentActionFocused(key, true)} onBlur={() => setRecentActionFocused(key, false)}>
+                                        <Pencil class="w-3.5 h-3.5 icon-muted" />
+                                      </button>
+                                    </Show>
+                                    <button type="button" class="folder-home-row-action p-2 transition-all hover:bg-surface-hover opacity-70 hover:opacity-100"
+                                      disabled={isLoading()} title={t("folderSelection.recent.remove")}
+                                      onClick={(event) => { setRecentActionHovered(key, false); setRecentActionFocused(key, false); handleRemove(folder, event) }}
+                                      onMouseEnter={() => setRecentActionHovered(key, true)} onMouseLeave={() => setRecentActionHovered(key, false)}
+                                      onFocus={() => setRecentActionFocused(key, true)} onBlur={() => setRecentActionFocused(key, false)}>
+                                      <Trash2 class="w-3.5 h-3.5 icon-muted" />
+                                    </button>
+                                  </>
+                                }>
+                                  <ActionOverflowMenu items={actions()} label={`${t("folderSelection.recent.actions")} · ${recentAccessibleName(folder)}`}
+                                    onOpenChange={(open) => setRecentActionFocused(key, open)} />
+                                </Show>
                               </div>
                             </div>
                           }}
@@ -621,22 +662,21 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                     </Show>
                   </div>
                   </Show>
-                  <div class="window-footer folder-home-creation-actions">
-                    <NewTabActions isLoading={isLoading()} onClone={openCloneDialog} onNewTemporary={props.onNewTemporaryInstance} />
-                  </div>
                 </div>
 
               </div>
 
+              <Show when={props.blank}>
+                <div class="folder-dashboard-servers panel window-shell flex flex-col min-w-0">
+                  <header class="panel-header !px-4 !py-3"><h2 class="panel-title text-base">{t("folderSelection.browseMenu.title")}</h2><EntryCount count={browseEntryCount()} /></header>
+                  <BrowseMenu isLoading={isLoading()} onBrowseLocal={() => void handleBrowse()} footer={
+                    <div class="window-footer folder-home-blank-actions">
+                      <NewTabActions isLoading={isLoading()} onClone={openCloneDialog} onNewTemporary={props.onNewTemporaryInstance} hideSidecar />
+                    </div>
+                  } />
+                </div>
+              </Show>
             </div>
-            <Show when={!props.blank}>
-              <div class="folder-home-status">
-                <button type="button" onClick={() => openSettings("opencode")} class="window-text-button">
-                  <Settings class="w-4 h-4" aria-hidden="true" />{t("folderSelection.opencode")}<ChevronRight class="w-4 h-4" aria-hidden="true" />
-                </button>
-                <VersionPill />
-              </div>
-            </Show>
           </div>
         </div>
         <Show when={isLoading()}>

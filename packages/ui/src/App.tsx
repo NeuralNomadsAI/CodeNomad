@@ -926,7 +926,7 @@ const App: Component = () => {
           onOpenChange={setLauncherOpen}
           onSelectFolder={(path) => void handleSelectFolder(path)}
           onSelectExistingInstance={handleSelectExistingInstance}
-          onOpenAnotherProject={() => { openBlankTab(); setShowFolderSelection(false) }}
+          onNewTemporary={() => void handleNewTemporaryInstance()}
         />
         <SettingsScreen />
         <AlertDialog />

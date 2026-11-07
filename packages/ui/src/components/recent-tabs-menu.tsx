@@ -21,12 +21,14 @@ export default function RecentTabsMenu(props: {
   const [query, setQuery] = createSignal("")
   const listId = `recent-list-${createUniqueId()}`
   const [index, setIndex] = createSignal(0)
+  const [keyboardNavigation, setKeyboardNavigation] = createSignal(false)
   const matches = createMemo(() => filterRecents(launchableRecents(), query()))
   let list: HTMLDivElement | undefined
   createEffect(on(() => props.active, (active) => {
     if (!active) return
     setQuery("")
     setIndex(0)
+    setKeyboardNavigation(false)
     void ensureSidecarsLoaded()
   }))
   createEffect(on(matches, () => setIndex(0), { defer: true }))
@@ -41,6 +43,7 @@ export default function RecentTabsMenu(props: {
     if (props.isLoading || !matches().length) return
     if (event.key === "ArrowDown" || event.key === "ArrowUp" || (!fromSearch && (event.key === "Home" || event.key === "End"))) {
       event.preventDefault()
+      setKeyboardNavigation(true)
       const count = matches().length
       const next = event.key === "Home" ? 0 : event.key === "End" ? count - 1
         : fromSearch ? (event.key === "ArrowDown" ? 0 : count - 1)
@@ -53,7 +56,9 @@ export default function RecentTabsMenu(props: {
     }
   }
   return (
-    <div class="recent-tabs-menu">
+    <div class="recent-tabs-menu" data-keyboard-active={keyboardNavigation()}
+      onPointerMove={() => setKeyboardNavigation(false)}
+      onKeyDown={(event) => { if (event.key === "Tab") setKeyboardNavigation(true) }}>
       <div class="window-toolbar new-instance-launcher-search">
         <Search class="w-4 h-4 icon-muted" aria-hidden="true" />
         <input type="search" class="new-instance-launcher-search-input" aria-controls={listId}
@@ -80,7 +85,8 @@ export default function RecentTabsMenu(props: {
                 </span>
               </button>
               <Show when={recentOpenTarget(recent)} fallback={<span class="new-instance-launcher-recent-meta">{formatRelativeTime(t, recent.lastAccessed)}</span>}>
-                <button type="button" class="window-action" disabled={props.isLoading}
+                <button type="button" class="folder-home-open-instance-button" disabled={props.isLoading}
+                  title={t("folderSelection.recent.switchToOpenProject")}
                   aria-label={`${t("folderSelection.recent.switchToOpenProject")} · ${recentAccessibleName(recent)}`}
                   onFocus={() => setIndex(position())}
                   onClick={() => { if (!props.isLoading) { props.onRun?.(); joinRecentOpenTarget(recent, props.onSelectExistingInstance) } }}>

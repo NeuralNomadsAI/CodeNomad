@@ -83,7 +83,7 @@ Meldet ein Client eine Zertifikatswarnung, halten Sie an und prüfen Sie Hostnam
 
 ## Remote-Server speichern {#saved-servers}
 
-1. Öffnen Sie auf der Startseite oder einem leeren **Projekt öffnen**-Tab **Durchsuchen** und geben Sie Adresse oder Kopplungslink in **Serveradresse oder -link** ein. Im Schnellstarter wählen Sie zuerst **Anderes Projekt öffnen…**. Einfügen fügt sofort hinzu, Enter bestätigt getippten Text. Der Server wird gespeichert, seine Zeile fokussiert und der Selektor bleibt offen; ein Link koppelt auch das lokale Backend für die Ordnersuche. Klicken Sie zum Durchsuchen auf die Zeile. **Einstellungen → Server** bietet dasselbe Feld.
+1. Nutzen Sie **Durchsuchen** auf der Startseite oder im rechten Bereich eines leeren Tabs und geben Sie Adresse oder Kopplungslink in **Serveradresse oder -link** ein. Einfügen fügt sofort hinzu, Enter bestätigt getippten Text. Der Server wird gespeichert, seine Zeile fokussiert und der Selektor bleibt offen; ein Link koppelt auch das lokale Backend für die Ordnersuche. Klicken Sie zum Durchsuchen auf die Zeile. **Einstellungen → Server** bietet dasselbe Feld.
 2. Verwenden Sie einen vertrauenswürdigen HTTPS-Ursprung. Zertifikatsfehler und unerreichbare Server erhalten übersetzte Meldungen; technische Details öffnen Sie über die Informationsschaltfläche. **TLS-Prüfung überspringen** erfordert Ihre ausdrückliche Wahl: nur für vertrauenswürdige Server aktivieren und erneut bestätigen. Die Öffnen-Aktion kündigt bei der Projektwahl das separate Fenster für dieses Profil an.
 3. Der Servername bleibt bei Anmeldung und Navigation sichtbar, mit beschrifteten Feldern und den Bereichen **Zuletzt verwendet** und **Ordner**. Kopplungsfehler nennen den betroffenen Server. **Server bearbeiten** unter **Einstellungen → Server** ändert URL und Namen; `i`-Schaltflächen zeigen URL/TLS-Hilfe auf Abruf.
 
@@ -99,7 +99,7 @@ Das Einfügen eines frischen Fernsteuerungslinks speichert den Tunnel-Ursprung u
 
 In der Desktop-App (Electron oder Tauri unter Windows) kann ein gespeicherter Server eines seiner Projekte auch in einem Tab dieses Fensters öffnen, neben Ihren lokalen Projekten:
 
-1. Öffnen Sie auf Startseite oder leerem Tab **Durchsuchen** und wählen Sie einen Server. Im Schnellstarter zuerst **Anderes Projekt öffnen…** wählen. Neue Server über **Serveradresse oder -link** hinzufügen, dann auf ihre Zeile klicken.
+1. Öffnen Sie auf Startseite oder leerem Tab **Durchsuchen** und wählen Sie einen Server. Neue Server über **Serveradresse oder -link** hinzufügen, dann auf ihre Zeile klicken.
 2. Der benannte Server zeigt **Zuletzt verwendet** und **Ordner** an Ort und Stelle. Bei Bedarf im beschrifteten Formular anmelden. Wählen Sie ein Projekt oder einen Ordner mit **Diesen Ordner öffnen**. **Zurück zu Durchsuchen** führt zur Serverliste.
 3. Die Ordnerwahl erzeugt ein neues Remote-Vorkommen anstelle des leeren Tabs und ergänzt **Zuletzt verwendet**. Die separate Aktion **Offen** wählt ein bestehendes Vorkommen. Die Öffnen-Aktion kündigt bei der Auswahl separate Fenster an, insbesondere beim TLS-Fallback und Tauri macOS/Linux. Bekannte Einschränkung: Backend-Ordnersuche und native Ansicht authentifizieren sich unabhängig.
 

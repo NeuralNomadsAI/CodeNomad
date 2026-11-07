@@ -65,3 +65,7 @@
 .browse-menu-meta[data-status="running"] {
   color: var(--session-status-idle-fg, var(--text-secondary));
 }
+
+.browse-menu--footer { overflow: hidden; }
+.browse-menu--footer > .browse-menu-body { flex: 1; overflow: auto; }
+.browse-menu-footer { flex: 0 0 auto; }

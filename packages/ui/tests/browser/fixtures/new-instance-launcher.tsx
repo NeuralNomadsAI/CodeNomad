@@ -27,7 +27,8 @@ function Fixture() {
     <NewInstanceLauncher open={launcherOpen()} anchor={anchor()} isLoading={false} onOpenChange={setLauncherOpen}
       onSelectFolder={(path) => calls.push(`folder:${path}`)}
       onSelectExistingInstance={(id, path) => calls.push(`existing:${id}:${path}`)}
-      onOpenAnotherProject={() => calls.push("home")} />
+      onNewTemporary={() => calls.push("temporary")}
+      />
     {/* Stands in for another window (command palette, home page) taking focus. */}
     <input id="other-surface" aria-label="Other surface" />
   </>}>

@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onMount } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onMount, type JSX } from "solid-js"
 import { Globe, Laptop, Server } from "lucide-solid"
 import type { RemoteServerProfile, SideCar } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
@@ -20,6 +20,7 @@ interface BrowseMenuProps {
   isLoading: boolean
   /** Browses this computer's folders (native dialog or folder browser). */
   onBrowseLocal: () => void
+  footer?: JSX.Element
 }
 
 /** Choices only: this computer, available saved servers and configured SideCars (the add field is an action). */
@@ -75,11 +76,18 @@ export default function BrowseMenu(props: BrowseMenuProps) {
   }
 
   const sidecarRunning = (sidecar: SideCar) => sidecar.status === "running"
+  const AddField = () => <Show when={canOpenRemoteWindows() && !selectedServer()}>
+    <ServerAddField navAttribute="data-browse-nav" disabled={props.isLoading}
+      onPairingFailure={(id) => setPairingFailures(ids => ids.includes(id) ? ids : [...ids, id])}
+      onAdded={(id, mayFocus) => {
+        setPairingFailures(ids => ids.filter(value => value !== id))
+        queueMicrotask(() => { if (mayFocus?.() ?? true) bodyRef?.querySelector<HTMLElement>(`[data-remote-server="${CSS.escape(id)}"]`)?.focus() })
+      }} />
+  </Show>
 
   return (
-    <div class="browse-menu">
-        <div class="browse-menu-body" ref={bodyRef} role="group" aria-label={t("folderSelection.browseMenu.title")}
-          onKeyDown={handleKeyDown}>
+    <div class="browse-menu" classList={{ "browse-menu--footer": Boolean(props.footer) }} ref={bodyRef} onKeyDown={handleKeyDown}>
+        <div class="browse-menu-body" role="group" aria-label={t("folderSelection.browseMenu.title")}>
           <Show when={selectedServer()}>{(profile) => <RemoteServerBrowser profile={profile()} onBack={backToRoot}
             onConnected={() => setPairingFailures(ids => ids.filter(id => id !== profile().id))}
             onSelect={(folder) => run(() => {
@@ -126,16 +134,12 @@ export default function BrowseMenu(props: BrowseMenuProps) {
               </div>
             }}
           </For>
-          <Show when={canOpenRemoteWindows()}>
-            <ServerAddField navAttribute="data-browse-nav" disabled={props.isLoading}
-              onPairingFailure={(id) => setPairingFailures(ids => ids.includes(id) ? ids : [...ids, id])}
-              onAdded={(id, mayFocus) => {
-                setPairingFailures(ids => ids.filter(value => value !== id))
-                queueMicrotask(() => { if (mayFocus?.() ?? true) bodyRef?.querySelector<HTMLElement>(`[data-remote-server="${CSS.escape(id)}"]`)?.focus() })
-              }} />
-          </Show>
+          <Show when={!props.footer}><AddField /></Show>
           </Show>
         </div>
+        <Show when={props.footer}>
+          <div class="browse-menu-footer"><AddField />{props.footer}</div>
+        </Show>
     </div>
   )
 }

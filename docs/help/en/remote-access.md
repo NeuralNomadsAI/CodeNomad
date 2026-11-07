@@ -83,7 +83,7 @@ If a client reports a certificate warning, stop and check the hostname, SANs, tr
 
 ## Save a remote server {#saved-servers}
 
-1. On Home or an empty **Open a project** tab, open **Browse** and enter the address or pairing link in **Server address or link**. From the quick launcher, use **Open another project…** first. Pasting adds immediately; Enter adds typed text. Adding saves the server, focuses its row and keeps the selector in place; a pairing link also pairs the local backend for browsing. Click the row to browse. **Settings → Servers** offers the same field.
+1. Use **Browse** on Home or the right-hand panel of an empty tab, and enter the address or pairing link in **Server address or link**. Pasting adds immediately; Enter adds typed text. Adding saves the server, focuses its row and keeps the selector in place; a pairing link also pairs the local backend for browsing. Click the row to browse. **Settings → Servers** offers the same field.
 2. Use a trusted HTTPS origin. Certificate and unreachable-server errors are localized; request details with the information control for the technical diagnostic. **Skip TLS verification** requires your explicit choice: use it only for a trusted server, then submit again. Opening a project on this profile uses a separate window; the opening action announces this at selection time.
 3. Choose the saved **Browse** row. The server name stays visible during sign-in and navigation, with labelled sign-in fields and distinct **Recent** and **Folders** sections. **Edit server** in **Settings → Servers** changes its URL or name; its `i` controls reveal address and TLS help on demand.
 
@@ -99,7 +99,7 @@ Pasting a fresh Remote Control pairing link saves its tunnel origin and pairs th
 
 In the desktop app (Electron, or Tauri on Windows), a saved server can also open one of its projects in a tab of this window, beside your local projects:
 
-1. On Home or an empty tab, open **Browse** and choose a saved server. From the quick launcher, use **Open another project…** first. To add a server, use **Server address or link**, then click its new row.
+1. On Home or an empty tab, open **Browse** and choose a saved server. To add a server, use **Server address or link**, then click its new row.
 2. The named server's **Recent** and **Folders** sections appear in place. Sign in using the labelled inline form if needed. Choose a recent project, or navigate folders and choose **Open this folder**. **Back to Browse** returns to the server list.
 3. Choosing the folder creates a new remote project occurrence, replacing the originating empty tab. The project joins **Recent**. To join an existing occurrence instead, use its separate **Open** action.
 

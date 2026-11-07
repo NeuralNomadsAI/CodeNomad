@@ -51,7 +51,8 @@
   text-align: start;
 }
 .new-instance-launcher-recent-primary:hover { background: var(--menu-item-hover-bg); }
-.new-instance-launcher-recent-primary:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
+.new-instance-launcher-recent-primary:focus { outline: none; }
+.recent-tabs-menu[data-keyboard-active="true"] .new-instance-launcher-recent-primary:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
 .new-instance-launcher-recent-details { display: flex; flex-direction: column; gap: var(--space-xs); min-width: 0; }
 .new-instance-launcher-recent-name, .new-instance-launcher-recent-path { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .new-instance-launcher-recent-name { color: var(--text-primary); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }

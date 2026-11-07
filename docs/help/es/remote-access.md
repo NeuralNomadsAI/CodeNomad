@@ -83,7 +83,7 @@ Si un cliente muestra una advertencia de certificado, detente y comprueba el nom
 
 ## Guardar un servidor remoto {#saved-servers}
 
-1. En Inicio o una pestaña vacía **Abrir un proyecto**, abre **Explorar** e introduce la dirección o enlace en **Dirección o enlace del servidor**. Desde el lanzador rápido, elige primero **Abrir otro proyecto…**. Pegar añade al instante; Intro confirma el texto escrito. Se guarda el servidor, se enfoca su fila y el selector permanece; un enlace también empareja el backend local para explorar. Pulsa la fila para explorar. **Configuración → Servidores** ofrece el mismo campo.
+1. Usa **Explorar** en Inicio o en el panel derecho de una pestaña vacía e introduce la dirección o enlace en **Dirección o enlace del servidor**. Pegar añade al instante; Intro confirma el texto escrito. Se guarda el servidor, se enfoca su fila y el selector permanece; un enlace también empareja el backend local para explorar. Pulsa la fila para explorar. **Configuración → Servidores** ofrece el mismo campo.
 2. Usa un origen HTTPS de confianza. Los errores de certificado y servidor inaccesible están traducidos; el control de información muestra el diagnóstico técnico bajo demanda. **Omitir la verificación TLS** exige una elección explícita: úsalo solo con un servidor de confianza y confirma otra vez. La acción de apertura anuncia al elegir el proyecto que este perfil usa otra ventana.
 3. El nombre del servidor permanece visible durante el acceso y la navegación, con campos etiquetados y secciones **Recientes** y **Carpetas**. Los errores de emparejamiento nombran al servidor. **Editar servidor** en **Configuración → Servidores** cambia URL y nombre; sus botones `i` muestran ayuda de URL/TLS bajo demanda.
 
@@ -99,7 +99,7 @@ Pegar un enlace nuevo de Control remoto guarda el origen del túnel y empareja e
 
 En la aplicación de escritorio (Electron, o Tauri en Windows), un servidor guardado también puede abrir uno de sus proyectos en una pestaña de esta ventana, junto a tus proyectos locales:
 
-1. En Inicio o una pestaña vacía, abre **Explorar** y elige un servidor. Desde el lanzador rápido, usa primero **Abrir otro proyecto…**. Para añadir uno, usa **Dirección o enlace del servidor** y pulsa su fila.
+1. En Inicio o una pestaña vacía, abre **Explorar** y elige un servidor. Para añadir uno, usa **Dirección o enlace del servidor** y pulsa su fila.
 2. El servidor identificado muestra **Recientes** y **Carpetas** en el mismo lugar. Accede en el formulario etiquetado si hace falta. Elige un reciente o navega y pulsa **Abrir esta carpeta**. **Volver a Explorar** regresa a los servidores.
 3. Elegir carpeta crea una nueva instancia remota en lugar de la pestaña vacía y la añade a **Recientes**. La acción separada **Abierta** selecciona la existente. La acción de apertura anuncia otra ventana al elegir, incluidos los casos de TLS y Tauri macOS/Linux. Limitación conocida: la exploración del backend y la vista nativa se autentican de forma independiente.
 

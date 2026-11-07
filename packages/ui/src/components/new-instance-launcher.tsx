@@ -1,6 +1,6 @@
 import { Popover } from "@kobalte/core/popover"
 import { useI18n } from "../lib/i18n"
-import { FolderOpen } from "lucide-solid"
+import { Hourglass } from "lucide-solid"
 import RecentTabsMenu from "./recent-tabs-menu"
 
 interface NewInstanceLauncherProps {
@@ -10,7 +10,7 @@ interface NewInstanceLauncherProps {
   onOpenChange: (open: boolean) => void
   onSelectFolder: (path: string) => void
   onSelectExistingInstance: (id: string, path: string) => void
-  onOpenAnotherProject: () => void
+  onNewTemporary: () => void
 }
 
 /** Quick recents only; other choices belong in a blank tab. */
@@ -34,16 +34,17 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
               if (returnFocus && !props.open && (!active || active === document.body || content?.contains(active))) props.anchor?.focus()
               returnFocus = false
             }}>
-            <header class="window-header"><Popover.Title class="window-title">{t("newInstanceLauncher.title")}</Popover.Title></header>
+            <header class="window-header">
+              <Popover.Title class="window-title">{t("newInstanceLauncher.title")}</Popover.Title>
+              <button type="button" class="window-icon-button !border !border-solid !border-base" disabled={props.isLoading}
+                aria-label={t("folderSelection.temporary.button")} title={t("folderSelection.temporary.button")}
+                onClick={() => { if (!props.isLoading) { close(); props.onNewTemporary() } }}>
+                <Hourglass aria-hidden="true" />
+              </button>
+            </header>
             <Popover.Description class="sr-only">{t("newInstanceLauncher.description")}</Popover.Description>
             <RecentTabsMenu active={props.open} isLoading={props.isLoading} onRun={close}
               onSelectFolder={props.onSelectFolder} onSelectExistingInstance={props.onSelectExistingInstance} />
-            <div class="window-footer new-instance-launcher-footer">
-              <button type="button" class="window-text-button" disabled={props.isLoading}
-                onClick={() => { close(); props.onOpenAnotherProject() }}>
-                <FolderOpen class="w-4 h-4" aria-hidden="true" />{t("newInstanceLauncher.openAnotherProject")}
-              </button>
-            </div>
           </Popover.Content>
         </Popover.Portal>
       </Popover>

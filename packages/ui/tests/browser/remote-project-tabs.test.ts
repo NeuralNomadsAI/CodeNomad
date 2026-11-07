@@ -141,7 +141,8 @@ async function open(page: Page, path: string, scenario: Scenario) {
 
 // Home and blank tabs share the canonical Browse tab.
 async function browse(page: Page) {
-  await page.getByRole("tab", { name: "Browse", exact: true }).click()
+  const tab = page.getByRole("tab", { name: "Browse", exact: true })
+  if (await tab.count()) await tab.click()
 }
 
 // Browse's last row: the field that saves a server. Enter submits it.
@@ -408,7 +409,7 @@ test("a pairing-link profile browses with the backend's device and fills its bla
     await page.locator('[data-sidecar="docs"]').click()
     await page.locator('.new-instance-button').click()
     const blank = page.locator('[data-tab-kind="blank"][data-tab-visible="true"]')
-    await blank.getByRole('tab', { name: 'Browse', exact: true }).click()
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Search recent projects')
     const code = 'p'.repeat(32)
     const field = blank.getByRole('textbox', { name: 'Server address or link' })
     await field.fill(`https://paired.example.test/remote-pair#${code}`)
@@ -584,13 +585,13 @@ test("+ opens disposable blank tabs; remote and SideCar choices replace their or
     const blank = page.locator('[data-tab-kind="blank"][data-tab-visible="true"]')
     await blank.waitFor()
     assert.equal(await page.locator('.tab-pill').count(), 2, await page.locator('.tab-strip-tabs').innerText())
-    assert.deepEqual(await blank.locator('[role=tablist] .badge-shape').allTextContents(), ['0', '3'])
+    assert.deepEqual(await blank.locator('.panel-header .panel-subtitle').allTextContents(), ['0 items', '3 items'])
     assert.equal(await blank.locator('.folder-home-root--blank').count(), 1)
     assert.deepEqual(fixture.created, [], 'blank tabs create no backend workspace')
-    assert.deepEqual(await blank.locator('.folder-home-creation-actions button').allTextContents(), ['Clone Git Repo', 'New temporary tab', 'New SideCar'])
-    const layout = await blank.locator('.folder-home-creation-actions').boundingBox()
-    const panel = await blank.getByRole('tabpanel').boundingBox()
-    assert.ok(layout!.y >= panel!.y + panel!.height, 'creation stays below the selector')
+    assert.deepEqual(await blank.locator('.folder-home-blank-actions button').allTextContents(), ['Clone Git Repo', 'New temporary tab'])
+    const layout = await blank.locator('.folder-home-blank-actions').boundingBox()
+    const panel = await blank.locator('.folder-dashboard-servers').boundingBox()
+    assert.ok(layout!.x >= panel!.x && layout!.y + layout!.height <= panel!.y + panel!.height, 'creation stays inside the Browse footer')
     await page.setViewportSize({ width: 480, height: 800 })
     assert.equal(await blank.locator('.folder-home-root').evaluate(node => node.scrollWidth <= node.clientWidth), true)
     await page.setViewportSize({ width: 1200, height: 800 })
@@ -599,7 +600,6 @@ test("+ opens disposable blank tabs; remote and SideCar choices replace their or
     const firstBlankId = await blank.getAttribute('data-tab-id')
     await page.locator('.new-instance-button').click()
     await page.locator(`[data-app-tab-id="${firstBlankId}"] [role=tab]`).click()
-    await blank.getByRole('tab', { name: 'Browse', exact: true }).click()
     await blank.getByRole('button', { name: 'Open a project on Box' }).click()
     assert.equal(await page.locator('[data-tab-kind="blank"]').count(), 2, 'browsing preserves both blanks')
     await blank.getByRole('button', { name: 'Remote recent /srv/recent', exact: true }).click()
@@ -613,7 +613,6 @@ test("+ opens disposable blank tabs; remote and SideCar choices replace their or
     assert.equal(JSON.stringify(fixture.state()).includes('blank:'), false)
 
     await page.locator('.new-instance-button').click()
-    await blank.getByRole('tab', { name: 'Browse', exact: true }).click()
     await blank.locator('[data-sidecar="docs"]').click()
     await page.locator('.tab-pill', { hasText: 'Docs' }).waitFor()
     assert.equal(await page.locator('[data-tab-kind="blank"]').count(), 0)
@@ -640,7 +639,7 @@ for (const kind of ['remote recent', 'SideCar'] as const) test(`Browse ${kind}: 
     const blank = page.locator('[data-tab-kind="blank"][data-tab-visible="true"]')
     const blankId = await blank.getAttribute('data-tab-id')
     await choose()
-    const join = page.getByRole('button', { name: /^Switch to open project ·/ })
+    const join = blank.locator('.browse-menu').getByRole('button', { name: /^Switch to open project ·/ })
     await join.waitFor()
     await join.focus()
     await join.press('Enter')
@@ -654,7 +653,7 @@ for (const kind of ['remote recent', 'SideCar'] as const) test(`Browse ${kind}: 
     await page.locator(`[data-app-tab-id="${blankId}"] [role=tab]`).click()
     const primary = kind === 'remote recent'
       ? blank.getByRole('button', { name: 'Remote recent /srv/recent', exact: true })
-      : blank.locator('[data-sidecar="docs"]')
+      : blank.locator('.browse-menu [data-sidecar="docs"]')
     await primary.click()
     await blank.waitFor({ state: 'hidden' })
     assert.equal(await page.locator(`[data-tab-id="${blankId}"]`).count(), 0, 'primary replaces the blank slot')
@@ -677,7 +676,6 @@ test("a delayed server add preserves both blank tabs; clicking its row fills the
     await page.locator(".new-instance-button").click()
     const blank = page.locator('[data-tab-kind="blank"][data-tab-visible="true"]')
     const origin = await blank.getAttribute("data-tab-id")
-    await blank.getByRole('tab', { name: 'Browse', exact: true }).click()
     await page.route("**/api/remote-servers/probe", async route => { await held; await route.fallback() })
     const field = blank.getByRole("textbox", { name: "Server address or link" })
     await field.fill("https://slow.example")
@@ -693,7 +691,6 @@ test("a delayed server add preserves both blank tabs; clicking its row fills the
     assert.equal(await page.locator(`[data-tab-id="${origin}"]`).count(), 1)
     assert.equal(await page.locator(`[data-tab-id="${other}"]`).count(), 1)
     await page.locator(`[data-app-tab-id="${origin}"] [role=tab]`).click()
-    await originView.getByRole('tab', { name: 'Browse', exact: true }).click()
     await originView.getByRole("button", { name: "Open a project on slow.example" }).click()
     await chooseRemoteRoot(page)
     assert.equal(await page.locator(`[data-tab-id="${origin}"]`).count(), 0)
@@ -701,7 +698,7 @@ test("a delayed server add preserves both blank tabs; clicking its row fills the
   } finally { release(); await page.close() }
 })
 
-test("Home and blank share their canonical selector and secondary actions; blank keeps a compact identity", async () => {
+test("Home restores its styling; blank has centered branding and Recent tabs and Browse columns without SideCar creation or social links", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, locale: "en-US" })
   try {
     await open(page, "", { context: "local", host: "electron", uiState: {
@@ -710,48 +707,70 @@ test("Home and blank share their canonical selector and secondary actions; blank
       remoteProjectRecents: [{ profileId: "box", folder: "/srv/remote", projectName: "Remote", lastAccessed: Date.now() - 120000 }],
       sidecarRecents: [{ sidecarId: "docs", lastAccessed: Date.now() - 180000 }],
     }, sidecars: [sidecar("docs", "Docs", "running")] })
+    const initialHome = page.locator('.folder-home-root')
+    const creation = (await initialHome.locator('.folder-home-create-column > .panel').first().boundingBox())!
+    const recentPanel = (await initialHome.locator('.folder-home-list-panel').boundingBox())!
+    assert.deepEqual({ x: creation.x, y: creation.y, width: creation.width }, { x: 120, y: 242, width: 472 })
+    assert.deepEqual({ x: recentPanel.x, y: recentPanel.y, width: recentPanel.width }, { x: 608, y: 242, width: 472 })
+    const creationColumn = (await initialHome.locator('.folder-home-create-column').boundingBox())!
+    assert.equal(recentPanel.y + recentPanel.height, creationColumn.y + creationColumn.height)
+    assert.equal((await initialHome.getByRole('button', { name: 'Clone Git Repo', exact: true }).boundingBox())!.height, 48)
+    await capture(page, 'home-initial')
     await page.getByRole("button", { name: "Local · This computer · /srv/local", exact: true }).click()
     await page.locator('.tab-strip-tabs [role=tab]', { hasText: 'Local' }).waitFor()
     await page.getByRole("button", { name: "Home", exact: true }).click()
     const home = page.locator(".folder-home-root")
-    await home.getByRole('tab', { name: 'Recent', exact: true }).waitFor()
-    const presentation = async (root: typeof home) => root.evaluate(node => {
-      const sizes = []
-      for (const selector of ['[role=tablist]', '.folder-home-recent-item', '.folder-home-creation-actions']) {
-        const element = node.querySelector(selector)!
-        const rect = element.getBoundingClientRect(), style = getComputedStyle(element)
-        sizes.push({ width: rect.width, height: rect.height, background: style.backgroundColor, font: style.font, radius: style.borderRadius })
-      }
-      return { background: getComputedStyle(node).backgroundColor, sizes }
-    })
-    const expected = await presentation(home)
+    await home.getByRole('tab', { name: 'Recent tabs', exact: true }).waitFor()
+    assert.equal(await home.locator('[role=tablist] .badge-shape').count(), 0)
+    assert.deepEqual(await home.locator('[role=tablist] .panel-subtitle').allTextContents(), ['3 items', '3 items'])
     await capture(page, 'home-desktop')
     await home.getByRole('tab', { name: 'Browse', exact: true }).click()
     await capture(page, '02-browse-dark')
-    await home.getByRole('tab', { name: 'Recent', exact: true }).click()
+    await home.getByRole('tab', { name: 'Recent tabs', exact: true }).click()
     await page.getByRole("button", { name: "Close", exact: true }).click()
     await page.locator(".new-instance-button").click()
     const blank = page.locator('[data-tab-kind="blank"][data-tab-visible="true"]')
     await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Search recent projects")
     const root = blank.locator(".folder-home-root")
-    assert.deepEqual(await presentation(root), expected)
-    assert.equal(await blank.getByRole("heading", { name: "Open a project" }).count(), 1)
-    assert.equal(await blank.locator('.folder-home-logo').count(), 0)
-    assert.deepEqual(await blank.getByRole('tab').allTextContents(), ['Recent3', 'Browse3'])
-    const selector = await blank.getByRole('tablist').boundingBox()
+    assert.equal(await blank.getByRole("heading", { name: "CodeNomad", exact: true }).count(), 1)
+    assert.equal(await blank.locator('.folder-home-logo').count(), 1)
+    assert.deepEqual(await blank.locator('.panel-header h2').allTextContents(), ['Recent tabs', 'Browse'])
+    const selector = await blank.locator('.folder-home-list-panel .panel-header').boundingBox()
     const search = await blank.getByRole('searchbox', { name: 'Search recent projects' }).boundingBox()
     assert.ok(search!.y >= selector!.y + selector!.height, 'search stays under the selector')
+    const recentColumn = (await blank.locator('.folder-home-list-column').boundingBox())!
+    const browseColumn = (await blank.locator('.folder-dashboard-servers').boundingBox())!
+    assert.equal(recentColumn.y, browseColumn.y)
+    assert.ok(recentColumn.x + recentColumn.width < browseColumn.x)
+    assert.equal(recentColumn.width, browseColumn.width)
+    assert.equal(await root.evaluate(node => getComputedStyle(node).backgroundColor), await page.locator('.tab-pill-active').evaluate(node => getComputedStyle(node).backgroundColor))
+    const fieldBounds = (await blank.getByRole('textbox', { name: 'Server address or link' }).boundingBox())!
+    const creationBounds = (await blank.locator('.folder-home-blank-actions').boundingBox())!
+    assert.ok(fieldBounds.x >= browseColumn.x && fieldBounds.y + fieldBounds.height <= creationBounds.y)
+    assert.equal(creationBounds.y + creationBounds.height, browseColumn.y + browseColumn.height - 1)
+    assert.equal(await blank.getByRole('button', { name: 'New SideCar', exact: true }).count(), 0)
+    assert.equal(await blank.getByRole('searchbox').getAttribute('placeholder'), 'Search recent tabs…')
+    const row = blank.locator('.folder-home-recent-item').first()
+    await blank.getByRole('searchbox').press('ArrowDown')
+    assert.equal(await row.evaluate(node => node.classList.contains('panel-list-item-highlight')), true)
+    await row.locator('.folder-home-recent-primary-action').hover({ position: { x: 10, y: 10 } })
+    await page.mouse.move(5, 700)
+    assert.equal(await row.evaluate(node => node.classList.contains('panel-list-item-highlight')), false)
+    const brand = (await blank.locator('.folder-home-identity').boundingBox())!
+    const logo = (await blank.locator('.folder-home-logo').boundingBox())!
+    assert.ok(Math.abs(logo.x + logo.width / 2 - brand.x - brand.width / 2) < 1)
     assert.equal(await blank.getByRole('link').count(), 0)
     assert.equal(await blank.locator('.locale-selector, .panel-section, .version-pill, .absolute.top-4').count(), 0)
     assert.equal(await blank.locator('.folder-home-open-instance-button').count(), 1)
-    assert.equal(await blank.getByText('Box', { exact: true }).count(), 1)
+    assert.equal(await blank.locator('.folder-home-open-instance-button').getAttribute('title'), 'Switch to open project')
+    assert.equal(await blank.locator('.folder-home-open-instance-button').evaluate(node => getComputedStyle(node).textTransform), 'uppercase')
+    assert.equal(await blank.getByText('Box', { exact: true }).count(), 2)
     assert.equal(await blank.getByText('/srv/remote', { exact: true }).count(), 1)
     await capture(page, 'blank-desktop')
     await page.setViewportSize({ width: 480, height: 800 })
     await capture(page, 'blank-narrow')
     assert.equal(await root.evaluate(node => node.scrollWidth <= node.clientWidth), true)
     await page.setViewportSize({ width: 1200, height: 800 })
-    await blank.getByRole('tab', { name: 'Browse', exact: true }).click()
     const field = blank.getByRole('textbox', { name: 'Server address or link' })
     await field.fill('https://added.example')
     await field.press('Enter')
@@ -775,13 +794,15 @@ test("the quick launcher delegates browsing, authentication and server addition 
     await chooseRemoteRoot(page)
     await page.locator('.new-instance-button').click({ button: 'right' })
     const launcher = page.locator('.new-instance-launcher')
-    await launcher.getByRole('heading', { name: 'Recent projects', exact: true }).waitFor()
+    await launcher.getByRole('heading', { name: 'Recent tabs', exact: true }).waitFor()
     await capture(page, '09-launcher')
     assert.equal(await launcher.locator('.browse-menu, input[type=password], [data-server-add-field], .new-tab-actions').count(), 0)
-    await launcher.getByRole('button', { name: 'Open another project…', exact: true }).click()
+    assert.equal(await launcher.getByRole('button', { name: 'Open another project…', exact: true }).count(), 0)
+    await page.keyboard.press('Escape')
     await launcher.waitFor({ state: 'hidden' })
+    await page.locator('.new-instance-button').click()
     const blank = page.locator('[data-tab-kind="blank"][data-tab-visible="true"]')
-    await blank.getByRole('tab', { name: 'Browse', exact: true }).click()
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Search recent projects')
     const field = blank.getByRole('textbox', { name: 'Server address or link' })
     await field.fill('https://launcher.example')
     await field.press('Enter')
@@ -817,7 +838,6 @@ for (const host of ['web', 'electron', 'tauri'] as const) test(`${host}: the log
     await page.getByRole('button', { name: 'Close', exact: true }).click()
     await page.locator('.new-instance-button').click()
     const blank = page.locator('[data-tab-kind="blank"][data-tab-visible="true"]')
-    await blank.getByRole('tab', { name: 'Recent', exact: true }).click()
     await blank.getByRole('button', { name: 'Local · This computer · /srv/local', exact: true }).click()
     await page.waitForFunction(() => !document.querySelector('[data-tab-kind="blank"]'))
     assert.deepEqual(fixture.created, ['/srv/local'])
@@ -867,7 +887,7 @@ test("Browse opens a running SideCar, which then joins the recent tabs of the ho
     const quickRecent = launcher.locator('.new-instance-launcher-recent[data-sidecar="docs"]')
     await quickRecent.waitFor()
     assert.equal(await launcher.locator('.browse-menu').count(), 0)
-    await quickRecent.locator('.window-action').click()
+    await quickRecent.locator('.folder-home-open-instance-button').click()
     await launcher.waitFor({ state: 'hidden' })
     assert.equal(await page.locator('.tab-pill').count(), 2)
   } finally { await page.close() }
@@ -918,7 +938,7 @@ for (const kind of ['local', 'remote', 'SideCar'] as const) test(`${kind}: recen
     const home = page.locator('.folder-home-root')
     await home.getByRole('tab', { name: 'Browse', exact: true }).click()
     await home.locator('[data-sidecar="docs"]').waitFor()
-    await home.getByRole('tab', { name: 'Recent', exact: true }).click()
+    await home.getByRole('tab', { name: 'Recent tabs', exact: true }).click()
     await home.locator('.folder-home-recent-primary-action').click()
     await page.locator('.tab-strip-tabs [role=tab]').first().waitFor()
     assert.equal(await page.locator('.tab-strip-tabs [role=tab]').count(), 1)
@@ -934,7 +954,7 @@ for (const kind of ['local', 'remote', 'SideCar'] as const) test(`${kind}: recen
     assert.equal(ids[0], original)
     await page.locator('.new-instance-button').click({ button: 'right' })
     const quick = page.locator('.new-instance-launcher')
-    await quick.locator('.new-instance-launcher-recent .window-action').focus()
+    await quick.locator('.new-instance-launcher-recent .folder-home-open-instance-button').focus()
     if (kind === 'local') {
       await capture(page, 'A-quick-populated')
       await page.setViewportSize({ width: 480, height: 800 })

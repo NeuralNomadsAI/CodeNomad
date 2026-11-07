@@ -4,8 +4,8 @@ Bir proje sekmesi CodeNomad'i arka uç bilgisayarındaki bir klasöre bağlar. S
 
 ## Bir proje açın {#open-project}
 
-1. **Yeni instance** (`+`) veya `Ctrl/Cmd+N`, kısa **Proje aç** başlıklı boş bir sekme açar. Ana sayfa aynı **Son kullanılanlar | Gözat** seçicisini, sayıları, aramayı ve eylemleri kullanır. **Git Deposunu Klonla**, **Yeni geçici sekme** ve **Yeni SideCar** listenin altındaki ikincil çubuktadır; klonlama ve geçici klasörler yerel arka ucu hedefler. Proje veya SideCar seçimi boş sekmeyi yerinde doldurur. Boş sekmeler yeniden yüklemeye kadar yaşar ve proje bırakmadan kapanır. Logo, CodeNomad kimliği, ayarlar, dil, bağlantılar ve **Sponsor** içeren ana sayfayı açar ([CodeNomad'i destekleyin](sponsor.md)).
-2. **Son kullanılanlar** içinde bir proje seçin; ya da **Gözat** bölümünü açıp **Bu bilgisayar** seçin, ardından arka uç klasörünü seçip açın. **Gözat** kayıtlı CodeNomad sunucularını ([uzak proje sekmeleri](remote-access.md#remote-project-tabs)) ve SideCar'ları ([SideCar'lar](browser-sidecars.md#register-sidecar)) da listeler.
+1. **Yeni instance** (`+`) veya `Ctrl/Cmd+N` boş bir sekme açar. Ortalanmış logo ve CodeNomad adının altında solda **Son sekmeler** ve arama, sağda **Gözat** vardır. Gözat'ın altında **Sunucu adresi veya bağlantısı**, onun altında **Git Deposunu Klonla** ve **Yeni geçici sekme** bulunur. Sayfa arka planı etkin sekmeyle aynıdır. Dar ekranlarda sütunlar alt alta dizilir. Logo ana sayfayı açar: solda **Git Deposunu Klonla**, **Yeni geçici sekme**, **Yeni SideCar** ve OpenCode satırı; sağda başlıkların altında sayılarla **Son sekmeler | Gözat**. Sağ panelin alt kenarı sol sütunla hizalanır ve liste panel içinde kayar. Ana sayfada dil, ayarlar, **Sponsor** ([CodeNomad'i destekleyin](sponsor.md)), GitHub, yıldızlar ve Discord vardır. Klonlama ve geçici klasörler yerel arka ucu hedefler. Proje veya SideCar seçimi boş sekmeyi yerinde doldurur. Boş sekmeler yeniden yüklemeye kadar yaşar ve proje bırakmadan kapanır.
+2. **Son sekmeler** içinde bir proje seçin; ya da **Gözat** bölümünü açıp **Bu bilgisayar** seçin, ardından arka uç klasörünü seçip açın. **Gözat** kayıtlı CodeNomad sunucularını ([uzak proje sekmeleri](remote-access.md#remote-project-tabs)) ve SideCar'ları ([SideCar'lar](browser-sidecars.md#register-sidecar)) da listeler.
 3. Depoyu kopyalamak için **Git Deposunu Klonla** eylemini seçin; **Depo URL'si** ve **Hedef klasör** alanlarını doldurup **Klonla** eylemini seçin. **Hedef klasör**, son klonunuzun bulunduğu klasörde (yoksa en son projenizin yanında) depo adıyla önceden doldurulur. **Göz At** klonu içerecek klasörü seçer; klon klasörünün adı dahil yolu elle de düzenleyebilirsiniz.
 
 Uzak bir sunucuya göz atmak, telefonunuzun veya dizüstü bilgisayarınızın değil, o sunucunun dosya sistemine göz atmak anlamına gelir. Bir projeyi açmak, her sekme için ayrı bir OpenCode arka plan programı oluşturmaz. Konuşmalar yerel OpenCode oturumlarıdır; bunların ömrü sekmenin ömrü değildir.
@@ -14,14 +14,14 @@ Uzak bir sunucuya göz atmak, telefonunuzun veya dizüstü bilgisayarınızın d
 
 Klonlama hedefe bir depo yazar. **Hedef klasör zaten varsa önce onu kaldırın.** yıkıcıdır: yalnızca zaten orada olan her şeyin silinebildiği durumlarda etkinleştirin. Emin değilseniz yeni bir hedef kullanın. Başarısız bir klon, mevcut bir projeyi silmek için bir neden değildir; yeniden denemeden önce bildirilen hedefi ve hatayı inceleyin.
 
-Son kullanılanlar kısayoldur. Ana sayfa ve boş sekmelerdeki eylem menüsü uygun olduğunda **Workspace'i yeniden adlandır** ve **Son kullanılanlardan kaldır** sunar; dosyalar ve konuşmalar korunur. Ana sayfa, boş sekme ve hızlı başlatıcıda yerel/uzak proje veya SideCar satırına tıklamak, zaten açık olsa da yeni bir örnek oluşturur. Ayrı **Aç** eylemi (**Açık projeye geç**) mevcut örneği seçer.
+Son kullanılanlar kısayoldur. Ana sayfanın satır içi düğmeleri ve boş sekmelerin eylem menüsü uygun olduğunda **Workspace'i yeniden adlandır** ve **Son kullanılanlardan kaldır** sunar; dosyalar ve konuşmalar korunur. Ana sayfa, boş sekme ve hızlı başlatıcıda yerel/uzak proje veya SideCar satırına tıklamak, zaten açık olsa da yeni bir örnek oluşturur. Ayrı **Aç** eylemi (**Açık projeye geç**) mevcut örneği seçer.
 
 ## Yeni örnek başlatıcıyı kullanın {#new-instance-launcher}
 
 1. `+`'ye uzun basın veya sağ tıklayın; Klavye odağı oradayken **Alt+Down**, **Shift+F10** veya Menü tuşunu kullanın.
-2. **Son projeler** yalnızca son yerel projeleri, uzak projeleri ve SideCar'ları arar. Satır yeni örnek oluşturur; ayrı **Aç** eylemi mevcut örneğe geçer. **Başka bir proje aç…** gezinmek, sunucu eklemek ve proje oluşturmak için boş sekme açar.
+2. **Son sekmeler** aramayı, son yerel ve uzak projeleri ve SideCar'ları, ayrı **Aç** eylemleriyle birlikte içerir. Satır yeni örnek oluşturur; **Aç** mevcut örneğe geçer. Başlık çubuğundaki kum saati simgeli **Yeni geçici sekme** düğmesi geçici bir sekme oluşturur.
 
-Normal tıklama boş sekme açar. Hızlı başlatıcı son kullanılanları, aramayı ve **Başka bir proje aç…** eylemini içerir. Son kullanılanları ana sayfa veya boş sekmede, sunucuları **Ayarlar → Sunucular**, SideCar'ları **Ayarlar → SideCars** bölümünde yönetin. Escape başlatıcıyı kapatır ve odağı `+` düğmesine döndürür.
+Normal tıklama boş sekme açar. Son kullanılanları ana sayfa veya boş sekmede, sunucuları **Ayarlar → Sunucular**, SideCar'ları **Ayarlar → SideCars** bölümünde yönetin. Ana sayfa, boş sekmeler ve hızlı başlatıcıda satır seçimi yalnızca klavyeyle gezinirken korunur; işaretçi satırdan çıkınca üzerine gelme vurgusu kaybolur. Escape başlatıcıyı kapatır ve odağı `+` düğmesine döndürür.
 
 ## Bir projeyi kapatın {#close-stop}
 

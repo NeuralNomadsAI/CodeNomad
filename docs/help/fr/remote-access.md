@@ -83,7 +83,7 @@ Si un client signale un avertissement de certificat, arrêtez-vous et vérifiez 
 
 ## Enregistrer un serveur distant {#saved-servers}
 
-1. Sur l'accueil ou un onglet vide **Ouvrir un projet**, ouvrez **Parcourir** et saisissez l'adresse ou le lien d'appairage dans **Adresse ou lien du serveur**. Depuis le lanceur rapide, choisissez d'abord **Ouvrir un autre projet…**. Coller ajoute immédiatement ; Entrée ajoute le texte saisi. Le serveur est enregistré, sa ligne reçoit le focus et le sélecteur reste en place ; un lien appaire aussi le backend local pour le parcours. Cliquez sur la ligne pour parcourir. **Paramètres → Serveurs** propose le même champ.
+1. Utilisez **Parcourir** sur l'accueil ou dans le panneau droit d'un onglet vide, puis saisissez l'adresse ou le lien d'appairage dans **Adresse ou lien du serveur**. Coller ajoute immédiatement ; Entrée ajoute le texte saisi. Le serveur est enregistré, sa ligne reçoit le focus et le sélecteur reste en place ; un lien appaire aussi le backend local pour le parcours. Cliquez sur la ligne pour parcourir. **Paramètres → Serveurs** propose le même champ.
 2. Utilisez une origine HTTPS de confiance. Les erreurs de certificat et de serveur inaccessible sont localisées ; leur contrôle d'information révèle le diagnostic technique à la demande. **Ignorer la vérification TLS** exige votre choix explicite : réservez-le aux serveurs de confiance, puis validez de nouveau. L'action d'ouverture annonce au choix du projet la fenêtre séparée utilisée par ce profil.
 3. Le nom du serveur reste visible à la connexion et pendant la navigation, avec des champs libellés et les sections **Récents** et **Dossiers**. Les erreurs d'appairage nomment le serveur concerné. **Modifier le serveur** dans **Paramètres → Serveurs** change URL et nom ; ses boutons `i` révèlent l'aide URL/TLS à la demande.
 
@@ -99,7 +99,7 @@ Coller un lien neuf du Contrôle à distance enregistre l’origine du tunnel et
 
 Dans l'application de bureau (Electron, ou Tauri sous Windows), un serveur enregistré peut aussi ouvrir l'un de ses projets dans un onglet de cette fenêtre, à côté de vos projets locaux :
 
-1. Sur l'accueil ou un onglet vide, ouvrez **Parcourir** et choisissez un serveur enregistré. Depuis le lanceur rapide, choisissez d'abord **Ouvrir un autre projet…**. Ajoutez un serveur avec **Adresse ou lien du serveur**, puis cliquez sur sa ligne.
+1. Sur l'accueil ou un onglet vide, ouvrez **Parcourir** et choisissez un serveur enregistré. Ajoutez un serveur avec **Adresse ou lien du serveur**, puis cliquez sur sa ligne.
 2. Le serveur nommé présente **Récents** et **Dossiers** sur place. Connectez-vous dans le formulaire libellé si nécessaire. Choisissez un récent, ou parcourez les dossiers puis **Ouvrir ce dossier**. **Retour à Parcourir** revient aux serveurs.
 3. Le dossier choisi crée une nouvelle occurrence distante à la place de l'onglet vide et rejoint **Récents**. L'action séparée **Ouvert** rejoint l'occurrence existante. Une ouverture en fenêtre séparée est annoncée par l'action au moment du choix, notamment pour le repli TLS et Tauri macOS/Linux. Limite connue : l'authentification du parcours backend et celle de la vue native sont indépendantes.
 
