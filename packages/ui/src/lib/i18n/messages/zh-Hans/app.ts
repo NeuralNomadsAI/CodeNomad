@@ -1,4 +1,12 @@
 export const appMessages = {
+  "window.menu.native.browserPermission": "允许 {origin} 使用 {permission}？",
+  "window.menu.native.browserPermissionUnknown": "已阻止未知权限：{permission}。",
+  "window.menu.native.browserAllow": "允许",
+  "window.menu.native.browserDeny": "拒绝",
+  "window.menu.native.browserCopyLink": "复制链接",
+  "window.menu.native.browserSaveImage": "保存图片",
+  "window.menu.native.browserOpenLink": "在新窗口中打开链接",
+  "window.menu.native.browserInspect": "检查",
   "window.title.main": "CodeNomad",
   "window.controls.minimize": "最小化窗口",
   "window.controls.maximize": "最大化或还原窗口",

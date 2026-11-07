@@ -1,4 +1,12 @@
 export const appMessages = {
+  "window.menu.native.browserPermission": "Разрешить {permission} для {origin}?",
+  "window.menu.native.browserPermissionUnknown": "Неизвестное разрешение заблокировано: {permission}.",
+  "window.menu.native.browserAllow": "Разрешить",
+  "window.menu.native.browserDeny": "Запретить",
+  "window.menu.native.browserCopyLink": "Копировать ссылку",
+  "window.menu.native.browserSaveImage": "Сохранить изображение",
+  "window.menu.native.browserOpenLink": "Открыть ссылку в новом окне",
+  "window.menu.native.browserInspect": "Исследовать",
   "window.title.main": "CodeNomad",
   "window.controls.minimize": "Свернуть окно",
   "window.controls.maximize": "Развернуть или восстановить окно",

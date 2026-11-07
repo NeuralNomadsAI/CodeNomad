@@ -1,4 +1,4 @@
-//! WebKit guest windows retain the engine's real opener, never an app IPC bridge.
+//! Native guest windows retain the engine's real opener, never an app IPC bridge.
 use super::*;
 
 fn download_path(directory: &Path, suggested: &Path) -> Option<PathBuf> {
@@ -20,10 +20,63 @@ fn download_path(directory: &Path, suggested: &Path) -> Option<PathBuf> {
     // WebKit refuses an existing destination; the random prefix also separates
     // concurrent downloads before either engine has created its file.
     let path = directory.join(format!("{}-{name}", uuid::Uuid::new_v4()));
-    (!path.exists()).then_some(path)
+    if path.exists() {
+        return None;
+    }
+    #[cfg(windows)]
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .ok()?;
+    Some(path)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(super) fn permission<R: Runtime>(
+    webview: tauri::Webview<R>,
+    kind: tauri::webview::PermissionKind,
+) -> tauri::webview::PermissionResponse {
+    use tauri::webview::{PermissionKind as K, PermissionResponse as R};
+    match kind {
+        K::Camera | K::Microphone | K::Geolocation | K::Notifications => R::Deny,
+        // Mandatory desktop adapters classify the raw request, including its
+        // requester metadata, before allowing consent or reporting a denial.
+        K::Other if cfg!(any(windows, target_os = "linux")) => R::Default,
+        K::ClipboardRead
+        | K::DisplayCapture
+        | K::Midi
+        | K::Sensors
+        | K::MediaKeySystemAccess
+        | K::LocalFonts
+        | K::WindowManagement
+        | K::PointerLock
+        | K::AutomaticDownloads
+        | K::FileSystemAccess
+        | K::Autoplay => R::Default,
+        _ => {
+            unknown_permission(&webview, &kind.to_string());
+            R::Deny
+        }
+    }
+}
+
+pub(super) fn unknown_permission<R: Runtime>(webview: &tauri::Webview<R>, kind: &str) {
+    use tauri_plugin_dialog::DialogExt;
+    let text = webview
+        .app_handle()
+        .try_state::<crate::AppState>()
+        .map(|state| state.menu_labels.text("browserPermissionUnknown"))
+        .unwrap_or_else(|| crate::menu_labels::label("browserPermissionUnknown").to_string())
+        .replace("{permission}", kind);
+    webview
+        .app_handle()
+        .dialog()
+        .message(text)
+        .parent(&webview.window())
+        .show(|_| {});
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn download<R: Runtime>(
     _: tauri::Webview<R>,
     event: tauri::webview::DownloadEvent<'_>,
@@ -44,7 +97,7 @@ pub(super) fn download<R: Runtime>(
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 impl EmbeddedViews {
     pub(super) fn open_popup<R: Runtime>(
         &self,
@@ -57,9 +110,11 @@ impl EmbeddedViews {
     ) -> tauri::webview::NewWindowResponse<R> {
         use tauri::webview::NewWindowResponse;
         // Only browser previews opt in; remote-view consumers keep their policy.
+        let Ok(opener_record) = self.owned(owner, opener) else {
+            return NewWindowResponse::Deny;
+        };
         if !opener.starts_with("browser-")
-            || !is_allowed_url(&url)
-            || self.owned(owner, opener).is_err()
+            || !site_url_allowed(&url, opener_record.origin.as_deref())
         {
             return NewWindowResponse::Deny;
         }
@@ -71,6 +126,7 @@ impl EmbeddedViews {
             return NewWindowResponse::Deny;
         };
         record.opener = Some(opener.into());
+        record.origin = opener_record.origin;
         if let Ok(mut inner) = self.0.lock() {
             let Some(current) = inner
                 .records
@@ -80,11 +136,14 @@ impl EmbeddedViews {
                 return NewWindowResponse::Deny;
             };
             current.opener = record.opener.clone();
+            current.origin = record.origin.clone();
         } else {
             return NewWindowResponse::Deny;
         }
         let policy = self.clone();
         let navigation_label = label.clone();
+        let page_policy = self.clone();
+        let page_label = label.clone();
         let popups = self.clone();
         let popup_app = app.clone();
         let popup_owner = owner.to_string();
@@ -101,6 +160,8 @@ impl EmbeddedViews {
         .window_features(features)
         .title(url.origin().ascii_serialization())
         .inner_size(520.0, 680.0)
+        .disable_drag_drop_handler()
+        .zoom_hotkeys_enabled(true)
         .visible(false);
         #[cfg(target_os = "linux")]
         let builder = parent
@@ -108,13 +169,18 @@ impl EmbeddedViews {
             .map(|parent| builder.transient_for_raw(&parent));
         #[cfg(target_os = "macos")]
         let builder = parent.ns_window().map(|parent| builder.parent_raw(parent));
+        #[cfg(windows)]
+        let builder = parent.hwnd().map(|parent| builder.owner_raw(parent));
         let builder = builder.map(|builder| {
             builder
                 .data_directory(storage.directory.clone())
+                .on_page_load(move |_, payload| {
+                    page_policy.observe_origin(&page_label, payload.url())
+                })
                 .on_navigation(move |url| {
                     policy.navigation_allowed(&navigation_label, url) == Some(true)
                 })
-                .on_permission_request(|_, _| tauri::webview::PermissionResponse::Deny)
+                .on_permission_request(permission)
                 .on_download(download)
                 .on_new_window(move |url, features| {
                     popups.open_popup(
@@ -135,6 +201,7 @@ impl EmbeddedViews {
                 return NewWindowResponse::Deny;
             }
         };
+        self.install_fullscreen_window(&window.as_ref().window());
         let cleanup = self.clone();
         let cleanup_app = app.clone();
         let cleanup_label = label.clone();
@@ -149,6 +216,8 @@ impl EmbeddedViews {
         let configured = super::linux::install(window.as_ref());
         #[cfg(target_os = "macos")]
         let configured = super::macos::install(window.as_ref());
+        #[cfg(windows)]
+        let configured = super::windows::install(window.as_ref());
         if configured
             .and_then(|()| self.finish_creation(&label, &record))
             .is_err()

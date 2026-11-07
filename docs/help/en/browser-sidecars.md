@@ -18,8 +18,8 @@ Native previews share cookies, sign-ins and site storage across projects/session
 
 | Client | Preview implementation | Agent browser automation | Mobile templates |
 | --- | --- | --- | --- |
-| Electron on supported desktop platforms | Native Chromium guest | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
-| Windows Tauri | Native WebView2 child | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
+| Electron on supported desktop platforms | Native Chromium guest; OAuth pop-ups, downloads and dialogs | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
+| Windows Tauri | Native WebView2 child; OAuth pop-ups, downloads and dialogs | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
 | macOS Tauri | Native WKWebView child; OAuth pop-ups, downloads and dialogs | Unavailable; use Electron or Windows Tauri | Dimensions only |
 | Linux Tauri | Native WebKitGTK child; OAuth pop-ups, downloads and dialogs | Unavailable; use Electron or Windows Tauri | Dimensions only |
 | Plain browser/remote view | Iframe fallback | No local native preview target | Dimensions only |
@@ -28,7 +28,7 @@ On Electron and Windows Tauri, native automation is prepared at desktop startup 
 
 Tauri macOS/Linux previews open manually, retain shared sign-ins across restarts and use native Back/Forward history. Native previews hide beneath local menus and dialogs; element comments are unavailable in native mode. `codenomad.browser` refuses all actions on Tauri macOS/Linux, even with a visible preview.
 
-Tauri macOS/Linux pop-ups share preview sign-ins, support `postMessage` and close with their opener. Navigation allows credential-free HTTP(S) only. Downloads save directly to your Downloads folder with sanitized, unique names, without overwriting files. `alert`, `confirm` and `prompt` use native dialogs. Camera, microphone, location, notifications and other site permissions are denied.
+Native pop-ups share preview sign-ins, preserve `opener`/`postMessage` and close with their opener. Typed/restored addresses accept credential-free HTTP(S); sites can also open blank and same-origin blob documents. File and app schemes are blocked. Downloads save to Downloads with sanitized unique names, never overwrite files and never auto-open. Camera, microphone, location and notifications are denied; classified permissions use consent, unknown requests show an error. Tauri supports `alert`/`confirm`/`prompt`; Electron supports `alert`/`confirm`, with `prompt` unavailable. Other APIs depend on the engine and hardware.
 
 ## Choose one of six viewport templates {#templates}
 

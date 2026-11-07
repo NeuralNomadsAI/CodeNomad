@@ -692,10 +692,27 @@ impl InnerWebView {
   ) -> Result<()> {
     unsafe {
       // Close container HWND when `window.close` is called in JS
-      webview.add_WindowCloseRequested(
-        &WindowCloseRequestedEventHandler::create(Box::new(move |_, _| DestroyWindow(hwnd))),
-        token,
-      )?;
+      if attributes
+        .id
+        .is_none_or(|id| !id.starts_with("browser-") || id.starts_with("browser-popup-"))
+      {
+        // Wry owns a child container even in a top-level Tauri window. A guest
+        // popup's script closure must dispose that top-level window as well.
+        let close_hwnd = if attributes
+          .id
+          .is_some_and(|id| id.starts_with("browser-popup-"))
+        {
+          GetAncestor(hwnd, GA_ROOT)
+        } else {
+          hwnd
+        };
+        webview.add_WindowCloseRequested(
+          &WindowCloseRequestedEventHandler::create(Box::new(move |_, _| {
+            DestroyWindow(close_hwnd)
+          })),
+          token,
+        )?;
+      }
 
       // Document title changed handler
       if let Some(document_title_changed_handler) = attributes.document_title_changed_handler.take()

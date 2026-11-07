@@ -4751,6 +4751,7 @@ You may have it installed on another user account, but it is not available for t
     .with_incognito(webview_attributes.incognito)
     .with_clipboard(webview_attributes.clipboard)
     .with_hotkeys_zoom(webview_attributes.zoom_hotkeys_enabled)
+    .with_back_forward_navigation_gestures(label.starts_with("browser-"))
     .with_general_autofill_enabled(webview_attributes.general_autofill_enabled);
 
   if url != "about:blank" {
@@ -5107,20 +5108,27 @@ You may have it installed on another user account, but it is not available for t
   let window_id_for_ipc = window_id.clone();
   #[cfg(not(windows))]
   let window_id_for_ipc = window_id;
-  webview_builder = webview_builder.with_ipc_handler(create_ipc_handler(
-    window_id_for_ipc,
-    id,
-    context.clone(),
-    label.clone(),
-    ipc_handler,
-  ));
-
-  for script in webview_attributes.initialization_scripts {
-    webview_builder = webview_builder
-      .with_initialization_script_for_main_only(script.script, script.for_main_frame_only);
+  let browser_guest = label.starts_with("browser-");
+  if !browser_guest {
+    webview_builder = webview_builder.with_ipc_handler(create_ipc_handler(
+      window_id_for_ipc,
+      id,
+      context.clone(),
+      label.clone(),
+      ipc_handler,
+    ));
+    for script in webview_attributes.initialization_scripts {
+      webview_builder = webview_builder
+        .with_initialization_script_for_main_only(script.script, script.for_main_frame_only);
+    }
   }
 
   for (scheme, protocol) in uri_scheme_protocols {
+    // Preview documents retain their browser globals (not app plugin overrides)
+    // and carry neither the application IPC bridge nor app resource protocols.
+    if browser_guest {
+      continue;
+    }
     // on Linux the custom protocols are associated with the web context
     // and you cannot register a scheme more than once
     #[cfg(any(

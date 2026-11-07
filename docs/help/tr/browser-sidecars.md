@@ -18,8 +18,8 @@ Native önizlemeler aynı masaüstü motoru ve profil/yapılandırma kapsamında
 
 | İstemci | Önizleme uygulaması | Ajan tarayıcı otomasyonu | Mobil şablonlar |
 | --- | --- | --- | --- |
-| Desteklenen masaüstü platformlarında Electron | Yerel Chromium konuğu | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
-| Windows Tauri | Yerel WebView2 alt öğesi | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
+| Desteklenen masaüstü platformlarında Electron | Yerel Chromium konuğu; OAuth pencereleri, indirmeler ve iletişim kutuları | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
+| Windows Tauri | Yerel WebView2 alt öğesi; OAuth pencereleri, indirmeler ve iletişim kutuları | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
 | macOS Tauri | Yerel WKWebView alt öğesi; OAuth pencereleri, indirmeler ve iletişim kutuları | Kullanılamaz; Electron veya Windows Tauri kullanın | Yalnızca boyutlar |
 | Linux Tauri | Yerel WebKitGTK alt öğesi; OAuth pencereleri, indirmeler ve iletişim kutuları | Kullanılamaz; Electron veya Windows Tauri kullanın | Yalnızca boyutlar |
 | Normal tarayıcı/uzak görünüm | Alternatif iframe görünümü | Yerel native önizleme hedefi yok | Yalnızca boyutlar |
@@ -28,7 +28,7 @@ Electron ve Windows Tauri'de yerel otomasyon, masaüstü başlangıcında hazır
 
 Tauri macOS/Linux önizlemeleri elle açılır, paylaşılan oturum açma bilgilerini yeniden başlatmalar arasında korur ve yerel Geri/İleri geçmişini kullanır. Yerel önizlemeler, uygulama içindeki menü ve iletişim kutularının altında gizlenir; yerel modda öğe yorumları kullanılamaz. `codenomad.browser`, görünür bir önizleme olsa bile Tauri macOS/Linux'ta tüm eylemleri reddeder.
 
-Tauri macOS/Linux açılır pencereleri önizleme oturumlarını paylaşır, `postMessage` destekler ve açan sayfayla birlikte kapanır. Gezinme yalnızca kimlik bilgisi içermeyen HTTP(S) adreslerine izin verir. İndirmeler temizlenmiş, benzersiz adlarla doğrudan İndirilenler klasörüne kaydedilir; mevcut dosyaların üzerine yazılmaz. `alert`, `confirm` ve `prompt` yerel iletişim kutularını kullanır. Kamera, mikrofon, konum, bildirimler ve diğer site izinleri reddedilir.
+Yerel açılır pencereler önizleme oturumlarını paylaşır, `opener`/`postMessage` ilişkisini korur ve açan sayfayla kapanır. Yazılan veya geri yüklenen adresler kimlik bilgisiz HTTP(S) ile sınırlıdır; siteler boş ve aynı kökenli blob belgeleri de açabilir. Dosya ve uygulama şemaları engellenir. İndirmeler temizlenmiş benzersiz adlarla İndirilenler'e kaydedilir; üzerine yazılmaz ve otomatik açılmaz. Kamera, mikrofon, konum ve bildirimler reddedilir; sınıflandırılmış izinler onay ister, bilinmeyen istekler hata gösterir. Tauri `alert`/`confirm`/`prompt`, Electron `alert`/`confirm` destekler; Electron'da `prompt` kullanılamaz. Diğer API'ler motora ve donanıma bağlıdır.
 
 ## Altı görünüm alanı şablonundan birini seçin {#templates}
 

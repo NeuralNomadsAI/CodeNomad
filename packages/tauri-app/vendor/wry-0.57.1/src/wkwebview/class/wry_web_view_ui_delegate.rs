@@ -97,6 +97,30 @@ define_class!(
 
   unsafe impl WKUIDelegate for WryWebViewUIDelegate {
     #[cfg(target_os = "macos")]
+    #[unsafe(method(webView:requestDeviceOrientationAndMotionPermissionForOrigin:initiatedByFrame:decisionHandler:))]
+    fn request_orientation_permission(
+      &self,
+      _webview: &WryWebView,
+      _origin: &WKSecurityOrigin,
+      _frame: &WKFrameInfo,
+      completion: &Block<dyn Fn(WKPermissionDecision)>,
+    ) {
+      let decision = if self.ivars().preview_dialogs {
+        match self
+          .ivars()
+          .permission_handler
+          .as_ref()
+          .map(|handler| handler(PermissionKind::Sensors))
+        {
+          Some(PermissionResponse::Deny) => WKPermissionDecision::Deny,
+          _ => WKPermissionDecision::Prompt,
+        }
+      } else {
+        WKPermissionDecision::Prompt
+      };
+      completion.call((decision,));
+    }
+    #[cfg(target_os = "macos")]
     #[unsafe(method(webViewDidClose:))]
     fn web_view_did_close(&self, webview: &WryWebView) {
       if self.ivars().popup {

@@ -580,6 +580,7 @@ dependencies = [
  "serde",
  "sha2",
  "tauri",
+ "tauri-plugin-dialog",
  "tempfile",
  "uuid",
  "webkit2gtk",

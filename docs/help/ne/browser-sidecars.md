@@ -18,8 +18,8 @@
 
 | क्लाइन्ट | पूर्वावलोकन कार्यान्वयन | Agent browser automation | Mobile template |
 | --- | --- | --- | --- |
-| समर्थित desktop प्लेटफर्ममा Electron | नेटिभ Chromium guest | देखिने स्वामित्वभित्रको session पूर्वावलोकनमा समर्थित | Android/Chromium पहिचान, touch र density emulation |
-| Windows Tauri | नेटिभ WebView2 child | देखिने स्वामित्वभित्रको session पूर्वावलोकनमा समर्थित | Android/Chromium पहिचान, touch र density emulation |
+| समर्थित desktop प्लेटफर्ममा Electron | नेटिभ Chromium guest; OAuth पप-अप, डाउनलोड र संवाद | देखिने स्वामित्वभित्रको session पूर्वावलोकनमा समर्थित | Android/Chromium पहिचान, touch र density emulation |
+| Windows Tauri | नेटिभ WebView2 child; OAuth पप-अप, डाउनलोड र संवाद | देखिने स्वामित्वभित्रको session पूर्वावलोकनमा समर्थित | Android/Chromium पहिचान, touch र density emulation |
 | macOS Tauri | नेटिभ WKWebView child; OAuth पप-अप, डाउनलोड र संवाद | उपलब्ध छैन; Electron वा Windows Tauri प्रयोग गर्नुहोस् | आयाम मात्र |
 | Linux Tauri | नेटिभ WebKitGTK child; OAuth पप-अप, डाउनलोड र संवाद | उपलब्ध छैन; Electron वा Windows Tauri प्रयोग गर्नुहोस् | आयाम मात्र |
 | सामान्य browser/remote दृश्य | iframe fallback | स्थानीय native preview target छैन | आयाम मात्र |
@@ -28,7 +28,7 @@ Electron र Windows Tauri मा नेटिभ automation desktop startup म
 
 macOS/Linux Tauri पूर्वावलोकन म्यानुअल रूपमा खुल्छन्, पुनःसुरुवातपछि पनि साझा sign-in राख्छन् र नेटिभ Back/Forward इतिहास प्रयोग गर्छन्। स्थानीय menu र dialog खुल्दा नेटिभ पूर्वावलोकन लुक्छन्; नेटिभ मोडमा element comment उपलब्ध छैनन्। `codenomad.browser` ले macOS/Linux Tauri मा पूर्वावलोकन देखिएकै अवस्थामा पनि सबै action अस्वीकार गर्छ।
 
-Tauri macOS/Linux का पप-अपले पूर्वावलोकनका साइन-इन साझा गर्छन्, `postMessage` समर्थन गर्छन् र मूल पृष्ठसँगै बन्द हुन्छन्। नेभिगेसनमा परिचयपत्ररहित HTTP(S) मात्र अनुमति छ। डाउनलोडहरू सुरक्षित र अद्वितीय नामसहित सिधै Downloads फोल्डरमा सुरक्षित हुन्छन्, विद्यमान फाइल मेटिँदैन। `alert`, `confirm` र `prompt` ले नेटिभ संवाद प्रयोग गर्छन्। क्यामेरा, माइक्रोफोन, स्थान, सूचना र अन्य साइट अनुमतिहरू अस्वीकार गरिन्छन्।
+नेटिभ पप-अपले पूर्वावलोकनका साइन-इन साझा गर्छन्, `opener`/`postMessage` कायम राख्छन् र मूल पृष्ठसँगै बन्द हुन्छन्। लेखिएका वा पुनर्स्थापित ठेगानामा परिचयपत्ररहित HTTP(S) मात्र अनुमति छ; साइटले खाली र उही मूलका blob कागजात पनि खोल्न सक्छन्। फाइल र एप स्किम रोकिएका छन्। डाउनलोडहरू सुरक्षित अद्वितीय नाममा Downloads मा राखिन्छन्, फाइल मेटिँदैन र स्वतः खोलिँदैन। क्यामेरा, माइक्रोफोन, स्थान र सूचना अस्वीकार गरिन्छन्; वर्गीकृत अनुमतिमा सहमति मागिन्छ र अज्ञात अनुरोधमा त्रुटि देखाइन्छ। Tauri मा `alert`/`confirm`/`prompt` र Electron मा `alert`/`confirm` उपलब्ध छन्; Electron मा `prompt` उपलब्ध छैन। अन्य API इन्जिन र हार्डवेयरमा निर्भर छन्।
 
 ## छ viewport template मध्ये एक रोज्नुहोस् {#templates}
 

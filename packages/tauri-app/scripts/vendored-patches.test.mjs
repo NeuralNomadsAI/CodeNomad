@@ -50,3 +50,11 @@ test("an update past the vendored version is detected", () => {
   assert.deepEqual(lockedPackages(lock, "tao"), [{ name: "tao", version: "9.0.0", source: "registry+https://github.com/rust-lang/crates.io-index" }])
   assert.deepEqual(patchedCrates('[patch.crates-io]\ntao = { path = "vendor/tao-1.0.0" }\n'), [{ name: "tao", dir: "vendor/tao-1.0.0" }])
 })
+
+test("preview runtime fence separates app IPC, scripts and protocols from browser globals", () => {
+  const runtime = read("vendor/tauri-runtime-wry-2.12.3/src/lib.rs")
+  assert.match(runtime, /let browser_guest = label\.starts_with\("browser-"\);/)
+  assert.match(runtime, /if !browser_guest \{\s*webview_builder = webview_builder\.with_ipc_handler/)
+  assert.match(runtime, /for \(scheme, protocol\) in uri_scheme_protocols \{[\s\S]*?if browser_guest\s*\{\s*continue;\s*\}/)
+  assert.doesNotMatch(read("src-tauri/src/embedded_view.rs"), /\.clipboard\(true\)/)
+})

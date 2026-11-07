@@ -1,19 +1,21 @@
 //! Owner-fenced native child views. Business/session state belongs to consumers.
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime};
 
+#[cfg(any(windows, target_os = "linux", target_os = "macos", test))]
+#[path = "embedded_view/browser.rs"]
+mod browser;
+#[path = "embedded_view/fullscreen.rs"]
+mod fullscreen;
 #[cfg(target_os = "linux")]
 #[path = "embedded_view/linux.rs"]
 mod linux;
 #[cfg(target_os = "macos")]
 #[path = "embedded_view/macos.rs"]
 mod macos;
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
-#[path = "embedded_view/webkit.rs"]
-mod webkit;
 #[cfg(windows)]
 #[path = "embedded_view/windows.rs"]
 mod windows;
@@ -42,7 +44,7 @@ impl StorageIdentity {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 pub(crate) struct Bounds {
     pub(crate) x: i32,
     pub(crate) y: i32,
@@ -62,6 +64,16 @@ pub(crate) fn is_allowed_url(url: &tauri::Url) -> bool {
         && url.host().is_some()
         && url.username().is_empty()
         && url.password().is_none()
+}
+
+fn site_url_allowed(url: &tauri::Url, origin: Option<&str>) -> bool {
+    is_allowed_url(url)
+        || (url.scheme() == "about" && url.path() == "blank")
+        || (url.scheme() == "blob"
+            && tauri::Url::parse(url.path()).is_ok_and(|inner| {
+                is_allowed_url(&inner)
+                    && Some(inner.origin().ascii_serialization().as_str()) == origin
+            }))
 }
 
 pub(crate) fn browser_storage(profile: &Path) -> PathBuf {
@@ -91,6 +103,7 @@ fn reserved_label(label: &str) -> bool {
 struct Inner {
     records: HashMap<String, Record>,
     sequence: u64,
+    fullscreen_windows: HashSet<String>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -98,8 +111,10 @@ struct Record {
     owner: String,
     token: u64,
     preparing: bool,
-    #[cfg(any(target_os = "linux", target_os = "macos", test))]
     opener: Option<String>,
+    origin: Option<String>,
+    bounds: Option<Bounds>,
+    fullscreen: Option<bool>,
 }
 
 #[derive(Clone, Default)]
@@ -128,8 +143,10 @@ impl EmbeddedViews {
             owner: owner.into(),
             token: inner.sequence,
             preparing: true,
-            #[cfg(any(target_os = "linux", target_os = "macos", test))]
             opener: None,
+            origin: None,
+            bounds: None,
+            fullscreen: None,
         };
         inner.records.insert(label.into(), record.clone());
         Ok(record)
@@ -179,11 +196,24 @@ impl EmbeddedViews {
     pub(crate) fn navigation_allowed(&self, label: &str, url: &tauri::Url) -> Option<bool> {
         let inner = self.0.lock().ok();
         if let Some(record) = inner.as_ref().and_then(|inner| inner.records.get(label)) {
-            return Some(
-                is_allowed_url(url) || (record.preparing && url.as_str() == "about:blank"),
-            );
+            let allowed = if label.starts_with("browser-") {
+                site_url_allowed(url, record.origin.as_deref())
+            } else {
+                is_allowed_url(url) || (record.preparing && url.as_str() == "about:blank")
+            };
+            return Some(allowed);
         }
         reserved_label(label).then_some(false)
+    }
+
+    fn observe_origin(&self, label: &str, url: &tauri::Url) {
+        if is_allowed_url(url) {
+            if let Ok(mut inner) = self.0.lock() {
+                if let Some(record) = inner.records.get_mut(label) {
+                    record.origin = Some(url.origin().ascii_serialization());
+                }
+            }
+        }
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -237,7 +267,7 @@ impl EmbeddedViews {
         on_navigation: impl Fn(&tauri::Url) -> bool + Send + Sync + 'static,
         install: impl FnOnce(&tauri::Webview<R>) -> Result<(), String>,
     ) -> Result<tauri::Webview<R>, String> {
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         use tauri::webview::NewWindowResponse;
         use tauri::webview::WebviewBuilder;
         let storage = storage.into();
@@ -257,25 +287,35 @@ impl EmbeddedViews {
         }
         // Register before add_child: the host navigation interceptor runs during creation.
         let record = self.reserve(window.label(), label)?;
+        if label.starts_with("browser-") {
+            self.install_fullscreen_window(window);
+        }
         let policy = self.clone();
         let navigation_label = label.to_string();
+        let page_policy = self.clone();
+        let page_label = label.to_string();
         let builder = WebviewBuilder::new(
             label,
             tauri::WebviewUrl::External("about:blank".parse().expect("static neutral URL")),
         )
         .data_directory(storage.directory.clone())
         .focused(false)
-        .on_page_load(on_page_load)
+        .disable_drag_drop_handler()
+        .zoom_hotkeys_enabled(true)
+        .on_page_load(move |view, payload| {
+            page_policy.observe_origin(&page_label, payload.url());
+            on_page_load(view, payload);
+        })
         .on_navigation(move |url| {
             let allowed = policy.navigation_allowed(&navigation_label, url) == Some(true);
             allowed && on_navigation(url)
         })
-        .on_permission_request(|_, _| tauri::webview::PermissionResponse::Deny);
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        .on_permission_request(browser::permission);
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         let builder = builder
             .on_new_window(|_, _| NewWindowResponse::Deny)
             .on_download(|_, _| false);
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         let builder = {
             let views = self.clone();
             let app = window.app_handle().clone();
@@ -283,7 +323,7 @@ impl EmbeddedViews {
             let opener = label.to_string();
             let browser = label.starts_with("browser-");
             builder
-                .on_download(move |webview, event| browser && webkit::download(webview, event))
+                .on_download(move |webview, event| browser && browser::download(webview, event))
                 .on_new_window(move |url, features| {
                     views.open_popup(&app, &owner, &opener, &storage, url, features)
                 })
@@ -329,6 +369,14 @@ impl EmbeddedViews {
     ) -> Result<(), String> {
         validate_bounds(bounds)?;
         let webview = self.webview(app, owner, label)?;
+        if let Ok(mut inner) = self.0.lock() {
+            if let Some(record) = inner.records.get_mut(label) {
+                if record.fullscreen.is_some() {
+                    return Ok(());
+                }
+                record.bounds = Some(bounds);
+            }
+        }
         webview
             .set_position(PhysicalPosition::new(bounds.x, bounds.y))
             .and_then(|()| webview.set_size(PhysicalSize::new(bounds.width, bounds.height)))
@@ -343,6 +391,9 @@ impl EmbeddedViews {
         visible: bool,
     ) -> Result<(), String> {
         let webview = self.webview(app, owner, label)?;
+        if !visible {
+            let _ = self.set_fullscreen(app, label, false);
+        }
         if visible {
             webview.show()
         } else {
@@ -393,7 +444,12 @@ impl EmbeddedViews {
             return Err("Embedded view belongs to another window".into());
         }
         if self.remove_exact(label, &record) {
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if record.fullscreen.is_some() {
+                if let Some(view) = &webview {
+                    let _ = view.window().set_fullscreen(record.fullscreen.unwrap());
+                }
+            }
+            #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
             self.close_popups(app, label);
             if let Some(webview) = webview {
                 webview.close().map_err(|error| error.to_string())?;
@@ -408,17 +464,22 @@ impl EmbeddedViews {
                 .records
                 .iter()
                 .filter(|(_, record)| record.owner == owner)
-                .map(|(label, _)| label.clone())
+                .map(|(label, record)| (label.clone(), record.fullscreen))
                 .collect::<Vec<_>>();
-            for label in &labels {
+            for (label, _) in &labels {
                 inner.records.remove(label);
             }
             labels
         } else {
             Vec::new()
         };
-        for label in labels {
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+        for (label, fullscreen) in labels {
+            if let Some(before) = fullscreen {
+                if let Some(view) = app.get_webview(&label) {
+                    let _ = view.window().set_fullscreen(before);
+                }
+            }
+            #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
             if label.starts_with("browser-popup-") {
                 if let Some(window) = app.get_webview_window(&label) {
                     let _ = window.destroy();

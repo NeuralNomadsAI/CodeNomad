@@ -18,8 +18,8 @@ Les aperçus natifs partagent cookies, connexions et stockage de site entre proj
 
 | Client | Implémentation de l’aperçu | Automatisation navigateur par agent | Modèles mobiles |
 | --- | --- | --- | --- |
-| Electron sur les plateformes de bureau prises en charge | Invité Chromium natif | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
-| Tauri Windows | Enfant WebView2 natif | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
+| Electron sur les plateformes de bureau prises en charge | Invité Chromium natif ; pop-ups OAuth, téléchargements et dialogues | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
+| Tauri Windows | Enfant WebView2 natif ; pop-ups OAuth, téléchargements et dialogues | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
 | Tauri macOS | Vue enfant WKWebView native ; pop-ups OAuth, téléchargements et dialogues | Indisponible ; utilisez Electron ou Tauri Windows | Dimensions seules |
 | Tauri Linux | Vue enfant WebKitGTK native ; pop-ups OAuth, téléchargements et dialogues | Indisponible ; utilisez Electron ou Tauri Windows | Dimensions seules |
 | Navigateur ordinaire/vue distante | Iframe de repli | Aucune cible locale d’aperçu natif | Dimensions seules |
@@ -28,7 +28,7 @@ Sur Electron et Tauri Windows, l’automatisation native est préparée au déma
 
 Les aperçus Tauri macOS/Linux s’ouvrent manuellement, conservent les connexions partagées entre les redémarrages et utilisent l’historique natif arrière/avant. Les aperçus natifs sont masqués sous les menus et boîtes de dialogue locaux ; les commentaires sur les éléments sont indisponibles en mode natif. `codenomad.browser` refuse toutes les actions sur Tauri macOS/Linux, même avec un aperçu visible.
 
-Les pop-ups Tauri macOS/Linux partagent les connexions de l’aperçu, prennent en charge `postMessage` et se ferment avec leur page d’origine. La navigation autorise uniquement HTTP(S) sans identifiants. Les téléchargements sont enregistrés directement dans Téléchargements, avec des noms assainis et uniques, sans écraser de fichier. `alert`, `confirm` et `prompt` utilisent des dialogues natifs. Caméra, microphone, localisation, notifications et autres permissions des sites sont refusés.
+Les pop-ups natifs partagent les connexions de l’aperçu, conservent `opener`/`postMessage` et se ferment avec leur page d’origine. Les adresses saisies/restaurées acceptent HTTP(S) sans identifiants ; les sites peuvent aussi ouvrir des documents vierges et blob de même origine. Les schémas de fichiers et applicatifs sont bloqués. Les téléchargements vont dans Téléchargements, avec des noms assainis et uniques, sans écrasement ni ouverture automatique. Caméra, microphone, localisation et notifications sont refusés ; les permissions classifiées demandent un consentement, les requêtes inconnues affichent une erreur. Tauri prend en charge `alert`/`confirm`/`prompt` ; Electron prend en charge `alert`/`confirm`, avec `prompt` indisponible. Les autres API dépendent du moteur et du matériel.
 
 ## Choisir parmi six modèles de zone d’affichage {#templates}
 

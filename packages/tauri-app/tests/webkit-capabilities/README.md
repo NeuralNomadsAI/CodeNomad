@@ -1,6 +1,6 @@
 # Native WebKit capabilities fixture
 
-Run in a graphical macOS or Linux session, with the Tauri workspace's locked
+Run in a graphical Windows, macOS or Linux session, with the Tauri workspace's locked
 dependencies installed. This harness includes the production embedded-view layer
 and uses neither a CodeNomad backend nor OpenCode.
 
@@ -28,3 +28,28 @@ open **Hold popup for opener cleanup**. The harness closes the production opener
 and asserts that both the child view and popup tree disappear within five seconds.
 `mac-input.py` supplies native macOS pointer/key/text events for VM trials;
 Linux X11 and nested-compositor input can use `xdotool`.
+
+Windows uses the shared common-controls manifest and a GUI-subsystem release
+fixture. Start the page with `node tests/webkit-capabilities/server.mjs`, then build
+`cargo build --release --locked -p codenomad-webkit-capabilities-fixture`.
+Launch the executable with an isolated absolute `CODENOMAD_PROFILE` directory.
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--force-renderer-accessibility` enables the
+fixture accessibility driver without a fixed debugging port. Run `windows-ui.ps1`
+with Windows PowerShell, the fixture PID, `-Invoke <accessible-name>` and
+`-NativePointer -Activate` for gesture-sensitive actions; `-Escape` exits browser
+fullscreen/pointer lock. The driver restricts actions to this checkout's fixture
+and creation-time-fenced descendants. Node/PowerShell console launchers use hidden
+windows. App release smoke launches use `src-tauri` as their working directory.
+
+The **Browser APIs** section additionally exercises blank/named pop-ups, prompt
+string/cancel, fullscreen, pointer lock, clipboard consent, beforeunload, print,
+file selection/drop and WebAuthn availability. Availability is recorded separately
+from authentication success. The page reports absent app IPC/Node globals.
+
+Electron uses `packages/electron-app/tests/browser-capabilities/fixture.ts` bundled
+with esbuild (`--platform=node --format=esm --external:electron`) and run by the
+installed Electron executable. Its own profile directory is mandatory. Set
+`CODENOMAD_FIXTURE_NETWORK=1` to test a trusted HTTPS page (`example.com`) requesting
+the loopback fixture: the permission dialog must identify the HTTPS origin. The
+fixture keeps the guest preload-free; Electron's unsupported prompt reports an
+explicit test error.

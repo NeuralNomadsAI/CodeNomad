@@ -1,5 +1,9 @@
-import { session, systemPreferences, type Session } from "electron"
+import { BrowserWindow, dialog, session, systemPreferences, type Session } from "electron"
 import { isAllowedRendererOrigin } from "./renderer-origin"
+import { browserPermissionDecision, permissionOrigin, permissionResource } from "./browser-permission-policy"
+import { nativeMenuLabels } from "./view-menu"
+import { configureBrowserDeviceChoosers } from "./browser-device-chooser"
+import { configureBrowserDisplayChooser } from "./browser-display-chooser"
 
 export { isAllowedRendererOrigin } from "./renderer-origin"
 
@@ -35,9 +39,67 @@ export function configureMediaPermissionHandlers(getAllowedOrigins: () => string
 }
 
 export function configureBrowserPermissionHandlers(targetSession: Session) {
-  targetSession.setPermissionCheckHandler(() => false)
-  targetSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
-  targetSession.setDevicePermissionHandler(() => false)
+  const grants = new Set<string>()
+  const pending = new Map<string, Promise<boolean>>()
+  const unknown = new Set<string>()
+  const key = (origin: string, permission: string, resource = "") => JSON.stringify([origin, permission, resource])
+  targetSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
+    const origin = permissionOrigin(details.securityOrigin ?? requestingOrigin)
+    if (!origin) return false
+    const decision = browserPermissionDecision(permission)
+    if (decision !== "consent") return decision === "browser" || decision === "chooser"
+    let embeddingOrigin = details.embeddingOrigin
+    try { embeddingOrigin ??= _webContents?.mainFrame.origin } catch {}
+    const resource = permissionResource(permission, details, embeddingOrigin)
+    return resource !== undefined && grants.has(key(origin, permission, resource))
+  })
+  targetSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+    const decision = browserPermissionDecision(permission)
+    if (decision === "deny" || contents.isDestroyed()) { callback(false); return }
+    const frameOrigins = new Set(contents.mainFrame.framesInSubtree
+      .filter(frame => frame.url === details.requestingUrl && (!details.isMainFrame || frame === contents.mainFrame))
+      .map(frame => permissionOrigin(frame.origin)).filter((origin): origin is string => Boolean(origin)))
+    const origin = permissionOrigin(details.requestingUrl) ?? (frameOrigins.size === 1 ? [...frameOrigins][0] : undefined)
+    const resource = permissionResource(permission, details, contents.mainFrame.origin)
+    const owner = BrowserWindow.fromWebContents(contents) ?? BrowserWindow.fromWebContents(contents.hostWebContents ?? contents)
+    const labels = nativeMenuLabels(owner)
+    const requestKey = key(origin ?? "null", permission, resource)
+    if (decision === "unknown" || !origin || resource === undefined) {
+      callback(false)
+      if (!unknown.has(requestKey)) {
+        unknown.add(requestKey)
+        const options = { type: "warning" as const, title: origin ?? "null", message: labels.browserPermissionUnknown.replace("{permission}", permission) }
+        void (owner ? dialog.showMessageBox(owner, options) : dialog.showMessageBox(options))
+          .catch(error => console.warn("[browser-permission] closed owner", error))
+      }
+      return
+    }
+    if (decision === "browser" || decision === "chooser") { callback(true); return }
+    if (grants.has(requestKey)) { callback(true); return }
+    let request = pending.get(requestKey)
+    if (!request) {
+      const options = { type: "question" as const, title: origin,
+        message: labels.browserPermission.replace("{permission}", permission).replace("{origin}", origin),
+        ...("filePath" in details && typeof details.filePath === "string" ? { detail: details.filePath } : {}),
+        buttons: [labels.browserDeny, labels.browserAllow], defaultId: 0, cancelId: 0, noLink: true }
+      request = (owner ? dialog.showMessageBox(owner, options) : dialog.showMessageBox(options))
+        .then(result => {
+          if (result.response !== 1) return false
+          grants.add(requestKey)
+          return true
+        }, () => false).finally(() => pending.delete(requestKey))
+      pending.set(requestKey, request)
+    }
+    void request.then(allowed => {
+      let current = false
+      try { current = allowed && !contents.isDestroyed()
+        && contents.mainFrame.framesInSubtree.some(frame => permissionOrigin(frame.origin) === origin) } catch {}
+      callback(current)
+    }).catch(error => console.warn("[browser-permission] expired request", error))
+  })
+  // Device grants require a chooser selection, not just a general API consent.
+  configureBrowserDeviceChoosers(targetSession)
+  configureBrowserDisplayChooser(targetSession)
 }
 
 export async function requestMicrophoneAccess(): Promise<boolean> {

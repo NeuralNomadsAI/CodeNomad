@@ -18,8 +18,8 @@ Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte
 
 | Client | Vorschauimplementierung | Agenten-Browser-Automatisierung | Mobilvorlagen |
 | --- | --- | --- | --- |
-| Electron auf unterstützten Desktop-Plattformen | Nativer Chromium-Gast | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
-| Windows-Tauri | Natives WebView2-Unterfenster | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
+| Electron auf unterstützten Desktop-Plattformen | Nativer Chromium-Gast; OAuth-Pop-ups, Downloads und Dialoge | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
+| Windows-Tauri | Natives WebView2-Unterfenster; OAuth-Pop-ups, Downloads und Dialoge | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
 | macOS-Tauri | Natives WKWebView-Unterfenster; OAuth-Pop-ups, Downloads und Dialoge | Nicht verfügbar; verwenden Sie Electron oder Windows-Tauri | Nur Abmessungen |
 | Linux-Tauri | Natives WebKitGTK-Unterfenster; OAuth-Pop-ups, Downloads und Dialoge | Nicht verfügbar; verwenden Sie Electron oder Windows-Tauri | Nur Abmessungen |
 | Normaler Browser/Remote-Ansicht | Iframe-Ersatz | Kein lokales natives Vorschauziel | Nur Abmessungen |
@@ -28,7 +28,7 @@ Unter Electron und Windows-Tauri wird native Automatisierung beim Desktop-Start 
 
 Tauri-Vorschauen unter macOS/Linux werden manuell geöffnet, behalten gemeinsame Anmeldungen über Neustarts hinweg und verwenden den nativen Zurück-/Vorwärts-Verlauf. Native Vorschauen werden unter lokalen Menüs und Dialogen ausgeblendet; Elementkommentare sind im nativen Modus nicht verfügbar. `codenomad.browser` lehnt unter Tauri macOS/Linux alle Aktionen ab, auch bei sichtbarer Vorschau.
 
-Tauri-Pop-ups unter macOS/Linux teilen Vorschau-Anmeldungen, unterstützen `postMessage` und schließen mit ihrer Ursprungsseite. Die Navigation erlaubt nur HTTP(S) ohne Zugangsdaten. Downloads landen direkt im Downloads-Ordner, mit bereinigten, eindeutigen Namen und ohne Dateien zu überschreiben. `alert`, `confirm` und `prompt` verwenden native Dialoge. Kamera, Mikrofon, Standort, Benachrichtigungen und andere Website-Berechtigungen werden verweigert.
+Native Pop-ups teilen Vorschau-Anmeldungen, behalten `opener`/`postMessage` und schließen mit ihrer Ursprungsseite. Eingegebene/wiederhergestellte Adressen erlauben HTTP(S) ohne Zugangsdaten; Websites können auch leere und gleichursprüngliche Blob-Dokumente öffnen. Datei- und App-Schemata bleiben gesperrt. Downloads landen mit bereinigten, eindeutigen Namen im Downloads-Ordner, ohne Überschreiben oder automatisches Öffnen. Kamera, Mikrofon, Standort und Benachrichtigungen werden verweigert; klassifizierte Berechtigungen benötigen Zustimmung, unbekannte Anfragen zeigen einen Fehler. Tauri unterstützt `alert`/`confirm`/`prompt`; Electron unterstützt `alert`/`confirm`, `prompt` ist nicht verfügbar. Weitere APIs hängen von Engine und Hardware ab.
 
 ## Eine von sechs Ansichtsgrößenvorlagen wählen {#templates}
 

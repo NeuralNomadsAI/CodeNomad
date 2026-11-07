@@ -1652,8 +1652,7 @@ fn is_final_application_window<'a>(
     !labels.any(|label| {
         label != closing_label
             && label != preferences_window::LABEL
-            && !(cfg!(any(target_os = "macos", target_os = "linux"))
-                && label.starts_with("browser-popup-"))
+            && !label.starts_with("browser-popup-")
             && !launch_windows.iter().any(|launch| launch == label)
     })
 }
@@ -2736,7 +2735,7 @@ mod menu_tests {
                 ["local-a", "browser-popup-a"].into_iter(),
                 &[],
             ),
-            cfg!(any(target_os = "macos", target_os = "linux")),
+            true,
         );
         assert!(!is_final_application_window(
             "local-a",

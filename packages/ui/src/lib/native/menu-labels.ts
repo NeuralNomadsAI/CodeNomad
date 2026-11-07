@@ -40,6 +40,14 @@ export const NATIVE_MENU_LABEL_KEYS = {
   maximize: "window.menu.native.maximize",
   zoom: "window.menu.native.zoom",
   bringAllToFront: "window.menu.native.bringAllToFront",
+  browserPermission: "window.menu.native.browserPermission",
+  browserPermissionUnknown: "window.menu.native.browserPermissionUnknown",
+  browserAllow: "window.menu.native.browserAllow",
+  browserDeny: "window.menu.native.browserDeny",
+  browserCopyLink: "window.menu.native.browserCopyLink",
+  browserSaveImage: "window.menu.native.browserSaveImage",
+  browserOpenLink: "window.menu.native.browserOpenLink",
+  browserInspect: "window.menu.native.browserInspect",
 } as const
 
 export type NativeMenuLabels = Record<keyof typeof NATIVE_MENU_LABEL_KEYS, string>

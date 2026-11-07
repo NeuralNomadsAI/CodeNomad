@@ -16,15 +16,34 @@ export function isBrowserUrlAllowed(rawUrl: string): boolean {
   }
 }
 
+export function isBrowserSiteUrlAllowed(rawUrl: string, openerUrl: string): boolean {
+  if (isBrowserUrlAllowed(rawUrl) || /^about:blank(?:[?#]|$)/.test(rawUrl)) return true
+  try {
+    const url = new URL(rawUrl)
+    return url.protocol === "blob:" && isBrowserUrlAllowed(openerUrl) && url.origin === new URL(openerUrl).origin
+  } catch { return false }
+}
+
+export function isBrowserDownloadUrlAllowed(rawUrl: string, openerUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl)
+    return url.protocol === "data:" || (url.protocol !== "about:" && isBrowserSiteUrlAllowed(rawUrl, openerUrl))
+  } catch { return false }
+}
+
 export function secureBrowserWebview(webPreferences: WebPreferences, params: Record<string, string>): boolean {
   if (!params.partition.startsWith(browserPartitionPrefix)
     || !/^[A-Za-z0-9_-]{1,256}$/.test(params.partition.slice(browserPartitionPrefix.length))
     || !isBrowserUrlAllowed(params.src)) return false
   delete webPreferences.preload
   webPreferences.nodeIntegration = false
+  webPreferences.nodeIntegrationInWorker = false
+  webPreferences.nodeIntegrationInSubFrames = false
+  webPreferences.webviewTag = false
   webPreferences.contextIsolation = true
   webPreferences.sandbox = true
   webPreferences.webSecurity = true
   webPreferences.allowRunningInsecureContent = false
+  webPreferences.disableDialogs = false
   return true
 }

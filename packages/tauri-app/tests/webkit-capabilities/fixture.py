@@ -13,9 +13,30 @@ PAGE = b'''<!doctype html><meta charset="utf-8"><title>WebKit capabilities</titl
 <button onclick="popup=window.open('/hold','hold')">Hold popup for opener cleanup</button>
 <a href="data:text/plain,generated-download" download="capabilities-data.txt">Data download</a>
 <button onclick="blobDownload()">Blob download</button>
+<details><summary>Browser APIs</summary>
+<button onclick="blankPopup()">Blank OAuth</button>
+<button onclick="const first=window.open('/hold','named-test');const second=window.open('/popup','named-test');report('named',first===second)">Named window</button>
+<button onclick="try{report('prompt-only',prompt('fixture prompt','fixture-default'))}catch(e){report('prompt-error',e.message)}">Prompt only</button>
+<button onclick="document.documentElement.requestFullscreen().then(()=>report('fullscreen','entered'),e=>report('fullscreen',e.name))">Fullscreen</button>
+<button onclick="this.requestPointerLock()">Pointer lock</button>
+<button onclick="navigator.clipboard.readText().then(v=>report('clipboard-read','length:'+v.length),e=>report('clipboard-read',e.name))">Read clipboard</button>
+<button onclick="navigator.clipboard.writeText('capabilities-fixture').then(()=>report('clipboard-write','written'),e=>report('clipboard-write',e.name))">Write clipboard</button>
+<button onclick="window.onbeforeunload=()=>true;report('beforeunload','armed')">Arm beforeunload</button><a href="/next">Navigate</a>
+<button onclick="window.print();report('print','requested')">Print</button>
+<input type="file" onchange="report('file',this.files[0]?.name)">
+<div style="height:80px;border:1px solid" ondragover="event.preventDefault()" ondrop="event.preventDefault();report('drop',event.dataTransfer.files[0]?.name)">Drop file</div>
+<button onclick="if(window.PublicKeyCredential)PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then(v=>report('webauthn',v));else report('webauthn','unavailable')">WebAuthn availability</button>
+</details>
 <pre id="results"></pre><script>
 function report(k,v){results.textContent+=k+': '+v+'\\n';fetch('/result?'+encodeURIComponent(k+'='+v))}
 addEventListener('error',e=>report('error',e.message));
+document.addEventListener('pointerlockchange',()=>report('pointer-lock',Boolean(document.pointerLockElement)));
+document.addEventListener('fullscreenchange',()=>report('fullscreen-state',Boolean(document.fullscreenElement)));
+function blankPopup(){
+  popup=window.open('about:blank','blank-oauth','width=520,height=680');
+  report('blank-opener',popup?.opener===window);
+  if(popup){popup.document.write('<button id="finish">Finish blank OAuth</button>');popup.document.getElementById('finish').onclick=()=>{popup.opener.postMessage('blank-roundtrip',location.origin);popup.close()}}
+}
 function blobDownload(){
   const api=typeof URL.createObjectURL==='function'?URL:window.webkitURL;
   if(!api?.createObjectURL){report('blob','unavailable');return}
@@ -27,11 +48,23 @@ function permissions(){
   if('Notification' in window)Notification.requestPermission().then(v=>report('notifications',v));else report('notifications','unavailable');
 }
 localStorage.fixture='shared';document.cookie='fixture=shared; SameSite=Lax';
+report('isolation',typeof window.__TAURI_INTERNALS__+'/'+typeof window.require+'/'+typeof URL.createObjectURL);
 addEventListener('message',e=>{if(e.origin===location.origin){report('oauth',e.data);setTimeout(()=>report('closed',popup?.closed),300)}});
 </script>'''
 POPUP = b'''<!doctype html><title>OAuth fixture</title><button onclick="if(opener)opener.postMessage('roundtrip:'+localStorage.fixture+':'+document.cookie,location.origin);window.close()">Finish OAuth</button>'''
 
 class Handler(BaseHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Private-Network', 'true')
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', '*')
+        self.end_headers()
+
     def do_GET(self):
         route = urlsplit(self.path).path
         if route == '/download':
