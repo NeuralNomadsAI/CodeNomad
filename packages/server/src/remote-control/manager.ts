@@ -33,6 +33,7 @@ interface ManagerOptions {
 
 export class RemoteControlManager {
   private readonly ingress: RemoteIngress
+  private readonly deviceSockets = new Map<Socket, Set<string>>()
   private tunnel: RemoteTunnel | null = null
   private starting: Promise<RemoteTunnel> | null = null
   // Incremented by every stop, so a start still provisioning cannot outlive it.
@@ -111,12 +112,12 @@ export class RemoteControlManager {
     return this.pairingFor(this.tunnel)
   }
 
-  exchangePairing(code: string, userAgent: string | undefined): { device: RemoteControlDevice; token: string } | null {
+  exchangePairing(code: string, userAgent: string | undefined, serverHostName?: string): { device: RemoteControlDevice; token: string } | null {
     if (!this.enabled || !this.tunnel) return null
-    const paired = this.options.registry.exchange(code, deviceNameFromUserAgent(userAgent))
+    const paired = this.options.registry.exchange(code, serverHostName === undefined ? deviceNameFromUserAgent(userAgent) : `CodeNomad · ${serverHostName}`)
     if (!paired) return null
     // A device replaced at the limit loses its live connections, as on revocation.
-    if (paired.evictedId) this.ingress.disconnectDevice(paired.evictedId)
+    if (paired.evictedId) this.disconnectDevice(paired.evictedId)
     return { device: paired.device, token: paired.token }
   }
 
@@ -132,7 +133,7 @@ export class RemoteControlManager {
   revokeDevice(id: string): boolean {
     const revoked = this.options.registry.revoke(id)
     // Revocation also ends live HTTP and SSE connections already admitted.
-    this.ingress.disconnectDevice(id)
+    this.disconnectDevice(id)
     return revoked
   }
 
@@ -150,8 +151,16 @@ export class RemoteControlManager {
   gate(): RemoteGateDeps {
     return {
       publicHost: () => (this.enabled ? this.tunnel?.hostname ?? null : null),
-      authenticate: (token) => this.options.registry.authenticate(token),
-      assignDevice: (socket, deviceId) => this.ingress.assignDevice(socket, deviceId),
+      authenticate: (token) => this.enabled && this.tunnel ? this.options.registry.authenticate(token) : null,
+      assignDevice: (socket, deviceId) => {
+        let devices = this.deviceSockets.get(socket)
+        if (!devices) {
+          devices = new Set()
+          this.deviceSockets.set(socket, devices)
+          socket.once("close", () => this.deviceSockets.delete(socket))
+        }
+        devices.add(deviceId)
+      },
       servesPreview: (token) => this.options.registry.previewsAllowed() && this.options.hasPreview?.(token) === true,
     }
   }
@@ -201,6 +210,7 @@ export class RemoteControlManager {
         this.enabled = false
         this.options.registry.cancelPairing()
         this.options.lease?.release()
+        this.disconnectDevices()
         void this.ingress.stop()
         this.options.logger.warn({ err: error }, "Remote Control tunnel stopped")
       })
@@ -223,7 +233,19 @@ export class RemoteControlManager {
     this.options.lease?.release()
     const tunnel = this.tunnel
     this.tunnel = null
+    this.disconnectDevices()
     await Promise.allSettled([tunnel?.close(), this.ingress.stop()])
+  }
+
+  private disconnectDevice(id: string): void {
+    for (const [socket, devices] of this.deviceSockets) {
+      if (devices.has(id)) socket.destroy()
+    }
+  }
+
+  private disconnectDevices(): void {
+    for (const socket of this.deviceSockets.keys()) socket.destroy()
+    this.deviceSockets.clear()
   }
 
   private pairingFor(tunnel: RemoteTunnel): RemoteControlPairing {

@@ -53,7 +53,7 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
 - `request-origin.ts` is the only authority for local privileges:
   `isLocalRequest()` requires a loopback peer **and** a non-ingress socket.
 - `gate.ts` runs before CORS, authentication and routing. It requires the exact
-  tunnel `Host` and the public `Origin` on mutations, and strips forwarding
+  tunnel `Host` and the public `Origin` on browser mutations, and strips forwarding
   headers. It accepts origin-form targets only (no absolute-form, leading `//`
   or fragment, which the router would reinterpret) and judges the path the
   router routes (`server/routed-path.ts`). It denies host-only paths: login and token
@@ -93,6 +93,16 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   connect flow ([architecture.md](architecture.md#native-profiles-windows-and-client-state)).
   It refuses URLs with user info or a fragment, so a pairing code or password
   never travels on a command line; pair from Add server instead.
+
+## Saved-profile relay
+
+The local CodeNomad backend connects to saved CodeNomad profiles through `codenomad-servers/`. Its browse/connect/forget routes and `/api/backends/:profileId/*` require both `isLocalRequest()` and exact loopback local-origin provenance. Same-origin EventSource and media reads use a loopback self Referer with `Sec-Fetch-Site: same-origin` when the browser omits Origin. Foreign, null and absent provenance, LAN peers and Remote Control ingress sockets are refused before credential or network access. Server-advertised LAN/remote addresses also stay outside this loopback-origin authority. Remote pages and opaque preview/extension frames stay outside this authority. SideCars intentionally share the local UI's origin and full application privileges, including this relay and OpenCode command execution; they are trusted extensions.
+
+The saved profile alone selects the destination and TLS verification policy. The explicit transport pins validated DNS answers to the connection, keeps the saved hostname for TLS verification and SNI, never follows redirects and never manufactures Origin or browser Fetch Metadata. Caller cookies, authorization and forwarding headers stay local; private session/device cookies stay in the backend's mode-0600 store beside its configuration. Response cookies and authentication headers remain private. Response documents receive sandbox CSP and `nosniff`; the relay publishes a small response-header allowlist. Log records retain fixed relay route names and completion metadata, excluding request payloads and target queries.
+
+`POST /api/remote-control/server-pair` is a dedicated ingress-only, cookie-free protocol with `X-CodeNomad-Server-Pairing: 1`, a strict JSON body and no Origin, Referer, authorization or browser metadata. It atomically consumes the ordinary five-minute pairing code and returns one revocable device credential to the local backend. Invalid attempts have a backend-wide failure bucket; a valid high-entropy code remains usable. Servers without this route yield a stable `pairing_unavailable` result. Password connections use the direct listener's existing login policy and private session cookies.
+
+An authenticated device request carrying `X-CodeNomad-Server-Request: 1` can mutate through the ingress or direct listener while carrying no browser context: Origin, Referer, Fetch Metadata, client hints and preflight headers, including empty ones, exclude this admission. Browser requests continue to require the public Origin. Device scope applies on both listeners, with host-only paths and nested backend relays denied. Invalid explicit device credentials never fall back to password sessions or skipped authentication. Revocation, eviction, Stop, shutdown and tunnel failure destroy admitted device sockets on both listeners. Profile removal or retargeting similarly aborts local uploads/SSE and deletes its private identity; pending connection results check their captured owner before saving.
 
 ## Validation
 
