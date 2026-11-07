@@ -20,6 +20,15 @@ import time
 
 class Fixture(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path.startswith('/mobile'):
+            directory = Path(__file__).resolve().parents[1] / 'tests/browser-parent'
+            body = (directory / 'mobile.html').read_text().replace('{{UA}}', json.dumps(self.headers.get('User-Agent','')).replace('<','\\u003c')).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type','text/html; charset=utf-8')
+            self.send_header('Content-Length',str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path.startswith('/read/'):
             directory = Path(__file__).resolve().parents[1] / 'tests/browser-parent'
             name = self.path.split('?',1)[0][len('/read/'):]
@@ -93,7 +102,9 @@ def main():
             '[patch.crates-io]\n' + ''.join(f'{name}={{path={json.dumps(str(root / "vendor" / folder))}}}\n' for name, folder in [('tao','tao-0.37.2'),('wry','wry-0.57.1'),('tauri-runtime-wry','tauri-runtime-wry-2.12.3')]),
             encoding='utf-8')
         (Path(directory) / 'build.rs').write_text(
-            f'#[path={json.dumps(str(root / "src-tauri/build_webkit.rs"))}] mod build_webkit;\nfn main() {{ build_webkit::build(std::path::Path::new({json.dumps(str(native))})); }}\n', encoding='utf-8')
+            f'#[path={json.dumps(str(root / "src-tauri/build_webkit.rs"))}] mod build_webkit;\nfn main() {{ build_webkit::build(std::path::Path::new({json.dumps(str(native))})); let mut b=cc::Build::new(); b.file({json.dumps(str(root / "tests/browser-parent" / ("mobile-trial-macos.m" if platform.system()=="Darwin" else "mobile-trial-linux.c")))}); '
+            + ('b.flag("-fobjc-arc").flag("-fblocks").flag("-mmacosx-version-min=14.0");' if platform.system()=='Darwin' else 'b.includes(pkg_config::Config::new().probe("webkit2gtk-4.1").unwrap().include_paths);')
+            + 'b.compile("mobile_trial"); }\n', encoding='utf-8')
         shutil.copyfile(root / 'Cargo.lock', Path(directory) / 'Cargo.lock')
         subprocess.run(['cargo', 'build', '--offline', '--manifest-path', str(manifest)], env=env, check=True, timeout=300)
         certificate, key = Path(directory) / 'certificate.pem', Path(directory) / 'key.pem'

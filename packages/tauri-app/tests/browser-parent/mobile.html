@@ -1,0 +1,9 @@
+<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><meta charset="utf-8"><title>Native device profile</title>
+<style>body{margin:0}#tap{position:absolute;left:20px;top:120px;width:100px;height:60px}output{font:10px monospace;overflow-wrap:anywhere}dialog{display:none}</style>
+<button id="tap">Touch target</button><dialog>Overlay</dialog><output id="report"></output>
+<script>
+window.httpUA={{UA}};window.inputEvents=[];
+for(const type of ['touchstart','touchmove','touchend','pointerdown','pointerup','click']) document.addEventListener(type,event=>{inputEvents.push({type,trusted:event.isTrusted,pointer:event.pointerType||'',touches:event.touches?.length??0});report()}, {passive:true});
+function report(){document.querySelector('#report').textContent='__CN_MOBILE__'+JSON.stringify({inner:[innerWidth,innerHeight],screen:[screen.width,screen.height,screen.availWidth,screen.availHeight],orientation:screen.orientation?{type:screen.orientation.type,angle:screen.orientation.angle}:null,dpr:devicePixelRatio,ua:navigator.userAgent,httpUA,platform:navigator.platform,touch:{max:navigator.maxTouchPoints,constructor:typeof TouchEvent,handler:'ontouchstart'in window},media:Object.fromEntries(['pointer:coarse','pointer:fine','hover:none','hover:hover','any-pointer:coarse','any-hover:none','orientation:portrait','orientation:landscape'].map(value=>[value,matchMedia('('+value+')').matches])),events:inputEvents})}
+addEventListener('resize',report);report();
+</script>

@@ -49,6 +49,9 @@ const OWNER: &str = "local-11111111-1111-4111-8111-111111111111";
 const OTHER: &str = "local-22222222-2222-4222-8222-222222222222";
 #[cfg(not(windows))]
 const SESSION: &str = "fixture-session";
+#[cfg(not(windows))]
+#[path = "../../tests/browser-parent/mobile-native.rs"]
+mod mobile_fixture;
 
 #[cfg(not(windows))]
 fn bounds() -> Value {
@@ -241,6 +244,7 @@ fn main() {
                     let response = native_request::dispatch(request, fence, |request, fence| {
                         let id = live.lock().unwrap().clone();
                         match request.method.as_str() {
+                            method if method.starts_with("fixture.mobile-") => mobile_fixture::handle(&app,&controller,&id,method,request.params.as_ref().unwrap_or(&Value::Null),fence),
                             "fixture.action-probe" | "fixture.action-control" => {
                                 let programs:Value=serde_json::from_str(include_str!("../../tests/browser-parent/action-programs.generated.json")).unwrap();
                                 let kind=if request.method=="fixture.action-probe" {"observe"} else {request.params.as_ref().and_then(|value|value["kind"].as_str()).ok_or("Invalid fixture control")?};
