@@ -1,6 +1,6 @@
 import { rm, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { executeInstaller, npmNeedsNodeCommand, writeNpmNodeCommand } from "./npm-runtime"
+import { executeInstaller, npmNeedsNodeCommand, openCodeAllowScripts, writeNpmNodeCommand } from "./npm-runtime"
 import { createInstallerDirectory, InstallationInterruptedError } from "./installation-lock"
 
 /** Let OpenCode retain its running Windows image while using our npm (in Electron resources,
@@ -16,6 +16,7 @@ export async function upgradeSharedOpenCode(options: {
   platform: NodeJS.Platform
   execute?: typeof executeInstaller
 }): Promise<void> {
+  const allowScripts = openCodeAllowScripts(options.version)
   const directory = await createInstallerDirectory(options.prefix, "upgrade")
   let retain = false
   try {
@@ -29,9 +30,10 @@ export async function upgradeSharedOpenCode(options: {
       : '#!/bin/sh\nexec "$CODENOMAD_UPGRADE_NODE" "$CODENOMAD_UPGRADE_NPM" "$@"\n'
     await writeFile(path.join(directory, windows ? "npm.cmd" : "npm"), shim, { mode: 0o700 })
     // npm config keys are case-insensitive, even on POSIX. Do not allow an
-    // inherited prefix or registry to redirect this verified installation.
+    // inherited prefix or registry to redirect this verified installation, nor
+    // an inherited script allow-list to replace the one below.
     for (const key of Object.keys(env)) {
-      if (/^npm_config_(prefix|registry|audit|fund)$/i.test(key)) delete env[key]
+      if (/^npm_config_(prefix|registry|audit|fund|allow_scripts)$/i.test(key)) delete env[key]
     }
     const pathKey = Object.keys(env).find(key => key.toLowerCase() === "path") ?? "PATH"
     env[pathKey] = [directory, path.dirname(options.node), env[pathKey] || ""].join(windows ? ";" : ":")
@@ -42,6 +44,8 @@ export async function upgradeSharedOpenCode(options: {
       npm_config_registry: "https://registry.npmjs.org",
       npm_config_audit: "false",
       npm_config_fund: "false",
+      // OpenCode runs npm itself: the environment is the only per-invocation channel.
+      npm_config_allow_scripts: allowScripts,
     })
     // Windows searches cwd before PATH for npm.cmd. Own that directory too.
     // Give native npm's five-minute deadline time to finish its own cleanup.

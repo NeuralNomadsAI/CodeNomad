@@ -3,6 +3,7 @@ const fs = require("fs")
 const path = require("path")
 const { spawnSync } = require("child_process")
 const { MANAGED_NODE_VERSION } = require("./prepare-node-runtime.cjs")
+const { NPM_VERSION, checkNpmEngine } = require("./bundled-npm.cjs")
 
 const requiredPackages = [
   "yaml",
@@ -84,6 +85,10 @@ function smokeServer(resourcesRoot, target, electron) {
     if (!fs.existsSync(packageRoot)) throw new Error(`Missing packaged dependency: ${packageName}`)
   }
 
+  const npmRoot = path.dirname(path.dirname(npm))
+  const npmVersion = JSON.parse(fs.readFileSync(path.join(npmRoot, "package.json"), "utf8")).version
+  if (npmVersion !== NPM_VERSION) throw new Error(`Bundled npm ${npmVersion} does not match the ${NPM_VERSION} pin`)
+
   console.log(`packaged server static checks ok for ${target}`)
   if (electron && fs.existsSync(nodeBinary(resourcesRoot, target))) throw new Error("Electron resources contain a redundant Node executable")
 
@@ -99,14 +104,9 @@ function smokeServer(resourcesRoot, target, electron) {
     throw new Error(`Packaged Node version ${version} does not match ${MANAGED_NODE_VERSION}`)
   }
   console.log(`${electron ? "Electron's integrated" : "packaged"} Node version ok: ${version}`)
-  // npm only warns about an unsupported engine; Electron's Node must satisfy it.
-  const npmRoot = path.dirname(path.dirname(npm))
-  const engine = JSON.parse(fs.readFileSync(path.join(npmRoot, "package.json"), "utf8")).engines?.node
-  const semver = require(path.join(npmRoot, "node_modules", "semver"))
-  if (!engine || !semver.satisfies(version, engine)) {
-    throw new Error(`Bundled npm requires Node ${engine ?? "(undeclared)"}, but the server runtime reports ${version}`)
-  }
-  console.log(`bundled npm engine ok: ${version} satisfies ${engine}`)
+  // npm only warns about an unsupported engine; the server runtime's Node must satisfy it.
+  const engine = checkNpmEngine(npmRoot, version.replace(/^v/, ""), "the server runtime")
+  console.log(`bundled npm ${NPM_VERSION} engine ok: ${version} satisfies ${engine}`)
   run(node, [npm, "--version"], { env })
   run(node, [entrypoint, "--version"], { env })
 

@@ -41,6 +41,12 @@ export function registerStorageRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.put<{ Params: { id: string } }>("/api/storage/instances/:id", async (request, reply) => {
     try {
+      const history = (request.body as { messageHistory?: unknown } | undefined)?.messageHistory
+      // Omitted history keeps the schema default; fail at the first invalid item
+      // instead of allocating a Zod issue for every element in the request.
+      if (history !== undefined && (!Array.isArray(history) || !history.every(item => typeof item === "string"))) {
+        return reply.code(400).send({ error: "Invalid instance data" })
+      }
       const body = InstanceDataSchema.parse(request.body ?? {})
       const storageId = resolveStorageKey(request.params.id)
       await deps.instanceStore.write(storageId, body)
@@ -48,7 +54,7 @@ export function registerStorageRoutes(app: FastifyInstance, deps: RouteDeps) {
       reply.code(204)
     } catch (error) {
       reply.code(400)
-      return { error: error instanceof Error ? error.message : "Failed to save instance data" }
+      return { error: error instanceof z.ZodError ? "Invalid instance data" : error instanceof Error ? error.message : "Failed to save instance data" }
     }
   })
 
