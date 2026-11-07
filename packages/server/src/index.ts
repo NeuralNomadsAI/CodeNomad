@@ -18,6 +18,7 @@ import { prepareForeignProbe } from "./opencode-update/shared-installation"
 import { FileSystemBrowser } from "./filesystem/browser"
 import { EventBus } from "./events/bus"
 import { ServerMeta } from "./api-types"
+import { CODENOMAD_API_CONTRACT, CODENOMAD_CAPABILITIES } from "./meta-contract"
 import { InstanceStore } from "./storage/instance-store"
 import { InstanceEventBridge } from "./workspaces/instance-events"
 import { createLogger } from "./logger"
@@ -345,6 +346,9 @@ async function main() {
   })
 
   const settings = new SettingsService(configLocation, eventBus, configLogger)
+  serverMeta.serverId = settings.getServerId()
+  serverMeta.apiContract = CODENOMAD_API_CONTRACT
+  serverMeta.capabilities = [...CODENOMAD_CAPABILITIES]
   const binaryResolver = new BinaryResolver(settings)
   // Warm the bounded, asynchronous version probe of a foreign PATH OpenCode so
   // synchronous resolution can prefer a managed OpenCode 2 without spawning.

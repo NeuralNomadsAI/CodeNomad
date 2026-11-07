@@ -10,6 +10,8 @@ import { applyMergePatch } from "./merge-patch"
 import { readAdmissionEnvironment } from "./admission-environment"
 import { canonicalScope } from "../host-lifetime/protocol"
 import { createHash } from "node:crypto"
+import fs from "node:fs"
+import { claimServerIdentity } from "./server-identity"
 import path from "node:path"
 
 export type DocKind = "config" | "state"
@@ -89,6 +91,29 @@ export class SettingsService {
       logger.child({ component: "settings-state" }),
       { throwOnPersistError: true },
     )
+  }
+
+  /** Persist before advertising; unreadable config or failed writes abort startup. */
+  getServerId(): string {
+    const server = this.configStore.getAuthoritativeOwner("server")
+    if (server.serverId !== undefined) {
+      return z.string().uuid().parse(server.serverId)
+    }
+    const serverId = claimServerIdentity(this.location.configYamlPath)
+    // Refresh after exclusive publication: every process uses the winning claim.
+    const current = this.configStore.getAuthoritativeOwner("server")
+    if (current.serverId !== undefined) {
+      const persisted = z.string().uuid().parse(current.serverId)
+      if (persisted !== serverId) throw new Error("Conflicting persisted server identity")
+      return persisted
+    }
+    try {
+      fs.accessSync(this.location.configYamlPath, fs.constants.W_OK)
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") throw error
+    }
+    this.configStore.mergePatchOwner("server", { serverId })
+    return z.string().uuid().parse(this.configStore.getAuthoritativeOwner("server").serverId)
   }
 
   /** Selected desktop profile; same identity used at Mission Play. */

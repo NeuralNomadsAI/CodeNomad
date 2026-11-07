@@ -253,6 +253,12 @@ CodeNomad owns no private OpenCode port, database, service registration, or daem
 
 Closing a project tab deletes its logical CodeNomad workspace record without evicting the native Location or stopping sessions. Separate occurrences of the same folder are independent. The `workspace.stopped` broadcast closes any other window's tab displaying that record, with a notification only in that other window. Whole-window close, quit and renderer reload do not delete records; backend shutdown clears only CodeNomad's in-memory connection state and never stops the global service. Reopening the project finds its native sessions again.
 
+### Server Metadata
+
+`GET /api/meta` includes `serverId` (public UUID persisted once as `server.serverId` in the selected config YAML), `apiContract` (CodeNomad UI/server contract integer, initially `1`) and `capabilities` (implemented route families: `workspaces`, `workspace-files`, `workspace-git`, `events`). Existing metadata fields keep their meanings. First initialization exclusively publishes a complete UUID claim in `<config-target>.server-id` with an atomic hard link, then rereads the YAML and stores that UUID. Concurrent processes share the winning claim. The config filesystem must support hard links. A claim survives a crash or failed config write for retry; unused temporary files from an interrupted publication are ignored. Keep the claim alongside its config; an invalid claim requires explicit repair. Config read, identity validation or persistence failures refuse startup rather than advertise an ephemeral identity. An existing valid YAML identity supports read-only startup.
+
+Clients cache metadata per backend and can use exact `apiContract` equality for native compatibility, with fallback for a different or absent contract. The current UI keeps its existing opening behavior. See the [metadata contract](../../dev-docs/architecture.md#server-metadata-contract) for capability semantics and contract maintenance.
+
 ### Event Delivery
 
 CodeNomad holds one shared OpenCode V2 `client.event.subscribe()` stream. It routes native location-scoped events to logical workspaces and multiplexes them with CodeNomad events over `GET /api/events` for browser `EventSource` clients.
