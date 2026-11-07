@@ -35,12 +35,13 @@
   the installed Electron executable's `process.versions.node` for Electron
   (fetched by `npx --no install-electron`).
   `scripts/verify-bundled-node.cjs` checks the packaged npm version against the pin.
-- npm lifecycle scripts call `node` by name. Tauri's bundled `node` answers to it
-  from PATH, even though Tauri also sets `ELECTRON_RUN_AS_NODE=1`. A runtime
-  executable not named `node` (Electron's) receives a temporary `node` command
-  pointing to it instead. Installation and native upgrade scope it to their
-  child environment and clean it after completion; interrupted installers retain
-  their adapter and prefix lock for safe manual recovery. The command lives in an
+- npm scripts and their children receive temporary `npm` and `npx` commands tied
+  to the selected npm package and Node runtime. Tauri's bundled `node` answers
+  from PATH, even with `ELECTRON_RUN_AS_NODE=1`; an executable not named `node`
+  (Electron's) also receives a temporary `node` command. Installation and native
+  upgrade share these adapters, scope them to their child environment and clean
+  them after completion; interrupted installers retain their adapters and prefix
+  lock for safe manual recovery. The commands live in an
   installer directory inside the npm prefix (`.codenomad-npm-*` for direct npm,
   `.codenomad-upgrade-*` beside the native upgrade's npm shim), never the system
   temporary directory, which may be mounted noexec.

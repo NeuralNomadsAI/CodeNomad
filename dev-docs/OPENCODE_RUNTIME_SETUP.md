@@ -161,8 +161,9 @@ and pins the verified prefix
 and registry, including when the desktop runtime has no npm launcher on PATH. It is
 also the command's working directory, preventing cwd from shadowing npm on Windows.
 Installer commands live in directories beside the lock inside the npm prefix:
-`.codenomad-upgrade-*` for this adapter and `.codenomad-npm-*` for Electron's
-lifecycle `node` command during direct npm. The prefix must allow execution for its
+`.codenomad-upgrade-*` for native upgrade and `.codenomad-npm-*` for direct npm.
+Both supply `npm`/`npx` bound to the selected package and runtime, plus Electron's
+lifecycle `node` command. The prefix must allow execution for its
 installed commands, unlike a temporary directory that may be mounted noexec, and
 npm and the OpenCode command lookup ignore these dot directories.
 If the outer supervisor is terminated by timeout, signal or output limit, descendant

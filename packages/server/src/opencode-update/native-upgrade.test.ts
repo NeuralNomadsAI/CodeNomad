@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { access, mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { access, mkdtemp, mkdir, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { spawnSync } from "node:child_process"
 import { InstallationInterruptedError, withInstallationLock } from "./installation-lock"
 import { upgradeSharedOpenCode } from "./native-upgrade"
 import { installSharedOpenCode, npmExecutable, npmCommandDirectory } from "./shared-installation"
@@ -33,8 +34,9 @@ test("native upgrade scopes bundled npm and prefix in the prefix, cleans its shi
           assert.equal(childEnv.npm_config_allow_scripts, "@opencode/cli@2.0.16")
           assert.equal(childEnv.NPM_CONFIG_ALLOW_SCRIPTS, undefined)
           assert.equal(Object.keys(childEnv).filter(key => /^npm_config_(ignore_scripts|dangerously_allow_all_scripts)$/i.test(key)).length, 0)
-          assert.equal(childEnv.CODENOMAD_UPGRADE_NODE, node)
-          assert.equal(childEnv.CODENOMAD_UPGRADE_NPM, "/bundled npm/npm-cli.js")
+          assert.equal(childEnv.CODENOMAD_NPM_NODE, node)
+          assert.equal(childEnv.CODENOMAD_NPM_CLI, "/bundled npm/npm-cli.js")
+          assert.equal(childEnv.CODENOMAD_NPX_CLI, path.join("/bundled npm", "npx-cli.js"))
           const separator = platform === "win32" ? ";" : ":"
           const runtime = separator + path.dirname(node) + separator
           assert.ok(childEnv.Path!.endsWith(runtime + "/original"))
@@ -48,7 +50,6 @@ test("native upgrade scopes bundled npm and prefix in the prefix, cleans its shi
             assert.equal(childEnv.CODENOMAD_NPM_NODE, node)
             assert.match(await readFile(command, "utf8"), /CODENOMAD_NPM_NODE/)
           } else {
-            assert.equal(childEnv.CODENOMAD_NPM_NODE, undefined)
             await assert.rejects(access(command), { code: "ENOENT" })
           }
           shim = path.join(directory, platform === "win32" ? "npm.cmd" : "npm")
@@ -56,8 +57,9 @@ test("native upgrade scopes bundled npm and prefix in the prefix, cleans its shi
           const preload = electron && platform === "win32"
           assert.equal(childEnv.CODENOMAD_NPM_PRELOAD, preload ? path.join(directory, "hide-child-windows.cjs") : undefined)
           assert.equal(await readFile(shim, "utf8"), platform === "win32"
-            ? `@echo off\r\n"%CODENOMAD_UPGRADE_NODE%" ${preload ? '--require "%CODENOMAD_NPM_PRELOAD%" ' : ""}"%CODENOMAD_UPGRADE_NPM%" %*\r\n`
-            : '#!/bin/sh\nexec "$CODENOMAD_UPGRADE_NODE" "$CODENOMAD_UPGRADE_NPM" "$@"\n')
+            ? `@echo off\r\n"%CODENOMAD_NPM_NODE%" ${preload ? '--require "%CODENOMAD_NPM_PRELOAD%" ' : ""}"%CODENOMAD_NPM_CLI%" %*\r\n`
+            : '#!/bin/sh\nexec "$CODENOMAD_NPM_NODE" "$CODENOMAD_NPM_CLI" "$@"\n')
+          assert.match(await readFile(path.join(directory, platform === "win32" ? "npx.cmd" : "npx"), "utf8"), /CODENOMAD_NPX_CLI/)
           if (outcome === "interrupted") throw new InstallationInterruptedError()
           if (outcome === "failure") throw new Error("native failure")
         },
@@ -79,6 +81,38 @@ test("native upgrade scopes bundled npm and prefix in the prefix, cleans its shi
         npm: "/bundled npm/npm-cli.js", env: {}, platform: "win32", execute: async () => assert.fail("must not run") }), /exact stable/)
       assert.deepEqual(await readdir(prefix), [])
     }
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test("native upgrade npm/npx commands override hostile caller PATH and cwd without changing policy", async () => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "upgrade commands ")))
+  const prefix = path.join(root, "prefix")
+  const hostile = path.join(root, "hostile")
+  const bundled = path.join(root, "bundled & npm")
+  try {
+    await mkdir(prefix); await mkdir(hostile); await mkdir(bundled)
+    for (const name of ["npm", "npx"]) {
+      await writeFile(path.join(hostile, name + (process.platform === "win32" ? ".cmd" : "")),
+        process.platform === "win32" ? "@exit /b 99\r\n" : "#!/bin/sh\nexit 99\n", { mode: 0o700 })
+      await writeFile(path.join(bundled, name + "-cli.js"), "console.log(JSON.stringify({execPath:process.execPath,cli:__filename,prefix:process.env.npm_config_prefix,allow:process.env.npm_config_allow_scripts}))")
+    }
+    const env: NodeJS.ProcessEnv = { PATH: [hostile, process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32") : "/bin"].join(path.delimiter),
+      ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot, ComSpec: process.env.ComSpec } : {}) }
+    const original = { ...env }
+    await upgradeSharedOpenCode({ binary: "verified-opencode", version: "2.2.5", prefix, node: process.execPath,
+      npm: path.join(bundled, "npm-cli.js"), env, platform: process.platform,
+      execute: async (_file, _args, childEnv, options) => {
+        assert.notEqual(options!.cwd, hostile, "the native command owns cwd as well as PATH")
+        for (const name of ["npm", "npx"]) {
+          const result = process.platform === "win32"
+            ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", name], { cwd: options?.cwd ?? hostile, env: childEnv, windowsHide: true, encoding: "utf8" })
+            : spawnSync(name, [], { cwd: options?.cwd ?? hostile, env: childEnv, windowsHide: true, encoding: "utf8" })
+          assert.equal(result.status, 0, result.stderr)
+          assert.deepEqual(JSON.parse(result.stdout), { execPath: process.execPath, cli: path.join(bundled, name + "-cli.js"), prefix, allow: "@opencode/cli@2.2.5" })
+        }
+      } })
+    assert.deepEqual(env, original)
+    assert.deepEqual(await readdir(prefix), [])
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
