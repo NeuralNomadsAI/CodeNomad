@@ -1252,6 +1252,14 @@ impl CliProcessManager {
             // comes after Unix shell_env's env_clear, and the Windows launcher
             // inherits it before it starts Node.
             configure_backend_profile(&mut c, &manager.channel, &manager.config_identity, manager.original_config.as_deref());
+            c.env(
+                "CODENOMAD_TAURI_WEBKIT",
+                if cfg!(any(target_os = "macos", target_os = "linux")) {
+                    "1"
+                } else {
+                    "0"
+                },
+            );
             #[cfg(windows)]
             c.env("CODENOMAD_NATIVE_PARENT", "1");
             configure_spawn(&mut c);

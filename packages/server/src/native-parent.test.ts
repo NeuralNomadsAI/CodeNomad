@@ -2,6 +2,12 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { NativeParent, NATIVE_REQUEST_PREFIX, NATIVE_RESPONSE_PREFIX } from "./native-parent"
 
+test("WebKit browser refusal is independent of the native transport", async () => {
+  const parent = new NativeParent({ write: () => { throw new Error("Unexpected native request") } }, false, true)
+  assert.equal(parent.browserAutomationUnavailable, true)
+  await assert.rejects(parent.request("browser.probe", {}), /Native control is unavailable/)
+})
+
 test("matches native responses to requests and rejects pending work on shutdown", async () => {
   const lines: string[] = []
   const parent = new NativeParent({ write: (line: string | Uint8Array) => { lines.push(String(line)); return true } }, true)

@@ -26,6 +26,7 @@ export class NativeParent {
   constructor(
     private readonly output: Pick<NodeJS.WriteStream, "write"> = process.stdout,
     readonly available = process.env.CODENOMAD_NATIVE_PARENT === "1",
+    readonly browserAutomationUnavailable = process.env.CODENOMAD_TAURI_WEBKIT === "1",
   ) {}
 
   request<T>(method: string, params: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {

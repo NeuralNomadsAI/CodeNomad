@@ -198,13 +198,13 @@ test("browser works with an unavailable developer target and unrelated inventory
   await app.close()
 })
 
-test("WebKit browser refusals precede preview creation and preserve Mission-only claims", async t => {
+for (const transport of [true, false]) test(`WebKit browser refusals preserve Mission-only claims (native transport: ${transport})`, async t => {
   const app = Fastify({ logger: false })
   t.after(() => app.close())
   const nativeCalls: string[] = []
   registerAutomationPluginRoute(app, {
     authManager: { isLoopbackRequest: () => true }, bridgeToken: "secret",
-    nativeParent: { available: true, request: async (method: string) => {
+    nativeParent: { available: transport, browserAutomationUnavailable: !transport, request: async (method: string) => {
       nativeCalls.push(method)
       throw new Error(BROWSER_AUTOMATION_UNAVAILABLE)
     } },
@@ -221,9 +221,9 @@ test("WebKit browser refusals precede preview creation and preserve Mission-only
   const claim = await request({ mode: "browser-claim" })
   assert.equal(claim.statusCode, 409)
   assert.equal(claim.json().error, BROWSER_AUTOMATION_UNAVAILABLE)
-  assert.deepEqual(nativeCalls, ["browser.probe"], "claim refuses without requesting preview creation")
+  assert.deepEqual(nativeCalls, transport ? ["browser.probe"] : [], "claim refuses without requesting preview creation")
   const probe = await request({ mode: "browser-probe" })
-  assert.equal(probe.statusCode, 404)
+  assert.equal(probe.statusCode, transport ? 404 : 409)
   assert.equal(probe.json().error, BROWSER_AUTOMATION_UNAVAILABLE)
   for (const command of [
     { action: "open", url: "https://example.com" }, { action: "navigate", url: "https://example.com" },

@@ -91,6 +91,8 @@ Local Tauri primary renderers receive `__CODENOMAD_BROWSER_CAPABILITIES__` durin
 
 Agent browser automation (`codenomad.browser`, including open, probe and page actions) is unavailable on Tauri macOS/Linux and returns an explicit refusal. Open these previews manually, or use Electron or Tauri Windows for agent automation. Plain-browser and remote-view clients use the sandboxed iframe proxy.
 
+The Tauri launcher sets `CODENOMAD_TAURI_WEBKIT` on each backend spawn after shell-environment resolution. The authenticated bridge uses this host marker to return the WebKit refusal after validating session ownership, including hosts whose native-parent transport is unavailable. Mission-only ownership claims retain their normal admission path.
+
 On macOS, a page reading the clipboard after a user gesture can display the system's native **Paste** button. That button performs user-initiated paste. Site permission requests, downloads and new windows are denied by the native preview policy.
 
 ### Tauri embedded-view contract
