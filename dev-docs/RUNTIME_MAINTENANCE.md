@@ -92,8 +92,10 @@
   from the root installation and externalizes the daemon's native SDK/Effect.
   Cargo's workspace covers its application and regression members; local vendor
   manifests and lockfiles remain under the vendored-patch qualification policy.
- - Root workspaces and the Cloudflare worker have separate npm jobs, each with a
-   limit of five open version-update PRs. Routine minor/patch updates are grouped
+ - Each of the four Dependabot jobs permits one open version-update PR. Root
+   workspaces and the Cloudflare worker have separate npm jobs. Existing proposals
+   keep their review lifecycle; security updates follow GitHub's independent
+   security-update limit. Routine minor/patch updates are grouped
    only by related toolchain: the Tauri family
   (`tauri`, `tauri-*`, `wry`, including the runtime regression fixture's
   `tests/windows-runner-refcount` requirements), the Electron toolchain, the
