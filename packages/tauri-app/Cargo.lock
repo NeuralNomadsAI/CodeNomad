@@ -572,6 +572,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "codenomad-webkit-capabilities-fixture"
+version = "0.1.0"
+dependencies = [
+ "dirs 5.0.1",
+ "gtk",
+ "serde",
+ "sha2",
+ "tauri",
+ "tempfile",
+ "uuid",
+ "webkit2gtk",
+ "webview2-com",
+ "windows-core",
+]
+
+[[package]]
 name = "codenomad-windows-input-fixture"
 version = "0.1.0"
 dependencies = [

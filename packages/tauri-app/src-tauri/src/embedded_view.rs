@@ -6,10 +6,16 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime};
 
 #[cfg(target_os = "linux")]
+#[path = "embedded_view/linux.rs"]
 mod linux;
 #[cfg(target_os = "macos")]
+#[path = "embedded_view/macos.rs"]
 mod macos;
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[path = "embedded_view/webkit.rs"]
+mod webkit;
 #[cfg(windows)]
+#[path = "embedded_view/windows.rs"]
 mod windows;
 
 /// Full, normalized desktop identity. The caller resolves config aliases before startup.
@@ -92,6 +98,8 @@ struct Record {
     owner: String,
     token: u64,
     preparing: bool,
+    #[cfg(any(target_os = "linux", target_os = "macos", test))]
+    opener: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -120,6 +128,8 @@ impl EmbeddedViews {
             owner: owner.into(),
             token: inner.sequence,
             preparing: true,
+            #[cfg(any(target_os = "linux", target_os = "macos", test))]
+            opener: None,
         };
         inner.records.insert(label.into(), record.clone());
         Ok(record)
@@ -227,7 +237,9 @@ impl EmbeddedViews {
         on_navigation: impl Fn(&tauri::Url) -> bool + Send + Sync + 'static,
         install: impl FnOnce(&tauri::Webview<R>) -> Result<(), String>,
     ) -> Result<tauri::Webview<R>, String> {
-        use tauri::webview::{NewWindowResponse, WebviewBuilder};
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        use tauri::webview::NewWindowResponse;
+        use tauri::webview::WebviewBuilder;
         let storage = storage.into();
         validate_bounds(bounds)?;
         #[cfg(target_os = "macos")]
@@ -251,16 +263,31 @@ impl EmbeddedViews {
             label,
             tauri::WebviewUrl::External("about:blank".parse().expect("static neutral URL")),
         )
-        .data_directory(storage.directory)
+        .data_directory(storage.directory.clone())
         .focused(false)
         .on_page_load(on_page_load)
         .on_navigation(move |url| {
             let allowed = policy.navigation_allowed(&navigation_label, url) == Some(true);
             allowed && on_navigation(url)
         })
-        .on_new_window(|_, _| NewWindowResponse::Deny)
-        .on_permission_request(|_, _| tauri::webview::PermissionResponse::Deny)
-        .on_download(|_, _| false);
+        .on_permission_request(|_, _| tauri::webview::PermissionResponse::Deny);
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        let builder = builder
+            .on_new_window(|_, _| NewWindowResponse::Deny)
+            .on_download(|_, _| false);
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let builder = {
+            let views = self.clone();
+            let app = window.app_handle().clone();
+            let owner = window.label().to_string();
+            let opener = label.to_string();
+            let browser = label.starts_with("browser-");
+            builder
+                .on_download(move |webview, event| browser && webkit::download(webview, event))
+                .on_new_window(move |url, features| {
+                    views.open_popup(&app, &owner, &opener, &storage, url, features)
+                })
+        };
         #[cfg(target_os = "macos")]
         let builder = builder.data_store_identifier(storage_identifier);
         // Tauri has no hidden-child builder flag. Keep the neutral child off-canvas
@@ -366,6 +393,8 @@ impl EmbeddedViews {
             return Err("Embedded view belongs to another window".into());
         }
         if self.remove_exact(label, &record) {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            self.close_popups(app, label);
             if let Some(webview) = webview {
                 webview.close().map_err(|error| error.to_string())?;
             }
@@ -389,6 +418,13 @@ impl EmbeddedViews {
             Vec::new()
         };
         for label in labels {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if label.starts_with("browser-popup-") {
+                if let Some(window) = app.get_webview_window(&label) {
+                    let _ = window.destroy();
+                }
+                continue;
+            }
             if let Some(webview) = app.get_webview(&label) {
                 if webview.window().label() == owner {
                     let _ = webview.close();

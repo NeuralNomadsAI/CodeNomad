@@ -1,4 +1,4 @@
-pub(super) fn install(webview: &tauri::Webview) -> Result<(), String> {
+pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<(), String> {
     use std::sync::mpsc;
     use std::time::Duration;
     use webkit2gtk::{PermissionRequestExt, WebViewExt};

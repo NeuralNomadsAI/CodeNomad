@@ -20,13 +20,15 @@ Native previews share cookies, sign-ins and site storage across projects/session
 | --- | --- | --- | --- |
 | Electron on supported desktop platforms | Native Chromium guest | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
 | Windows Tauri | Native WebView2 child | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |
-| macOS Tauri | Native WKWebView child | Unavailable; use Electron or Windows Tauri | Dimensions only |
-| Linux Tauri | Native WebKitGTK child | Unavailable; use Electron or Windows Tauri | Dimensions only |
+| macOS Tauri | Native WKWebView child; OAuth pop-ups, downloads and dialogs | Unavailable; use Electron or Windows Tauri | Dimensions only |
+| Linux Tauri | Native WebKitGTK child; OAuth pop-ups, downloads and dialogs | Unavailable; use Electron or Windows Tauri | Dimensions only |
 | Plain browser/remote view | Iframe fallback | No local native preview target | Dimensions only |
 
 On Electron and Windows Tauri, native automation is prepared at desktop startup and uses the session-bound `codenomad.browser` tool for open, navigate, snapshot, screenshot and page actions: click, type, select, hover, drag, scroll, key presses and waiting for text. Tool availability is not authorization for every window: execution checks the owning backend, native capabilities, session and visible target. An action whose page was hidden, replaced or navigated meanwhile is refused rather than sent to another page, and an action is never repeated automatically. Page contents remain untrusted. An iframe may fail because the target forbids embedding; use an external browser rather than weakening its protections.
 
 Tauri macOS/Linux previews open manually, retain shared sign-ins across restarts and use native Back/Forward history. Native previews hide beneath local menus and dialogs; element comments are unavailable in native mode. `codenomad.browser` refuses all actions on Tauri macOS/Linux, even with a visible preview.
+
+Tauri macOS/Linux pop-ups share preview sign-ins, support `postMessage` and close with their opener. Navigation allows credential-free HTTP(S) only. Downloads save directly to your Downloads folder with sanitized, unique names, without overwriting files. `alert`, `confirm` and `prompt` use native dialogs. Camera, microphone, location, notifications and other site permissions are denied.
 
 ## Choose one of six viewport templates {#templates}
 

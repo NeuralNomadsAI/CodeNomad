@@ -278,9 +278,12 @@ default-features = false
 version = "0.3.2"
 features = [
     "std",
+    "block2",
     "objc2-core-foundation",
     "NSApplication",
     "NSButton",
+    "NSAlert",
+    "NSTextField",
     "NSControl",
     "NSEvent",
     "NSWindow",

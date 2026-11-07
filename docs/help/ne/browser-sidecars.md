@@ -20,13 +20,15 @@
 | --- | --- | --- | --- |
 | समर्थित desktop प्लेटफर्ममा Electron | नेटिभ Chromium guest | देखिने स्वामित्वभित्रको session पूर्वावलोकनमा समर्थित | Android/Chromium पहिचान, touch र density emulation |
 | Windows Tauri | नेटिभ WebView2 child | देखिने स्वामित्वभित्रको session पूर्वावलोकनमा समर्थित | Android/Chromium पहिचान, touch र density emulation |
-| macOS Tauri | नेटिभ WKWebView child | उपलब्ध छैन; Electron वा Windows Tauri प्रयोग गर्नुहोस् | आयाम मात्र |
-| Linux Tauri | नेटिभ WebKitGTK child | उपलब्ध छैन; Electron वा Windows Tauri प्रयोग गर्नुहोस् | आयाम मात्र |
+| macOS Tauri | नेटिभ WKWebView child; OAuth पप-अप, डाउनलोड र संवाद | उपलब्ध छैन; Electron वा Windows Tauri प्रयोग गर्नुहोस् | आयाम मात्र |
+| Linux Tauri | नेटिभ WebKitGTK child; OAuth पप-अप, डाउनलोड र संवाद | उपलब्ध छैन; Electron वा Windows Tauri प्रयोग गर्नुहोस् | आयाम मात्र |
 | सामान्य browser/remote दृश्य | iframe fallback | स्थानीय native preview target छैन | आयाम मात्र |
 
 Electron र Windows Tauri मा नेटिभ automation desktop startup मै तयार हुन्छ र open, navigate, snapshot, screenshot र page action (click, type, select, hover, drag, scroll, key press र text पर्खने) का लागि session-bound `codenomad.browser` tool प्रयोग गर्छ। tool उपलब्धता हरेक विन्डोको अनुमति होइन: execution ले स्वामी backend, native capability, session र visible target जाँच्छ। बीचमै पृष्ठ लुकेको, बदलिएको वा अर्कै ठाउँ नेभिगेट भएको action अर्को पृष्ठमा पठाइँदैन, अस्वीकार गरिन्छ; कुनै action स्वतः दोहोर्‍याइँदैन। पृष्ठ सामग्री अविश्वसनीय नै हुन्छ। target ले embedding निषेध गर्दा iframe असफल हुन सक्छ; सुरक्षा कमजोर पार्नुको सट्टा बाह्य browser प्रयोग गर्नुहोस्।
 
 macOS/Linux Tauri पूर्वावलोकन म्यानुअल रूपमा खुल्छन्, पुनःसुरुवातपछि पनि साझा sign-in राख्छन् र नेटिभ Back/Forward इतिहास प्रयोग गर्छन्। स्थानीय menu र dialog खुल्दा नेटिभ पूर्वावलोकन लुक्छन्; नेटिभ मोडमा element comment उपलब्ध छैनन्। `codenomad.browser` ले macOS/Linux Tauri मा पूर्वावलोकन देखिएकै अवस्थामा पनि सबै action अस्वीकार गर्छ।
+
+Tauri macOS/Linux का पप-अपले पूर्वावलोकनका साइन-इन साझा गर्छन्, `postMessage` समर्थन गर्छन् र मूल पृष्ठसँगै बन्द हुन्छन्। नेभिगेसनमा परिचयपत्ररहित HTTP(S) मात्र अनुमति छ। डाउनलोडहरू सुरक्षित र अद्वितीय नामसहित सिधै Downloads फोल्डरमा सुरक्षित हुन्छन्, विद्यमान फाइल मेटिँदैन। `alert`, `confirm` र `prompt` ले नेटिभ संवाद प्रयोग गर्छन्। क्यामेरा, माइक्रोफोन, स्थान, सूचना र अन्य साइट अनुमतिहरू अस्वीकार गरिन्छन्।
 
 ## छ viewport template मध्ये एक रोज्नुहोस् {#templates}
 

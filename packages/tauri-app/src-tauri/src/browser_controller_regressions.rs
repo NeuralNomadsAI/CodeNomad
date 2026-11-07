@@ -47,10 +47,14 @@ fn tauri_authority_does_not_grant_parent_capabilities_to_preview_children() {
             url: url.parse().unwrap(),
         };
         for command in &commands {
-            for child in ["browser-preview", "embedded-remote-preview"] {
+            for (window, child) in [
+                (OWNER, "browser-preview"),
+                (OWNER, "embedded-remote-preview"),
+                ("browser-popup-preview", "browser-popup-preview"),
+            ] {
                 assert!(
                     authority
-                        .resolve_access(command, OWNER, child, &origin)
+                        .resolve_access(command, window, child, &origin)
                         .is_none(),
                     "{child} inherited {command} at {url}"
                 );

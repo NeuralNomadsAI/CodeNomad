@@ -20,13 +20,15 @@
 | --- | --- | --- | --- |
 | 支持的桌面平台上的 Electron | 原生 Chromium 访客页面 | 支持可见且归属已确认的会话预览 | Android/Chromium 身份、触摸和像素密度仿真 |
 | Windows Tauri | 原生 WebView2 子窗口 | 支持可见且归属已确认的会话预览 | Android/Chromium 身份、触摸和像素密度仿真 |
-| macOS Tauri | 原生 WKWebView 子窗口 | 不可用；请使用 Electron 或 Windows Tauri | 仅尺寸 |
-| Linux Tauri | 原生 WebKitGTK 子窗口 | 不可用；请使用 Electron 或 Windows Tauri | 仅尺寸 |
+| macOS Tauri | 原生 WKWebView 子窗口；支持 OAuth 弹窗、下载和对话框 | 不可用；请使用 Electron 或 Windows Tauri | 仅尺寸 |
+| Linux Tauri | 原生 WebKitGTK 子窗口；支持 OAuth 弹窗、下载和对话框 | 不可用；请使用 Electron 或 Windows Tauri | 仅尺寸 |
 | 普通浏览器/远程视图 | iframe 后备实现 | 无本地原生预览目标 | 仅尺寸 |
 
 在 Electron 和 Windows Tauri 上，原生自动化在桌面启动时准备好，使用会话绑定的 `codenomad.browser` 工具进行打开、导航、快照、截图和页面操作：点击、输入、选择、悬停、拖动、滚动、按键以及等待文本出现。工具可用不代表对每个窗口都已获授权：执行会检查所属后端、原生能力、会话和可见目标。如果操作所针对的页面在此期间已被隐藏、替换或导航离开，该操作会被拒绝，而不会发送到其他页面；操作也绝不会被自动重复。页面内容仍不可信。目标禁止嵌入时 iframe 可能失败；请使用外部浏览器，不要削弱保护。
 
 Tauri macOS/Linux 预览需手动打开，共享登录状态在重启后仍会保留，并使用原生后退/前进历史。原生预览会在应用内菜单和对话框下方隐藏；原生模式不支持元素评论。即使预览可见，`codenomad.browser` 也会拒绝 Tauri macOS/Linux 上的所有操作。
+
+Tauri macOS/Linux 弹窗共享预览的登录状态，支持 `postMessage`，并随打开它的页面关闭。导航仅允许不含凭据的 HTTP(S) 地址。下载文件使用经过清理的唯一名称直接保存到“下载”文件夹，不覆盖现有文件。`alert`、`confirm` 和 `prompt` 使用原生对话框。摄像头、麦克风、位置、通知及其他网站权限均被拒绝。
 
 ## 选择六种视口模板之一 {#templates}
 

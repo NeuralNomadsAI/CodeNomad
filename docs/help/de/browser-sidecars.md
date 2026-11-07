@@ -20,13 +20,15 @@ Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte
 | --- | --- | --- | --- |
 | Electron auf unterstützten Desktop-Plattformen | Nativer Chromium-Gast | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
 | Windows-Tauri | Natives WebView2-Unterfenster | Für sichtbare zugehörige Sitzungsvorschau unterstützt | Android-/Chromium-Identität, Touch- und Dichteemulation |
-| macOS-Tauri | Natives WKWebView-Unterfenster | Nicht verfügbar; verwenden Sie Electron oder Windows-Tauri | Nur Abmessungen |
-| Linux-Tauri | Natives WebKitGTK-Unterfenster | Nicht verfügbar; verwenden Sie Electron oder Windows-Tauri | Nur Abmessungen |
+| macOS-Tauri | Natives WKWebView-Unterfenster; OAuth-Pop-ups, Downloads und Dialoge | Nicht verfügbar; verwenden Sie Electron oder Windows-Tauri | Nur Abmessungen |
+| Linux-Tauri | Natives WebKitGTK-Unterfenster; OAuth-Pop-ups, Downloads und Dialoge | Nicht verfügbar; verwenden Sie Electron oder Windows-Tauri | Nur Abmessungen |
 | Normaler Browser/Remote-Ansicht | Iframe-Ersatz | Kein lokales natives Vorschauziel | Nur Abmessungen |
 
 Unter Electron und Windows-Tauri wird native Automatisierung beim Desktop-Start vorbereitet und nutzt das sitzungsgebundene Werkzeug `codenomad.browser` zum Öffnen, Navigieren, Schnappschuss, Screenshot und für Seitenaktionen: Klicken, Tippen, Auswählen, Überfahren, Ziehen, Scrollen, Tastendrücke und Warten auf Text. Werkzeugverfügbarkeit autorisiert nicht jedes Fenster: Ausführung prüft zuständiges Backend, native Fähigkeiten, Sitzung und sichtbares Ziel. Eine Aktion, deren Seite inzwischen verborgen, ersetzt oder weiternavigiert wurde, wird abgelehnt statt an eine andere Seite gesendet, und eine Aktion wird nie automatisch wiederholt. Seiteninhalte bleiben nicht vertrauenswürdig. Ein iframe kann scheitern, weil das Ziel Einbettung verbietet; nutzen Sie einen externen Browser, statt Schutzmaßnahmen zu schwächen.
 
 Tauri-Vorschauen unter macOS/Linux werden manuell geöffnet, behalten gemeinsame Anmeldungen über Neustarts hinweg und verwenden den nativen Zurück-/Vorwärts-Verlauf. Native Vorschauen werden unter lokalen Menüs und Dialogen ausgeblendet; Elementkommentare sind im nativen Modus nicht verfügbar. `codenomad.browser` lehnt unter Tauri macOS/Linux alle Aktionen ab, auch bei sichtbarer Vorschau.
+
+Tauri-Pop-ups unter macOS/Linux teilen Vorschau-Anmeldungen, unterstützen `postMessage` und schließen mit ihrer Ursprungsseite. Die Navigation erlaubt nur HTTP(S) ohne Zugangsdaten. Downloads landen direkt im Downloads-Ordner, mit bereinigten, eindeutigen Namen und ohne Dateien zu überschreiben. `alert`, `confirm` und `prompt` verwenden native Dialoge. Kamera, Mikrofon, Standort, Benachrichtigungen und andere Website-Berechtigungen werden verweigert.
 
 ## Eine von sechs Ansichtsgrößenvorlagen wählen {#templates}
 

@@ -653,6 +653,10 @@ impl InnerWebView {
         mtm,
         attributes.new_window_req_handler,
         attributes.permission_handler,
+        attributes.id.is_some_and(|id| id.starts_with("browser-")),
+        attributes
+          .id
+          .is_some_and(|id| id.starts_with("browser-popup-")),
       );
       let proto_ui_delegate = ProtocolObject::from_ref(&*ui_delegate);
       webview.setUIDelegate(Some(proto_ui_delegate));

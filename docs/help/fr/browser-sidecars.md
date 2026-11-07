@@ -20,13 +20,15 @@ Les aperçus natifs partagent cookies, connexions et stockage de site entre proj
 | --- | --- | --- | --- |
 | Electron sur les plateformes de bureau prises en charge | Invité Chromium natif | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
 | Tauri Windows | Enfant WebView2 natif | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
-| Tauri macOS | Vue enfant WKWebView native | Indisponible ; utilisez Electron ou Tauri Windows | Dimensions seules |
-| Tauri Linux | Vue enfant WebKitGTK native | Indisponible ; utilisez Electron ou Tauri Windows | Dimensions seules |
+| Tauri macOS | Vue enfant WKWebView native ; pop-ups OAuth, téléchargements et dialogues | Indisponible ; utilisez Electron ou Tauri Windows | Dimensions seules |
+| Tauri Linux | Vue enfant WebKitGTK native ; pop-ups OAuth, téléchargements et dialogues | Indisponible ; utilisez Electron ou Tauri Windows | Dimensions seules |
 | Navigateur ordinaire/vue distante | Iframe de repli | Aucune cible locale d’aperçu natif | Dimensions seules |
 
 Sur Electron et Tauri Windows, l’automatisation native est préparée au démarrage du bureau et utilise l’outil `codenomad.browser` lié à la session pour ouvrir, naviguer, capturer l’état, prendre une capture d’écran et agir sur la page : cliquer, saisir, sélectionner, survoler, glisser, faire défiler, appuyer sur des touches et attendre un texte. La disponibilité d’un outil n’autorise pas toutes les fenêtres : l’exécution vérifie le backend propriétaire, les capacités natives, la session et la cible visible. Une action dont la page a été masquée, remplacée ou a changé d’adresse entre-temps est refusée plutôt qu’envoyée à une autre page, et une action n’est jamais répétée automatiquement. Le contenu des pages reste non fiable. Une iframe peut échouer si la cible interdit l’intégration ; utilisez un navigateur externe plutôt que d’affaiblir ses protections.
 
 Les aperçus Tauri macOS/Linux s’ouvrent manuellement, conservent les connexions partagées entre les redémarrages et utilisent l’historique natif arrière/avant. Les aperçus natifs sont masqués sous les menus et boîtes de dialogue locaux ; les commentaires sur les éléments sont indisponibles en mode natif. `codenomad.browser` refuse toutes les actions sur Tauri macOS/Linux, même avec un aperçu visible.
+
+Les pop-ups Tauri macOS/Linux partagent les connexions de l’aperçu, prennent en charge `postMessage` et se ferment avec leur page d’origine. La navigation autorise uniquement HTTP(S) sans identifiants. Les téléchargements sont enregistrés directement dans Téléchargements, avec des noms assainis et uniques, sans écraser de fichier. `alert`, `confirm` et `prompt` utilisent des dialogues natifs. Caméra, microphone, localisation, notifications et autres permissions des sites sont refusés.
 
 ## Choisir parmi six modèles de zone d’affichage {#templates}
 

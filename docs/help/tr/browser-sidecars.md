@@ -20,13 +20,15 @@ Native önizlemeler aynı masaüstü motoru ve profil/yapılandırma kapsamında
 | --- | --- | --- | --- |
 | Desteklenen masaüstü platformlarında Electron | Yerel Chromium konuğu | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
 | Windows Tauri | Yerel WebView2 alt öğesi | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
-| macOS Tauri | Yerel WKWebView alt öğesi | Kullanılamaz; Electron veya Windows Tauri kullanın | Yalnızca boyutlar |
-| Linux Tauri | Yerel WebKitGTK alt öğesi | Kullanılamaz; Electron veya Windows Tauri kullanın | Yalnızca boyutlar |
+| macOS Tauri | Yerel WKWebView alt öğesi; OAuth pencereleri, indirmeler ve iletişim kutuları | Kullanılamaz; Electron veya Windows Tauri kullanın | Yalnızca boyutlar |
+| Linux Tauri | Yerel WebKitGTK alt öğesi; OAuth pencereleri, indirmeler ve iletişim kutuları | Kullanılamaz; Electron veya Windows Tauri kullanın | Yalnızca boyutlar |
 | Normal tarayıcı/uzak görünüm | Alternatif iframe görünümü | Yerel native önizleme hedefi yok | Yalnızca boyutlar |
 
 Electron ve Windows Tauri'de yerel otomasyon, masaüstü başlangıcında hazırlanır ve açma, gezinme, anlık görüntü, ekran görüntüsü ve sayfa eylemleri için oturuma bağlı `codenomad.browser` aracını kullanır: tıklama, yazma, seçme, üzerine gelme, sürükleme, kaydırma, tuşa basma ve metin bekleme. Aracın kullanılabilirliği her pencere için yetkilendirme değildir: yürütme, sahip olunan arka ucu, yerel yetenekleri, oturumu ve görünür hedefi kontrol eder. Sayfası bu arada gizlenmiş, değiştirilmiş veya başka bir adrese gitmiş bir eylem başka bir sayfaya gönderilmek yerine reddedilir ve hiçbir eylem otomatik olarak tekrarlanmaz. Sayfa içerikleri güvenilmez durumda kalıyor. Hedef yerleştirmeyi yasakladığından iframe başarısız olabilir; korumalarını zayıflatmak yerine harici bir tarayıcı kullanın.
 
 Tauri macOS/Linux önizlemeleri elle açılır, paylaşılan oturum açma bilgilerini yeniden başlatmalar arasında korur ve yerel Geri/İleri geçmişini kullanır. Yerel önizlemeler, uygulama içindeki menü ve iletişim kutularının altında gizlenir; yerel modda öğe yorumları kullanılamaz. `codenomad.browser`, görünür bir önizleme olsa bile Tauri macOS/Linux'ta tüm eylemleri reddeder.
+
+Tauri macOS/Linux açılır pencereleri önizleme oturumlarını paylaşır, `postMessage` destekler ve açan sayfayla birlikte kapanır. Gezinme yalnızca kimlik bilgisi içermeyen HTTP(S) adreslerine izin verir. İndirmeler temizlenmiş, benzersiz adlarla doğrudan İndirilenler klasörüne kaydedilir; mevcut dosyaların üzerine yazılmaz. `alert`, `confirm` ve `prompt` yerel iletişim kutularını kullanır. Kamera, mikrofon, konum, bildirimler ve diğer site izinleri reddedilir.
 
 ## Altı görünüm alanı şablonundan birini seçin {#templates}
 
