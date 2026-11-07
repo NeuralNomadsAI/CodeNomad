@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify"
-import cors from "@fastify/cors"
+import cors, { type FastifyCorsOptions } from "@fastify/cors"
 import fastifyStatic from "@fastify/static"
 import replyFrom from "@fastify/reply-from"
 import fs from "fs"
@@ -38,6 +38,9 @@ import { registerSpeechRoutes } from "./routes/speech"
 import { registerOpenCodeUpdateRoutes } from "./routes/opencode-update"
 import { registerRemoteControlRoutes } from "./routes/remote-control"
 import { registerRemoteServerRoutes } from "./routes/remote-servers"
+import { registerRemoteServerBrowseRoutes } from "./routes/remote-server-browse"
+import { registerBackendRelayRoutes } from "./routes/backend-relay"
+import { RemoteServerBrowseManager } from "../codenomad-servers/browse-manager"
 import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
@@ -91,6 +94,7 @@ import { proxyWebSocket } from "./proxy-websocket"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
 import { gateRemoteRequest, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
+import { guardServerPairRequest, SERVER_PAIR_PATH } from "../remote-control/server-pairing"
 import { isRemoteRequest } from "../remote-control/request-origin"
 import { routedPath } from "./routed-path"
 import { redactSecrets, registerRequestLogging } from "./request-logging"
@@ -125,6 +129,7 @@ interface HttpServerDeps {
   httpsOptions?: { key: string | Buffer; cert: string | Buffer; ca?: string | Buffer }
   workspaceManager: WorkspaceManager
   settings: SettingsService
+  remoteServerBrowseManager?: RemoteServerBrowseManager
   fileSystemBrowser: FileSystemBrowser
   eventBus: EventBus
   serverMeta: ServerMeta
@@ -194,6 +199,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   // Remote Control admission runs before CORS, authentication and routing.
   const remoteGate = deps.remoteControlManager.gate()
   app.addHook("onRequest", (request, reply, done) => {
+    if (guardServerPairRequest(request, reply)) return
     if (!gateRemoteRequest(request, reply, remoteGate)) done()
   })
 
@@ -219,7 +225,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     return origins
   }
 
-  app.register(cors, {
+  const corsOptions: FastifyCorsOptions = {
     origin: (origin, cb) => {
       if (!origin) {
         cb(null, true)
@@ -252,7 +258,10 @@ export function createHttpServer(deps: HttpServerDeps) {
       cb(null, false)
     },
     credentials: true,
-  })
+  }
+  // This CORS version uses a per-request delegator for route-level opt-out.
+  app.register(cors, { delegator: (request, callback) => callback(null,
+    routedPath(request.raw.url ?? request.url) === SERVER_PAIR_PATH ? { origin: false } : corsOptions) })
 
   app.register(replyFrom, {
     contentTypesToEncode: [],
@@ -275,7 +284,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     }
 
     // Pairing routes answer only through the Remote Control ingress.
-    const publicApiPaths = new Set(["/api/auth/login", "/api/auth/token", "/api/auth/status", "/api/auth/logout", PAIR_EXCHANGE_PATH])
+    const publicApiPaths = new Set(["/api/auth/login", "/api/auth/token", "/api/auth/status", "/api/auth/logout", PAIR_EXCHANGE_PATH, SERVER_PAIR_PATH])
     const publicPagePaths = new Set(["/login", PAIR_PAGE_PATH])
     if (deps.authManager.isTokenBootstrapEnabled()) {
       publicPagePaths.add("/auth/token")
@@ -397,6 +406,17 @@ export function createHttpServer(deps: HttpServerDeps) {
     workspaceManager: deps.workspaceManager,
   })
   registerRemoteServerRoutes(app, { logger: apiLogger })
+  const remoteServerBrowse = deps.remoteServerBrowseManager ?? new RemoteServerBrowseManager(deps.settings)
+  registerRemoteServerBrowseRoutes(app, { manager: remoteServerBrowse, getSelfOrigins })
+  registerBackendRelayRoutes(app, { manager: remoteServerBrowse, getSelfOrigins })
+  const reconcileBackends = () => remoteServerBrowse.reconcile()
+  if (!deps.remoteServerBrowseManager) deps.eventBus.on("storage.stateChanged", reconcileBackends)
+  app.addHook("onClose", async () => {
+    if (!deps.remoteServerBrowseManager) {
+      deps.eventBus.off("storage.stateChanged", reconcileBackends)
+      remoteServerBrowse.close()
+    }
+  })
   registerRemoteProxyRoutes(app, { logger: proxyLogger, sessionManager: deps.remoteProxySessionManager })
   registerRemoteControlRoutes(app, { manager: deps.remoteControlManager })
   registerSpeechRoutes(app, { speechService: deps.speechService })

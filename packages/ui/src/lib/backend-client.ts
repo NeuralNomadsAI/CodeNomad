@@ -43,7 +43,7 @@ function assertAbsoluteHttpUrl(baseUrl: string) {
 export function createBackendClient(options: BackendClientOptions): BackendClient {
   assertAbsoluteHttpUrl(options.baseUrl)
   const transport = createBackendTransport(options)
-  const auth = createAuthRecovery(transport.baseUrl, options.fetcher)
+  const auth = createAuthRecovery(transport, options.fetcher)
   const fetch = createAuthenticatedFetch(auth, options.fetcher)
   const api = createServerApi({ ...transport, fetch })
   const events = new ServerEvents({ api, auth })
@@ -53,6 +53,12 @@ export function createBackendClient(options: BackendClientOptions): BackendClien
     meta: createServerMetaCache(api),
     sdk: new SDKManager({ url: transport.url, fetch }),
   })
+}
+
+/** An unregistered remote client; the local backend owns its relay credentials. */
+export function createRemoteBackendClient(profileId: string, options: Pick<BackendClientOptions, "fetcher" | "eventSource"> = {}): BackendClient {
+  const baseUrl = new URL(localHttp.url("/"), window.location.origin).origin
+  return createBackendClient({ ...options, id: profileId, baseUrl, relayProfileId: profileId })
 }
 
 /** The backend that served this page, made of the module singletons its importers already use. */

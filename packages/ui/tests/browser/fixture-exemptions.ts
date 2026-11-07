@@ -4,6 +4,7 @@
  * heavyServers marks entries that still run a full private Vite server. */
 export const exemptions: Record<string, string> = {
   "auth-recovery.test.ts": "stateful SSE middleware driven by the test",
+  "backend-relay-eventsource.test.ts": "real Fastify relay and test-driven upstream SSE; no Vite server",
   "automation-forms.test.ts": "electron automation harness; its machine-specific a11y flakiness pre-dates the daemon",
   "automation-input.test.ts": "served by a self-hosting harness or inline server that owns its Vite server",
   "automation-preview.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",

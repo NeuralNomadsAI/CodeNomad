@@ -768,6 +768,11 @@ export interface RemoteServerProbeRequest {
   skipTlsVerify?: boolean
 }
 
+export interface RemoteServerBrowseResponse {
+  listing: FileSystemListResponse
+  recents: Array<{ path: string; projectName?: string; lastAccessed: number }>
+}
+
 export interface RemoteServerProbeResponse {
   ok: boolean
   reachable: boolean

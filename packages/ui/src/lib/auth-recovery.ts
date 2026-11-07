@@ -3,7 +3,7 @@ import { localTransport, resolveBackendUrl, type BackendHttp } from "./backend-t
 
 /** Browser login recovery only. Never retries a failed application request or
  * interprets an upstream OpenCode 401 as proof of an expired CodeNomad login. */
-export function createAuthRecovery(base: string | undefined, fetcher: typeof fetch = (...args) => fetch(...args)) {
+export function createAuthRecovery(base: string | undefined | Pick<BackendHttp, "url">, fetcher: typeof fetch = (...args) => fetch(...args)) {
   const [required, setRequired] = createSignal(false)
   // Remote Control devices cannot sign in with a password; they pair again on the host.
   const [pairingRequired, setPairingRequired] = createSignal(false)
@@ -11,7 +11,7 @@ export function createAuthRecovery(base: string | undefined, fetcher: typeof fet
   let generation = 0
   let nextProbe = 0, publishedProbe = 0
   const checking = new Map<AbortSignal | undefined, Promise<void>>()
-  const url = (path: string) => resolveBackendUrl(base, path)
+  const url = typeof base === "object" ? base.url : (path: string) => resolveBackendUrl(base, path)
 
   function authenticated(signal?: AbortSignal) {
     const current = generation
