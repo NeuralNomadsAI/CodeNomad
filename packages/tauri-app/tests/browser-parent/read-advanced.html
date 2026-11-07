@@ -14,6 +14,9 @@
   <section inert><button>Hidden inert</button></section>
   <section aria-hidden="true"><button>Hidden ARIA</button></section>
   <x-open id="open"></x-open><div id="closed"></div>
+  <div id="disabled-shadow" aria-disabled="true"></div>
+  <div id="hidden-shadow" style="display:none"></div>
+  <label>Search secret <input type="password" role="searchbox" value="private"></label>
   <iframe id="same" title="Same-origin frame" src="/read/frame"></iframe>
   <iframe id="cross" title="Cross-origin frame" src="{{CROSS}}/read/frame"></iframe>
 </main>
@@ -21,4 +24,6 @@
   window.__codenomadPageOnly=true;
   document.querySelector('#open').attachShadow({mode:'open'}).innerHTML='<span id="label">Shadow label</span><button id="shadow-button" aria-labelledby="label">Wrong text</button><label>Shadow field <input value="Shadow value"></label>';
   document.querySelector('#closed').attachShadow({mode:'closed'}).innerHTML='<button id="closed-button">Closed action</button>';
+  document.querySelector('#disabled-shadow').attachShadow({mode:'open'}).innerHTML='<button>Disabled shadow action</button>';
+  document.querySelector('#hidden-shadow').attachShadow({mode:'open'}).innerHTML='<button>Hidden shadow action</button>';
 </script>

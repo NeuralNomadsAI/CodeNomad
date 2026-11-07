@@ -136,6 +136,14 @@ int cn_test_direct_hover(void *opaque, double x, double y) {
 static void fail(CNCompletion done, void *context, NSString *error) {
     done(context, NULL, 0, error.UTF8String);
 }
+static WKContentWorld *read_world(void) {
+    // WKContentWorld's named cache is weak. Keep the world alive between reads
+    // so its per-document identity table survives separate native callbacks.
+    static WKContentWorld *world;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ world = [WKContentWorld worldWithName:@CN_WORLD]; });
+    return world;
+}
 int cn_install_page_read(void *opaque) {
     WKWebView *view = (__bridge WKWebView *)opaque;
     WKUserScript *hook = [[WKUserScript alloc] initWithSource:[NSString stringWithUTF8String:CN_PAGE_HOOK] injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:NO inContentWorld:WKContentWorld.pageWorld];
@@ -147,7 +155,7 @@ void cn_page_read(void *opaque, const char *request, unsigned timeout_ms, CNComp
     WKWebView *view = (__bridge WKWebView *)opaque;
     if (view.loading) { fail(done,context,@"Native browser page is loading"); return; }
     NSDictionary *arguments = @{ @"request": [NSString stringWithUTF8String:request] };
-    [view callAsyncJavaScript:[NSString stringWithUTF8String:CN_PAGE_READ] arguments:arguments inFrame:nil inContentWorld:[WKContentWorld worldWithName:@CN_WORLD]
+    [view callAsyncJavaScript:[NSString stringWithUTF8String:CN_PAGE_READ] arguments:arguments inFrame:nil inContentWorld:read_world()
         completionHandler:^(id result, NSError *error) {
             if (error || view.loading || ![result isKindOfClass:NSString.class]) {
                 fail(done,context,error.localizedDescription ?: @"Native browser page changed or is loading"); return;
@@ -159,7 +167,7 @@ void cn_page_read(void *opaque, const char *request, unsigned timeout_ms, CNComp
 void cn_checkpoint(void *opaque, CNCompletion done, void *context) {
     WKWebView *view = (__bridge WKWebView *)opaque;
     [view evaluateJavaScript:@CN_CHECKPOINT inFrame:nil
-        inContentWorld:[WKContentWorld worldWithName:@CN_WORLD]
+        inContentWorld:read_world()
         completionHandler:^(id result, NSError *error) {
             if (error || ![result isKindOfClass:NSString.class]) {
                 fail(done, context, error.localizedDescription ?: @"WebKit evaluation returned no value");

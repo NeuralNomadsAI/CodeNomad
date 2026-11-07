@@ -9,7 +9,13 @@ extern "C" {
     fn cn_checkpoint(view: *mut c_void, done: Completion, context: *mut c_void);
     fn cn_capture(view: *mut c_void, done: Completion, context: *mut c_void);
     fn cn_install_page_read(view: *mut c_void) -> i32;
-    fn cn_page_read(view: *mut c_void, request: *const c_char, timeout_ms: u32, done: Completion, context: *mut c_void);
+    fn cn_page_read(
+        view: *mut c_void,
+        request: *const c_char,
+        timeout_ms: u32,
+        done: Completion,
+        context: *mut c_void,
+    );
 }
 
 #[derive(Clone)]
@@ -95,7 +101,16 @@ pub(crate) fn read(
                     Read::Capture => cn_capture(view, completed, context),
                     Read::Page(request) => {
                         let request = CString::new(request).expect("serialized JSON request");
-                        cn_page_read(view,request.as_ptr(),deadline.saturating_duration_since(Instant::now()).as_millis().clamp(1,u32::MAX as u128) as u32,completed,context);
+                        cn_page_read(
+                            view,
+                            request.as_ptr(),
+                            deadline
+                                .saturating_duration_since(Instant::now())
+                                .as_millis()
+                                .clamp(1, u32::MAX as u128) as u32,
+                            completed,
+                            context,
+                        );
                     }
                 }
             }
@@ -109,14 +124,26 @@ pub(crate) fn read(
 }
 
 pub(crate) fn install_read(webview: &tauri::Webview) -> Result<(), String> {
-    let (sender,receiver)=mpsc::sync_channel(1);
-    webview.with_webview(move |native| {
-        #[cfg(target_os="linux")]
-        let view = { use gtk::glib::object::ObjectType; native.inner().as_ptr().cast::<c_void>() };
-        #[cfg(target_os="macos")]
-        let view=native.inner();
-        let installed=unsafe {cn_install_page_read(view)};
-        let _=sender.send(installed != 0);
-    }).map_err(|error|error.to_string())?;
-    if receiver.recv_timeout(std::time::Duration::from_secs(5)).map_err(|_|"Timed out installing native read hooks".to_string())? { Ok(()) } else {Err("Native read hooks are unavailable".into())}
+    let (sender, receiver) = mpsc::sync_channel(1);
+    webview
+        .with_webview(move |native| {
+            #[cfg(target_os = "linux")]
+            let view = {
+                use gtk::glib::object::ObjectType;
+                native.inner().as_ptr().cast::<c_void>()
+            };
+            #[cfg(target_os = "macos")]
+            let view = native.inner();
+            let installed = unsafe { cn_install_page_read(view) };
+            let _ = sender.send(installed != 0);
+        })
+        .map_err(|error| error.to_string())?;
+    if receiver
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .map_err(|_| "Timed out installing native read hooks".to_string())?
+    {
+        Ok(())
+    } else {
+        Err("Native read hooks are unavailable".into())
+    }
 }

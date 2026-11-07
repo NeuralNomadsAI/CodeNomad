@@ -275,30 +275,6 @@ pub(super) fn parse(value: Value) -> Result<Operation, String> {
 }
 
 impl Operation {
-    pub(super) fn webkit_result(&self) -> Value {
-        if matches!(self, Self::Checkpoint | Self::ReleaseHandles) {
-            json!({})
-        } else {
-            json!({"error":{"code":"unsupported","driver":"webkit","operation":self.name()}})
-        }
-    }
-    pub(super) fn name(&self) -> &'static str {
-        match self {
-            Self::Tree => "tree",
-            Self::Viewport => "viewport",
-            Self::ReleaseHandles => "release-handles",
-            Self::Checkpoint => "checkpoint",
-            Self::Resolve { .. } => "resolve",
-            Self::ScrollIntoView { .. } => "scroll-into-view",
-            Self::Geometry { .. } => "geometry",
-            Self::HitTest { .. } => "hit-test",
-            Self::Call { .. } => "call",
-            Self::Pointer { .. } => "pointer",
-            Self::Wheel { .. } => "wheel",
-            Self::Keyboard { .. } => "keyboard",
-            Self::InsertText { .. } => "insert-text",
-        }
-    }
     pub(super) fn cdp(&self) -> Option<(&'static str, Value)> {
         Some(match self {
             Self::Tree => ("Accessibility.getFullAXTree", json!({})),
@@ -438,14 +414,6 @@ mod tests {
                 parse(value.clone()).is_ok(),
                 "valid operation rejected: {value}"
             );
-            let operation = parse(value.clone()).unwrap();
-            if !matches!(operation, Operation::Checkpoint | Operation::ReleaseHandles) {
-                assert_eq!(operation.webkit_result()["error"]["code"], "unsupported");
-                assert_eq!(
-                    operation.webkit_result()["error"]["operation"],
-                    operation.name()
-                );
-            }
         }
         for value in cases["invalid"].as_array().unwrap() {
             assert!(

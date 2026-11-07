@@ -20,3 +20,16 @@ Requirements: Rust, Node, OpenSSL, and the host's native development libraries (
 The harness compiles production `BrowserController`, `EmbeddedViews`, local-window identity validation, native adapters and `native_request::dispatch`. Its child uses production `NativeParent`, real prefixed stdout requests and piped stdin responses. The owning-window inventory and renderer's open-claim callback are fixture-supplied; the existing application UI subscription has its own regression. The harness starts its own fixture child and HTTP/self-signed TLS servers. Keep its temporary data profile separate from application profiles. The public automation capability stays disabled while private requests are exercised directly.
 
 The fixed fixture-only operations control visibility, a renderer dialog, duplicate ownership, close/reopen, response delay and backend retirement. Native capture-completion tests revoke authority at the callback guard's acceptance boundary, after the real engine has produced its result. The controller's native navigation and capture operations remain unchanged by the fixture. These operations belong only to this example executable, never renderer IPC or the application parent-method allowlist.
+
+## Semantic reads
+
+Regenerate the fixed reader and extracted Electron fixtures, then build the read child:
+
+```sh
+node --import tsx scripts/build-webkit-read.ts
+npx --no-install esbuild packages/tauri-app/tests/browser-parent/read-fixture.ts --bundle --platform=node --format=esm --outfile=.tmp/read-fixture.mjs
+```
+
+Pass that child as `--fixture` to the same native harness. It saves each fixture's tree and shared-renderer snapshot, and `read-result.json`. Checks include stable same-document refs, fragment/pushState preservation, removal/reinsertion, recreation, cross-document navigation, scope/query and visibility/closure fences. Fixture-only mutations use fixed scripts in the example. Read identities and semantic traversal stay inside the production isolated-world program. The closed-shadow page-world annotation records dynamic `attachShadow({mode:"closed"})` boundaries; declarative closed-root detection remains constrained by public DOM access.
+
+Run `node --import tsx scripts/compare-webkit-read.ts <comparison-output> <native-artifact-parent>` to assert rendered control parity and produce a side-by-side table for each fixture. The optional native parent contains `p3-read-macos`, `p3-read-x11` and `p3-read-wayland` artifact folders. Frame content and opaque closed-root boundaries are compared explicitly; native date-editor internals are filtered by the production snapshot renderer.

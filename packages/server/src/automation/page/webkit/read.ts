@@ -4,13 +4,13 @@ import type { SemanticNode, PageOperation } from "../protocol"
 
 type State = {
   document: Document; token: string; next: number; ids: WeakMap<Node,number>; nodes: Map<number,WeakRef<Node>>
-  observers: Set<{observer: MutationObserver; root: WeakRef<Node>}>; observed: WeakSet<Node>; pending: MutationRecord[]
+  observers: Set<{observer: MutationObserver; root: WeakRef<Node>}>; observed: WeakSet<Node>
 }
 const MAX_NODES = 20_000
 const KEY = "__codenomadWebkitReadV1"
 const token = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 const globalState = globalThis as typeof globalThis & { [KEY]?: State }
-function makeState(): State { return {document,token:token(),next:0,ids:new WeakMap(),nodes:new Map(),observers:new Set(),observed:new WeakSet(),pending:[]} }
+function makeState(): State { return {document,token:token(),next:0,ids:new WeakMap(),nodes:new Map(),observers:new Set(),observed:new WeakSet()} }
 function parent(node: Node): Node | null { return node.parentNode ?? (node.nodeType === 11 ? (node as ShadowRoot).host : null) }
 function live(node: Node): boolean {
   const doc = node.nodeType === 9 ? node as Document : node.ownerDocument
@@ -30,17 +30,11 @@ function retire(state: State, node: Node) {
 function watch(state: State, root: Node) {
   if (state.observed.has(root)) return
   state.observed.add(root)
-  const observer = new MutationObserver(records => state.pending.push(...records))
+  const observer = new MutationObserver(records => retireRecords(state,records))
   observer.observe(root,{childList:true,subtree:true})
   state.observers.add({observer,root:new WeakRef(root)})
 }
-function flush(state: State) {
-  const records = state.pending.splice(0)
-  for (const entry of state.observers) {
-    records.push(...entry.observer.takeRecords())
-    const root=entry.root.deref()
-    if (!root || !live(root)) {entry.observer.disconnect();state.observers.delete(entry);if(root)state.observed.delete(root)}
-  }
+function retireRecords(state: State, records: MutationRecord[]) {
   for (const record of records) for (const removed of Array.from(record.removedNodes)) {
     if (removed.nodeType === 1 && (removed as Element).localName === "html" && record.target === document) {
       for (const {observer} of state.observers) observer.disconnect()
@@ -50,6 +44,13 @@ function flush(state: State) {
     }
     retire(state,removed)
     if (removed.nodeType === 1 && (removed as Element).localName === "html" && record.target.nodeType === 9) retire(state,record.target)
+  }
+}
+function flush(state: State) {
+  for (const entry of state.observers) {
+    retireRecords(state,entry.observer.takeRecords())
+    const root=entry.root.deref()
+    if (!root || !live(root)) {entry.observer.disconnect();state.observers.delete(entry);if(root)state.observed.delete(root)}
   }
   for (const [id, reference] of state.nodes) { const node = reference.deref(); if (!node || !live(node)) { if (node) state.ids.delete(node); state.nodes.delete(id) } }
 }
@@ -86,6 +87,7 @@ function composedText(root: Node): string {
 }
 function role(element: Element): string {
   const tag=element.localName, type=(element as HTMLInputElement).type
+  if (element.getAttribute("role")?.trim()) return getRole(element) ?? "generic"
   if (tag === "input") {
     if (type === "password") return "textbox"
     if (type === "date" || type === "month" || type === "week") return "Date"
@@ -100,6 +102,12 @@ function role(element: Element): string {
   if (value === "region" && !computeAccessibleName(element)) value="generic"
   if ((tag === "header" || tag === "footer") && element.parentElement?.closest("article,aside,main,nav,section")) value="generic"
   return value
+}
+function ariaDisabled(element: Element): boolean {
+  for (let node: Node | null=element; node; node=parent(node)) {
+    if (node.nodeType === 1 && (node as Element).getAttribute("aria-disabled") === "true") return true
+  }
+  return false
 }
 function semanticTree(state: State): SemanticNode[] {
   const nodes: SemanticNode[]=[], seen=new Set<Node>()
@@ -144,7 +152,7 @@ function semanticTree(state: State): SemanticNode[] {
     else if (tag === "select" && !(element as HTMLSelectElement).multiple && (element as HTMLSelectElement).size <= 1) property("expanded",false)
     else if (tag === "summary" && element.parentElement?.localName === "details") property("expanded",element.parentElement.hasAttribute("open"))
     if (attr("selected") !== null || tag === "option") property("selected",attr("selected") !== null ? attr("selected") === "true" : (element as HTMLOptionElement).selected)
-    if (element.matches(":disabled") || attr("disabled") === "true" || element.parentElement?.closest('[aria-disabled="true"]')) property("disabled",true)
+    if (element.matches(":disabled") || ariaDisabled(element)) property("disabled",true)
     if (input.required || attr("required") === "true") property("required",true)
     if (input.readOnly || attr("readonly") === "true") property("readonly",true)
     if (tag === "select" && (element as HTMLSelectElement).multiple || attr("multiselectable") === "true") property("multiselectable",true)

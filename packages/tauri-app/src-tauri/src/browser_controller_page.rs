@@ -100,12 +100,13 @@ impl BrowserController {
             })
             || inner.registrations.get(&lease.registration.registration_id)
                 != Some(&lease.registration)
-            || (lease.document.is_none() && !inner
-                .navigation_versions
-                .get(&lease.registration.registration_id)
-                .is_some_and(|navigation| {
-                    self.page_generation(&lease.registration, *navigation) == lease.generation
-                }))
+            || (lease.document.is_none()
+                && !inner
+                    .navigation_versions
+                    .get(&lease.registration.registration_id)
+                    .is_some_and(|navigation| {
+                        self.page_generation(&lease.registration, *navigation) == lease.generation
+                    }))
         {
             return Err("Browser page lease is no longer current".into());
         }
@@ -181,7 +182,8 @@ impl BrowserController {
         fence.check()?;
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(document) = &lease.document {
-            let response = self.webkit_read(app, lease, &json!({"op":"checkpoint"}), deadline, fence)?;
+            let response =
+                self.webkit_read(app, lease, &json!({"op":"checkpoint"}), deadline, fence)?;
             if response["document"].as_str() != Some(document.as_str()) {
                 return Err("Browser page document changed; inspect again".into());
             }
@@ -214,11 +216,13 @@ impl BrowserController {
             return Ok(json!({}));
         }
         let begin = method == "browser.page.begin";
-        let mut lease = if begin {
+        let lease = if begin {
             self.reserve_page(self.resolve(app, session_id)?, operation_id)?
         } else {
             self.page_lease(input)?
         };
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let mut lease = lease;
         let operation = if method == "browser.page.send" {
             Some(operations::parse(
                 input
@@ -233,12 +237,24 @@ impl BrowserController {
             let url = self.check_page(app, &lease, deadline, fence)?;
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             if begin {
-                let response = self.webkit_read(app, &lease, &json!({"op":"checkpoint"}), deadline, fence)?;
-                let document = response["document"].as_str().ok_or("Missing WebKit document identity")?.to_string();
+                let response =
+                    self.webkit_read(app, &lease, &json!({"op":"checkpoint"}), deadline, fence)?;
+                let document = response["document"]
+                    .as_str()
+                    .ok_or("Missing WebKit document identity")?
+                    .to_string();
                 self.check_page_state(&lease, deadline)?;
-                lease.generation = format!("{}:{}:{}", self.run_id, lease.registration.generation, document);
+                lease.generation = format!(
+                    "{}:{}:{}",
+                    self.run_id, lease.registration.generation, document
+                );
                 lease.document = Some(document);
-                self.inner.0.lock().map_err(|error| error.to_string())?.page_leases.insert(operation_id.into(), lease.clone());
+                self.inner
+                    .0
+                    .lock()
+                    .map_err(|error| error.to_string())?
+                    .page_leases
+                    .insert(operation_id.into(), lease.clone());
             }
             if method == "browser.page.check" {
                 return Ok(json!({ "url": url }));
@@ -278,21 +294,24 @@ impl BrowserController {
             };
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             let response = if let Some(_) = &operation {
-                let response = self.webkit_read(app, &lease, &input["operation"], deadline, fence)?;
+                let response =
+                    self.webkit_read(app, &lease, &input["operation"], deadline, fence)?;
                 if response["document"].as_str() != lease.document.as_deref() {
                     return Err("Browser page document changed; inspect again".into());
                 }
                 response["result"].clone()
-            } else { json!({}) };
+            } else {
+                json!({})
+            };
             let url = self.check_page(app, &lease, deadline, fence)?;
             if begin {
                 Ok(
                     json!({ "generation": lease.generation, "url": url, "driver": if cfg!(windows) {"cdp"} else {"webkit"}, "contractVersion":1 }),
                 )
             } else {
-                let operation = operation.as_ref().ok_or("Invalid browser page operation")?;
                 #[cfg(windows)]
                 {
+                    let operation = operation.as_ref().ok_or("Invalid browser page operation")?;
                     Ok(operation.result(response))
                 }
                 #[cfg(any(target_os = "linux", target_os = "macos"))]

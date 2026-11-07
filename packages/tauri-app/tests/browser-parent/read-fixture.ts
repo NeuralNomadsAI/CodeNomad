@@ -41,7 +41,11 @@ async function main() {
     if(name === "advanced") {
       assert.ok(!JSON.stringify(nodes).includes("never-expose-this-secret"))
       for(const label of ["First choice","Shadow label","Frame action","Closed shadow root (unavailable)","Cross-origin frame (unavailable)"]) assert.ok(snapshot.includes(label),`${label}: ${snapshot}`)
-      for(const hidden of ["Hidden attribute","Hidden display","Hidden inert","Hidden ARIA"]) assert.ok(!snapshot.includes(hidden))
+      for(const hidden of ["Hidden attribute","Hidden display","Hidden inert","Hidden ARIA","Hidden shadow action"]) assert.ok(!snapshot.includes(hidden))
+      const secret=nodes.find(node=>node.role === "textbox" && node.name === "Secret")!
+      const secretHandle=(await current.send({op:"resolve",node:secret.node!})).handle as string
+      assert.deepEqual(await current.send({op:"call",function:"read-value",handle:secretHandle,args:[]}),{value:"•".repeat(16)})
+      assert.deepEqual(await current.send({op:"call",function:"field",handle:secretHandle,args:[]}),{handle:secretHandle})
       const button=nodes.find(node=>node.role === "button" && node.name === "First choice")!
       const handle=(await current.send({op:"resolve",node:button.node!})).handle
       assert.equal(typeof handle,"string")

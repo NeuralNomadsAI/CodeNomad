@@ -581,6 +581,58 @@ fn page_generation_survives_end_but_not_navigation_registration_or_host_replacem
 }
 
 #[test]
+fn document_bound_page_leases_preserve_uri_changes_and_registration_fences() {
+    let (controller, registration) = controller_with_registration();
+    let operation = uuid::Uuid::new_v4().to_string();
+    let mut lease = controller.reserve_page(registration, &operation).unwrap();
+    lease.document = Some("isolated-document-token".into());
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .page_leases
+        .insert(operation.clone(), lease.clone());
+    controller.invalidate_page_for_generation("preview", 1);
+    controller.invalidate_page("preview");
+    let deadline = Instant::now() + Duration::from_secs(1);
+    assert!(controller.check_page_state(&lease, deadline).is_ok());
+    // The native adapter checks the document token; URI callbacks keep the lease.
+    assert!(controller.check_page_state(&lease, Instant::now()).is_err());
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .registrations
+        .get_mut("preview")
+        .unwrap()
+        .visible = false;
+    assert!(controller.check_page_state(&lease, deadline).is_err());
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .registrations
+        .get_mut("preview")
+        .unwrap()
+        .visible = true;
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .registrations
+        .get_mut("preview")
+        .unwrap()
+        .generation += 1;
+    assert!(controller.check_page_state(&lease, deadline).is_err());
+    controller.end_page("session", &operation);
+    assert!(controller.check_page_state(&lease, deadline).is_err());
+}
+
+#[test]
 fn page_lease_identity_limits_expiry_and_cleanup_are_exact() {
     let (controller, registration) = controller_with_registration();
     let operation = uuid::Uuid::new_v4().to_string();

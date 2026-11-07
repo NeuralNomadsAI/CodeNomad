@@ -41,6 +41,11 @@ static void page_read_done(GObject *object, GAsyncResult *result, gpointer data)
     g_free(text); g_clear_object(&value); g_clear_error(&error); g_free(read);
 }
 int cn_install_page_read(void *view) {
+    /* Pin the named content world between async calls. WebKit otherwise releases
+     * an unused world and its document identity table after each callback. */
+    WebKitUserScript *world = webkit_user_script_new_for_world("void 0", WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, CN_WORLD, NULL, NULL);
+    webkit_user_content_manager_add_script(webkit_web_view_get_user_content_manager(WEBKIT_WEB_VIEW(view)), world);
+    webkit_user_script_unref(world);
     WebKitUserScript *script = webkit_user_script_new(CN_PAGE_HOOK, WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, NULL, NULL);
     webkit_user_content_manager_add_script(webkit_web_view_get_user_content_manager(WEBKIT_WEB_VIEW(view)), script);
     webkit_user_script_unref(script);

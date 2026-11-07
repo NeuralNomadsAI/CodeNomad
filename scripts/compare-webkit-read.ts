@@ -28,6 +28,13 @@ async function main() {
   const driver=cdpDriver({send:(method,params)=>cdp.send(method as never,params as never) as Promise<Record<string,unknown>>},async()=>{})
   const source=readFileSync("packages/server/src/automation/page/webkit/read.generated.js","utf8")
   const comparisons=[]
+  const actionable=new Set(["button","link","textbox","searchbox","combobox","checkbox","radio","switch","slider","spinbutton","tab","menuitem","menuitemcheckbox","menuitemradio","option","treeitem","listbox","Date","DateTime","InputTime","ColorWell","DisclosureTriangle"])
+  const signature=(node:SemanticNode)=>{
+    const states=new Map(node.properties?.map(item=>[item.name,item.value]))
+    const text=(value:unknown)=>String(value ?? "").replace(/\s+/g," ").trim()
+    return JSON.stringify([node.role,text(node.name),text(node.description),text(node.name) === "Secret" ? "masked" : text(node.value),
+      ...["disabled","required","readonly","multiselectable","checked","expanded","pressed","selected","invalid"].map(key=>String(states.get(key) ?? false))])
+  }
   try {
     for (const name of Object.keys(fixtures)) {
       await page.goto(`${base}/${name}`)
@@ -41,15 +48,31 @@ async function main() {
       const chromiumNodes=await driver.tree(), webkit=await read({op:"tree"})
       const render=(nodes:SemanticNode[],options={})=>renderSnapshot(snapshotTree(nodes),id=>`n${id}`,options).text
       const comparison={name,chromium:render(chromiumNodes),webkit:render(webkit.result.nodes),chromiumNodes,webkitNodes:webkit.result.nodes}
+      const controls=(nodes:SemanticNode[])=>{
+        // Compare what the shared renderer exposes, excluding native date-editor internals.
+        const visible=new Set([...render(nodes).matchAll(/\[n(\d+)\]/g)].map(match=>Number(match[1])))
+        return nodes.filter(node=>visible.has(node.node!) && actionable.has(String(node.role)) && !["Closed action","Frame action","Frame field"].includes(String(node.name))).map(signature).sort()
+      }
+      assert.deepEqual(controls(webkit.result.nodes),controls(chromiumNodes),`${name}: actionable controls differ`)
       writeFileSync(join(output,`${name}.json`),JSON.stringify(comparison,null,2))
       writeFileSync(join(output,`${name}.txt`),`CHROMIUM CDP\n${comparison.chromium}\n\nWEBKIT READER (Chromium isolated world)\n${comparison.webkit}\n`)
       comparisons.push({name,chromium:chromiumNodes.length,webkit:webkit.result.nodes.length})
+      if(process.argv[3]) {
+        const rows=[{engine:"Chromium CDP",text:comparison.chromium}]
+        for(const engine of ["macos","x11","wayland"]) {
+          const native=JSON.parse(readFileSync(join(process.argv[3],`p3-read-${engine}`,`${name}.json`),"utf8")) as {nodes:SemanticNode[];snapshot:string}
+          assert.deepEqual(controls(native.nodes),controls(webkit.result.nodes),`${engine}/${name}: actionable controls differ`)
+          assert.equal(native.snapshot.replace(/ \[n\d+\]/g,""),comparison.webkit.replace(/ \[n\d+\]/g,""),`${engine}/${name}: outline differs`)
+          rows.push({engine,text:native.snapshot})
+        }
+        writeFileSync(join(output,`${name}-native.md`),`# ${name}\n\n| Engine | Snapshot |\n|---|---|\n${rows.map(row=>`| ${row.engine} | <pre>${row.text.replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll("|","&#124;").replaceAll("\n","<br>")}</pre> |`).join("\n")}\n`)
+      }
       const repeated=await read({op:"tree"})
       assert.equal(repeated.document,webkit.document)
       assert.deepEqual(repeated.result.nodes,webkit.result.nodes)
       if(name === "advanced") {
         assert.ok(!JSON.stringify(webkit).includes("never-expose-this-secret"))
-        for(const hidden of ["Hidden attribute","Hidden display","Hidden inert","Hidden ARIA"]) assert.ok(!comparison.webkit.includes(hidden))
+        for(const hidden of ["Hidden attribute","Hidden display","Hidden inert","Hidden ARIA","Hidden shadow action"]) assert.ok(!comparison.webkit.includes(hidden))
         const button=webkit.result.nodes.find(node=>node.role === "button" && node.name === "First choice")!
         assert.ok(button)
         assert.match(render(webkit.result.nodes,{query:"Detailed help"}),/First choice/)
