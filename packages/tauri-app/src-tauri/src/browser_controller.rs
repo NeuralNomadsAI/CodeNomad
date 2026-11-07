@@ -712,16 +712,7 @@ impl BrowserController {
                 .ok_or_else(|| "Invalid browser request".to_string())?;
             match method {
                 "browser.page.begin" | "browser.page.send" | "browser.page.check"
-                | "browser.page.end" => {
-                    #[cfg(windows)]
-                    {
-                        self.page_request(app, method, &input, deadline)
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        Err(unsupported())
-                    }
-                }
+                | "browser.page.end" => self.page_request(app, method, &input, deadline, &fence),
                 "browser.probe" => {
                     let registration = self.resolve(app, session_id)?;
                     self.check_target(app, &registration, deadline, &fence)?;

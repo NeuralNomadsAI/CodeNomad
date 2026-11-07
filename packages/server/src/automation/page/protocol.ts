@@ -1,77 +1,76 @@
-/** Protocol primitives shared by the page engine's actions. */
+import { VALUE_LIMIT, type PageFunctionId } from "./functions"
+export { VALUE_LIMIT, INPUT_MARK_LEASE_MS } from "./functions"
 
-/** One page's protocol connection, whatever carries it (DevTools socket or a native pipe). */
-export interface PageChannel {
-  send(method: string, params?: Record<string, unknown>): Promise<Record<string, unknown>>
-}
-
-export interface PageSession {
-  channel: PageChannel
-  /** Throws once the page changed since the operation began; runs between protocol steps. */
-  checkpoint(): Promise<void>
-  /** The trusted CodeNomad window: page-side automation and trusted input are marked so they
-   * never count as a human answer (`form-answer-interaction.ts`). Never set this in a user's web page. */
-  markAutomation: boolean
-}
-
-/** An element handle passed to a page function, as opposed to a plain value. */
-export class Handle {
-  constructor(readonly objectId: string) {}
-}
-
+/** Low-level CDP transport, used only by the CDP adapter. */
+export interface PageChannel { send(method: string, params?: Record<string, unknown>): Promise<Record<string, unknown>> }
+export const PAGE_DRIVER_VERSION = 1
 export const OBJECT_GROUP = "codenomad-automation"
-export const VALUE_LIMIT = 200
-
-export function gone(ref: string): Error {
-  return new Error(`${ref} is no longer in the page; inspect again`)
+export type DriverKind = "cdp" | "webkit"
+export interface SemanticNode {
+  id?: string; parent?: string; children?: string[]; ignored?: boolean; node?: number
+  role?: unknown; name?: unknown; description?: unknown; value?: unknown
+  properties?: Array<{ name?: string; value?: unknown }>
 }
+export interface PointerInput { type: "mouseMoved" | "mousePressed" | "mouseReleased"; x: number; y: number; button?: "left" | "right" | "middle" | "none"; buttons?: number; clickCount?: number; modifiers?: number; timestamp?: number }
+export interface WheelInput { type: "mouseWheel"; x: number; y: number; deltaX: number; deltaY: number; modifiers?: number; timestamp?: number }
+export interface KeyboardInput { type: "keyDown" | "rawKeyDown" | "keyUp"; key?: string; code?: string; windowsVirtualKeyCode?: number; modifiers?: number; text?: string; unmodifiedText?: string; location?: number; timestamp?: number; buttons?: number }
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
+export type PageArgument = JsonValue
+export interface CallResult { value?: unknown; handle?: string; exception?: string }
+export type PageOperation =
+  | { op: "tree" | "viewport" | "release-handles" | "checkpoint" }
+  | { op: "resolve" | "scroll-into-view" | "geometry"; node: number }
+  | { op: "hit-test"; x: number; y: number }
+  | { op: "call"; function: PageFunctionId; handle?: string; args: PageArgument[] }
+  | { op: "pointer"; event: PointerInput }
+  | { op: "wheel"; event: WheelInput }
+  | { op: "keyboard"; event: KeyboardInput }
+  | { op: "insert-text"; text: string }
 
-export async function resolveElement(session: PageSession, ref: string, backendNodeId: number): Promise<string> {
-  let result: Record<string, unknown>
-  try {
-    result = await session.channel.send("DOM.resolveNode", { backendNodeId, objectGroup: OBJECT_GROUP })
-  } catch {
+/** One semantic page; drivers own protocol/native adaptation, never arbitrary evaluation. */
+export interface PageDriver {
+  readonly kind: DriverKind
+  readonly version: typeof PAGE_DRIVER_VERSION
+  tree(): Promise<SemanticNode[]>
+  resolve(node: number): Promise<string | undefined>
+  call(functionId: PageFunctionId, handle: string | undefined, args: PageArgument[]): Promise<CallResult>
+  scrollIntoView(node: number): Promise<void>
+  geometry(node: number): Promise<number[][]>
+  viewport(): Promise<{ width: number; height: number }>
+  hitTest(x: number, y: number): Promise<number | undefined>
+  pointer(event: PointerInput): Promise<void>
+  wheel(event: WheelInput): Promise<void>
+  keyboard(event: KeyboardInput): Promise<void>
+  insertText(text: string): Promise<void>
+  releaseHandles(): Promise<void>
+  checkpoint(): Promise<void>
+}
+export class PageDriverUnsupportedError extends Error {
+  readonly code = "unsupported"
+  constructor(readonly driver: DriverKind, readonly operation: string) { super(`${driver} page driver does not support ${operation}`) }
+}
+export interface PageSession { driver: PageDriver; checkpoint(): Promise<void>; markAutomation: boolean }
+export class Handle { constructor(readonly objectId: string) {} }
+export function gone(ref: string): Error { return new Error(`${ref} is no longer in the page; inspect again`) }
+
+export async function resolveElement(session: PageSession, ref: string, node: number): Promise<string> {
+  let handle: string | undefined
+  try { handle = await session.driver.resolve(node) } catch (error) {
+    if (error instanceof PageDriverUnsupportedError) throw error
     throw gone(ref)
   }
   await session.checkpoint()
-  const objectId = (result.object as { objectId?: unknown } | undefined)?.objectId
-  if (typeof objectId !== "string") throw gone(ref)
-  return objectId
+  if (typeof handle !== "string") throw gone(ref)
+  return handle
 }
-
-/** Runs a fixed page function on an element; inputs travel as protocol arguments, never as source.
- * `byValue: false` returns another element handle. */
-export async function callOn(session: PageSession, ref: string, objectId: string, body: string, args: unknown[], byValue = true): Promise<unknown> {
-  const result = await session.channel.send("Runtime.callFunctionOn", {
-    objectId,
-    functionDeclaration: pageFunction(body, session.markAutomation),
-    arguments: args.map(value => value instanceof Handle ? { objectId: value.objectId } : { value }),
-    returnByValue: byValue,
-    objectGroup: OBJECT_GROUP,
-  })
+export async function callOn(session: PageSession, ref: string, handle: string, functionId: PageFunctionId, args: Array<PageArgument | Handle>, byValue = true): Promise<unknown> {
+  const result = await session.driver.call(functionId, handle, args.map(value => value instanceof Handle ? { handle: value.objectId } : value))
   await session.checkpoint()
-  const failure = result.exceptionDetails as { exception?: { description?: unknown }; text?: unknown } | undefined
-  if (failure) throw pageError(ref, String(failure.exception?.description ?? failure.text ?? ""))
-  const value = result.result as { value?: unknown; objectId?: unknown } | undefined
-  if (!byValue) {
-    if (typeof value?.objectId !== "string") throw gone(ref)
-    return value.objectId
-  }
-  return value?.value
+  if (result.exception !== undefined) throw pageError(ref, result.exception)
+  if (!byValue) { if (typeof result.handle !== "string") throw gone(ref); return result.handle }
+  return result.value
 }
-
-export async function releaseObjects(session: PageSession): Promise<void> {
-  await session.channel.send("Runtime.releaseObjectGroup", { objectGroup: OBJECT_GROUP }).catch(() => undefined)
-}
-
-function pageFunction(body: string, mark: boolean): string {
-  const element = `const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;
-    if (!(element instanceof Element) || !element.isConnected) throw new Error("codenomad:gone");`
-  return mark
-    ? `function (...args) { ${element} globalThis.__codenomadAutomationDepth = (globalThis.__codenomadAutomationDepth || 0) + 1;
-      try { return (() => { ${body} })(); } finally { globalThis.__codenomadAutomationDepth--; } }`
-    : `function (...args) { ${element} ${body} }`
-}
+export async function releaseObjects(session: PageSession): Promise<void> { await session.driver.releaseHandles().catch(() => undefined) }
 
 function pageError(ref: string, description: string): Error {
   const [code, detail = ""] = /codenomad:([a-z-]+)(?::(.*))?/.exec(description.split("\n", 1)[0])?.slice(1) ?? []
@@ -93,91 +92,66 @@ function pageError(ref: string, description: string): Error {
   }
 }
 
-/** Marks trusted input (DevTools mouse/keyboard events) in the CodeNomad window. A lease, not a
- * counter: if the clearing call is lost with the connection, the mark still expires. */
-export async function markedInput<T>(session: PageSession, run: (dispatch: (method: string, params: Record<string, unknown>) => Promise<void>) => Promise<T>): Promise<T> {
-  const held = new Map<string, { method: string; params: Record<string, unknown> }>()
+type InputKind = "pointer" | "wheel" | "keyboard" | "insert-text"
+async function sendInput(session: PageSession, kind: InputKind, params: Record<string, unknown>): Promise<void> {
+  switch (kind) {
+    case "pointer": return session.driver.pointer(params as unknown as PointerInput)
+    case "wheel": return session.driver.wheel(params as unknown as WheelInput)
+    case "keyboard": return session.driver.keyboard(params as unknown as KeyboardInput)
+    case "insert-text": return session.driver.insertText(params.text as string)
+  }
+}
+/** Provenance marking belongs only to the trusted application window. */
+export async function markedInput<T>(session: PageSession, run: (dispatch: (kind: InputKind, params: Record<string, unknown>) => Promise<void>) => Promise<T>): Promise<T> {
+  const held = new Map<string, { kind: InputKind; params: Record<string, unknown> }>()
   let point = { x: 0, y: 0 }
   let attempted = false
-  const dispatch = async (method: string, params: Record<string, unknown>) => {
+  const dispatch = async (kind: InputKind, params: Record<string, unknown>) => {
     let timestamp: number | undefined
     if (session.markAutomation) {
-      const result = await session.channel.send("Runtime.evaluate", { expression: MARK_INPUT, returnByValue: true })
-      const stamp = (result.result as { value?: unknown } | undefined)?.value
+      const stamp = (await session.driver.call("mark-input", undefined, [])).value
       if (typeof stamp !== "number" || !Number.isFinite(stamp) || stamp <= 0) throw new Error("Cannot establish automation input provenance")
       timestamp = stamp
     }
-    const mouse = method === "Input.dispatchMouseEvent"
+    const mouse = kind === "pointer" || kind === "wheel"
     if (mouse && typeof params.x === "number" && typeof params.y === "number") point = { x: params.x, y: params.y }
     const id = mouse ? `mouse:${params.button}` : `key:${params.code}`
     const down = mouse ? params.type === "mousePressed" : params.type === "keyDown" || params.type === "rawKeyDown"
     const up = mouse ? params.type === "mouseReleased" : params.type === "keyUp"
-    if (down) held.set(id, { method, params: { ...params, type: mouse ? "mouseReleased" : "keyUp", buttons: 0, modifiers: 0,
+    if (down) held.set(id, { kind, params: { ...params, type: mouse ? "mouseReleased" : "keyUp", buttons: 0, modifiers: 0,
       ...(timestamp === undefined ? {} : { timestamp }) } })
     attempted = true
-    await session.channel.send(method, { ...params,
-      ...(timestamp === undefined || !["Input.dispatchMouseEvent", "Input.dispatchKeyEvent"].includes(method) ? {} : { timestamp }) })
+    await sendInput(session, kind, { ...params, ...(timestamp === undefined || kind === "insert-text" ? {} : { timestamp }) })
     if (up) held.delete(id)
     await session.checkpoint()
   }
   await awaitInputAcceptance(session)
-  try {
-    return await run(dispatch)
-  } catch (error) {
-    if (attempted && error instanceof Error && /timed out|timeout/i.test(error.message)) {
-      throw new Error("Input timed out: its outcome is unknown. The page was busy and the input may still be delivered; inspect before retrying.")
-    }
+  try { return await run(dispatch) }
+  catch (error) {
+    if (attempted && error instanceof Error && /timed out|timeout/i.test(error.message)) throw new Error("Input timed out: its outcome is unknown. The page was busy and the input may still be delivered; inspect before retrying.")
     throw error
   } finally {
-    // Failure may be after admission but before acknowledgement/checkpoint. Release
-    // anything potentially held, without a failed checkpoint suppressing cleanup.
     for (const release of [...held.values()].reverse()) {
       try {
-        // A frozen page can time out this write too. The release retains the
-        // original press's timestamp, so provenance never depends on the timeout.
-        if (session.markAutomation) await session.channel.send("Runtime.evaluate", { expression: MARK_INPUT, returnByValue: true }).catch(() => undefined)
+        if (session.markAutomation) await session.driver.call("mark-input", undefined, []).catch(() => undefined)
         const { text: _text, unmodifiedText: _unmodified, ...params } = release.params
-        await session.channel.send(release.method, { ...params, ...(release.method === "Input.dispatchMouseEvent" ? point : {}) })
-      } catch { /* Best effort, exact original channel only; never retry the action. */ }
+        await sendInput(session, release.kind, { ...params, ...(release.kind === "pointer" ? point : {}) })
+      } catch { /* Exact original driver, best effort; never replay a press. */ }
     }
-    if (session.markAutomation) await session.channel.send("Runtime.evaluate", { expression: UNMARK_INPUT, returnByValue: true }).catch(() => undefined)
+    if (session.markAutomation) await session.driver.call("unmark-input", undefined, []).catch(() => undefined)
   }
 }
-
-/** After an HTTP(S) navigation, Chromium's renderer defers compositor commits until the first
- * (contentful) paint, for at most about 500 ms after rendering starts, and drops key, click and
- * wheel input meanwhile (Blink paint holding: `LocalFrameView` and
- * `WidgetInputHandlerManager::DispatchEvent`). A hidden or software-composited page can take that
- * long to paint, so its first trusted input waits until the page has painted or roughly that limit
- * has passed, approximated from the moment it became interactive. The page's answer only delays
- * input, by at most `INPUT_ACCEPTANCE_MAX_WAIT_MS`. */
 async function awaitInputAcceptance(session: PageSession): Promise<void> {
   const started = Date.now()
   for (;;) {
-    const result = await session.channel.send("Runtime.evaluate", { expression: INPUT_ACCEPTANCE_DELAY, returnByValue: true })
-      .catch(() => undefined)
+    const result = await session.driver.call("input-acceptance", undefined, []).catch(error => {
+      if (error instanceof PageDriverUnsupportedError) throw error
+      return undefined
+    })
     await session.checkpoint()
-    const delay = ((result?.result as { value?: { inputDelayMs?: unknown } } | undefined)?.value)?.inputDelayMs
-    const remaining = INPUT_ACCEPTANCE_MAX_WAIT_MS - (Date.now() - started)
+    const delay = (result?.value as { inputDelayMs?: unknown } | undefined)?.inputDelayMs
+    const remaining = 1_000 - (Date.now() - started)
     if (typeof delay !== "number" || !(delay > 0) || remaining <= 0) return
     await new Promise(resolve => setTimeout(resolve, Math.min(delay, remaining, 50)))
   }
 }
-
-const PAINT_HOLDING_LIMIT_MS = 500
-const INPUT_ACCEPTANCE_MAX_WAIT_MS = 1_000
-// Milliseconds until the page accepts input: 0 once it painted, for non-HTTP(S) documents (no
-// paint holding) and after the limit; a short poll while the document is still loading.
-const INPUT_ACCEPTANCE_DELAY = `({ inputDelayMs: (() => {
-  if (!/^https?:$/.test(location.protocol) || performance.getEntriesByType("paint").length > 0) return 0;
-  const navigation = performance.getEntriesByType("navigation")[0];
-  if (!navigation || !(navigation.domInteractive > 0)) return 50;
-  return Math.max(0, Math.ceil(navigation.domInteractive + ${PAINT_HOLDING_LIMIT_MS} - performance.now()));
-})() })`
-
-export const INPUT_MARK_LEASE_MS = 15_000
-// CDP timestamps use epoch seconds; DOM event.timeStamp uses the page's monotonic
-// origin. Reading both in the page keeps delayed input within its original interval.
-const MARK_INPUT = `globalThis.__codenomadAutomationInputUntil = performance.now() + ${INPUT_MARK_LEASE_MS}; Date.now() / 1000`
-// Keep the interval's end for events queued before a stalled renderer recovered.
-const UNMARK_INPUT = "globalThis.__codenomadAutomationInputUntil = Math.min(globalThis.__codenomadAutomationInputUntil || 0, performance.now()); true"

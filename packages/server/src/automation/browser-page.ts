@@ -3,6 +3,7 @@ import type { NativeParent } from "../native-parent"
 import { bindRefs, performAction, snapshotPage, type PageSession } from "./page/actions"
 import type { RefAction } from "./page/parse"
 import { RefTable } from "./page/refs"
+import { nativeDriver } from "./page/native-driver"
 
 export type BrowserPageAction = RefAction | { action: "snapshot"; ref?: string; query?: string }
 const OPERATION_MS = 25_000
@@ -52,20 +53,18 @@ export class BrowserPage {
       return result
     }
     try {
-      const target = await request<{ generation: string; url: string }>("browser.page.begin", {})
+      const target = await request<{ generation: string; url: string; driver: unknown; contractVersion: unknown }>("browser.page.begin", {})
       if (!target || typeof target.generation !== "string" || !target.generation || target.generation.length > 512
         || typeof target.url !== "string") throw new Error("Invalid native browser target")
       const generation = target.generation
       let url = target.url
-      const page: PageSession = {
-        markAutomation: false,
-        channel: { send: (method, params) => request("browser.page.send", { generation, method, params: params ?? {} }) },
-        checkpoint: async () => {
+      const checkpoint = async () => {
           const result = await request<{ url: string }>("browser.page.check", { generation })
           if (!result || typeof result.url !== "string") throw new Error("Invalid native browser target")
           url = result.url
-        },
       }
+      const driver = nativeDriver(target, operation => request("browser.page.send", { generation, operation }), checkpoint)
+      const page: PageSession = { driver, markAutomation: false, checkpoint }
       const refs = this.table(sessionID)
       if (action.action === "snapshot") {
         const rootBackendNodeId = action.ref ? refs.resolve(action.ref, generation) : undefined

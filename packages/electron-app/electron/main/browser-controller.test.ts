@@ -55,8 +55,23 @@ function createHarness(requestOpen: (sessionID: string, url: string, requestID: 
   return { controller, owner, add, hide: () => { visible = false } }
 }
 
-const page = (controller: BrowserController, method: string, params: object, deadline = Infinity) =>
-  handleNativeBrowserRequest(controller, `browser.page.${method}`, params, deadline)
+// Existing lifecycle scenarios keep their raw-CDP fixture vocabulary; the
+// production transport receives only the new closed semantic operations.
+const page = (controller: BrowserController, method: string, params: any, deadline = Infinity) => {
+  if (method !== "send" || !params.method) return handleNativeBrowserRequest(controller, `browser.page.${method}`, params, deadline)
+  const {method: command, params: data = {}, ...identity} = params
+  const operations: Record<string, unknown> = {
+    "Accessibility.getFullAXTree": {op:"tree"}, "DOM.resolveNode": {op:"resolve",node:42},
+    "DOM.scrollIntoViewIfNeeded": {op:"scroll-into-view",node:42}, "DOM.getContentQuads": {op:"geometry",node:42},
+    "DOM.getNodeForLocation": {op:"hit-test",x:0,y:0}, "Page.getLayoutMetrics": {op:"viewport"},
+    "Runtime.callFunctionOn": {op:"call",function:"focus",handle:"h",args:[]},
+    "Runtime.evaluate": {op:"call",function:"input-acceptance",args:[]},
+    "Runtime.releaseObjectGroup": {op:"release-handles"}, "Input.insertText": {op:"insert-text",text:data && typeof data === "object" && !Array.isArray(data) ? data.text ?? "" : null},
+    "Input.dispatchMouseEvent": {op:data?.type === "mouseWheel" ? "wheel" : "pointer",event:data},
+    "Input.dispatchKeyEvent": {op:"keyboard",event:data},
+  }
+  return handleNativeBrowserRequest(controller, `browser.page.${method}`, {...identity,operation:operations[command] ?? {op:command}}, deadline)
+}
 
 async function begin(controller: BrowserController, sessionID = "session", operationID: string = randomUUID()) {
   const result = await page(controller, "begin", { sessionID, operationID }) as { generation: string; url: string }
@@ -186,11 +201,13 @@ describe("BrowserController private page channel", () => {
       await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.insertText", params }), /parameters/)
     }
     assert.deepEqual(calls, ["Accessibility.enable"])
-    for (const method of ["Accessibility.getFullAXTree", "DOM.resolveNode", "DOM.scrollIntoViewIfNeeded", "DOM.getContentQuads",
-      "DOM.getNodeForLocation", "Page.getLayoutMetrics", "Runtime.callFunctionOn", "Runtime.releaseObjectGroup",
-      "Input.insertText", "Input.dispatchMouseEvent"]) {
-      assert.deepEqual(await page(h.controller, "send", { ...lease, method, params: {} }), { ok: true })
-    }
+    const valid = [
+      [{op:"tree"},{nodes:[]}], [{op:"resolve",node:42},{}], [{op:"scroll-into-view",node:42},{ok:true}],
+      [{op:"geometry",node:42},{ok:true}], [{op:"hit-test",x:0,y:0},{}], [{op:"viewport"},{}],
+      [{op:"call",function:"focus",handle:"h",args:[]},{}], [{op:"release-handles"},{ok:true}],
+      [{op:"insert-text",text:""},{}], [{op:"pointer",event:{type:"mouseMoved",x:1,y:1}},{ok:true}],
+    ]
+    for (const [operation,expected] of valid) assert.deepEqual(await page(h.controller,"send",{...lease,operation}),expected)
     assert.deepEqual(await page(h.controller, "send", { ...lease, method: "Input.dispatchKeyEvent", params: { type: "keyUp", key: "a" } }), {})
     await assert.rejects(page(h.controller, "send", { ...lease, method: "Runtime.evaluate" }), /response is too large/)
     assert.equal(guest.debugger.isAttached(), false)
@@ -244,7 +261,7 @@ describe("BrowserController private page channel", () => {
     release()
     await Promise.all([tree, input])
     assert.deepEqual(counts(), { attachCount: 1, detachCount: 0 })
-    await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.dispatchMouseEvent" }), /no longer current/)
+    await assert.rejects(page(h.controller, "send", { ...lease, operation: {op:"pointer",event:{type:"mouseMoved",x:1,y:1}} }), /no longer current/)
     assert.deepEqual(counts(), { attachCount: 1, detachCount: 1 })
   })
 

@@ -1,12 +1,15 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { BrowserPage } from "./browser-page"
+import { executeCdpOperation } from "./page/cdp-driver"
+import type { PageOperation } from "./page/protocol"
 
 class Native {
   generation = "run/guest/document-1"
   hidden = false
   failMethod?: string
   calls: Array<{ method: string; input: Record<string, any> }> = []
+  protocol: Array<{method: string; params: Record<string, unknown>}> = []
   gate?: () => Promise<void>
   leases = new Map<string, string>()
   nodes = [{ nodeId: "one", backendDOMNodeId: 42, role: { value: "button" }, name: { value: "Save" } }]
@@ -16,15 +19,18 @@ class Native {
     if (this.hidden) throw new Error("No visible browser")
     if (method === "browser.page.begin") {
       this.leases.set(input.operationID, this.generation)
-      return { generation: this.generation, url: "https://example.test/" } as T
+      return { generation: this.generation, url: "https://example.test/", driver: "cdp", contractVersion: 1 } as T
     }
     if (input.generation !== this.generation || this.leases.get(input.operationID) !== this.generation) throw new Error("Browser document changed")
     if (method === "browser.page.check") return { url: "https://example.test/" } as T
-    if (input.method === this.failMethod) throw new Error("Native reply uncertain")
-    if (input.method === "Accessibility.getFullAXTree") { await this.gate?.(); return { nodes: this.nodes } as T }
-    if (input.method === "DOM.resolveNode") return { object: { objectId: "object-1" } } as T
-    if (input.method === "Runtime.callFunctionOn") return { result: { value: null } } as T
-    return {} as T
+    return await executeCdpOperation({ send: async (method, params = {}) => {
+      this.protocol.push({method, params})
+      if (method === this.failMethod) throw new Error("Native reply uncertain")
+      if (method === "Accessibility.getFullAXTree") { await this.gate?.(); return { nodes: this.nodes } }
+      if (method === "DOM.resolveNode") return { object: { objectId: "object-1" } }
+      if (method === "Runtime.callFunctionOn") return { result: { value: null } }
+      return {}
+    } }, input.operation as PageOperation) as T
   }
 }
 
@@ -36,11 +42,14 @@ test("preview operations use the shared outline/actions without a CodeNomad inpu
   assert.match(String(first.snapshot), /- button "Save" \[b1e1\]/)
   const ref = firstRef(first.snapshot)
   assert.deepEqual(await page.execute("session", { action: "click", ref }), { url: "https://example.test/" })
-  const functions = native.calls.filter(call => call.input.method === "Runtime.callFunctionOn")
+  const functions = native.protocol.filter(call => call.method === "Runtime.callFunctionOn")
   assert.ok(functions.length > 0)
-  assert.ok(functions.every(call => !String(call.input.params.functionDeclaration).includes("__codenomadAutomation")),
+  assert.ok(functions.every(call => !String(call.params.functionDeclaration).includes("__codenomadAutomation")),
     "a user's web page never receives the app's input provenance variables")
   assert.equal(native.leases.size, 0)
+  assert.ok(native.calls.filter(call => call.method === "browser.page.send").every(call =>
+    call.input.operation && !Object.hasOwn(call.input, "method") && !Object.hasOwn(call.input, "params")
+      && !JSON.stringify(call.input).includes("functionDeclaration")), "the private wire carries IDs/JSON operations, never program source")
   const starts = native.calls.filter(call => call.method === "browser.page.begin")
   assert.equal(starts.length, 2)
   assert.notEqual(starts[0].input.operationID, starts[1].input.operationID)
@@ -97,7 +106,7 @@ test("a failed native mutation is never replayed, and queue admission is bounded
   const ref = firstRef((await page.execute("a", { action: "snapshot" })).snapshot)
   native.failMethod = "Runtime.callFunctionOn"
   await assert.rejects(page.execute("a", { action: "click", ref }), /reply uncertain/)
-  assert.equal(native.calls.filter(call => call.input.method === "Runtime.callFunctionOn").length, 1)
+  assert.equal(native.protocol.filter(call => call.method === "Runtime.callFunctionOn").length, 1)
   assert.equal(native.leases.size, 0)
   native.failMethod = undefined
   let release!: () => void, entered!: () => void
