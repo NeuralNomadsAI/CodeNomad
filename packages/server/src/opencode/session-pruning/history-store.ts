@@ -5,6 +5,7 @@ import { z } from "zod"
 import { historyScopeSQL, historyContent, historyTexts, MAX_MESSAGE_BYTES, HISTORY_SLICE_MS, textProjection } from "./history-content"
 import { previewContent } from "./planner"
 import { projectStoredMedia } from "./media-blob"
+import { messageStorage } from "./message-storage"
 import type { HistoryQuery, HistoryNativePage, HistoryHit } from "./history-contract"
 
 export interface HistoryScope { directory: string; workspaceID?: string; sessionID?: string; projectID?: string }
@@ -44,10 +45,11 @@ export async function queryHistoryPage(db: DatabaseSync, scope: HistoryScope, in
   const countMessagesOnly = input.purpose === "stats" && !input.includeTechnical
   const textOnly = input.purpose === "search" && !input.includeTechnical
   const rowLimit = countMessagesOnly || input.purpose === "search" ? 1024 : 32
-  const dataColumn = countMessagesOnly ? "NULL" : `CASE WHEN length(CAST(m.data AS BLOB)) <= ? THEN ${textOnly ? textProjection : "m.data"} END`
+  const storage = messageStorage(db)
+  const dataColumn = countMessagesOnly ? "NULL" : `CASE WHEN ${storage.bytes("m")} <= ? THEN ${textOnly ? textProjection : "m.data"} END`
   const rows = db.prepare(`SELECT m.rowid AS position,m.id,m.session_id,m.type,s.directory,s.workspace_id,
     ${dataColumn} AS data
-    FROM session_message m JOIN session_v2 s ON s.id=m.session_id
+    FROM ${countMessagesOnly ? "session_message" : storage.table} m JOIN session_v2 s ON s.id=m.session_id
     WHERE ${where} AND m.rowid > ? AND m.rowid <= ? ORDER BY m.rowid LIMIT ${rowLimit}`)
   let after = cursor.after
   const started = performance.now()
