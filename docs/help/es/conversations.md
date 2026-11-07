@@ -9,7 +9,7 @@ Los encabezados de razonamiento y de herramientas muestran cuánto duró cada pa
 ## Buscar y recorrer conversaciones {#navigate-conversations}
 
 1. Selecciona una fila en **Sesiones** o usa **Nueva sesión** para iniciar una conversación padre.
-2. Haz clic en el chevrón de una conversación padre para expandir o contraer sus subsesiones conservando sus insignias. Un chevrón contraído muestra el estado más urgente de sus descendientes: necesitan entrada, están trabajando, compactando o inactivos; su etiqueta accesible los cuenta.
+2. Haz clic en el chevrón de una conversación padre para expandir o contraer sus subsesiones conservando sus insignias. Expandido o contraído, el chevrón muestra el estado más urgente de sus descendientes: necesitan entrada, están trabajando, compactando o inactivos; su etiqueta accesible los cuenta. Haz clic derecho en él y elige **Marcar como leído** para borrar de una vez las insignias **Inactiva** e **Interrumpido** de la conversación y de todas sus subsesiones.
 3. Usa **Buscar sesiones…**, **Sesiones principales** / **Subsesiones**, el filtro de worktree y la ordenación por **Actividad**, **Nombre** o **Worktree** para acotar la lista. En los resultados de búsqueda, arrastra sobre las casillas de las filas para seleccionar o deseleccionar varias conversaciones a la vez.
 4. Usa **Atrás** y **Adelante** en la barra lateral para volver a conversaciones que hayas mostrado.
 

@@ -41,5 +41,7 @@ export interface PromptInputProps {
   onAbortSession?: () => Promise<void>
   onBackgroundSession?: () => Promise<void>
   footerControls?: JSX.Element
+  /** Receives the cell beside the footer, under the session's timeline rail. */
+  footerCornerRef?: (element: HTMLDivElement) => void
   registerPromptInputApi?: (api: PromptInputApi) => void | (() => void)
 }

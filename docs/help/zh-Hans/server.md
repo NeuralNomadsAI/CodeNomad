@@ -6,7 +6,7 @@
 
 ## 准备主机 {#prerequisites}
 
-1. 安装 Node.js 24 LTS 和 npm；仓库固定构建运行时为 24.20.0。桌面包包含 Node/npm。
+1. 安装 Node.js 24 LTS 和 npm；仓库构建运行时固定在 `.node-version` 中。桌面包提供自己的运行时：Electron 使用内置 Node，Tauri 附带 Node，两者均包含 npm。
 2. 将 Git 加入**后端进程的 PATH**。仅 WSL 内的 Git 不满足 Windows 后端。
 3. 安装或选择 OpenCode：必需最低版本为 **2.2.3**，推荐验证目标为 **2.2.5**。更新或自定义构建会接受兼容检查，而非已测试版本白名单。参阅 [OpenCode 设置](opencode.md)。
 4. 选择启动服务器的文件夹，或显式传入 `--workspace-root`。

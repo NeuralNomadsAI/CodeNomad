@@ -14,7 +14,7 @@ Elige un equipo de escritorio local o ejecuta el [servidor independiente](server
 | Windows | ZIP, x64 | Instalador, x64 | Windows 10 o posterior; Tauri usa WebView2. |
 | Linux | Paquete Debian, x64 | AppImage, x64 | Compilado y probado en Ubuntu 24.04; no se garantiza la compatibilidad con distribuciones anteriores. |
 
-Las versiones de escritorio incluyen los recursos de ejecución necesarios para el backend y el instalador de OpenCode, por lo que no necesitas instalar Node.js/npm por separado para usarlas. Git no está incluido. Electron y Tauri usan vistas previas web nativas integradas. La automatización del navegador por agentes es compatible con Electron y Tauri para Windows; las vistas previas de Tauri para macOS/Linux permiten navegar manualmente con plantillas de solo dimensiones.
+Las versiones de escritorio incluyen los recursos de ejecución necesarios para el backend y el instalador de OpenCode, por lo que no necesitas instalar Node.js/npm por separado para usarlas. Git no está incluido. La automatización nativa del navegador es compatible con Electron y Tauri para Windows; las demás plataformas Tauri usan vistas previas iframe.
 
 Si una descarga verificada se bloquea al iniciarse, consulta la [solución de problemas de la plataforma](troubleshooting.md#desktop-launch). Nunca ejecutes un archivo de origen no fiable solo para eludir una advertencia.
 
@@ -47,7 +47,7 @@ La instalación Debian de Electron configura el aislamiento de Chromium. No desa
 | --- | --- | --- |
 | CLI de OpenCode | Equipo de ejecución seleccionado, incluida la distribución WSL seleccionada cuando corresponda | Mínimo **2.2.3**; **2.2.5** es la versión recomendada/verificada. Las versiones más nuevas o personalizadas pasan una validación de contratos en lugar de prohibirse por no haberse probado. |
 | Git | `PATH` de la cuenta del backend de CodeNomad | Necesario para la identidad del repositorio, las operaciones Git y los worktrees. |
-| Node.js/npm | Equipo del servidor independiente y de compilación desde el código fuente | Node.js 24 LTS; las compilaciones reproducibles desde el código fuente usan `.node-version` (**24.20.0**). Incluido con los recursos de ejecución/instalación de escritorio. |
+| Node.js/npm | Equipo del servidor independiente y de compilación desde el código fuente | Node.js 24 LTS; las compilaciones reproducibles desde el código fuente usan la versión fijada en `.node-version`. Las versiones de escritorio incluyen el suyo: el Node integrado de Electron o el Node que incluye Tauri, con npm. |
 | Carpeta del espacio de trabajo | Disco accesible para el backend | Una carpeta física abierta explícitamente, no una carpeta local del dispositivo deducida por un navegador remoto. |
 
 En Windows, instala [Git for Windows](https://gitforwindows.org/) con el acceso desde la línea de comandos/aplicaciones de terceros activado. Basta con una instalación por usuario en la que este pueda escribir. En macOS/Linux, sigue las [instrucciones de Git para tu plataforma](https://git-scm.com/downloads).

@@ -1,8 +1,98 @@
 version: 2
 updates:
+  # All Cargo dependencies, including transitives, from the workspace lockfile.
+  # allow.update-types limits routine updates only; security fixes may cross majors.
+  # Group related Tauri security fixes; unmatched dependencies stay individual.
+  # Explicit security rules override repository/organization grouping here.
+  # Re-qualify local path patches before merging
+  # (packages/tauri-app/vendor/README.md; dev-docs/RUNTIME_MAINTENANCE.md).
+  # Use the default branch (dev) so security updates share this configuration.
+  - package-ecosystem: cargo
+    directory: /packages/tauri-app
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    allow:
+      - dependency-type: all
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+    groups:
+      tauri-security:
+        applies-to: security-updates
+        patterns:
+          - tauri
+          - tauri-*
+          - wry
+      tauri:
+        applies-to: version-updates
+        patterns:
+          - tauri
+          - tauri-*
+          - wry
+        update-types:
+          - minor
+          - patch
+      cargo-dependencies:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
   - package-ecosystem: github-actions
     directory: /
     target-branch: dev
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+
+  # Root workspaces use the root lockfile; the deployment worker has its own.
+  # Fastify security fixes share a family PR; unmatched dependencies stay individual.
+  # Routine majors require a maintainer decision, except supported Electron majors.
+  # The all-dependency rule preserves security coverage, including major fixes.
+  - package-ecosystem: npm
+    directories:
+      - /
+      - /packages/cloudflare
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    allow:
+      - dependency-type: all
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+      - dependency-name: electron
+        update-types:
+          - version-update:semver-major
+    groups:
+      fastify-security:
+        applies-to: security-updates
+        patterns:
+          - fastify
+          - "@fastify/*"
+      electron-toolchain:
+        applies-to: version-updates
+        patterns:
+          - electron
+          - electron-builder
+          - electron-vite
+        update-types:
+          - minor
+          - patch
+      tauri-js:
+        applies-to: version-updates
+        patterns:
+          - "@tauri-apps/*"
+        update-types:
+          - minor
+          - patch
+      npm-dependencies:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch

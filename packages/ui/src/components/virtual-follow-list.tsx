@@ -533,8 +533,21 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     runBottomPinFrame()
   }
 
+  /** The anchor an immediate jump to the top holds, told apart from in-place reveals. */
+  let topHold: { key: string; offset: number } | undefined
+
   function performScrollToTop(immediate: boolean, source: ScrollReason) {
     writeScroll(source, immediate ? { type: "dom", top: 0, record: true } : { type: "native", top: 0, behavior: "smooth", record: false })
+    if (!immediate) return
+    // Like a key jump, the landing is held while rows are measured: right after a
+    // window replacement Virtua can still apply a size compensation computed
+    // against its previous offset, which would carry the reader back down.
+    const handle = virtuaHandle(), first = retiredCount()
+    const item = virtualItems()[first]
+    if (handle && item !== undefined) {
+      topHold = { key: props.getKey(item, first), offset: handle.getItemOffset(first + HEADER_ROWS) }
+      readerSettlement.hold(topHold)
+    }
   }
 
   function performScrollToKey(key: string, source: ScrollReason) {
@@ -1052,10 +1065,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       }
       markUserScrollIntent(intent.direction, intent.distance)
     }
-    // Moving focus elsewhere (Tab, assistive technology) ends an in-place reveal's hold.
+    // Moving focus elsewhere (Tab, assistive technology) ends an in-place reveal's
+    // hold; the top landing reveals nothing, so any focus move ends it.
     const handleFocusIn = (event: FocusEvent) => {
       const held = readerSettlement.held()
-      if (held && !itemElements.get(held.key)?.contains(event.target as Node)) readerSettlement.cancel()
+      if (held && (held === topHold || !itemElements.get(held.key)?.contains(event.target as Node))) readerSettlement.cancel()
     }
     const detachGestureRouting = attachScrollGestureRouting(element, handleWheelIntent)
     element.addEventListener("focusin", handleFocusIn)
@@ -1327,7 +1341,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       if (!isActive() || scrollController.snapshot().restoring) return
       if (canPinFollowBottom()) {
         pinFollowBottom("viewport-resize")
-      } else if (!readerSettlement.held()) {
+      } else if (!readerSettlement.held() && element.scrollTop > TOP_SCROLL_EPSILON_PX) {
+        // A reader at the start stays there; others keep the content above the composer.
         const before = element.scrollTop
         writeScroll("viewport-resize", { type: "dom", top: getBottomAnchoredViewportOffset(before, heightDelta), record: true })
         // The rolled reader's place follows the bottom-anchored (and clamped) content.

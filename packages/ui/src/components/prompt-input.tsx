@@ -1033,6 +1033,9 @@ export default function PromptInput(props: PromptInputProps) {
               </button>
             </div>
           </div>
+          <Show when={props.footerCornerRef}>
+            {(ref) => <div class="session-scroll-corner" ref={ref()} />}
+          </Show>
         </div>
       </div>
 

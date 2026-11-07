@@ -44,8 +44,10 @@
 @import "./components/provider-model-visibility.css";
 @import "./components/prompt-context-controls.css";
 @import "./components/plugin-controls.css";
+@import "./components/plugin-system-attention.css";
 @import "./components/plugin-source-add.css";
 @import "./components/interruption-dock.css";
 @import "./components/composer-notice.css";
 @import "./components/integration-attachment.css";
 @import "./components/integration-catalog.css";
+@import "./components/agent-memory.css";

@@ -47,6 +47,7 @@ export const sessionMessages = {
   "sessionList.expand.collapseTitle": "Colapsar",
   "sessionList.expand.expandTitle": "Expandir",
   "sessionList.expand.withChildActivity": "{action} — {activity}",
+  "sessionList.expand.markRead": "Marcar como leído",
   "sessionList.actions.newSession.ariaLabel": "Nueva sesión",
   "sessionList.actions.newSession.title": "Nueva sesión",
   "sessionList.actions.newSession.failedTitle": "No se pudo crear la sesión",

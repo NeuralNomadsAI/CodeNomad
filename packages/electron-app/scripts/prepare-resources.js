@@ -35,7 +35,7 @@ async function main() {
   } finally {
     fs.rmSync(staged.stagingRoot, { recursive: true, force: true })
   }
-  await prepareBundledNodeRuntime({ resourcesRoot, target: staged.target })
+  await prepareBundledNodeRuntime({ resourcesRoot, target: staged.target, npmOnly: true })
 }
 
 main().catch((error) => {

@@ -47,6 +47,7 @@ export const sessionMessages = {
   "sessionList.expand.collapseTitle": "Einklappen",
   "sessionList.expand.expandTitle": "Ausklappen",
   "sessionList.expand.withChildActivity": "{action} — {activity}",
+  "sessionList.expand.markRead": "Als gelesen markieren",
   "sessionList.actions.newSession.ariaLabel": "Neue Sitzung",
   "sessionList.actions.newSession.title": "Neue Sitzung",
   "sessionList.actions.newSession.failedTitle": "Sitzung konnte nicht erstellt werden",

@@ -47,6 +47,7 @@ export const sessionMessages = {
   "sessionList.expand.collapseTitle": "折叠",
   "sessionList.expand.expandTitle": "展开",
   "sessionList.expand.withChildActivity": "{action} — {activity}",
+  "sessionList.expand.markRead": "标为已读",
   "sessionList.actions.newSession.ariaLabel": "新建会话",
   "sessionList.actions.newSession.title": "新建会话",
   "sessionList.actions.newSession.failedTitle": "无法新建会话",

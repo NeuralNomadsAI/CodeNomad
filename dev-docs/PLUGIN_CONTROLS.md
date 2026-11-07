@@ -42,7 +42,7 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   (409). The result must parse to the original minus exactly that element.
   Activation rules (`id`/`-id`) are left in place, and OpenCode's package cache is
   never touched.
-  Every plugin uses the ordinary source removal, independently of catalog, family or binding count.
+  Every ordinary plugin uses the ordinary source removal, independently of catalog, family or binding count.
   The trusted Cancel-first confirmation names the plugin and exact scope, warns of interrupted availability
   and connections (including other projects for Global), and enables its scoped removal action after 600 ms.
   Unsent consent expires after 120 s and is revoked by navigation, invalidation or disconnection.
@@ -71,10 +71,55 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   omits disabled plugins and exposes no package-to-ID link for them, so a disabled
   package with an exact `-id` rule shows two rows: its ID row with switches, and
   its unconfirmed source row carrying the Remove items.
-- **Correlation**: snapshot sources carry `pluginId` when the runtime inventory
-  loaded them, so Remove items attach to the plugin row. A row offers removal only
+- **Correlation**: snapshot sources carry `pluginId` when runtime inventory or a verified
+  managed installation associates their source, so Remove items attach to ordinary plugin rows. A row offers removal only
   for declarations in a scope's own write target; inherited, inline and other
   documents are shown, never edited.
+
+## CodeNomad-managed plugins
+
+The server marks records `managedBy: "codenomad"` only after validating the installer-generated
+entry and its content-addressed payload location. Recognition parses the exact generated
+`plugins/codenomad-<feature>.ts` shape, used by `session-pruning`, `automation`, `missions` and `memory`:
+the lifecycle marker, generated `desktopPlugin` import/call shape, presence directories and
+`<sha256>.mjs` payload must agree. Missions' provider/runtime artifact descriptors follow the
+installer's generated shape. Validated storage retained outside the default data path remains
+recognisable; paths use the daemon's dialect, including WSL's Linux file URLs and paths.
+WSL publication and recognition translate those paths through the selected distro for
+host filesystem IO. The reserved WSL UNC redirector may report device zero for both
+pathname and handles: independent handles must still agree on a nonzero inode and size,
+with regular single-link files, stable bounded reads and the payload's SHA-256 verified.
+Payload mapping translates its parent directory and preserves the exact basename, so file
+links remain detectable instead of being dereferenced by path translation.
+Configuration-document reads, permissions and mutations use native distro IO.
+Never classify a plugin by its display name, ID or a `codenomad` prefix alone. A third-party
+homonym retains its ordinary controls.
+
+The per-feature build scripts emit a minimal descriptor on the runtime payload's first line:
+`// CodeNomad plugin IDs: ["..."]`. These IDs are inside the SHA-256-verified payload bytes.
+Detection reads them generically; every new feature builder must emit its actual exported IDs.
+The current builders export `codenomad-session-pruning`, `codenomad.automation`,
+`codenomad.missions` and `codenomad.memory`. The descriptor supplies IDs for correlating absent runtime entries with
+exact or wildcard activation rules. Descriptor-less generated installations remain recognisable
+by the validated source when the runtime reports them; synthesising an absent ID requires the
+payload descriptor. Never add an ID/name allowlist or execute the payload during discovery.
+Qualification follows the consumed native contracts without a daemon-version allowlist.
+
+The UI excludes managed records from every ordinary plugin row, activation switch, package
+check/update action and source-removal path. A compact warning above the Plugins list exposes
+only managed plugins that are disabled, failed or loading-unconfirmed. Each warning row has
+an `InfoPopoverButton` with available native error/ref details. Only a disabled row offers
+**Re-enable**, through the existing activation mutation: append the positive exact ID, retain
+the negative rule and all unrelated configuration. Use the disabling rule's Global/Project
+scope when writable, otherwise the writable Project override. Native rules still determine
+precedence. Keep the warning until a fenced inventory refresh confirms an active runtime
+entry; a durable write alone leaves it visible. Native events and the existing Refresh action
+drive reconciliation. Never restart OpenCode automatically.
+Concurrent mutation/read reconciliation retains the newer runtime and provenance while applying
+the durable activation rules. A confirmed native failure keeps its warning and details available.
+Status and details distinguish Global, Project, inherited/external and virtual rule origins;
+the Re-enable action names its writable destination independently of that origin.
+Virtual origins remain visible in details when the native rule has no filesystem path.
 
 ## V2 contract
 
@@ -122,7 +167,7 @@ Global rules can be overridden by later project rules. Built-in OpenCode entries
 remain in the authoritative snapshot without user activation controls. An exact
 disabled ID remains available even when it is absent from `plugin.list`, so it
 can be re-enabled. A plugin hidden only by a broad wildcard gets a control once
-the runtime or an exact configured rule reveals its ID. Disabled synthesized
+runtime inventory, an exact configured rule or a verified managed descriptor reveals its ID. Disabled synthesized
 controls retain OpenCode's reserved `opencode.*` identity, so builtins stay hidden
 when `plugin.list` omits inactive entries.
 
@@ -266,6 +311,14 @@ guessed paths.
 
 ## Validation
 
+- `scripts/test-plugin-runtime-native.mjs <absolute-cli>` runs an isolated native daemon and
+  verifies the reported local source against the generated shim or referenced bundle and the
+  session-pruning payload descriptor against the exported plugin ID.
+- Managed provenance, descriptors, retained storage, Windows/WSL paths and link/integrity refusal:
+  `desktop-plugin-managed.test.ts`; absent-runtime rules and scoped recovery: `plugin-controls.test.ts`.
+- `CODENOMAD_TEST_WSL_PLUGIN_CONTROLS=Ubuntu` enables the real Linux-filesystem/UNC
+  publication, recognition, tamper and link checks in `desktop-plugin-managed-wsl.test.ts`,
+  alongside the native document suite in `plugin-control-document-wsl.test.ts`.
 - JSONC preservation, malformed input, optimistic conflict, and atomic replace:
   `plugin-control-document.test.ts`
 - spec validation, package identity, append and exact removal (comments, CRLF,
@@ -310,9 +363,10 @@ guessed paths.
 
 ## Agent conventions
 
+- Recognise managed plugins on the server through validated installer entries and content-addressed payload locations. All ordinary UI paths exclude `managedBy: "codenomad"` records; surface managed failures only in the compact warning and its on-demand details, with scoped Re-enable for disabled entries.
 - Present Global and Project as separate per-plugin columns so every mutation has an explicit scope. Cache display snapshots by instance and worktree directory, and refresh them only while the plugin surface is visible.
 - Keep the Plugins surface minimal: plugin names, one compact row-action icon when applicable, and Global/Project switches. The row menu (`components/plugin-row-actions.tsx`, memoized item descriptors) names each exact operation: package check or update with its native target, **Remove from Global/Project** per removable declaration, and Refresh for unconfirmed sources; a single package item keeps its package icon. Put source/status/version/target details, failure `ref`s and the shared-cache effect of package updates in hover/focus tooltips. Do not add general descriptions, inline explanations, target footers or success commentary; source rows carry only a short state label (**Installing**/**Not confirmed**). The compact Refresh and Add icons occupy the name-column header; Refresh spins during loading and refresh; automatic display updates follow native events, reconnects and visible demand. Package writes use native inventory-validated targets, never plugin IDs; styles live in `styles/components/plugin-package-action.css` and `plugin-source-add.css`, and menu chrome is shared with `action-overflow-menu`.
 - The Plugins Add menu (`components/plugin-add-menu.tsx`) uses stable item descriptors for **Add an integration…** and **Add a plugin…**. The integration catalog window (`integration-catalog-window.tsx`) uses shared window primitives, overlay surface, an upper-right close button and reviewed catalog IDs through `pluginSourcesStore.installIntegration`; native integrations lock the focusable scope selector to Global. Confirmation uses the shared 600 ms guard. Installation hints and reconciliation use the existing source store.
 - The Add plugin window (`components/plugin-source-add.tsx`) is a transient `.window-*` popover without a close button: a `--surface-field` spec input, the native scope select (Global default, Project disabled when unavailable), the trust sentence and the Project warning. It closes on success and keeps refusals inline; it never announces an active plugin.
 - Recognized integrations keep their Plugins row alongside their own Status section. Both use `PluginActivationSwitch` and `PluginRowActions` with shared mutation/in-flight state. Application installation and conversation attachment actions belong to the integration section. Source ambiguity labels its Plugins row **Non-conforming** and suppresses its integration section. Supplemental integration details use `InfoPopoverButton` or tooltips, with localized terse labels.
-- Plugin packages that fail before exporting an ID remain visible by their native target with check/update actions and failure details in the name tooltip. Do not fabricate plugin IDs or activation switches for these entries; reconcile them into ordinary rows once native loading succeeds.
+- Plugins that fail before exporting an ID remain visible by their native package target or local path, with failure details in the name tooltip; package entries retain check/update actions. Do not fabricate plugin IDs or activation switches for these entries; reconcile them into ordinary rows once native loading succeeds. Managed failures belong to the attention block.

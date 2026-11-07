@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "browser.viewport.emulationHint": "Mobil kimlik, dokunma ve piksel yoğunluğuyla yeniden yükler. Tarayıcı motoru, klavye ve sistem çubukları simüle edilmez.",
   "browser.viewport.emulationUnavailable": "Yalnızca boyutlar. Bu önizlemede cihaz emülasyonu kullanılamıyor.",
   "sessionList.filter.includeMainSessions": "Ana oturumlar",
   "sessionList.filter.includeSubsessions": "Alt oturumlar",
@@ -45,6 +46,7 @@ export const sessionMessages = {
   "sessionList.expand.collapseTitle": "Daralt",
   "sessionList.expand.expandTitle": "Genişlet",
   "sessionList.expand.withChildActivity": "{action} — {activity}",
+  "sessionList.expand.markRead": "Okundu olarak işaretle",
   "sessionList.actions.newSession.ariaLabel": "Yeni session",
   "sessionList.actions.newSession.title": "Yeni session",
   "sessionList.actions.newSession.failedTitle": "Session oluşturulamadı",

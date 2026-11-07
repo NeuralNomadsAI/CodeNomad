@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto"
-import { execFileSync, spawn } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 import { mkdir, open, opendir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -8,6 +8,9 @@ import { MissionControlError } from "../missions/control-error"
 import { signNativeRecurrenceControl, type RecurrenceControlProofBody } from "../missions/recurrence-control-proof"
 import { missionRecoveryError } from "../missions/recovery-error"
 import { PAGE_ACTION_PROPERTIES, PAGE_ACTIONS, parsePageAction, type RefAction } from "../automation/page/parse"
+import { MemoryError } from "../memory/model"
+import type { MemoryErrorCode } from "../memory/model"
+import type { MemoryOperation, MemoryResult } from "../memory/api"
 
 export const AUTOMATION_BRIDGE_PATH = "/api/opencode-plugin/automation"
 const REQUEST_TIMEOUT_MS = 95_000
@@ -23,7 +26,7 @@ const MAX_BRIDGE_RESPONSE_BYTES = 8 * 1024 * 1024
 const PROBE_CONCURRENCY = 4
 const REGISTRATION_NAME = /^(\d+)-\d+-[A-Za-z0-9_-]+\.json$/
 const WINDOWS_INTEROP = Symbol("windowsInterop")
-let cachedWslWindowsLocalAppData: string | null | undefined
+let cachedWslWindowsLocalAppData: string | undefined
 
 export type DeveloperAction =
   | { action: "inspect"; ref?: string; query?: string }
@@ -57,6 +60,7 @@ interface BridgeResponse {
   result?: unknown
   error?: string
   code?: unknown
+  titles?: string[]
 }
 
 interface ProbedBridge {
@@ -87,29 +91,40 @@ export function automationBridgeDirectories(options: {
       ? paths.join(env.XDG_RUNTIME_DIR, "codenomad", "automation-bridges")
       : paths.join(home, ".config", "codenomad", "automation-bridges")
   if (platform !== "linux" || !env.WSL_DISTRO_NAME) return [primary]
-  const windowsLocalAppData = options.windowsLocalAppData ?? resolveWslWindowsLocalAppData()
+  const windowsLocalAppData = options.windowsLocalAppData
   return windowsLocalAppData
     ? [...new Set([primary, path.posix.join(windowsLocalAppData, "CodeNomad", "automation-bridges")])]
     : [primary]
 }
 
-function resolveWslWindowsLocalAppData(): string | undefined {
-  if (cachedWslWindowsLocalAppData !== undefined) return cachedWslWindowsLocalAppData ?? undefined
+export async function discoverAutomationBridgeDirectories(signal?: AbortSignal,
+  options: Parameters<typeof automationBridgeDirectories>[0] = {}): Promise<string[]> {
+  signal?.throwIfAborted()
+  if ((options.platform ?? process.platform) !== "linux" || !(options.env ?? process.env).WSL_DISTRO_NAME)
+    return automationBridgeDirectories(options)
+  const windowsLocalAppData = options.windowsLocalAppData ?? await resolveWslWindowsLocalAppData(signal)
+  signal?.throwIfAborted()
+  return automationBridgeDirectories({ ...options, windowsLocalAppData })
+}
+
+async function resolveWslWindowsLocalAppData(signal?: AbortSignal): Promise<string | undefined> {
+  if (cachedWslWindowsLocalAppData !== undefined) return cachedWslWindowsLocalAppData
+  const command = (file: string, args: string[]) => new Promise<string>((resolve, reject) => {
+    execFile(file, args, { encoding: "utf8", timeout: 2_000, windowsHide: true, maxBuffer: MAX_REGISTRATION_BYTES, signal },
+      (error, stdout) => error ? reject(error) : resolve(stdout.trim()))
+  })
   try {
-    const windowsPath = execFileSync("cmd.exe", ["/d", "/s", "/c", "echo %LOCALAPPDATA%"], {
-      encoding: "utf8",
-      timeout: 2_000,
-      windowsHide: true,
-    }).trim()
-    const translated = execFileSync("wslpath", ["-u", windowsPath], {
-      encoding: "utf8",
-      timeout: 2_000,
-    }).trim()
-    cachedWslWindowsLocalAppData = path.posix.isAbsolute(translated) ? translated : null
+    const windowsPath = await command("cmd.exe", ["/d", "/s", "/c", "echo %LOCALAPPDATA%"])
+    signal?.throwIfAborted()
+    const translated = await command("wslpath", ["-u", windowsPath])
+    signal?.throwIfAborted()
+    if (path.posix.isAbsolute(translated)) cachedWslWindowsLocalAppData = translated
   } catch {
-    cachedWslWindowsLocalAppData = null
+    signal?.throwIfAborted()
+    // Interop can become available later; retain only a qualified path.
+    return undefined
   }
-  return cachedWslWindowsLocalAppData ?? undefined
+  return cachedWslWindowsLocalAppData
 }
 
 export function createAutomationBridgeRegistration(url: string): AutomationBridgeRegistration {
@@ -289,15 +304,17 @@ export async function verifyHumanAnswerBridge(body: import("../missions/human-an
   return false
 }
 
-async function registrations(pruneStale = true): Promise<DiscoveredBridgeRegistration[]> {
+async function registrations(pruneStale = true, signal?: AbortSignal): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
-  const directories = automationBridgeDirectories()
+  const directories = await discoverAutomationBridgeDirectories(signal)
   for (const [directoryIndex, directory] of directories.entries()) {
+    signal?.throwIfAborted()
     let entries: Array<{ name: string; startedAt: number }> = []
     const entryLimit = directoryIndex === 0 ? MAX_LOCAL_REGISTRY_FILES : MAX_REGISTRATIONS
     try {
       const stream = await opendir(directory)
       for await (const entry of stream) {
+        signal?.throwIfAborted()
         if (!entry.isFile()) continue
         const match = REGISTRATION_NAME.exec(entry.name)
         if (!match) continue
@@ -308,11 +325,13 @@ async function registrations(pruneStale = true): Promise<DiscoveredBridgeRegistr
         }
       }
     } catch {
+      signal?.throwIfAborted()
       continue
     }
     entries.sort((left, right) => right.startedAt - left.startedAt)
     entries.length = Math.min(entries.length, entryLimit)
     for (const entry of entries) {
+      signal?.throwIfAborted()
       const target = path.join(directory, entry.name)
       const registration = await readRegistration(target) as DiscoveredBridgeRegistration | undefined
       if (!registration) continue
@@ -347,13 +366,15 @@ async function callBridge(
   registration: DiscoveredBridgeRegistration,
   body: Record<string, unknown>,
   timeoutMs = PROBE_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<{ status: number; body: BridgeResponse }> {
-  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs)
+  signal?.throwIfAborted()
+  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs, signal)
   const response = await fetch(registration.url, {
     method: "POST",
     headers: { "content-type": "application/json", "x-codenomad-automation-token": registration.token },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
   })
   const contentLength = Number(response.headers.get("content-length"))
   if (Number.isFinite(contentLength) && contentLength > MAX_BRIDGE_RESPONSE_BYTES) {
@@ -384,7 +405,9 @@ function callWindowsBridge(
   registration: AutomationBridgeRegistration,
   body: Record<string, unknown>,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<{ status: number; body: BridgeResponse }> {
+  signal?.throwIfAborted()
   return new Promise((resolve, reject) => {
     const child = spawn("curl.exe", [
       "--silent", "--show-error", "--max-time", String(timeoutMs / 1_000),
@@ -403,6 +426,7 @@ function callWindowsBridge(
       if (settled) return false
       settled = true
       clearTimeout(timer)
+      signal?.removeEventListener("abort", onAbort)
       if (error) reject(error)
       return true
     }
@@ -410,6 +434,9 @@ function callWindowsBridge(
       child.kill()
       finish(new Error("Native automation bridge request timed out"))
     }, timeoutMs)
+    const onAbort = () => { child.kill(); finish(signal!.reason) }
+    signal?.addEventListener("abort", onAbort, { once: true })
+    if (signal?.aborted) { onAbort(); return }
     child.stdout.on("data", (chunk: Buffer) => {
       stdoutBytes += chunk.length
       if (stdoutBytes > MAX_BRIDGE_RESPONSE_BYTES + 16) {
@@ -559,6 +586,47 @@ export async function sendMissionInput(sessionID: string,
     const recovery = missionRecoveryError(response.body.code)
     if (recovery && recovery.status === response.status) throw new MissionControlError(recovery.message, recovery.code)
     throw new Error("CodeNomad could not admit the mission input; inspect ownership/environment and retry the same task")
+  }
+  return response.body.result
+}
+
+/** Discover independently of desktop capabilities; never pick between owning backends. */
+export async function sendMemoryInput(sessionID: string, command: MemoryOperation, signal?: AbortSignal): Promise<MemoryResult> {
+  return sendMemoryBridge(sessionID, "memory-input", command, signal) as Promise<MemoryResult>
+}
+
+export async function requestMemoryContext(sessionID: string, signal?: AbortSignal): Promise<import("../memory/contract").MemoryInstructionContext> {
+  return sendMemoryBridge(sessionID, "memory-context", undefined, signal) as Promise<import("../memory/contract").MemoryInstructionContext>
+}
+
+async function sendMemoryBridge(sessionID: string, mode: "memory-input" | "memory-context", command?: MemoryOperation, signal?: AbortSignal): Promise<unknown> {
+  signal?.throwIfAborted()
+  const active = await registrations(true, signal)
+  signal?.throwIfAborted()
+  const targets: DiscoveredBridgeRegistration[] = []
+  let unowned = 0
+  for (let index = 0; index < active.length && targets.length < 2; index += PROBE_CONCURRENCY) {
+    signal?.throwIfAborted()
+    const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async registration => {
+      try {
+        const response = await callBridge(registration, { mode: "memory-probe", sessionID }, MISSION_PROBE_TIMEOUT_MS, signal)
+        if (response.status === 400 && response.body.code === "invalid") unowned++
+        return response.status === 200 ? registration : undefined
+      } catch { return undefined }
+    }))
+    targets.push(...batch.filter((value): value is DiscoveredBridgeRegistration => Boolean(value)))
+  }
+  signal?.throwIfAborted()
+  // Global plugin activation also covers Locations outside CodeNomad. Only an
+  // explicit ownership refusal clears stale context there. Context callers also
+  // attempt cleanup on transport failures; memory mutations retain strict ownership.
+  if (mode === "memory-context" && active.length > 0 && unowned === active.length) return { supported: true, value: null }
+  if (targets.length !== 1) throw new MemoryError(targets.length ? "conflict" : "unreadable", "Memory requires exactly one owning CodeNomad backend")
+  const response = await callBridge(targets[0]!, { mode, sessionID, ...(command ? { command } : {}) }, REQUEST_TIMEOUT_MS, signal)
+  if (response.status !== 200) {
+    const codes: MemoryErrorCode[] = ["disabled", "full", "conflict", "invalid", "unreadable", "git_unavailable", "malformed"]
+    const code = codes.find(code => code === response.body.code) ?? "unreadable"
+    throw new MemoryError(code, code === "full" ? "Memory is full. Merge or delete entries before retrying." : `Memory operation failed: ${code}`, response.body.titles)
   }
   return response.body.result
 }

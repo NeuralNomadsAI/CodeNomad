@@ -132,6 +132,13 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
     },
     {
       kind: "toggle",
+      id: "behavior.scrollControlsInTimelineCorner",
+      titleKey: "settings.behavior.scrollControlsInTimelineCorner.title",
+      get: (p) => Boolean(p.scrollControlsInTimelineCorner ?? false),
+      set: (next) => updatePreferences?.({ scrollControlsInTimelineCorner: next }),
+    },
+    {
+      kind: "toggle",
       id: "behavior.diffViewMode",
       titleKey: "settings.behavior.diffView.title",
       // Checked shows split diffs; unchecked shows the unified view.
@@ -336,6 +343,18 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       // Checked queues prompts sent during a task; unchecked steers the running task.
       get: (p) => p.followUpBehavior === "queue",
       set: (next) => updatePreferences?.({ followUpBehavior: (next ? "queue" : "steer") satisfies FollowUpBehavior }),
+    },
+    {
+      kind: "toggle",
+      id: "behavior.keepComputerAwake",
+      titleKey: "settings.behavior.keepComputerAwake.title",
+      infoKey: "settings.behavior.keepComputerAwake.info",
+      get: (p) => p.keepComputerAwake === true,
+      set: async (next) => {
+        if (await updatePreferences?.({ keepComputerAwake: next }) === false) {
+          throw new Error("Failed to persist keep-awake behavior")
+        }
+      },
     },
   ]
 }

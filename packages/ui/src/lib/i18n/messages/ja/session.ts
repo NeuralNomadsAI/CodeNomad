@@ -47,6 +47,7 @@ export const sessionMessages = {
   "sessionList.expand.collapseTitle": "折りたたむ",
   "sessionList.expand.expandTitle": "展開",
   "sessionList.expand.withChildActivity": "{action} — {activity}",
+  "sessionList.expand.markRead": "既読にする",
   "sessionList.actions.newSession.ariaLabel": "新しいセッション",
   "sessionList.actions.newSession.title": "新しいセッション",
   "sessionList.actions.newSession.failedTitle": "セッションを作成できませんでした",

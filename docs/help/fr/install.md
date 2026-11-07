@@ -14,7 +14,7 @@ Choisissez un hôte de bureau local ou lancez le [serveur autonome](server.md). 
 | Windows | ZIP, x64 | Installateur, x64 | Windows 10 ou ultérieur ; Tauri utilise WebView2. |
 | Linux | Paquet Debian, x64 | AppImage, x64 | Compilé et testé sur Ubuntu 24.04 ; la compatibilité avec des distributions plus anciennes n’est pas garantie. |
 
-Les versions de bureau incluent les ressources d’exécution nécessaires au backend et à l’installateur OpenCode ; aucune installation séparée de Node.js/npm n’est donc nécessaire. Git n’est pas fourni. Electron et Tauri utilisent des aperçus web natifs intégrés. L’automatisation du navigateur par agent est prise en charge dans Electron et Tauri Windows ; les aperçus Tauri macOS/Linux permettent la navigation manuelle avec des modèles limités aux dimensions.
+Les versions de bureau incluent les ressources d’exécution nécessaires au backend et à l’installateur OpenCode ; aucune installation séparée de Node.js/npm n’est donc nécessaire. Git n’est pas fourni. L’automatisation native du navigateur est prise en charge dans Electron et Tauri Windows ; les autres plateformes Tauri utilisent des aperçus iframe.
 
 Pour un téléchargement vérifié bloqué au lancement, consultez le [dépannage de plateforme](troubleshooting.md#desktop-launch). N’exécutez jamais une archive non fiable simplement pour contourner un avertissement.
 
@@ -47,7 +47,7 @@ L’installation Debian d’Electron configure le bac à sable Chromium. Ne dés
 | --- | --- | --- |
 | CLI OpenCode | Hôte d’exécution sélectionné, y compris la distribution WSL choisie le cas échéant | Minimum **2.2.3** ; **2.2.5** est la cible recommandée/qualifiée. Les versions plus récentes ou personnalisées passent une validation des contrats plutôt qu’une interdiction des versions non testées. |
 | Git | `PATH` du compte du backend CodeNomad | Requis pour l’identité des dépôts, les opérations Git et les worktrees. |
-| Node.js/npm | Hôte du serveur autonome et de compilation depuis les sources | Node.js 24 LTS ; les compilations reproductibles utilisent `.node-version` (**24.20.0**). Fourni avec les ressources d’exécution/d’installation de bureau. |
+| Node.js/npm | Hôte du serveur autonome et de compilation depuis les sources | Node.js 24 LTS ; les compilations reproductibles utilisent la version épinglée dans `.node-version`. Les versions de bureau fournissent le leur : le Node intégré d’Electron ou le Node embarqué par Tauri, avec npm. |
 | Dossier de travail | Disque accessible au backend | Dossier physique explicitement ouvert, pas un dossier local à l’appareil déduit par un navigateur distant. |
 
 Sous Windows, installez [Git for Windows](https://gitforwindows.org/) avec l’accès en ligne de commande/par les logiciels tiers activé. Une installation par utilisateur, modifiable par celui-ci, suffit. Sous macOS/Linux, suivez les [instructions Git pour votre plateforme](https://git-scm.com/downloads).

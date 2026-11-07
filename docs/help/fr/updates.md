@@ -54,6 +54,6 @@ Un processus déjà actif n’acquiert pas le nouveau code simplement parce que 
 
 Mettre à jour CodeNomad n’est pas mettre à jour la CLI OpenCode sélectionnée. Mettre à jour cette CLI n’est pas redémarrer le démon partagé actif. Recharger la configuration native est une autre opération explicite, avec ses propres effets sur les Locations chargées et les demandes.
 
-Les ressources Node/npm de bureau sont fournies avec l’application ; une version de l’application livre leurs mises à jour. Cela ne remplace pas votre Node/npm système, l’environnement interne d’Electron, la webview de plateforme ou le service OpenCode géré indépendamment.
+Les environnements de bureau sont mis à jour avec l’application : Electron utilise son Node intégré, Tauri embarque Node et les deux incluent npm. Node/npm système, la webview de plateforme et le service OpenCode sont gérés indépendamment.
 
 Utilisez **Paramètres → OpenCode** pour sélectionner l’environnement d’exécution, installer/mettre à jour et commander explicitement le service. Consultez [Configuration d’OpenCode](opencode.md) avant de redémarrer ou recharger, surtout si d’autres fenêtres/utilisateurs ou Missions partagent le démon. Ne répétez jamais un prompt ou une modification incertaine simplement parce qu’une mise à jour/reconnexion s’est terminée.

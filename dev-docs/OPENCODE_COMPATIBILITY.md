@@ -81,6 +81,23 @@ reply the goal reviewer rejects, pausing the goal) runs in the minimum/latest CI
 
 ### Contract notes
 
+Agent memory qualifies the optional session instruction entry GET/PUT/DELETE
+contract per authenticated connection (`memory/instructions-capability.ts`). A
+valid contract declaring the routes absent keeps memory inactive silently while
+preserving its preference; authentication and transient/unreadable discovery
+remain distinct. Native child sessions get their own entries through the awaited
+plugin prompt-admission hook, with instruction changes carried by native
+context-update notices. The isolated
+`scripts/test-memory-instructions-native.mjs` checks first-call child delivery,
+resumed updates and independently refused native admissions. The shipped bundle's
+`scripts/test-memory-tool-native.mjs` also qualifies title-only child delivery
+through the real backend policy/store, disable cleanup and unrelated Location
+admission. Optional memory failures attempt stale-entry cleanup and allow prompts;
+disabled memory bypasses discovery and storage. Failed cleanup can retain the
+preceding entry until the next successful refresh. Cancellation, retired
+connections and Missions authority checks keep their blocking contracts. See
+[Agent memory](AGENT_MEMORY.md).
+
 - Generated client URLs keep their `baseUrl` prefix and pass through unchanged;
   scheduling classifies API paths relative to the proxy prefix.
 - The generated `experimental.session` methods and their `session` aliases use
@@ -189,7 +206,18 @@ mutation fences and settlement tombstones stay essential.
 
 ## Agent conventions
 
-All managed bundle payloads (automation, session-pruning, Missions runtime and
+The bundled `codenomad.memory` plugin exposes `codenomad_memory` with `list`,
+`read` (exact ID or title), `save` (title/type/text), and revision-conditional
+`delete`. It uses the native execution session as provenance and the shared
+authenticated memory bridge for every operation. Backend presence admits its
+tool transform in desktop and standalone hosts; the server checks current
+enablement and session ownership on execution. Its payload, shim, leases,
+integrity repair and WSL translation use the shared lifecycle. Build it with
+`build:memory`; `scripts/test-memory-tool-native.mjs` exercises model-driven
+operations, safe projections, useful disabled/full errors and an uncertain
+write response with one dispatch. Never automatically replay a memory mutation.
+
+All managed bundle payloads (automation, memory, session-pruning, Missions runtime and
 Missions carrier provider) share `opencode/desktop-plugin-artifact.ts` for digest
 verification, atomic repair and bounded lock retries. Provisioning verifies both
 Missions payloads before publishing its shim or lease. Failures flow through the
@@ -197,10 +225,13 @@ shared provisioning error deduplication and pending-request recovery notice.
 
 Artifact identities use exact BigInt device/inode values. When Windows pathname
 stats report device zero, verification opens the name independently and compares
-both handles' nonzero device and inode identities, then rechecks the regular,
-single-link pathname and its size. The payload still passes full SHA-256 and EOF
-verification; the pre-publication recheck repeats this verification for a missing
-pathname device. Known device mismatches, inode changes and links fail closed.
+both handles' device and inode identities, then rechecks the regular,
+single-link pathname and its size. Windows handles require a nonzero device except
+under the reserved `\\wsl.localhost\<distro>\` and `\\wsl$\<distro>\` UNC namespaces,
+where both handles and pathname must agree on device zero and a nonzero inode.
+The payload passes full SHA-256 and EOF verification; the pre-publication recheck
+repeats this verification for a missing pathname or WSL handle device.
+Known device mismatches, inode changes and links fail closed.
 Verification errors identify the failed file, identity, size or digest check.
 
 - Desktop automation and pruning provisioning follows the authenticated OpenCode connection and its `config.get` global discovery directory, including reconnects. Replacing a connection aborts its in-flight provisioning: `opencode/desktop-plugin-provisioning.ts` logs that at debug as superseded (the new connection provisions again) and keeps errors for failures on the current connection, logging each distinct failure once with its consequence and repeats at debug until a provisioning succeeds. Bundle payloads are content-addressed (`<sha256>.mjs`) and shared by every backend of the namespace: `opencode/desktop-plugin-installation.ts` publishes one only by renaming a complete temporary copy, and replaces a name that holds other bytes or is not one regular file (an earlier write cut short, a link) the same way before the entry may point at it, so concurrent installers never read a partial payload and a damaged one never blocks later connections. Never derive a running daemon's roots from backend/startup environment or CLI `debug paths`. OpenCode watches the entire discovery root recursively: keep changing presence leases outside it, in the sibling `.codenomad/<root-hash>/` namespace. Retain existing outside-root storage; migrate inside-root storage while reading older backends' leases without writing there. WSL translates the daemon-reported paths through the selected distro only for filesystem access. Verify heartbeat stability with the isolated native automation fixture.
@@ -208,6 +239,6 @@ Verification errors identify the failed file, identity, size or digest check.
   Each follower handle owns its admitted marker writes. Shutdown stops admission and its timer, joins reconciliation and registration disposal, then drains those writes before releasing its observations, including on disposal failure. Marker IO stays outside normal reconciliation; failed writes retry on a later live check. Overlapping followers keep independent lifetimes, while backend lease removal and the independently running daemon keep their own owners.
 - The Design agent and skills follow backend leases, never a command or RPC. A backend requests them while an installed, enabled panel extension declares `opencode.designAgent` (`opencode/design/demand.ts`, refreshed on every extension-store change). `DesktopPluginLifecycle.setLeaseContent` writes the request (`{"version":1,"design":true}`, or an empty lease) into every session-pruning lease the backend retains, one per configuration namespace, and each new installation starts from it. Writes happen only when the request changes, through a temporary name outside the lease pattern and a rename, serialized with the heartbeat so a removed lease is never resurrected; a failed write retries at the next heartbeat. The shared presence observation (`desktop-plugin-presence.ts`, versioned process key) reads at most 256 bytes of each live lease: empty, unreadable, oversized or unknown-version leases request nothing, and Design is wanted while any live lease of the plugin's presence directories requests it, so one backend's expiry withdraws only its own request. The session-pruning plugin registers its agent and skill transforms once in its `effect`, before `followPresence` (`opencode/design/register.ts`), with content conditioned on a Location-local flag; reconciliation at the presence interval only flips the flag and calls `agent.reload()` and `skill.reload()` on an actual change, and the content loads on the first request. Never register these transforms from presence, an RPC or a command: a late registration bypasses the user's permission rules and overrides the user's own `design` agent or `design-*` skills, which always win. A runtime without agent or skill transforms gets no Design agent. `opencode/design/status.ts` classifies a Location's `GET /api/agent`: `present` when the prompt starts with the content mark, `user` otherwise, or `absent`. Validate with `opencode/design/*.test.ts` and `scripts/test-design-activation-native.mjs` (build the pruning bundle first); that fixture enables project discovery, so outside CI it refuses to run under the user's home unless `CODENOMAD_NATIVE_FIXTURE_PARENT` names a parent outside it.
 - The shared native event relay consumes upstream events before slow routing I/O. Preserve per-session/PTY/Shell and per-recipient FIFO, validated full-location ownership, invalidation/connection/workspace fences and bounded-backlog reconnect recovery. When an ownership lookup still fails after its retry, the relay evicts that cache entry and pulses that recipient's status alone (`error` with `event routing failed`, then `connected`), so its clients run their reconnect reconciliation (one pass per instance, with later requests coalesced into one trailing pass, `ui/src/lib/trailing-resync.ts`). Pulses are leading and trailing, at most every 5 s, doubling to 60 s while failures persist. Never fail the shared subscription for one recipient's lookup: that resyncs every instance. A slow recipient must not block another or the shared SDK subscriber. Validate with the relay regressions and isolated native location fixture.
-- Native OpenCode plugins share `packages/server/scripts/native-plugin-build.mjs`: never embed Effect or the public plugin SDK into daemon-loaded bundles (version boundaries: Qualification policy above). Keep backend-side OpenTunnel isolation separate, and run the bundle regression plus isolated plugin-runtime/pruning/automation/Missions fixtures when changing this boundary.
+- Native OpenCode plugins share `packages/server/scripts/native-plugin-build.mjs`: never embed Effect or the public plugin SDK into daemon-loaded bundles (version boundaries: Qualification policy above). Each desktop runtime builder emits `// CodeNomad plugin IDs: ["..."]` as the payload's first line with its actual exported IDs. The content-addressed digest covers this descriptor; [plugin controls](PLUGIN_CONTROLS.md#codenomad-managed-plugins) use it to identify installed plugins omitted from native runtime inventory. Keep backend-side OpenTunnel isolation separate, and run the bundle regression plus isolated plugin-runtime/pruning/automation/Missions fixtures when changing this boundary.
 - The Design agent and skills exist once, as native OpenCode files in `packages/server/src/opencode/design/opencode/` (`agents/design.md`, `skills/design-*/SKILL.md`, `NOTICE.md`, `LICENSE-APACHE-2.0.txt`), which also work unchanged when copied into a project's `.opencode/` or the global OpenCode configuration folder; the public help links this folder for that use (`docs/help/<locale>/extensions.md#design-without-codenomad`), so moving it means updating those links. Each file keeps its licence notice in frontmatter comments and its references inside its own body: never add sibling files, CLI or form protocols, URLs or brand names (`design/content.test.ts` checks them, with the attribution of each adapted file). `design/content.ts` embeds the files as text through the build's `.md` loader and parses them strictly: bundles call `loadDesignContent()`; `tsx` cannot import `.md`, so checkout code and tests read the files and call `parseDesignContent()`. The agent prompt starts with `codenomad-design-content: <DESIGN_CONTENT_VERSION>`; raise the version whenever the skill, direction or recipe identifiers change. Validate content changes with that test, the self-contained bundle test in `native-plugin-build.test.mjs` and `scripts/test-design-content-native.mjs`. That native test enables project discovery, which walks every ancestor directory: outside CI it refuses to run under the user's home unless `CODENOMAD_NATIVE_FIXTURE_PARENT` names a parent outside it.
 - Missions provisioning installs `provider.mjs` as a separate content-addressed local provider beside its content-addressed runtime. The managed shim supplies native absolute `{provider:{file,sha256},runtime:{file,sha256}}` paths as the factory's second argument; WSL translation applies only to backend filesystem I/O. Lease release and upgrades retain both payloads for native carrier recovery. Registration paths are acquired during arming in the current native RPC graph by `missions/native-schedule-installation.ts`, from the own-process record under native Global state and current ServerInfo URLs, then authenticated with exact-file public Service discovery.

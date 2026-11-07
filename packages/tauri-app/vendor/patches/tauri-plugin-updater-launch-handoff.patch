@@ -1,0 +1,66 @@
+diff --git a/src/updater.rs b/src/updater.rs
+index ddb47fc..2435a41 100644
+--- a/src/updater.rs
++++ b/src/updater.rs
+@@ -1014,11 +1014,6 @@ impl Update {
+ 
+         let updater_type = self.extract(bytes)?;
+ 
+-        if let Some(on_before_exit) = self.context.on_before_exit.as_ref() {
+-            log::debug!("running on_before_exit hook");
+-            on_before_exit();
+-        }
+-
+         let file = match &updater_type {
+             WindowsUpdaterType::Nsis { path, .. } => path.as_os_str().to_os_string(),
+             WindowsUpdaterType::Msi { .. } => std::env::var("SYSTEMROOT").as_ref().map_or_else(
+@@ -1043,9 +1038,12 @@ impl Update {
+                 SW_SHOW,
+             )
+         };
+-        if result as isize <= 32 {
+-            return Err(crate::Error::Io(shell_execute_error(result as isize)));
+-        }
++        finish_windows_launch(result as isize, || {
++            if let Some(on_before_exit) = self.context.on_before_exit.as_ref() {
++                log::debug!("running on_before_exit hook");
++                on_before_exit();
++            }
++        })?;
+ 
+         std::process::exit(0);
+     }
+@@ -2027,6 +2025,33 @@ fn shell_execute_error(code: isize) -> std::io::Error {
+     }
+ }
+ 
++// CodeNomad: a failed ShellExecuteW must not release persistence ownership.
++#[cfg(windows)]
++fn finish_windows_launch(result: isize, on_before_exit: impl FnOnce()) -> Result<()> {
++    if result <= 32 {
++        return Err(crate::Error::Io(shell_execute_error(result)));
++    }
++    on_before_exit();
++    Ok(())
++}
++
++#[cfg(all(test, windows))]
++mod windows_launch_tests {
++    use super::finish_windows_launch;
++    use std::cell::Cell;
++
++    #[test]
++    fn failed_launch_preserves_ownership_and_success_releases_once() {
++        let releases = Cell::new(0);
++        for result in [0, 2, 5, 31, 32] {
++            assert!(finish_windows_launch(result, || releases.set(releases.get() + 1)).is_err());
++        }
++        assert_eq!(releases.get(), 0);
++        finish_windows_launch(33, || releases.set(releases.get() + 1)).unwrap();
++        assert_eq!(releases.get(), 1);
++    }
++}
++
+ #[cfg(windows)]
+ trait PathExt {
+     fn wrap_in_quotes(&self) -> Self;

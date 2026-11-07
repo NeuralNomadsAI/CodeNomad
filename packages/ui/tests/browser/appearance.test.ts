@@ -28,6 +28,84 @@ function merge(target: any, patch: any): any {
   }
   return result
 }
+
+const keepAwakeTitle = "Keep the computer awake while CodeNomad is running"
+const keepAwakeInfo = "Prevents system sleep while a local CodeNomad window is open (including minimized); the screen can still turn off. When off, CodeNomad keeps the computer awake only while a session is working."
+
+test("General hides keep-awake in a plain web browser and remote desktop views", async () => {
+  for (const host of ["web", "electron", "tauri"]) {
+    const page = await browser.newPage({ locale: "en-US" })
+    await page.addInitScript(({ host }) => Object.assign(window, {
+      __CODENOMAD_RUNTIME_HOST__: host, __CODENOMAD_WINDOW_CONTEXT__: "remote",
+    }), { host })
+    await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+    try {
+      await page.goto(url)
+      await page.waitForFunction(() => Boolean((window as any).appearanceFixture))
+      await page.getByRole("checkbox", { name: "Automatically expand subsessions", exact: true }).waitFor()
+      assert.equal(await page.getByRole("checkbox", { name: keepAwakeTitle, exact: true }).count(), 0, host)
+    } finally { await page.close() }
+  }
+})
+
+for (const host of ["electron", "tauri"]) for (const windowContext of ["local", "preferences"]) {
+  test(`General persists keep-awake with an independent info tip in ${host} ${windowContext}`, async () => {
+    const page = await browser.newPage({ viewport: { width: 1600, height: 1100 }, locale: "en-US" })
+    await page.addInitScript(({ host, windowContext }) => Object.assign(window, {
+      __CODENOMAD_RUNTIME_HOST__: host, __CODENOMAD_WINDOW_CONTEXT__: windowContext,
+    }), { host, windowContext })
+    let config: any = {}
+    const patches: unknown[] = []
+    await page.route("**/api/**", async route => {
+      const request = route.request(), ui = new URL(request.url()).pathname === "/api/storage/config/ui"
+      if (ui && request.method() === "PATCH") {
+        patches.push(request.postDataJSON())
+        config = merge(config, request.postDataJSON())
+      }
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify(ui ? config : {}) })
+    })
+    const option = page.getByRole("checkbox", { name: keepAwakeTitle, exact: true })
+    const row = page.locator(".settings-choice-row").filter({ has: option })
+    const info = row.getByRole("img", { name: keepAwakeInfo, exact: true })
+    const waitChecked = (checked: boolean) => page.waitForFunction(({ title, checked }) =>
+      document.querySelector<HTMLInputElement>(`input[aria-label="${title}"]`)?.checked === checked,
+    { title: keepAwakeTitle, checked })
+    const toggle = async (checked: boolean) => {
+      await Promise.all([
+        page.waitForResponse(response => new URL(response.url()).pathname === "/api/storage/config/ui" && response.request().method() === "PATCH"),
+        option.click(),
+      ])
+      await waitChecked(checked)
+      assert.deepEqual(patches.at(-1), { settings: { keepComputerAwake: checked } })
+    }
+    try {
+      await page.goto(url)
+      await option.waitFor()
+      assert.equal(await option.isChecked(), false)
+      assert.equal(await row.innerText(), keepAwakeTitle, "only the title appears inline")
+      assert.equal(await row.locator(".settings-toggle-caption").count(), 0)
+      assert.equal(await page.getByRole("tooltip").count(), 0)
+      assert.equal(await row.evaluate(element => element === element.parentElement?.lastElementChild), true, "last behavior row")
+      await option.focus()
+      await page.keyboard.press("Shift+Tab")
+      assert.equal(await info.evaluate(element => document.activeElement === element), true)
+      await page.getByRole("tooltip").waitFor()
+      assert.equal(await page.getByRole("tooltip").innerText(), keepAwakeInfo)
+      await info.click()
+      assert.equal(await option.isChecked(), false)
+      assert.deepEqual(patches, [], "info never writes the preference")
+      await toggle(true)
+      await page.reload()
+      await waitChecked(true)
+      await toggle(false)
+      await page.reload()
+      await option.waitFor()
+      await waitChecked(false)
+      assert.equal(config.settings.keepComputerAwake, false)
+    } finally { await page.close() }
+  })
+}
+
 async function open(run: (page: Page) => Promise<void>, saveDelay = 0) {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1100 }, locale: "en-US" })
   let state: any = {}
@@ -42,6 +120,33 @@ async function open(run: (page: Page) => Promise<void>, saveDelay = 0) {
   try { await page.goto(url); await page.waitForFunction(() => Boolean((window as any).appearanceFixture)); await run(page) }
   finally { await page.close() }
 }
+
+// General offers the timeline-corner layout beside the timeline itself: off by
+// default, saved through the ui config owner and restored after a reload.
+test("General offers the first/latest arrows under the timeline, off by default and kept across reload", async () => {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1100 }, locale: "en-US" })
+  let config: any = {}
+  await page.route("**/api/**", async route => {
+    const request = route.request(), ui = request.url().includes("/storage/config/ui")
+    if (ui && request.method() === "PATCH") config = merge(config, request.postDataJSON())
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify(ui ? config : {}) })
+  })
+  const option = page.getByRole("checkbox", { name: "Put the first/latest message arrows under the timeline", exact: true })
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).appearanceFixture))
+    assert.equal(await option.isChecked(), false)
+    await Promise.all([
+      page.waitForResponse(response => response.url().includes("/storage/config/ui") && response.request().method() === "PATCH"),
+      option.click(),
+    ])
+    assert.equal(config.settings?.scrollControlsInTimelineCorner, true)
+    await page.reload()
+    await page.waitForFunction(() => Boolean((window as any).appearanceFixture))
+    await page.waitForFunction(() => document.querySelector<HTMLInputElement>('input[type="checkbox"]:checked') !== null)
+    assert.equal(await option.isChecked(), true)
+  } finally { await page.close() }
+})
 
 test("mode filters a flat palette list and retains both choices across reload", async () => open(async page => {
   const picker = page.locator(".theme-scheme-picker")

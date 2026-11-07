@@ -30,6 +30,32 @@ L’interface se met à jour sans redémarrer de conversation. L’hébreu utili
 
 Si les couleurs deviennent difficiles à lire, sélectionnez une palette intégrée ou réinitialisez celle modifiée. Changer de palette peut demander d’abandonner les modifications de couleur non enregistrées ; cela n’abandonne pas un brouillon de conversation.
 
+## Garder l’ordinateur éveillé {#keep-computer-awake}
+
+Dans **Paramètres → Général**, **Garder l’ordinateur éveillé tant que CodeNomad tourne** est désactivé par défaut. Activez cette option pour empêcher la mise en veille tant qu’une fenêtre locale CodeNomad est ouverte (même minimisée), même sans session au travail ; l’écran peut toujours s’éteindre. Lorsque cette option est désactivée, CodeNomad garde l’ordinateur éveillé uniquement pendant qu’une session travaille. Le **i** à côté du titre explique ce comportement. Cette option apparaît uniquement dans les fenêtres locales de l’application de bureau et dans Preferences ; elle est masquée dans les vues navigateur et distantes.
+
+## Mémoire persistante de l’agent {#agent-memory}
+
+L’envoi continue pendant une panne de mémoire. CodeNomad tente de retirer les instructions mémoire périmées de la session ; si ce nettoyage échoue aussi, les instructions précédentes peuvent rester jusqu’à une actualisation réussie. Continuez à vérifier leurs affirmations dans les fichiers et commandes actuels.
+
+Ouvrez **Préférences → Général → Mémoire** (ou **Paramètres → Général** dans un navigateur). La mémoire est désactivée par défaut. Activez-la pour que l’agent conserve les faits et préférences utiles entre les conversations. L’interrupteur s’applique à la configuration CodeNomad connectée ; sa désactivation conserve les entrées et leur historique.
+
+- **À propos de vous** : jusqu’à 60 entrées partagées entre les projets de cette configuration.
+- **Projet** : jusqu’à 200 entrées. Cette interface utilise le projet sélectionné dans les Préférences, ou le projet actif de la fenêtre principale dans les réglages intégrés. L’outil `codenomad_memory` de l’agent et les instructions de session utilisent le dossier de cette session. Le serveur identifie le dépôt par son adresse Git distante normalisée, avec repli sur son chemin local ; les worktrees partagent cette mémoire. Ouvrez un projet pour sélectionner cette portée.
+
+Chaque session, y compris les sous-sessions, reçoit les règles d’enregistrement et une liste bornée des titres et types (bloc d’instructions de 8 000 caractères environ au maximum). L’agent doit lire les entrées pertinentes avec `codenomad_memory` avant d’agir, vérifier leurs affirmations dans les fichiers et commandes actuels et signaler ses enregistrements. Même une mémoire vide reçoit ces règles. Les portées illisibles sont omises comme indisponibles. Si OpenCode ne fournit pas la capacité facultative d’instructions de session, l’intégration reste silencieusement inactive et conserve votre choix.
+
+1. Sélectionnez une portée et une entrée. **Nouveau** et **Modifié** signalent les changements depuis la dernière consultation réussie de cette portée dans cette vue navigateur ou bureau ; ils restent visibles pendant la visite en cours.
+2. Modifiez **Titre**, **Type** (**Fait**, **Préférence** ou **Référence**) et **Texte**, puis **Enregistrer**. Le titre accepte 60 caractères et le texte 2 000. **Annuler** rétablit le contenu enregistré de l’entrée. Si elle a été modifiée ailleurs, utilisez **Recharger** et vérifiez avant d’enregistrer à nouveau.
+3. Pour retirer une entrée, ouvrez son menu d’actions et confirmez **Oublier**. Elle sort de la mémoire active ; Git conserve son historique local, ancien texte compris. Oublier retire l’entrée de l’usage de l’agent, sans constituer un effacement sécurisé.
+4. Si la mémoire est pleine, fusionnez ou oubliez des entrées avant de réessayer. Un titre identique ou un texte fortement similaire remplace une entrée existante, dont Git conserve le texte précédent.
+
+**À vérifier** signale des consignes suspectées de contourner les protections ou de divulguer des identifiants. Ces entrées restent modifiables ici, comptent dans le plafond et sont écartées des titres et lectures de l’agent. Les vérifications ont lieu à chaque lecture ; corrigez le contenu et enregistrez, ou utilisez **Oublier**. Une mémoire mal formée ou illisible affiche une erreur plutôt qu’une liste vide ; réparez la cause avant de réessayer.
+
+**Ranger** demande confirmation, puis ouvre une nouvelle conversation dans le projet affiché dans les Préférences pour vérifier et fusionner la portée sélectionnée. L’agent conserve les entrées invérifiables et les références externes et rend compte des changements. Il faut un projet ouvert et une mémoire activée, lisible, inscriptible, avec au moins une entrée non signalée. Si le lancement reste incertain, vérifiez les conversations du projet avant de réessayer.
+
+La mémoire est tenue par l’agent. S’il tient déjà une mémoire ailleurs, par exemple `.claude/…/MEMORY.md`, il enregistre une **Référence** vers ce fichier ; les mémoires externes gardent leur propre gestion. CodeNomad stocke un fichier Markdown par entrée dans `memory/global/` ou `memory/projects/<id>/` sous son dossier de configuration, avec un commit Git local à chaque enregistrement ou suppression. Le stockage reste local, sans synchronisation distante. Voir [Fenêtres et données du bureau](desktop.md) pour les limites entre configuration et profils.
+
 ## Panneaux et sections Statut {#panels-status}
 
 Faites glisser le bord intérieur d’un panneau ancré pour le redimensionner. La poignée reste surlignée et garde la capture du pointeur pendant tout le glissement, même si le pointeur dépasse son bord. Relâchez pour terminer.
@@ -48,7 +74,7 @@ La disposition intégrée est propre à la fenêtre, pas une modification du pro
 
 1. Ouvrez **Chat** pour choisir les niveaux de détail par défaut. Les préréglages sont **Rien**, **Minimal**, **Équilibré** et **Tout** ; les changements individuels produisent **Personnalisé**.
 2. Réglez l’**État par défaut** de chaque ligne (**Masqué**, **Réduit** ou **Développé**) pour la réflexion, les diagnostics, les entrées d’outils, les tokens, les messages système et chaque type d’outil, ou utilisez le menu **Contenu des messages** de la conversation, qui partage ces choix.
-3. Dans **Général**, cochez au besoin **Afficher la chronologie des messages**, **Scinder les diffs des appels d’outils** et **Mettre les prompts envoyés en file d’attente** (mettre en file les prompts envoyés pendant qu’une session travaille au lieu de l’orienter).
+3. Dans **Général**, cochez au besoin **Afficher la chronologie des messages**, **Placer les flèches premier/dernier message sous la chronologie**, **Scinder les diffs des appels d’outils** et **Mettre les prompts envoyés en file d’attente** (mettre en file les prompts envoyés pendant qu’une session travaille au lieu de l’orienter).
 4. Redimensionnez la zone de saisie avec sa commande ; les longs brouillons défilent dans le champ.
 
 La chronologie a un marqueur pour chaque réponse, réflexion, outil, compactage et contexte système affiché dans la conversation, dans le même ordre. Ses marqueurs suivent **Contenu des messages** : masquer à cet endroit un type d’outil, la réflexion ou les messages système masque aussi leurs marqueurs, sauf celui d’un outil avec une autorisation en attente, et **Rien** masque tous les marqueurs d’outils. Les réglages de visibilité et de développement changent seulement la présentation. Ils ne retirent pas les outils/raisonnements enregistrés et ne compactent pas le contexte du modèle. Voir [Historique et nettoyage](history.md) pour les opérations destructrices.

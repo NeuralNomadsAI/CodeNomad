@@ -103,6 +103,7 @@ declare global {
     acceptPreferencesRequest?: (request: unknown) => Promise<unknown>
     resolvePreferencesTransition?: (id: number, approved: boolean) => Promise<unknown>
     openerStartupState?: (command: string, epoch?: number) => Promise<unknown>
+    memoryCleanup?: (request: import("../lib/native/memory-cleanup-command").MemoryCleanupRequest) => Promise<unknown>
     onPreferencesSection?: (callback: (request: unknown) => void) => () => void
     onPreferencesCloseRequested?: (callback: () => void) => () => void
     onPreferencesTransitionRequested?: (callback: (value: unknown) => void) => () => void
@@ -142,6 +143,7 @@ declare global {
        readonly __CODENOMAD_WINDOW_ID__?: string | null
        __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: () => Promise<void>
        __CODENOMAD_STARTUP_STATE_COMMAND__?: (command: unknown) => Promise<unknown>
+       __CODENOMAD_MEMORY_CLEANUP__?: (request: unknown) => Promise<void>
        electronAPI?: ElectronAPI
       __TAURI__?: TauriBridge
       codenomadLogger?: LoggerControls

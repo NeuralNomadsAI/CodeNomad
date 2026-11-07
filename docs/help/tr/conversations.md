@@ -9,7 +9,7 @@ Akıl yürütme ve araç başlıkları her adımın ne kadar sürdüğünü gös
 ## Konuşmaları bulma ve gezinme {#navigate-conversations}
 
 1. **Session'lar** altında satır seçin veya üst konuşma başlatmak için **Yeni session** eylemini kullanın.
-2. Üst konuşmanın okuna tıklayarak alt oturumlarını rozetlerini koruyarak genişletin veya daraltın. Kapalı ok, alt konuşmalarının en acil durumunu gösterir: girdi bekliyor, çalışıyor, sıkıştırılıyor veya boşta; erişilebilir etiketi bunları sayar.
+2. Üst konuşmanın okuna tıklayarak alt oturumlarını rozetlerini koruyarak genişletin veya daraltın. Açık ya da kapalı, ok alt konuşmalarının en acil durumunu gösterir: girdi bekliyor, çalışıyor, sıkıştırılıyor veya boşta; erişilebilir etiketi bunları sayar. Oka sağ tıklayıp **Okundu olarak işaretle** öğesini seçerek konuşmanın ve tüm alt oturumlarının **Boşta** ve **Kesildi** rozetlerini tek seferde temizleyin.
 3. Listeyi daraltmak için **Session ara…**, **Ana oturumlar** / **Alt oturumlar**, çalışma ağacı filtresini ve **Etkinlik**, **Ad** veya **Çalışma ağacı** sıralamasını kullanın. Arama sonuçlarında, birden fazla konuşmayı tek seferde seçmek veya seçimini kaldırmak için satırların onay kutularının üzerinde sürükleyin.
 4. Görüntülediğiniz konuşmaları yeniden ziyaret etmek için kenar çubuğundaki **Geri** ve **İleri** öğesini kullanın.
 

@@ -10,9 +10,10 @@ Start with [README](../README.md) for installation and usage, then
 - [Runtime setup and recovery](OPENCODE_RUNTIME_SETUP.md): admission, installation/upgrade and service maintenance.
 - [Worktree/session placement](WORKTREE_SESSION_PLACEMENT.md): native location identity and authorized conversation movement.
 - [Session environment](SESSION_ENVIRONMENT.md): server-only execution-host snapshots, fresh profile reads at admission and fail-closed per-send synchronization.
+- [Agent memory](AGENT_MEMORY.md): entry format, project identity, local Git transactions and recovery, authorized API/tool contracts, safe session instructions, Preferences review and cleanup sessions.
 - [Session recovery](SESSION_RECOVERY.md): reconciling saved session activity with native state.
 - [Cache refresh conventions](CACHE_REFRESH_CONVENTIONS.md): display snapshots, invalidation and authoritative mutation reads.
-- [Bundled runtime maintenance](RUNTIME_MAINTENANCE.md): Node/npm pinning, LTS proposals and the dependency audit.
+- [Bundled runtime maintenance](RUNTIME_MAINTENANCE.md): Node/npm pinning, update proposals and the npm audit.
 
 ## History and pruning
 
@@ -56,7 +57,7 @@ Start with [README](../README.md) for installation and usage, then
 - [Desktop data profiles](DESKTOP_DATA_PROFILES.md): profile resolution, isolation and cleanup.
 - [Tauri updates](TAURI_UPDATER.md): signed updates, the update feed and Linux AppImage distribution.
 - [Remote Control](REMOTE_CONTROL.md): OpenTunnel transport, pairing and device admission.
-- [Tauri backports](../packages/tauri-app/vendor/README.md): upstream provenance, validation commands and override removal criteria.
+- [Vendored Tauri crates](../packages/tauri-app/vendor/README.md): vendored crate provenance, local patches, re-qualification, validation commands and override removal criteria.
 - [Build guide](../BUILD.md): packaging and platform build commands.
 - [Code signing policy](../CODE_SIGNING.md): Windows SignPath signing in the release workflows, its configuration and approvals.
 - [Contributing](../CONTRIBUTING.md): development and test workflows.

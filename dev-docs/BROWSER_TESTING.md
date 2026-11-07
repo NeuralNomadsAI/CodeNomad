@@ -104,6 +104,8 @@ synthetic provider.
   `text/event-stream`, including when native frames enter through the real
   dispatcher directly. Keep network-failure collectors strict for failed streams
   and unrelated cancelled requests.
+- Projection-only fixtures provide a valid empty outline through the API adapter
+  before mounting and reject outline HTTP reads.
 - Shell fixtures share `tests/browser/panel-read-fixture.ts` to observe optional
   panel-extension list cancellations: the exact request identity, its owning
   aborted signal and its native `AbortError` receipt must agree. Drain pending

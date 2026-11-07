@@ -163,7 +163,7 @@ for (const role of ["runtime", "provider"] as const) test(`Missions ${role} publ
   assert.equal(await provision(), false)
   assert.equal(await provision(), false)
   assert.deepEqual(calls.map(call => call.level), ["error", "debug"])
-  assert.match(calls[0].message, /Missions and automation are unavailable/)
+  assert.match(calls[0].message, /Missions, automation and agent memory are unavailable/)
   assert.match(String(calls[0].err), /is a directory/)
   assert.equal(await readFile(path.join(file, "sentinel"), "utf8"), "keep")
   assert.equal((await readdir(path.join(paths.data, "missions", "presence"))).length, 0)

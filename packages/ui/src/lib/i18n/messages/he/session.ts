@@ -47,6 +47,7 @@ export const sessionMessages = {
   "sessionList.expand.collapseTitle": "כווץ",
   "sessionList.expand.expandTitle": "פרוס",
   "sessionList.expand.withChildActivity": "{action} — {activity}",
+  "sessionList.expand.markRead": "סמן כנקרא",
   "sessionList.actions.newSession.ariaLabel": "סשן חדש",
   "sessionList.actions.newSession.title": "סשן חדש",
   "sessionList.actions.newSession.failedTitle": "לא ניתן ליצור סשן",

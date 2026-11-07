@@ -259,6 +259,7 @@ impl EmbeddedViews {
             allowed && on_navigation(url)
         })
         .on_new_window(|_, _| NewWindowResponse::Deny)
+        .on_permission_request(|_, _| tauri::webview::PermissionResponse::Deny)
         .on_download(|_, _| false);
         #[cfg(target_os = "macos")]
         let builder = builder.data_store_identifier(storage_identifier);

@@ -47,6 +47,7 @@ export const sessionMessages = {
   "sessionList.expand.collapseTitle": "Свернуть",
   "sessionList.expand.expandTitle": "Развернуть",
   "sessionList.expand.withChildActivity": "{action} — {activity}",
+  "sessionList.expand.markRead": "Отметить как прочитанное",
   "sessionList.actions.newSession.ariaLabel": "Новая сессия",
   "sessionList.actions.newSession.title": "Новая сессия",
   "sessionList.actions.newSession.failedTitle": "Не удалось создать сессию",

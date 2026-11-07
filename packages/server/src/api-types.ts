@@ -7,6 +7,7 @@ import type {
   RecentFolder,
 } from "./config/schema"
 import type { FormInfo, OpenCodeEvent, PermissionRequest } from "@opencode/client"
+export type { MemoryScope, MemoryEntryType, MemoryContent, MemoryEntryHeader, MemoryEntry, MemoryErrorCode, MemoryOperation, MemoryContext, MemorySettings, MemoryVersionedEntry, MemoryUIEntry, MemoryListEntry, MemoryUIListResult, MemoryResult, MemoryApiError } from "./memory/contract"
 export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionContext, PanelExtensionCatalog, PanelExtensionCatalogEntry } from "./panel-extensions/contract"
 export type { ForgeRepository, ForgeWorkItem, ForgeWorkItemKind, ForgeWorkItemsResult } from "./panel-extensions/contract"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
@@ -206,19 +207,35 @@ export interface ProviderUsageWindow {
   windowSeconds: number | null
   resetAt: number | null
   valueLabel?: string
+  balanceUSD?: { remaining: number; total?: number }
+  limitUSD?: number
+  consumption?: { used: number; limit?: number } | { creditsUsed: number } | { unlimited: true }
 }
+
+export type ProviderUsageUnavailableReason = "openai-token-sharing-unsupported" | "provider-error" | "minimax-limits-not-shared" | "invalid-base-url"
+  | "cursor-token-expired" | "cursor-team-unavailable" | "cursor-access-denied" | "cursor-usage-unavailable"
+  | "opencode-go-key-expired"
+  | import("./api-types-provider-usage").ProviderUsageUnavailableReason
+export type ProviderUsageUnavailableAction = "chatgpt-usage" | "opencode-go-new-key"
 
 export interface ProviderUsageResponse {
   requestedProviderId: string
   providerId: string | null
   providerName: string
+  copilotPlan?: "free" | "pro" | "proPlus" | "business" | "enterprise" | "student" | "max"
   modelId?: string
   supported: boolean
   configured: boolean
   ok: boolean
   windows: Record<string, ProviderUsageWindow>
   fetchedAt: number
-  unavailableReason?: "openai-token-sharing-unsupported"
+  unavailableReason?: ProviderUsageUnavailableReason
+  /** Public numeric business code, at most eight digits; never an upstream message. */
+  providerErrorCode?: string
+  /** UI-owned fixed destination, admitted only for its associated reason. */
+  unavailableAction?: ProviderUsageUnavailableAction
+  console?: import("./api-types-provider-usage").OpenCodeConsoleUsage
+  freeEstimate?: import("./api-types-provider-usage").OpenCodeFreeEstimate
   /** Computed locally from recorded activity because the provider publishes no counter. */
   estimated?: true
 }
@@ -240,6 +257,9 @@ export interface WorktreeDescriptor {
   registeredDirectory?: string
   /** Degraded mode: only this exact physical directory authorizes sessions. */
   directoryOnly?: boolean
+  /** The opened nested folder is absent from this checkout: it still owns the
+   * sessions placed there, but is neither offered for selection nor recovered. */
+  nestedFolderMissing?: boolean
   kind: WorktreeKind
   /** False for the opened folder and Git's main checkout. */
   removable?: boolean
@@ -510,6 +530,8 @@ export type PluginRuntimeSource =
 
 export interface PluginRuntimeInventoryEntry {
   key: string
+  /** Proven local installation published by CodeNomad. */
+  managedBy?: "codenomad"
   id?: string
   source: PluginRuntimeSource
   /** `gui`: the package ships parts the OpenCode desktop app loads only from Global configuration. */
@@ -528,11 +550,12 @@ export interface PluginConfiguredRule {
 
 export interface PluginConfiguredSource {
   target: string
+  managedBy?: "codenomad"
   scope: PluginConfigScope
   path?: string
   entryIndex: number
   hasOptions: boolean
-  /** The runtime plugin this declaration loaded, when the inventory reports it. */
+  /** Plugin associated by runtime inventory or a verified managed installation. */
   pluginId?: string
   /** Opaque confirmed-document identity, present on writable removal descriptors. */
   expectedRevision?: string
@@ -542,6 +565,7 @@ export type PluginScopeRuleState = "default" | "enabled" | "disabled"
 
 export interface PluginActivationControl {
   id: string
+  managedBy?: "codenomad"
   runtime?: PluginRuntimeInventoryEntry
   /** True for OpenCode-owned plugins, including disabled builtins absent from runtime inventory. */
   builtin: boolean
@@ -840,6 +864,7 @@ export type WorkspaceEventType =
   | "yolo.stateChanged"
   | "yolo.autoAccepted"
   | "permission.receiptsChanged"
+  | "memory.changed"
 
 export interface PermissionReceipt {
   requestId: string
@@ -863,6 +888,7 @@ export interface PermissionReceiptPage {
 export interface WorkspaceDirectoryChange { directory: string; path: string }
 
 export type WorkspaceEventPayload =
+  | { type: "memory.changed" }
   | { type: "workspace.created"; workspace: WorkspaceDescriptor }
   | { type: "workspace.started"; workspace: WorkspaceDescriptor }
   | { type: "workspace.error"; workspace: WorkspaceDescriptor }

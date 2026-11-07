@@ -226,6 +226,7 @@ async function openElectronFixture() {
   const profile = await mkdtemp(join(temp, "browser-frame-electron-"))
   const env = { ...process.env, CODENOMAD_TEST_PROFILE: profile }
   delete env.ELECTRON_RUN_AS_NODE
+  delete env.ELECTRON_NO_ASAR
   const app = await _electron.launch({ executablePath: process.env.CODENOMAD_TEST_ELECTRON || electronPath,
     args: ["--no-sandbox", fileURLToPath(new URL("fixtures/browser-frame-native-electron.cjs", import.meta.url))], env })
   return { page: await app.firstWindow(), close: async () => {

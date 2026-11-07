@@ -8,7 +8,7 @@ import { build } from "esbuild"
 import { nativePluginBuild } from "./native-plugin-build.mjs"
 
 test("native plugin builds never embed a second Effect runtime or OpenCode adapter", async () => {
-  for (const entry of ["session-pruning/desktop-plugin", "automation/desktop-plugin", "missions/managed-owner-plugin"]) {
+  for (const entry of ["session-pruning/desktop-plugin", "automation/desktop-plugin", "missions/managed-owner-plugin", "memory/desktop-plugin"]) {
     const result = await build({ ...nativePluginBuild,
       entryPoints: [fileURLToPath(new URL(`../src/opencode/${entry}.ts`, import.meta.url))],
       write: false, metafile: true })

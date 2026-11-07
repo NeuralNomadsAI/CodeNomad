@@ -4,6 +4,12 @@ import { enforceSpeechCredentialPairing, registerSettingsRoutes } from "./settin
 import Fastify from "fastify"
 import type { SettingsService } from "../../settings/service"
 import type { Logger } from "../../logger"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import { parse, stringify } from "yaml"
+import { resolveConfigLocation } from "../../config/location"
+import { SettingsService as RealSettingsService } from "../../settings/service"
 
 describe("enforceSpeechCredentialPairing", () => {
   it("clears shared key when baseUrl differs from stored", () => {
@@ -89,11 +95,51 @@ describe("enforceSpeechCredentialPairing", () => {
   })
 })
 
+for (const url of ["/api/storage/config", "/api/storage/config/server"]) {
+  it(`${url} pairs shared, STT and TTS credentials against fresh configuration inside the write lock`, async t => {
+    const root = mkdtempSync(path.join(tmpdir(), "codenomad-speech-pairing-"))
+    const logger = { child() { return this }, warn() {}, info() {} } as unknown as Logger
+    const location = resolveConfigLocation(root), app = Fastify()
+    t.after(async () => { await app.close(); rmSync(root, { recursive: true, force: true }) })
+    const speech = (host: string, withKeys = true) => {
+      const pair = () => ({ baseUrl: `https://${host}.example/v1`, ...(withKeys ? { apiKey: `sentinel-${host}` } : {}) })
+      return { ...pair(), stt: pair(), tts: pair() }
+    }
+    writeFileSync(location.configYamlPath, stringify({ server: { speech: speech("a") } }))
+    const settings = new RealSettingsService(location, undefined, logger)
+    settings.getOwner("config", "server") // Warm the display cache before an external writer.
+    let entered!: () => void, release!: () => void, arrivals = 0
+    const waiting = new Promise<void>(resolve => { entered = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let tail = Promise.resolve()
+    registerSettingsRoutes(app, { settings, logger, withConfigLock: <T>(action: () => T) => {
+      if (++arrivals === 2) entered()
+      const result = tail.then(async () => { await gate; return action() })
+      tail = result.then(() => {}, () => {})
+      return result
+    } })
+    const payload = (value: object) => url.endsWith("/server") ? value : { server: value }
+    const first = app.inject({ method: "PATCH", url, payload: payload({ speech: speech("b") }) }).then(result => result)
+    const second = app.inject({ method: "PATCH", url, payload: payload({ speech: speech("a", false) }) }).then(result => result)
+    try {
+      await waiting
+      // Both requests have reached the lock, neither may have published yet.
+      assert.deepEqual(parse(readFileSync(location.configYamlPath, "utf8")), { server: { speech: speech("a") } })
+      writeFileSync(location.configYamlPath, stringify({ server: { speech: speech("external"), keep: true }, external: { keep: true } }))
+      release()
+      assert.deepEqual((await Promise.all([first, second])).map(result => result.statusCode), [200, 200])
+      const saved = parse(readFileSync(location.configYamlPath, "utf8"))
+      assert.deepEqual(saved, { server: { speech: speech("a", false), keep: true }, external: { keep: true } })
+      for (const pair of [saved.server.speech, saved.server.speech.stt, saved.server.speech.tts]) assert.equal(pair.apiKey, undefined)
+    } finally { release() }
+  })
+}
+
 it("both explicit executable settings paths refresh the login start after save; unrelated settings and reads stay passive", async t => {
   const app = Fastify(), order: string[] = []
   t.after(() => app.close())
   const settings = {
-    getOwner: () => ({}), getDoc: () => ({}),
+    getOwner: () => ({}), getDoc: () => ({}), getRawConfigOwner: () => ({}),
     mergePatchDoc: (_kind: string, patch: object) => { order.push("save"); return patch },
     mergePatchOwner: (_kind: string, _owner: string, patch: object) => { order.push("save"); return patch },
   } as unknown as SettingsService

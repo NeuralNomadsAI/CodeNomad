@@ -32,7 +32,6 @@ methods, the integration OpenCode's maintainers recommend for plugins
 - `history-ranked-service.ts`: the presence-owned Code Mode `codenomad.session_search` tool and versioned ranked-history RPC; ranking, scope and bounds are specified in [full-history queries](SESSION_HISTORY_QUERIES.md).
 - `desktop-plugin.ts` / `presence.ts`: register RPC while a CodeNomad backend is present; dispose on final close or lease expiry. At load, before following presence, the entry also registers the Design agent and skills that backend leases request (`../design/register.ts`, contract in [OpenCode compatibility](OPENCODE_COMPATIBILITY.md#agent-conventions)).
   Closing the native plugin scope stops its follower and joins that follower's admitted readiness writes before releasing its observations. Other live followers retain their registrations and writes; backend shutdown removes its own lease while OpenCode continues independently.
-- `tui.ts` / `tui-reload.ts`: companion cache invalidation via the public TUI API.
 
 `pruning-lifecycle.ts` and `pruning-installation.ts` beside that directory own
 automatic provisioning and backend leases. The server build bundles the payload
@@ -66,9 +65,7 @@ After commit the caller re-reads native history, never a synthesized remainder.
 revision. The UI invalidates both message-load authority and its native SDK transcript,
 including pending rotations, then coalesces active-session reloads. Late reads cannot
 overwrite a newer pruning invalidation. Reconnect uses authoritative reconciliation.
-The optional TUI companion invalidates/synchronizes its public message cache and
-reconciles loaded sessions on reconnect. Third-party clients may display cached
-history until they reload.
+Other clients may display cached history until they reload.
 
 The receipt and content change commit together; an identical retry returns the same
 receipt and re-emits the event. Receipts contain no deleted content. Event delivery
@@ -197,7 +194,7 @@ meanwhile write nothing and give `unavailable`.
 - The plugin contract lacks `ctx.session.message` and `ctx.db`; the plugin opens its own SQLite connection.
 - SQLite unit tests use Node's `node:sqlite`; the native test also exercises that
   driver **inside the official compiled runtime**.
-- The module has a packable manifest with `index.ts` and `./tui` entrypoints.
+- The module has a packable manifest with `index.ts` and `./rpc` entrypoints.
   Local configuration must target the **directory**, never `plugin.ts`.
 - An automatically provisioned entry in the global OpenCode `plugins` directory is
   discovered for all projects. Its small lifecycle module stays loaded; pruning
@@ -228,7 +225,7 @@ prefilled from the installed Design extension through the real right panel, API 
 and composer, sent, and its relative Markdown image is checked in the real transcript.
 The mock's usage numbers are synthetic; never cite them as provider token savings.
 
-Unvalidated: native WSL runs, interactive TUI, two desktop windows/scroll,
+Unvalidated: native WSL runs, two desktop windows/scroll,
 provider-specific continuation state and budgets, and interactive bulk
 progress/cancel. Never describe these as passed on the strength of HTTP or
 mocked cache tests.

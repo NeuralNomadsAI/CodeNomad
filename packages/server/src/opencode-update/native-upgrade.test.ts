@@ -1,41 +1,100 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { access, mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { InstallationInterruptedError, withInstallationLock } from "./installation-lock"
 import { upgradeSharedOpenCode } from "./native-upgrade"
 import { installSharedOpenCode, npmExecutable, npmCommandDirectory } from "./shared-installation"
 import { MINIMUM_OPENCODE_VERSION as minimum } from "../opencode/runtime-support"
 
-test("native upgrade scopes bundled npm and prefix and cleans its shim on success/failure", async () => {
-  for (const platform of ["win32", "linux"] as const) for (const fail of [false, true]) {
-    let shim = ""
-    const env = { Path: "/original", NPM_CONFIG_PREFIX: "/wrong", NPM_CONFIG_REGISTRY: "https://wrong.invalid" }
-    const pending = upgradeSharedOpenCode({ binary: "/verified/opencode.exe", version: "2.0.16", prefix: "/verified prefix",
-      node: "/bundled node/node", npm: "/bundled npm/npm-cli.js", env, platform,
-      execute: async (file, args, childEnv, execution) => {
-        assert.equal(file, "/verified/opencode.exe")
-        assert.deepEqual(args, ["upgrade", "2.0.16", "--method", "npm"])
-        assert.equal(childEnv.npm_config_prefix, "/verified prefix")
-        assert.equal(childEnv.npm_config_registry, "https://registry.npmjs.org")
-        assert.equal(childEnv.NPM_CONFIG_PREFIX, undefined)
-        assert.equal(childEnv.NPM_CONFIG_REGISTRY, undefined)
-        assert.equal(childEnv.CODENOMAD_UPGRADE_NODE, "/bundled node/node")
-        assert.equal(childEnv.CODENOMAD_UPGRADE_NPM, "/bundled npm/npm-cli.js")
-        const directory = childEnv.Path!.split(platform === "win32" ? ";" : ":/bundled")[0]
-        assert.equal(execution?.cwd, directory)
-        assert.equal(execution?.timeout, 360_000)
-        shim = path.join(directory, platform === "win32" ? "npm.cmd" : "npm")
-        assert.match(await readFile(shim, "utf8"), /CODENOMAD_UPGRADE_NODE/)
-        if (fail) throw new Error("native failure")
-      },
+test("native upgrade scopes bundled npm and prefix in the prefix, cleans its shim, and retains it on interruption", async () => {
+  // Electron's executable needs the scoped `node` command; Tauri's Node (also
+  // started with ELECTRON_RUN_AS_NODE) is found by name beside npm.
+  const root = await mkdtemp(path.join(os.tmpdir(), "native-upgrade-shim-"))
+  const prefix = path.join(root, "verified prefix")
+  await mkdir(prefix)
+  try {
+    for (const platform of ["win32", "linux"] as const) for (const electron of [true, false]) for (const outcome of ["success", "failure", "interrupted"]) {
+      let shim = ""
+      const node = electron ? "/application/CodeNomad" : platform === "win32" ? "/bundled node/node.exe" : "/bundled node/bin/node"
+      const env = { Path: "/original", ELECTRON_RUN_AS_NODE: "1", NPM_CONFIG_PREFIX: "/wrong", NPM_CONFIG_REGISTRY: "https://wrong.invalid",
+        NPM_CONFIG_ALLOW_SCRIPTS: "unrelated-package" }
+      const pending = upgradeSharedOpenCode({ binary: "/verified/opencode.exe", version: "2.0.16", prefix,
+        node, npm: "/bundled npm/npm-cli.js", env, platform,
+        execute: async (file, args, childEnv, execution) => {
+          assert.equal(file, "/verified/opencode.exe")
+          assert.deepEqual(args, ["upgrade", "2.0.16", "--method", "npm"])
+          assert.equal(childEnv.npm_config_prefix, prefix)
+          assert.equal(childEnv.npm_config_registry, "https://registry.npmjs.org")
+          assert.equal(childEnv.NPM_CONFIG_PREFIX, undefined)
+          assert.equal(childEnv.NPM_CONFIG_REGISTRY, undefined)
+          // npm (12+) blocks unlisted install scripts: OpenCode's npm runs only the upgraded package's.
+          assert.equal(childEnv.npm_config_allow_scripts, "@opencode/cli@2.0.16")
+          assert.equal(childEnv.NPM_CONFIG_ALLOW_SCRIPTS, undefined)
+          assert.equal(Object.keys(childEnv).filter(key => /^npm_config_(ignore_scripts|dangerously_allow_all_scripts)$/i.test(key)).length, 0)
+          assert.equal(childEnv.CODENOMAD_UPGRADE_NODE, node)
+          assert.equal(childEnv.CODENOMAD_UPGRADE_NPM, "/bundled npm/npm-cli.js")
+          const separator = platform === "win32" ? ";" : ":"
+          const runtime = separator + path.dirname(node) + separator
+          assert.ok(childEnv.Path!.endsWith(runtime + "/original"))
+          const directory = childEnv.Path!.slice(0, -(runtime + "/original").length)
+          assert.equal(path.dirname(directory), prefix)
+          assert.match(path.basename(directory), /^\.codenomad-upgrade-/)
+          assert.equal(execution?.cwd, directory)
+          assert.equal(execution?.timeout, 360_000)
+          const command = path.join(directory, platform === "win32" ? "node.cmd" : "node")
+          if (electron) {
+            assert.equal(childEnv.CODENOMAD_NPM_NODE, node)
+            assert.match(await readFile(command, "utf8"), /CODENOMAD_NPM_NODE/)
+          } else {
+            assert.equal(childEnv.CODENOMAD_NPM_NODE, undefined)
+            await assert.rejects(access(command), { code: "ENOENT" })
+          }
+          shim = path.join(directory, platform === "win32" ? "npm.cmd" : "npm")
+          // Only Electron's Windows npm loads the console-hiding preload; Tauri's shim is unchanged.
+          const preload = electron && platform === "win32"
+          assert.equal(childEnv.CODENOMAD_NPM_PRELOAD, preload ? path.join(directory, "hide-child-windows.cjs") : undefined)
+          assert.equal(await readFile(shim, "utf8"), platform === "win32"
+            ? `@echo off\r\n"%CODENOMAD_UPGRADE_NODE%" ${preload ? '--require "%CODENOMAD_NPM_PRELOAD%" ' : ""}"%CODENOMAD_UPGRADE_NPM%" %*\r\n`
+            : '#!/bin/sh\nexec "$CODENOMAD_UPGRADE_NODE" "$CODENOMAD_UPGRADE_NPM" "$@"\n')
+          if (outcome === "interrupted") throw new InstallationInterruptedError()
+          if (outcome === "failure") throw new Error("native failure")
+        },
+      })
+      if (outcome === "success") await pending
+      else await assert.rejects(pending, outcome === "failure" ? /native failure/ : InstallationInterruptedError)
+      if (outcome === "interrupted") {
+        await access(shim)
+        await rm(path.dirname(shim), { recursive: true, force: true })
+      } else await assert.rejects(access(shim), { code: "ENOENT" })
+      assert.deepEqual(await readdir(prefix), [])
+      assert.equal(env.NPM_CONFIG_PREFIX, "/wrong", "do not mutate the backend environment")
+      assert.equal(env.NPM_CONFIG_ALLOW_SCRIPTS, "unrelated-package")
+      assert.equal(env.Path, "/original")
+    }
+    // Only an exact version can be allowed; nothing is written for anything else.
+    for (const version of ["latest", "^2.0.16", "2.0.16 || 2.0.17"]) {
+      await assert.rejects(upgradeSharedOpenCode({ binary: "/verified/opencode.exe", version, prefix, node: "/bundled node/node.exe",
+        npm: "/bundled npm/npm-cli.js", env: {}, platform: "win32", execute: async () => assert.fail("must not run") }), /exact stable/)
+      assert.deepEqual(await readdir(prefix), [])
+    }
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test("a fresh installation lock removes installer directories retained by an interrupted installer", async () => {
+  const prefix = await mkdtemp(path.join(os.tmpdir(), "installer-directory-recovery-"))
+  try {
+    for (const name of [".codenomad-npm-retained", ".codenomad-upgrade-retained"]) {
+      await mkdir(path.join(prefix, name))
+      await writeFile(path.join(prefix, name, "node"), "")
+    }
+    await mkdir(path.join(prefix, "node_modules"))
+    await writeFile(path.join(prefix, ".codenomad-npm-file"), "not a directory")
+    await withInstallationLock(prefix, async () => {
+      assert.deepEqual((await readdir(prefix)).sort(), [".codenomad-npm-file", ".codenomad-opencode-install.lock", "node_modules"])
     })
-    if (fail) await assert.rejects(pending, /native failure/)
-    else await pending
-    await assert.rejects(access(shim), { code: "ENOENT" })
-    assert.equal(env.NPM_CONFIG_PREFIX, "/wrong", "do not mutate the backend environment")
-    assert.equal(env.Path, "/original")
-  }
+  } finally { await rm(prefix, { recursive: true, force: true }) }
 })
 
 test("shared update delegates to native CLI, verifies publication, and never retries npm on failure", async () => {

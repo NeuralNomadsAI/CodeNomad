@@ -1145,7 +1145,7 @@ export class WorkspaceManager {
     const locator = process.platform === "win32" ? "where" : "which"
 
     try {
-      const result = spawnSync(locator, [identifier], { encoding: "utf8", timeout: Math.max(1, timeoutMs) })
+      const result = spawnSync(locator, [identifier], { encoding: "utf8", timeout: Math.max(1, timeoutMs), windowsHide: true })
       if (result.status === 0 && result.stdout) {
         const candidates = result.stdout
           .split(/\r?\n/)

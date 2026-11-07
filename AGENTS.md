@@ -31,6 +31,7 @@ Paths are under `packages/ui/src/` or `packages/server/src/` unless stated.
 - **Timeline, transcript scrolling and history search** (`virtual-follow-list.tsx`, `timeline-*`, `stores/timeline-previews.ts`, history search): `dev-docs/SESSION_HISTORY_NAVIGATION.md`, `dev-docs/SESSION_HISTORY_QUERIES.md`.
 - **Shell, panels, tabs, session sidebar and native menus** (`instance/shell/`, `tab-scroll.tsx`, session list, `lib/native/menu-labels*`): `dev-docs/UI_SHELL.md`.
 - **Session state and recovery** (`stores/session-state.ts`, `stores/session-generation-recovery.ts`): `dev-docs/SESSION_RECOVERY.md`.
+- **Agent memory** (server `memory/`, `opencode/memory/`, `server/routes/memory.ts`, `workspaces/session-memory-context.ts`; UI `components/settings/agent-memory*`, `stores/agent-memory*`, `lib/agent-memory-api.ts`, `lib/native/memory-cleanup*`, `styles/components/agent-memory.css`; desktop memory-cleanup bridges): `dev-docs/AGENT_MEMORY.md`.
 - **Dialogs, utility windows, icon toggles, surfaces and scrollbars** (`alert-dialog.tsx`, `dismissible-window.tsx`, auth recovery, `styles/utilities.css`, `index.css`): `dev-docs/UI_CONVENTIONS.md`.
 - **Settings and Preferences** (settings rows/actions, Preferences window and project context, Providers/Web search, Stats, notifications, bug report): `dev-docs/SETTINGS.md`; provider accounts and usage `dev-docs/PROVIDER_ACCOUNTS.md`; hotkeys `dev-docs/HOTKEYS.md`; palettes `dev-docs/PALETTE_SOURCES.md`; plugin controls `dev-docs/PLUGIN_CONTROLS.md`; right-panel customization and panel extensions `dev-docs/PANEL_EXTENSIONS.md`.
 - **Projects and tabs** (closing tabs, temporary workspaces, new-instance launcher, Git-unavailable mode): `dev-docs/PROJECTS.md`.
@@ -40,7 +41,7 @@ Paths are under `packages/ui/src/` or `packages/server/src/` unless stated.
 - **OpenCode integrations** (`opencode/integrations/`, `integration-types.ts`; fixtures `scripts/fixtures/fake-integration/`, `scripts/fixtures/fake-npm-registry.mjs`): `dev-docs/OPENCODE_INTEGRATIONS.md`.
 - **Remote Control and Remote Access settings**: `dev-docs/REMOTE_CONTROL.md`; **SideCars**: `dev-docs/architecture.md`.
 - **Browser previews and automation**: `dev-docs/BROWSER_AUTOMATION.md`, `dev-docs/BROWSER_DEVICE_EMULATION.md`.
-- **Desktop hosts**: data profiles `dev-docs/DESKTOP_DATA_PROFILES.md`; updates and update feed `dev-docs/TAURI_UPDATER.md`; Tao/Tauri backports `packages/tauri-app/vendor/README.md`; bundled Node/npm `dev-docs/RUNTIME_MAINTENANCE.md`.
+- **Desktop hosts**: data profiles `dev-docs/DESKTOP_DATA_PROFILES.md`; updates and update feed `dev-docs/TAURI_UPDATER.md`; vendored Tauri crates (Tao, updater) `packages/tauri-app/vendor/README.md`; desktop runtimes (Tauri's bundled Node, Electron's integrated Node, both hosts' bundled npm) `dev-docs/RUNTIME_MAINTENANCE.md`.
 - **Public help** (`docs/help/`, help entry points): `dev-docs/USER_HELP.md`.
 
 ## Multi-Language Support (i18n)
@@ -67,6 +68,7 @@ File size is a refactoring signal, never by itself a reason to refactor. When a 
 
 ## Pull Requests
 - A PR that changes user-visible behavior (labels, controls, steps, defaults, limitations) updates the affected help pages in the same PR: English first, then the nine translations using each locale's UI labels (`dev-docs/USER_HELP.md`). Help publishes from `dev`, and CI checks only its structure and links. Answer the non-blocking `help-update-reminder.yml` comment (English UI messages changed without `docs/help`) before merging: update the help, or confirm nothing user-facing is documented there.
+- After a PR merges, remove its local worktree and branch; GitHub deletes the merged head branch (repository setting). Delete a remote branch you created only once its PR is merged or closed for good, and ask before deleting branches created by others or by automation.
 
 ## Commit Message Guidelines
 - Commit messages: a concise conventional-style subject, then body paragraphs explaining why the change exists, the user-visible behavior change, the implementation approach, important edge cases or platform considerations, and the validation or tests that prevent regressions.

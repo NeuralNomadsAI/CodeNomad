@@ -82,6 +82,7 @@ import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
 import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
 
 import { hasWakeLockEligibleWork, getSessionStatus } from "./stores/session-status"
+import { shouldAppHoldWakeLock } from "./stores/wake-lock-eligibility"
 import { openSettings } from "./stores/settings-screen"
 import { showCommandPalette } from "./stores/command-palette"
 import {
@@ -225,15 +226,11 @@ const App: Component = () => {
     initReleaseNotifications()
   })
 
-  const shouldHoldWakeLock = createMemo(() => {
-    const map = instances()
-    for (const id of map.keys()) {
-      if (hasWakeLockEligibleWork(id)) {
-        return true
-      }
-    }
-    return false
-  })
+  const shouldHoldWakeLock = createMemo(() => shouldAppHoldWakeLock(
+    preferences().keepComputerAwake,
+    [...instances().keys()].some(hasWakeLockEligibleWork),
+    runtimeEnv.windowContext,
+  ))
 
   createEffect(() => {
     const hold = shouldHoldWakeLock()

@@ -27,6 +27,7 @@ test("real Electron View menu rebuilds native labels on initial sync, locale and
       outdir: sandbox, outExtension: { ".js": ".cjs" }, bundle: true, platform: "node", format: "cjs", external: ["electron"] })
     const env = { ...process.env, CODENOMAD_TEST_PROFILE: join(sandbox, "profile"), CODENOMAD_TEST_MENU_MODULE: module }
     delete env.ELECTRON_RUN_AS_NODE
+    delete env.ELECTRON_NO_ASAR
     app = await _electron.launch({ timeout: 15000, executablePath: process.env.CODENOMAD_TEST_ELECTRON || createRequire(import.meta.url)("electron"),
       args: [fileURLToPath(new URL("fixtures/view-menu-electron.cjs", import.meta.url))], env })
     await app.evaluate(async ({ app }) => { await app.whenReady() })

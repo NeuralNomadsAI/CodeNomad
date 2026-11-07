@@ -54,6 +54,6 @@ Un proceso ya en ejecución no adquiere código nuevo solo porque npm lo instal�
 
 Actualizar CodeNomad no actualiza la CLI OpenCode seleccionada. Actualizar esa CLI no reinicia el daemon compartido en ejecución. Recargar la configuración nativa es otra operación explícita con sus propios efectos sobre Locations cargadas y solicitudes.
 
-Los recursos Node/npm de escritorio se distribuyen con la aplicación; una versión de la aplicación entrega sus actualizaciones. Esto no reemplaza tu Node/npm del sistema, el entorno interno de Electron, el webview de la plataforma ni el servicio OpenCode gestionado independientemente.
+Los entornos de escritorio se actualizan con la aplicación: Electron usa su Node integrado, Tauri incluye Node y ambos incluyen npm. Node/npm del sistema, el webview de la plataforma y el servicio OpenCode se gestionan de forma independiente.
 
 Usa **Configuración → OpenCode** para selección del entorno, instalación/actualización y controles explícitos del servicio. Comprueba la [configuración de OpenCode](opencode.md) antes de reiniciar o recargar, sobre todo cuando otras ventanas/personas o Misiones comparten el daemon. Nunca repitas un mensaje o modificación inciertos solo porque terminó una actualización/reconexión.
