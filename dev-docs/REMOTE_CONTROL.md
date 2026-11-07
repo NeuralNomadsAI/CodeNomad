@@ -139,9 +139,17 @@ success; secrets stay out of UI state and logs, and the add field is scrubbed af
 the attempt. Never retain codes for retries.
 
 The credential survives local launches. Forgetting the saved server deletes it;
-revocation clears the rejected credential and returns Browse to its inline
-password form. To repair tunnel browsing, use Back to Browse and paste a fresh
-pairing link into the add field. Native embedded views pair separately.
+revocation clears the rejected credential. To repair tunnel browsing, use Back to
+Browse and paste a fresh pairing link into the add field. Pairing errors name the
+saved server. Home and blank tabs own this named-server browsing flow; the quick
+launcher reaches it through Open another project….
+
+Known authentication limitation: native embedded views and backend browsing use
+independent authentication authorities. A native view can require another sign-in
+or pairing link even after backend browsing succeeds. A separate backend/native
+authentication change is required to unify that flow; keep single-use codes
+scrubbed after redemption. Project selection explicitly labels the separate-window
+fallback for profiles skipping TLS verification and hosts without embedded views.
 
 Compatibility is capability-based: an endpoint returning 403 (including an older
 browser-Origin rejection), 404 or 405 maps to `pairing_unavailable` and offers

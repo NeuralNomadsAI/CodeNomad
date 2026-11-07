@@ -47,7 +47,7 @@ Native Mobilvorlagen setzen Android-/Chromium-Identität, Ausrichtung, Touch und
 1. Starten Sie das Webwerkzeug separat auf dem CodeNomad-Backend-Host, lauschend auf `127.0.0.1:<port>`.
 2. Öffnen Sie **Einstellungen → SideCars**. Geben Sie **Name** und **Port** ein; prüfen Sie den abgeleiteten **Basispfad** (`/sidecars/<id>`).
 3. Setzen Sie **Protokoll** passend zum Upstream-Dienst und wählen Sie **Präfix-Modus**.
-4. Wählen Sie **SideCar hinzufügen** und öffnen Sie den SideCar dann über **Durchsuchen** auf der Startseite oder im Starter; danach erscheint er unter **Zuletzt verwendet**. **Neuer SideCar** öffnet dieses Formular.
+4. Wählen Sie **SideCar hinzufügen** und öffnen Sie ihn über **Durchsuchen** auf Startseite oder leerem Tab; danach erscheint er unter **Zuletzt verwendet** und in der Schnellstartersuche. **Neuer SideCar** unter der Auswahlliste öffnet dieses Formular. Die SideCar-Auswahl erzeugt ein neues Vorkommen; die separate Aktion **Offen** wählt ein bestehendes ([Projekt-Tabs](projects.md#open-project)).
 
 | Auswahl | Exakte Wirkung |
 | --- | --- |

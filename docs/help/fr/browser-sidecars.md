@@ -47,7 +47,7 @@ Les modèles mobiles natifs définissent identité Android/Chromium, orientation
 1. Démarrez l’outil web séparément sur l’hôte backend CodeNomad, en écoute sur `127.0.0.1:<port>`.
 2. Ouvrez **Paramètres → SideCars**. Saisissez **Nom** et **Port** ; vérifiez le **Chemin de base** dérivé (`/sidecars/<id>`).
 3. Réglez **Protocole** selon le service amont et choisissez **Mode de préfixe**.
-4. Choisissez **Ajouter un SideCar**, puis ouvrez le SideCar depuis **Parcourir** sur l’accueil ou dans le lanceur ; il rejoint alors les **Récents**. **Nouveau SideCar** ouvre ce formulaire.
+4. Choisissez **Ajouter un SideCar**, puis ouvrez-le depuis **Parcourir** sur l'accueil ou un onglet vide ; il rejoint **Récents** et la recherche du lanceur rapide. **Nouveau SideCar**, sous la liste du sélecteur, ouvre ce formulaire. Choisir un SideCar crée une nouvelle occurrence ; son action séparée **Ouvert** rejoint l'existante ([onglets de projet](projects.md#open-project)).
 
 | Choix | Effet exact |
 | --- | --- |

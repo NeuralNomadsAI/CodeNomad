@@ -1,5 +1,11 @@
 .remote-server-browser { min-width: 0; max-height: 55dvh; overflow: auto; }
-.remote-server-browser .browse-menu-meta { max-width: 45%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.remote-server-browser .browse-menu-meta { flex: 0 1 45%; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .remote-server-signin { display: grid; gap: var(--space-sm); padding: var(--space-sm); }
 .remote-server-signin input { background: var(--surface-field); }
-.remote-server-path { padding: var(--space-sm); overflow-wrap: anywhere; color: var(--text-muted); font-size: var(--font-size-sm); }
+.remote-server-navigation { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) var(--space-sm); }
+.remote-server-label { display: grid; gap: var(--space-xs); color: var(--text-secondary); font-size: var(--font-size-sm); }
+.remote-server-path { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-sm); background: var(--surface-inset); color: var(--text-muted); font-size: var(--font-size-sm); }
+.remote-server-path > span:first-child { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.remote-server-section { margin: 0; padding: var(--space-sm); color: var(--text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
+.remote-server-path > span:focus-visible,
+.remote-server-navigation > bdi:focus-visible { outline: 1px solid var(--focus-ring-color); }

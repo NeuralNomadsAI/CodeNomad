@@ -1,41 +1,18 @@
-/* Browse disclosure shared by the home page and the new-instance launcher (`browse-menu.tsx`). */
+/* Browse fills the canonical project selector's panel. */
 .browse-menu {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
   min-width: 0;
-}
-
-/* A section title with its chevron first: no frame, no icon (Browse, and the launcher's Recent). */
-.browse-menu-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  border: 0;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  text-align: start;
-  cursor: pointer;
-}
-
-.browse-menu-toggle:hover:not(:disabled) {
-  color: var(--text-secondary);
-}
-
-.browse-menu-toggle:focus-visible {
-  outline: 1px solid var(--focus-ring-color);
-  outline-offset: 2px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 
 .browse-menu-body {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background-color: var(--surface-overlay);
-  border: 1px solid color-mix(in srgb, var(--border-base) 50%, transparent);
   color: var(--text-secondary);
   text-align: start;
 }
@@ -87,22 +64,4 @@
 
 .browse-menu-meta[data-status="running"] {
   color: var(--session-status-idle-fg, var(--text-secondary));
-}
-
-/* The home page's Browse tab: the list fills its panel, without its own frame. */
-.browse-menu--open {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-}
-
-.browse-menu--open .browse-menu-body {
-  border: 0;
-  background-color: transparent;
-}
-
-/* The launcher aligns it with its section titles. */
-.new-instance-launcher .browse-menu {
-  padding: var(--space-xs) var(--window-inline-padding);
-  border-top: 1px solid color-mix(in srgb, var(--border-base) 50%, transparent);
 }

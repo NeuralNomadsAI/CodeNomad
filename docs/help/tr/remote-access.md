@@ -83,9 +83,9 @@ Bir istemci bir sertifika uyarısı bildirirse, durdurun ve ana bilgisayar adın
 
 ## Uzak sunucuyu kaydedin {#saved-servers}
 
-1. Ana sayfada, boş sekmede veya **Sekme aç** başlatıcısında **Gözat** bölümünü açıp adresi ya da eşleştirme bağlantısını **Sunucu adresi veya bağlantısı** alanına girin. Yapıştırma hemen ekler; Enter yazılan metni ekler. Sunucu ana bilgisayar adıyla kaydedilir ve satırına odaklanılır; eşleştirme bağlantısı tarama için yerel arka ucu da eşleştirir. Başlatıcı açık kalır. Projeleri aynı yerde taramak için bu satıra tıklayın. **Ayarlar → Sunucular** aynı alanı sunar.
-2. Güvenilir bir HTTPS kaynağı kullanın. Sertifika doğrulanamazsa alanın altında **TLS doğrulamasını atla** görünür: yalnızca güvendiğiniz sunucu için işaretleyip kaydetmek üzere yeniden Enter'a basın. Bu profilde klasör veya proje seçmek kendi penceresini açar.
-3. Projeleri aynı yerde taramak için **Gözat** içindeki kayıtlı satırını seçin. İstenirse satır içi forma sunucu kullanıcı adını ve parolasını girin. Adı veya adresi **Ayarlar → Sunucular** içindeki **Sunucuyu düzenle** ile değiştirin.
+1. Ana sayfa veya boş **Proje aç** sekmesinde **Gözat** bölümünü açıp **Sunucu adresi veya bağlantısı** alanına adres veya bağlantı girin. Hızlı başlatıcıda önce **Başka bir proje aç…** seçin. Yapıştırmak hemen ekler; Enter yazılan metni onaylar. Sunucu kaydedilir, satırı odaklanır ve seçici yerinde kalır; bağlantı tarama için yerel arka ucu da eşleştirir. Taramak için satıra tıklayın. **Ayarlar → Sunucular** aynı alanı sunar.
+2. Güvenilir HTTPS kaynağı kullanın. Sertifika ve erişilemeyen sunucu hataları çevrilmiştir; bilgi denetimi teknik ayrıntıları isteğe bağlı gösterir. **TLS doğrulamasını atla** açık seçim gerektirir: yalnızca güvenilir sunucuda kullanıp yeniden onaylayın. Açma eylemi, proje seçilirken profilin ayrı pencere kullanacağını belirtir.
+3. Sunucu adı oturum açarken ve gezinirken görünür kalır; alanlar etiketlidir, **Son kullanılanlar** ve **Klasörler** ayrıdır. Eşleştirme hataları sunucuyu adlandırır. **Ayarlar → Sunucular** içindeki **Sunucuyu düzenle** URL ve adı değiştirir; `i` düğmeleri URL/TLS yardımını istek üzerine gösterir.
 
 **Ayarlar → Sunucular** profilleri yönetir (**Sunucuyu düzenle**, **Kayıtlı sunucuyu kaldır**). Kaldırma önce arka uçtaki tarama kimlik bilgilerini ve oturumunu unutur, ardından yer imini kaldırıp sekmelerini kapatır. Uzak projeler ve konuşmalar sunucuda kalır. Yerel arka uç tarama sırlarını yapılandırmasının yanında `remote-server-credentials.json` içinde saklar; bu dosyayı parola gibi koruyun. Gömülü görünümlerin kimlik doğrulaması ayrıdır.
 
@@ -99,9 +99,9 @@ Yeni bir Uzaktan Kontrol bağlantısı yapıştırmak tünel kökenini kaydeder 
 
 Masaüstü uygulamasında (Electron veya Windows'ta Tauri), kayıtlı bir sunucu projelerinden birini yerel projelerinizin yanında bu pencerenin bir sekmesinde de açabilir:
 
-1. Ana sayfada, boş sekmede veya **Sekme aç** başlatıcısında **Gözat** bölümünü açıp kayıtlı bir sunucu seçin. Önce eklemek için **Sunucu adresi veya bağlantısı** alanını kullanıp yeni satıra tıklayın.
-2. Liste aynı yerde sunucunun son projelerine ve klasörlerine geçer. Gerekirse satır içi formdan oturum açın. Son projelerden birini seçin veya klasörlere gidip **Geçerli Olanı Seç** öğesini kullanın. **Gözat'a dön** sunucu listesini açar.
-3. Klasör seçimi uzak proje sekmesini açar ve başlangıçtaki boş sekmenin yerini alır. `+` başlatıcısı seçime kadar açık kalır. Proje doğrudan yeniden açılmak üzere **Son kullanılanlar** listesine eklenir.
+1. Ana sayfa veya boş sekmede **Gözat** bölümünden sunucu seçin. Hızlı başlatıcıda önce **Başka bir proje aç…** kullanın. Sunucu eklemek için **Sunucu adresi veya bağlantısı** alanını kullanıp satırına tıklayın.
+2. Adı görünen sunucu **Son kullanılanlar** ve **Klasörler** bölümlerini yerinde gösterir. Gerekirse etiketli formda oturum açın. Son proje seçin veya gezinip **Bu klasörü aç** kullanın. **Gözat'a dön** sunucuları gösterir.
+3. Klasör seçimi boş sekmenin yerine yeni uzak örnek oluşturur ve **Son kullanılanlar** listesine ekler. Ayrı **Aç** eylemi mevcut örneğe geçer. TLS ve Tauri macOS/Linux dahil ayrı pencere kullanılacağı seçim anında belirtilir. Bilinen sınır: arka uç taraması ve yerel görünüm bağımsız kimlik doğrular.
 
 Sekmenin konuşmaları, dosyaları, Git'i, ayarları ve Missions uzak sunucuda çalışır. Gömülü görünüm sunucunun uzak pencere depolamasını paylaşır ve Gözat'tan bağımsız oturum açmanızı isteyebilir. Uzak sekmeler başlangıçta geri yüklenir. Gömülü modu olmayan sunucular tam arayüzü gösterir; TLS doğrulamasını atlayan profiller ve macOS/Linux'ta Tauri ayrı pencere açar. Gömülü sayfa kendi sunucusunda kalır ve ana bilgisayarda yalnızca bildirim erişimine sahiptir. Web istemcilerinde ve Uzaktan Kontrol cihazlarında uzak sekme yoktur.
 

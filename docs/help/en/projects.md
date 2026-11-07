@@ -4,24 +4,24 @@ A project tab connects CodeNomad to a folder on the backend computer. Opening a 
 
 ## Open a project {#open-project}
 
-1. Click **New instance** (`+`) to open an empty **New tab**, focused on search. It shares Home's background, centered CodeNomad logo and name, large **Clone Git Repo**, **New temporary tab** and **New SideCar** buttons, and the **Recent | Browse** selector with item counts. Search sits below the selector in **Recent**. Choosing a local or remote project or a SideCar fills that tab in place. An empty tab lasts until the window reloads and closes without leaving a project. The CodeNomad logo in the title bar or tab bar opens Home, which also offers settings, language and the heart **Sponsor** button ([Support CodeNomad](sponsor.md)).
+1. Click **New instance** (`+`) or press `Ctrl/Cmd+N` to open an empty **New tab** with the compact **Open a project** selector. Home uses the same **Recent | Browse** selector, counts, search and project actions. **Clone Git Repo**, **New temporary tab** and **New SideCar** sit in a secondary bar below the list; cloning and temporary folders target the local backend. Choosing a local or remote project or a SideCar fills the empty tab in place. Empty tabs last until reload and close without leaving a project. The CodeNomad logo opens Home, with CodeNomad's identity, settings, language, links and the heart **Sponsor** button ([Support CodeNomad](sponsor.md)).
 2. In **Recent**, choose a project; or open **Browse**, choose **This computer**, then select the backend folder and open it. **Browse** also lists saved CodeNomad servers ([remote project tabs](remote-access.md#remote-project-tabs)) and SideCars ([SideCars](browser-sidecars.md#register-sidecar)).
 3. For a repository copy, choose **Clone Git Repo**, enter **Repository URL** and **Destination folder**, then **Clone**. **Destination folder** is prefilled with the repository name in the folder that holds your last clone, or next to your most recent project. **Browse** chooses the folder that contains the clone; you can also edit the path, including the clone's folder name.
 
 Browsing a remote server means browsing that server's filesystem, not your phone or laptop. Opening a project does not create a separate OpenCode daemon for each tab. Conversations are native OpenCode sessions; their lifetime is not the tab's lifetime.
 
-Choosing a saved server in **Browse** replaces the list with its recent projects and folders. Sign in inline if requested, then choose a recent project or navigate to a folder and use **Select Current**. **Back to Browse** returns to the servers. Only choosing a project fills the empty tab and dismisses the `+` launcher. The remote tab may request its own sign-in separately from browsing.
+Choosing a saved server in **Browse** shows its name throughout sign-in and folder navigation. The sign-in fields have visible labels; **Recent** opens a project, while **Folders** navigates. Choose **Open this folder** to open the current folder, or **Back to Browse** to return to the servers. Only a project choice fills the empty tab. Known limitation: backend browsing and the native view authenticate independently, so the remote tab may request its own sign-in.
 
 Cloning writes a repository to the destination. **Remove the destination folder first if it already exists.** is destructive: enable it only when everything already there can be deleted. Use a fresh destination if unsure. A failed clone is not a reason to delete an existing project; inspect the reported destination and error before retrying.
 
-Recent entries are shortcuts. **Rename workspace** changes its displayed name; **Remove from recent** removes the shortcut, not its files or conversations. Clicking an already-open recent project opens a new tab; its **Open** button (**Switch to open project**) selects the existing tab instead.
+Recent entries are shortcuts. Their project-actions menu on Home and empty tabs offers **Rename workspace** and **Remove from recent** where available; removal keeps files and conversations. Across Home, empty tabs and the quick launcher, clicking a local project, remote project or SideCar creates a new occurrence, even when already open. Its separate **Open** action (**Switch to open project**) selects the existing occurrence instead.
 
 ## Use the new-instance launcher {#new-instance-launcher}
 
 1. Long-press or right-click `+`; with keyboard focus there, use **Alt+Down**, **Shift+F10** or the Menu key.
-2. In **Open a tab**, search **Recent** (projects, remote projects and SideCars), open **Browse**, or choose **Clone Git Repo** or **New temporary tab**.
+2. **Recent projects** searches only recent local projects, remote projects and SideCars. Choose a row for a new occurrence, or its separate **Open** action to switch to the existing one. **Open another project…** opens an empty tab for browsing, adding servers or creating projects.
 
-A normal click opens an empty tab. Home, opened from the CodeNomad logo, offers the same choices and item counts in **Recent** and **Browse**. Rename or remove recent tabs there; manage servers in **Settings → Servers** and SideCars in **Settings → SideCars**. Escape dismisses the launcher and returns focus to `+`.
+A normal click opens an empty tab. The quick launcher contains recents and search only, plus **Open another project…**. Manage recent entries on Home or an empty tab, servers in **Settings → Servers** and SideCars in **Settings → SideCars**. Escape dismisses the launcher and returns focus to `+`.
 
 ## Close a project tab {#close-stop}
 
@@ -40,7 +40,7 @@ Closing a whole window, quitting or reloading does not close its project connect
 
 ## Temporary workspaces {#temporary-workspaces}
 
-1. Choose **New temporary tab** on the home page or in the launcher.
+1. Choose **New temporary tab** below the list on Home or an empty tab.
 2. Work in the empty CodeNomad-managed folder; Git is not initialized automatically.
 3. On closing the tab, choose **Keep**, **Discard** or **Cancel**. The tab menu also offers **Keep as project**.
 

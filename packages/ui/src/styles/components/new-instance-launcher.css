@@ -1,30 +1,18 @@
-/* Compact new-instance launcher anchored to the tab-bar button (`new-instance-launcher.tsx`). */
+/* Quick recents anchored to the tab-bar button. */
 .recent-tabs-menu { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-
 .new-instance-launcher {
   background-color: var(--surface-overlay);
   color: var(--text-secondary);
-  border: 1px solid color-mix(in srgb, var(--border-base) 50%, transparent);
-  width: min(26rem, calc(100vw - 1rem));
+  border: 1px solid var(--border-base);
+  width: min(28rem, calc(100vw - 1rem));
   max-height: min(calc(100dvh - 2rem), var(--kb-popper-content-available-height, calc(100dvh - 2rem)));
   display: flex;
   flex-direction: column;
   overflow: hidden;
   z-index: 1000;
 }
-
-.new-instance-launcher .window-header {
-  background: transparent;
-  border-bottom-color: color-mix(in srgb, var(--border-base) 50%, transparent);
-}
-
-.new-instance-launcher-search {
-  /* Like the command palette, the whole search row is the field. */
-  background-color: var(--surface-field);
-  gap: var(--space-sm);
-  border-bottom: 1px solid color-mix(in srgb, var(--border-base) 50%, transparent);
-}
-
+.new-instance-launcher .window-header { background: transparent; }
+.new-instance-launcher-search { background-color: var(--surface-field); gap: var(--space-sm); }
 .new-instance-launcher-search-input {
   flex: 1 1 auto;
   min-width: 0;
@@ -34,112 +22,43 @@
   color: var(--text-primary);
   font-size: var(--font-size-sm);
 }
-
-/* Recent, a folded section styled like Browse (`.browse-menu-toggle`). */
-.new-instance-launcher-recents-toggle {
-  padding: var(--space-xs) var(--window-inline-padding) 0;
-}
-
-/* About eight rows stay visible; the rest scroll. */
+.new-instance-launcher-search:focus-within { box-shadow: inset 0 0 0 1px var(--focus-ring-color); }
 .new-instance-launcher-recents {
   flex: 0 1 auto;
   min-height: 0;
-  max-height: calc(8 * 2.25rem);
+  max-height: 28rem;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: var(--space-xs);
+  padding: 0;
 }
-
 .new-instance-launcher-recent {
-  display: grid;
-  grid-template-columns: auto minmax(0, max-content) minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
   gap: var(--space-sm);
-  width: 100%;
-  min-height: 2.25rem;
-  padding: var(--space-xs) var(--space-sm);
+  padding-inline-end: var(--window-inline-padding);
+  border-bottom: 1px solid var(--border-divider);
+}
+.new-instance-launcher-recent-primary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-sm) var(--window-inline-padding);
   border: 0;
   background: transparent;
   color: inherit;
   text-align: start;
-  cursor: pointer;
 }
-
-.new-instance-launcher-recent[aria-selected="true"] {
-  background-color: var(--list-item-highlight-bg);
-  box-shadow: inset 0 0 0 1px var(--list-item-highlight-border);
-}
-
-.new-instance-launcher-recent[aria-disabled="true"] {
-  cursor: default;
-  opacity: 0.6;
-}
-
-.new-instance-launcher-recent-name {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-}
-
-.new-instance-launcher-recent-path {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font-family: var(--font-family-mono, monospace);
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-}
-
-.new-instance-launcher-recent-meta {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.new-instance-launcher-recent-open {
-  color: var(--session-status-idle-fg, var(--text-secondary));
-}
-
-.new-instance-launcher-recent-open .status-dot {
-  background-color: currentColor;
-}
-
-.new-instance-launcher-empty {
-  margin: 0;
-  padding: var(--space-sm);
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-}
-
-.new-instance-launcher-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-xs);
-  padding: var(--space-xs) var(--window-inline-padding);
-  border-top: 1px solid color-mix(in srgb, var(--border-base) 50%, transparent);
-}
-
-.new-instance-launcher-actions .window-action {
-  justify-content: center;
-  min-width: 0;
-}
-
-.new-instance-launcher-actions .window-action > span {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
+.new-instance-launcher-recent-primary:hover { background: var(--menu-item-hover-bg); }
+.new-instance-launcher-recent-primary:focus-visible { outline: 1px solid var(--focus-ring-color); outline-offset: -1px; }
+.new-instance-launcher-recent-details { display: flex; flex-direction: column; gap: var(--space-xs); min-width: 0; }
+.new-instance-launcher-recent-name, .new-instance-launcher-recent-path { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.new-instance-launcher-recent-name { color: var(--text-primary); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
+.new-instance-launcher-recent-path, .new-instance-launcher-recent-meta { font-size: var(--font-size-xs); color: var(--text-muted); }
+.new-instance-launcher-recent-meta { flex-shrink: 0; white-space: nowrap; }
+.new-instance-launcher-empty { margin: 0; padding: var(--space-sm); font-size: var(--font-size-sm); color: var(--text-muted); }
+.new-instance-launcher-footer { justify-content: flex-start; background: var(--surface-overlay); }
 
 /* Long press must not select text or open the touch callout on the button. */
-.new-instance-button {
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-touch-callout: none;
-  touch-action: manipulation;
-}
+.new-instance-button { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }

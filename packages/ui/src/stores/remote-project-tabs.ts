@@ -18,10 +18,6 @@ const [activeRemoteProjectToken, setActiveRemoteProjectToken] = createSignal<str
 let sequence = 0
 
 function openRemoteProjectTab(profileId: string, options: { folder?: string; entryUrl?: string } = {}): RemoteProjectTabRecord {
-  if (options.folder && !options.entryUrl) {
-    const existing = remoteProjectTabs().find((tab) => tab.profileId === profileId && tab.folder === options.folder)
-    if (existing) return existing
-  }
   const record: RemoteProjectTabRecord = {
     token: `${Date.now().toString(36)}-${(sequence++).toString(36)}`,
     profileId,

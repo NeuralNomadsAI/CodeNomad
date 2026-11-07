@@ -4,24 +4,24 @@ Una pestaña de proyecto conecta CodeNomad a una carpeta del equipo del backend.
 
 ## Abrir un proyecto {#open-project}
 
-1. **Nueva instancia** (`+`) abre una **Nueva pestaña** vacía con el foco en la búsqueda. Comparte el fondo, logotipo y nombre CodeNomad centrados y los botones grandes de Inicio: **Clonar repo Git**, **Nueva pestaña temporal** y **Nuevo SideCar**. El selector **Recientes | Explorar** muestra cantidades; la búsqueda está debajo, en **Recientes**. Elegir un proyecto local o remoto o un SideCar llena esa pestaña en su posición. La pestaña vacía dura hasta recargar y se cierra sin dejar un proyecto. El logotipo CodeNomad en la barra de título o pestañas abre Inicio, con configuración, idioma y el botón con corazón **Patrocinar** ([Apoyar CodeNomad](sponsor.md)).
+1. **Nueva instancia** (`+`) o `Ctrl/Cmd+N` abre una pestaña vacía con el título compacto **Abrir un proyecto**. Inicio comparte el selector **Recientes | Explorar**, cantidades, búsqueda y acciones. **Clonar repo Git**, **Nueva pestaña temporal** y **Nuevo SideCar** están en una barra secundaria bajo la lista; los clones y carpetas temporales usan el backend local. Elegir un proyecto local, remoto o SideCar llena la pestaña en su posición. Las pestañas vacías duran hasta recargar y se cierran sin dejar proyecto. El logotipo abre Inicio con la identidad de CodeNomad, configuración, idioma, enlaces y **Patrocinar** ([Apoyar CodeNomad](sponsor.md)).
 2. En **Recientes**, elige un proyecto; o abre **Explorar**, elige **Este equipo** y luego selecciona la carpeta del backend y ábrela. **Explorar** también lista los servidores CodeNomad guardados ([pestañas de proyectos remotos](remote-access.md#remote-project-tabs)) y los SideCars ([SideCars](browser-sidecars.md#register-sidecar)).
 3. Para obtener una copia de un repositorio, elige **Clonar repo Git**, introduce la **URL del repositorio** y la **Carpeta de destino** y pulsa **Clonar**. La **Carpeta de destino** se rellena con el nombre del repositorio en la carpeta que contiene tu último clon, o junto a tu proyecto más reciente. **Buscar** elige la carpeta que contendrá el clon; también puedes editar la ruta, incluido el nombre de la carpeta del clon.
 
 Explorar un servidor remoto significa explorar el sistema de archivos de ese servidor, no el de tu teléfono o portátil. Abrir un proyecto no crea un daemon de OpenCode distinto para cada pestaña. Las conversaciones son sesiones nativas de OpenCode; su duración no es la de la pestaña.
 
-Elegir un servidor en **Explorar** sustituye la lista por sus proyectos recientes y carpetas. Inicia sesión en el formulario integrado si se solicita y elige un proyecto o navega a una carpeta y pulsa **Seleccionar actual**. Volver a Explorar muestra los servidores. Solo elegir un proyecto rellena la pestaña vacía y cierra el lanzador `+`. La pestaña remota puede pedir su propio inicio de sesión, separado de la exploración.
+El servidor elegido en **Explorar** conserva su nombre visible durante el acceso y la navegación. Los campos tienen etiquetas; **Recientes** abre proyectos y **Carpetas** permite navegar. **Abrir esta carpeta** abre la carpeta actual; volver a Explorar muestra los servidores. Solo elegir proyecto llena la pestaña vacía. Limitación conocida: la exploración del backend y la vista nativa se autentican de forma independiente; la pestaña remota puede pedir su propio acceso.
 
 La clonación escribe un repositorio en el destino. **Eliminar primero la carpeta de destino si ya existe.** es destructivo: actívalo solo si se puede borrar todo lo que ya haya allí. Usa un destino nuevo si tienes dudas. Una clonación fallida no es motivo para eliminar un proyecto existente; inspecciona el destino y el error indicados antes de reintentar.
 
-Las entradas recientes son accesos directos. **Renombrar workspace** cambia su nombre visible; **Eliminar de recientes** elimina el acceso directo, no sus archivos ni conversaciones. Hacer clic en un proyecto reciente que ya esté abierto abre una pestaña nueva; su botón **Abierta** (**Cambiar al proyecto abierto**) selecciona en cambio la pestaña existente.
+Los recientes son accesos directos. Su menú de acciones en Inicio y pestañas vacías ofrece **Renombrar workspace** y **Eliminar de recientes** cuando corresponde; conserva archivos y conversaciones. En Inicio, pestañas vacías y lanzador rápido, pulsar un proyecto local, remoto o SideCar crea una nueva instancia aunque ya esté abierto. La acción separada **Abierta** (**Cambiar al proyecto abierto**) selecciona la existente.
 
 ## Usar el lanzador de nuevas instancias {#new-instance-launcher}
 
 1. Mantén pulsado `+` o haz clic derecho; con el foco del teclado allí, usa **Alt+Down**, **Shift+F10** o la tecla Menú.
-2. En **Abrir una pestaña**, busca en **Recientes** (proyectos, proyectos remotos y SideCars), abre **Explorar** o elige **Clonar repo Git** o **Nueva pestaña temporal**.
+2. **Proyectos recientes** busca solo proyectos locales, remotos y SideCars recientes. Una fila crea una nueva instancia; su acción **Abierta** cambia a la existente. **Abrir otro proyecto…** abre una pestaña vacía para explorar, añadir servidores o crear proyectos.
 
-Un clic normal abre una pestaña vacía. Inicio, desde el logotipo CodeNomad, ofrece las mismas opciones y cantidades en **Recientes** y **Explorar**. Cambia el nombre o quita pestañas recientes allí; gestiona los servidores en **Configuración → Servidores** y los SideCars en **Configuración → SideCars**. Escape cierra el lanzador y devuelve el foco a `+`.
+Un clic normal abre una pestaña vacía. El lanzador rápido contiene recientes, su búsqueda y **Abrir otro proyecto…**. Gestiona los recientes en Inicio o una pestaña vacía, los servidores en **Configuración → Servidores** y los SideCars en **Configuración → SideCars**. Escape cierra el lanzador y devuelve el foco a `+`.
 
 ## Cerrar una pestaña de proyecto {#close-stop}
 
@@ -40,7 +40,7 @@ Cerrar una ventana entera, salir o recargar no cierra sus conexiones de proyecto
 
 ## Espacios de trabajo temporales {#temporary-workspaces}
 
-1. Elige **Nueva pestaña temporal** en la página de inicio o en el lanzador.
+1. Elige **Nueva pestaña temporal** bajo la lista en Inicio o una pestaña vacía.
 2. Trabaja en la carpeta vacía gestionada por CodeNomad; Git no se inicializa automáticamente.
 3. Al cerrar la pestaña, elige **Conservar**, **Descartar** o **Cancelar**. El menú de la pestaña también ofrece **Conservar como proyecto**.
 

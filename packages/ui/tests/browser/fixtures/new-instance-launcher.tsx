@@ -6,12 +6,13 @@ import NewInstanceLauncher from "../../../src/components/new-instance-launcher"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { addInstance } from "../../../src/stores/instances"
-import type { AppTabRecord } from "../../../src/stores/app-tabs"
+import { attachInstanceTab, type AppTabRecord } from "../../../src/stores/app-tabs"
 import type { Instance } from "../../../src/types/instance"
 import "../../../src/index.css"
 
 const open: Instance = { id: "codenomad-tab", folder: "D:/CodeNomad", port: 0, pid: 0, proxyPath: "/fixture", status: "ready", client: null, projectName: "CodeNomad" }
 addInstance(open)
+attachInstanceTab(open.id)
 const tabs: AppTabRecord[] = [{ id: `instance:${open.id}`, kind: "instance", instance: open }]
 
 const calls: string[] = []
@@ -26,7 +27,7 @@ function Fixture() {
     <NewInstanceLauncher open={launcherOpen()} anchor={anchor()} isLoading={false} onOpenChange={setLauncherOpen}
       onSelectFolder={(path) => calls.push(`folder:${path}`)}
       onSelectExistingInstance={(id, path) => calls.push(`existing:${id}:${path}`)}
-      onNewTemporaryInstance={() => calls.push("temporary")} />
+      onOpenAnotherProject={() => calls.push("home")} />
     {/* Stands in for another window (command palette, home page) taking focus. */}
     <input id="other-surface" aria-label="Other surface" />
   </>}>

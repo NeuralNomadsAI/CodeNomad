@@ -47,17 +47,17 @@ describe("remote project tabs", () => {
     assert.deepEqual(decoded?.session?.tabs, source.session?.tabs)
   })
 
-  it("join the tab bar, reuse a tab for the same project and close with their server", () => {
+  it("join the tab bar as separate occurrences and close with their server", () => {
     releaseAppSessionRestoreGate()
     const first = openRemoteProjectTab("box", { folder: "/srv/app" })
-    assert.equal(openRemoteProjectTab("box", { folder: "/srv/app" }).token, first.token)
+    assert.notEqual(openRemoteProjectTab("box", { folder: "/srv/app" }).token, first.token)
     const picker = openRemoteProjectTab("box")
     const pairing = openRemoteProjectTab("box", { entryUrl: "https://t.example/remote-pair#code" })
     assert.notEqual(picker.token, pairing.token)
     selectRemoteProjectTab(first.token)
     assert.equal(activeAppTabId(), `remote-project:${first.token}`)
     assert.equal(activeRemoteProjectToken(), first.token)
-    assert.equal(appTabs().filter((tab) => tab.kind === "remote-project").length, 3)
+    assert.equal(appTabs().filter((tab) => tab.kind === "remote-project").length, 4)
 
     patchRemoteProjectTab(pairing.token, { entryUrl: undefined, folder: "/srv/other", title: "Other" })
     assert.deepEqual(remoteProjectTabs().find((tab) => tab.token === pairing.token), {
