@@ -50,6 +50,11 @@ finishes first. JSON is materialized one message at a time, limited to 16 MiB.
 Oversized or unsupported content is counted as skipped and reported to the UI.
 Never add an index, trigger, FTS table or persistent transcript copy.
 
+The shared `session-pruning/message-storage.ts` relation reconstructs assistant
+content from ordered `session_part` rows followed by the inline tail. Stored-byte
+bounds cover both forms before reconstruction; all resulting part indexes use that
+combined order. Existing split rows retain this read behavior after `part_rows` is disabled.
+
 Cursors bind scope and query; the broker also binds the authorized directory
 inventory. A rowid horizon excludes new rows appended during each location scan.
 The search window never starts a separate statistics traversal, and an empty

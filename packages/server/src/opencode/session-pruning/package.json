@@ -18,7 +18,7 @@
     "assets-gallery-contract.ts", "assets-gallery-proof.ts", "assets-gallery.ts", "assets-conversation.ts",
     "history-database.ts", "navigation-contract.ts", "navigation-store.ts",
     "navigation-scope.ts", "outline-index.ts", "outline-layout.ts", "outline-preview.ts",
-    "transaction.ts"
+    "transaction.ts", "message-storage.ts", "native-assistant-content.ts"
   ],
   "dependencies": {
     "@opencode/plugin": "2.2.3",

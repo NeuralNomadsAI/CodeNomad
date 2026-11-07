@@ -24,6 +24,7 @@ methods, the integration OpenCode's maintainers recommend for plugins
 - `media-blob.ts`: the native read form of rows stored with OpenCode's optional media storage (`experimental.media_blob`: `media:<sha256>` refs into `blob`, owned through `blob_ref`). Preview, pruning, prune candidates, navigation windows and assets inline refs, or give the native unavailable placeholder, exactly as native reads do, within the same byte budgets measured on that form. Rows naming no ref pass through untouched; ref-backed rows whose blob tables are missing or unrecognized fail closed as `unsupported_storage`.
 - `database-path.ts`: daemon-side OpenCode data-directory/environment conventions, with an optional path override.
 - `transaction.ts`: synchronous content-only CAS and atomic idempotency receipt.
+- `message-storage.ts`: bounded native message relation for inline content and ordinal `session_part` rows followed by any inline tail; schema inspection selects the stored representation. Headers account for both stores before JSON materialization. Invalid part ownership, type or call identity is refused. Metadata-only rowid/sequence seeks retain their native tables.
 - `claim-fence.ts`: native execution-claim and database-identity checks.
 - `service.ts`: database connection and a fresh `ctx.storage` challenge.
 - `isolated-store.ts`: in-memory-only test adapter; never a live write bypass.
@@ -42,8 +43,10 @@ The UI offers individual, per-message, group and session cleanup entry points. I
 fetches the native message, resolves selected tools by ID and reasoning by a unique
 content/time match, then sends indexes plus a canonical SHA-256 content revision.
 Ambiguous reasoning or stale content fails closed. It never submits replacement text.
-The plugin compares that revision with the native read form (`media-blob.ts`), writes
-surviving parts in their stored form, and in the same transaction releases the
+The plugin compares that revision with the reconstructed native read form (`message-storage.ts`, `media-blob.ts`),
+deletes selected split rows and removes selected entries from the inline tail under the same write lock.
+Retained split rows keep their original ordinals and JSON bytes; native readers order ordinals without requiring contiguous values.
+The envelope's exact-data CAS, part deletion and receipt commit together. In the same transaction it releases the
 `blob_ref` rows of refs the removed parts alone named, deleting blobs no ref keeps,
 as native content updates do.
 Selections allow up to 100,001 unique indices (0-100,000), within a 1 MiB broker
