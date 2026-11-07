@@ -1,9 +1,12 @@
 """Loopback-only native browser acceptance page; logs results to stdout."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
+import base64
+
+PDF_BASE64 = 'JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMjAwXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA0IDAgUiA+PiA+PiAvQ29udGVudHMgNSAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iago1IDAgb2JqCjw8IC9MZW5ndGggNDkgPj4Kc3RyZWFtCkJUIC9GMSAxNiBUZiAzMCAxMDAgVGQgKE5hdGl2ZSBwcmV2aWV3IFBERikgVGogRVQKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNgowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyNDEgMDAwMDAgbiAKMDAwMDAwMDMxMSAwMDAwMCBuIAp0cmFpbGVyCjw8IC9TaXplIDYgL1Jvb3QgMSAwIFIgPj4Kc3RhcnR4cmVmCjQxMAolJUVPRgo='
 
 PAGE = b'''<!doctype html><meta charset="utf-8"><title>WebKit capabilities</title>
-<style>body{font:20px sans-serif}button,a{display:block;margin:18px;padding:10px}</style>
+<style>body{font:18px sans-serif}button,a{display:inline-block;margin:4px;padding:6px}details{margin-block:12px}pre{white-space:pre-wrap}</style>
 <button onclick="window.popup=window.open('/popup','oauth','width=520,height=680')">OAuth popup</button>
 <a href="/popup" target="_blank" rel="opener">Target blank</a>
 <a href="/download" download>Download</a>
@@ -13,7 +16,7 @@ PAGE = b'''<!doctype html><meta charset="utf-8"><title>WebKit capabilities</titl
 <button onclick="popup=window.open('/hold','hold')">Hold popup for opener cleanup</button>
 <a href="data:text/plain,generated-download" download="capabilities-data.txt">Data download</a>
 <button onclick="blobDownload()">Blob download</button>
-<details><summary>Browser APIs</summary>
+<details open><summary>Browser APIs</summary>
 <button onclick="blankPopup()">Blank OAuth</button>
 <button onclick="const first=window.open('/hold','named-test');const second=window.open('/popup','named-test');report('named',first===second)">Named window</button>
 <button onclick="try{report('prompt-only',prompt('fixture prompt','fixture-default'))}catch(e){report('prompt-error',e.message)}">Prompt only</button>
@@ -22,15 +25,19 @@ PAGE = b'''<!doctype html><meta charset="utf-8"><title>WebKit capabilities</titl
 <button onclick="navigator.clipboard.readText().then(v=>report('clipboard-read','length:'+v.length),e=>report('clipboard-read',e.name))">Read clipboard</button>
 <button onclick="navigator.clipboard.writeText('capabilities-fixture').then(()=>report('clipboard-write','written'),e=>report('clipboard-write',e.name))">Write clipboard</button>
 <button onclick="window.onbeforeunload=()=>true;report('beforeunload','armed')">Arm beforeunload</button><a href="/next">Navigate</a>
+<button onclick="location.reload()">Reload page</button>
 <button onclick="window.print();report('print','requested')">Print</button>
 <input type="file" onchange="report('file',this.files[0]?.name)">
 <div style="height:80px;border:1px solid" ondragover="event.preventDefault()" ondrop="event.preventDefault();report('drop',event.dataTransfer.files[0]?.name)">Drop file</div>
 <button onclick="if(window.PublicKeyCredential)PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then(v=>report('webauthn',v));else report('webauthn','unavailable')">WebAuthn availability</button>
+<button onclick="report('hardware',JSON.stringify(Object.fromEntries(['usb','hid','serial','bluetooth'].map(k=>[k,typeof navigator[k]]))))">Hardware APIs</button>
+<a href="/pdf" target="_blank">PDF display</a><a href="/pdf-download" download>PDF download</a>
 </details>
 <pre id="results"></pre><script>
 function report(k,v){results.textContent+=k+': '+v+'\\n';fetch('/result?'+encodeURIComponent(k+'='+v))}
 addEventListener('error',e=>report('error',e.message));
 document.addEventListener('pointerlockchange',()=>report('pointer-lock',Boolean(document.pointerLockElement)));
+document.addEventListener('pointerlockerror',()=>report('pointer-lock','error'));
 document.addEventListener('fullscreenchange',()=>report('fullscreen-state',Boolean(document.fullscreenElement)));
 function blankPopup(){
   popup=window.open('about:blank','blank-oauth','width=520,height=680');
@@ -67,6 +74,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         route = urlsplit(self.path).path
+        if route in ('/pdf', '/pdf-download'):
+            body = base64.b64decode(PDF_BASE64)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/pdf')
+            if route == '/pdf-download':
+                self.send_header('Content-Disposition', 'attachment; filename="capabilities-fixture.pdf"')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if route == '/download':
             body = b'webkit-capabilities-download\n'
             self.send_response(200)

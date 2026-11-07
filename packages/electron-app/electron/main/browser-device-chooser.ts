@@ -1,6 +1,7 @@
-import { BrowserWindow, dialog, webContents, type Session, type WebContents } from "electron"
+import { BrowserWindow, webContents, type Session, type WebContents } from "electron"
 import { nativeMenuLabels } from "./view-menu"
 import { permissionOrigin } from "./browser-permission-policy"
+import { showBrowserDialog } from "./browser-dialog"
 
 export function configureBrowserDeviceChoosers(target: Session): void {
   const grants = new Set<string>()
@@ -14,19 +15,14 @@ export function configureBrowserDeviceChoosers(target: Session): void {
 
   async function choose(kind: string, devices: { id: string; label: string }[], contents: WebContents | undefined,
     origin: string | undefined, stillOwned: () => boolean, callback: (id: string) => void) {
-    // ponytail: native message-box choices cap at 20; use a scrollable chooser
-    // when larger device inventories need selection.
-    if (!contents || !origin || !devices.length || devices.length > 20) { callback(""); return }
+    if (!contents || !origin || !devices.length) { callback(""); return }
     const owner = BrowserWindow.fromWebContents(contents) ?? BrowserWindow.fromWebContents(contents.hostWebContents ?? contents)
     const l = nativeMenuLabels(owner)
-    const options = { type: "question" as const, title: origin,
-      message: l.browserPermission.replace("{permission}", kind).replace("{origin}", origin),
-      buttons: [l.browserDeny, ...devices.map(device => device.label.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 160).replaceAll("&", "&&"))],
-      defaultId: 0, cancelId: 0, noLink: true }
     let chosen = ""
     try {
-      const result = await (owner ? dialog.showMessageBox(owner, options) : dialog.showMessageBox(options))
-      const selected = devices[result.response - 1]
+      const result = owner ? await showBrowserDialog(owner, origin,
+        l.browserPermission.replace("{permission}", kind).replace("{origin}", origin), { choices: devices.map(device => device.label) }) : null
+      const selected = result !== null && /^(0|[1-9]\d*)$/.test(result) ? devices[Number(result)] : undefined
       if (selected && !contents.isDestroyed() && stillOwned()) {
         grants.add(key(kind, origin, selected.id))
         chosen = selected.id

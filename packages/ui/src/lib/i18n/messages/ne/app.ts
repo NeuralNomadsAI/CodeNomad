@@ -1,4 +1,6 @@
 export const appMessages = {
+  "window.menu.native.browserPromptAccept": "ठीक छ",
+  "window.menu.native.browserPromptCancel": "रद्द गर्नुहोस्",
   "window.menu.native.browserPermission": "{origin} का लागि {permission} अनुमति दिने?",
   "window.menu.native.browserPermissionUnknown": "अज्ञात अनुमति रोकियो: {permission}।",
   "window.menu.native.browserAllow": "अनुमति दिनुहोस्",

@@ -1,11 +1,19 @@
 import { BrowserWindow, clipboard, dialog, Menu, type WebContents } from "electron"
 import { isBrowserDownloadUrlAllowed, isBrowserSiteUrlAllowed, isBrowserUrlAllowed } from "./browser-webview-security"
 import { nativeMenuLabels } from "./view-menu"
+import { isBrowserDialog } from "./browser-dialog"
+import { installBrowserPrompt } from "./browser-prompt"
 
 const windows = new WeakSet<BrowserWindow>()
 const guests = new Map<number, BrowserWindow>()
-export const isBrowserAuxiliaryWindow = (window: BrowserWindow) => windows.has(window)
+export const isBrowserAuxiliaryWindow = (window: BrowserWindow) => windows.has(window) || isBrowserDialog(window)
 export const browserGuestOwner = (contents: WebContents | null) => contents ? guests.get(contents.id) : undefined
+let promptConfigured = false
+export function configureBrowserGuests(): void {
+  if (promptConfigured) return
+  promptConfigured = true
+  installBrowserPrompt(contents => guests.get(contents.id))
+}
 
 export function focusedBrowserGuest(window: BrowserWindow, focused: WebContents | null): WebContents | undefined {
   return focused && guests.get(focused.id) === window && !focused.isDestroyed() ? focused : undefined

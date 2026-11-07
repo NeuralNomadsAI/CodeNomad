@@ -1,4 +1,6 @@
 export const appMessages = {
+  "window.menu.native.browserPromptAccept": "אישור",
+  "window.menu.native.browserPromptCancel": "ביטול",
   "window.menu.native.browserPermission": "לאפשר {permission} עבור {origin}?",
   "window.menu.native.browserPermissionUnknown": "הרשאה לא מוכרת נחסמה: {permission}.",
   "window.menu.native.browserAllow": "אפשר",

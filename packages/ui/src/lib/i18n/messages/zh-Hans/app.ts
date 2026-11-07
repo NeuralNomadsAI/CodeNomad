@@ -1,4 +1,6 @@
 export const appMessages = {
+  "window.menu.native.browserPromptAccept": "确定",
+  "window.menu.native.browserPromptCancel": "取消",
   "window.menu.native.browserPermission": "允许 {origin} 使用 {permission}？",
   "window.menu.native.browserPermissionUnknown": "已阻止未知权限：{permission}。",
   "window.menu.native.browserAllow": "允许",

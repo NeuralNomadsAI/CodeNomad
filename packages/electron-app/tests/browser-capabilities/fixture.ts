@@ -2,13 +2,17 @@ import { app, BrowserWindow, session } from "electron"
 import { secureBrowserWebview } from "../../electron/main/browser-webview-security"
 import { configureBrowserPermissionHandlers } from "../../electron/main/permissions"
 import { configureBrowserDownloads } from "../../electron/main/browser-downloads"
-import { protectBrowserGuest } from "../../electron/main/browser-guests"
+import { protectBrowserGuest, configureBrowserGuests } from "../../electron/main/browser-guests"
+import { configureBrowserPromptSession } from "../../electron/main/browser-prompt"
+import { qualifyPrompt } from "./prompt-acceptance"
 
 if (!process.env.CODENOMAD_PROFILE) throw new Error("Set an isolated CODENOMAD_PROFILE directory")
 app.setPath("userData", process.env.CODENOMAD_PROFILE)
 void app.whenReady().then(async () => {
 const partition = "persist:codenomad-browser-capabilities"
 const store = session.fromPartition(partition)
+configureBrowserGuests()
+configureBrowserPromptSession(store, process.env.CODENOMAD_FIXTURE_PROMPT_PRELOAD!)
 configureBrowserPermissionHandlers(store)
 configureBrowserDownloads(store, app.getPath("downloads"))
 const owner = new BrowserWindow({ width: 920, height: 820,
@@ -18,6 +22,7 @@ owner.webContents.on("will-attach-webview", (event, preferences, params) => {
 })
 owner.webContents.on("did-attach-webview", (_event, guest) => {
   protectBrowserGuest(owner, guest)
+  if (process.env.CODENOMAD_FIXTURE_PROMPT_TEST) guest.once("did-finish-load", () => { void qualifyPrompt(owner, guest) })
   guest.on("console-message", details => console.log("guest", details.message))
   if (process.env.CODENOMAD_FIXTURE_NETWORK) guest.once("did-finish-load", () => {
     void guest.loadURL("https://example.com").then(() => guest.executeJavaScript(`

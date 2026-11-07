@@ -1,4 +1,6 @@
 export const appMessages = {
+  "window.menu.native.browserPromptAccept": "Tamam",
+  "window.menu.native.browserPromptCancel": "İptal",
   "window.menu.native.browserPermission": "{origin} için {permission} izni verilsin mi?",
   "window.menu.native.browserPermissionUnknown": "Bilinmeyen izin engellendi: {permission}.",
   "window.menu.native.browserAllow": "İzin ver",

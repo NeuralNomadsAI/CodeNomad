@@ -95,6 +95,33 @@ define_class!(
 
   unsafe impl NSObjectProtocol for WryWebViewUIDelegate {}
 
+  // WebKit's native window.print/beforeunload hooks are declared in
+  // Source/WebKit/UIProcess/API/Cocoa/WKUIDelegatePrivate.h (macOS 12+).
+  // They are confined to preview delegates; the page receives no app bridge.
+  impl WryWebViewUIDelegate {
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(_webView:printFrame:))]
+    fn print_frame(&self, webview: &WryWebView, _frame: &NSObject) {
+      if self.ivars().preview_dialogs { preview_print(webview); }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(_webView:printFrame:pdfFirstPageSize:completionHandler:))]
+    fn print_frame_with_completion(&self, webview: &WryWebView, _frame: &NSObject,
+      _size: objc2_foundation::NSSize, completion: &Block<dyn Fn()>) {
+      if self.ivars().preview_dialogs { preview_print(webview); }
+      completion.call(());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[unsafe(method(_webView:runBeforeUnloadConfirmPanelWithMessage:initiatedByFrame:completionHandler:))]
+    fn before_unload(&self, webview: &WryWebView, message: &objc2_foundation::NSString,
+      frame: &WKFrameInfo, completion: &Block<dyn Fn(objc2::runtime::Bool)>) {
+      if !self.ivars().preview_dialogs { completion.call((true.into(),)); return; }
+      self.javascript_confirm(objc2::sel!(webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:), webview, message, frame, completion);
+    }
+  }
+
   unsafe impl WKUIDelegate for WryWebViewUIDelegate {
     #[cfg(target_os = "macos")]
     #[unsafe(method(webView:requestDeviceOrientationAndMotionPermissionForOrigin:initiatedByFrame:decisionHandler:))]
@@ -430,6 +457,23 @@ impl WryWebViewUIDelegate {
         popup,
       });
     unsafe { msg_send![super(delegate), init] }
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn preview_print(webview: &WryWebView) {
+  // Use the same public print operation as Wry's host-initiated printing.
+  unsafe {
+    if webview.window().is_none()
+      || objc2_app_kit::NSPrintOperation::currentOperation(MainThreadMarker::new().unwrap())
+        .is_some()
+    {
+      return;
+    }
+    let info = objc2_app_kit::NSPrintInfo::sharedPrintInfo();
+    let operation = webview.printOperationWithPrintInfo(&info);
+    operation.setCanSpawnSeparateThread(true);
+    operation.runOperation();
   }
 }
 

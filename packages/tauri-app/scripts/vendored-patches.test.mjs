@@ -58,3 +58,12 @@ test("preview runtime fence separates app IPC, scripts and protocols from browse
   assert.match(runtime, /for \(scheme, protocol\) in uri_scheme_protocols \{[\s\S]*?if browser_guest\s*\{\s*continue;\s*\}/)
   assert.doesNotMatch(read("src-tauri/src/embedded_view.rs"), /\.clipboard\(true\)/)
 })
+
+test("WK preview print and beforeunload callbacks retain native completion and app policy", () => {
+  const delegate = read("vendor/wry-0.57.1/src/wkwebview/class/wry_web_view_ui_delegate.rs")
+  assert.match(delegate, /method\(_webView:printFrame:pdfFirstPageSize:completionHandler:\)/)
+  assert.match(delegate, /if self\.ivars\(\)\.preview_dialogs \{ preview_print\(webview\); \}\s*completion\.call\(\(\)\)/)
+  assert.match(delegate, /fn before_unload[\s\S]*?if !self\.ivars\(\)\.preview_dialogs \{ completion\.call\(\(true\.into\(\),\)\); return; \}/)
+  assert.match(delegate, /webview\.printOperationWithPrintInfo\(&info\)/)
+  assert.match(delegate, /operation\.runOperation\(\)/)
+})

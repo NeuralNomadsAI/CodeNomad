@@ -10,8 +10,9 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { appendNodeOption, DeveloperMode } from "./developer-mode"
 import { BrowserController, handleNativeBrowserRequest } from "./browser-controller"
 import { isBrowserUrlAllowed, secureBrowserWebview } from "./browser-webview-security"
-import { protectBrowserGuest, isBrowserAuxiliaryWindow } from "./browser-guests"
+import { protectBrowserGuest, isBrowserAuxiliaryWindow, configureBrowserGuests } from "./browser-guests"
 import { configureBrowserDownloads } from "./browser-downloads"
+import { configureBrowserPromptSession } from "./browser-prompt"
 import { ClientStateManager } from "./client-state"
 import { setupClientStateIPC } from "./client-state-ipc"
 import { ClientStateNavigationController } from "./client-state-navigation"
@@ -292,6 +293,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     (error) => console.error("[cli] bootstrap token exchange failed", error),
   )
 
+  configureBrowserGuests()
   const createWindow = (windowId: string, persisted = true, connectOnly = false): LocalWindowRecord => {
     const saved = persisted ? clientState.getWindowState(windowId) : undefined
     const minimum = zoomedWindowMinimum(saved?.zoomFactor ?? 1)
@@ -335,6 +337,7 @@ function runPrimary(firstIntent: LaunchIntent) {
         return
       }
       const browserSession = session.fromPartition(params.partition)
+      configureBrowserPromptSession(browserSession, join(mainDirname, "../preload/browser-prompt.js"))
       if (!securedBrowserSessions.has(browserSession)) {
         securedBrowserSessions.add(browserSession)
         configureBrowserPermissionHandlers(browserSession)

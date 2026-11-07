@@ -1,6 +1,23 @@
 //! Native guest windows retain the engine's real opener, never an app IPC bridge.
 use super::*;
 
+pub(super) fn page_permission_subject(raw: &str) -> Option<String> {
+    let url = tauri::Url::parse(raw).ok()?;
+    if is_allowed_url(&url) {
+        return Some(url.origin().ascii_serialization());
+    }
+    if url.scheme() == "about" && url.path() == "blank" {
+        return Some("about:blank".into());
+    }
+    if url.scheme() == "blob" {
+        let inner = tauri::Url::parse(url.path()).ok()?;
+        if is_allowed_url(&inner) {
+            return Some(inner.origin().ascii_serialization());
+        }
+    }
+    None
+}
+
 fn download_path(directory: &Path, suggested: &Path) -> Option<PathBuf> {
     if !directory.is_dir() {
         return None;
@@ -265,6 +282,29 @@ impl EmbeddedViews {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn page_scoped_permission_subject_is_native_document_identity() {
+        assert_eq!(
+            page_permission_subject("https://example.com:8443/path?q=secret"),
+            Some("https://example.com:8443".into())
+        );
+        assert_eq!(
+            page_permission_subject("about:blank"),
+            Some("about:blank".into())
+        );
+        assert_eq!(
+            page_permission_subject("blob:https://example.com/id"),
+            Some("https://example.com".into())
+        );
+        for raw in [
+            "file:///private",
+            "tauri://localhost",
+            "https://user:pass@example.com",
+            "blob:null/id",
+        ] {
+            assert_eq!(page_permission_subject(raw), None);
+        }
+    }
     #[test]
     fn downloads_are_sanitized_unique_and_confined() {
         let dir = tempfile::tempdir().unwrap();

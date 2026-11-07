@@ -48,8 +48,18 @@ from authentication success. The page reports absent app IPC/Node globals.
 
 Electron uses `packages/electron-app/tests/browser-capabilities/fixture.ts` bundled
 with esbuild (`--platform=node --format=esm --external:electron`) and run by the
-installed Electron executable. Its own profile directory is mandatory. Set
+installed Electron executable (`--loader:.css=text` when bundling). Its own profile directory is mandatory. Set
 `CODENOMAD_FIXTURE_NETWORK=1` to test a trusted HTTPS page (`example.com`) requesting
 the loopback fixture: the permission dialog must identify the HTTPS origin. The
-fixture keeps the guest preload-free; Electron's unsupported prompt reports an
-explicit test error.
+fixture requires `CODENOMAD_FIXTURE_PROMPT_PRELOAD` pointing to the preview-only
+`electron/preload/browser-prompt.cjs`. Set `CODENOMAD_FIXTURE_PROMPT_TEST=1` for
+assertions covering root/blank-popup prompt strings, empty strings, cancellation,
+page-global isolation, suppressed subframe prompts and selection of entry 25.
+
+For extended qualification, open **Print** and cancel the system print panel;
+select a known local fixture through the native file input and drop it on the HTML
+zone; open **PDF display** and verify its text, then **PDF download** and verify a
+unique 593-byte PDF in Downloads. Arm beforeunload before **Navigate**, **Reload
+page** and native closure, testing cancellation and acceptance separately. Record
+native closure independently from navigation. **Hardware APIs** reports interface
+availability; **WebAuthn availability** reports platform-authenticator availability.

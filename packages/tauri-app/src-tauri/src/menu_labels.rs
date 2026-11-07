@@ -5,7 +5,7 @@ use tauri::{menu::MenuItemKind, Wry};
 /// English labels until a renderer reports its locale. Keys and texts mirror
 /// `NATIVE_MENU_LABEL_KEYS` and the English messages in the UI package
 /// (`packages/ui/src/lib/native/menu-labels.ts`); a UI test keeps them in sync.
-pub(crate) const DEFAULTS: [(&str, &str); 47] = [
+pub(crate) const DEFAULTS: [(&str, &str); 49] = [
     ("file", "File"),
     ("edit", "Edit"),
     ("view", "View"),
@@ -56,6 +56,8 @@ pub(crate) const DEFAULTS: [(&str, &str); 47] = [
     ("browserSaveImage", "Save Image"),
     ("browserOpenLink", "Open Link in New Window"),
     ("browserInspect", "Inspect"),
+    ("browserPromptAccept", "OK"),
+    ("browserPromptCancel", "Cancel"),
 ];
 
 const MAX_LABEL_CHARS: usize = 200;

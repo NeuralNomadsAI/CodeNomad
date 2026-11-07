@@ -48,6 +48,8 @@ export const NATIVE_MENU_LABEL_KEYS = {
   browserSaveImage: "window.menu.native.browserSaveImage",
   browserOpenLink: "window.menu.native.browserOpenLink",
   browserInspect: "window.menu.native.browserInspect",
+  browserPromptAccept: "window.menu.native.browserPromptAccept",
+  browserPromptCancel: "window.menu.native.browserPromptCancel",
 } as const
 
 export type NativeMenuLabels = Record<keyof typeof NATIVE_MENU_LABEL_KEYS, string>
