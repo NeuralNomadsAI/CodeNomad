@@ -6,6 +6,7 @@ export const exemptions: Record<string, string> = {
   "auth-recovery.test.ts": "stateful SSE middleware driven by the test",
   "automation-forms.test.ts": "electron automation harness; its machine-specific a11y flakiness pre-dates the daemon",
   "automation-input.test.ts": "served by a self-hosting harness or inline server that owns its Vite server",
+  "automation-preview-preparation.test.ts": "mocked Electron preparation; no fixture page",
   "automation-preview.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
   "browser-emulation-native.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
   "browser-frame-native.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
