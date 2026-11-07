@@ -114,7 +114,10 @@ int cn_key(void *opaque, const char *key, unsigned flags, int down) {
         context:nil characters:text charactersIgnoringModifiers:text isARepeat:NO keyCode:code];
     NSResponder *receiver = view.window.firstResponder;
     if (![receiver isKindOfClass:NSView.class] || ![(NSView *)receiver isDescendantOf:view]) receiver = view;
-    if (down) [receiver keyDown:event]; else [receiver keyUp:event];
+    if (down) {
+        if (!(flags & CN_META) || ![(NSView *)receiver performKeyEquivalent:event])
+            [receiver keyDown:event];
+    } else [receiver keyUp:event];
     return 1;
 }
 

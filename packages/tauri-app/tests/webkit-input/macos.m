@@ -17,6 +17,7 @@
 }
 - (void)tick:(NSTimer *)timer {
     void *view = (__bridge void *)self.view;
+    if (self.step >= 0) assert(!self.window.isKeyWindow && !NSApp.active);
     if (self.step >= 0 && self.step <= 19) sequence(view, (int)self.step);
     if (self.step == 21) cn_checkpoint(view, write_result, "checkpoint.json");
     if (self.step == 22) cn_capture(view, write_result, "capture.png");

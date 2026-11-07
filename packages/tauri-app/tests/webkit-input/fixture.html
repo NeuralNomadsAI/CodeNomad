@@ -7,7 +7,7 @@ const observations = [];
 for (const type of ['pointerdown','pointerup','pointermove','click','contextmenu','wheel','keydown','keyup','beforeinput','input']) {
   document.addEventListener(type, event => {
     observations.push({type, trusted:event.isTrusted, button:event.button, buttons:event.buttons,
-      key:event.key, ctrl:event.ctrlKey, meta:event.metaKey, data:event.data, target:event.target.tagName});
+      x:event.clientX, y:event.clientY, key:event.key, ctrl:event.ctrlKey, meta:event.metaKey, data:event.data, target:event.target.tagName});
     document.querySelector('output').textContent = JSON.stringify({observations,
       input:document.querySelector('input').value, editor:document.querySelector('[contenteditable]').textContent});
     if(type === 'contextmenu' || type === 'wheel') event.preventDefault();

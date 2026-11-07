@@ -8,6 +8,7 @@ static gint initial_x, initial_y;
 static GdkDevice *pointer;
 static gboolean tick(gpointer unused) {
     (void)unused;
+    if (step >= 0) assert(!gtk_window_is_active(GTK_WINDOW(window)));
     if (step >= 0 && step <= 19) sequence(view, step);
     if (step == 21) cn_checkpoint(view, write_result, "checkpoint.json");
     if (step == 22) cn_capture(view, write_result, "capture.png");
@@ -40,6 +41,14 @@ int main(int argc, char **argv) {
     gtk_container_add(GTK_CONTAINER(window), view);
     g_signal_connect(view, "load-changed", G_CALLBACK(loaded), NULL);
     gtk_widget_show_all(window);
+    if (g_getenv("CN_NESTED_KDE")) {
+        /* A new private compositor initially focuses its first surface. Give
+         * keyboard focus to a sentinel before sending background guest input. */
+        GtkWidget *sentinel = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+        gtk_window_set_title(GTK_WINDOW(sentinel), "Qualification focus sentinel");
+        gtk_window_set_default_size(GTK_WINDOW(sentinel), 200, 100);
+        gtk_widget_show_all(sentinel);
+    }
     pointer = gdk_seat_get_pointer(gdk_display_get_default_seat(gtk_widget_get_display(window)));
     gdk_device_get_position(pointer, NULL, &initial_x, &initial_y);
     char *html = NULL;
