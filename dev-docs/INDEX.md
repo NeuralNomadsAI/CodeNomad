@@ -13,7 +13,7 @@ Start with [README](../README.md) for installation and usage, then
 - [Agent memory](AGENT_MEMORY.md): entry format, project identity, local Git transactions and recovery, authorized API/tool contracts, safe session instructions, Preferences review and cleanup sessions.
 - [Session recovery](SESSION_RECOVERY.md): reconciling saved session activity with native state.
 - [Cache refresh conventions](CACHE_REFRESH_CONVENTIONS.md): display snapshots, invalidation and authoritative mutation reads.
-- [Bundled runtime maintenance](RUNTIME_MAINTENANCE.md): Node/npm pinning, LTS proposals and the dependency audit.
+- [Bundled runtime maintenance](RUNTIME_MAINTENANCE.md): Node/npm pinning, update proposals and the npm audit.
 
 ## History and pruning
 

@@ -18,7 +18,8 @@ test("native upgrade scopes bundled npm and prefix in the prefix, cleans its shi
     for (const platform of ["win32", "linux"] as const) for (const electron of [true, false]) for (const outcome of ["success", "failure", "interrupted"]) {
       let shim = ""
       const node = electron ? "/application/CodeNomad" : platform === "win32" ? "/bundled node/node.exe" : "/bundled node/bin/node"
-      const env = { Path: "/original", ELECTRON_RUN_AS_NODE: "1", NPM_CONFIG_PREFIX: "/wrong", NPM_CONFIG_REGISTRY: "https://wrong.invalid" }
+      const env = { Path: "/original", ELECTRON_RUN_AS_NODE: "1", NPM_CONFIG_PREFIX: "/wrong", NPM_CONFIG_REGISTRY: "https://wrong.invalid",
+        NPM_CONFIG_ALLOW_SCRIPTS: "unrelated-package" }
       const pending = upgradeSharedOpenCode({ binary: "/verified/opencode.exe", version: "2.0.16", prefix,
         node, npm: "/bundled npm/npm-cli.js", env, platform,
         execute: async (file, args, childEnv, execution) => {
@@ -28,6 +29,10 @@ test("native upgrade scopes bundled npm and prefix in the prefix, cleans its shi
           assert.equal(childEnv.npm_config_registry, "https://registry.npmjs.org")
           assert.equal(childEnv.NPM_CONFIG_PREFIX, undefined)
           assert.equal(childEnv.NPM_CONFIG_REGISTRY, undefined)
+          // npm (12+) blocks unlisted install scripts: OpenCode's npm runs only the upgraded package's.
+          assert.equal(childEnv.npm_config_allow_scripts, "@opencode/cli@2.0.16")
+          assert.equal(childEnv.NPM_CONFIG_ALLOW_SCRIPTS, undefined)
+          assert.equal(Object.keys(childEnv).filter(key => /^npm_config_(ignore_scripts|dangerously_allow_all_scripts)$/i.test(key)).length, 0)
           assert.equal(childEnv.CODENOMAD_UPGRADE_NODE, node)
           assert.equal(childEnv.CODENOMAD_UPGRADE_NPM, "/bundled npm/npm-cli.js")
           const separator = platform === "win32" ? ";" : ":"
@@ -65,7 +70,14 @@ test("native upgrade scopes bundled npm and prefix in the prefix, cleans its shi
       } else await assert.rejects(access(shim), { code: "ENOENT" })
       assert.deepEqual(await readdir(prefix), [])
       assert.equal(env.NPM_CONFIG_PREFIX, "/wrong", "do not mutate the backend environment")
+      assert.equal(env.NPM_CONFIG_ALLOW_SCRIPTS, "unrelated-package")
       assert.equal(env.Path, "/original")
+    }
+    // Only an exact version can be allowed; nothing is written for anything else.
+    for (const version of ["latest", "^2.0.16", "2.0.16 || 2.0.17"]) {
+      await assert.rejects(upgradeSharedOpenCode({ binary: "/verified/opencode.exe", version, prefix, node: "/bundled node/node.exe",
+        npm: "/bundled npm/npm-cli.js", env: {}, platform: "win32", execute: async () => assert.fail("must not run") }), /exact stable/)
+      assert.deepEqual(await readdir(prefix), [])
     }
   } finally { await rm(root, { recursive: true, force: true }) }
 })
