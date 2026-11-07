@@ -56,6 +56,28 @@ test("a frozen mark write cannot suppress release, and late input effects are re
   }
 })
 
+test("trusted input waits until a freshly navigated page accepts it, within a bounded delay", async () => {
+  for (const delays of [[40, 40, 0], [5_000]]) {
+    const calls: string[] = []
+    const answers = [...delays]
+    const started = Date.now()
+    await pressKeys({ markAutomation: false, checkpoint: async () => {}, channel: { send: async (method, params = {}) => {
+      calls.push(method === "Runtime.evaluate" ? "ready?" : `${method}:${params.type}`)
+      return method === "Runtime.evaluate" ? { result: { value: { inputDelayMs: answers.length > 1 ? answers.shift() : answers[0] } } } : {}
+    } } }, "a")
+    const elapsed = Date.now() - started
+    const firstKey = calls.indexOf("Input.dispatchKeyEvent:keyDown")
+    assert.ok(firstKey > 0 && calls.slice(0, firstKey).every(call => call === "ready?"), "no key precedes acceptance")
+    if (delays.length > 1) {
+      assert.equal(firstKey, 3, "polls until the page reports it accepts input")
+      assert.ok(elapsed >= 70 && elapsed < 900, `waited ${elapsed} ms`)
+    } else {
+      assert.ok(elapsed >= 950 && elapsed < 2_000, `a page that never reports readiness delays input by at most a second, waited ${elapsed} ms`)
+    }
+    assert.deepEqual(calls.slice(firstKey), ["Input.dispatchKeyEvent:keyDown", "Input.dispatchKeyEvent:keyUp"])
+  }
+})
+
 test("input refuses when the page cannot supply a valid provenance timestamp", async () => {
   const methods: string[] = []
   await assert.rejects(pressKeys({ markAutomation: true, checkpoint: async () => {},

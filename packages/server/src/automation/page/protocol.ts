@@ -120,6 +120,7 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (meth
     if (up) held.delete(id)
     await session.checkpoint()
   }
+  await awaitInputAcceptance(session)
   try {
     return await run(dispatch)
   } catch (error) {
@@ -142,6 +143,37 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (meth
     if (session.markAutomation) await session.channel.send("Runtime.evaluate", { expression: UNMARK_INPUT, returnByValue: true }).catch(() => undefined)
   }
 }
+
+/** After an HTTP(S) navigation, Chromium's renderer defers compositor commits until the first
+ * (contentful) paint, for at most about 500 ms after rendering starts, and drops key, click and
+ * wheel input meanwhile (Blink paint holding: `LocalFrameView` and
+ * `WidgetInputHandlerManager::DispatchEvent`). A hidden or software-composited page can take that
+ * long to paint, so its first trusted input waits until the page has painted or roughly that limit
+ * has passed, approximated from the moment it became interactive. The page's answer only delays
+ * input, by at most `INPUT_ACCEPTANCE_MAX_WAIT_MS`. */
+async function awaitInputAcceptance(session: PageSession): Promise<void> {
+  const started = Date.now()
+  for (;;) {
+    const result = await session.channel.send("Runtime.evaluate", { expression: INPUT_ACCEPTANCE_DELAY, returnByValue: true })
+      .catch(() => undefined)
+    await session.checkpoint()
+    const delay = ((result?.result as { value?: { inputDelayMs?: unknown } } | undefined)?.value)?.inputDelayMs
+    const remaining = INPUT_ACCEPTANCE_MAX_WAIT_MS - (Date.now() - started)
+    if (typeof delay !== "number" || !(delay > 0) || remaining <= 0) return
+    await new Promise(resolve => setTimeout(resolve, Math.min(delay, remaining, 50)))
+  }
+}
+
+const PAINT_HOLDING_LIMIT_MS = 500
+const INPUT_ACCEPTANCE_MAX_WAIT_MS = 1_000
+// Milliseconds until the page accepts input: 0 once it painted, for non-HTTP(S) documents (no
+// paint holding) and after the limit; a short poll while the document is still loading.
+const INPUT_ACCEPTANCE_DELAY = `({ inputDelayMs: (() => {
+  if (!/^https?:$/.test(location.protocol) || performance.getEntriesByType("paint").length > 0) return 0;
+  const navigation = performance.getEntriesByType("navigation")[0];
+  if (!navigation || !(navigation.domInteractive > 0)) return 50;
+  return Math.max(0, Math.ceil(navigation.domInteractive + ${PAINT_HOLDING_LIMIT_MS} - performance.now()));
+})() })`
 
 export const INPUT_MARK_LEASE_MS = 15_000
 // CDP timestamps use epoch seconds; DOM event.timeStamp uses the page's monotonic

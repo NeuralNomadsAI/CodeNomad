@@ -296,6 +296,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The electron package fetches its binary on first use; fetch it once
+      # before parallel tests and command substitutions use it.
+      - name: Install the Electron binary
+        run: npx --no install-electron
+
       - name: Typecheck desktop clients
         run: npm run typecheck
 
@@ -601,6 +606,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install the Electron binary
+        run: npx --no install-electron
+
       - name: Install Chromium for UI rendering regressions
         run: npx playwright install --with-deps chromium
 
@@ -688,6 +696,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install the Electron binary
+        run: npx --no install-electron
 
       - name: Test binary compatibility and shared lifecycle
         run: >-

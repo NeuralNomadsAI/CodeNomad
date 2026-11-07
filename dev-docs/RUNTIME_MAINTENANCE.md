@@ -61,7 +61,9 @@
   vendored crates (`packages/tauri-app/vendor/README.md`) and keeps
   `@tauri-apps/api` and the plugin JavaScript packages (`packages/ui/package.json`)
   on the crates' major/minor: the CLI's version check runs from
-  `packages/tauri-app` and does not see them. The vendored Tao and updater are
+  `packages/tauri-app` and does not see them. Dependabot's npm entry proposes the
+  `@tauri-apps/*` packages in their own grouped PR (`tauri-js`); merge it with
+  the matching cargo `tauri` PR so the packages never trail the crates' minor. The vendored Tao and updater are
   path patches, which Dependabot does not update;
   `packages/tauri-app/scripts/vendored-patches.test.mjs` fails a PR whose
   lockfile stops resolving them. Platform crates shared with Wry (`webview2-com`,
@@ -73,6 +75,21 @@
 - Dependabot checks GitHub Actions weekly and proposes updates against `dev`;
   merges are manual. Composite actions that follow their upstream
   `stable`/latest major stay on those supported references.
+- Electron's integrated Node is the Electron backend runtime, so the exact
+  `electron` pin (`packages/electron-app/package.json`) selects it. Dependabot
+  proposes Electron toolchain updates (`electron`, `electron-builder`,
+  `electron-vite`) weekly against
+  `dev`: minor and patch updates in one grouped PR, each major in its own PR.
+  Keep the pin within Electron's supported majors (the latest three). Before
+  merging, the maintainer qualifies the upstream breaking changes of every major
+  crossed (<https://www.electronjs.org/docs/latest/breaking-changes>) and its
+  platform minimums against the declared ones (`BUILD.md`, `docs/help`), and the
+  update passes the existing CI: the real-Electron tests, the Electron-mode
+  first-installation fixture and the npm `engines` smoke check of every build.
+- The `electron` package downloads its binary on first use. CI jobs that run or
+  package Electron fetch it right after `npm ci` with `npx --no install-electron`,
+  before parallel tests or command substitutions read its path; the Electron
+  app's `dev` and `preview` scripts and `scripts/dev.sh` run it first.
 - **Bundled Runtime Maintenance** runs daily (07:23 UTC, subject to GitHub's
   scheduling delays) and on manual dispatch, on the default branch only.
   It selects newer LTS releases within the pinned Node major only, and npm's
@@ -113,6 +130,7 @@ Run `npm run check:runtime` locally for the same read-only assessment.
 
 ## Agent conventions
 
+- Keep the `electron` devDependency an exact version; Dependabot's npm entry is limited to the Electron toolchain and the `@tauri-apps/*` packages; adding other npm dependencies or ecosystems to Dependabot is a separate decision.
 - Bundled runtime maintenance keeps `.node-version` and `.npm-version` exact. It proposes only same-major Node LTS upgrades and newer npm releases whose `engines.node` accepts `.node-version` and the pinned Electron's Node, each as a regular, non-draft PR changing that one pin, without automatic merge; a major npm proposal says so in its title and body. Never bundle npm from another source than the verified `.npm-version` registry package, resolve `latest` at build time, skip the engines guard, auto-fix dependencies, merge or publish from the check, or report a failed audit as clean. Application runtime changes require reviewed builds/releases.
 - Documents reference `.node-version` and `.npm-version` and never restate the pinned Node or bundled npm version: maintenance updates only those files.
 - Documents never restate Tauri crate or CLI versions: they point to `packages/tauri-app/Cargo.toml`/`Cargo.lock` and the `@tauri-apps/*` entries of `packages/tauri-app/package.json` and `packages/ui/package.json`. Never merge a Tauri update whose vendored crates fail re-qualification or whose `@tauri-apps/*` packages trail the crates' minor.

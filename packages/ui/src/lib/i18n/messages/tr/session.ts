@@ -46,6 +46,7 @@ export const sessionMessages = {
   "sessionList.expand.collapseTitle": "Daralt",
   "sessionList.expand.expandTitle": "Genişlet",
   "sessionList.expand.withChildActivity": "{action} — {activity}",
+  "sessionList.expand.markRead": "Okundu olarak işaretle",
   "sessionList.actions.newSession.ariaLabel": "Yeni session",
   "sessionList.actions.newSession.title": "Yeni session",
   "sessionList.actions.newSession.failedTitle": "Session oluşturulamadı",
