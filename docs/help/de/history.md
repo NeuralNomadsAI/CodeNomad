@@ -1,5 +1,7 @@
 # Verlauf, Suche und Bereinigung
 
+Suche, Zeitleiste, Bildergalerie und technische Bereinigung unterstützen auch OpenCodes experimentellen `part_rows`-Speicher und Nachrichten mit getrennten und eingebetteten Teilen. Bereits getrennte Teile bleiben nach dem Deaktivieren der Option lesbar.
+
 Gespeicherter Verlauf, aktuell angezeigter Gesprächsverlauf und komprimierter Modellkontext sind getrennte Dinge. Wählen Sie Navigation oder Filter, bevor Sie etwas löschen.
 
 ## Gesamten Verlauf durchsuchen {#full-history-search}

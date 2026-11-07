@@ -32,10 +32,11 @@ owns both the tool and RPC registrations.
 
 With `experimental.part_rows`, native assistant parts can reside in `session_part`
 beside an inline tail. CodeNomad's SQL history, search, outline/navigation, gallery
-and pruning readers consume inline `session_message` content and can omit split
-parts. Keep this experimental option disabled for those features; disabling it
-leaves existing split parts stored separately. Missions uses its own ordinal-part
-projection.
+and pruning readers use the shared `session-pruning/message-storage.ts` relation:
+ordinal split rows precede the inline tail, and all resulting part indexes use that
+combined order. Stored-byte bounds cover both forms before reconstruction. Existing
+split rows retain this read behavior after `part_rows` is disabled. Missions uses
+the same ordered-content SQL expression with its own read budgets and source fences.
 
 ## Scope and resource limits
 

@@ -172,6 +172,11 @@ jobs:
       - name: Qualify the pinned client against the technical minimum and latest stable
         shell: pwsh
         run: |
+          $fixtures = Join-Path $env:RUNNER_TEMP 'runtime-contract-fixtures'
+          New-Item -ItemType Directory -Force $fixtures | Out-Null
+          "RUNTIME_CONTRACT_FIXTURES=$fixtures" >> $env:GITHUB_ENV
+          $env:TEMP = $fixtures
+          $env:TMP = $fixtures
           $sandbox = Join-Path $env:RUNNER_TEMP 'opencode-contract-runtime'
           $version = '${{ matrix.runtime }}'
           if ($version -eq 'minimum') {
@@ -197,6 +202,10 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-pruning-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if ('${{ matrix.runtime }}' -eq 'latest') {
+            node scripts/test-session-pruning-native.mjs $cli --part-rows
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
           # Shipped Missions bundle: loading, model-visible tools through the
           # ordinary prompt loop, journal RPC and recurrence capability.
           node scripts/test-missions-native-contract.mjs $cli
@@ -286,6 +295,18 @@ jobs:
             ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/receipt.json
             ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/failure-diagnostic.json
           if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload isolated runtime contract failure diagnostics
+        if: ${{ failure() && env.RUNTIME_CONTRACT_FIXTURES != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: runtime-contract-failure-windows-${{ matrix.runtime }}
+          path: |
+            ${{ env.RUNTIME_CONTRACT_FIXTURES }}/opencode/missions-native-*/runtime.log
+            ${{ env.RUNTIME_CONTRACT_FIXTURES }}/opencode/missions-native-*/receipt.json
+            ${{ env.RUNTIME_CONTRACT_FIXTURES }}/opencode/missions-native-*/reload-diagnostics.json
+          if-no-files-found: warn
           retention-days: 7
 
   tests:
