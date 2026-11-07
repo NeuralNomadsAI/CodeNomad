@@ -48,8 +48,11 @@ test("Electron runs a real npm lifecycle `node` script through the prefix-scoped
       npm_config_update_notifier: "false",
     })
 
+    // As for OpenCode, the installed package's own script is allowed explicitly
+    // (npm 12+ blocks it otherwise); a local tarball is identified by its path.
+    const tarball = path.join(stage, "fixture.tgz")
     await executeNpm(electron!, [npm!, "install", "--global", "--prefix", prefix, "--offline", "--no-audit", "--no-fund",
-      path.join(stage, "fixture.tgz")], env, process.platform, prefix)
+      `--allow-scripts=${tarball}`, tarball], env, process.platform, prefix)
 
     const result = JSON.parse(await readFile(output, "utf8")) as { electron: string | null; execPath: string; execArgv: string[] }
     assert.match(result.electron ?? "", /^\d+\.\d+\.\d+/, "the lifecycle script ran under Electron")
