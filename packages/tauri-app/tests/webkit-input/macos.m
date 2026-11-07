@@ -1,6 +1,12 @@
 #import <AppKit/AppKit.h>
 #import <WebKit/WebKit.h>
 #include "sequence.h"
+#include <objc/runtime.h>
+extern void cn_test_scoped_buttons(void);
+@interface WKWebView (CNInputDrain)
+- (void)_doAfterProcessingAllPendingKeyEvents:(void (^)(void))completion;
+- (void)_doAfterProcessingAllPendingMouseEvents:(void (^)(void))completion;
+@end
 
 @interface Runner : NSObject <WKNavigationDelegate>
 @property NSWindow *window;
@@ -8,17 +14,32 @@
 @property NSInteger step;
 @property NSPoint pointer;
 @end
+static void painted(void *context, const unsigned char *bytes, size_t length, const char *error) {
+    (void)bytes; (void)length;
+    assert(!error);
+    Runner *runner = (__bridge Runner *)context;
+    [NSTimer scheduledTimerWithTimeInterval:0.25 target:runner selector:@selector(tick:) userInfo:nil repeats:YES];
+}
 @implementation Runner
 - (void)webView:(WKWebView *)view didFinishNavigation:(WKNavigation *)navigation {
     (void)view; (void)navigation;
     self.pointer = NSEvent.mouseLocation;
     self.step = -4;
-    [NSTimer scheduledTimerWithTimeInterval:0.25 target:self selector:@selector(tick:) userInfo:nil repeats:YES];
+    cn_capture((__bridge void *)self.view, painted, (__bridge void *)self);
 }
 - (void)tick:(NSTimer *)timer {
     void *view = (__bridge void *)self.view;
     if (self.step >= 0) assert(!self.window.isKeyWindow && !NSApp.active);
+    IMP buttons = class_getMethodImplementation(object_getClass(NSEvent.class), @selector(pressedMouseButtons));
     if (self.step >= 0 && self.step <= 19) sequence(view, (int)self.step);
+    assert(class_getMethodImplementation(object_getClass(NSEvent.class), @selector(pressedMouseButtons)) == buttons);
+    if (self.step >= 0 && self.step <= 19 && getenv("CN_INPUT_TRACE")) {
+        NSInteger current = self.step;
+        if ([self.view respondsToSelector:@selector(_doAfterProcessingAllPendingKeyEvents:)])
+            [self.view _doAfterProcessingAllPendingKeyEvents:^{ fprintf(stderr, "key-drained step=%ld\n", (long)current); }];
+        if ([self.view respondsToSelector:@selector(_doAfterProcessingAllPendingMouseEvents:)])
+            [self.view _doAfterProcessingAllPendingMouseEvents:^{ fprintf(stderr, "mouse-drained step=%ld\n", (long)current); }];
+    }
     if (self.step == 21) cn_checkpoint(view, write_result, "checkpoint.json");
     if (self.step == 22) cn_capture(view, write_result, "capture.png");
     if (self.step == 26) {
@@ -39,6 +60,7 @@ int main(int argc, char **argv) {
     @autoreleasepool {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+        cn_test_scoped_buttons();
         Runner *runner = [Runner new];
         runner.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(30, 30, 700, 600)
             styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];

@@ -32,7 +32,7 @@ def main():
     env = os.environ.copy()
     binary = output / 'native-input'
     if platform.system() == 'Darwin':
-        command = ['clang', '-Wall', '-Wextra', '-Werror', '-fobjc-arc', '-fblocks',
+        command = ['clang', '-Wall', '-Wextra', '-Werror', '-fobjc-arc', '-fblocks', '-DCN_INPUT_SELF_TEST',
                    '-mmacosx-version-min=14.0', '-framework', 'AppKit', '-framework', 'WebKit',
                    '-framework', 'ApplicationServices', str(source / 'input_macos.m'), str(test / 'macos.m')]
     else:
@@ -97,11 +97,13 @@ def main():
         'trusted_events': bool(events) and all(event['trusted'] for event in events),
         'event_types': required <= {event['type'] for event in events},
         'hover': any(event['type'] == 'pointermove' and event.get('buttons') == 0 and event.get('x') == 30 and event.get('y') == 160 for event in events),
+        'hover_enter_css': all(any(event['type'] == kind and event.get('x') == 30 and event.get('y') == 160 and event['padHover'] for event in events) for kind in ('mouseover', 'mouseenter')),
         'drag_buttons': any(event['type'] == 'pointermove' and event.get('buttons') == 1 for event in events),
         'chord_event': any(event['type'] == 'keydown' and (event.get('ctrl') or event.get('meta')) for event in events),
         'chord_select_all': observations['input'] == 'remplacé漢🙂',
         'contenteditable_unicode': observations['editor'].startswith('éditeur漢🙂'),
         'contenteditable_enter': any(event['type'] == 'keydown' and event.get('key') == 'Enter' and event['target'] == 'DIV' for event in events),
+        'contenteditable_enter_dom': any(event['type'] == 'input' and event.get('inputType') in {'insertParagraph', 'insertLineBreak'} and event['target'] == 'DIV' for event in events) and '<' in observations['editorHtml'],
         'visible_png': png[:8] == b'\x89PNG\r\n\x1a\n' and all(0 < value <= 2000 for value in dimensions),
         'desktop_pointer_unchanged': pointer_unchanged,
     }

@@ -25,7 +25,9 @@ The fixture checks left/right click, hover, drag with a held button, wheel, key 
 
 ## Qualification boundary
 
-The AppKit candidate uses public targeted NSEvent/responder APIs. Its drag path must produce `pointermove.buttons == 1`; a trusted event alone is insufficient. Select-all must replace the entire input value, and Enter must reach contenteditable. Keep these assertions strict when investigating an alternative native path.
+The AppKit candidate uses targeted NSEvent/responder APIs. Its UI-thread dispatch scopes the native `pressedMouseButtons` implementation to the synthetic button state, delegates other threads to the original implementation, and restores it in `@finally`. The native self-check exercises nested dispatch, another thread and exception cleanup; the harness also verifies method restoration after every action. Its drag path must produce `pointermove.buttons == 1`; a trusted event alone is insufficient. Select-all must replace the entire input value, and Enter must reach contenteditable. Keep these assertions strict when investigating an alternative native path.
+
+`CN_INPUT_TRACE=1` records key-equivalent, native editing fallback and hover dispatch paths. Hover first checks for a public `mouseMoved:` implementation on the view and otherwise checks availability of the narrow `_simulateMouseMove:` WebKit SPI. An initial native snapshot establishes the paint callback before input starts. Keyboard delivery targets the exact view; an inactive native editing fallback remains subject to qualification of page cancellation and single execution before integration.
 
 WebKit's `WebEventFactory::createWebMouseEvent` obtains ordinary NSEvent button state from `WebCore::currentlyPressedMouseButtons`, which reads `[NSEvent pressedMouseButtons]`. The automation event path has distinct handling. Source references for investigation:
 
@@ -34,4 +36,4 @@ WebKit's `WebEventFactory::createWebMouseEvent` obtains ordinary NSEvent button 
 - <https://github.com/WebKit/WebKit/blob/main/Source/WebKit/UIProcess/Automation/mac/WebAutomationSessionMac.mm>
 - <https://github.com/WebKit/WebKit/blob/main/Source/WebKit/UIProcess/API/Cocoa/_WKAutomationSession.h>
 
-An alternative based on WebKit automation SPI requires explicit contract qualification and runtime capability checks. Its background-window behavior must pass this harness before application integration. Never use global CGEvent posting, global event-state swizzling, XTest, DOM-event substitutes, or broad script evaluation to satisfy a failed assertion.
+An alternative based on WebKit automation SPI requires explicit contract qualification and runtime capability checks. Its background-window behavior must pass this harness before application integration. Never use global CGEvent posting, unscoped event-state overrides, XTest, DOM-event substitutes, or broad script evaluation to satisfy a failed assertion.
