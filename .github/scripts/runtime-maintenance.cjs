@@ -114,8 +114,9 @@ async function readBaseFile(github, owner, repo, sha, file) {
 }
 
 const VALIDATION_NOTE = 'Review and merge manually after PR validation. '
-  + 'GITHUB_TOKEN-created pull requests do not automatically trigger another workflow; '
-  + 'a maintainer can close and reopen this PR to trigger validation. '
+  + 'GitHub holds the PR Build Validation runs of a pull request opened with GITHUB_TOKEN for approval: '
+  + 'a maintainer with write access selects **Approve workflows to run** on this PR '
+  + '(or closes and reopens it with their own account) to start validation. '
   + 'Validate installer/upgrade behavior, rebuild and publish CodeNomad before users receive the updated runtime.'
 
 /** Writes one pin file on a new version-specific branch and opens a regular PR. `basis`
@@ -136,12 +137,38 @@ async function proposePin({ github, context, core, file, pin, target, branch, me
   }
   const previous = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'all', base, head: `${owner}:${branch}`, per_page: 100 })
   if (previous.length) { core.info('This release already has a proposal; leaving its review decision unchanged.'); return }
-  // Never force-push or rewrite a pre-existing branch. An interrupted proposal
-  // leaves a visible API failure for manual reconciliation rather than replay.
+  // Never force-push, rewrite or delete a pre-existing branch: a branch without
+  // a pull request (an earlier run stopped after creating it) fails the job
+  // every run until a maintainer opens its PR or deletes it.
+  const reconcile = `open its pull request manually or delete the branch; maintenance never overwrites it`
+  const orphan = await github.rest.git.getRef({ owner, repo, ref: `heads/${branch}` })
+    .then(() => true, error => { if (error.status === 404) return false; throw error })
+  if (orphan) throw new Error(`Branch ${branch} exists without a pull request: ${reconcile}.`)
   await github.rest.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha: reference.object.sha })
-  await github.rest.repos.createOrUpdateFileContents({ owner, repo, branch, path: file, sha: current.sha,
-    message, content: Buffer.from(`${target}\n`).toString('base64') })
-  await github.rest.pulls.create({ owner, repo, base, head: branch, draft: false, title, body })
+  try {
+    await github.rest.repos.createOrUpdateFileContents({ owner, repo, branch, path: file, sha: current.sha,
+      message, content: Buffer.from(`${target}\n`).toString('base64') })
+    await github.rest.pulls.create({ owner, repo, base, head: branch, draft: false, title, body })
+  } catch (error) {
+    throw new Error(`Branch ${branch} was created but its proposal did not complete (${error.message}): ${reconcile}.`)
+  }
+}
+
+// engines.node is the npm publisher's declaration, never evidence of CodeNomad's behaviour.
+const DECLARED_ONLY = 'This declaration is not a behavioural validation: only the proposal\'s PR build and the '
+  + 'maintainer\'s checklist show whether CodeNomad works with this npm.'
+
+/** Daily findings about the bundled npm; a proposal is opened only when `proposable`. */
+function npmFindings({ npmPin, npm, candidateError }) {
+  if (!npm.update) return { proposable: false, messages: [] }
+  if (!npm.compatible) return { proposable: false, messages: [`Bundled npm ${npmPin}: npm ${npm.target} is available, but its engines.node `
+    + `(${npm.engine}) excludes ${npm.rejected.join(' and ')}. No proposal is opened until that runtime is updated.`] }
+  // Only the candidate's audit is optional: the pinned audit and every metadata request still fail the job.
+  if (candidateError) return { proposable: false, messages: [`Bundled npm ${npmPin}: npm ${npm.target} is available, but its audit `
+    + `could not complete (${candidateError}). No npm proposal is opened this run; the Node check and the pinned npm audit are unaffected.`] }
+  return { proposable: true, messages: [`Bundled npm ${npmPin}: npm ${npm.target} is available`
+    + `${npm.major ? ' as a major update (maintainer qualification needed)' : ''}; its engines.node includes every runtime. `
+    + `${DECLARED_ONLY} A proposal is opened for review.`] }
 }
 
 const report = context => `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
@@ -167,17 +194,19 @@ async function proposeNpmUpdate({ github, context, core, pin, target, engine, no
   if (typeof engine !== 'string' || !/^[\w.\s|<>=^~*-]{1,200}$/.test(engine)) throw new Error('Invalid npm engines.node range')
   const counts = auditCounts(audit), pinnedCounts = auditCounts(pinnedAudit)
   const major = version(target)[0] > version(pin)[0]
-  const crossed = major ? `major update ${version(pin)[0]}.x → ${version(target)[0]}.x` : 'same major'
+  const crossed = `${version(pin)[0]}.x → ${version(target)[0]}.x`
   await proposePin({ github, context, core, file: '.npm-version', pin, target, branch: `maintenance/npm-${target}`,
     message: `chore(runtime): propose npm ${target}`,
-    title: `chore(runtime): update bundled npm to ${target}${major ? ` (major: ${version(pin)[0]}.x → ${version(target)[0]}.x)` : ''}`,
+    title: `chore(runtime): update bundled npm to ${target}${major ? ` (major ${crossed}: maintainer qualification needed)` : ''}`,
     basis: { '.node-version': text => text.trim() === nodePin,
       'packages/electron-app/package.json': text => JSON.parse(text).devDependencies?.electron === electron },
-    body: `Updates the bundled npm pin (\`.npm-version\`) of both desktop hosts from ${pin} to ${target} (${crossed}).\n\n`
-      + (major ? '**This is a major npm update.** npm publishes fixes on its current major line, so the maintenance check proposes '
-        + 'majors as well; its breaking changes need the maintainer\'s qualification below before merging.\n\n' : '')
-      + `npm ${target} declares \`engines.node\` \`${engine}\`, which accepts Node ${nodePin} (\`.node-version\`: CI and Tauri) `
-      + `and Node ${electronNodeVersion} integrated in Electron ${electron}.\n\n`
+    body: `Proposes the bundled npm pin (\`.npm-version\`) of both desktop hosts from ${pin} to ${target}`
+      + `${major ? ` (major update ${crossed})` : ''}.\n\n`
+      + (major ? '**Major npm update: maintainer qualification needed before merging.** npm publishes fixes on its current '
+        + 'major line, so the maintenance check proposes majors too, but never adopts one: its breaking changes need the '
+        + 'maintainer\'s qualification with the checklist below.\n\n' : '')
+      + `npm ${target} declares \`engines.node\` \`${engine}\`, which includes Node ${nodePin} (\`.node-version\`: CI and Tauri) `
+      + `and Node ${electronNodeVersion} integrated in Electron ${electron}. ${DECLARED_ONLY}\n\n`
       + `Audit of the published npm CLI and its bundled dependencies: npm ${target}: ${describeAudit(counts)}; `
       + `pinned npm ${pin}: ${describeAudit(pinnedCounts)}. The JSON reports are kept for seven days in the `
       + `[maintenance report](${report(context)}).\n\n`
@@ -187,8 +216,10 @@ async function proposeNpmUpdate({ github, context, core, pin, target, engine, no
       + `- the release notes of every npm version after ${pin} up to ${target}, especially breaking changes to `
       + '`install`/`uninstall --global --prefix`, flag parsing, configuration, and the dependency lifecycle-script '
       + 'policy (`allow-scripts`): OpenCode\'s postinstall must still run during installation and native upgrade;\n'
-      + '- the PR build\'s desktop packaging tests, packaged-resources smoke (npm engines against each host\'s Node) and the native '
-      + 'OpenCode install/upgrade fixtures, including the Electron runtime (`npm-lifecycle.test.ts`, Electron install fixture);\n'
+      + '- the PR build\'s desktop packaging tests, packaged-resources smoke (npm engines against each host\'s Node) and the '
+      + 'first-installation fixtures with Tauri\'s Node and with Electron\'s npm-only resources, which install OpenCode with this npm;\n'
+      + '- the native OpenCode install, upgrade and legacy-replacement fixtures run locally against both packaged hosts with this npm '
+      + '(`scripts/test-opencode-*-native.mjs`): the PR build runs only first installation with the bundled npm;\n'
       + '- the audit findings above for applicability.\n\n'
       + 'This changes only `.npm-version`; Node and Electron are unchanged. It does not merge itself.\n\n'
       + VALIDATION_NOTE })
@@ -211,15 +242,18 @@ async function main() {
   const electronNodeVersion = electronNode(electron, electronReleases)
   const npm = assessNpm(npmPin, latestNpm, npmRuntimes(pin, electron, electronNodeVersion), npmSemver())
   const pinnedAudit = auditNpm(npmPin)
-  const candidateAudit = npm.update ? auditNpm(npm.target) : undefined
+  let candidateAudit, candidateError
+  if (npm.compatible) {
+    try { candidateAudit = auditNpm(npm.target) } catch (error) { candidateError = error.message }
+  }
   const pinnedCounts = auditCounts(pinnedAudit.metadata.vulnerabilities)
   const candidateCounts = candidateAudit && auditCounts(candidateAudit.metadata.vulnerabilities)
+  const findings = npmFindings({ npmPin, npm, candidateError })
   if (process.env.RUNNER_TEMP) fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'bundled-npm-audit.json'), JSON.stringify({
     pinned: { version: npmPin, report: pinnedAudit }, ...(candidateAudit ? { candidate: { version: npm.target, report: candidateAudit } } : {}) }, null, 2))
   const warnings = []
   if (node.nodeUpdate) warnings.push(`Node ${pin}: newer LTS release ${node.target} is available within the same major.`)
-  if (npm.compatible) warnings.push(`Bundled npm ${npmPin}: npm ${npm.target}${npm.major ? ' (a major update)' : ''} is available and its engines accept every runtime; a proposal is opened for review.`)
-  else if (npm.update) warnings.push(`Bundled npm ${npmPin}: npm ${npm.target} is available, but its engines.node (${npm.engine}) rejects ${npm.rejected.join(' and ')}. No proposal is opened until that runtime is updated.`)
+  warnings.push(...findings.messages)
   if (pinnedCounts.total) warnings.push(`The pinned npm ${npmPin} CLI/dependency audit reports ${describeAudit(pinnedCounts)}. Manual assessment is required.`)
   for (const message of warnings) console.log(process.env.GITHUB_ACTIONS === 'true' ? `::warning::${message}` : `Warning: ${message}`)
   const summary = `## Bundled runtime maintenance\n\nNode pin: **${pin}**; latest LTS in this major: **${node.target}**.\n\n`
@@ -235,10 +269,10 @@ async function main() {
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary)
   if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT,
     `pin=${pin}\ntarget=${node.target}\nnode-update=${node.nodeUpdate}\n`
-    + `npm-pin=${npmPin}\nnpm-target=${npm.target}\nnpm-update=${npm.compatible}\nnpm-engine=${npm.engine ?? ''}\n`
+    + `npm-pin=${npmPin}\nnpm-target=${npm.target}\nnpm-update=${findings.proposable}\nnpm-engine=${npm.engine ?? ''}\n`
     + `electron=${electron}\nelectron-node=${electronNodeVersion}\n`
     + `npm-audit=${JSON.stringify(candidateCounts ?? null)}\nnpm-pinned-audit=${JSON.stringify(pinnedCounts)}\n`)
 }
 
-module.exports = { assessNode, assessNpm, auditNpm, electronNode, npmRuntimes, npmSemver, proposeNodeUpdate, proposeNpmUpdate }
+module.exports = { assessNode, assessNpm, auditNpm, electronNode, npmFindings, npmRuntimes, npmSemver, proposeNodeUpdate, proposeNpmUpdate }
 if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1 })

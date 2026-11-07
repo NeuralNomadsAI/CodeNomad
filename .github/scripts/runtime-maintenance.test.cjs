@@ -2,7 +2,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 const test = require('node:test')
-const { assessNode, assessNpm, auditNpm, electronNode, npmRuntimes, npmSemver, proposeNodeUpdate, proposeNpmUpdate } = require('./runtime-maintenance.cjs')
+const { assessNode, assessNpm, auditNpm, electronNode, npmFindings, npmRuntimes, npmSemver, proposeNodeUpdate, proposeNpmUpdate } = require('./runtime-maintenance.cjs')
 
 const release = (version, npm = '11.19.0', lts = 'Krypton') => ({ version: `v${version}`, npm, lts })
 const releases = [release('24.20.0'), release('26.12.0', '12.2.0', 'Next'), release('24.9.0'), release('24.21.0')]
@@ -109,13 +109,17 @@ test('failed audit, mismatched lockfile and malformed output cannot produce a cl
   }
 })
 
-function proposalFixture({ currentPin = '24.20.0', previous = [], branchError, files = {} } = {}) {
+function proposalFixture({ currentPin = '24.20.0', previous = [], branchError, branchExists = false, prError, files = {} } = {}) {
   const calls = [], warnings = []
   const record = (kind, data) => { calls.push({ kind, data }); return { data: {} } }
   const contents = { '.node-version': `${currentPin}\n`, ...files }
   const github = { rest: {
     git: {
-      getRef: async () => ({ data: { object: { sha: 'base-snapshot' } } }),
+      getRef: async ({ ref }) => {
+        if (ref === 'heads/dev') return { data: { object: { sha: 'base-snapshot' } } }
+        if (branchExists) return { data: { object: { sha: 'earlier-run' } } }
+        throw Object.assign(new Error('Not Found'), { status: 404 })
+      },
       createRef: async data => { if (branchError) throw branchError; return record('branch', data) },
     },
     repos: {
@@ -124,7 +128,7 @@ function proposalFixture({ currentPin = '24.20.0', previous = [], branchError, f
       } } },
       createOrUpdateFileContents: async data => record('file', data),
     },
-    pulls: { list() {}, create: async data => record('pr', data) },
+    pulls: { list() {}, create: async data => { if (prError) throw prError; return record('pr', data) } },
   }, paginate: async (_method, params) => { assert.equal(params.state, 'all'); return previous } }
   return { github, calls, warnings, context: { serverUrl: 'https://github.com', runId: 42,
     repo: { owner: 'example', repo: 'project' }, payload: { repository: { default_branch: 'dev' } } },
@@ -144,7 +148,7 @@ test('a Node proposal changes only the pin, opens normally and never merges or c
   assert.equal(pr.base, 'dev')
   assert.equal(pr.draft, false)
   assert.match(pr.body, /Review and merge manually after PR validation/)
-  assert.match(pr.body, /close and reopen this PR to trigger validation/)
+  assert.match(pr.body, /select\w* \*\*Approve workflows to run\*\* on this PR/)
   assert.match(pr.body, /It does not change npm or merge itself/)
   assert.match(pr.body, /https:\/\/github.com\/example\/project\/actions\/runs\/42/)
 })
@@ -170,21 +174,63 @@ test('an npm proposal changes only .npm-version, labels a major and lists what t
   assert.equal(Buffer.from(file.content, 'base64').toString('utf8'), '12.2.2\n')
   assert.equal(pr.draft, false)
   assert.equal(pr.base, 'dev')
-  assert.equal(pr.title, 'chore(runtime): update bundled npm to 12.2.2 (major: 11.x → 12.x)')
-  assert.match(pr.body, /\*\*This is a major npm update\.\*\*/)
-  assert.match(pr.body, /accepts Node 24\.22\.2 \(`\.node-version`: CI and Tauri\) and Node 24\.15\.0 integrated in Electron 42\.0\.0/)
+  assert.equal(pr.title, 'chore(runtime): update bundled npm to 12.2.2 (major 11.x → 12.x: maintainer qualification needed)')
+  assert.match(pr.body, /\*\*Major npm update: maintainer qualification needed before merging\.\*\*/)
+  assert.match(pr.body, /never adopts one/)
+  assert.match(pr.body, /includes Node 24\.22\.2 \(`\.node-version`: CI and Tauri\) and Node 24\.15\.0 integrated in Electron 42\.0\.0/)
+  assertDeclaredOnly(pr.body)
+  assert.match(pr.body, /legacy-replacement fixtures run locally against both packaged hosts/)
   assert.match(pr.body, /npm 12\.2\.2: 0 affected package entries .*pinned npm 11\.19\.1: 3 affected package entries \(0 critical, 2 high/)
   assert.match(pr.body, /https:\/\/github\.com\/npm\/cli\/releases\/tag\/v12\.2\.2/)
   assert.match(pr.body, /Before merging, check:\n- the release notes of every npm version after 11\.19\.1 up to 12\.2\.2/)
   assert.match(pr.body, /OpenCode's postinstall must still run/)
   assert.match(pr.body, /Review and merge manually after PR validation/)
-  assert.match(pr.body, /close and reopen this PR to trigger validation/)
+  assert.match(pr.body, /select\w* \*\*Approve workflows to run\*\* on this PR/)
   assert.match(pr.body, /This changes only `\.npm-version`/)
 
   const minor = npmProposalFixture()
   await proposeNpmUpdate({ ...minor, target: '11.20.0' })
   assert.equal(minor.calls.at(-1).data.title, 'chore(runtime): update bundled npm to 11.20.0')
-  assert.doesNotMatch(minor.calls.at(-1).data.body, /major npm update/)
+  assert.doesNotMatch(minor.calls.at(-1).data.body, /major npm update|qualification needed/i)
+  assertDeclaredOnly(minor.calls.at(-1).data.body)
+})
+
+// Engines are the publisher's declaration: no message may present them as validated behaviour.
+function assertDeclaredOnly(text) {
+  assert.match(text, /This declaration is not a behavioural validation: only the proposal's PR build and the maintainer's checklist show whether CodeNomad works with this npm\./)
+  assert.doesNotMatch(text.replace(/is not a behavioural validation/g, ''), /\b(validated|verified|qualified|compatible|safe)\b/i)
+}
+
+test('daily npm findings propose only a declared-compatible candidate with a completed audit and never claim validation', () => {
+  const runtimes = npmRuntimes('24.22.2', '45.2.3', '24.22.2')
+  const major = assessNpm('11.19.1', npm12, runtimes, semver)
+  const proposable = npmFindings({ npmPin: '11.19.1', npm: major })
+  assert.equal(proposable.proposable, true)
+  assert.match(proposable.messages[0], /as a major update \(maintainer qualification needed\)/)
+  assertDeclaredOnly(proposable.messages[0])
+  const minor = npmFindings({ npmPin: '11.19.1', npm: assessNpm('11.19.1', { version: '11.20.0', engines: { node: '>=20' } }, runtimes, semver) })
+  assert.equal(minor.proposable, true)
+  assert.doesNotMatch(minor.messages[0], /major/)
+  // A failed candidate audit blocks only the npm proposal, visibly; it is never reported as clean.
+  const unaudited = npmFindings({ npmPin: '11.19.1', npm: major, candidateError: 'npm audit could not complete' })
+  assert.equal(unaudited.proposable, false)
+  assert.match(unaudited.messages[0], /audit could not complete \(npm audit could not complete\)\. No npm proposal is opened this run/)
+  const excluded = npmFindings({ npmPin: '11.19.1', npm: assessNpm('11.19.1', npm12, npmRuntimes('24.22.2', '39.0.0', '22.20.0'), semver) })
+  assert.equal(excluded.proposable, false)
+  assert.match(excluded.messages[0], /excludes Electron 39\.0\.0's Node 22\.20\.0/)
+  assert.deepEqual(npmFindings({ npmPin: '12.2.2', npm: assessNpm('12.2.2', npm12, runtimes, semver) }), { proposable: false, messages: [] })
+})
+
+test('a proposal branch left without a pull request blocks visibly and is never overwritten or deleted', async () => {
+  const orphan = npmProposalFixture({ branchExists: true })
+  await assert.rejects(proposeNpmUpdate(orphan), /Branch maintenance\/npm-12\.2\.2 exists without a pull request: open its pull request manually or delete the branch; maintenance never overwrites it/)
+  assert.deepEqual(orphan.calls, [])
+  const failed = npmProposalFixture({ prError: new Error('Validation Failed') })
+  await assert.rejects(proposeNpmUpdate(failed), /Branch maintenance\/npm-12\.2\.2 was created but its proposal did not complete \(Validation Failed\)/)
+  assert.deepEqual(failed.calls.map(call => call.kind), ['branch', 'file'], 'the created branch is kept for reconciliation')
+  const node = proposalFixture({ branchExists: true })
+  await assert.rejects(proposeNodeUpdate(node), /Branch maintenance\/node-24\.21\.0 exists without a pull request/)
+  assert.deepEqual(node.calls, [])
 })
 
 test('an npm proposal leaves existing proposals alone and refuses a basis that changed or invalid inputs', async () => {

@@ -106,29 +106,40 @@
 - Each update creates a version-specific **regular (non-draft) PR** changing one
   pin only: `.node-version` (branch `maintenance/node-<version>`) or
   `.npm-version` (`maintenance/npm-<version>`); review and merge are manual.
-  Events from `GITHUB_TOKEN` start no workflows, so a maintainer closes and
-  reopens the PR to run validation. The proposal rereads the pin from the default
-  branch and writes nothing when it changed; existing proposals, including closed
-  ones, are left alone; orphan branches after an uncertain API response require
-  manual reconciliation, never a force-push.
-- An npm release is proposed only when its `engines.node` accepts both runtimes
+  GitHub creates the PR Build Validation runs of a pull request opened with
+  `GITHUB_TOKEN` in an approval-required state: a maintainer with write access
+  selects **Approve workflows to run** on the PR, or closes and reopens it with
+  their own account. The proposal rereads the pin from the default branch and
+  writes nothing when it changed; existing proposals, including closed ones, are
+  left alone. A proposal branch without a pull request (a run that stopped after
+  creating it) fails every later run with a message naming the branch until a
+  maintainer opens its PR or deletes it; maintenance never overwrites,
+  force-pushes or deletes it.
+- An npm release is proposed only when its `engines.node` includes both runtimes
   it would run under: `.node-version` (CI and Tauri) and the Node integrated in
   the exact Electron version of `packages/electron-app/package.json`, read from
   Electron's release index (`releases.electronjs.org/releases.json`). The npm
   proposal also requires those two files unchanged on the default branch.
   Otherwise the job warns and names the rejected runtime; updating that runtime
-  first unblocks the proposal. Major npm releases are proposed too, because npm
-  ships fixes on its current major only; their title and body mark the major,
-  and the body lists the breaking-change, lifecycle-script and fixture checks the
-  maintainer completes before merging.
+  first unblocks the proposal. `engines.node` is npm's declaration only: the
+  proposal and the job summary state that it does not validate CodeNomad's
+  behaviour, which the PR build and the maintainer's checklist establish. Major
+  npm releases are proposed too, because npm ships fixes on its current major
+  only, but never adopted from the engines check: their title and body say
+  "maintainer qualification needed", and the body lists the breaking-change,
+  lifecycle-script and fixture checks to complete before merging (the PR build
+  runs first installation with the bundled npm on both hosts; install, upgrade
+  and legacy-replacement fixtures against both packaged hosts run locally).
 - The check audits the pinned npm CLI and its bundled dependencies, and the
   proposed npm when there is one, using an isolated temporary lockfile with
   installation scripts disabled, separately from the application's dependency
   audit. Advisories in the pinned npm are warnings; the npm proposal body
-  summarizes both audits. The JSON reports are retained as one Actions artifact
+  summarizes both audits. A proposal needs its candidate's audit: when that audit
+  cannot complete, the job warns and opens no npm proposal that run, while the
+  Node check and the pinned audit proceed. The JSON reports are retained as one Actions artifact
   for seven days.
 - Version lag and advisory counts need applicability review.
-- Failed metadata/audit requests fail the job; updates and advisories only emit
+- Failed metadata requests and a failed pinned-npm audit fail the job; updates and advisories only emit
   warnings, a job summary and proposals, never an unrelated PR build gate.
 
 Repository settings must allow GitHub Actions to create pull requests.
@@ -140,6 +151,6 @@ Run `npm run check:runtime` locally for the same read-only assessment.
 ## Agent conventions
 
 - Keep the `electron` devDependency an exact version; Dependabot's npm entry is limited to the Electron toolchain and the `@tauri-apps/*` packages; adding other npm dependencies or ecosystems to Dependabot is a separate decision.
-- Bundled runtime maintenance keeps `.node-version` and `.npm-version` exact. It proposes only same-major Node LTS upgrades and newer npm releases whose `engines.node` accepts `.node-version` and the pinned Electron's Node, each as a regular, non-draft PR changing that one pin, without automatic merge; a major npm proposal says so in its title and body. Never bundle npm from another source than the verified `.npm-version` registry package, extract it with anything but the system `tar` plus the extracted-tree check, resolve `latest` at build time, skip the engines guard, auto-fix dependencies, merge or publish from the check, or report a failed audit as clean. Application runtime changes require reviewed builds/releases.
+- Bundled runtime maintenance keeps `.node-version` and `.npm-version` exact. It proposes only same-major Node LTS upgrades and newer npm releases whose `engines.node` includes `.node-version` and the pinned Electron's Node, each as a regular, non-draft PR changing that one pin, without automatic merge; a major npm proposal says "maintainer qualification needed" in its title and body. Never present `engines.node` as behavioural validation, adopt an npm major without qualification, bundle npm from another source than the verified `.npm-version` registry package, extract it with anything but the system `tar` plus the extracted-tree check, resolve `latest` at build time, skip the engines guard, auto-fix dependencies, merge or publish from the check, overwrite or delete a proposal branch, or report a failed audit as clean. Application runtime changes require reviewed builds/releases.
 - Documents reference `.node-version` and `.npm-version` and never restate the pinned Node or bundled npm version: maintenance updates only those files.
 - Documents never restate Tauri crate or CLI versions: they point to `packages/tauri-app/Cargo.toml`/`Cargo.lock` and the `@tauri-apps/*` entries of `packages/tauri-app/package.json` and `packages/ui/package.json`. Never merge a Tauri update whose vendored crates fail re-qualification or whose `@tauri-apps/*` packages trail the crates' minor.
