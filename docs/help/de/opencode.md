@@ -20,7 +20,7 @@ Installierte Programmdatei und laufender Dienst können unterschiedliche Version
 | Einstufung | Aktuelle Anforderung | Bedeutung |
 | --- | --- | --- |
 | Minimum | OpenCode **2.2.3** | Das Bildgenerierungswerkzeug, das die Einstellungen unter **Bilder** und die Design-Erweiterung nutzen, sowie die korrekte Reihenfolge von JavaScript-Jobs in Code Mode und das native Wiedergabe- und Komprimierungsformat; mit früheren Versionen gespeicherte Unterhaltungen bleiben nach dem Update lesbar. |
-| Empfohlen | OpenCode **2.2.5** | Qualifiziertes Ziel, getrennt vom technischen Minimum. |
+| Empfohlen | OpenCode **2.2.6** | Qualifiziertes Ziel, getrennt vom technischen Minimum. |
 | Ungeprüft | Neuere oder angepasste, nicht vollständig validierte Version | Nicht allein wegen fehlender Tests abgelehnt; geprüft werden die tatsächlichen API-Verträge des verbundenen Dienstes. |
 
 Der verbundene Dienst muss die erforderlichen Verträge für Sitzungen, Berechtigungen, Forms, Posteingang und Sitzungsumgebung bereitstellen. Native Missionszeitplanung prüft auch die Zeitplan-APIs, das Plugin-/Anbieterpaket und die wirksame Einstellung `experimental.schedules`. Die Verfügbarkeit richtet sich nach diesen genutzten Fähigkeiten, auch bei kompatiblen künftigen Versionen. Meldet die Einrichtung einen nicht unterstützten laufenden Dienst, wählen/installieren Sie eine unterstützte CLI und führen Sie bei Bereitschaft den expliziten Neustart des gemeinsamen Dienstes aus.
