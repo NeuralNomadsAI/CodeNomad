@@ -1,31 +1,42 @@
 version: 2
 updates:
-  # Only the Tauri family (dev-docs/RUNTIME_MAINTENANCE.md), from the Cargo
-  # workspace root holding Cargo.lock. The runtime crates are direct dependencies
-  # of the runtime regression fixture, whose requirements follow; Wry is a
-  # lockfile-only update. Vendored Tao and updater copies are path patches that Dependabot leaves alone;
-  # an update needing newer ones fails the vendored-patch check until re-vendored
-  # (packages/tauri-app/vendor/README.md). Minor and patch updates arrive
-  # together; each major update gets its own PR.
+  # All Cargo dependencies, including transitives, from the workspace lockfile.
+  # allow.update-types limits routine updates only; security fixes may cross majors.
+  # Group related Tauri security fixes; unmatched dependencies stay individual.
+  # Explicit security rules override repository/organization grouping here.
+  # Re-qualify local path patches before merging
+  # (packages/tauri-app/vendor/README.md; dev-docs/RUNTIME_MAINTENANCE.md).
+  # Use the default branch (dev) so security updates share this configuration.
   - package-ecosystem: cargo
     directory: /packages/tauri-app
-    target-branch: dev
     schedule:
       interval: weekly
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 5
     allow:
-      - dependency-name: tauri
-      - dependency-name: tauri-build
-      - dependency-name: tauri-plugin-*
-      - dependency-name: tauri-runtime*
-      - dependency-name: wry
-        dependency-type: indirect
+      - dependency-type: all
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
     groups:
-      tauri:
+      tauri-security:
+        applies-to: security-updates
         patterns:
           - tauri
           - tauri-*
           - wry
+      tauri:
+        applies-to: version-updates
+        patterns:
+          - tauri
+          - tauri-*
+          - wry
+        update-types:
+          - minor
+          - patch
+      cargo-dependencies:
+        applies-to: version-updates
+        patterns:
+          - "*"
         update-types:
           - minor
           - patch
@@ -37,23 +48,33 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
 
-  # Only the Electron toolchain and the Tauri JavaScript packages
-  # (dev-docs/RUNTIME_MAINTENANCE.md). The root entry covers the workspace
-  # manifests and the root lockfile. Minor and patch updates arrive together per
-  # toolchain; each major update gets its own PR.
+  # Root workspaces use the root lockfile; the deployment worker has its own.
+  # Fastify security fixes share a family PR; unmatched dependencies stay individual.
+  # Routine majors require a maintainer decision, except supported Electron majors.
+  # The all-dependency rule preserves security coverage, including major fixes.
   - package-ecosystem: npm
-    directory: /
-    target-branch: dev
+    directories:
+      - /
+      - /packages/cloudflare
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
     allow:
+      - dependency-type: all
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
       - dependency-name: electron
-      - dependency-name: electron-builder
-      - dependency-name: electron-vite
-      - dependency-name: "@tauri-apps/*"
+        update-types:
+          - version-update:semver-major
     groups:
+      fastify-security:
+        applies-to: security-updates
+        patterns:
+          - fastify
+          - "@fastify/*"
       electron-toolchain:
+        applies-to: version-updates
         patterns:
           - electron
           - electron-builder
@@ -62,8 +83,16 @@ updates:
           - minor
           - patch
       tauri-js:
+        applies-to: version-updates
         patterns:
           - "@tauri-apps/*"
+        update-types:
+          - minor
+          - patch
+      npm-dependencies:
+        applies-to: version-updates
+        patterns:
+          - "*"
         update-types:
           - minor
           - patch
