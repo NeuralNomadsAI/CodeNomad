@@ -2,6 +2,18 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { NativeParent, NATIVE_REQUEST_PREFIX, NATIVE_RESPONSE_PREFIX } from "./native-parent"
 
+test("a supported native parent takes precedence over an inherited WebKit host marker", () => {
+  const previous = process.env.CODENOMAD_TAURI_WEBKIT
+  try {
+    process.env.CODENOMAD_TAURI_WEBKIT = "1"
+    assert.equal(new NativeParent(undefined, true).browserAutomationUnavailable, false)
+    assert.equal(new NativeParent(undefined, false).browserAutomationUnavailable, true)
+  } finally {
+    if (previous === undefined) delete process.env.CODENOMAD_TAURI_WEBKIT
+    else process.env.CODENOMAD_TAURI_WEBKIT = previous
+  }
+})
+
 test("WebKit browser refusal is independent of the native transport", async () => {
   const parent = new NativeParent({ write: () => { throw new Error("Unexpected native request") } }, false, true)
   assert.equal(parent.browserAutomationUnavailable, true)
