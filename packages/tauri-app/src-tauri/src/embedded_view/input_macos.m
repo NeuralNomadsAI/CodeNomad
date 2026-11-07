@@ -114,6 +114,23 @@ void cn_test_scoped_buttons(void) {
 @interface WKWebView (CNTargetedMouseMove)
 - (void)_simulateMouseMove:(NSEvent *)event;
 @end
+#ifdef CN_INPUT_SELF_TEST
+int cn_test_direct_hover(void *opaque, double x, double y) {
+    WKWebView *view = (__bridge WKWebView *)opaque;
+    NSPoint local = NSMakePoint(x, view.isFlipped ? y : view.bounds.size.height - y);
+    NSPoint point = [view convertPoint:local toView:nil];
+    NSEvent *entered = [NSEvent enterExitEventWithType:NSEventTypeMouseEntered location:point
+        modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:view.window.windowNumber
+        context:nil eventNumber:1 trackingNumber:0 userData:NULL];
+    NSEvent *moved = [NSEvent mouseEventWithType:NSEventTypeMouseMoved location:point
+        modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:view.window.windowNumber
+        context:nil eventNumber:2 clickCount:0 pressure:0];
+    trace([NSString stringWithFormat:@"hover direct mouseEntered+mouseMoved css=%g,%g window=%g,%g flipped=%d keyWindow=%d", x, y, point.x, point.y, view.isFlipped, view.window.isKeyWindow]);
+    [view mouseEntered:entered];
+    [view mouseMoved:moved];
+    return 1;
+}
+#endif
 
 static void fail(CNCompletion done, void *context, NSString *error) {
     done(context, NULL, 0, error.UTF8String);
@@ -226,7 +243,7 @@ static void change_modifiers(WKWebView *view, unsigned before, unsigned after) {
             modifierFlags:modifiers(current) timestamp:NSProcessInfo.processInfo.systemUptime
             windowNumber:view.window.windowNumber context:nil characters:@"" charactersIgnoringModifiers:@""
             isARepeat:NO keyCode:codes[i]];
-        trace([NSString stringWithFormat:@"flagsChanged code=%hu flags=0x%lx timestamp=%.6f window=%ld", codes[i], (unsigned long)changed.modifierFlags, changed.timestamp, (long)changed.windowNumber]);
+        trace([NSString stringWithFormat:@"flagsChanged receiver=%@ code=%hu flags=0x%lx timestamp=%.6f window=%ld", view.class, codes[i], (unsigned long)changed.modifierFlags, changed.timestamp, (long)changed.windowNumber]);
         with_modifiers(changed.modifierFlags, ^{ [view flagsChanged:changed]; });
     }
 }
@@ -264,10 +281,6 @@ int cn_key(void *opaque, const char *key, unsigned flags, int down) {
     } else if (down) {
         trace([NSString stringWithFormat:@"key %@ keyDown", [NSString stringWithUTF8String:key]]);
         [view keyDown:event];
-        if (!view.window.isKeyWindow && [@[@"Return", @"Tab", @"BackSpace", @"Delete"] containsObject:[NSString stringWithUTF8String:key]]) {
-            trace([NSString stringWithFormat:@"key %@ interpretKeyEvents", [NSString stringWithUTF8String:key]]);
-            [view interpretKeyEvents:@[event]];
-        }
     } else { trace([NSString stringWithFormat:@"key %@ keyUp", [NSString stringWithUTF8String:key]]); [view keyUp:event]; }
     });
     } @finally {

@@ -104,6 +104,7 @@ def main():
         'contenteditable_unicode': observations['editor'].startswith('éditeur漢🙂'),
         'contenteditable_enter': any(event['type'] == 'keydown' and event.get('key') == 'Enter' and event['target'] == 'DIV' for event in events),
         'contenteditable_enter_dom': any(event['type'] == 'input' and event.get('inputType') in {'insertParagraph', 'insertLineBreak'} and event['target'] == 'DIV' for event in events) and '<' in observations['editorHtml'],
+        'contenteditable_enter_once': all(sum(event['type'] == kind and event.get('inputType') == 'insertParagraph' and event['target'] == 'DIV' for event in events) == 1 for kind in ('beforeinput', 'input')),
         'visible_png': png[:8] == b'\x89PNG\r\n\x1a\n' and all(0 < value <= 2000 for value in dimensions),
         'desktop_pointer_unchanged': pointer_unchanged,
     }

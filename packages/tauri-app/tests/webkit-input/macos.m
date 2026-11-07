@@ -3,6 +3,7 @@
 #include "sequence.h"
 #include <objc/runtime.h>
 extern void cn_test_scoped_buttons(void);
+extern int cn_test_direct_hover(void *, double, double);
 @interface WKWebView (CNInputDrain)
 - (void)_doAfterProcessingAllPendingKeyEvents:(void (^)(void))completion;
 - (void)_doAfterProcessingAllPendingMouseEvents:(void (^)(void))completion;
@@ -34,12 +35,18 @@ static void painted(void *context, const unsigned char *bytes, size_t length, co
         self.window.acceptsMouseMovedEvents = YES;
         [self.view updateTrackingAreas];
         fprintf(stderr, "hover variant=prime-5,5-then-target trackingAreas=%lu acceptsMouseMoved=%d\n", (unsigned long)self.view.trackingAreas.count, self.window.acceptsMouseMovedEvents);
-        assert(cn_pointer(view, CN_MOVE, 5, 5, 0));
+        for (NSTrackingArea *area in self.view.trackingAreas) {
+            fprintf(stderr, "tracking owner=%s options=0x%lx activeInKeyWindow=%d activeAlways=%d\n", NSStringFromClass([area.owner class]).UTF8String, (unsigned long)area.options, !!(area.options & NSTrackingActiveInKeyWindow), !!(area.options & NSTrackingActiveAlways));
+        }
+        if (getenv("CN_INPUT_DIRECT_HOVER")) assert(cn_test_direct_hover(view, 5, 5));
+        else assert(cn_pointer(view, CN_MOVE, 5, 5, 0));
     }
     IMP buttons = class_getMethodImplementation(object_getClass(NSEvent.class), @selector(pressedMouseButtons));
     IMP modifiers = class_getMethodImplementation(object_getClass(NSEvent.class), @selector(modifierFlags));
     BOOL omit_chord = getenv("CN_INPUT_NO_CHORD") && (self.step == 12 || self.step == 13);
-    if (self.step >= 0 && self.step <= 19 && !omit_chord) sequence(view, (int)self.step);
+    BOOL direct_hover = getenv("CN_INPUT_DIRECT_HOVER") && self.step == 0;
+    if (direct_hover) assert(cn_test_direct_hover(view, 30, 160));
+    if (self.step >= 0 && self.step <= 19 && !omit_chord && !direct_hover) sequence(view, (int)self.step);
     assert(class_getMethodImplementation(object_getClass(NSEvent.class), @selector(pressedMouseButtons)) == buttons);
     assert(class_getMethodImplementation(object_getClass(NSEvent.class), @selector(modifierFlags)) == modifiers);
     if (self.step >= 0 && self.step <= 19 && getenv("CN_INPUT_TRACE")) {

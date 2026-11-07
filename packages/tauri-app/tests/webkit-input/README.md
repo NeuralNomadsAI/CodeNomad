@@ -33,6 +33,16 @@ The macOS harness primes hover at `(5,5)`, then targets `(30,160)` on the next t
 
 `CN_INPUT_NO_CHORD=1` is a diagnostic that omits only the chord down/up steps. The acceptance assertions remain enabled, so this diagnostic fails the chord criteria by design. Compare its contenteditable keyboard events against the complete sequence; use the complete sequence for acceptance.
 
+`CN_INPUT_DIRECT_HOVER=1` exercises public `mouseEntered:` then `mouseMoved:` directly on the exact WKWebView at the priming and target positions. This variant lives in the native self-test build. The trace includes each tracking area's options and key-window/always-active bits. Keep the window inactive throughout qualification.
+
+## macOS candidate limitations
+
+- A standalone Enter uses WebKit's native `keyDown:` text-input path and produces exactly one `insertParagraph` beforeinput/input pair. The harness counts both events independently to catch duplicate execution. Its DOM trace contains Enter key-down; Enter key-up is missing in this diagnostic.
+- In the complete Cmd+A sequence, the native select-all fallback replaces the input value. DOM delivery includes Meta key-down, while the Meta release and following Enter keyboard events are missing. The native trace records direct WKWebView `flagsChanged:` down/up, chord key-up and zero modifiers on the following Enter. After this chord, the agent's subsequent Enter also lacks its native paragraph edit. Keep keyboard actions following a Mod chord gated by this limitation.
+- The initial hover lacks `pointermove` at the requested target while the window is inactive, including after priming at a different in-view location. Public direct enter/move and the checked `_simulateMouseMove:` SPI are covered by separate harness variants. Mouse-enter/CSS hover observations occur with subsequent clicks. The agent's initial standalone hover consequently cannot establish the expected pointer-move behavior. The harness preserves background-window operation; tracking-area option logging is diagnostic evidence rather than a key-window positive control.
+
+The strict complete-sequence assertions retain these failures. The adapter sources remain isolated from the application build while the private transport and its capability policy are integrated.
+
 WebKit's `WebEventFactory::createWebMouseEvent` obtains ordinary NSEvent button state from `WebCore::currentlyPressedMouseButtons`, which reads `[NSEvent pressedMouseButtons]`. The automation event path has distinct handling. Source references for investigation:
 
 - <https://github.com/WebKit/WebKit/blob/main/Source/WebKit/Shared/mac/WebEventFactory.mm>
