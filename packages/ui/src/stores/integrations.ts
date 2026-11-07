@@ -43,6 +43,7 @@ serverEvents.on("instance.event", event => {
     invalidate(event.instanceId)
     integrations.applyEvent(event.instanceId, type)
   } else if (type === "server.connected") {
+    integrations.connection(event.instanceId, true)
     integrationBindings.reconnect(event.instanceId)
     invalidate(event.instanceId)
     integrations.invalidate(event.instanceId)
@@ -57,6 +58,7 @@ serverEvents.on("instance.event", event => {
 serverEvents.on("instance.eventStatus", event => {
   if (event.type !== "instance.eventStatus") return
   integrationBindings.reconnect(event.instanceId, event.status === "connected")
+  integrations.connection(event.instanceId, event.status === "connected")
   invalidate(event.instanceId)
   integrations.invalidate(event.instanceId)
   if (event.status === "connected") reconnects.schedule(event.instanceId, "urgent", serverEvents.signalForInstance(event.instanceId))
@@ -64,6 +66,7 @@ serverEvents.on("instance.eventStatus", event => {
 serverEvents.onOpen(backendId => {
   if (!observeBackend(backendId)) return
   integrationBindings.reconnect(undefined, true, backendId)
+  integrations.connection(undefined, true, backendId)
   bumpConnection(backendId)
   integrations.invalidate(undefined, backendId)
   void integrations.refreshDemanded(undefined, backendId)
@@ -71,6 +74,7 @@ serverEvents.onOpen(backendId => {
 serverEvents.onTransportStatus((status, backendId) => {
   if (!observeBackend(backendId)) return
   if (status !== "disconnected") return
+  integrations.connection(undefined, false, backendId)
   bumpConnection(backendId)
   integrations.invalidate(undefined, backendId)
   integrationBindings.reconnect(undefined, false, backendId)

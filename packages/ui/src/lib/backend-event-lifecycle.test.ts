@@ -6,6 +6,7 @@ import { backendEvents, ServerEvents } from "./server-events"
 import { getSseManager, sseManager } from "./sse-manager"
 import { useForegroundRefresh } from "./hooks/use-foreground-refresh"
 import { integrationBindings, integrationEpoch } from "../stores/integrations"
+import { registerLocalBackendFixture } from "../../tests/contracts/local-backend-fixture"
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve))
 function renderer(t: TestContext) {
@@ -81,6 +82,7 @@ test("detach revokes transport, deletes reactive statuses and subscriptions, the
 })
 
 test("disposing an attached source removes its fan-in and integration connection records", async t => {
+  registerLocalBackendFixture(t, "disposed_owner")
   renderer(t)
   const a = owner(t, "disposed_owner"), baseline = counts()
   let reads = 0

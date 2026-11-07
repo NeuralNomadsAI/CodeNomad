@@ -398,10 +398,12 @@ jobs:
           packages/ui/src/stores/plugin-controls-demand.test.ts
           packages/ui/src/stores/plugin-controls-events.test.ts
           packages/ui/src/stores/plugin-sources.test.ts
+          packages/ui/src/lib/backend-plugin-routing.test.ts
           packages/ui/src/stores/integrations-store.test.ts
           packages/ui/src/stores/integration-bindings-store.test.ts
           packages/ui/src/lib/integration-rows.test.ts
           packages/ui/src/lib/integrations-api.test.ts
+          packages/ui/src/lib/backend-integration-routing.test.ts
           packages/ui/src/stores/message-prompt-display.test.ts
           packages/ui/src/stores/message-v2/instance-store.test.ts
           packages/ui/src/stores/message-v2/message-hydration-authority.test.ts
@@ -512,6 +514,7 @@ jobs:
           packages/ui/src/stores/backend-store-indicators.test.ts
           packages/ui/src/components/backend-view-indicators.test.ts
           packages/ui/src/lib/backend-panel-deadline.test.ts
+          packages/ui/src/lib/backend-panel-extensions-routing.test.ts
           packages/ui/tests/contracts/mission-current-body-attachment.test.ts
           packages/ui/tests/contracts/mission-current-body-lifetime.test.ts
           packages/ui/src/stores/app-session-workspace-hydration.test.ts

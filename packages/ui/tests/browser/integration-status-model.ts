@@ -37,6 +37,7 @@ export async function routeIntegrations(page: Page) {
   }
   await page.route("**/api/**", async route => {
     const request = route.request(), url = new URL(request.url())
+    if (url.pathname === "/api/panel-extensions" && request.method() === "GET") return route.fulfill({ json: [] })
     const match = url.pathname.match(/\/integrations(?:\/([a-z0-9-]+)\/(hosts|attach|detach|install-host|binding|install))?$/)
     if (url.pathname.endsWith("/plugin-sources") && request.method() === "DELETE") {
       calls.push({ action: "remove", method: "DELETE", directory: null, body: request.postDataJSON() })

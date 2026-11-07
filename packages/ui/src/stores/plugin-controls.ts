@@ -6,7 +6,7 @@ import type {
   PluginControlScope,
   PluginControlsSnapshot,
 } from "../../../server/src/api-types"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { parseInstanceKey } from "../lib/backend-identity"
 import { captureBackendOperation } from "../lib/backend-operation"
 
@@ -453,7 +453,10 @@ function retainRuntime(durable: PluginControlsSnapshot, newer: PluginControlsSna
   }
 }
 
-export const pluginControlsCache = new PluginControlsCache(serverApi, id => captureBackendOperation(id).signal)
+export const pluginControlsCache = new PluginControlsCache({
+  getPluginControls: async (id, location, signal) => backendOf(id).api.getPluginControls(parseInstanceKey(id).workspaceId, location, signal),
+  setPluginActivation: async (id, payload) => backendOf(id).api.setPluginActivation(parseInstanceKey(id).workspaceId, payload),
+}, id => captureBackendOperation(id).signal)
 
 function cacheKey(instanceId: string, location: PluginControlLocation): string {
   return `${JSON.stringify(instanceId)}:${JSON.stringify(location.directory)}`

@@ -4,6 +4,7 @@ import type { Instance, RawMcpStatus } from "../types/instance"
 import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import { useI18n } from "../lib/i18n"
 import { captureBackendOperation } from "../lib/backend-operation"
+import { getRootClient } from "../stores/opencode-client"
 import { getLogger } from "../lib/logger"
 import { PluginActivationControls } from "./plugin-activation-controls"
 import { createIntegrationContext } from "./integration-context"
@@ -69,6 +70,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
 
 
   const [pendingMcpActions, setPendingMcpActions] = createSignal<Record<string, "connect" | "disconnect">>({})
+  const pendingMcpOwners = new Map<string, object>()
 
   const setPendingMcpAction = (name: string, action?: "connect" | "disconnect") => {
     setPendingMcpActions((prev) => {
@@ -82,11 +84,13 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
   const toggleMcpServer = async (serverName: string, shouldEnable: boolean) => {
     const operation = captureBackendOperation(instance().id)
     if (!operation.current()) return
-    const client = instance().client
-    if (!client?.mcp) return
+    const instanceId = instance().id
+    if (!instance().client) return
     const action: "connect" | "disconnect" = shouldEnable ? "connect" : "disconnect"
+    pendingMcpOwners.set(serverName, operation)
     setPendingMcpAction(serverName, action)
     try {
+      const client = getRootClient(instanceId)
       const resolved = metadata()?.mcpStatus?.location
       const location = resolved
         ? { directory: resolved.directory }
@@ -100,7 +104,10 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
     } catch (error) {
       log.error("Failed to toggle MCP server", { serverName, action, error })
     } finally {
-      setPendingMcpAction(serverName)
+      if (pendingMcpOwners.get(serverName) === operation) {
+        pendingMcpOwners.delete(serverName)
+        setPendingMcpAction(serverName)
+      }
     }
   }
 

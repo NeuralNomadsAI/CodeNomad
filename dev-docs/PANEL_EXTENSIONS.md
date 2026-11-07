@@ -88,6 +88,19 @@ profile**, and each profile/channel installs separately. Legacy global grants
 load as enabled and folder-only grants as disabled, with installed packages kept;
 reads never rewrite storage, and the next explicit mutation drops folder grants.
 
+The displayed project's backend owns inventory, catalogue reads, package inspection,
+installation, activation and removal. `panel-extensions-backend.ts` captures that
+backend's attachment before IO; API 2/3/4 and panel-document requests resolve the
+same owner, translating the opaque UI instance key to its raw workspace ID only at
+the HTTP boundary. Missing backend registrations fail closed. The registered local
+backend preserves the injected local URL concatenation and request bytes.
+Downloaded HTML becomes a local sandboxed `srcdoc` document. Every HTTP response
+and decoded JSON value retains its captured attachment authority; revocation drops
+results, closes the frame's port and removes its document. Manager confirmations
+belong to the current project/attachment lifetime. Inventory invalidations share
+one running read and one trailing refresh, with generation-owned publication and
+indicator release; prefill rate limits belong to each backend attachment.
+
 To update, download and inspect a new release ZIP and install it over the same ID.
 Compare the displayed digest with the publisher's checksum through a trusted
 channel. Replacing code revokes **all** activation grants, even when permissions
@@ -409,6 +422,7 @@ node scripts/test-panel-extension-native.mjs --api4
 node scripts/test-panel-extension-electron.mjs # real preload, createWindow webPreferences; Linux may add --no-sandbox
 node --import tsx --test packages/server/src/forge/forge.test.ts packages/server/src/server/routes/panel-extension-work-items.test.ts
 node --conditions=browser --import tsx --test packages/ui/src/components/panel-extensions/work-items-channel.test.ts
+node --conditions=browser --import tsx --test packages/ui/src/lib/backend-panel-extensions-routing.test.ts
 node --import tsx --test packages/ui/src/components/panel-extensions/image-bounds.test.ts
 node --import tsx --test packages/server/src/panel-extensions/api4.test.ts packages/server/src/server/routes/panel-extension-api4.test.ts packages/server/src/remote-control/panel-extension-remote.test.ts
 node --conditions=browser --import tsx --test packages/ui/src/components/panel-extensions/composer-prefill.test.ts packages/ui/src/components/panel-extensions/api4-messages.test.ts

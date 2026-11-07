@@ -400,6 +400,7 @@ test("a detached native model refresh cannot publish its old selection", async t
 })
 
 test("a binding acquired before the first source event is revoked with that attachment", async t => {
+  registerLocalBackendFixture(t, "silent_binding")
   const a = owner(t), target = { instanceId: "silent_binding~ws", directory: "/repo", sessionID: "s", integrationId: "i" }
   const detach = backendEvents.attach("silent_binding", a.events)
   t.after(detach)
