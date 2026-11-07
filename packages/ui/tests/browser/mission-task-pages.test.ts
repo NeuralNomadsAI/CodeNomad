@@ -552,7 +552,7 @@ for (const failure of ["network", "changed"] as const) test(`sliced task ${failu
     return route.fulfill({ json: answer })
   })
   try {
-    const original = await rows(f.page), toolbar = f.page.locator(".mission-action-bar"), element = await toolbar.elementHandle()
+    const original = await rows(f.page), toolbar = f.page.locator(".mission-picker-selection-actions .mission-action-bar"), element = await toolbar.elementHandle()
     await more(f.page)
     const read = f.page.locator(".mission-tree-read")
     await read.waitFor()

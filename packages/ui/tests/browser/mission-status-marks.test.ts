@@ -129,6 +129,26 @@ test("marks follow the session palette and a completion stays green until this w
   } finally { await page.close() }
 })
 
+test("a refresh that reorders the rows keeps keyboard focus and the selection's detail", async () => {
+  let list = [mission("first", { updatedAt: 3 }), mission("second", { updatedAt: 2 }), mission("third", { updatedAt: 1 })]
+  const { page, errors } = await open(() => list, () => [])
+  try {
+    await selectMission(page, "Objective second")
+    await (await inlineMissionEntry(page, "Objective third")).focus()
+    const order = () => page.locator(".mission-rows .mission-row .session-item-title").allInnerTexts()
+    assert.deepEqual(await order(), ["Objective first", "Objective second", "Objective third"])
+    list = list.map(value => value.id === "third" ? { ...value, updatedAt: 9, revision: 2 } : value)
+    await refresh(page)
+    await page.waitForFunction(() => document.querySelector(".mission-rows .mission-row .session-item-title")?.textContent === "Objective third")
+    assert.deepEqual(await order(), ["Objective third", "Objective first", "Objective second"])
+    assert.equal(await page.evaluate(() => document.activeElement?.closest(".mission-row")?.querySelector(".session-item-title")?.textContent),
+      "Objective third", "the focused row keeps focus when a refresh moves it")
+    assert.equal(await page.locator(".mission-row:has(.mission-row-select[aria-current=true]) + .mission-row-children section.mission-detail").count(), 1,
+      "the detail stays the selected row's children")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("a selected mission completing behind the creation form stays green until its detail shows again", async () => {
   let list = [mission("selected"), mission("other", { updatedAt: 2 })]
   const { page, errors } = await open(() => list, () => [])
