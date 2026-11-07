@@ -10,7 +10,7 @@
 
 | 平台 | Electron 发行包 | Tauri 发行包 | 平台说明 |
 | --- | --- | --- | --- |
-| macOS | ZIP，Intel 或 Apple Silicon | ZIP，Intel 或 Apple Silicon | macOS 13.5 或更高版本（Tauri 附带的 Node 需要；Electron 声明相同的最低版本）。 |
+| macOS | ZIP，Intel 或 Apple Silicon | ZIP，Intel 或 Apple Silicon | Tauri：macOS 14+；Electron：macOS 13.5+。 |
 | Windows | ZIP，x64 | 安装程序，x64 | Windows 10 或更高版本；Tauri 使用 WebView2。 |
 | Linux | Debian 软件包，x64 | AppImage，x64 | 在 Ubuntu 24.04 上构建和测试；不保证兼容更早的发行版。 |
 

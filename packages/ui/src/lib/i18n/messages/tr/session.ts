@@ -1,6 +1,6 @@
 export const sessionMessages = {
   "browser.viewport.emulationHint": "Mobil kimlik, dokunma ve piksel yoğunluğuyla yeniden yükler. Tarayıcı motoru, klavye ve sistem çubukları simüle edilmez.",
-  "browser.viewport.emulationUnavailable": "Cihaz emülasyonu için yerel masaüstü Web önizlemesi gerekir.",
+  "browser.viewport.emulationUnavailable": "Yalnızca boyutlar. Bu önizlemede cihaz emülasyonu kullanılamıyor.",
   "sessionList.filter.includeMainSessions": "Ana oturumlar",
   "sessionList.filter.includeSubsessions": "Alt oturumlar",
   "session.pruning.maintenance_required": "Oturum veya depolama alanı meşgul. Geçerli işlem bitince temizlemeyi yeniden deneyin.",

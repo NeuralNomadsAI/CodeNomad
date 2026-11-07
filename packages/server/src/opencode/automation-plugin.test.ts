@@ -8,6 +8,7 @@ import childProcess from "node:child_process"
 import { syncBuiltinESMExports } from "node:module"
 import {
   AUTOMATION_BRIDGE_PATH,
+  BROWSER_AUTOMATION_UNAVAILABLE,
   automationBridgeDirectory,
   automationBridgeDirectories,
   discoverAutomationBridgeDirectories,
@@ -20,6 +21,7 @@ import {
   removeLegacyAutomationPlugin,
   setupAutomationPlugin,
   sendMissionInput,
+  executeBrowserTool,
 } from "./automation-plugin"
 
 type ToolDefinition = {
@@ -27,13 +29,13 @@ type ToolDefinition = {
   execute(input: unknown, context: { sessionID: string }): Promise<{ content: unknown }>
 }
 
-function listen(handler: (body: Record<string, unknown>) => Promise<Record<string, unknown>>) {
+function listen(handler: (body: Record<string, unknown>, response: http.ServerResponse) => Promise<Record<string, unknown>>) {
   return new Promise<{ server: http.Server; url: string }>((resolve) => {
     const server = http.createServer((request, response) => {
       const chunks: Buffer[] = []
       request.on("data", (chunk) => chunks.push(Buffer.from(chunk)))
       request.on("end", () => {
-        void handler(JSON.parse(Buffer.concat(chunks).toString("utf8"))).then((body) => {
+        void handler(JSON.parse(Buffer.concat(chunks).toString("utf8")), response).then((body) => {
           response.setHeader("content-type", "application/json")
           response.end(JSON.stringify(body))
         })
@@ -173,6 +175,30 @@ test("mission discovery waits for cold ownership validation and still rejects co
   } finally {
     await Promise.all(removals.map(remove => remove()))
     await Promise.all(servers.map(closeServer))
+    restore()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("browser discovery preserves WebKit refusals without executing a preview action", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-webkit-refusal-"))
+  const restore = isolateAutomationBridgeRegistry(root)
+  const calls: unknown[] = []
+  let remove: (() => Promise<void>) | undefined
+  const { server, url } = await listen(async (body, response) => {
+    calls.push(body.mode)
+    response.statusCode = 409
+    return { error: BROWSER_AUTOMATION_UNAVAILABLE }
+  })
+  try {
+    remove = await publishAutomationBridge(createAutomationBridgeRegistration(url))
+    for (const command of [{ action: "open", url: "https://example.com" }, { action: "snapshot" }, { action: "screenshot" }]) {
+      await assert.rejects(executeBrowserTool("ses_webkit", command), { message: BROWSER_AUTOMATION_UNAVAILABLE })
+    }
+    assert.deepEqual(calls, ["browser-claim", "browser-probe", "browser-probe"])
+  } finally {
+    await remove?.()
+    await closeServer(server)
     restore()
     await rm(root, { recursive: true, force: true })
   }

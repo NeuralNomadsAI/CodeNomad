@@ -10,7 +10,7 @@
 
 | פלטפורמה | גרסת Electron | גרסת Tauri | הערות לפלטפורמה |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel או Apple Silicon | ZIP, Intel או Apple Silicon | macOS 13.5 ואילך (נדרש עבור ה־Node ש־Tauri כולל; Electron מצהיר על אותו מינימום). |
+| macOS | ZIP, Intel או Apple Silicon | ZIP, Intel או Apple Silicon | Tauri: ‏macOS 14 ואילך; Electron: ‏macOS 13.5 ואילך. |
 | Windows | ZIP, x64 | מתקין, x64 | Windows 10 ואילך; Tauri משתמש ב־WebView2. |
 | Linux | חבילת Debian, x64 | AppImage, x64 | נבנה ונבדק ב־Ubuntu 24.04; תאימות להפצות ישנות יותר אינה מובטחת. |
 

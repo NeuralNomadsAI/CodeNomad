@@ -20,16 +20,19 @@
 | --- | --- | --- | --- |
 | समर्थित desktop प्लेटफर्ममा Electron | नेटिभ Chromium guest | देखिने स्वामित्वभित्रको session पूर्वावलोकनमा समर्थित | Android/Chromium पहिचान, touch र density emulation |
 | Windows Tauri | नेटिभ WebView2 child | देखिने स्वामित्वभित्रको session पूर्वावलोकनमा समर्थित | Android/Chromium पहिचान, touch र density emulation |
-| macOS/Linux Tauri | sandbox भएको iframe | नेटिभ browser automation छैन | आयाम मात्र |
+| macOS Tauri | नेटिभ WKWebView child | उपलब्ध छैन; Electron वा Windows Tauri प्रयोग गर्नुहोस् | आयाम मात्र |
+| Linux Tauri | नेटिभ WebKitGTK child | उपलब्ध छैन; Electron वा Windows Tauri प्रयोग गर्नुहोस् | आयाम मात्र |
 | सामान्य browser/remote दृश्य | iframe fallback | स्थानीय native preview target छैन | आयाम मात्र |
 
-नेटिभ automation desktop startup मै तयार हुन्छ र open, navigate, snapshot, screenshot र page action (click, type, select, hover, drag, scroll, key press र text पर्खने) का लागि session-bound `codenomad.browser` tool प्रयोग गर्छ। tool उपलब्धता हरेक विन्डोको अनुमति होइन: execution ले स्वामी backend, native capability, session र visible target जाँच्छ। बीचमै पृष्ठ लुकेको, बदलिएको वा अर्कै ठाउँ नेभिगेट भएको action अर्को पृष्ठमा पठाइँदैन, अस्वीकार गरिन्छ; कुनै action स्वतः दोहोर्‍याइँदैन। पृष्ठ सामग्री अविश्वसनीय नै हुन्छ। target ले embedding निषेध गर्दा iframe असफल हुन सक्छ; सुरक्षा कमजोर पार्नुको सट्टा बाह्य browser प्रयोग गर्नुहोस्।
+Electron र Windows Tauri मा नेटिभ automation desktop startup मै तयार हुन्छ र open, navigate, snapshot, screenshot र page action (click, type, select, hover, drag, scroll, key press र text पर्खने) का लागि session-bound `codenomad.browser` tool प्रयोग गर्छ। tool उपलब्धता हरेक विन्डोको अनुमति होइन: execution ले स्वामी backend, native capability, session र visible target जाँच्छ। बीचमै पृष्ठ लुकेको, बदलिएको वा अर्कै ठाउँ नेभिगेट भएको action अर्को पृष्ठमा पठाइँदैन, अस्वीकार गरिन्छ; कुनै action स्वतः दोहोर्‍याइँदैन। पृष्ठ सामग्री अविश्वसनीय नै हुन्छ। target ले embedding निषेध गर्दा iframe असफल हुन सक्छ; सुरक्षा कमजोर पार्नुको सट्टा बाह्य browser प्रयोग गर्नुहोस्।
+
+macOS/Linux Tauri पूर्वावलोकन म्यानुअल रूपमा खुल्छन्, पुनःसुरुवातपछि पनि साझा sign-in राख्छन् र नेटिभ Back/Forward इतिहास प्रयोग गर्छन्। स्थानीय menu र dialog खुल्दा नेटिभ पूर्वावलोकन लुक्छन्; नेटिभ मोडमा element comment उपलब्ध छैनन्। `codenomad.browser` ले macOS/Linux Tauri मा पूर्वावलोकन देखिएकै अवस्थामा पनि सबै action अस्वीकार गर्छ।
 
 ## छ viewport template मध्ये एक रोज्नुहोस् {#templates}
 
 1. पूर्वावलोकनको viewport menu खोल्नुहोस्।
 2. तलको template चयन गर्नुहोस्। portrait/landscape प्रविष्टि सोझै प्रयोग गर्नुहोस्; छुट्टै rotate नियन्त्रण छैन।
-3. mobile emulation प्रवेश/परिवर्तन वा dimensions-only template मा फर्कँदा native reload हुन्छ भन्ने बुझ्नुहोस्।
+3. Electron र Windows Tauri मा mobile emulation प्रवेश/परिवर्तन वा dimensions-only template मा फर्कँदा native reload हुन्छ भन्ने बुझ्नुहोस्।
 
 | Template | CSS viewport |
 | --- | --- |
@@ -40,7 +43,7 @@
 | Mobile viewport | 390 × 844 |
 | Mobile landscape | 844 × 390 |
 
-नेटिभ mobile template ले स्वामित्वको guest मा मात्र Android/Chromium पहिचान, orientation, touch र DPR 2.75 सेट गर्छन्। responsive/desktop/tablet मा फर्कँदा override हटेर reload हुन्छ। iframe fallback ले आकार मात्र बदल्छ। यी पुनरुत्पादनयोग्य layout सन्दर्भ हुन्, Safari/Firefox emulation वा phone keyboard, browser/system bar वा mobile OS text setting को simulation होइनन्। reload ले नपठाइएको page state हटाउन सक्ने भएकाले template बदल्नुअघि पृष्ठ काम बचत गर्नुहोस्।
+Electron र Windows Tauri मा mobile template ले स्वामित्वको guest मा मात्र Android/Chromium पहिचान, orientation, touch र DPR 2.75 सेट गर्छन्। responsive/desktop/tablet मा फर्कँदा override हटेर reload हुन्छ। macOS/Linux Tauri र iframe fallback ले आकार मात्र बदल्छन्। यी पुनरुत्पादनयोग्य layout सन्दर्भ हुन्, Safari/Firefox emulation वा phone keyboard, browser/system bar वा mobile OS text setting को simulation होइनन्। reload ले नपठाइएको page state हटाउन सक्ने भएकाले template बदल्नुअघि पृष्ठ काम बचत गर्नुहोस्।
 
 ## SideCar दर्ता गर्नुहोस् {#register-sidecar}
 

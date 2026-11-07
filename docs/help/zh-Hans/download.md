@@ -11,7 +11,7 @@
 | 平台 | Tauri（推荐） | Electron |
 | --- | --- | --- |
 | Windows 10 或更高版本 | [安装程序，x64](release:tauri-windows-x64) | [ZIP，x64](release:electron-windows-x64) |
-| macOS 13.5 或更高版本 | [ZIP，Apple Silicon](release:tauri-macos-arm64) · [ZIP，Intel](release:tauri-macos-x64) | [ZIP，Apple Silicon](release:electron-macos-arm64) · [ZIP，Intel](release:electron-macos-x64) |
+| macOS — Tauri 14+；Electron 13.5+ | [ZIP，Apple Silicon](release:tauri-macos-arm64) · [ZIP，Intel](release:tauri-macos-x64) | [ZIP，Apple Silicon](release:electron-macos-arm64) · [ZIP，Intel](release:electron-macos-x64) |
 | Linux x64（在 Ubuntu 24.04 上测试） | [AppImage，x64](release:tauri-linux-x64) | [Debian 软件包，x64](release:electron-linux-x64) |
 
 两种构建提供相同的工作区。Tauri 可在应用内安装更新；Electron 通过下载新版本更新，并在所有平台上支持原生浏览器自动化（Tauri 仅在 Windows 上支持）。[比较两种构建](install.md#desktop-downloads)。

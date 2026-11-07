@@ -10,7 +10,7 @@ Yerel bir masaüstü ana bilgisayarı seçin veya [bağımsız sunucu](server.md
 
 | Platform | Electron sürümü | Tauri sürümü | Platform notları |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel veya Apple Silicon | ZIP, Intel veya Apple Silicon | macOS 13.5 veya üzeri (Tauri'nin paketlediği Node için gerekli; Electron aynı alt sınırı bildirir). |
+| macOS | ZIP, Intel veya Apple Silicon | ZIP, Intel veya Apple Silicon | Tauri: macOS 14+; Electron: macOS 13.5+. |
 | Windows | ZIP, x64 | Yükleyici, x64 | Windows 10 veya sonrası; Tauri WebView2 kullanır. |
 | Linux | Debian paketi, x64 | AppImage, x64 | Ubuntu 24.04'te oluşturulmuş ve test edilmiştir; eski dağıtımlarla uyumluluk garanti edilmez. |
 

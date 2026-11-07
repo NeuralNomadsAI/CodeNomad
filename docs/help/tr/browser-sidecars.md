@@ -20,16 +20,19 @@ Native önizlemeler aynı masaüstü motoru ve profil/yapılandırma kapsamında
 | --- | --- | --- | --- |
 | Desteklenen masaüstü platformlarında Electron | Yerel Chromium konuğu | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
 | Windows Tauri | Yerel WebView2 alt öğesi | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
-| macOS/Linux Tauri | Korumalı alana alınmış iframe | Yerel tarayıcı otomasyonu yok | Yalnızca boyutlar |
+| macOS Tauri | Yerel WKWebView alt öğesi | Kullanılamaz; Electron veya Windows Tauri kullanın | Yalnızca boyutlar |
+| Linux Tauri | Yerel WebKitGTK alt öğesi | Kullanılamaz; Electron veya Windows Tauri kullanın | Yalnızca boyutlar |
 | Normal tarayıcı/uzak görünüm | Alternatif iframe görünümü | Yerel native önizleme hedefi yok | Yalnızca boyutlar |
 
-Yerel otomasyon, masaüstü başlangıcında hazırlanır ve açma, gezinme, anlık görüntü, ekran görüntüsü ve sayfa eylemleri için oturuma bağlı `codenomad.browser` aracını kullanır: tıklama, yazma, seçme, üzerine gelme, sürükleme, kaydırma, tuşa basma ve metin bekleme. Aracın kullanılabilirliği her pencere için yetkilendirme değildir: yürütme, sahip olunan arka ucu, yerel yetenekleri, oturumu ve görünür hedefi kontrol eder. Sayfası bu arada gizlenmiş, değiştirilmiş veya başka bir adrese gitmiş bir eylem başka bir sayfaya gönderilmek yerine reddedilir ve hiçbir eylem otomatik olarak tekrarlanmaz. Sayfa içerikleri güvenilmez durumda kalıyor. Hedef yerleştirmeyi yasakladığından iframe başarısız olabilir; korumalarını zayıflatmak yerine harici bir tarayıcı kullanın.
+Electron ve Windows Tauri'de yerel otomasyon, masaüstü başlangıcında hazırlanır ve açma, gezinme, anlık görüntü, ekran görüntüsü ve sayfa eylemleri için oturuma bağlı `codenomad.browser` aracını kullanır: tıklama, yazma, seçme, üzerine gelme, sürükleme, kaydırma, tuşa basma ve metin bekleme. Aracın kullanılabilirliği her pencere için yetkilendirme değildir: yürütme, sahip olunan arka ucu, yerel yetenekleri, oturumu ve görünür hedefi kontrol eder. Sayfası bu arada gizlenmiş, değiştirilmiş veya başka bir adrese gitmiş bir eylem başka bir sayfaya gönderilmek yerine reddedilir ve hiçbir eylem otomatik olarak tekrarlanmaz. Sayfa içerikleri güvenilmez durumda kalıyor. Hedef yerleştirmeyi yasakladığından iframe başarısız olabilir; korumalarını zayıflatmak yerine harici bir tarayıcı kullanın.
+
+Tauri macOS/Linux önizlemeleri elle açılır, paylaşılan oturum açma bilgilerini yeniden başlatmalar arasında korur ve yerel Geri/İleri geçmişini kullanır. Yerel önizlemeler, uygulama içindeki menü ve iletişim kutularının altında gizlenir; yerel modda öğe yorumları kullanılamaz. `codenomad.browser`, görünür bir önizleme olsa bile Tauri macOS/Linux'ta tüm eylemleri reddeder.
 
 ## Altı görünüm alanı şablonundan birini seçin {#templates}
 
 1. Önizlemenin görünüm menüsünü açın.
 2. Aşağıdan bir şablon seçin. Portre/manzara girişlerini doğrudan kullanın; ayrı bir döndürme kontrolü yoktur.
-3. Mobil öykünmeyi girerken/değiştirirken veya yalnızca boyut içeren bir şablona geri dönerken yerel bir yeniden yükleme beklenebilir.
+3. Electron ve Windows Tauri'de mobil öykünmeyi girerken/değiştirirken veya yalnızca boyut içeren bir şablona geri dönerken yerel bir yeniden yükleme beklenebilir.
 
 | Şablon | CSS görünüm alanı |
 | --- | --- |
@@ -40,7 +43,7 @@ Yerel otomasyon, masaüstü başlangıcında hazırlanır ve açma, gezinme, anl
 | Mobil dikey | 390 × 844 |
 | Mobil yatay | 844 × 390 |
 
-Yerel mobil şablonlar Android/Chromium kimliğini, yönelimini, dokunuşunu ve DPR 2.75'i yalnızca sahip olunan misafir için ayarlar. Duyarlı/masaüstü/tablete geri dönmek, bu geçersiz kılmaları temizler ve sayfayı yeniden yükler. Iframe geri dönüşü yalnızca yeniden boyutlandırılır. Bunlar tekrarlanabilir düzen referanslarıdır; Safari/Firefox emülasyonu veya telefon klavyelerinin, tarayıcı/sistem çubuklarının veya mobil işletim sistemi metin ayarlarının simülasyonları değildir. Yeniden yükleme gönderilmemiş sayfa durumunu atabileceği için şablonları değiştirmeden önce sayfa çalışmasını kaydedin.
+Electron ve Windows Tauri'de mobil şablonlar Android/Chromium kimliğini, yönelimini, dokunuşunu ve DPR 2.75'i yalnızca sahip olunan misafir için ayarlar. Duyarlı/masaüstü/tablete geri dönmek, bu geçersiz kılmaları temizler ve sayfayı yeniden yükler. Tauri macOS/Linux ve iframe geri dönüşü yalnızca yeniden boyutlandırılır. Bunlar tekrarlanabilir düzen referanslarıdır; Safari/Firefox emülasyonu veya telefon klavyelerinin, tarayıcı/sistem çubuklarının veya mobil işletim sistemi metin ayarlarının simülasyonları değildir. Yeniden yükleme gönderilmemiş sayfa durumunu atabileceği için şablonları değiştirmeden önce sayfa çalışmasını kaydedin.
 
 ## SideCar kaydedin {#register-sidecar}
 

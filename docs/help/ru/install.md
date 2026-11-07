@@ -10,7 +10,7 @@
 
 | Платформа | Релиз Electron | Релиз Tauri | Примечания |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel или Apple Silicon | ZIP, Intel или Apple Silicon | macOS 13.5 или новее (требуется для Node из комплекта Tauri; Electron объявляет тот же минимум). |
+| macOS | ZIP, Intel или Apple Silicon | ZIP, Intel или Apple Silicon | Tauri: macOS 14+; Electron: macOS 13.5+. |
 | Windows | ZIP, x64 | Установщик, x64 | Windows 10 или новее; Tauri использует WebView2. |
 | Linux | Пакет Debian, x64 | AppImage, x64 | Собрано и проверено на Ubuntu 24.04; совместимость со старыми дистрибутивами не гарантируется. |
 

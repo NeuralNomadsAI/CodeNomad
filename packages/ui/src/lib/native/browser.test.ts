@@ -1,13 +1,25 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { nativeBrowserHost, physicalBrowserBounds, selectBrowserOpenOwner } from "./browser.ts"
+import { browserHostCapabilities, nativeBrowserHost, physicalBrowserBounds, selectBrowserOpenOwner } from "./browser.ts"
 
 describe("native browser adapter", () => {
-  it("enables Tauri only for local Windows windows", () => {
-    assert.equal(nativeBrowserHost({ host: "tauri", windowContext: "local" }, "Windows NT"), "tauri")
-    assert.equal(nativeBrowserHost({ host: "tauri", windowContext: "local" }, "Linux"), undefined)
-    assert.equal(nativeBrowserHost({ host: "tauri", windowContext: "remote" }, "Windows NT"), undefined)
-    assert.equal(nativeBrowserHost({ host: "electron", windowContext: "local" }, "Linux"), "electron")
+  it("uses host-published embedding independently of history, emulation and automation", () => {
+    const local = { host: "tauri", windowContext: "local" } as const
+    const previous = Object.getOwnPropertyDescriptor(globalThis, "window")
+    try {
+      Object.defineProperty(globalThis, "window", { configurable: true, value: {} })
+      assert.equal(nativeBrowserHost(local), undefined)
+      for (const emulation of [false, true]) {
+        window.__CODENOMAD_BROWSER_CAPABILITIES__ = { embedding: true, history: true, emulation, automation: emulation }
+        assert.equal(nativeBrowserHost(local), "tauri")
+        assert.equal(browserHostCapabilities(local).emulation, emulation)
+      }
+      assert.equal(nativeBrowserHost({ host: "tauri", windowContext: "remote" }), undefined)
+      assert.equal(nativeBrowserHost({ host: "electron", windowContext: "local" }), "electron")
+    } finally {
+      if (previous) Object.defineProperty(globalThis, "window", previous)
+      else Reflect.deleteProperty(globalThis, "window")
+    }
   })
 
   it("maps CSS bounds to WebView2 physical pixels", () => {

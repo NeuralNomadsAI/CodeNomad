@@ -48,6 +48,8 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Securit
 [target.'cfg(target_os = "macos")'.dependencies]
 # Already built through tauri; reads the bundle executable for restarts.
 plist = "1.8"
+objc2 = "0.6.4"
+objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-app-kit", "WKWebView", "WKBackForwardList", "WKBackForwardListItem", "WKNavigation"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 open = "5.3"

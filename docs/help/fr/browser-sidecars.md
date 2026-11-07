@@ -20,16 +20,19 @@ Les aperçus natifs partagent cookies, connexions et stockage de site entre proj
 | --- | --- | --- | --- |
 | Electron sur les plateformes de bureau prises en charge | Invité Chromium natif | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
 | Tauri Windows | Enfant WebView2 natif | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
-| Tauri macOS/Linux | Iframe en bac à sable | Pas d’automatisation navigateur native | Dimensions seules |
+| Tauri macOS | Vue enfant WKWebView native | Indisponible ; utilisez Electron ou Tauri Windows | Dimensions seules |
+| Tauri Linux | Vue enfant WebKitGTK native | Indisponible ; utilisez Electron ou Tauri Windows | Dimensions seules |
 | Navigateur ordinaire/vue distante | Iframe de repli | Aucune cible locale d’aperçu natif | Dimensions seules |
 
-L’automatisation native est préparée au démarrage du bureau et utilise l’outil `codenomad.browser` lié à la session pour ouvrir, naviguer, capturer l’état, prendre une capture d’écran et agir sur la page : cliquer, saisir, sélectionner, survoler, glisser, faire défiler, appuyer sur des touches et attendre un texte. La disponibilité d’un outil n’autorise pas toutes les fenêtres : l’exécution vérifie le backend propriétaire, les capacités natives, la session et la cible visible. Une action dont la page a été masquée, remplacée ou a changé d’adresse entre-temps est refusée plutôt qu’envoyée à une autre page, et une action n’est jamais répétée automatiquement. Le contenu des pages reste non fiable. Une iframe peut échouer si la cible interdit l’intégration ; utilisez un navigateur externe plutôt que d’affaiblir ses protections.
+Sur Electron et Tauri Windows, l’automatisation native est préparée au démarrage du bureau et utilise l’outil `codenomad.browser` lié à la session pour ouvrir, naviguer, capturer l’état, prendre une capture d’écran et agir sur la page : cliquer, saisir, sélectionner, survoler, glisser, faire défiler, appuyer sur des touches et attendre un texte. La disponibilité d’un outil n’autorise pas toutes les fenêtres : l’exécution vérifie le backend propriétaire, les capacités natives, la session et la cible visible. Une action dont la page a été masquée, remplacée ou a changé d’adresse entre-temps est refusée plutôt qu’envoyée à une autre page, et une action n’est jamais répétée automatiquement. Le contenu des pages reste non fiable. Une iframe peut échouer si la cible interdit l’intégration ; utilisez un navigateur externe plutôt que d’affaiblir ses protections.
+
+Les aperçus Tauri macOS/Linux s’ouvrent manuellement, conservent les connexions partagées entre les redémarrages et utilisent l’historique natif arrière/avant. Les aperçus natifs sont masqués sous les menus et boîtes de dialogue locaux ; les commentaires sur les éléments sont indisponibles en mode natif. `codenomad.browser` refuse toutes les actions sur Tauri macOS/Linux, même avec un aperçu visible.
 
 ## Choisir parmi six modèles de zone d’affichage {#templates}
 
 1. Ouvrez le menu de zone d’affichage de l’aperçu.
 2. Sélectionnez un modèle ci-dessous. Utilisez directement les entrées portrait/paysage ; aucune commande de rotation séparée.
-3. Attendez-vous à un rechargement natif en entrant/changeant l’émulation mobile ou en revenant à un modèle de dimensions seules.
+3. Sur Electron et Tauri Windows, attendez-vous à un rechargement natif en entrant/changeant l’émulation mobile ou en revenant à un modèle de dimensions seules.
 
 | Modèle | Zone d’affichage CSS |
 | --- | --- |
@@ -40,7 +43,7 @@ L’automatisation native est préparée au démarrage du bureau et utilise l’
 | Zone mobile | 390 × 844 |
 | Mobile paysage | 844 × 390 |
 
-Les modèles mobiles natifs définissent identité Android/Chromium, orientation, tactile et DPR 2.75 sur l’invité détenu seulement. Revenir à adaptatif/bureau/tablette efface ces remplacements et recharge. L’iframe de repli change seulement de taille. Ce sont des références de disposition reproductibles, pas une émulation Safari/Firefox ou des simulations de clavier téléphonique, barres navigateur/système ou réglages de texte mobile. Enregistrez le travail de page avant de changer de modèle, car le rechargement peut perdre l’état non envoyé.
+Sur Electron et Tauri Windows, les modèles mobiles définissent identité Android/Chromium, orientation, tactile et DPR 2.75 sur l’invité détenu seulement. Revenir à adaptatif/bureau/tablette efface ces remplacements et recharge. Tauri macOS/Linux et l’iframe de repli changent seulement de taille. Ce sont des références de disposition reproductibles, pas une émulation Safari/Firefox ou des simulations de clavier téléphonique, barres navigateur/système ou réglages de texte mobile. Enregistrez le travail de page avant de changer de modèle, car le rechargement peut perdre l’état non envoyé.
 
 ## Enregistrer un SideCar {#register-sidecar}
 

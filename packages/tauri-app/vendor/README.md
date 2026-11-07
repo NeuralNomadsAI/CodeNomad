@@ -1,7 +1,52 @@
 # Vendored Tauri crates
 
+## Embedded WebKit views
+
+`tauri-runtime-wry-2.12.3/` and `wry-0.57.1/` are complete published
+MIT/Apache-2.0 crates, including licenses, selected through `[patch.crates-io]`.
+
+- Crates: https://static.crates.io/crates/tauri-runtime-wry/tauri-runtime-wry-2.12.3.crate
+  and https://static.crates.io/crates/wry/wry-0.57.1.crate.
+- Published SHA-256: runtime `e1aa9d8b7a120f879f44fdc1053f7b7dbf416bf0bbc6a72b714dec46b782b52f`;
+  Wry `759c50ddad0ef9913bb5496cb9d509a50433a3b78cb0238d61105526589cf0e9`.
+- Local changes: `patches/tauri-runtime-wry-gtk.patch` and
+  `patches/wry-gtk.patch`; native trials ship beside the runtime examples.
+- GTK: the runtime lazily installs a window-owned `GtkOverlay` inside Tao's
+  content box, below its menu bar. Primary content stays boxed; child webviews use
+  `GtkFixed`. The overlay passes uncovered input through to the primary view.
+  Primary-only windows keep their ordinary box. Reparenting uses the destination
+  window's own child container.
+- Wry stores child positions in `GtkFixed` and sizes in GTK size requests, alongside
+  immediate allocation, so resize/menu/hide-show allocations keep the rectangle.
+  Bounds reads use that retained layout while hidden, preserving position across
+  Tauri's separate position and size updates before reveal.
+  Bounds follow the actual parent after reparenting. IPC callbacks keep weak
+  WebView references so destruction releases both the view and its IPC manager.
+- WKWebView uses Tauri's per-webview `on_permission_request` callback, installed
+  on the embedded-view builder before construction. Wry's native delegate routes
+  media capture to it; file uploads retain user-driven selection. The application
+  renderer keeps its own permission policy. Requalify WebKit's engine-default
+  handling of location, notifications, display capture and storage access when
+  changing runtime or OS support.
+
+Keep these overrides until the resolved upstream runtime supports the same child
+layout, persistent geometry policy. Requalify both GTK
+backends and macOS permission behavior before removing either override.
+
+The Linux native regression is
+`python3 tauri-runtime-wry-2.12.3/examples/gtk-child-trial.py` from this directory,
+with the desktop session environment, Cargo dependencies cached and `python3-dbus`
+installed. KDE Wayland uses `GTK_TRIAL_UINPUT=1`, `python3-evdev` and a writable
+`/dev/uinput`; an X11 desktop uses `GTK_TRIAL_X11=1` and `xdotool`. GNOME uses
+Mutter's native seat. It compiles through a temporary manifest using the actual runtime layout
+module and vendored Wry, then exercises Wayland and X11 with native input:
+rectangles, relayout, menus, reparenting, hide/show, independent owning windows,
+destruction, permission/download denial and distinct persistent data managers.
+Full application checks additionally exercise Tauri's dispatch integration.
+
+
 The Tauri workspace's `[patch.crates-io]` (`packages/tauri-app/Cargo.toml`)
-selects the published crates below, each with one local change. Never mutate the
+selects the published crates below, with focused local changes. Never mutate the
 registry cache or patch at build time. Each directory is named after its crate
 version; `packages/tauri-app/scripts/vendored-patches.test.mjs` fails when
 `Cargo.lock` no longer resolves a vendored copy (for example after a dependency

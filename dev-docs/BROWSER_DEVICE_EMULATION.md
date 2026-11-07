@@ -3,7 +3,7 @@
 The viewport menu has exactly six fixed templates: responsive,
 desktop 1440 × 900, tablet 768 × 1024, tablet landscape 1024 × 768,
 mobile 390 × 844 and mobile landscape 844 × 390 CSS px; landscape templates
-stand in for rotation, so never add a separate rotation button. Native mobile templates automatically apply
+stand in for rotation, so never add a separate rotation button. Electron and Windows Tauri mobile templates automatically apply
 Android / Chromium touch, mobile identity and density settings.
 Device profiles set CSS viewport, screen orientation, DPR 2.75, touch media and
 events, Android user agent and mobile client hints. Switching between profiles
@@ -11,8 +11,12 @@ reloads the preview because applications can cache device detection at startup.
 Returning to any dimension preset clears all overrides and reloads again.
 
 Electron and Windows Tauri apply overrides to the owned native preview only.
-The sandboxed iframe fallback changes dimensions only, with a translated
-tooltip explaining that emulation requires the native app. Never expose application
+Tauri macOS (WKWebView) and Linux (WebKitGTK) embed native previews with native
+Back/Forward history; all six presets change dimensions only. The sandboxed iframe
+fallback also changes dimensions only. A translated tooltip identifies dimensions-only
+previews. Native display, history, device emulation and agent automation are separate
+host capabilities; WebKit previews support manual browsing, while agent browser
+automation requires Electron or Tauri Windows. Never expose application
 privileges or a general CDP bridge to preview pages. Tauri's synchronous WebView2
 callbacks are awaited off the UI thread. Electron retains its debugger attachment
 while emulation is active so the overrides survive accessibility automation.

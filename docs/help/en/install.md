@@ -10,7 +10,7 @@ Choose a local desktop host or run the [standalone server](server.md). In both c
 
 | Platform | Electron release | Tauri release | Platform notes |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel or Apple Silicon | ZIP, Intel or Apple Silicon | macOS 13.5 or later (required by Tauri's bundled Node; Electron declares the same minimum). |
+| macOS | ZIP, Intel or Apple Silicon | ZIP, Intel or Apple Silicon | Tauri: macOS 14+; Electron: macOS 13.5+. |
 | Windows | ZIP, x64 | Installer, x64 | Windows 10 or later; Tauri uses WebView2. |
 | Linux | Debian package, x64 | AppImage, x64 | Built and tested on Ubuntu 24.04; compatibility with older distributions is not guaranteed. |
 

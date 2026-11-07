@@ -10,7 +10,7 @@
 
 | प्लेटफर्म | Electron रिलिज | Tauri रिलिज | प्लेटफर्म टिप्पणी |
 | --- | --- | --- | --- |
-| macOS | ZIP, Intel वा Apple Silicon | ZIP, Intel वा Apple Silicon | macOS 13.5 वा पछिको (Tauri को bundled Node का लागि आवश्यक; Electron ले पनि त्यही न्यूनतम घोषणा गर्छ)। |
+| macOS | ZIP, Intel वा Apple Silicon | ZIP, Intel वा Apple Silicon | Tauri: macOS 14 वा पछिको; Electron: macOS 13.5 वा पछिको। |
 | Windows | ZIP, x64 | Installer, x64 | Windows 10 वा पछिको; Tauri ले WebView2 प्रयोग गर्छ। |
 | Linux | Debian प्याकेज, x64 | AppImage, x64 | Ubuntu 24.04 मा build र परीक्षण गरिएको; पुराना वितरणसँग अनुकूलता सुनिश्चित छैन। |
 

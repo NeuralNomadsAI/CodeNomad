@@ -10,7 +10,7 @@
 
 | プラットフォーム | Electron リリース | Tauri リリース | 注意事項 |
 | --- | --- | --- | --- |
-| macOS | ZIP、Intel または Apple Silicon | ZIP、Intel または Apple Silicon | macOS 13.5 以降（Tauri 同梱の Node に必要。Electron も同じ最小バージョンを指定）。 |
+| macOS | ZIP、Intel または Apple Silicon | ZIP、Intel または Apple Silicon | Tauri：macOS 14 以降。Electron：macOS 13.5 以降。 |
 | Windows | ZIP、x64 | インストーラー、x64 | Windows 10 以降。Tauri は WebView2 を使用します。 |
 | Linux | Debian パッケージ、x64 | AppImage、x64 | Ubuntu 24.04 でビルド・テスト済み。古いディストリビューションとの互換性は保証されません。 |
 
