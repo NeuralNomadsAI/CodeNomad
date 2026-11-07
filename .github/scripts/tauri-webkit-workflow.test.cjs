@@ -4,7 +4,7 @@ const path = require('node:path')
 const { test } = require('node:test')
 
 test('WebKit qualification runs authorized drafts on Intel, ARM64 and Linux without secrets', () => {
-  const workflow = fs.readFileSync(path.join(__dirname, '../workflows/pr-build.yml'), 'utf8')
+  const workflow = fs.readFileSync(path.join(__dirname, '../workflows/pr-build.yml'), 'utf8').replace(/\r\n/g, '\n')
   const job = workflow.split('  tests-tauri-webkit:\n')[1].split('\n  # Exercise the window persistence')[0]
   assert.match(job, /needs: authorize/)
   assert.match(job, /if: \$\{\{ needs\.authorize\.outputs\.allowed == 'true' \}\}/)
