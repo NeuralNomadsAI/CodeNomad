@@ -29,6 +29,10 @@ The AppKit candidate uses targeted NSEvent/responder APIs. Its UI-thread dispatc
 
 `CN_INPUT_TRACE=1` records key-equivalent, native editing fallback and hover dispatch paths. Hover first checks for a public `mouseMoved:` implementation on the view and otherwise checks availability of the narrow `_simulateMouseMove:` WebKit SPI. An initial native snapshot establishes the paint callback before input starts. Keyboard delivery targets the exact view; an inactive native editing fallback remains subject to qualification of page cancellation and single execution before integration.
 
+The macOS harness primes hover at `(5,5)`, then targets `(30,160)` on the next timer tick, with tracking areas installed and mouse-moved events enabled. The trace records both CSS and native window coordinates. Chords send native `flagsChanged:` transitions for each modifier, the key equivalent, its matching key-up, and modifier release. Synthetic class modifier state is UI-thread scoped with exception-safe restoration; the native self-check covers nested modifier state and exception cleanup. Fresh key-event timestamps, window numbers and flags are recorded for sequence comparison.
+
+`CN_INPUT_NO_CHORD=1` is a diagnostic that omits only the chord down/up steps. The acceptance assertions remain enabled, so this diagnostic fails the chord criteria by design. Compare its contenteditable keyboard events against the complete sequence; use the complete sequence for acceptance.
+
 WebKit's `WebEventFactory::createWebMouseEvent` obtains ordinary NSEvent button state from `WebCore::currentlyPressedMouseButtons`, which reads `[NSEvent pressedMouseButtons]`. The automation event path has distinct handling. Source references for investigation:
 
 - <https://github.com/WebKit/WebKit/blob/main/Source/WebKit/Shared/mac/WebEventFactory.mm>

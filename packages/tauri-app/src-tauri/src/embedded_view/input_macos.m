@@ -40,6 +40,33 @@ static void with_buttons(NSUInteger buttons, void (^dispatch)(void)) {
 static void trace(NSString *message) {
     if (getenv("CN_INPUT_TRACE")) fprintf(stderr, "%s\n", message.UTF8String);
 }
+static _Thread_local unsigned modifier_depth;
+static _Thread_local NSEventModifierFlags synthetic_modifiers;
+static _Atomic(IMP) original_modifiers;
+static NSEventModifierFlags modifier_flags(id object, SEL selector) {
+    if (modifier_depth) return synthetic_modifiers;
+    return ((NSEventModifierFlags (*)(id, SEL))atomic_load(&original_modifiers))(object, selector);
+}
+static void with_modifiers(NSEventModifierFlags flags, void (^dispatch)(void)) {
+    NSCAssert(NSThread.isMainThread, @"Native input requires the UI thread");
+    Method method = class_getClassMethod(NSEvent.class, @selector(modifierFlags));
+    BOOL outer = modifier_depth == 0;
+    NSEventModifierFlags previous = synthetic_modifiers;
+    IMP original = NULL;
+    if (outer) {
+        original = method_getImplementation(method);
+        atomic_store(&original_modifiers, original);
+        method_setImplementation(method, (IMP)modifier_flags);
+    }
+    modifier_depth++;
+    synthetic_modifiers = flags;
+    @try { dispatch(); }
+    @finally {
+        synthetic_modifiers = previous;
+        modifier_depth--;
+        if (outer) method_setImplementation(method, original);
+    }
+}
 #ifdef CN_INPUT_SELF_TEST
 void cn_test_scoped_buttons(void) {
     Method method = class_getClassMethod(NSEvent.class, @selector(pressedMouseButtons));
@@ -63,6 +90,21 @@ void cn_test_scoped_buttons(void) {
     }
     NSCAssert(method_getImplementation(method) == original, @"method implementation leaked");
     NSCAssert(NSEvent.pressedMouseButtons == physical, @"button state leaked");
+    Method modifier_method = class_getClassMethod(NSEvent.class, @selector(modifierFlags));
+    IMP modifier_original = method_getImplementation(modifier_method);
+    NSEventModifierFlags physical_modifiers = NSEvent.modifierFlags;
+    @try {
+        with_modifiers(NSEventModifierFlagCommand, ^{
+            NSCAssert(NSEvent.modifierFlags == NSEventModifierFlagCommand, @"synthetic modifier missing");
+            with_modifiers(0, ^{ NSCAssert(NSEvent.modifierFlags == 0, @"zero modifier missing"); });
+            NSCAssert(NSEvent.modifierFlags == NSEventModifierFlagCommand, @"nested modifier leaked");
+            @throw [NSException exceptionWithName:@"Qualification" reason:@"modifier cleanup" userInfo:nil];
+        });
+    } @catch (NSException *exception) {
+        NSCAssert([exception.name isEqualToString:@"Qualification"], @"unexpected exception");
+    }
+    NSCAssert(method_getImplementation(modifier_method) == modifier_original, @"modifier implementation leaked");
+    NSCAssert(NSEvent.modifierFlags == physical_modifiers, @"modifier state leaked");
 }
 #endif
 
@@ -124,6 +166,7 @@ int cn_pointer(void *opaque, int action, double x, double y, unsigned flags) {
     with_buttons(buttons, ^{
         switch (action) {
             case CN_MOVE:
+                trace([NSString stringWithFormat:@"hover css=%g,%g window=%g,%g flipped=%d", x, y, point.x, point.y, view.isFlipped]);
                 if (public_move) { trace(@"hover public-mouseMoved"); [view mouseMoved:event]; }
                 else { trace(@"hover SPI=_simulateMouseMove:"); [view _simulateMouseMove:event]; }
                 break;
@@ -172,17 +215,39 @@ static NSString *characters(const char *key, unsigned short *code) {
     *code = (unsigned short)index;
     return text;
 }
+static void change_modifiers(WKWebView *view, unsigned before, unsigned after) {
+    const unsigned bits[] = {CN_SHIFT, CN_CONTROL, CN_ALT, CN_META};
+    const unsigned short codes[] = {56, 59, 58, 55};
+    unsigned current = before;
+    for (int i = 0; i < 4; i++) {
+        if (!((before ^ after) & bits[i])) continue;
+        current = (current & ~bits[i]) | (after & bits[i]);
+        NSEvent *changed = [NSEvent keyEventWithType:NSEventTypeFlagsChanged location:NSZeroPoint
+            modifierFlags:modifiers(current) timestamp:NSProcessInfo.processInfo.systemUptime
+            windowNumber:view.window.windowNumber context:nil characters:@"" charactersIgnoringModifiers:@""
+            isARepeat:NO keyCode:codes[i]];
+        trace([NSString stringWithFormat:@"flagsChanged code=%hu flags=0x%lx timestamp=%.6f window=%ld", codes[i], (unsigned long)changed.modifierFlags, changed.timestamp, (long)changed.windowNumber]);
+        with_modifiers(changed.modifierFlags, ^{ [view flagsChanged:changed]; });
+    }
+}
 int cn_key(void *opaque, const char *key, unsigned flags, int down) {
     WKWebView *view = (__bridge WKWebView *)opaque;
     if (!view.window || view.hidden) return 0;
     unsigned short code = 0;
     NSString *text = characters(key, &code);
     if (!text) return 0;
+    static char held_modifiers_key;
+    unsigned held = [objc_getAssociatedObject(view, &held_modifiers_key) unsignedIntValue];
+    change_modifiers(view, held, flags);
+    objc_setAssociatedObject(view, &held_modifiers_key, @(flags), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     NSEvent *event = [NSEvent keyEventWithType:down ? NSEventTypeKeyDown : NSEventTypeKeyUp
         location:NSZeroPoint modifierFlags:modifiers(flags)
         timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:view.window.windowNumber
         context:nil characters:text charactersIgnoringModifiers:text isARepeat:NO keyCode:code];
     [view.window makeFirstResponder:view];
+    trace([NSString stringWithFormat:@"%@ key=%@ flags=0x%lx timestamp=%.6f window=%ld held=0x%x", down ? @"keyDown" : @"keyUp", [NSString stringWithUTF8String:key], (unsigned long)event.modifierFlags, event.timestamp, (long)event.windowNumber, flags]);
+    @try {
+    with_modifiers(event.modifierFlags, ^{
     if (down && (flags & CN_META)) {
         BOOL handled = [view performKeyEquivalent:event];
         trace([NSString stringWithFormat:@"key %@ equivalent=%d", text, handled]);
@@ -203,7 +268,15 @@ int cn_key(void *opaque, const char *key, unsigned flags, int down) {
             trace([NSString stringWithFormat:@"key %@ interpretKeyEvents", [NSString stringWithUTF8String:key]]);
             [view interpretKeyEvents:@[event]];
         }
-    } else [view keyUp:event];
+    } else { trace([NSString stringWithFormat:@"key %@ keyUp", [NSString stringWithUTF8String:key]]); [view keyUp:event]; }
+    });
+    } @finally {
+        if (!down) {
+            change_modifiers(view, flags, 0);
+            objc_setAssociatedObject(view, &held_modifiers_key, @0, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            trace(@"modifiers reset held=0 synthetic=0");
+        }
+    }
     return 1;
 }
 int cn_text(void *opaque, const char *text) {

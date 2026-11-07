@@ -30,9 +30,18 @@ static void painted(void *context, const unsigned char *bytes, size_t length, co
 - (void)tick:(NSTimer *)timer {
     void *view = (__bridge void *)self.view;
     if (self.step >= 0) assert(!self.window.isKeyWindow && !NSApp.active);
+    if (self.step == -1) {
+        self.window.acceptsMouseMovedEvents = YES;
+        [self.view updateTrackingAreas];
+        fprintf(stderr, "hover variant=prime-5,5-then-target trackingAreas=%lu acceptsMouseMoved=%d\n", (unsigned long)self.view.trackingAreas.count, self.window.acceptsMouseMovedEvents);
+        assert(cn_pointer(view, CN_MOVE, 5, 5, 0));
+    }
     IMP buttons = class_getMethodImplementation(object_getClass(NSEvent.class), @selector(pressedMouseButtons));
-    if (self.step >= 0 && self.step <= 19) sequence(view, (int)self.step);
+    IMP modifiers = class_getMethodImplementation(object_getClass(NSEvent.class), @selector(modifierFlags));
+    BOOL omit_chord = getenv("CN_INPUT_NO_CHORD") && (self.step == 12 || self.step == 13);
+    if (self.step >= 0 && self.step <= 19 && !omit_chord) sequence(view, (int)self.step);
     assert(class_getMethodImplementation(object_getClass(NSEvent.class), @selector(pressedMouseButtons)) == buttons);
+    assert(class_getMethodImplementation(object_getClass(NSEvent.class), @selector(modifierFlags)) == modifiers);
     if (self.step >= 0 && self.step <= 19 && getenv("CN_INPUT_TRACE")) {
         NSInteger current = self.step;
         if ([self.view respondsToSelector:@selector(_doAfterProcessingAllPendingKeyEvents:)])
