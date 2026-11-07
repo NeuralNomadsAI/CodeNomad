@@ -1,4 +1,4 @@
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { createEventRefreshScheduler, type RefreshUrgency } from "../lib/event-refresh-scheduler"
 import { backendEvents as serverEvents } from "../lib/server-events"
@@ -19,12 +19,12 @@ export const missionStore = createMissionPanelInventory({
   },
   read: (instanceId, selector, scope) => {
     const origin = instances().get(instanceId), client = origin?.client, folder = origin?.folder, generation = getOpenCodeInstanceGeneration(instanceId)
-    return serverApi.fetchMissionPanel(instanceId, selector, { ...scope, projectID: scope.projectID ?? origin?.metadata?.project?.id,
+    return backendOf(instanceId).api.fetchMissionPanel(parseInstanceKey(instanceId).workspaceId, selector, { ...scope, projectID: scope.projectID ?? origin?.metadata?.project?.id,
       current: () => scope.current() && instances().get(instanceId)?.client === client && instances().get(instanceId)?.folder === folder && getOpenCodeInstanceGeneration(instanceId) === generation })
   },
   tasks: (instanceId, missionId, request, scope) => {
     const origin = instances().get(instanceId), client = origin?.client, folder = origin?.folder, generation = getOpenCodeInstanceGeneration(instanceId)
-    return serverApi.fetchMissionTasks(instanceId, missionId, request, { ...scope, current: () => scope.current()
+    return backendOf(instanceId).api.fetchMissionTasks(parseInstanceKey(instanceId).workspaceId, missionId, request, { ...scope, current: () => scope.current()
       && instances().get(instanceId)?.client === client && instances().get(instanceId)?.folder === folder && getOpenCodeInstanceGeneration(instanceId) === generation })
   } })
 

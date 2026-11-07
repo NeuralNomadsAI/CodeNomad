@@ -35,6 +35,8 @@ const hooks = registerHooks({ resolve(specifier, context, next) {
     "./session-list-restoration": "export const sessionListRestored = () => true;",
     "./missions": "export const isMissionActivityEvent = () => false;",
   }
+   if ((context.parentURL?.endsWith("/mission-schedules.ts") || context.parentURL?.endsWith("/mission-schedule-controls.ts")) && specifier === "../lib/backend-client")
+     return { shortCircuit: true, url: `data:text/javascript,${encodeURIComponent(sources["../lib/api-client"] + " export const backendOf = () => ({ api: serverApi });")}` }
    if (context.parentURL?.endsWith("/backend-operation.ts") && specifier === "./backend-events")
      return { shortCircuit: true, url: `data:text/javascript,${encodeURIComponent(sources["../lib/server-events"])}` }
    if ((context.parentURL?.endsWith("/mission-schedules.ts") || context.parentURL?.endsWith("/mission-schedule-controls.ts")) && sources[specifier])

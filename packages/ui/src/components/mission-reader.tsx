@@ -500,7 +500,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       <Show when={target()?.kind === "report" && report()}>{value =>
         <p>{t(`missions.control.report.outcome.${value().outcome}`)}</p>
       }</Show>
-      <Show when={playbook()}>{id => <MissionPlaybookReader playbook={id()} taskMode={target()?.taskMode ?? "native"} />}</Show>
+      <Show when={playbook()}>{id => <MissionPlaybookReader instanceId={props.instanceId} playbook={id()} taskMode={target()?.taskMode ?? "native"} />}</Show>
       <Show when={target()?.kind !== "recurrence" && target()?.kind === "task" && task() && mission()} fallback={
         <Show when={target()?.kind !== "recurrence" && !playbook()}>
         <Show when={sections().length} fallback={<Show when={targetState() === "failed"} fallback={<p>{t(missionStore.state(props.instanceId).status === "loading"

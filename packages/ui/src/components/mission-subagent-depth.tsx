@@ -1,6 +1,6 @@
 import { Show, createEffect, createSignal, createUniqueId, onCleanup } from "solid-js"
 import { RefreshCw } from "lucide-solid"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { useI18n } from "../lib/i18n"
 import { createMissionViewFence } from "../lib/mission-view-fence"
@@ -10,7 +10,7 @@ import { showConfirmDialog } from "../stores/alerts"
 import { backendEvents as serverEvents } from "../lib/server-events"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 
-type SubagentDepthSnapshot = Awaited<ReturnType<typeof serverApi.getSubagentDepth>>
+type SubagentDepthSnapshot = Awaited<ReturnType<ReturnType<typeof backendOf>["api"]["getSubagentDepth"]>>
 
 interface DepthDraft {
   snapshot?: SubagentDepthSnapshot
@@ -66,7 +66,7 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
     controller?.abort(); controller = new AbortController()
     target.state[1]({ ...previous, phase: "reading", error: false })
     try {
-      const snapshot = await serverApi.getSubagentDepth(instanceId, directory, controller.signal)
+      const snapshot = await backendOf(instanceId).api.getSubagentDepth(instanceId, directory, controller.signal)
       if (!admitted()) return
       if (!snapshot.location || typeof snapshot.location.directory !== "string" || snapshot.capability === undefined || snapshot.project === undefined) throw new Error("Unconfirmed depth contract")
       target.state[1]({ snapshot, draft: snapshot.project?.depth == null ? "" : String(snapshot.project.depth), dirty: false, phase: "ready", error: false, saved: previous.saved })
@@ -135,7 +135,7 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
     const admitted = () => operation.current() && target.request === request && instances().get(instanceId)?.client === owner && getOpenCodeInstanceGeneration(instanceId) === generation
     target.state[1]({ ...previous, phase: "saving", error: false, saved: false })
     try {
-      await serverApi.setSubagentDepth(instanceId, { location: { directory: location.directory }, depth: value, expectation: project.expectation })
+      await backendOf(instanceId).api.setSubagentDepth(instanceId, { location: { directory: location.directory }, depth: value, expectation: project.expectation })
       if (!admitted()) { target.state[1]({ ...previous, phase: "uncertain" }); return }
       target.state[1]({ ...previous, dirty: false, phase: "ready", saved: true })
       // An acknowledged write is followed only by a bounded read, never replay. A hidden

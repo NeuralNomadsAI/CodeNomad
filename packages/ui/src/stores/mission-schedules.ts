@@ -1,6 +1,8 @@
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import type { MissionScheduleRead } from "../../../server/src/api-types"
-import { serverApi } from "../lib/api-client"
+import type { ServerApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
+import { parseInstanceKey } from "../lib/backend-identity"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { partialMissionScheduleReceipt } from "../lib/mission-schedule-receipt"
 import { createEventRefreshScheduler } from "../lib/event-refresh-scheduler"
@@ -11,7 +13,7 @@ import { sessionListRestored } from "./session-list-restoration"
 import { isMissionActivityEvent } from "./missions"
 
 export type UnifiedMissionSchedule = NonNullable<MissionScheduleRead["document"]>
-export type UnifiedScheduleAction = Parameters<typeof serverApi.controlMissionSchedule>[2]["action"]
+export type UnifiedScheduleAction = Parameters<ServerApi["controlMissionSchedule"]>[2]["action"]
 export type UnifiedScheduleHold = { phase: "control" | "activation" | "publication"; requestID: string; expectedRevision: number;
   action: UnifiedScheduleAction; partial: boolean; document: UnifiedMissionSchedule; original?: UnifiedScheduleHold; minimumRevision?: number }
 export const unifiedScheduleHolds = new Map<string, UnifiedScheduleHold>()
@@ -63,10 +65,11 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
     const current = () => captured === epoch && binding() === owner && !signal.aborted
     setLoading(true)
     try {
+      const api = backendOf(owner.instance).api, workspaceId = parseInstanceKey(owner.instance).workspaceId
       const collected = new Map<string, UnifiedMissionSchedule>()
       let after: string | undefined
       for (let page = 0; page < pages; page++) {
-        const value = await serverApi.fetchMissionSchedules(owner.instance, { directory: owner.directory, after, limit: 8 }, signal)
+        const value = await api.fetchMissionSchedules(workspaceId, { directory: owner.directory, after, limit: 8 }, signal)
         if (!current()) return
         if (value.projectID !== owner.project || value.version !== 1 || value.next && value.next === after) throw new Error("Foreign schedule page")
         for (const row of value.schedules) collected.set(row.id, row)
@@ -83,7 +86,7 @@ export function useMissionSchedules(props: { instanceId: () => string; projectID
       published(owner, [...collected.values()])
       if (selected && !collected.has(selected)) {
         try {
-          const value = await serverApi.fetchMissionSchedule(owner.instance, selected, { directory: owner.directory }, signal)
+          const value = await api.fetchMissionSchedule(workspaceId, selected, { directory: owner.directory }, signal)
           if (!selectedCurrent()) return
           if (value.document && value.document.id !== selected) throw new Error("Foreign selected schedule")
           if (value.document) collected.set(selected, value.document)

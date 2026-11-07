@@ -387,10 +387,13 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const refresh = async () => {
     if (refreshing()) return
     const retry = controlRetry(), instanceId = props.instanceId
+    const operation = captureBackendOperation(instanceId, undefined, captureView())
+    if (!operation.current()) return
     setRefreshing(true)
     try {
       const mapRead = missionStore.refresh(instanceId)
       const [, read] = await Promise.allSettled([mapRead, retry?.reconcile(mapRead)])
+      if (!operation.current()) return
       setRecurrenceRefresh(value => value + 1)
       // A skipped, failed or superseded read never leads to a resend.
       const witnessed = read.status === "fulfilled" && read.value === true
@@ -435,15 +438,15 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         active={() => (props.isActive?.() ?? true) && editor() === action}
         onDispose={draft => settleMissionEditor(action, draft === null ? action : draft && { ...action, draft })}
         captureOperation={() => {
-          const origin = captureView(), operation = intent
-          completionCurrent = () => origin() && operation === intent
+          const origin = captureView(), operation = intent, backend = captureBackendOperation(props.instanceId)
+          completionCurrent = () => backend.current() && origin() && operation === intent
           return completionCurrent
         }}
         onCancel={closeEditor} onOpenPreferences={openPreferences} onShowPlaybook={showPlaybook}
         onReopen={() => {
           // The edit reopens on the newest map, read first: the one it opened on is outdated.
           // The form stays as it opened until this settles; a failed read rejects, so it says so.
-          const view = captureView()
+          const view = captureBackendOperation(props.instanceId, undefined, captureView()).current
           return missionStore.refresh(props.instanceId).then(() => {
             if (!view() || editor() !== action) return
             if (missionStore.state(props.instanceId).status !== "ready") throw new Error("The mission map could not be read")

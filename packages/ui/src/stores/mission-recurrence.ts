@@ -5,7 +5,8 @@ export type RecurrenceSchedule = MissionRecurrenceSnapshot["schedules"][number]
 export type RecurrenceAction = RecurrenceSchedule["actions"][number]
 export type RecurrenceHistoryItem = RecurrenceSchedule["history"][number]
 import { readRecurrenceScheduleChanged } from "../../../server/src/missions/recurrence-events"
-import { serverApi } from "../lib/api-client"
+import type { ServerApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { backendEvents as serverEvents } from "../lib/server-events"
 import { parseInstanceKey } from "../lib/backend-identity"
@@ -17,7 +18,7 @@ import { sessionListRestored } from "./session-list-restoration"
 import { eventRefreshDue, type RefreshUrgency } from "../lib/event-refresh-scheduler"
 import { createMissionPanelInventory } from "./mission-panel-inventory"
 
-export type RecurrenceDraft = Parameters<typeof serverApi.createMissionRecurrence>[1]
+export type RecurrenceDraft = Parameters<ServerApi["createMissionRecurrence"]>[1]
 const heldDrafts = new Map<string, Readonly<RecurrenceDraft>>()
 export function uncertainRecurrence(scope: string) { return heldDrafts.get(scope) }
 export function holdRecurrence(scope: string, draft: RecurrenceDraft) {
@@ -86,8 +87,12 @@ function read(entry: RecurrenceEntry, attachment = entry.attachment): void {
   entry.controller = controller
   changed()
   const admitted = () => !signal.aborted && entry.controller === controller && entry.demand > 0 && current(entry)
-  const request = entry.scheduleID ? serverApi.fetchMissionCurrentPassage(entry.instanceId, entry.scheduleID, signal, entry.owner)
-    : serverApi.fetchMissionRecurrence(entry.instanceId, signal)
+  const request = Promise.resolve().then<MissionRecurrenceCurrent | MissionRecurrenceSnapshot>(() => {
+    if (!admitted()) throw new DOMException("Obsolete recurrence owner", "AbortError")
+    const api = backendOf(entry.instanceId).api, workspaceId = parseInstanceKey(entry.instanceId).workspaceId
+    return entry.scheduleID ? api.fetchMissionCurrentPassage(workspaceId, entry.scheduleID, signal, entry.owner)
+      : api.fetchMissionRecurrence(workspaceId, signal)
+  })
   void request.then(async value => {
     if (!admitted()) return
     if (value?.version !== 1 || typeof value.projectID !== "string"
@@ -105,8 +110,8 @@ function read(entry: RecurrenceEntry, attachment = entry.attachment): void {
           entry.inventory = createMissionPanelInventory({ passage: source, scope: () => entry.directory, projectID: () => entry.projectID,
             signal: () => entry.attachment,
             capture: () => () => current(entry) && entry.demand > 0 && JSON.stringify(entry.currentSnapshot?.source) === JSON.stringify(source),
-            read: (id, selector, scope) => serverApi.fetchMissionCurrentPanel(id, source, selector, scope),
-            tasks: (id, _mission, task, scope) => serverApi.fetchMissionCurrentTasks(id, source, task, scope) })
+            read: (id, selector, scope) => backendOf(id).api.fetchMissionCurrentPanel(parseInstanceKey(id).workspaceId, source, selector, scope),
+            tasks: (id, _mission, task, scope) => backendOf(id).api.fetchMissionCurrentTasks(parseInstanceKey(id).workspaceId, source, task, scope) })
         }
         const inventory = entry.inventory!
         inventory.setDemand(entry.instanceId, true); inventory.want(entry.instanceId, "passage", source.missionID, true, signal)

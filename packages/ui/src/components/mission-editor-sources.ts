@@ -1,5 +1,4 @@
 import { createEffect, createMemo, createSignal, mapArray, onCleanup, untrack } from "solid-js"
-import { serverApi } from "../lib/api-client"
 import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { getRootClient } from "../stores/opencode-client"
@@ -51,7 +50,7 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
             || page.branches.some(ref => typeof ref !== "string" || !ref.startsWith("refs/heads/") || ref.length > 1024)) throw new Error("Invalid local branch page")
           return { rows: page.branches.map(ref => ({ id: ref, label: ref.slice("refs/heads/".length) })), next: undefined }
         }
-        const page = await serverApi.fetchMissionSchedules(props.instanceId, { directory, after, limit: 8 }, signal)
+        const page = await backendOf(props.instanceId).api.fetchMissionSchedules(props.instanceId, { directory, after, limit: 8 }, signal)
         if (props.projectID && page.projectID !== props.projectID || page.schedules.length > 8) throw new Error("Foreign source page")
         return { rows: page.schedules.filter(row => row.id !== props.target && row.kind === (kind === "schedule-success" ? "schedule" : "one-time"))
           .map(row => ({ id: row.id, label: row.configuration.title })), next: page.next }

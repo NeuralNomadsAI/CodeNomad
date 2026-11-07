@@ -42,13 +42,20 @@ export function createMissionPanelInventory(input: {
   const observationOwner = new WeakMap<object, { epoch: number; cycle: number; lane: string; offset: number }>()
   let readSerial = 0
   const changed = () => setVersion(value => value + 1)
+  const retire = (own: Entry) => {
+    const previous = own.controller
+    own.epoch++; own.controller = new AbortController(); own.refreshDeadline = undefined
+    own.headerErrors.clear(); own.missing.clear(); own.headerReads.clear()
+    for (const lane of own.lanes.values()) { lane.pending = undefined; lane.pendingCurrent = undefined; lane.pendingSelector = undefined; lane.loading = false }
+    previous.abort()
+  }
   const entry = (id: string): Entry => {
     let own = entries.get(id)
     if (!own) entries.set(id, own = { controller: new AbortController(), epoch: 0, owners: new Map(), panel: false, maps: new Map(), lanes: new Map(), missionOwners: new Map(), headerReads: new Map(), headerErrors: new Map(), missing: new Set() })
     const attachment = input.signal?.(id)
     const project = input.projectID?.(id), differentProject = Boolean(own.projectID && project && own.projectID !== project)
     if (own.attachment !== attachment || differentProject || own.originCurrent && !own.originCurrent()) {
-      own.controller.abort(); own.epoch++; own.controller = new AbortController(); own.headerErrors.clear(); own.missing.clear(); own.headerReads.clear()
+      retire(own)
       if (differentProject) { own.projectID = undefined; own.baseline = undefined; own.seeded = false; own.maps.clear(); own.lanes.clear() }
       base.invalidateTasks(id); changed()
     }
@@ -157,7 +164,7 @@ export function createMissionPanelInventory(input: {
     if (selector.source === "mission") target.field = { missionID: selector.missionID, field: selector.field, part: selector.part, text: selector.text }
     const admittedFailures = new Map(target.failures)
     const fieldDigest = selector.source === "mission" && selector.field ? own.maps.get(selector.missionID)?.header.collections[selector.field]?.digest : undefined
-    const signature = JSON.stringify([selector.source, "missionID" in selector ? selector.missionID : null, selector.source === "mission" ? [selector.field, selector.part, selector.text] : null, offsetOf(selector), orderOf(selector)]), waiting = target.pending
+    const signature = JSON.stringify([selector.source, "missionID" in selector ? selector.missionID : null, selector.source === "mission" ? [selector.field, selector.part, selector.text] : null, offsetOf(selector), orderOf(selector)]), waiting = target.pendingCurrent?.() ? target.pending : undefined
     if (!restart && waiting && target.pendingSelector === signature && target.pendingCurrent?.()) return waiting
     const serial = ++readSerial
     const ownLife = scope(instanceId, own, selector.source === "mission" || selector.source === "activity" ? selector.missionID : undefined)
@@ -311,6 +318,7 @@ export function createMissionPanelInventory(input: {
       map = { ...map, tasks: tasks.tasks, reports: tasks.reports, taskPage: header.tasks.page }
       if (header.tasks.pins.length || header.tasks.reportPins.length) {
         const pins = await input.tasks(instanceId, id, { ids: header.tasks.pins, reportIds: header.tasks.reportPins }, { ...life, projectID: own.projectID!, signal: life.signal!, deadline: life.deadline! })
+        if (!life.current()) throw new DOMException("Obsolete task owner", "AbortError")
         if (!pins.available || !("tasks" in pins) || pins.revision !== header.root.revision) throw new MissionTaskPageReadError("changed")
         map = { ...map, tasks: [...map.tasks, ...pins.tasks], reports: [...new Map([...map.reports, ...pins.reports].map(report => [report.id, report])).values()] }
       }
@@ -485,7 +493,7 @@ export function createMissionPanelInventory(input: {
     }),
     invalidateTasks: (instanceId: string) => {
       const own = entries.get(instanceId)
-      if (own) { own.controller.abort(); own.epoch++; own.controller = new AbortController(); own.headerErrors.clear(); own.missing.clear(); own.headerReads.clear() }
+      if (own) retire(own)
       base.invalidateTasks(instanceId)
     },
     clear: (instanceId: string) => { entries.get(instanceId)?.controller.abort(); entries.delete(instanceId); base.clear(instanceId); changed() },

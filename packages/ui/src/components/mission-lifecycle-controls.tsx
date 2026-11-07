@@ -1,6 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import type { MissionPanelMap } from "../../../server/src/api-types"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { isRejectedLifecycleIntent, type MissionLifecycleInput } from "../lib/mission-lifecycle-request"
 import { useI18n } from "../lib/i18n"
@@ -97,7 +97,7 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
     }
     let outcome: "acknowledged" | "rejected" | "unknown" = "unknown"
     try {
-      const result = await serverApi.controlMission(instanceId, mission.id, intent.input)
+      const result = await backendOf(instanceId).api.controlMission(instanceId, mission.id, intent.input)
       const acknowledged = result?.mission
       if (acknowledged && missionLifecycleSource(instanceId, acknowledged, sourceLocation) === scope) outcome = "acknowledged"
     } catch (error) {

@@ -1,7 +1,7 @@
 import { Show, createSignal, createUniqueId, onCleanup } from "solid-js"
 import { RefreshCw } from "lucide-solid"
 import type { MissionActorActivity, MissionPanelMap } from "../../../server/src/api-types"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { useI18n } from "../lib/i18n"
 import { canRecoverMissionReport } from "./mission-native-execution-model"
@@ -85,7 +85,7 @@ export function createMissionRecoveryAction(props: MissionRecoveryButtonProps) {
     markAttempt(requestKey, "pending")
     setError(undefined)
     try {
-      const response = await serverApi.recoverMission(instanceId, mission.id, input)
+      const response = await backendOf(instanceId).api.recoverMission(instanceId, mission.id, input)
       if (response.admitted !== true) throw { code: "recovery-unknown" }
       markAttempt(requestKey, "admitted")
     } catch (failure) {

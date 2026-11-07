@@ -1,5 +1,6 @@
 import type { MissionMap, MissionPanelMap } from "../../../server/src/api-types"
-import { serverApi } from "./api-client"
+import { backendOf } from "./backend-client"
+import { captureBackendOperation } from "./backend-operation"
 import { instances } from "../stores/instances"
 import { hydrateRestoredSessionChain } from "../stores/sessions"
 import { sendMessage } from "../stores/session-actions"
@@ -17,9 +18,12 @@ export async function sendMissionCoordinatorMessage(input: {
 }): Promise<{ state: "admitted"; messageId: string } | { state: "error" | "uncertain" }> {
   let attempted = false
   try {
-    const { instanceId, mission: original, current } = input
+    const { instanceId, mission: original } = input
+    const operation = captureBackendOperation(instanceId, undefined, input.current)
+    const current = operation.current
+    if (!current()) throw new Error("Mission view changed")
     // Authoritative: the display reads' hints can miss project damage.
-    const read = await serverApi.fetchMissionAdmission(instanceId, original.id)
+    const read = await backendOf(instanceId).api.fetchMissionAdmission(instanceId, original.id)
     const fresh = read.available && !read.controlUnavailable ? read.mission : undefined
     if (!current() || !fresh || !missionAcceptsMessage(fresh)
       || fresh.coordinatorSessionId !== original.coordinatorSessionId || fresh.projectID !== original.projectID

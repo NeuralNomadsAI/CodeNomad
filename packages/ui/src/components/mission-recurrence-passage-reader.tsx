@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import type { MissionRecurrenceReadPage } from "../../../server/src/api-types"
 import type { RecurrenceHistoryItem } from "../stores/mission-recurrence"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { useI18n } from "../lib/i18n"
 import { instances } from "../stores/instances"
@@ -61,7 +61,7 @@ export function MissionRecurrencePassageReader(props: { instanceId: string; scop
       && instances().get(instanceId)?.folder === directory && instances().get(instanceId)?.metadata?.project?.id === projectID
       && instances().get(instanceId)?.client === client && getOpenCodeInstanceGeneration(instanceId) === generation
     if (!admitted()) { setLoading(false); return }
-    void serverApi.fetchMissionRecurrencePassagePage(instanceId, scheduleID, receipt.passageID,
+    void backendOf(instanceId).api.fetchMissionRecurrencePassagePage(instanceId, scheduleID, receipt.passageID,
       { section: selectedSection, page: selectedPage, ...(revision === undefined ? {} : { revision }) }, AbortSignal.any([signal, controller.signal])).then(result => {
       if (!admitted()) return
       if (result.version !== 1 || result.projectID !== projectID || result.scheduleID !== scheduleID || result.passageID !== receipt.passageID

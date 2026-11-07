@@ -25,6 +25,7 @@ export interface MissionTaskSessionDeps {
 
 interface Entry {
   signal?: AbortSignal
+  connection: unknown
   stamp: string; pulse: number; sessions: Map<string, string[]>
   /** Direct children whose admitted first message was already examined. */
   examined: ReadonlySet<string>
@@ -45,7 +46,7 @@ const unlinked = (mission: MissionPanelMap, sessions: Map<string, string[]>) => 
 export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
   const [entries, setEntries] = createSignal(new Map<string, Entry>())
   /** One read per mission at a time; a demand arriving meanwhile reruns once after it. */
-  const inFlight = new Map<string, { rerun?: () => void; done: Promise<void>; signal?: AbortSignal }>()
+  const inFlight = new Map<string, { rerun?: () => void; done: Promise<void>; signal?: AbortSignal; connection: unknown; generation: number }>()
 
   /** Visible demand: a full coordinator read once per mission revision and connection
    * generation. Each activity pulse (the mission activity projection's generation)
@@ -59,7 +60,7 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
     const generation = deps.generation(instanceId)
     const stamp = `${generation}:${mission.revision}`
     const entry = entries().get(key)
-    const known = entry?.stamp === stamp && entry.signal === signal
+    const known = entry?.stamp === stamp && entry.signal === signal && entry.connection === connection
     if (!connection || (known && entry.pulse === pulse)) return Promise.resolve()
     // Preserve startup's no-work fast path after extracting the read logic:
     // activity invalidations must not fan out reads without a task to observe.
@@ -68,8 +69,10 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
       return Promise.resolve()
     }
     const running = inFlight.get(key)
-    if (running && running.signal === signal) { running.rerun = () => { if (!signal?.aborted) void demand(instanceId, mission, pulse) }; return running.done }
-    const flight: { rerun?: () => void; done: Promise<void>; signal?: AbortSignal } = { done: Promise.resolve(), signal }
+    if (running && running.signal === signal && running.connection === connection && running.generation === generation) {
+      running.rerun = () => { if (!signal?.aborted) void demand(instanceId, mission, pulse) }; return running.done
+    }
+    const flight: NonNullable<ReturnType<typeof inFlight.get>> = { done: Promise.resolve(), signal, connection, generation }
     inFlight.set(key, flight)
     const root = deps.root(instanceId)
     const current = () => !signal?.aborted && inFlight.get(key) === flight && deps.connection(instanceId) === connection
@@ -103,13 +106,14 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
       const active = linked.size ? await root.session.active({ signal }) : {}
       if (!current()) return
       const live = new Set(Object.keys(active ?? {}).filter(id => linked.has(id)))
-      setEntries(previous => new Map(previous).set(key, { stamp, pulse, sessions: sessions!, examined, active: live, signal }))
+      setEntries(previous => new Map(previous).set(key, { stamp, pulse, sessions: sessions!, examined, active: live, signal, connection }))
     })()
       .catch(error => { if (current()) deps.warn("Mission task conversations unavailable", { instanceId, missionId: mission.id, error }) })
       .finally(() => {
         if (inFlight.get(key) !== flight) return
+        const follow = current()
         inFlight.delete(key)
-        if (!signal?.aborted) flight.rerun?.()
+        if (follow) flight.rerun?.()
       })
     return flight.done
   }
