@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { access, chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { access, chmod, copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { execFileSync, spawnSync } from "node:child_process"
@@ -28,7 +28,7 @@ test("discovers Electron npm resources on each platform and preserves Node layou
 })
 
 test("scoped npm/npx quote runtime, CLI paths and arguments without invoking caller commands", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "npm & $ commands "))
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "npm & $ commands ")))
   try {
     const env = { ...process.env }
     for (const key of Object.keys(env)) if (key.toLowerCase() === "path") delete env[key]

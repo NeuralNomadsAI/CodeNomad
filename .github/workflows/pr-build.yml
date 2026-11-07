@@ -172,6 +172,11 @@ jobs:
       - name: Qualify the pinned client against the technical minimum and latest stable
         shell: pwsh
         run: |
+          $fixtures = Join-Path $env:RUNNER_TEMP 'runtime-contract-fixtures'
+          New-Item -ItemType Directory -Force $fixtures | Out-Null
+          "RUNTIME_CONTRACT_FIXTURES=$fixtures" >> $env:GITHUB_ENV
+          $env:TEMP = $fixtures
+          $env:TMP = $fixtures
           $sandbox = Join-Path $env:RUNNER_TEMP 'opencode-contract-runtime'
           $version = '${{ matrix.runtime }}'
           if ($version -eq 'minimum') {
@@ -213,6 +218,14 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # Parallel siblings, a recursive grandchild and coordinator readout.
           node scripts/test-missions-native-trajectory.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Context IDs must resolve native schedule metadata; the retained product
+          # bundle must admit cold scheduled passages with the backend closed.
+          node scripts/test-native-schedule-context.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $scheduleParent = node -p "require('node:path').join(require('node:os').tmpdir(), 'opencode')"
+          $scheduleScratch = Join-Path $scheduleParent "schedule-wakes-$([guid]::NewGuid().ToString('N'))"
+          node --import tsx scripts/test-native-mission-schedule-product.mjs $cli $scheduleScratch --parent-ready --kinds=at,in
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           if ('${{ matrix.runtime }}' -eq 'latest') {
             # Missions Preferences' Location subagent-depth editor against the
@@ -262,6 +275,39 @@ jobs:
             node scripts/test-recurring-simple-native.mjs $cli ABCD
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
+
+      - name: Upload isolated schedule product failure diagnostics
+        if: ${{ failure() && env.NATIVE_SCHEDULE_PRODUCT_FIXTURE != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: schedule-product-failure-${{ matrix.runtime }}
+          path: |
+            ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/receipt.json
+            ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/failure-diagnostic.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload isolated schedule foundation failure diagnostics
+        if: ${{ failure() && env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: schedule-foundation-failure-${{ matrix.runtime }}
+          path: |
+            ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/receipt.json
+            ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/failure-diagnostic.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload isolated runtime contract failure diagnostics
+        if: ${{ failure() && env.RUNTIME_CONTRACT_FIXTURES != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: runtime-contract-failure-windows-${{ matrix.runtime }}
+          path: |
+            ${{ env.RUNTIME_CONTRACT_FIXTURES }}/opencode/missions-native-*/runtime.log
+            ${{ env.RUNTIME_CONTRACT_FIXTURES }}/opencode/missions-native-*/receipt.json
+            ${{ env.RUNTIME_CONTRACT_FIXTURES }}/opencode/missions-native-*/reload-diagnostics.json
+          if-no-files-found: warn
+          retention-days: 7
 
   tests:
     needs: authorize

@@ -1,11 +1,11 @@
-// PREPARED ONLY: build/run after the parent's explicit integrated final-ready message.
+// Isolated retained-product qualification: private service, storage and local provider.
 // node --import tsx scripts/test-native-mission-schedule-product.mjs <cli> <fresh-scratch> --parent-ready --kinds=at,in
 // --kinds=every --natural-every uses the real >=15-minute product interval.
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
 import { existsSync } from "node:fs"
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
@@ -13,10 +13,12 @@ import { setTimeout as delay } from "node:timers/promises"
 import { parseArgs } from "node:util"
 import { fileURLToPath } from "node:url"
 import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixtureCliVersion } from "./native-fixture-cli-version.mjs"
 
 const { positionals: [cli, scratch], values } = parseArgs({ allowPositionals: true, options: {
   "parent-ready": { type: "boolean" }, kinds: { type: "string", default: "at,in" }, "natural-every": { type: "boolean" },
-  "delay-ms": { type: "string", default: "30000" }, "grace-ms": { type: "string", default: "45000" },
+  // Cold recovery can wait for the native 60-second leader lease and 30-second loop.
+  "delay-ms": { type: "string", default: "30000" }, "grace-ms": { type: "string", default: "120000" },
   "controlled-settlement": { type: "boolean" },
   "arm-only": { type: "boolean" },
   "first-admission-race": { type: "boolean" }, "crash-pending": { type: "boolean" },
@@ -25,11 +27,12 @@ const { positionals: [cli, scratch], values } = parseArgs({ allowPositionals: tr
   "diagnose-product-stop": { type: "boolean" },
   "convert-preparation": { type: "boolean" },
 } })
-assert(values["parent-ready"], "Wait for the parent's explicit final-ready message, then pass --parent-ready")
+assert(values["parent-ready"], "Explicit product qualification requires --parent-ready")
 assert(cli && scratch && path.isAbsolute(cli) && path.isAbsolute(scratch) && !existsSync(scratch), "Absolute CLI and fresh approved scratch child required")
-const approved = ["impl/core/product-native", "impl/fix-core/native", "impl/fix-core-2/native", "impl/adopt-223/native", "impl/ui-convert/native"].map(part => path.resolve(process.env.LOCALAPPDATA, `codenomad-agent-scratch/issue-926/${part}`))
+const approved = [path.resolve(process.env.TEMP, "opencode")]
 assert(approved.some(base => { const relative = path.relative(base, path.resolve(scratch)); return relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative) }), "Use an approved native scratch child")
 const kinds = values.kinds.split(","), delayMs = Number(values["delay-ms"]), graceMs = Number(values["grace-ms"])
+const cliVersion = await fixtureCliVersion(cli)
 const controlsKinds = ["paused-manual", "stop-pending", "flag-off-pause", "stop-preparing", "delete-preparing"]
 assert(kinds.length && new Set(kinds).size === kinds.length && kinds.every(kind => ["at", "in", "every", ...controlsKinds].includes(kind)))
 assert(!kinds.some(kind => controlsKinds.includes(kind)) || values["controlled-settlement"], "Control journeys require the explicit native Clock observer")
@@ -42,6 +45,7 @@ assert(!values["arm-only"] || !values["first-admission-race"] && !values["crash-
 assert(!values["diagnose-stop"] || kinds.length === 1 && kinds[0] === "stop-pending", "The narrow diagnostic owns one Stop-pending case only")
 assert(!values["diagnose-product-stop"] || kinds.length === 1 && kinds[0] === "stop-pending" && !values["diagnose-stop"], "The product-context trace owns one separate Stop-pending case")
 await mkdir(scratch, { recursive: true })
+if (process.env.GITHUB_ENV) await appendFile(process.env.GITHUB_ENV, `NATIVE_SCHEDULE_PRODUCT_FIXTURE=${scratch}\n`)
 const originalEnvironment = { ...process.env }, hash = bytes => createHash("sha256").update(bytes).digest("hex")
 const receipt = { preparedContract: 1, cliSHA256: hash(await readFile(cli)), kinds, cases: [], outcome: "running", gates: [
   "No deterministic lost-ACK/admission-before-count fault injection in this natural fixture",
@@ -221,7 +225,7 @@ async function journey(kind) {
     assert(endpoint && endpoint.url === readNativeScheduleIncarnation(registrationFile).url)
     client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
     if (endpoint.auth?.password) { secrets.add(endpoint.auth.password); secrets.add(Buffer.from(`${endpoint.auth.username}:${endpoint.auth.password}`).toString("base64")) }
-    const info = await client.server.info({ signal }); assert.equal(info.version, "2.2.3"); assert.equal(info.pid, child.pid)
+    const info = await client.server.info({ signal }); assert.equal(info.version, cliVersion); assert.equal(info.pid, child.pid)
     rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   }
   const stop = async () => {
@@ -251,11 +255,13 @@ async function journey(kind) {
     try { body = JSON.parse(raw) } catch { throw Error(`Product HTTP ${response.status}: non-json-response`) }
     if (!body || typeof body !== "object" || Array.isArray(body)) throw Error(`Product HTTP ${response.status}: non-object-response`)
     const code = typeof body.code === "string" && /^[a-z0-9-]{1,80}$/.test(body.code) ? body.code : undefined
+    const reason = typeof body.refusal?.reason === "string" && /^[a-z0-9-]{1,120}$/.test(body.refusal.reason) ? body.refusal.reason : undefined
+    if (code === "schedule-refused") assert(reason, "Schedule refusal requires its native reason")
     result.http.push({ suffix, action: payload.action ?? "activate", requestID: payload.requestID,
-      expectedRevision: payload.expectedRevision ?? payload.expectedDocumentRevision, status: response.status, ...(code ? { code } : {}), pending: body.pending,
+      expectedRevision: payload.expectedRevision ?? payload.expectedDocumentRevision, status: response.status, ...(code ? { code } : {}), reason, pending: body.pending,
       document: body.document && { id: body.document.id, revision: body.document.revision, state: body.document.state,
         launchedCount: body.document.launchedCount, pending: body.document.pending, activation: body.document.scheduleActivation?.state } })
-    assert(response.status === 200 || allowPending && response.status === 503 && body.pending === true, `Product HTTP ${response.status}: ${code ?? "unconfirmed"}`)
+    assert(response.status === 200 || allowPending && response.status === 503 && body.pending === true, `Product HTTP ${response.status}: ${code ?? "unconfirmed"}; reason=${reason ?? "missing"}`)
     return body
   }
   const create = async (label, timing, maxLaunches = 1) => {
@@ -434,7 +440,17 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       result.deletedConvertedID = deletedID
     }
     const timing = kind === "every" ? { kind, intervalMs: 900000 } : kind === "at" ? { kind, at: Date.now() + delayMs, zone: "UTC" } : { kind, delayMs }
-    const id = await create(kind, timing); await activate(id); await control(id, "play")
+    const id = await create(kind, timing); await activate(id)
+    if (kind === "at") {
+      // Creation and activation may take longer than the actual wake delay.
+      timing.at = Date.now() + delayMs
+      const before = snapshot(id).document
+      const { roots: _roots, profileID: _profileID, executionHost: _host, ...configuration } = before.configuration
+      await http(`/${id}/schedule`, { requestID: `configure_${randomUUID().replaceAll("-", "")}`, expectedRevision: before.revision,
+        action: "configure", configuration: { ...configuration, launch: { ...configuration.launch, timing } } })
+    }
+    result.stage = "play"
+    await control(id, "play")
     const armed = snapshot(id), principal = armed.schedules.find(item => item.role === "principal"), auxiliary = armed.schedules.find(item => item.role === "reconciliation")
     assert(armed.document.calendarOwner.auxiliaryReady && !armed.document.calendarOwner.operation.pending)
     assert(auxiliary?.status === "active" && principal?.status === "active")
@@ -620,7 +636,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     result.status = "failed"; result.error = redact(error?.message ?? "qualification-failed")
     await save("failure-diagnostic", { stage: result.stage, error: detail(error), reason: detail(error?.reason), cause: detail(error?.cause), nativeErrorTail: redact(nativeErrorTail) })
     if (result.documentID) try { await save("failure-sql", snapshot(result.documentID)) } catch { /* Preserve the original failure. */ }
-    throw Error(`Native product qualification failed at ${result.stage ?? "setup"}; private redacted diagnostic saved`)
+    throw Error(`Native product qualification failed at ${result.stage ?? "setup"}: ${result.error}; private redacted diagnostic saved`)
   }
   finally {
     releaseBarrier("fixture-finally")

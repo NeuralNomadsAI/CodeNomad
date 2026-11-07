@@ -73,7 +73,7 @@ test("Electron runs a real npm lifecycle `node` script through the prefix-scoped
 })
 
 test("both runtimes support nested npm/npx commands and approved project lifecycles without system Node or npm", { skip: unavailable || false }, async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "npm commands "))
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "npm commands ")))
   const { startFakeNpmRegistry } = await import(new URL("../../../../scripts/fixtures/fake-npm-registry.mjs", import.meta.url).href)
   const registry = await startFakeNpmRegistry()
   try {

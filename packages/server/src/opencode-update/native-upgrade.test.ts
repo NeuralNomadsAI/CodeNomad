@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { access, mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { access, mkdtemp, mkdir, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
@@ -85,7 +85,7 @@ test("native upgrade scopes bundled npm and prefix in the prefix, cleans its shi
 })
 
 test("native upgrade npm/npx commands override hostile caller PATH and cwd without changing policy", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "upgrade commands "))
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "upgrade commands ")))
   const prefix = path.join(root, "prefix")
   const hostile = path.join(root, "hostile")
   const bundled = path.join(root, "bundled & npm")
