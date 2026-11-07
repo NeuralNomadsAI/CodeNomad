@@ -11,7 +11,7 @@ view; release notes are at [opencode.ai/changelog](https://opencode.ai/changelog
 (GitHub Releases cover V1 only). Keep results in the PR and CI logs, never as
 per-version sections here.
 
-Minimum runtime **2.2.3**, recommended **2.2.5** (`runtime-support.ts`), with
+Minimum runtime **2.2.3**, recommended **2.2.6** (`runtime-support.ts`), with
 **2.2.3** client/schema/plugin pins. The minimum carries the image tool contract of
 upstream [#60258](https://github.com/anomalyco/opencode/pull/60258), consumed by
 the Images gallery, the Design agent and skills and the Images settings: one
@@ -25,7 +25,7 @@ The minimum also provides the replay contract (below) consumed by the pinned
 reducer and Code Mode JavaScript run-to-completion, whose regression
 `scripts/test-codemode-jobs-native.mjs` runs in CI against minimum and latest.
 Daemons below the minimum are refused with `native_contract`. Plugins share the
-host Effect 4.0.6/Schema runtime. Unlisted/prerelease/custom/future labels
+host-provided Effect/Schema runtime. Unlisted/prerelease/custom/future labels
 undergo authenticated contract recognition; missing canonical APIs, session
 environment or the replay shape give a concrete reason. OpenCode reads older
 stored data.

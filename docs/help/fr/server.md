@@ -8,7 +8,7 @@ La même interface prend en charge [plusieurs onglets de projet et worktrees](pr
 
 1. Installez Node.js 24 LTS et npm ; la version d’exécution du dépôt pour la compilation est épinglée dans `.node-version`. Les paquets de bureau fournissent leur propre environnement : Electron utilise son Node intégré, Tauri embarque Node et les deux incluent npm.
 2. Placez Git dans le **PATH du processus backend**. Git dans WSL seul ne suffit pas pour un backend Windows.
-3. Installez ou sélectionnez OpenCode : **2.2.3** est le minimum requis et **2.2.5** la cible de qualification recommandée. Les versions plus récentes ou personnalisées passent des contrôles de compatibilité, pas une liste de versions testées autorisées. Consultez la [configuration d’OpenCode](opencode.md).
+3. Installez ou sélectionnez OpenCode : **2.2.3** est le minimum requis et **2.2.6** la cible de qualification recommandée. Les versions plus récentes ou personnalisées passent des contrôles de compatibilité, pas une liste de versions testées autorisées. Consultez la [configuration d’OpenCode](opencode.md).
 4. Choisissez le dossier depuis lequel démarrer le serveur, ou passez explicitement `--workspace-root`.
 
 Sans Git, les conversations restent disponibles uniquement dans le dossier physique explicitement ouvert ; les opérations Git et worktree échouent. Installez Git et redémarrez le backend après une modification de PATH. Une racine d’espace de travail limite l’ouverture/la navigation, pas l’exécution de l’agent : voir [Sécurité](security.md).
