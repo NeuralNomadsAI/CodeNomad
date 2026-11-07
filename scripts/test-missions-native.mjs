@@ -144,7 +144,7 @@ try {
   await mkdir(fixturePlugin)
   // Test-only RPC drives the actual registered tool executors without relying on LLM decisions.
   await writeFile(path.join(fixturePlugin, "index.ts"), `import { Plugin, Rpc } from '@opencode/plugin/effect'
-  import { Effect } from 'effect'
+  import { Cause, Effect } from 'effect'
   export default Plugin.define({ id: 'missions.fixture', effect: Effect.fn(function*(ctx) {
     yield* ctx.session.hook('http.request', event => Effect.sync(() => {
       event.request.headers.set('x-fixture-kind', event.kind)
@@ -155,7 +155,8 @@ try {
       const tool = (yield* ctx.tool.list()).find(tool => tool.id === 'mission_' + input.tool)
       if (!tool) throw new Error('Mission tool unavailable')
       const result = yield* tool.execute(input.input, { sessionID: input.sessionID, agent: 'build', messageID: 'msg_fixture',
-        id: input.callID, progress: () => Effect.void, signal })
+        id: input.callID, progress: () => Effect.void, signal }).pipe(Effect.catchCause(cause =>
+          Effect.succeed({ content: JSON.stringify({ fixtureToolError: Cause.pretty(cause) }) })))
       return result.content
     }), panelShape: input => Effect.succeed(input) })
   }) })`)
@@ -275,6 +276,7 @@ try {
   // Mission tools return compact readouts; checks below read the resulting map from the native snapshot.
   const invoke = async (tool, input, sessionID = coordinator.id, callID = `fixture-${tool}`) => {
     const result = JSON.parse(await client.rpc(invocation).invoke({ tool, input, sessionID, callID }, { location }))
+    if (typeof result.fixtureToolError === "string") throw new Error(result.fixtureToolError)
     if (result.missionID === undefined) return result
     const { missions } = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
     const mission = missions.find(mission => mission.id === result.missionID)
