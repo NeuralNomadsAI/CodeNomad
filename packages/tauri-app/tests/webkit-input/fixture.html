@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8"><title>Native input qualification</title>
+<style>body{margin:0}input, [contenteditable]{position:absolute;left:10px;width:280px;height:40px}input{top:10px}[contenteditable]{top:70px;background:#eee}#pad{position:absolute;top:140px;left:10px;width:400px;height:180px;background:#bdf}output{position:absolute;top:340px;white-space:pre-wrap}</style>
+<input aria-label="input"><div contenteditable="true" aria-label="editor"></div><div id="pad">pointer target</div><output></output>
+<script>
+window.__codenomadPageOnly = true;
+const observations = [];
+for (const type of ['pointerdown','pointerup','pointermove','click','contextmenu','wheel','keydown','keyup','beforeinput','input']) {
+  document.addEventListener(type, event => {
+    observations.push({type, trusted:event.isTrusted, button:event.button, buttons:event.buttons,
+      key:event.key, ctrl:event.ctrlKey, meta:event.metaKey, data:event.data, target:event.target.tagName});
+    document.querySelector('output').textContent = JSON.stringify({observations,
+      input:document.querySelector('input').value, editor:document.querySelector('[contenteditable]').textContent});
+    if(type === 'contextmenu' || type === 'wheel') event.preventDefault();
+  }, {passive:false});
+}
+</script>
