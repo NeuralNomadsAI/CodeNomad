@@ -219,8 +219,13 @@ async function journey(kind) {
     if (!cold) await connect()
   }
   const connect = async signal => {
-    signal?.throwIfAborted()
-    endpoint = await Service.discover({ file: registrationFile })
+    // Registration can precede HTTP readiness. Retry only discovery of our own
+    // process; native mutations and the cold no-client window keep their gates.
+    endpoint = await until(async () => {
+      signal?.throwIfAborted()
+      assert.equal(readNativeScheduleIncarnation(registrationFile).pid, child.pid)
+      return Service.discover({ file: registrationFile })
+    }, 40000)
     signal?.throwIfAborted()
     assert(endpoint && endpoint.url === readNativeScheduleIncarnation(registrationFile).url)
     client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
