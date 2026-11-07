@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
 import type { RemoteControlManager } from "../../remote-control/manager"
 import { deviceCookie, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../../remote-control/gate"
-import { isRemoteRequest } from "../../remote-control/request-origin"
+import { isRemoteRequest, isRemoteSocket } from "../../remote-control/request-origin"
 import { SERVER_PAIR_PATH, validServerPairRequest } from "../../remote-control/server-pairing"
 
 interface RouteDeps {
@@ -23,7 +23,7 @@ export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDep
   let resetsAt = 0
   app.post(SERVER_PAIR_PATH, { bodyLimit: 4096, config: { cors: false } }, async (request, reply) => {
     reply.header("Cache-Control", "no-store")
-    if (!isRemoteRequest(request)) return reply.code(404).send({ error: "Not found" })
+    if (!isRemoteSocket(request.raw.socket)) return reply.code(404).send({ error: "Not found" })
     if (!validServerPairRequest(request)) return reply.code(403).send({ error: "Server pairing request rejected" })
     const parsed = ServerPairBody.safeParse(request.body)
     // The 192-bit code is checked and consumed atomically before throttling failures;
@@ -98,7 +98,7 @@ export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDep
 
   // Pairing happens only on the public Remote Control origin.
   app.get(PAIR_PAGE_PATH, async (request, reply) => {
-    if (!isRemoteRequest(request)) return reply.code(404).send({ error: "Not found" })
+    if (!isRemoteSocket(request.raw.socket)) return reply.code(404).send({ error: "Not found" })
     pairTemplate ??= fs.readFileSync(PAIR_TEMPLATE_URL, "utf-8")
     reply.header("Cache-Control", "no-store")
     reply.header("Referrer-Policy", "no-referrer")
@@ -107,7 +107,7 @@ export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDep
   })
 
   app.post(PAIR_EXCHANGE_PATH, { bodyLimit: 4096 }, async (request, reply) => {
-    if (!isRemoteRequest(request)) return reply.code(404).send({ error: "Not found" })
+    if (!isRemoteSocket(request.raw.socket)) return reply.code(404).send({ error: "Not found" })
     const parsed = PairBody.safeParse(request.body)
     const paired = parsed.success ? deps.manager.exchangePairing(parsed.data.code, request.headers["user-agent"]) : null
     if (!paired) {

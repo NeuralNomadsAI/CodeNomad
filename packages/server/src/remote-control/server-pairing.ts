@@ -1,6 +1,6 @@
 import type { FastifyReply, FastifyRequest } from "fastify"
 import { routedPath } from "../server/routed-path"
-import { isRemoteRequest } from "./request-origin"
+import { isRemoteSocket } from "./request-origin"
 
 export const SERVER_PAIR_PATH = "/api/remote-control/server-pair"
 const forbidden = /^(origin|cookie2?|authorization|proxy-authorization|referer|sec-fetch-.*|access-control-request-.*)$/i
@@ -23,8 +23,9 @@ export function validServerPairRequest(request: FastifyRequest): boolean {
 export function guardServerPairRequest(request: FastifyRequest, reply: FastifyReply): boolean {
   if (routedPath(request.raw.url ?? request.url) !== SERVER_PAIR_PATH) return false
   reply.header("Cache-Control", "no-store")
-  if (!isRemoteRequest(request) || !validServerPairRequest(request)) {
-    reply.header("connection", "close").code(!isRemoteRequest(request) ? 404 : 403).send(request.method === "HEAD" ? "" : { error: "Server pairing request rejected" })
+  const ingress = isRemoteSocket(request.raw.socket)
+  if (!ingress || !validServerPairRequest(request)) {
+    reply.header("connection", "close").code(!ingress ? 404 : 403).send(request.method === "HEAD" ? "" : { error: "Server pairing request rejected" })
     return true
   }
   return false

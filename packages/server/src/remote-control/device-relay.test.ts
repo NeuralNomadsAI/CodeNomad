@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import http from "node:http"
-import test from "node:test"
-import { DEVICE_COOKIE_NAME } from "./gate"
+import test, { type TestContext } from "node:test"
+import Fastify from "fastify"
+import { DEVICE_COOKIE_NAME, gateRemoteRequest } from "./gate"
+import { markRemoteSocket } from "./request-origin"
 import { SERVER_PAIR_PATH } from "./server-pairing"
 import { FAKE_TUNNEL_HOST, startRemoteSurface } from "./test-support/surface"
 
@@ -40,9 +42,6 @@ test("P2 credentials admit non-browser mutations on ingress and direct, always i
   for (const target of [f.target(), f.local]) {
     const headers = { host: target === f.local ? f.local : FAKE_TUNNEL_HOST, cookie }
     assert.equal((await send(target, MUTATION, { method: "DELETE", headers })).status, 204)
-    const echo = await send(target, "/api/test/echo", { headers: { ...headers, "x-forwarded-for": "127.0.0.1", "x-codenomad-remote-control": "0" } })
-    assert.equal(echo.status, 200)
-    assert.deepEqual(JSON.parse(echo.body), { loopbackPrivileges: false, forwardedFor: null, remoteControlHeader: null })
     const status = await send(target, "/api/auth/status", { headers })
     assert.equal(JSON.parse(status.body).authenticated, true)
     const remote = await send(target, "/api/remote-control/status", { headers })
@@ -92,7 +91,7 @@ test("invalid credentials never fall back to local sessions or skipped authentic
 async function stream(target: string, cookie: string, host = target) {
   const [hostname, port] = target.split(":")
   return new Promise<{ closed: Promise<void> }>((resolve, reject) => {
-    const request = http.get({ hostname, port, agent: false, path: "/api/test/stream", headers: { host, cookie, "x-codenomad-server-request": "1" } }, response => {
+    const request = http.get({ hostname, port, agent: false, path: "/api/events", headers: { host, cookie, "x-codenomad-server-request": "1" } }, response => {
       if (response.statusCode !== 200) {
         response.resume()
         reject(new Error(`stream rejected: ${response.statusCode}`))
@@ -107,11 +106,30 @@ async function stream(target: string, cookie: string, host = target) {
   })
 }
 
+// A minimal SSE handler on the reviewed protocol route, sharing the real
+// manager's admission and socket revocation (the surface's event bus is stubbed).
+async function streamListener(t: TestContext, f: Awaited<ReturnType<typeof startRemoteSurface>>, ingress: boolean) {
+  const app = Fastify()
+  t.after(() => app.close())
+  if (ingress) app.server.on("connection", markRemoteSocket)
+  app.addHook("onRequest", (request, reply, done) => {
+    if (!gateRemoteRequest(request, reply, f.manager.gate())) done()
+  })
+  app.get("/api/events", (_request, reply) => {
+    reply.hijack()
+    reply.raw.writeHead(200, { "content-type": "text/event-stream" })
+    reply.raw.write("data: open\n\n")
+  })
+  const address = await app.listen({ host: "127.0.0.1", port: 0 })
+  return new URL(address).host
+}
+
 for (const action of ["revoke", "stop", "shutdown", "failure", "evict"] as const) {
   test(`${action} closes device streams on both listeners and revokes direct authority`, { timeout: 10_000 }, async t => {
     const f = await startRemoteSurface(t)
     const { cookie, id } = await pair(f)
-    const streams = await Promise.all([stream(f.target(), cookie, FAKE_TUNNEL_HOST), stream(f.local, cookie)])
+    const [ingress, direct] = await Promise.all([streamListener(t, f, true), streamListener(t, f, false)])
+    const streams = await Promise.all([stream(ingress, cookie, FAKE_TUNNEL_HOST), stream(direct, cookie)])
     if (action === "revoke") assert(f.manager.revokeDevice(id))
     else if (action === "stop") await f.manager.stop()
     else if (action === "shutdown") await f.manager.shutdown()

@@ -100,11 +100,26 @@ The local CodeNomad backend connects to saved CodeNomad profiles through `codeno
 
 The saved profile alone selects the destination and TLS verification policy. The explicit transport pins validated DNS answers to the connection, keeps the saved hostname for TLS verification and SNI, never follows redirects and never manufactures Origin or browser Fetch Metadata. Caller cookies, authorization and forwarding headers stay local; private session/device cookies stay in the backend's mode-0600 store beside its configuration. Response cookies and authentication headers remain private. Response documents receive sandbox CSP and `nosniff`; the relay publishes a small response-header allowlist. Log records retain fixed relay route names and completion metadata, excluding request payloads and target queries.
 
+HTTP, HTTPS and the private bridge share the backend's connection authority and private credential cache. Admission captures the profile id, exact origin, TLS policy and revocable generation before entering a queue; dispatch and publication recheck that owner. Retargeting or changing TLS invalidates pending and queued operations and the stored identity. Stored identities include their TLS policy; entries without that field bind to verified TLS. Forget through any listener closes all of that profile's streams and removes its identity for every listener. The backend owns shutdown; a standalone listener releases its shared lease without closing another listener's owner.
+
 `POST /api/remote-control/server-pair` is a dedicated ingress-only, cookie-free protocol with `X-CodeNomad-Server-Pairing: 1`, a strict JSON body and no Origin, Referer, authorization or browser metadata. It atomically consumes the ordinary five-minute pairing code and returns one revocable device credential to the local backend. Invalid attempts have a backend-wide failure bucket; a valid high-entropy code remains usable. Servers without this route yield a stable `pairing_unavailable` result. Password connections use the direct listener's existing login policy and private session cookies.
 
 An authenticated device request carrying `X-CodeNomad-Server-Request: 1` can mutate through the ingress or direct listener while carrying no browser context: Origin, Referer, Fetch Metadata, client hints and preflight headers, including empty ones, exclude this admission. Browser requests continue to require the public Origin. Device scope applies on both listeners, with host-only paths and nested backend relays denied. Invalid explicit device credentials never fall back to password sessions or skipped authentication. Revocation, eviction, Stop, shutdown and tunnel failure destroy admitted device sockets on both listeners. Profile removal or retargeting similarly aborts local uploads/SSE and deletes its private identity; pending connection results check their captured owner before saving.
 
+`gate.ts` maintains the closed `SERVER_DEVICE_ROUTES` catalog of method/path pairs for the relay's existing backend API contracts. Additions require review of the caller and remote route together; unknown paths and unlisted methods return 404. Direct requests using the explicit device protocol stay within this catalog even when they carry browser headers. Browser pairing (`/remote-pair`, `/api/remote-control/pair`) and server pairing judge the physical ingress socket before device attachment; their route handlers also require ingress membership.
+
+| Reviewed device-route family | Admission surface |
+|---|---|
+| Identity and connection | GET auth status, metadata, events and read-only Remote Control status; POST connection pong. |
+| Backend data and preferences | Explicit filesystem, config-file, storage owner/instance, usage, runtime, speech, SideCar/previews and panel-extension method/path pairs in `SERVER_DEVICE_ROUTES`; existing host-only exclusions still apply. |
+| Project operations | Workspace inventory/lifecycle, worktrees, files/Git, plugin/integration settings, accounts/usage, session media/history/pruning, pending requests, Missions and Yolo method/path pairs. |
+| Native workspace API | `/workspaces/:id/instance/api/…` under the existing `isAllowedInstanceApiRoute()` allowlist and workspace/location ownership checks in `http-server.ts`. |
+
+Browser traffic on the ingress retains its existing public-Origin and device admission. Browser-pairing authority comes from physical ingress membership.
+
 ## Validation
+
+- `codenomad-servers/review-regressions.test.ts` covers queued credentials across address/TLS changes, persisted TLS binding, cross-listener Forget, shared-owner shutdown and direct browser-pairing refusal. `remote-control/device-relay-r1.test.ts` exercises the closed route/method catalog and preserves browser pairing on the ingress.
 
 - `remote-surface.test.ts` drives the real `createHttpServer` through the
   ingress. It covers unpaired access, pairing, `Origin`/`Host` checks,

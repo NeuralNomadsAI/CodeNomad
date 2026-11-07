@@ -417,8 +417,9 @@ test("backend relay performs a real device-authenticated mutation without browse
     "sec-fetch-site": "same-origin", referer: `${f.origin}/`, cookie: "caller=must-not-leak",
   } })
   assert.equal(deleted.status, 204, deleted.body)
-  const echo = await f.call("/api/test/echo")
+  const echo = await f.call("/api/auth/status")
   assert.equal(echo.status, 200)
-  assert.deepEqual(JSON.parse(echo.body), { loopbackPrivileges: false, forwardedFor: null, remoteControlHeader: null })
+  assert.equal(JSON.parse(echo.body).authenticated, true)
   assert.equal(echo.headers["set-cookie"], undefined)
+  assert.equal((await f.call("/api/test/echo")).status, 404)
 })
