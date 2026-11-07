@@ -1,11 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { access, chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { execFileSync } from "node:child_process"
-import { bundledNpm, executeNpm, npmNeedsNodeCommand, writeNpmNodeCommand } from "./npm-runtime"
-import { InstallationInterruptedError } from "./installation-lock"
+import { execFileSync, spawnSync } from "node:child_process"
+import { bundledNpm, executeNpm, npmNeedsNodeCommand, writeNpmCommands } from "./npm-runtime"
+import { InstallationInterruptedError, withInstallationLock } from "./installation-lock"
 
 test("discovers Electron npm resources on each platform and preserves Node layouts", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "npm-discovery-"))
@@ -23,6 +23,33 @@ test("discovers Electron npm resources on each platform and preserves Node layou
       await mkdir(path.dirname(npm), { recursive: true })
       await writeFile(npm, "")
       assert.equal(bundledNpm(path.join(directory, "node"), "", "linux-x64"), npm)
+    }
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test("scoped npm/npx quote runtime, CLI paths and arguments without invoking caller commands", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "npm & $ commands "))
+  try {
+    const env = { ...process.env }
+    for (const key of Object.keys(env)) if (key.toLowerCase() === "path") delete env[key]
+    env.PATH = process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32") : "/bin"
+    const runtime = path.join(root, process.platform === "win32" ? "runtime & $.exe" : "runtime & $")
+    await copyFile(process.execPath, runtime)
+    await chmod(runtime, 0o700)
+    const npm = path.join(root, "npm-cli.js")
+    for (const name of ["npm", "npx"]) await writeFile(path.join(root, name + "-cli.js"),
+      "console.log(JSON.stringify({execPath:process.execPath,cli:__filename,args:process.argv.slice(2)}))")
+    await writeNpmCommands(root, runtime, npm, env, process.platform)
+    for (const name of ["npm", "npx"]) {
+      const output = process.platform === "win32"
+        ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `${name} "a & b"`],
+          { env, cwd: root, windowsVerbatimArguments: true, windowsHide: true, encoding: "utf8" })
+        : spawnSync(path.join(root, name), ["a & b"], { env, cwd: root, windowsHide: true, encoding: "utf8" })
+      assert.equal(output.status, 0, output.stderr)
+      const result = JSON.parse(output.stdout)
+      assert.equal(result.execPath, runtime)
+      assert.equal(result.cli, path.join(root, name + "-cli.js"))
+      assert.deepEqual(result.args, ["a & b"])
     }
   } finally { await rm(root, { recursive: true, force: true }) }
 })
@@ -54,7 +81,7 @@ test("the console-hiding preload makes every asynchronous child process hide its
   try {
     // The real writer's Windows preload; it loads under any OS's Node.
     const env: NodeJS.ProcessEnv = {}
-    const [flag, preload] = await writeNpmNodeCommand(root, process.execPath, env, "win32")
+    const [flag, preload] = await writeNpmCommands(root, "/application/CodeNomad", "npm-cli.js", env, "win32")
     assert.equal(flag, "--require")
     // Loaded first, the spy sits beneath the preload's patch and sees the final options.
     const spy = path.join(root, "spy.cjs")
@@ -127,23 +154,41 @@ test("Electron lifecycle node command lives in the prefix, is cleaned, and is re
   })
 })
 
-test("Tauri's Node runs npm with its own directory on PATH and no adapter, even with ELECTRON_RUN_AS_NODE", async () => {
+test("Tauri gets scoped npm/npx commands and keeps its Node on PATH without a node adapter", async () => {
   await withPrivateTemporary(async (temporary, prefix) => {
     for (const [platform, node, directory] of [["win32", "C:/CodeNomad/resources/node/node.exe", "C:/CodeNomad/resources/node"],
       ["win32", "C:/CodeNomad/resources/node/NODE.EXE", "C:/CodeNomad/resources/node"],
       ["linux", "/opt/CodeNomad/node/bin/node", "/opt/CodeNomad/node/bin"],
-      ["darwin", "/Applications/CodeNomad.app/Contents/Resources/node/bin/node", "/Applications/CodeNomad.app/Contents/Resources/node/bin"]] as const) {
+      ["darwin", "/Applications/CodeNomad.app/Contents/Resources/node/bin/node", "/Applications/CodeNomad.app/Contents/Resources/node/bin"]] as const) for (const outcome of ["success", "failure", "interrupted"]) {
       assert.equal(npmNeedsNodeCommand(node, platform), false)
       const env = { ELECTRON_RUN_AS_NODE: "1", Path: "/original" }
       let called = false
-      await executeNpm(node, ["npm-cli.js"], env, platform, prefix, async (file, args, childEnv, options) => {
+      let adapter = ""
+      const pending = withInstallationLock(prefix, () => executeNpm(node, ["npm-cli.js"], env, platform, prefix, async (file, args, childEnv, options) => {
         called = true
         assert.equal(file, node)
         assert.deepEqual(args, ["npm-cli.js"])
-        assert.equal(options?.cwd, undefined)
-        assert.equal(childEnv.Path, directory + (platform === "win32" ? ";" : ":") + "/original")
-        assert.equal(childEnv.CODENOMAD_NPM_NODE, undefined)
-      })
+        adapter = options!.cwd!
+        assert.equal(path.dirname(adapter), prefix)
+        assert.equal(childEnv.Path, [adapter, directory, "/original"].join(platform === "win32" ? ";" : ":"))
+        assert.equal(childEnv.CODENOMAD_NPM_NODE, node)
+        assert.equal(childEnv.CODENOMAD_NPM_CLI, "npm-cli.js")
+        assert.equal(childEnv.CODENOMAD_NPX_CLI, "npx-cli.js")
+        for (const name of ["npm", "npx"]) assert.match(await readFile(path.join(adapter, name + (platform === "win32" ? ".cmd" : "")), "utf8"), /CODENOMAD_NPM_NODE/)
+        await assert.rejects(access(path.join(adapter, platform === "win32" ? "node.cmd" : "node")), { code: "ENOENT" })
+        if (outcome === "interrupted") throw new InstallationInterruptedError()
+        if (outcome === "failure") throw new Error("failed")
+      }))
+      if (outcome === "success") await pending
+      else await assert.rejects(pending)
+      const lock = path.join(prefix, ".codenomad-opencode-install.lock")
+      if (outcome === "interrupted") {
+        await access(adapter); await access(lock)
+        await rm(adapter, { recursive: true, force: true }); await rm(lock)
+      } else {
+        await assert.rejects(access(adapter), { code: "ENOENT" })
+        await assert.rejects(access(lock), { code: "ENOENT" })
+      }
       assert.ok(called)
       assert.deepEqual(env, { ELECTRON_RUN_AS_NODE: "1", Path: "/original" })
     }
