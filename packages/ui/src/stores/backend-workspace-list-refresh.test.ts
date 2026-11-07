@@ -12,6 +12,8 @@ import { projectScope } from "../lib/backend-identity"
 import { missionProjectView, updateMissionProjectView } from "./mission-view-state"
 import { closeSessionPreview, getSessionPreview, openSessionPreview, showSessionChatFor } from "./session-previews"
 import { serverApi } from "../lib/api-client"
+import { backends, createBackendClient, type BackendClient } from "../lib/backend-client"
+import { backendEvents } from "../lib/backend-events"
 
 const instance = (id: string, backendId?: string): Instance => ({
   id, ...(backendId ? { backendId } : {}), folder: "/repo", port: 0, pid: 0, proxyPath: `/workspaces/${id}`,
@@ -26,7 +28,11 @@ describe("workspace lists of two backends", () => {
   it("refuses a non-local refresh without that backend's API", async () => {
     await assert.rejects(refreshWorkspaceList("lab"), /needs its backend API/)
   })
-  it("never closes the tabs of a backend whose list was not refreshed", async () => {
+  it("never closes the tabs of a backend whose list was not refreshed", async (t) => {
+    const backend = createBackendClient({ id: "lab", baseUrl: "https://lab.invalid", fetcher: async () => Response.json({}) })
+    ;(backends as Map<string, BackendClient>).set("lab", backend)
+    const detach = backendEvents.attach("lab", backend.events)
+    t.after(() => { detach(); backend.events.dispose(); (backends as Map<string, BackendClient>).delete("lab") })
     const local = instance("w-local"), lab = instance("lab~w1", "lab")
     const events: InstanceLifecycleAuthorityEvent[] = []
     const stop = onInstanceLifecycleAuthority((event) => { events.push(event) })

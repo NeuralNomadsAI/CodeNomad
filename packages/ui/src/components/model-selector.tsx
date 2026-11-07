@@ -7,7 +7,7 @@ import type { Model } from "../types/session"
 import { useI18n } from "../lib/i18n"
 import { withHotkey } from "../lib/hotkeys"
 import { getLogger } from "../lib/logger"
-import { getFavoritesOnlyPreference, getProviderModelVisibilityPreference, setFavoritesOnlyPreference, uiState, toggleFavoriteModelPreference } from "../stores/preferences"
+import { useConfig } from "../stores/preferences"
 import { openSettings } from "../stores/settings-screen"
 import { isModelVisible, resolvePickerValue } from "../lib/model-visibility"
 import { catalogModels as listedModels, compareCatalogModels, favoriteModelKeys } from "../lib/model-catalog"
@@ -53,6 +53,7 @@ function ComboboxInputValue(props: { value: string }) {
 }
 
 export default function ModelSelector(props: ModelSelectorProps) {
+  const { getFavoritesOnlyPreference, getProviderModelVisibilityPreference, setFavoritesOnlyPreference, uiState, toggleFavoriteModelPreference } = useConfig(() => props.instanceId)
   const { t } = useI18n()
   const instanceProviders = () => providers().get(props.instanceId) || []
   const [isOpen, setIsOpen] = createSignal(false)
@@ -79,7 +80,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
   )
 
   // Missions' model selectors list the same models (`preferredModelList`).
-  const modelList = createMemo(() => preferredModelList(catalogModels()))
+  const modelList = createMemo(() => preferredModelList(catalogModels(), props.instanceId))
 
   const favoriteKeySet = createMemo(() => favoriteModelKeys(uiState().models.favorites ?? []))
 

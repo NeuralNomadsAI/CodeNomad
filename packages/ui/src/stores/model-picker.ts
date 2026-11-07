@@ -3,12 +3,13 @@ import { catalogModelKey, listCatalogModels, type CatalogModel } from "../lib/mo
 import type { Provider } from "../types/session"
 import { instances } from "./instances"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
-import { getFavoritesOnlyPreference, getProviderModelVisibilityPreference, uiState } from "./preferences"
+import { preferencesOf } from "./preferences"
 import { normalizeSessionDirectory } from "./session-list-options"
 import { providers } from "./session-state"
 
 /** The list the conversation's model selector shows, under the user's model preferences. */
-export function preferredModelList<T extends CatalogModel>(models: readonly T[]) {
+export function preferredModelList<T extends CatalogModel>(models: readonly T[], instanceId = "") {
+  const { getFavoritesOnlyPreference, getProviderModelVisibilityPreference, uiState } = preferencesOf(instanceId)
   return listCatalogModels(models, {
     visibility: getProviderModelVisibilityPreference,
     favorites: uiState().models.favorites ?? [],

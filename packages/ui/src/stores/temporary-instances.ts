@@ -6,7 +6,7 @@ import { showAlertDialog, showChoiceDialog } from "./alerts"
 import { activeAppTabId, closeInstanceTab, detachInstanceTab, getAdjacentAppTabId, getInstanceAppTabId, selectAppTab, selectInstanceTab } from "./app-tabs"
 import { getSessionAttachmentsForInstance } from "./attachments"
 import { closeWorkspace, createInstance, instances, trackWorkspaceClose, updateInstance } from "./instances"
-import { addNamedRecentFolder } from "./preferences"
+import { preferencesOf } from "./preferences"
 import { getSessionDraftPromptsForInstance, getSessions } from "./sessions"
 import { backendIdOf, LOCAL_BACKEND_ID } from "../lib/backend-identity"
 import type { Instance } from "../types/instance"
@@ -88,7 +88,7 @@ export async function keepTemporaryInstance(instanceId: string): Promise<boolean
     }
   }
   clearTemporaryMark(instance)
-  await addNamedRecentFolder(instance.folder, instance.projectName ?? "")
+  await preferencesOf(instanceId).addNamedRecentFolder(instance.folder, instance.projectName ?? "")
     .catch((error) => log.error("Failed to add the kept project to recent folders", error))
   return true
 }
