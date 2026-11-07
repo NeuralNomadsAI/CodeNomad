@@ -82,6 +82,7 @@ struct OpenClaim {
     url: String,
     owner: Option<String>,
     failed_owners: HashSet<String>,
+    fence: Option<crate::native_request::RequestFence>,
 }
 
 #[derive(Default)]
@@ -565,6 +566,13 @@ impl BrowserController {
             return false;
         };
         if claim
+            .fence
+            .as_ref()
+            .is_some_and(|fence| fence.check().is_err())
+        {
+            return false;
+        }
+        if claim
             .owner
             .as_deref()
             .is_some_and(|owner| owner != window_label)
@@ -592,6 +600,13 @@ impl BrowserController {
     fn release_claim(&self, window_label: &str, request_id: &str) -> Option<OpenClaim> {
         let mut inner = self.inner.0.lock().ok()?;
         let claim = inner.open_claims.get_mut(request_id)?;
+        if claim
+            .fence
+            .as_ref()
+            .is_some_and(|fence| fence.check().is_err())
+        {
+            return None;
+        }
         if claim.owner.as_deref() != Some(window_label) {
             return None;
         }
@@ -745,7 +760,11 @@ impl BrowserController {
             return self.open(app, session_id, url, deadline, fence);
         }
         let registration = self.resolve(app, session_id)?;
-        self.check_target(app, &registration, deadline, fence)?;
+        if action == "navigate" {
+            self.check_target_identity(app, &registration, deadline, fence)?;
+        } else {
+            self.check_target(app, &registration, deadline, fence)?;
+        }
         let webview = app
             .get_webview(&registration.webview_label)
             .ok_or_else(|| "Browser preview is no longer available".to_string())?;
@@ -759,12 +778,26 @@ impl BrowserController {
             "screenshot" => {
                 let document = self.document_version(&registration)?;
                 #[cfg(windows)]
-                let result = cdp(
-                    &webview,
-                    "Page.captureScreenshot",
-                    json!({ "format": "png", "fromSurface": true }),
-                    deadline,
-                )?;
+                let result = {
+                    let controller = self.clone();
+                    let expected = registration.clone();
+                    let app = app.clone();
+                    let fence = fence.clone();
+                    cdp_guarded(
+                        &webview,
+                        "Page.captureScreenshot",
+                        json!({ "format": "png", "fromSurface": true }),
+                        deadline,
+                        move || {
+                            controller.check_target(&app, &expected, deadline, &fence)?;
+                            if controller.document_version(&expected)? != document {
+                                return Err("Browser document changed during capture".into());
+                            }
+                            Ok(())
+                        },
+                        24 * 1024 * 1024,
+                    )?
+                };
                 #[cfg(windows)]
                 let data = result
                     .get("data")
@@ -832,24 +865,17 @@ impl BrowserController {
         }
 
         let request_id = uuid::Uuid::new_v4().to_string();
-        {
-            let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
-            inner.open_claims.insert(
-                request_id.clone(),
-                OpenClaim {
-                    session_id: session_id.to_string(),
-                    url: raw_url.to_string(),
-                    owner: None,
-                    failed_owners: HashSet::new(),
-                },
-            );
-        }
         let claim = OpenClaim {
             session_id: session_id.to_string(),
             url: raw_url.to_string(),
             owner: None,
             failed_owners: HashSet::new(),
+            fence: Some(fence.clone()),
         };
+        {
+            let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
+            inner.open_claims.insert(request_id.clone(), claim.clone());
+        }
         Self::emit_open_request(app, &request_id, &claim);
         let result = (|| -> Result<Value, String> {
             let registration_deadline = deadline.min(Instant::now() + Duration::from_secs(10));
@@ -959,11 +985,17 @@ impl BrowserController {
         self.check_target(app, registration, deadline, fence)?;
         self.invalidate_page(&registration.registration_id);
         let sequence = self.prepare_page_load(&registration.registration_id, url.as_str())?;
-        let result = cdp(
+        let controller = self.clone();
+        let expected = registration.clone();
+        let app = app.clone();
+        let fence = fence.clone();
+        let result = cdp_guarded(
             webview,
             "Page.navigate",
             json!({ "url": url.as_str() }),
             deadline,
+            move || controller.check_target_identity(&app, &expected, deadline, &fence),
+            24 * 1024 * 1024,
         )?;
         if let Some(error) = result
             .get("errorText")
@@ -1011,6 +1043,23 @@ impl BrowserController {
         deadline: Instant,
         fence: &crate::native_request::RequestFence,
     ) -> Result<(), String> {
+        self.check_target_identity(app, expected, deadline, fence)?;
+        let view = app
+            .get_webview(&expected.webview_label)
+            .ok_or("Browser preview is no longer available")?;
+        allowed_url(view.url().map_err(|error| error.to_string())?.as_str())?;
+        self.document_version(expected)?;
+        fence.check()
+    }
+
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    fn check_target_identity(
+        &self,
+        app: &AppHandle,
+        expected: &Registration,
+        deadline: Instant,
+        fence: &crate::native_request::RequestFence,
+    ) -> Result<(), String> {
         fence.check()?;
         if Instant::now() >= deadline {
             return Err("Native request expired before execution".into());
@@ -1024,7 +1073,7 @@ impl BrowserController {
         if view.window().label() != expected.window_label {
             return Err("Browser target belongs to another window".into());
         }
-        allowed_url(view.url().map_err(|error| error.to_string())?.as_str())?;
+        self.document_version(expected)?;
         fence.check()
     }
 
@@ -1150,7 +1199,13 @@ impl BrowserController {
                 == Some(generation)
             {
                 if let Some(expectation) = inner.page_load_expectations.get_mut(registration_id) {
-                    if expectation.url == url && expectation.navigation_id.is_none() {
+                    if expectation
+                        .navigation_id
+                        .is_some_and(|id| id != navigation_id)
+                    {
+                        expectation.result =
+                            Some(Err("Browser preview navigation is no longer current".into()));
+                    } else if expectation.url == url && expectation.navigation_id.is_none() {
                         expectation.navigation_id = Some(navigation_id);
                     }
                 }
@@ -1566,6 +1621,7 @@ mod tests {
                 url: "https://example.com/".to_string(),
                 owner: None,
                 failed_owners: HashSet::new(),
+                fence: None,
             },
         );
 
@@ -1632,6 +1688,8 @@ mod tests {
             7,
             Some("Browser navigation failed: ConnectionAborted".to_string()),
         );
+        // WebKitGTK emits Finished after LoadFailed for the same load.
+        controller.mark_page_finished("registration", 1, 7, None);
         assert_eq!(
             controller
                 .wait_for_page_load(

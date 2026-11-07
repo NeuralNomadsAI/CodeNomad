@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Production native-parent/controller qualification without a shared daemon.
+"""Production native-parent/controller qualification using an isolated fixture child.
 
 Build the TypeScript fixture with esbuild first; pass its .mjs path via --fixture.
 The owning-window inventory and renderer's open-claim callback are fixture-owned.
@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import ssl
 import subprocess
 import tempfile
 import threading
@@ -46,7 +47,10 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--target', type=Path, required=True)
     parser.add_argument('--node', default=shutil.which('node'))
+    parser.add_argument('--nested-kde', action='store_true', help='Own a private KWin Wayland compositor alongside the current desktop')
     args = parser.parse_args()
+    if not args.node:
+        parser.error('Node executable required: use --node /absolute/path/to/node')
     root = Path(__file__).resolve().parents[1]
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -77,16 +81,43 @@ def main():
             f'#[path={json.dumps(str(root / "src-tauri/build_webkit.rs"))}] mod build_webkit;\nfn main() {{ build_webkit::build(std::path::Path::new({json.dumps(str(native))})); }}\n', encoding='utf-8')
         shutil.copyfile(root / 'Cargo.lock', Path(directory) / 'Cargo.lock')
         subprocess.run(['cargo', 'build', '--offline', '--manifest-path', str(manifest)], env=env, check=True, timeout=300)
-        with http.server.ThreadingHTTPServer(('127.0.0.1', 0), Fixture) as server:
+        certificate, key = Path(directory) / 'certificate.pem', Path(directory) / 'key.pem'
+        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+                        '-subj', '/CN=localhost', '-keyout', str(key), '-out', str(certificate)],
+                       check=True, timeout=20, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with http.server.ThreadingHTTPServer(('127.0.0.1', 0), Fixture) as server, http.server.ThreadingHTTPServer(('127.0.0.1', 0), Fixture) as tls_server:
+            tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            tls.load_cert_chain(certificate, key)
+            tls_server.socket = tls.wrap_socket(tls_server.socket, server_side=True)
+            env['CN_FIXTURE_TLS_URL'] = f'https://127.0.0.1:{tls_server.server_port}/ok'
             thread = threading.Thread(target=server.serve_forever, daemon=True)
+            tls_thread = threading.Thread(target=tls_server.serve_forever, daemon=True)
             thread.start()
+            tls_thread.start()
+            compositor = None
             try:
+                if args.nested_kde:
+                    socket = f'codenomad-parent-{os.getpid()}'
+                    env.update(WAYLAND_DISPLAY=socket, GDK_BACKEND='wayland')
+                    with (output / 'kwin.log').open('w') as log:
+                        compositor = subprocess.Popen(['kwin_wayland', '--virtual', '--socket', socket, '--width', '1024', '--height', '768'],
+                            env={**env, 'QT_QPA_PLATFORM': 'offscreen', 'KWIN_COMPOSE': 'Q'}, stdout=log, stderr=subprocess.STDOUT)
+                    deadline = time.monotonic() + 15
+                    while not (Path(env['XDG_RUNTIME_DIR']) / socket).exists():
+                        assert compositor.poll() is None, (output / 'kwin.log').read_text()
+                        assert time.monotonic() < deadline, 'KWin socket startup timed out'
+                        time.sleep(.1)
                 subprocess.run([str(args.target.resolve() / 'debug/browser-parent-webkit'), args.node,
                                 str(args.fixture.resolve()), f'http://127.0.0.1:{server.server_port}', str(output)],
                                env=env, check=True, timeout=150)
             finally:
+                if compositor:
+                    compositor.terminate()
+                    compositor.wait(timeout=10)
                 server.shutdown()
+                tls_server.shutdown()
                 thread.join()
+                tls_thread.join()
 
 
 if __name__ == '__main__':

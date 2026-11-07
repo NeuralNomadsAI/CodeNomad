@@ -1,4 +1,4 @@
-//! Real native guests and production parent framing; no OpenCode service.
+//! Real native guests and production parent framing with an isolated fixture child.
 #[cfg(not(windows))]
 #[path = "../src/browser_controller.rs"]
 mod browser_controller;
@@ -100,6 +100,55 @@ fn update(
     controller.update(app, owner, input)
 }
 
+#[cfg(not(windows))]
+fn capture_at_revocation(
+    app: &tauri::AppHandle,
+    controller: &BrowserController,
+    id: &str,
+    close: bool,
+    deadline_ms: u64,
+    fence: native_request::RequestFence,
+) -> Result<Value, String> {
+    use std::sync::atomic::AtomicUsize;
+    let prefix = format!("browser-{id}-");
+    let view = app
+        .webviews()
+        .into_values()
+        .find(|view| view.label().starts_with(&prefix))
+        .ok_or("Fixture preview missing")?;
+    let controller = controller.clone();
+    let app = app.clone();
+    let id = id.to_string();
+    let reads = AtomicUsize::new(0);
+    // The third guard runs in the actual native PNG completion callback, after
+    // admission and dispatch. Revoke authority at that acceptance boundary.
+    embedded_view::input::read(
+        &view,
+        embedded_view::input::Read::Capture,
+        std::time::Instant::now() + Duration::from_secs(15),
+        move || {
+            fence.check()?;
+            if reads.fetch_add(1, Ordering::SeqCst) == 2 {
+                if close {
+                    controller.unregister(&app, OWNER, &id)?;
+                } else {
+                    update(&app, &controller, OWNER, &id, false)?;
+                }
+            }
+            controller
+                .handle_native(
+                    &app,
+                    "browser.probe",
+                    Some(json!({"sessionID":SESSION})),
+                    deadline_ms,
+                    fence.clone(),
+                )
+                .map(|_| ())
+        },
+    )
+    .map(|_| Value::Null)
+}
+
 #[cfg(windows)]
 fn main() {}
 #[cfg(not(windows))]
@@ -118,6 +167,14 @@ fn main() {
             args[3].clone(),
         ))
         .setup(move |app| {
+            #[cfg(target_os = "linux")]
+            {
+                use gtk::glib::object::ObjectExt;
+                eprintln!(
+                    "native-display={}",
+                    gtk::gdk::Display::default().unwrap().type_().name()
+                );
+            }
             create_primary(app, OWNER, &args[2]);
             create_primary(app, OTHER, &args[2]);
             let open_app = app.handle().clone();
@@ -183,10 +240,21 @@ fn main() {
                     let response = native_request::dispatch(request, fence, |request, fence| {
                         let id = live.lock().unwrap().clone();
                         match request.method.as_str() {
-                            "fixture.hide" | "fixture.overlay" => {
+                            "fixture.hide" => {
+                                update(&app, &controller, OWNER, &id, false).map(|()| Value::Null)
+                            }
+                            "fixture.overlay" => {
+                                app.get_webview(OWNER)
+                                    .ok_or("Fixture renderer missing")?
+                                    .eval("document.querySelector('dialog').showModal()")
+                                    .map_err(|error| error.to_string())?;
                                 update(&app, &controller, OWNER, &id, false).map(|()| Value::Null)
                             }
                             "fixture.show" => {
+                                app.get_webview(OWNER)
+                                    .ok_or("Fixture renderer missing")?
+                                    .eval("document.querySelector('dialog').close()")
+                                    .map_err(|error| error.to_string())?;
                                 update(&app, &controller, OWNER, &id, true).map(|()| Value::Null)
                             }
                             "fixture.duplicate" => register(
@@ -203,6 +271,16 @@ fn main() {
                             "fixture.close" => controller
                                 .unregister(&app, OWNER, &id)
                                 .map(|()| Value::Null),
+                            "fixture.capture-hide" | "fixture.capture-close" => {
+                                capture_at_revocation(
+                                    &app,
+                                    &controller,
+                                    &id,
+                                    request.method == "fixture.capture-close",
+                                    request.deadline,
+                                    fence,
+                                )
+                            }
                             "fixture.late" => {
                                 std::thread::sleep(Duration::from_millis(100));
                                 Ok(json!({"stale":true}))

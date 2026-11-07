@@ -6,6 +6,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[derive(Clone)]
 pub(crate) struct RequestFence {
     deadline: Instant,
+    deadline_ms: u64,
     current: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
@@ -23,6 +24,7 @@ impl RequestFence {
             .unwrap_or_else(Instant::now);
         Self {
             deadline,
+            deadline_ms,
             current: Arc::new(current),
         }
     }
@@ -31,7 +33,11 @@ impl RequestFence {
         if !(self.current)() {
             return Err("Native backend process is no longer current".into());
         }
-        if Instant::now() >= self.deadline {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|value| value.as_millis() as u64)
+            .unwrap_or(u64::MAX);
+        if Instant::now() >= self.deadline || now_ms >= self.deadline_ms {
             return Err("Native request expired before execution".into());
         }
         Ok(())
@@ -178,6 +184,7 @@ mod tests {
         assert!(queued.check().unwrap_err().contains("no longer current"));
         let late = RequestFence {
             deadline: Instant::now() + Duration::from_millis(5),
+            deadline_ms: u64::MAX,
             current: Arc::new(|| true),
         };
         let response = dispatch(request(), late, |_, _| {
@@ -187,5 +194,11 @@ mod tests {
         .unwrap();
         assert!(response.contains("expired"));
         assert!(!response.contains("stale"));
+        let absolute = RequestFence {
+            deadline: Instant::now() + Duration::from_secs(10),
+            deadline_ms: 0,
+            current: Arc::new(|| true),
+        };
+        assert!(absolute.check().unwrap_err().contains("expired"));
     }
 }

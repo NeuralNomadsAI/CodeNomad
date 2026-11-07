@@ -1,17 +1,18 @@
 import assert from "node:assert/strict"
-import { createInterface } from "node:readline"
 import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { NativeParent } from "../../../server/src/native-parent"
+import { installShutdownStdinHandler } from "../../../server/src/shutdown"
 
 const parent = new NativeParent(process.stdout, true)
-createInterface({ input: process.stdin }).on("line", line => parent.handleLine(line))
+installShutdownStdinHandler(process.stdin, async () => { throw new Error("Unexpected fixture shutdown command") }, line => parent.handleLine(line))
 const [base, output] = process.argv.slice(2)
 const request = <T = unknown>(method: string, params: unknown = {}, timeout = 15_000) => parent.request<T>(method, { sessionID: "fixture-session", ...params as object }, timeout)
 const execute = <T = {url: string}>(action: string, url?: string, timeout?: number) => request<T>("browser.execute", { command: { action, url } }, timeout)
 const checks: string[] = []
 async function check(name: string, run: () => Promise<void>) { await run(); checks.push(name); console.error(`PASS ${name}`) }
 try {
+  assert.equal(parent.browserAutomationUnavailable, true, "public automation gate remains closed")
   await check("no preview", async () => { await assert.rejects(request("browser.probe"), /No visible/ ) })
   await check("autonomous open and redirect", async () => {
     assert.equal((await execute("open", `${base}/redirect`)).url, `${base}/ok`)
@@ -29,6 +30,15 @@ try {
   await check("cross-document redirect", async () => { assert.equal((await execute("navigate", `${base}/redirect`)).url, `${base}/ok`) })
   await check("failed load", async () => { await assert.rejects(execute("navigate", "http://127.0.0.1:1/unavailable"), /failed|load|navigation/i) })
   await execute("navigate", `${base}/ok`)
+  await check("TLS failure", async () => {
+    assert.ok(process.env.CN_FIXTURE_TLS_URL)
+    await assert.rejects(execute("navigate", process.env.CN_FIXTURE_TLS_URL), /failed|load|navigation/i)
+  })
+  await execute("navigate", `${base}/ok`)
+  await check("navigation deadline", async () => {
+    await assert.rejects(execute("navigate", `${base}/slow`, 30), /timed out|expired/i)
+  })
+  await execute("navigate", `${base}/ok`)
   await check("hidden target", async () => {
     await request("fixture.hide")
     await assert.rejects(request("browser.probe"), /No visible/)
@@ -44,6 +54,14 @@ try {
     await request("fixture.duplicate")
     await assert.rejects(request("browser.probe"), /Multiple visible/)
     await request("fixture.removeDuplicate")
+  })
+  await check("native capture callback after hide", async () => {
+    await assert.rejects(request("fixture.capture-hide"), /No visible/)
+    await request("fixture.show")
+  })
+  await check("native capture callback after close", async () => {
+    await assert.rejects(request("fixture.capture-close"), /No visible/)
+    assert.equal((await execute("open", `${base}/ok`)).url, `${base}/ok`)
   })
   await check("late reply is discarded", async () => {
     await assert.rejects(request("fixture.late", {}, 20), /timed out/)

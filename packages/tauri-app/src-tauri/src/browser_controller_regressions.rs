@@ -157,6 +157,100 @@ fn controller_with_registration() -> (BrowserController, Registration) {
 }
 
 #[test]
+fn capture_document_identity_changes_on_navigation_hide_and_replacement() {
+    let (controller, expected) = controller_with_registration();
+    let document = controller.document_version(&expected).unwrap();
+    controller.invalidate_page(&expected.registration_id);
+    assert_ne!(controller.document_version(&expected).unwrap(), document);
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .registrations
+        .get_mut(&expected.registration_id)
+        .unwrap()
+        .visible = false;
+    assert!(controller.document_version(&expected).is_err());
+    controller.inner.0.lock().unwrap().registrations.insert(
+        expected.registration_id.clone(),
+        Registration {
+            generation: expected.generation + 1,
+            ..expected.clone()
+        },
+    );
+    assert!(controller.document_version(&expected).is_err());
+}
+
+#[test]
+fn native_open_claim_cannot_be_reclaimed_after_deadline_or_backend_retirement() {
+    use std::sync::atomic::AtomicBool;
+    let (controller, _) = controller_with_registration();
+    let current = Arc::new(AtomicBool::new(true));
+    let predicate = current.clone();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    controller.inner.0.lock().unwrap().open_claims.insert(
+        "pending".into(),
+        OpenClaim {
+            session_id: "session".into(),
+            url: "https://example.com/".into(),
+            owner: None,
+            failed_owners: HashSet::new(),
+            fence: Some(crate::native_request::RequestFence::new(
+                now + 10_000,
+                move || predicate.load(Ordering::SeqCst),
+            )),
+        },
+    );
+    assert!(controller.claim_open(OWNER, "pending"));
+    current.store(false, Ordering::SeqCst);
+    assert!(!controller.claim_open(OWNER, "pending"));
+    assert!(controller.release_claim(OWNER, "pending").is_none());
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .open_claims
+        .get_mut("pending")
+        .unwrap()
+        .fence = Some(crate::native_request::RequestFence::new(0, || true));
+    assert!(!controller.claim_open(OWNER, "pending"));
+}
+
+#[test]
+fn a_different_native_navigation_supersedes_a_bound_load_even_if_it_finishes_late() {
+    let (controller, expected) = controller_with_registration();
+    let sequence = controller
+        .prepare_page_load(&expected.registration_id, "https://example.com/wanted")
+        .unwrap();
+    controller.mark_page_started(
+        &expected.registration_id,
+        expected.generation,
+        1,
+        "https://example.com/wanted".into(),
+    );
+    controller.mark_page_started(
+        &expected.registration_id,
+        expected.generation,
+        2,
+        "https://example.com/user".into(),
+    );
+    controller.mark_page_finished(&expected.registration_id, expected.generation, 1, None);
+    assert!(controller
+        .wait_for_page_load(
+            &expected.registration_id,
+            sequence,
+            Instant::now() + Duration::from_secs(1)
+        )
+        .unwrap_err()
+        .contains("no longer current"));
+}
+
+#[test]
 fn history_requires_current_owner_and_generation_but_survives_hide() {
     let (controller, expected) = controller_with_registration();
     assert!(controller.check_history_registration(&expected).is_ok());

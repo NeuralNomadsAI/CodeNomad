@@ -1,6 +1,6 @@
 # Native WebKit input qualification
 
-The harness compiles the native adapter candidates in `src-tauri/src/embedded_view/input_{linux.c,macos.m}` directly. The application keeps its current capabilities while qualification is incomplete. The candidates are isolated from the application build and transport.
+The harness compiles the native adapter sources in `src-tauri/src/embedded_view/input_{linux.c,macos.m}` directly. The application's target-gated native build uses the same sources; its private browser controller integrates visible PNG capture through the Rust read adapter. Public WebKit automation stays disabled, and input dispatch retains the qualification boundary below.
 
 Run on the graphical Linux desktop:
 
@@ -41,7 +41,7 @@ The macOS harness primes hover at `(5,5)`, then targets `(30,160)` on the next t
 - In the complete Cmd+A sequence, the native select-all fallback replaces the input value. DOM delivery includes Meta key-down, while the Meta release and following Enter keyboard events are missing. The native trace records direct WKWebView `flagsChanged:` down/up, chord key-up and zero modifiers on the following Enter. After this chord, the agent's subsequent Enter also lacks its native paragraph edit. Keep keyboard actions following a Mod chord gated by this limitation.
 - The initial hover lacks `pointermove` at the requested target while the window is inactive, including after priming at a different in-view location. Public direct enter/move and the checked `_simulateMouseMove:` SPI are covered by separate harness variants. Mouse-enter/CSS hover observations occur with subsequent clicks. The agent's initial standalone hover consequently cannot establish the expected pointer-move behavior. The harness preserves background-window operation; tracking-area option logging is diagnostic evidence rather than a key-window positive control.
 
-The strict complete-sequence assertions retain these failures. The adapter sources remain isolated from the application build while the private transport and its capability policy are integrated.
+The strict complete-sequence assertions retain these failures. The private transport integrates navigation and capture; pointer and keyboard dispatch retain the documented macOS limitations and their separate capability gate.
 
 WebKit's `WebEventFactory::createWebMouseEvent` obtains ordinary NSEvent button state from `WebCore::currentlyPressedMouseButtons`, which reads `[NSEvent pressedMouseButtons]`. The automation event path has distinct handling. Source references for investigation:
 

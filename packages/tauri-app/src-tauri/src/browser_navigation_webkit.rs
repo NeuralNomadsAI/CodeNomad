@@ -159,7 +159,7 @@ impl BrowserController {
         deadline: Instant,
         fence: &crate::native_request::RequestFence,
     ) -> Result<(), String> {
-        self.check_target(app, registration, deadline, fence)?;
+        self.check_target_identity(app, registration, deadline, fence)?;
         let previous = view.url().map_err(|error| error.to_string())?;
         let mut previous_base = previous.clone();
         previous_base.set_fragment(None);
@@ -176,7 +176,7 @@ impl BrowserController {
         let (sender, receiver) = mpsc::sync_channel(1);
         view.with_webview(move |native| {
             let result: Result<(), String> = (|| {
-                controller.check_target(&app, &expected, deadline, &queued_fence)?;
+                controller.check_target_identity(&app, &expected, deadline, &queued_fence)?;
                 if controller.page_load_expectation(&expected.registration_id, target.as_str())?
                     != Some(sequence)
                 {
@@ -205,7 +205,11 @@ impl BrowserController {
                         .get_mut(&expected.registration_id)
                         .filter(|entry| entry.sequence == sequence)
                         .ok_or("Browser preview navigation is no longer current")?;
-                    expectation.navigation_id = Some(token);
+                    // WKWebView can return a navigation object for a fragment
+                    // change without issuing document completion callbacks.
+                    if !fragment_only {
+                        expectation.navigation_id = Some(token);
+                    }
                 }
                 Ok(())
             })();
