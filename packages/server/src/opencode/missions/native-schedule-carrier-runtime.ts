@@ -7,7 +7,7 @@ import { missionDocumentChanges } from "../../missions/mission-document-state"
 import { acquireNativeMissionDocumentStore } from "./native-mission-document-storage"
 import { nativeInvocation } from "./native-invocation"
 import { acquireNativeMissionScheduleWakeReader } from "./native-mission-schedule-wake-reader"
-import { nativeScheduleCarrierHooks, nativeScheduleCarrierWakes, nativeScheduleCarrierNonWakeMessageIDs, NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
+import { nativeScheduleCarrierHooks, nativeScheduleCarrierWakes, NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
 import { assertNativeScheduleCarrierArtifacts, claimNativeScheduleCarrierWake, closeNativeScheduleCarrierClaim, nativeScheduleClaimKey,
   NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL, readNativeScheduleCarrierBinding,
   type NativeScheduleCarrierInstallation } from "./native-schedule-carrier-binding"
@@ -157,7 +157,7 @@ export function registerNativeScheduleCarrierFoundation(ctx: Plugin.Context, opt
       const run = <A>(effect: Effect.Effect<A, unknown>) => invocation.check(run => run(effect))
       const reader = yield* acquireNativeMissionScheduleWakeReader(ctx, run)
       const messages = yield* Effect.promise(() => reader.contextMessages(mapping.sessionID, event.messages))
-      const wakes: NativeScheduleWake[] = nativeScheduleCarrierWakes(mapping, binding.calendar.highWater, messages, nativeScheduleCarrierNonWakeMessageIDs(messages))
+      const wakes: NativeScheduleWake[] = nativeScheduleCarrierWakes(mapping, binding.calendar.highWater, messages)
       // Only public context closures survive this hook. RPC reacquires its own
       // Core graph; never reuse the plugin setup or a completed HTTP Scope.
       yield* Effect.promise(async () => {

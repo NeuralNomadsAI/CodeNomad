@@ -51,7 +51,7 @@ test("wake reader accepts only the durable exact native user, bounds SQL and exp
   const reader = await run(acquireNativeMissionScheduleWakeReader({ location } as Plugin.Context, run).pipe(Effect.provideService(Scope.Scope, scope)))
   assert.deepEqual(await reader.message(wake), { scheduleID: wake.scheduleID, messageID: wake.messageID, run: 1, dueAt: 1000 })
   assert.match(queries[0].sql, /length\(CAST\(data AS BLOB\)\)<=262144/)
-  assert.deepEqual(queries[0].params, [wake.messageID, wake.sessionID, 262144])
+  assert.deepEqual(queries[0].params, [262144, wake.messageID, wake.sessionID])
   rows = [{ type: "synthetic", data: JSON.stringify(user) }]
   assert.equal(await reader.message(wake), undefined)
   rows = [{ type: "user", data: JSON.stringify({ ...user, metadata: { schedule: { ...user.metadata.schedule, run: 2 } } }) }]

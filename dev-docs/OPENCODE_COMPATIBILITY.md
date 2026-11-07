@@ -37,10 +37,8 @@ and [transport](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md). Recognition uses the
 consumed capabilities, including on future versions. Schedule delivery qualification
 uses the minimum/latest CI matrix, including cold scheduled passage admission with
 the retained product bundle and CodeNomad backend closed; keep results in PR/CI evidence.
-Context hooks retain native message IDs. Missions resolves their bounded exact
-`session_message` rows for schedule metadata, restart notices and compactions;
-LLM-projected metadata is optional. Native prompt hooks and stored user messages
-retain `metadata.schedule` for deterministic schedule/run correlation.
+Context hooks retain native message IDs; Missions consumes the transport's
+[native read/authority contract](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#context-read-authority-and-bounds).
 
 ### Native Codex subscription usage
 
@@ -150,13 +148,7 @@ connections and Missions authority checks keep their blocking contracts. See
 
 ### Replay contract
 
-Known storage limitation: with `experimental.part_rows`, native assistant parts can
-reside in `session_part` beside an inline tail. CodeNomad's SQL history, search,
-outline/navigation, gallery and pruning readers consume inline `session_message`
-content and can omit split parts. Keep this experimental option disabled for those
-features; disabling it leaves existing split parts stored separately. Missions has
-its own ordinal-part projection, whose mixed inline-tail behavior requires separate
-qualification.
+Stored-part coverage: [history query storage contract](SESSION_HISTORY_QUERIES.md#stored-part-coverage).
 
 Text/reasoning/tool/step provider data is one `native` field (on a key shared by
 a tool call and its result, the result wins). Summary compactions reference

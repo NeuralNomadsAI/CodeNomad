@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, realpath, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import os from "node:os"
 import path from "node:path"
@@ -119,8 +119,18 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
       if (child.exitCode !== null || Date.now() > deadline) throw new Error(output.slice(-3000))
       await delay(25)
     }
-    const endpoint = service ? await Service.discover({ file: path.join(env.XDG_STATE_HOME, "opencode/service.json") })
-      : { url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], auth: { type: "basic", username: "opencode", password } }
+    let endpoint
+    if (service) {
+      const file = path.join(env.XDG_STATE_HOME, "opencode/service.json")
+      while (!endpoint && Date.now() < deadline) {
+        if (spawnError) throw spawnError
+        assert.equal(child.exitCode, null, "Owned service exited before registration")
+        try {
+          if (JSON.parse(await readFile(file, "utf8")).pid === child.pid) endpoint = await Service.discover({ file })
+        } catch { /* Registration publication and readiness may still be in flight. */ }
+        if (!endpoint) await delay(25)
+      }
+    } else endpoint = { url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], auth: { type: "basic", username: "opencode", password } }
     assert(endpoint && endpoint.url === output.match(/http:\/\/127\.0\.0\.1:\d+/)[0])
     const boundedFetch = (url, init) => fetch(url, { ...init, signal: AbortSignal.any([...(init?.signal ? [init.signal] : []), AbortSignal.timeout(30_000)]) })
     const client = OpenCode.make({ baseUrl: endpoint.url,

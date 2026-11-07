@@ -21,6 +21,7 @@ assert(cli && path.isAbsolute(cli) && root && path.isAbsolute(root), "absolute i
 const cliVersion = await fixtureCliVersion(cli)
 assert(!existsSync(root), "Preserve existing evidence; use a fresh scratch child")
 mkdirSync(root, { recursive: true })
+if (process.env.GITHUB_ENV) appendFileSync(process.env.GITHUB_ENV, `NATIVE_SCHEDULE_FOUNDATION_FIXTURE=${root}\n`)
 const save = (name, value) => { writeFileSync(path.join(root, `${name}.json`), JSON.stringify(value, null, 2)); return value }
 const log = event => appendFileSync(path.join(root, "harness.jsonl"), JSON.stringify({ at: Date.now(), ...event }) + "\n")
 const eventsFile = path.join(root, "native.jsonl")
@@ -326,6 +327,7 @@ try {
     try { save("plugin-diagnostics", await client.plugin.list({ location: { directory: project } })) } catch {}
   }
   save("result", { completed: false, message: error.message, stack: error.stack })
+  save("failure-diagnostic", { message: error.message, stack: error.stack })
   console.error(error)
   process.exitCode = 1
 } finally {
@@ -337,4 +339,5 @@ try {
     providerRequests, sharedServiceAccess: "none", externalClient: statusOnly ? "harness only; read-only status qualification"
       : controlledMaintenance ? "harness clock tick RPC; controlled-time maintenance explicitly qualified"
         : "harness only; bounded no-project-client cold window recorded" })
+  save("receipt", JSON.parse(readFileSync(path.join(root, "result.json"), "utf8")))
 }

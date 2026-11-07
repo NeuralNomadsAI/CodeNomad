@@ -267,6 +267,27 @@ jobs:
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
 
+      - name: Upload isolated schedule product failure diagnostics
+        if: ${{ failure() && env.NATIVE_SCHEDULE_PRODUCT_FIXTURE != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: schedule-product-failure-${{ matrix.runtime }}
+          path: |
+            ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/receipt.json
+            ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/failure-diagnostic.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload isolated schedule foundation failure diagnostics
+        if: ${{ failure() && env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: schedule-foundation-failure-${{ matrix.runtime }}
+          path: |
+            ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/receipt.json
+            ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/failure-diagnostic.json
+          if-no-files-found: ignore
+          retention-days: 7
+
   tests:
     needs: authorize
     if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}

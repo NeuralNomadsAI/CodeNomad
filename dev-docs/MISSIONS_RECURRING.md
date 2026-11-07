@@ -321,13 +321,8 @@ mutation takes the document exclusion before the existing journal writer. Native
 permissions, original message identities and whole-family H11 settlement apply.
 Technical carriers use the reserved `ses_cn_schedule_` namespace, local provider,
 local title/compaction hooks and authoritative ordinary-input guards.
-Context message IDs select exact native `session_message` records in the same
-carrier session. Native records supply wake, restart-notice and completed-compaction
-classification; LLM-projected metadata and prose supply no authority. Classification
-and deterministic wake proofs share 128 point reads and 1 MiB per invocation, with
-each body capped at 256 KiB before transfer. The receiving RPC rechecks native wake
-correlation, placement, mapping and source bytes before its existing CAS/high-water
-publication.
+Context classification and recovery follow the schedule transport's
+[native read/authority contract](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#context-read-authority-and-bounds).
 Ordinary sidebar browsing/search and both Mission conversation-source pickers
 exclude this namespace through the shared carrier-identity predicate; native
 observations remain available to ownership and reconciliation readers.
