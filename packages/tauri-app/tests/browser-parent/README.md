@@ -30,6 +30,17 @@ node --import tsx scripts/build-webkit-read.ts
 npx --no-install esbuild packages/tauri-app/tests/browser-parent/read-fixture.ts --bundle --platform=node --format=esm --outfile=.tmp/read-fixture.mjs
 ```
 
-Pass that child as `--fixture` to the same native harness. It saves each fixture's tree and shared-renderer snapshot, and `read-result.json`. Checks include stable same-document refs, fragment/pushState preservation, removal/reinsertion, recreation, cross-document navigation, scope/query and visibility/closure fences. Fixture-only mutations use fixed scripts in the example. Read identities and semantic traversal stay inside the production isolated-world program. The closed-shadow page-world annotation records dynamic `attachShadow({mode:"closed"})` boundaries; declarative closed-root detection remains constrained by public DOM access.
+Pass that child as `--fixture` to the same native harness. It saves each fixture's tree and shared-renderer snapshot, and `read-result.json`. Checks include stable same-document refs, fragment/pushState preservation, removal/reinsertion, recreation, cross-document navigation, scope/query and visibility/closure fences. Fixture-only mutations use fixed scripts in the example. Read identities and semantic traversal stay inside the production isolated-world program. The document-start closed-root hook weakly associates roots with hosts; the isolated reader validates native reference-event endpoints against their exact host and document. Declarative closed roots are opaque to this public-DOM capture path.
 
-Run `node --import tsx scripts/compare-webkit-read.ts <comparison-output> <native-artifact-parent>` to assert rendered control parity and produce a side-by-side table for each fixture. The optional native parent contains `p3-read-macos`, `p3-read-x11` and `p3-read-wayland` artifact folders. Frame content and opaque closed-root boundaries are compared explicitly; native date-editor internals are filtered by the production snapshot renderer.
+Run `node --import tsx scripts/compare-webkit-read.ts <comparison-output> <native-artifact-parent> <optional-folder-prefix>` to assert rendered control parity and produce a side-by-side table for each fixture. The native parent contains `<prefix>macos`, `<prefix>x11` and `<prefix>wayland` folders; the default prefix is `p3-read-`. Frame contents are compared explicitly; native date-editor internals are filtered by the production snapshot renderer.
+
+## Native actions
+
+```sh
+npx --no-install esbuild packages/tauri-app/tests/browser-parent/action-fixture.ts --bundle --platform=node --format=esm --sourcemap=inline --outfile=.tmp/p4-action-fixture.mjs
+node --import tsx scripts/compare-webkit-actions.ts .tmp/p4-comparison
+```
+
+Run the native harness with that action child as `--fixture` on macOS, Linux X11 and private Wayland. The shared `action-scenarios.ts` drives the production BrowserPage/PageDriver over real parent pipes and the direct CDP driver over Chromium. HTML input/form/preview fixtures are extracted from the Electron tests. Additional cases cover captured closed-root click/text/contenteditable/select, same-origin frame click/text, forged root endpoints, native ten-step drags, special input append/validation, modal/hidden/covered refusal, waits and declarative parser boundaries. Fixed observation/control programs belong only to the example host.
+
+`action-result.json` records assertions, DOM event trust/modifiers and engine limitations. Native-only timeout cases cover both an expired unsent insertion and an admitted pointer whose handler blocks the page: each down appears once, exact-lease cleanup releases buttons/keys, and the insertion stays unsent. macOS traces can be enabled with `CN_INPUT_TRACE=1`; preserve the standalone-hover and Meta-equivalent event differences alongside the normalized state comparison.

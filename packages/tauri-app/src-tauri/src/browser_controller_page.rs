@@ -14,7 +14,7 @@ pub(super) struct PageLease {
     pub(super) generation: String,
     pub(super) expires: Instant,
     pub(super) document: Option<String>,
-    #[cfg(any(target_os="linux",target_os="macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(super) held: crate::embedded_view::input::Held,
 }
 
@@ -65,7 +65,7 @@ impl BrowserController {
             registration,
             expires: Instant::now() + Duration::from_secs(30),
             document: None,
-            #[cfg(any(target_os="linux",target_os="macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             held: Default::default(),
         };
         inner.page_leases.insert(operation_id.into(), lease.clone());
@@ -216,14 +216,16 @@ impl BrowserController {
             return Err("Invalid browser page identity".into());
         }
         if method == "browser.page.end" {
-            #[cfg(any(target_os="linux",target_os="macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             self.webkit_cleanup(app, session_id, operation_id, deadline, fence);
             self.end_page(session_id, operation_id);
             return Ok(json!({}));
         }
         let begin = method == "browser.page.begin";
-        #[cfg(any(target_os="linux",target_os="macos"))]
-        if begin { self.webkit_expire(app, deadline, fence); }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if begin {
+            self.webkit_expire(app, deadline, fence);
+        }
         let lease = if begin {
             self.reserve_page(self.resolve(app, session_id)?, operation_id)?
         } else {
@@ -329,10 +331,21 @@ impl BrowserController {
             }
         })();
         if result.is_err() {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if std::env::var_os("CN_INPUT_TRACE").is_some() {
+                eprintln!(
+                    "native page {method} op={} function={}: {}",
+                    input["operation"]["op"],
+                    input["operation"]["function"],
+                    result.as_ref().unwrap_err()
+                );
+            }
             #[cfg(windows)]
             self.release_page(&lease);
-            #[cfg(any(target_os="linux",target_os="macos"))]
-            if lease.held.lock().is_ok_and(|held|held.is_empty()) { self.release_page(&lease); }
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            if lease.held.lock().is_ok_and(|held| held.is_empty()) {
+                self.release_page(&lease);
+            }
         }
         result
     }

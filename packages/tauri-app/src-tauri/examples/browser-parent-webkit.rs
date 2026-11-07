@@ -211,6 +211,7 @@ fn main() {
                 // Allow the primary documents' initial loads to settle; no daemon starts.
                 std::thread::sleep(Duration::from_millis(500));
                 let mut child = Command::new(&args[0])
+                    .arg("--enable-source-maps")
                     .arg(&args[1])
                     .arg(&args[2])
                     .arg(&args[3])
@@ -253,7 +254,10 @@ fn main() {
                                     let observed=serde_json::from_str(text.trim()).map_err(|error|error.to_string())?;
                                     let _=view.eval(programs["programs"]["remove-probe"].as_str().unwrap());
                                     Ok(observed)
-                                } else {Ok(Value::Null)}
+                                } else {
+                                    if kind=="recreate-shadow" { std::thread::sleep(Duration::from_millis(100)); }
+                                    Ok(Value::Null)
+                                }
                             }
                             "fixture.read-mutation" => {
                                 let script = match request.params.as_ref().and_then(|value| value["kind"].as_str()) {

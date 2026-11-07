@@ -41,14 +41,19 @@ export class BrowserPage {
 
   private async run(sessionID: string, action: BrowserPageAction, signal?: AbortSignal): Promise<Record<string, unknown>> {
     const operationID = randomUUID(), deadline = Date.now() + OPERATION_MS
+    let failure: Error | undefined
     const current = () => {
+      if (failure) throw failure
       signal?.throwIfAborted()
       if (this.closed) throw new Error("Browser automation is shutting down")
       if (Date.now() >= deadline) throw new Error("Browser operation timed out; inspect before another action")
     }
     const request = async <T>(method: string, params: Record<string, unknown>): Promise<T> => {
       current()
-      const result = await this.native.request<T>(method, { sessionID, operationID, ...params }, Math.max(1, deadline - Date.now()))
+      const result = await this.native.request<T>(method, { sessionID, operationID, ...params }, Math.max(1, deadline - Date.now())).catch(error => {
+        failure = error instanceof Error ? error : new Error(String(error))
+        throw failure
+      })
       current()
       return result
     }

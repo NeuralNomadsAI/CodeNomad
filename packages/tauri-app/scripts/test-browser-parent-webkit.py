@@ -27,7 +27,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             if name == 'advanced':
                 body = (directory / 'read-advanced.html').read_text().replace('{{CROSS}}', f'http://localhost:{self.server.server_port}')
             elif name == 'frame':
-                body = '<title>Child document</title><button>Frame action</button><label>Frame field <input value="Child value"></label>'
+                body = '<title>Child document</title><button onclick="document.body.dataset.clicked=event.isTrusted">Frame action</button><label>Frame field <input value="Child value"></label>'
             elif name == 'extra':
                 body = (directory / 'action-extra.html').read_text()
             else:

@@ -8,12 +8,13 @@ type State = {
   document: Document; token: string; next: number; ids: WeakMap<Node,number>; nodes: Map<number,WeakRef<Node>>
   observers: Set<{observer: MutationObserver; root: WeakRef<Node>}>; observed: WeakSet<Node>
   roots: WeakMap<Element,WeakRef<ShadowRoot>>
+  hides: WeakMap<Document,()=>void>
 }
 const MAX_NODES = 20_000
 const KEY = "__codenomadWebkitReadV1"
 const token = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 const globalState = globalThis as typeof globalThis & { [KEY]?: State }
-function makeState(): State { return {document,token:token(),next:0,ids:new WeakMap(),nodes:new Map(),observers:new Set(),observed:new WeakSet(),roots:new WeakMap()} }
+function makeState(): State { return {document,token:token(),next:0,ids:new WeakMap(),nodes:new Map(),observers:new Set(),observed:new WeakSet(),roots:new WeakMap(),hides:new WeakMap()} }
 function parent(node: Node): Node | null { return node.parentNode ?? (node.nodeType === 11 ? (node as ShadowRoot).host : null) }
 function live(node: Node): boolean {
   const doc = node.nodeType === 9 ? node as Document : node.ownerDocument
@@ -30,7 +31,13 @@ function retire(state: State, node: Node) {
     try { const doc=(node as HTMLIFrameElement).contentDocument; if(doc) retire(state,doc) } catch { /* opaque frame */ }
   }
 }
+function watchDocument(state:State,doc:Document) {
+  let hide=state.hides.get(doc)
+  if(!hide) {hide=()=>{if(doc===state.document)state.token=token();else retire(state,doc)};state.hides.set(doc,hide)}
+  doc.defaultView?.addEventListener('pagehide',hide)
+}
 function watch(state: State, root: Node) {
+  if(root.nodeType===9) watchDocument(state,root as Document)
   if (state.observed.has(root)) return
   state.observed.add(root)
   const observer = new MutationObserver(records => retireRecords(state,records))
@@ -41,7 +48,7 @@ function retireRecords(state: State, records: MutationRecord[]) {
   for (const record of records) for (const removed of Array.from(record.removedNodes)) {
     if (removed.nodeType === 1 && (removed as Element).localName === "html" && record.target === document) {
       for (const {observer} of state.observers) observer.disconnect()
-      Object.assign(state,makeState())
+      Object.assign(state,makeState(),{hides:state.hides})
       watch(state,document)
       return
     }
@@ -53,6 +60,7 @@ function flush(state: State) {
   for (const entry of state.observers) {
     retireRecords(state,entry.observer.takeRecords())
     const root=entry.root.deref()
+    if(root?.nodeType===9 && live(root)) watchDocument(state,root as Document)
     if (!root || !live(root)) {entry.observer.disconnect();state.observers.delete(entry);if(root)state.observed.delete(root)}
   }
   for (const [id, reference] of state.nodes) { const node = reference.deref(); if (!node || !live(node)) { if (node) state.ids.delete(node); state.nodes.delete(id) } }
@@ -195,8 +203,7 @@ function semanticTree(state: State): SemanticNode[] {
 
 export function read(operation: PageOperation): {document: string; result: Record<string,unknown>} {
   if (globalState[KEY]?.document !== document) {
-    const state=globalState[KEY]=makeState()
-    addEventListener("pagehide",()=>{state.token=token()})
+    globalState[KEY]=makeState()
   }
   const state=globalState[KEY]!
   watch(state,document); flush(state)
@@ -221,7 +228,13 @@ export function read(operation: PageOperation): {document: string; result: Recor
       if (!node) { result={exception:"codenomad:gone"}; break }
       if(operation.function === "contains") {
         const needle=collapse(String(operation.args[0])).toLowerCase()
-        result={value:semanticTree(state).some(item=>[item.name,item.value,item.description].some(value=>typeof value === "string" && collapse(value).toLowerCase().includes(needle)))}
+        result={value:semanticTree(state).some(item=>{
+          const target=item.node ? lookup(state,item.node) : undefined
+          const element=target?.nodeType === 1 ? target as Element : undefined
+          const attributes=element ? ['aria-label','title','placeholder'].map(name=>element.getAttribute(name)) : []
+          if(element && ['input','textarea'].includes(element.localName)) attributes.push((element as HTMLInputElement).value)
+          return [item.name,item.value,item.description,...attributes].some(value=>typeof value === "string" && collapse(value).toLowerCase().includes(needle))
+        })}
         break
       }
       try {

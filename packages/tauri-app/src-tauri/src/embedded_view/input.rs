@@ -26,14 +26,18 @@ pub(crate) enum Read {
     Checkpoint,
     Capture,
     Page(String),
-    Input {document:String,operation:serde_json::Value,held:Held},
+    Input {
+        document: String,
+        operation: serde_json::Value,
+        held: Held,
+    },
 }
 
 struct Pending {
     sender: mpsc::SyncSender<Result<Vec<u8>, String>>,
     guard: Guard,
     limit: usize,
-    input: Option<(*mut c_void,String,serde_json::Value,Held)>,
+    input: Option<(*mut c_void, String, serde_json::Value, Held)>,
 }
 
 unsafe extern "C" fn completed(
@@ -54,17 +58,24 @@ unsafe extern "C" fn completed(
         if length > pending.limit || (length != 0 && bytes.is_null()) {
             return Err("Native browser result exceeds its byte budget".into());
         }
-        let bytes=if length == 0 {
+        let bytes = if length == 0 {
             Vec::new()
         } else {
             unsafe { std::slice::from_raw_parts(bytes, length) }.to_vec()
         };
-        if let Some((view,document,operation,held))=&pending.input {
-            let response:serde_json::Value=serde_json::from_slice(&bytes).map_err(|error|error.to_string())?;
-            if response["document"].as_str()!=Some(document.as_str()) {return Err("Browser page document changed before input".into());}
-            unsafe {native::dispatch(*view,operation,held)}?;
+        if let Some((view, document, operation, held)) = &pending.input {
+            let response: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+            if response["document"].as_str() != Some(document.as_str()) {
+                return Err("Browser page document changed before input".into());
+            }
+            if operation["op"] == "wheel" && response["result"]["node"].as_u64().is_none() {
+                return Err("Native wheel point is unavailable".into());
+            }
+            unsafe { native::dispatch(*view, operation, held) }?;
             (pending.guard)()?;
-            return serde_json::to_vec(&serde_json::json!({"document":document,"result":{}})).map_err(|error|error.to_string());
+            return serde_json::to_vec(&serde_json::json!({"document":document,"result":{}}))
+                .map_err(|error| error.to_string());
         }
         Ok(bytes)
     })();
@@ -127,7 +138,11 @@ pub(crate) fn read(
                             context,
                         );
                     }
-                    Read::Input {..}=>cn_page_read(view,c"{\"op\":\"checkpoint\"}".as_ptr(),deadline.saturating_duration_since(Instant::now()).as_millis().clamp(1,u32::MAX as u128) as u32,completed,context),
+                    Read::Input {operation,..}=> {
+                        let preflight=if operation["op"]=="wheel" {serde_json::json!({"op":"hit-test","x":operation["event"]["x"].as_f64().unwrap_or(0.0).floor(),"y":operation["event"]["y"].as_f64().unwrap_or(0.0).floor()})} else {serde_json::json!({"op":"checkpoint"})};
+                        let request=CString::new(preflight.to_string()).expect("serialized input preflight");
+                        cn_page_read(view,request.as_ptr(),deadline.saturating_duration_since(Instant::now()).as_millis().clamp(1,u32::MAX as u128) as u32,completed,context);
+                    },
                 }
             }
         })

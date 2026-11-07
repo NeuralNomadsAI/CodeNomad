@@ -21,28 +21,36 @@ async function main(){
   const result=await actionScenarios({
     navigate:name=>{console.error(`action fixture: ${name}`);return request('browser.execute',{command:{action:'navigate',url:`${base}/read/${name}`}})},
     snapshot:async()=>(await browser.execute('fixture-session',{action:'snapshot'})).snapshot as string,
-    act:action=>browser.execute('fixture-session',parsePageAction(action,'snapshot')!),observe,control,
+    act:action=>{console.error(`action: ${action.action}${action.key?` ${action.key}`:''}`);return browser.execute('fixture-session',parsePageAction(action,'snapshot')!)},observe,control,
   },engine)
-  // Exercise host cleanup after an admitted down and an expired, unsent mutation.
-  await request('browser.execute',{command:{action:'navigate',url:`${base}/read/inputs`}})
-  const operationID=randomUUID(),descriptor=await request('browser.page.begin',{operationID})
-  const send=(operation:any,timeout?:number)=>request('browser.page.send',{operationID,generation:descriptor.generation,operation},timeout)
-  const driver=nativeDriver(descriptor,operation=>send(operation),async()=>{})
-  const target=(await driver.tree()).find(node=>node.role==='button' && node.name==='Hover me')!
-  const quad=(await driver.geometry(target.node!))[0],x=(quad[0]+quad[4])/2,y=(quad[1]+quad[5])/2
-  await driver.pointer({type:'mousePressed',x,y,button:'left',buttons:1,clickCount:1})
-  const query=(await driver.tree()).find(node=>node.role==='textbox' && node.name==='Query')!
-  await driver.call('focus',await driver.resolve(query.node!),[])
-  await driver.keyboard({type:'rawKeyDown',key:'Shift',code:'ShiftLeft',modifiers:8})
-  await control('busy')
-  await assert.rejects(send({op:'insert-text',text:'MUST-NOT-REPLAY'},20),/expired|timed out|timeout/i)
-  await request('browser.page.end',{operationID})
-  const observed=await observe();result.observations.timeout=observed
-  assert.equal(observed.audit.filter((event:any)=>event.type==='pointerdown').length,1)
-  assert.equal(observed.audit.filter((event:any)=>event.type==='pointerup').length,1)
-  assert.ok(observed.audit.some((event:any)=>event.type==='keyup' && event.key==='Shift'))
-  assert.ok(!JSON.stringify(observed.fields).includes('MUST-NOT-REPLAY'))
-  result.checks.push('native parent timeout: queued mutation refused, no replay; held pointer/key released on exact lease end')
+  for(const admitted of [false,true]) {
+    await request('browser.execute',{command:{action:'navigate',url:`${base}/read/inputs`}})
+    const operationID=randomUUID(),descriptor=await request('browser.page.begin',{operationID})
+    const send=(operation:any,timeout?:number)=>request('browser.page.send',{operationID,generation:descriptor.generation,operation},timeout)
+    const driver=nativeDriver(descriptor,operation=>send(operation),async()=>{})
+    const target=(await driver.tree()).find(node=>node.role==='button' && node.name==='Hover me')!
+    const quad=(await driver.geometry(target.node!))[0],x=(quad[0]+quad[4])/2,y=(quad[1]+quad[5])/2
+    const pointer={type:'mousePressed' as const,x,y,button:'left' as const,buttons:1,clickCount:1}
+    if(admitted) {
+      await control('arm-busy-click')
+      await assert.rejects(send({op:'pointer',event:pointer},150),/expired|timed out|timeout/i)
+    } else {
+      await driver.pointer(pointer)
+      const query=(await driver.tree()).find(node=>node.role==='textbox' && node.name==='Query')!
+      await driver.call('focus',await driver.resolve(query.node!),[])
+      await driver.keyboard({type:'rawKeyDown',key:'Shift',code:'ShiftLeft',modifiers:8})
+      await control('busy')
+      await assert.rejects(send({op:'insert-text',text:'MUST-NOT-REPLAY'},20),/expired|timed out|timeout/i)
+    }
+    await request('browser.page.end',{operationID})
+    const observed=await observe();result.observations[admitted?'admittedTimeout':'queuedTimeout']=observed
+    writeFileSync(join(output,'action-observations.json'),JSON.stringify(result,null,2))
+    assert.equal(observed.audit.filter((event:any)=>event.type==='pointerdown').length,1)
+    assert.equal(observed.audit.filter((event:any)=>event.type==='pointerup').length,1)
+    if(!admitted) assert.ok(observed.audit.some((event:any)=>event.type==='keyup' && event.key==='Shift'))
+    assert.ok(!JSON.stringify(observed.fields).includes('MUST-NOT-REPLAY'))
+  }
+  result.checks.push('native parent timeouts: queued mutation refused, admitted pointer not replayed; held pointer/key released on exact lease end')
   writeFileSync(join(output,'action-result.json'),JSON.stringify(result,null,2))
   console.error(JSON.stringify({passed:true,engine,checks:result.checks,limitations:result.limitations}))
 }

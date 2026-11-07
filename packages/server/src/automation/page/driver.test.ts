@@ -13,7 +13,7 @@ import { RefTable } from "./refs"
 const json = (file: string) => JSON.parse(readFileSync(new URL(file, import.meta.url), "utf8"))
 const golden = json("./driver.golden.json")
 
-test("the shared fixed registry keeps every pre-driver program byte-identical", () => {
+test("the shared fixed registry matches the qualified program hashes", () => {
   const hash = (source: string) => createHash("sha256").update(source).digest("hex")
   for (const id of Object.keys(ELEMENT_FUNCTIONS) as (keyof typeof ELEMENT_FUNCTIONS)[]) {
     assert.equal(hash(declaration(id, false)), golden.functions[id].plain, id)
@@ -49,7 +49,7 @@ test("CDP snapshots, scoped refs and bounded rendering equal the pre-driver gold
   }
 })
 
-test("WebKit's versioned skeleton returns a typed unsupported error without CDP or DOM fallback", async () => {
+test("native drivers propagate structured unsupported results without fallback", async () => {
   assert.throws(() => nativeDriver({driver:"cdp",contractVersion:2}, async()=>({}), async()=>{}), /contract/)
   assert.throws(() => nativeDriver({}, async()=>({}), async()=>{}), /contract/)
   const calls: unknown[] = []

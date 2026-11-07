@@ -121,3 +121,12 @@ test("a failed native mutation is never replayed, and queue admission is bounded
   assert.ok((await Promise.all([first, ...pending])).every(result => result instanceof Error))
   assert.equal(native.leases.size, 0)
 })
+
+test("a failed native scroll seals its lease and preserves the original failure before any mutation", async () => {
+  const native = new Native(), page = new BrowserPage(native)
+  const ref = firstRef((await page.execute("a", { action: "snapshot" })).snapshot)
+  native.failMethod = "DOM.scrollIntoViewIfNeeded"
+  await assert.rejects(page.execute("a", { action: "type", ref, text: "unsent", clear: true }), /reply uncertain/)
+  assert.equal(native.protocol.filter(call => call.method === "Runtime.callFunctionOn").length, 0)
+  assert.equal(native.leases.size, 0)
+})

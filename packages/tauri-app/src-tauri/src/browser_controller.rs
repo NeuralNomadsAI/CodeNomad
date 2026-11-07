@@ -455,7 +455,8 @@ impl BrowserController {
         {
             return;
         }
-        self.invalidate_page_for_generation(&registration.registration_id, registration.generation);
+        // History sampling publishes URL metadata; navigation/load callbacks
+        // own document fences, including while a new page lease is binding.
         if let Some(webview) = app.get_webview(&registration.window_label) {
             let _ = webview.emit(
                 "browser-target:navigated",

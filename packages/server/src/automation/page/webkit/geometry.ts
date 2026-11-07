@@ -5,17 +5,18 @@ function frame(doc:Document): HTMLIFrameElement | undefined { return doc === doc
 export function geometry(node:Node): number[][] {
   const item=element(node)
   if(!item) return []
-  return Array.from(item.getClientRects()).filter(rect=>rect.width>0 && rect.height>0).map(rect=>{
+  return Array.from(item.getClientRects()).filter(rect=>rect.width>0 && rect.height>0).flatMap(rect=>{
     let left=rect.left,top=rect.top,right=rect.right,bottom=rect.bottom,doc=item.ownerDocument
     for(let owner=frame(doc);owner;owner=frame(doc)) {
       const box=owner.getBoundingClientRect(),sx=box.width/owner.offsetWidth,sy=box.height/owner.offsetHeight
+      if(Math.min(owner.clientWidth,right)<=Math.max(0,left) || Math.min(owner.clientHeight,bottom)<=Math.max(0,top)) return []
       left=box.left+(owner.clientLeft+Math.max(0,left))*sx
       right=box.left+(owner.clientLeft+Math.min(owner.clientWidth,right))*sx
       top=box.top+(owner.clientTop+Math.max(0,top))*sy
       bottom=box.top+(owner.clientTop+Math.min(owner.clientHeight,bottom))*sy
       doc=owner.ownerDocument
     }
-    return [left,top,right,top,right,bottom,left,bottom]
+    return [[left,top,right,top,right,bottom,left,bottom]]
   })
 }
 export function scrollIntoView(node:Node): void {
@@ -27,7 +28,7 @@ export function scrollIntoView(node:Node): void {
 export function hitTest(x:number,y:number,roots:Roots): Element | undefined {
   let root:Document|ShadowRoot=document,hit:Element|null=null
   const seen=new Set<Element>()
-  for(let depth=0;depth<100;depth++) {
+  for(;;) {
     const item=root.elementFromPoint(x,y)
     if(!item || seen.has(item)) break
     hit=item;seen.add(item)
@@ -45,7 +46,9 @@ export function hitTest(x:number,y:number,roots:Roots): Element | undefined {
 }
 export function activeElement(roots:Roots): Element | null {
   let item=document.activeElement
-  for(let depth=0;item && depth<100;depth++) {
+  const seen=new Set<Element>()
+  while(item && !seen.has(item)) {
+    seen.add(item)
     const nested=shadowRoot(item,roots)?.activeElement ?? ((item as HTMLIFrameElement).contentDocument?.activeElement)
     if(!nested || nested === item) break
     item=nested

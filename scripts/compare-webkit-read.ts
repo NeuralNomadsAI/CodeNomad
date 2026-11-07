@@ -38,6 +38,7 @@ async function main() {
   try {
     for (const name of Object.keys(fixtures)) {
       await page.goto(`${base}/${name}`)
+      if(name === 'inputs') await page.waitForFunction(()=>document.querySelector('#later')?.textContent === 'Ready now')
       const tree=await cdp.send("Page.getFrameTree")
       const world=await cdp.send("Page.createIsolatedWorld",{frameId:tree.frameTree.frame.id,worldName:"codenomad-webkit"})
       const read=async(operation:PageOperation)=>{
@@ -60,7 +61,7 @@ async function main() {
       if(process.argv[3]) {
         const rows=[{engine:"Chromium CDP",text:comparison.chromium}]
         for(const engine of ["macos","x11","wayland"]) {
-          const native=JSON.parse(readFileSync(join(process.argv[3],`p3-read-${engine}`,`${name}.json`),"utf8")) as {nodes:SemanticNode[];snapshot:string}
+          const native=JSON.parse(readFileSync(join(process.argv[3],`${process.argv[4] ?? 'p3-read-'}${engine}`,`${name}.json`),"utf8")) as {nodes:SemanticNode[];snapshot:string}
           assert.deepEqual(controls(native.nodes),controls(webkit.result.nodes),`${engine}/${name}: actionable controls differ`)
           assert.equal(native.snapshot.replace(/ \[n\d+\]/g,""),comparison.webkit.replace(/ \[n\d+\]/g,""),`${engine}/${name}: outline differs`)
           rows.push({engine,text:native.snapshot})

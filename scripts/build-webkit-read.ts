@@ -16,7 +16,8 @@ const license=readFileSync(file("node_modules/dom-accessibility-api/LICENSE.md")
 const source=`/*! dom-accessibility-api 0.7.1\n${license}*/\n${bundled.outputFiles[0].text}\nreturn JSON.stringify(__codenomadReadModule.read(JSON.parse(request)));\n`
 writeFileSync(file("packages/server/src/automation/page/webkit/read.generated.js"),source)
 writeFileSync(file("packages/server/src/automation/page/webkit/LICENSE.dom-accessibility-api"),license)
-writeFileSync(file("packages/tauri-app/src-tauri/src/embedded_view/page_read.generated.h"),`#pragma once\n/* Generated fixed isolated-world program; MIT notice is embedded in the source. */\nstatic const char CN_PAGE_READ[] = ${JSON.stringify(source)};\nstatic const char CN_PAGE_HOOK[] = ${JSON.stringify(CLOSED_SHADOW_HOOK)};\n`)
+const cString=(source:string)=>JSON.stringify(source).replace(/\?/g,"\\?")
+writeFileSync(file("packages/tauri-app/src-tauri/src/embedded_view/page_read.generated.h"),`#pragma once\n/* Generated fixed isolated-world program; MIT notice is embedded in the source. */\nstatic const char CN_PAGE_READ[] = ${cString(source)};\nstatic const char CN_PAGE_HOOK[] = ${cString(CLOSED_SHADOW_HOOK)};\n`)
 const extract=(path:string,name:string)=>{
  const text=readFileSync(file(path),"utf8"), ast=ts.createSourceFile(path,text,ts.ScriptTarget.Latest,true)
  for(const statement of ast.statements) if(ts.isVariableStatement(statement)) for(const declaration of statement.declarationList.declarations) if(ts.isIdentifier(declaration.name)&&declaration.name.text===name&&declaration.initializer&&ts.isNoSubstitutionTemplateLiteral(declaration.initializer)) return declaration.initializer.text

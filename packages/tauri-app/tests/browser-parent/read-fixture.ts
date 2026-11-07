@@ -29,8 +29,9 @@ async function lease() {
 async function main() {
   assert.equal(parent.browserAutomationUnavailable,true)
   await request("browser.execute",{command:{action:"open",url:`${base}/read/preview`}})
-  for(const name of ["preview","forms","edges","advanced"]) {
+  for(const name of ["preview","forms","edges","inputs","advanced"]) {
     await navigate(`${base}/read/${name}`)
+    if(name === 'inputs') await browser.execute('fixture-session',{action:'wait',text:'Ready now',gone:false,timeout:5000})
     const current=await lease()
     const {nodes}=await current.send<{nodes:SemanticNode[]}>({op:"tree"})
     assert.ok(nodes.length)

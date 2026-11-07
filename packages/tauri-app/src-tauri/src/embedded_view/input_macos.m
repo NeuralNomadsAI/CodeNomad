@@ -261,7 +261,7 @@ static NSString *characters(const char *key, unsigned short *code) {
         return [NSString stringWithCharacters:&character length:1];
     }
     // ANSI keycodes serve native shortcuts; Unicode insertion uses the responder API.
-    NSArray *keys = @[@"a", @"s", @"d", @"f", @"h", @"g", @"z", @"x", @"c", @"v", @"", @"b", @"q", @"w", @"e", @"r", @"y", @"t", @"1", @"2", @"3", @"4", @"6", @"5", @"=", @"9", @"7", @"-", @"8", @"0", @"]", @"o", @"u", @"[", @"i", @"p", @"", @"l", @"j", @"'", @"k", @";", @"\\", @",", @"/", @"n", @"m", @".", @"", @" "];
+    NSArray *keys = @[@"a", @"s", @"d", @"f", @"h", @"g", @"z", @"x", @"c", @"v", @"", @"b", @"q", @"w", @"e", @"r", @"y", @"t", @"1", @"2", @"3", @"4", @"6", @"5", @"=", @"9", @"7", @"-", @"8", @"0", @"]", @"o", @"u", @"[", @"i", @"p", @"", @"l", @"j", @"'", @"k", @";", @"\\", @",", @"/", @"n", @"m", @".", @"", @" ", @"`"];
     NSDictionary *shifted=@{@"~":@"`",@"!":@"1",@"@":@"2",@"#":@"3",@"$":@"4",@"%":@"5",@"^":@"6",@"&":@"7",@"*":@"8",@"(":@"9",@")":@"0",@"_":@"-",@"+":@"=",@"{":@"[",@"}":@"]",@"|":@"\\",@":":@";",@"\"":@"'",@"<":@",",@">":@".",@"?":@"/"};
     NSUInteger index = [keys indexOfObject:shifted[text] ?: text.lowercaseString];
     if (index == NSNotFound || !text.length) return nil;
@@ -305,27 +305,20 @@ int cn_key(void *opaque, const char *key, unsigned flags, int down) {
         context:nil characters:text charactersIgnoringModifiers:text isARepeat:NO keyCode:code];
     [view.window makeFirstResponder:view];
     trace([NSString stringWithFormat:@"%@ key=%@ flags=0x%lx timestamp=%.6f window=%ld held=0x%x", down ? @"keyDown" : @"keyUp", [NSString stringWithUTF8String:key], (unsigned long)event.modifierFlags, event.timestamp, (long)event.windowNumber, flags]);
-    @try {
     with_modifiers(event.modifierFlags, ^{
-    if (down && (flags & CN_META)) {
-        BOOL handled = [view performKeyEquivalent:event];
-        trace([NSString stringWithFormat:@"key %@ equivalent=%d", text, handled]);
-        // An inactive view can acknowledge the key equivalent without executing
-        // its editing action. Keep this candidate gated by the harness.
-        if (!handled || !view.window.isKeyWindow) {
-            NSDictionary *commands = @{@"a": @"selectAll:", @"c": @"copy:", @"v": @"paste:", @"x": @"cut:", @"z": (flags & CN_SHIFT) ? @"redo:" : @"undo:"};
-            SEL command = NSSelectorFromString(commands[text.lowercaseString] ?: @"");
-            if ([view respondsToSelector:command]) {
-                trace([NSString stringWithFormat:@"key %@ native-command=%@", text, NSStringFromSelector(command)]);
-                [view tryToPerform:command with:nil];
-            } else if (!handled) [view keyDown:event];
-        }
+    NSDictionary *commands = @{@"a": @"selectAll:", @"c": @"copy:", @"v": @"paste:", @"x": @"cut:", @"z": @"undo:"};
+    NSString *selector = flags == CN_META ? commands[text.lowercaseString]
+        : (flags == (CN_META | CN_SHIFT) && [text.lowercaseString isEqualToString:@"z"]) ? @"redo:" : nil;
+    SEL command = selector ? NSSelectorFromString(selector) : NULL;
+    // Execute editing equivalents once on this view. Acknowledged native input
+    // is never followed by a second command as an inactive-window fallback.
+    if (down && command && [view respondsToSelector:command]) {
+        [view tryToPerform:command with:nil];
     } else if (down) {
         trace([NSString stringWithFormat:@"key %@ keyDown", [NSString stringWithUTF8String:key]]);
         [view keyDown:event];
     } else { trace([NSString stringWithFormat:@"key %@ keyUp", [NSString stringWithUTF8String:key]]); [view keyUp:event]; }
     });
-    } @finally { /* Modifier transitions are explicit semantic key events. */ }
     return 1;
 }
 int cn_text(void *opaque, const char *text) {

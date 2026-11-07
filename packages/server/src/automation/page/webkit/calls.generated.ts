@@ -89,17 +89,15 @@ export const readCalls = {
   }
   if (field instanceof HTMLInputElement && ["date","time","datetime-local","month","week","range","color"].includes(field.type)) return "value";
   if (editable) {
-    const range = document.createRange();
-    range.selectNodeContents(field);
-    if (!clear) range.collapse(false);
     const selection = getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
+    selection.setBaseAndExtent(field, clear ? 0 : field.childNodes.length, field, field.childNodes.length);
   } else if (clear) field.select();
   // Email and number inputs have no caret API: their text is appended as a value.
   else { try { field.setSelectionRange(field.value.length, field.value.length); } catch { return "append"; } }
   return "insert"; },
-"set-value": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); const [text, append] = args, next = append ? element.value + text : text;
+"set-value": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); if (element.matches(":disabled")) throw new Error("codenomad:disabled");
+  if (element.readOnly) throw new Error("codenomad:readonly");
+  const [text, append] = args, next = append ? element.value + text : text;
   // Ranges and colors have no empty value: the browser would substitute its default.
   const valid = element.type === "color" ? /^#[0-9a-f]{6}$/i.test(next)
     : element.type === "range" ? /^-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(next)

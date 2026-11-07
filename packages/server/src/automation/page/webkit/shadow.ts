@@ -14,16 +14,17 @@ export function shadowRoot(host: Element, roots: WeakMap<Element, WeakRef<Shadow
   if(cached) return cached
   if(host.getAttribute("data-codenomad-shadow-boundary") !== "closed") return
   let root: ShadowRoot | undefined
-  const receive=(event: Event)=>{
+  const receive=(event:Event)=>{
     try {
-      const ranges=InputEvent.prototype.getTargetRanges.call(event)
-      if(ranges.length !== 1) return
-      const candidate=ranges[0].startContainer
-      root=validate(candidate)
-    } catch { /* A page can dispatch arbitrary events; none grants a DOM identity. */ }
+      const carriers=PointerEvent.prototype.getPredictedEvents.call(event)
+      if(carriers.length!==1) return
+      const candidate=Object.getOwnPropertyDescriptor(MouseEvent.prototype,"relatedTarget")!.get!.call(carriers[0])
+      const validated=validate(candidate)
+      if(validated) root=validated
+    } catch { /* Native brands reject arbitrary page replies. */ }
   }
   host.addEventListener("__codenomad_shadow_v1",receive)
-  try { host.dispatchEvent(new Event("__codenomad_request_shadow_v1",{bubbles:true,composed:true})) }
+  try { host.dispatchEvent(new Event("__codenomad_request_shadow_v1")) }
   finally { host.removeEventListener("__codenomad_shadow_v1",receive) }
   if(root) roots.set(host,new WeakRef(root))
   return root
