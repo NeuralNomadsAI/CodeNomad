@@ -42,7 +42,8 @@
   of the PR OpenCode compatibility matrix run real npm lifecycle scripts through
   the development Electron executable on Windows, Linux and macOS.
 - Dependabot covers every dependency of the Cargo workspace `packages/tauri-app`
-  and of the npm workspaces (root lockfile), with weekly version checks against
+  and of the npm workspaces (root lockfile), plus the Cloudflare deployment worker
+  (`packages/cloudflare`, separate lockfile), with weekly version checks against
   the default branch (`dev`). Keep `target-branch` omitted for npm and Cargo so
   security updates share the configuration. Each entry's `allow` rule uses
   `dependency-type: all` and permits routine minor/patch updates; Cargo includes
@@ -52,20 +53,30 @@
   [`allow.update-types`](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference#update-types-allow)
   filters version updates only: security fixes remain eligible for every package,
   including fixes requiring a major. Matching allow rules combine their permitted
-  update types. Security PRs target the default branch (`dev`) as advisories arise;
-  keep repository/organization-level
-  [grouped security updates](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/configure-security-updates#grouping-dependabot-security-updates-into-a-single-pull-request)
-  disabled so unrelated fixes arrive individually and one conflict cannot hold
-  the others. Review related
-  dependency versions together before merging.
+  update types. Security PRs target the default branch (`dev`) as advisories arise.
+  The explicit `tauri-security` (`tauri`, `tauri-*`, `wry`) and `fastify-security`
+  (`fastify`, `@fastify/*`) families group related fixes at every SemVer level;
+  unmatched dependencies receive individual PRs. These
+  [security group rules](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/configure-security-updates#grouping-dependabot-security-updates-into-a-single-pull-request)
+  take priority over repository/organization blanket grouping for the configured
+  Cargo workspace and npm directories (`/`, `/packages/cloudflare`). Site-level
+  grouping can still apply to other directories. Review related dependency
+  versions together before merging.
+- The npm roots follow actual installations: root workspaces and the separately
+  installed Cloudflare release worker. The source plugin packaging manifest at
+  `packages/server/src/opencode/session-pruning/package.json` is qualified with
+  the plugin build: `build-session-pruning.mjs` bundles application dependencies
+  from the root installation and externalizes the daemon's native SDK/Effect.
+  Cargo's workspace covers its application and regression members; local vendor
+  manifests and lockfiles remain under the vendored-patch qualification policy.
 - Routine minor/patch updates are grouped by toolchain: the Tauri family
   (`tauri`, `tauri-*`, `wry`, including the runtime regression fixture's
   `tests/windows-runner-refcount` requirements), the Electron toolchain, the
   `@tauri-apps/*` packages, then every other crate or npm dependency; minor and
   patch updates of a group arrive together. The first matching group wins, so the
-  remaining-dependency catchalls follow the toolchain groups. Groups explicitly
-  apply to version updates; `allow.update-types` controls which versions are
-  proposed. Electron majors arrive individually. Every merge is manual.
+  remaining-dependency catchalls follow the toolchain groups. Routine groups
+  explicitly apply to version updates; `allow.update-types` controls which
+  versions are proposed. Electron majors arrive individually. Every merge is manual.
 - For a Tauri crate update, the maintainer reviews the Tauri, runtime, Wry, Tao
   and plugin release notes of every version crossed, re-qualifies the
   vendored crates (`packages/tauri-app/vendor/README.md`) and keeps

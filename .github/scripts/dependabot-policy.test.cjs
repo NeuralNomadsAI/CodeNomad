@@ -16,10 +16,12 @@ const versionGroup = (patterns) => ({
 // Assert the configuration contract, leaving update resolution to Dependabot.
 // Upstream Job#collect_permitted_update_types unions matching allow rules;
 // Job#ignored_versions_from_allowed_update_types bypasses security updates.
+// GroupUpdateAllVersions#perform runs individual updates after security groups;
+// DependencyGroupEngine keeps unmatched dependencies ungrouped.
 function assertPolicy(config) {
   assert.equal(config.version, 2)
-  assert.deepEqual(config.updates.map((entry) => [entry["package-ecosystem"], entry.directory]), [
-    ["cargo", "/packages/tauri-app"], ["github-actions", "/"], ["npm", "/"],
+  assert.deepEqual(config.updates.map((entry) => [entry["package-ecosystem"], entry.directory ?? entry.directories]), [
+    ["cargo", "/packages/tauri-app"], ["github-actions", "/"], ["npm", ["/", "/packages/cloudflare"]],
   ])
   for (const entry of config.updates) {
     assert.equal(entry.schedule.interval, "weekly")
@@ -36,14 +38,17 @@ function assertPolicy(config) {
   assert.deepEqual(npm.allow, [allDependencies, electronMajor], "all npm names; only Electron adds routine majors")
   assert.equal(actions.allow, undefined)
   assert.equal(actions.groups, undefined)
-  assert.deepEqual(Object.keys(cargo.groups), ["tauri", "cargo-dependencies"], "specific groups precede catchalls")
+  assert.deepEqual(Object.keys(cargo.groups), ["tauri-security", "tauri", "cargo-dependencies"],
+    "small security family; specific version groups precede catchalls")
   assert.deepEqual(cargo.groups, {
+    "tauri-security": { "applies-to": "security-updates", patterns: ["tauri", "tauri-*", "wry"] },
     tauri: versionGroup(["tauri", "tauri-*", "wry"]),
     "cargo-dependencies": versionGroup(["*"]),
   })
-  assert.deepEqual(Object.keys(npm.groups), ["electron-toolchain", "tauri-js", "npm-dependencies"],
+  assert.deepEqual(Object.keys(npm.groups), ["fastify-security", "electron-toolchain", "tauri-js", "npm-dependencies"],
     "specific groups precede catchalls; Electron majors stay individual")
   assert.deepEqual(npm.groups, {
+    "fastify-security": { "applies-to": "security-updates", patterns: ["fastify", "@fastify/*"] },
     "electron-toolchain": versionGroup(["electron", "electron-builder", "electron-vite"]),
     "tauri-js": versionGroup(["@tauri-apps/*"]),
     "npm-dependencies": versionGroup(["*"]),
@@ -64,6 +69,13 @@ test("policy check rejects security restrictions, broad majors and incorrect gro
     (config) => { config.updates[2].allow.pop() },
     (config) => { config.updates[2].ignore = [{ "dependency-name": "*" }] },
     (config) => { config.updates[0].groups["cargo-dependencies"]["applies-to"] = "security-updates" },
+    (config) => { config.updates[0].groups["tauri-security"].patterns.push("*") },
+    (config) => { config.updates[2].groups["fastify-security"].patterns = ["*"] },
+    (config) => { config.updates[0].groups["tauri-security"]["update-types"] = ["minor", "patch"] },
+    (config) => { config.updates[2].groups["fastify-security"]["update-types"] = ["minor", "patch"] },
+    (config) => { delete config.updates[0].groups["tauri-security"] },
+    (config) => { delete config.updates[2].groups["fastify-security"] },
+    (config) => { config.updates[2].directories.pop() },
     (config) => { config.updates[2].groups["npm-dependencies"]["update-types"].push("major") },
     (config) => { config.updates[0].groups = Object.fromEntries(Object.entries(config.updates[0].groups).reverse()) },
   ]
