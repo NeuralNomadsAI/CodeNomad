@@ -2,7 +2,7 @@ import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "soli
 import type { MissionTemplateId } from "../../../server/src/missions/model"
 import type { MissionPlaybookDetails } from "../../../server/src/missions/playbook-details"
 import type { MissionTaskMode } from "../../../server/src/missions/task-execution-mode"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { openExternalUrl } from "../lib/external-url"
 import { helpUrl } from "../lib/help-url"
@@ -10,7 +10,7 @@ import { useI18n } from "../lib/i18n"
 
 /** One playbook as this backend defines it: steps and roles, then, folded, the complete English
  * texts its coordinator and task actors receive. Read from the server's recipes, never copied. */
-export function MissionPlaybookReader(props: { playbook: MissionTemplateId; taskMode: MissionTaskMode }) {
+export function MissionPlaybookReader(props: { instanceId: string; playbook: MissionTemplateId; taskMode: MissionTaskMode }) {
   const { t, locale } = useI18n()
   const [details, setDetails] = createSignal<MissionPlaybookDetails>()
   const [failed, setFailed] = createSignal(false)
@@ -19,11 +19,12 @@ export function MissionPlaybookReader(props: { playbook: MissionTemplateId; task
   createEffect(() => {
     const taskMode = props.taskMode
     attempt()
-    const operation = captureBackendOperation("")
+    const instanceId = props.instanceId, controller = new AbortController()
+    const operation = captureBackendOperation(instanceId, controller.signal)
     let current = true
-    setFailed(false)
-    if (operation.current()) serverApi.fetchMissionPlaybooks(taskMode).then(value => { if (current && operation.current()) setDetails(value) }, () => { if (current && operation.current()) setFailed(true) })
-    onCleanup(() => { current = false })
+    setDetails(undefined); setFailed(false)
+    if (operation.current()) backendOf(instanceId).api.fetchMissionPlaybooks(taskMode).then(value => { if (current && operation.current()) setDetails(value) }, () => { if (current && operation.current()) setFailed(true) })
+    onCleanup(() => { current = false; controller.abort() })
   })
   const shown = () => details()?.taskMode === props.taskMode ? details() : undefined
   const playbook = () => shown()?.playbooks.find(value => value.id === props.playbook)

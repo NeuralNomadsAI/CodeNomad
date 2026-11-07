@@ -428,6 +428,11 @@ jobs:
       - name: Test Missions UI units
         run: >-
           node --conditions=browser --import tsx --test --test-force-exit
+          packages/ui/src/lib/backend-missions-routing.test.ts
+          packages/ui/src/lib/mission-coordinator-routing.test.ts
+          packages/ui/src/components/mission-backend-consumers.test.ts
+          packages/ui/src/stores/mission-backend-routing.test.ts
+          packages/ui/src/stores/mission-store-ownership.test.ts
           packages/ui/src/components/mission-attention.test.ts
           packages/ui/src/stores/mission-store.test.ts
           packages/ui/src/stores/mission-task-pages.test.ts

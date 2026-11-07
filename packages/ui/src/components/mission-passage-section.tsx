@@ -1,7 +1,7 @@
 import { Show, createEffect, createSignal, onCleanup } from "solid-js"
 import type { MissionRecurrenceCurrentContent } from "../../../server/src/api-types"
 import type { RecurrenceCurrentContentInput } from "../../../server/src/missions/recurrence-current"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { useI18n } from "../lib/i18n"
 import { instances } from "../stores/instances"
@@ -30,7 +30,7 @@ export function MissionPassageSectionContent(props: { instanceId: string; source
     let current = true
     const { projectID, missionID, ...input } = source
     if (!operation.current()) return
-    void serverApi.fetchMissionCurrentContent(instanceId, { ...input, page }, AbortSignal.any([operation.signal, controller.signal])).then(result => {
+    void backendOf(instanceId).api.fetchMissionCurrentContent(instanceId, { ...input, page }, AbortSignal.any([operation.signal, controller.signal])).then(result => {
       if (!operation.current() || !current || controller.signal.aborted || instances().get(instanceId)?.folder !== directory
         || instances().get(instanceId)?.client !== client || getOpenCodeInstanceGeneration(instanceId) !== generation) return
       const parsed = result

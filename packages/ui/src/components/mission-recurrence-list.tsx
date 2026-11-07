@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
@@ -116,10 +116,10 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     unresolved.set(identity, intent); setHeld(intent); setBusy(true); setRefusal(undefined)
     try {
       if (action === "run-now") {
-        const result = await serverApi.runMissionRecurrenceNow(instanceId, intent)
+        const result = await backendOf(instanceId).api.runMissionRecurrenceNow(instanceId, intent)
         if (operation.current() && captured === generation && key() === identity && completedRecurrenceManual(result, intent)) settle(intent, identity)
       } else {
-        const result = await serverApi.controlMissionRecurrence(instanceId, intent.scheduleID, { ...intent, ...(retry ? { retry: true } : {}) })
+        const result = await backendOf(instanceId).api.controlMissionRecurrence(instanceId, intent.scheduleID, { ...intent, ...(retry ? { retry: true } : {}) })
         if (operation.current() && captured === generation && key() === identity) finish(result, intent, identity)
       }
     } catch (error) {
@@ -145,14 +145,14 @@ function createRecurrenceControls(props: { schedule: RecurrenceSchedule; identit
     setBusy(true)
     try {
       if (intent.action === "run-now") {
-        const result = await serverApi.missionRecurrenceRunNowStatus(props.instanceId, intent)
+        const result = await backendOf(props.instanceId).api.missionRecurrenceRunNowStatus(props.instanceId, intent)
         const rejected = rejectedRecurrenceControl(result, intent)
         if (operation.current() && captured === generation && key() === identity) {
           if (completedRecurrenceManual(result, intent) || rejected) settle(intent, identity, rejected)
           else props.refresh()
         }
       } else {
-        const result = await serverApi.missionRecurrenceControlStatus(props.instanceId, intent.scheduleID, intent)
+        const result = await backendOf(props.instanceId).api.missionRecurrenceControlStatus(props.instanceId, intent.scheduleID, intent)
         if (operation.current() && captured === generation && key() === identity) {
           finish(result, intent, identity)
           if (reconcile && partialRecurrenceControl(result, intent)) witness = { generation, intent }

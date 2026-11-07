@@ -10,6 +10,7 @@ function source(path: string) {
   return ts.createSourceFile(path, readFileSync(new URL(path, import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
 }
 function compile(text: string, scope: Record<string, any>) {
+  scope.backendOf ??= () => ({ api: scope.serverApi })
   const code = ts.transpileModule(`(${text})`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText
   return new Function("scope", `with (scope) { return ${code} }`)(scope)
 }
@@ -334,4 +335,59 @@ test("lifecycle: revocation during the acknowledged control's refresh releases i
   await flush(); assert.equal(refreshing, true)
   backend.revoke(); backend.replace(); refresh.resolve(); await result
   assert.equal(refreshing, false)
+})
+
+test("playbook reader: owner routing and replacement reject a detached response", async () => {
+  const backend = attachment(), requests: ReturnType<typeof deferred>[] = [], owners: string[] = []
+  let shown: unknown, failed = false, dispose!: () => void
+  const callback = effect("./mission-playbook-reader.tsx", "fetchMissionPlaybooks", { ...solid, ...backend,
+    props: { instanceId: "remote~same", taskMode: "native" }, attempt: () => 0,
+    serverApi: { fetchMissionPlaybooks: () => assert.fail("local singleton reached") },
+    backendOf: (id: string) => { owners.push(id); return { api: { fetchMissionPlaybooks: () => {
+      const request = deferred(); requests.push(request); return request.promise
+    } } } },
+    setDetails: (value: unknown) => { shown = value }, setFailed: (value: boolean) => { failed = value },
+  })
+  createRoot(close => { dispose = close; createEffect(callback) })
+  assert.deepEqual(owners, ["remote~same"])
+  backend.replace(); assert.equal(requests.length, 2)
+  requests[1].resolve({ taskMode: "native", source: "replacement" }); await flush()
+  requests[0].resolve({ taskMode: "native", source: "detached" }); await flush()
+  assert.deepEqual(shown, { taskMode: "native", source: "replacement" }); assert.equal(failed, false)
+  backend.revoke(); backend.replace(); assert.equal(requests.length, 3)
+  dispose(); requests[2].reject(new Error("disposed")); await flush()
+  assert.equal(failed, false)
+})
+
+test("MissionControl refresh: detachment prevents recurrence publication and control resend", async () => {
+  const backend = attachment(), request = deferred()
+  let refreshing = false, publications = 0, resends = 0
+  const retry = { reconcile: () => request.promise, pending: () => true, resend: async () => { resends++ } }
+  const run = method("./instance/shell/right-panel/tabs/MissionControl.tsx", "refresh", { ...backend,
+    props: { instanceId: "remote~same" }, refreshing: () => refreshing, controlRetry: () => retry,
+    captureView: () => () => true, setRefreshing: (value: boolean) => { refreshing = value },
+    missionStore: { refresh: () => request.promise }, setRecurrenceRefresh: () => { publications++ },
+  })
+  const pending = run(); assert.equal(refreshing, true)
+  backend.replace(); request.resolve(true); await pending
+  assert.equal(publications, 0); assert.equal(resends, 0); assert.equal(refreshing, false)
+})
+
+test("cleanup: remote preflight detachment never advances to a destructive retry", async () => {
+  const backend = attachment(), request = deferred(), owners: string[] = []
+  let pending = "", deletes = 0, refreshes = 0
+  const saved = { missionID: "m", deletionID: "d", requestID: "r", expectedRevision: 1, deleteManagedSessions: false }
+  const run = method("./mission-cleanup.tsx", "retry", { ...backend,
+    props: { instanceId: "remote~same", active: true, disabled: false, refresh: async () => { refreshes++ } },
+    pending: () => pending, rows: () => new Map([["row", saved]]), missionCleanupPending: () => true,
+    captureView: () => () => true, attempt: 0, alive: true,
+    setPending: (value: string) => { pending = value }, setError: () => {},
+    serverApi: { fetchMission: () => assert.fail("local singleton reached") },
+    backendOf: (id: string) => { owners.push(id); return { api: {
+      fetchMission: () => request.promise, deleteMission: async () => { deletes++ },
+    } } },
+  })
+  const result = run("row"); assert.deepEqual(owners, ["remote~same"])
+  backend.replace(); request.resolve({ available: true, cleanups: [saved] }); await result
+  assert.equal(deletes, 0); assert.equal(refreshes, 0); assert.equal(pending, "")
 })

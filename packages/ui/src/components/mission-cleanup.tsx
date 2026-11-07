@@ -1,6 +1,6 @@
 import { For, Show, createComputed, createMemo, createSignal, onCleanup } from "solid-js"
 import type { MissionCleanup } from "../../../server/src/missions/model"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { deletionErrorKey, missionCleanupPending } from "../lib/mission-cleanup"
 import { useI18n } from "../lib/i18n"
@@ -51,13 +51,13 @@ export function MissionCleanupPanel(props: {
     try {
       // Display data is never destructive authority. Reconcile the original
       // intent before an explicit retry, then let the native bridge revalidate.
-      const snapshot = await serverApi.fetchMission(instanceId, saved.missionID)
+      const snapshot = await backendOf(instanceId).api.fetchMission(instanceId, saved.missionID)
       if (!current()) return
       const fresh = snapshot.available && !snapshot.cleanupUnavailable && snapshot.cleanups.find(item => item.deletionID === saved.deletionID
         && item.missionID === saved.missionID && item.requestID === saved.requestID
         && item.expectedRevision === saved.expectedRevision && item.deleteManagedSessions === saved.deleteManagedSessions)
       if (!fresh) throw new Error("Unconfirmed cleanup intent")
-      if (missionCleanupPending(fresh)) await serverApi.deleteMission(instanceId, fresh.missionID, {
+      if (missionCleanupPending(fresh)) await backendOf(instanceId).api.deleteMission(instanceId, fresh.missionID, {
         requestId: fresh.requestID, expectedRevision: fresh.expectedRevision, deleteManagedSessions: fresh.deleteManagedSessions,
       })
       if (current()) await props.refresh()

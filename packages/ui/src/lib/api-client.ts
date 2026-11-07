@@ -120,7 +120,7 @@ function currentPassageTransport(ctx: BackendHttp, instanceId: string, source: M
       if (!scope.current()) throw new DOMException("Obsolete passage read", "AbortError")
       const payload = JSON.stringify({ source, selector: JSON.parse(selector), ...(body ? { body } : {}) })
       if (new TextEncoder().encode(payload).length > 16384) throw new MissionTaskPageReadError("invalid")
-      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(source.scheduleID)}/current/${encodeURIComponent(source.passageID)}/page`
+      const path = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/recurrence/${encodeURIComponent(source.scheduleID)}/current/${encodeURIComponent(source.passageID)}/page`
       return ctx.fetch(ctx.url(path), { method: "POST", body: payload, signal, credentials: "include", headers: { "Content-Type": "application/json" } })
     } }
 }
@@ -483,10 +483,10 @@ export function createServerApi(ctx: BackendHttp) {
       return request(`/api/workspaces/${encodeURIComponent(instanceId)}/image-settings`, { method: "PUT", body: JSON.stringify(payload), signal })
     },
     getSubagentDepth(instanceId: string, directory: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").SubagentDepthSnapshot> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/subagent-depth?${new URLSearchParams({ directory })}`, { signal })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/subagent-depth?${new URLSearchParams({ directory })}`, { signal })
     },
     setSubagentDepth(instanceId: string, payload: { location: { directory: string }; depth: number | null; expectation: string }): Promise<void> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/subagent-depth`, { method: "PUT", body: JSON.stringify(payload) })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/subagent-depth`, { method: "PUT", body: JSON.stringify(payload) })
     },
     setPluginActivation(instanceId: string, payload: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse> {
       return request<PluginActivationMutationResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls`, {
@@ -786,7 +786,7 @@ export function createServerApi(ctx: BackendHttp) {
     fetchMissionPanel(instanceId: string, selector: Exclude<import("../../../server/src/missions/mission-panel-wire").MissionPanelPageRequest, { source: "tasks" }>, scope: MissionPanelReadScope) {
       const deadline = Math.min(scope.deadline ?? Infinity, performance.now() + TASK_READ_TIMEOUT_MS)
       const signal = AbortSignal.any([...(scope.signal ? [scope.signal] : []), AbortSignal.timeout(Math.max(0, Math.ceil(deadline - performance.now())))])
-      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/panel-page`
+      const path = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/panel-page`
       return readMissionPanelWindow(selector, { ...scope, signal, deadline, runTransfer: read => secondaryRead(signal, read), exchange: body => {
         if (!scope.current()) throw new DOMException("Obsolete panel read", "AbortError")
         assertTaskReadLive(signal, deadline)
@@ -797,7 +797,7 @@ export function createServerApi(ctx: BackendHttp) {
     },
     /** One mission's compact map and cleanups, for display reconciliation (lost acknowledgements, cleanup retries). */
     fetchMission(instanceId: string, missionId: string): Promise<MissionReadResponse> {
-      return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`)
+      return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionId)}`)
     },
     /** More of one mission's tasks for display: a window of its display order or tasks by name;
      * it shares the secondary read budget. */
@@ -807,7 +807,7 @@ export function createServerApi(ctx: BackendHttp) {
       const deadline = Math.min(scope.deadline ?? Infinity, performance.now() + TASK_READ_TIMEOUT_MS)
       const timeout = AbortSignal.timeout(Math.max(0, Math.ceil(deadline - performance.now())))
       const signal = scope.signal ? AbortSignal.any([scope.signal, timeout]) : timeout
-      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/panel-page`
+      const path = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/panel-page`
       return readMissionTaskPage(missionId, input, { ...scope, signal, deadline, runTransfer: read => secondaryRead(signal, read), exchange: body => {
         if (!scope.current()) throw new DOMException("Obsolete task read", "AbortError")
         assertTaskReadLive(signal, deadline)
@@ -820,7 +820,7 @@ export function createServerApi(ctx: BackendHttp) {
     fetchMissionContent(instanceId: string, missionId: string, input: Omit<import("../../../server/src/missions/mission-content-wire").MissionContentRequest, "missionID">,
       signal: AbortSignal): Promise<import("../../../server/src/missions/mission-content-wire").MissionContentResponse> {
       const params = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
-      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/content?${params}`, { signal }))
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionId)}/content?${params}`, { signal }))
     },
     /** This backend's playbook definitions, as its Missions prompts are built from them. */
     fetchMissionPlaybooks(taskMode: import("../../../server/src/missions/task-execution-mode").MissionTaskMode): Promise<import("../../../server/src/missions/playbook-details").MissionPlaybookDetails> {
@@ -828,45 +828,45 @@ export function createServerApi(ctx: BackendHttp) {
     },
     fetchMissionSchedules(instanceId: string, input: { after?: string; limit?: number; directory?: string } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleList> {
       const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
-      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/scheduled?${query}`, { signal }))
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled?${query}`, { signal }))
     },
     fetchMissionScheduleCapability(instanceId: string, directory?: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleCapability> {
       const query = new URLSearchParams(directory === undefined ? {} : { directory })
-      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/scheduled/capabilities?${query}`, { signal }))
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled/capabilities?${query}`, { signal }))
     },
     fetchMissionSchedule(instanceId: string, missionID: string, input: { directory?: string; requestID?: string } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
       const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined) as [string, string][])
-      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionID)}/schedule?${query}`, { signal }))
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionID)}/schedule?${query}`, { signal }))
     },
     fetchMissionScheduleCreation(instanceId: string, requestID: string, directory?: string): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
       const query = new URLSearchParams(directory === undefined ? {} : { directory })
-      return secondaryRead(undefined, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/scheduled/requests/${encodeURIComponent(requestID)}?${query}`))
+      return secondaryRead(undefined, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled/requests/${encodeURIComponent(requestID)}?${query}`))
     },
     saveMissionSchedule(instanceId: string, input: import("../stores/mission-schedule-editor-holds").MissionScheduleEditorRequest): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
       const { missionID, ...body } = input
       const target = missionID ? `${encodeURIComponent(missionID)}/schedule` : "scheduled"
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${target}`, { method: "POST", body: JSON.stringify(body) })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${target}`, { method: "POST", body: JSON.stringify(body) })
     },
     controlMissionSchedule(instanceId: string, missionID: string, input: { action: "play" | "resume" | "pause" | "stop" | "check" | "run-now" | "delete";
       requestID: string; expectedRevision: number; directory?: string; deleteManagedSessions?: boolean }): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionID)}/schedule`, {
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionID)}/schedule`, {
         method: "POST", body: JSON.stringify(input) })
     },
     missionScheduleSettings(instanceId: string, missionID: string, input: { requestID: string; expectedDocumentRevision: number }, apply = false): Promise<{ document: import("../../../server/src/missions/mission-document-one-time").MissionDocumentSummary }> {
-      const url = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionID)}/schedule-settings`
+      const url = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionID)}/schedule-settings`
       return apply ? request(url, { method: "POST", body: JSON.stringify(input) })
         : secondaryRead(undefined, () => request(`${url}?${new URLSearchParams({ requestID: input.requestID, expectedDocumentRevision: String(input.expectedDocumentRevision) })}`))
     },
     /** The same read, with the full map, from the authoritative full snapshot, for admitting an application-authored prompt. */
     fetchMissionAdmission(instanceId: string, missionId: string): Promise<MissionReadResponse<MissionMap>> {
-      return request<MissionReadResponse<MissionMap>>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/admission`)
+      return request<MissionReadResponse<MissionMap>>(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionId)}/admission`)
     },
     fetchMissionCurrentPassage(instanceId: string, scheduleID: string, signal?: AbortSignal, owner: "daily" | "scheduled" = "daily"): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrent> {
       const deadline = performance.now() + TASK_READ_TIMEOUT_MS
       const live = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(TASK_READ_TIMEOUT_MS)])
       return secondaryRead(live, async () => {
         assertTaskReadLive(live, deadline)
-        const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current${owner === "scheduled" ? "?owner=scheduled" : ""}`
+        const path = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current${owner === "scheduled" ? "?owner=scheduled" : ""}`
         return readMissionCurrentIdentity(await ctx.fetch(ctx.url(path), { signal: live, credentials: "include" }), live)
       })
     },
@@ -895,63 +895,63 @@ export function createServerApi(ctx: BackendHttp) {
     fetchMissionCurrentContent(instanceId: string, input: import("../../../server/src/missions/recurrence-current").RecurrenceCurrentContentInput, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrentContent> {
       const { scheduleID, passageID, ...query } = input
       const params = new URLSearchParams(Object.entries(query).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current/${encodeURIComponent(passageID)}/content?${params}`, { signal })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current/${encodeURIComponent(passageID)}/content?${params}`, { signal })
     },
     async fetchMissionRecurrence(instanceId: string, signal?: AbortSignal): Promise<MissionRecurrenceSnapshot> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { signal })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/recurrence`, { signal })
     },
     async controlMissionRecurrence(instanceId: string, scheduleID: string, input: RecurrenceControlIntent): Promise<RecurrenceControlStatus> {
-      return readRecurrenceControlResult(await request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/control`, {
+      return readRecurrenceControlResult(await request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/control`, {
         method: "POST", body: JSON.stringify(input),
       }))
     },
     async missionRecurrenceControlStatus(instanceId: string, scheduleID: string, input: RecurrenceControlIntent): Promise<RecurrenceControlStatus> {
-      return readRecurrenceControlResult(await request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/control/status`, {
+      return readRecurrenceControlResult(await request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/control/status`, {
         method: "POST", body: JSON.stringify(recurrenceControlStatusInput(input)),
       }))
     },
     async runMissionRecurrenceNow(instanceId: string, input: RecurrenceControlIntent): Promise<RecurrenceManualResult> {
       const { requestID, expectedRevision, directory } = input
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(input.scheduleID)}/run-now`, {
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/recurrence/${encodeURIComponent(input.scheduleID)}/run-now`, {
         method: "POST", body: JSON.stringify({ requestID, expectedRevision, ...(directory ? { directory } : {}) }),
       })
     },
     async missionRecurrenceRunNowStatus(instanceId: string, input: RecurrenceControlIntent): Promise<RecurrenceManualResult> {
       const query = new URLSearchParams({ requestID: input.requestID, expectedRevision: String(input.expectedRevision),
         ...(input.directory ? { directory: input.directory } : {}) })
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(input.scheduleID)}/run-now/status?${query}`)
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/recurrence/${encodeURIComponent(input.scheduleID)}/run-now/status?${query}`)
     },
     fetchMissionRecurrencePassagePage(instanceId: string, scheduleID: string, passageID: string,
       input: { section: number; page: number; revision?: number }, signal?: AbortSignal): Promise<MissionRecurrenceReadPage> {
       const query = new URLSearchParams({ section: String(input.section), page: String(input.page),
         ...(input.revision === undefined ? {} : { revision: String(input.revision) }) })
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/passages/${encodeURIComponent(passageID)}?${query}`, { signal })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/passages/${encodeURIComponent(passageID)}?${query}`, { signal })
     },
     createMissionRecurrence(instanceId: string, input: { requestID: string; title: string; instructions: string;
       notes?: string; template: MissionMap["template"];
       clock: { time: string; zone: string }; watchedConversationIDs: string[];
       profiles: MissionProfiles; taskMode: "native" | "independent"; directory?: string
     }): Promise<{ schedule: { id: string; revision: number; state: "paused"; digest: string; projectID: string; projectCanonical: string } }> {
-      return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { method: "POST", body: JSON.stringify(input) })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/recurrence`, { method: "POST", body: JSON.stringify(input) })
     },
     createMission(instanceId: string, input: { title?: string; objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; taskMode?: "native" | "independent"; directory?: string; requestId: string }): Promise<{ mission: MissionMap }> {
-      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions`
+      const path = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions`
       return missionMutationRequest(ctx.url(path), "POST", input, ctx.fetch)
     },
     editMission(instanceId: string, missionId: string, input: { objective: string; notes?: string; expectedRevision: number; requestId: string }): Promise<{ mission: MissionMap }> {
-      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`
+      const path = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionId)}`
       return missionMutationRequest(ctx.url(path), "PATCH", input, ctx.fetch)
     },
     deleteMission(instanceId: string, missionId: string, input: MissionDeletionRequest) {
-      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`
+      const path = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionId)}`
       return deleteMissionRequest(ctx.url(path), input, ctx.fetch)
     },
     controlMission(instanceId: string, missionId: string, input: MissionLifecycleInput): Promise<{ mission: MissionMap }> {
-      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/control`
+      const path = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionId)}/control`
       return missionLifecycleRequest(ctx.url(path), input, ctx.fetch)
     },
     async recoverMission(instanceId: string, missionId: string, input: { expectedRevision: number; target: "coordinator" | "report"; taskKey?: string }): Promise<{ mission: MissionMap; admitted: true }> {
-      const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/recover`
+      const path = `/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionId)}/recover`
       // Keep the structured classification: generic request() intentionally projects
       // errors to text. Recovery must never display upstream text or replay a POST.
       const response = await ctx.fetch(ctx.url(path), {

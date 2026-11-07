@@ -72,8 +72,7 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
   const [states, setStates] = createSignal(new Map<string, MissionViewState>())
   const generations = new Map<string, number>()
   const demand = new Set<string>()
-  const inFlight = new Map<string, Promise<void>>()
-  const refreshSignals = new Map<string, AbortSignal | undefined>()
+  const inFlight = new Map<string, { done: Promise<void>; signal?: AbortSignal }>()
   const queuedSignals = new Map<string, AbortSignal | undefined>()
   const trailing = new Set<string>()
   const wants = new Map<string, Map<string, string>>()
@@ -93,7 +92,7 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
   const cancellations = new Map<string, number>()
   /** Rows read further, per instance and mission, and the chain of each mission's page reads. */
   const pages = new Map<string, Map<string, MissionTaskPageCache>>()
-  const pageReads = new Map<string, Promise<MissionTaskReadResult>>(), queuedReads = new Map<string, Promise<MissionTaskReadResult>>()
+  const pageReads = new Map<string, { done: Promise<MissionTaskReadResult>; signal?: AbortSignal }>(), queuedReads = new Map<string, Promise<MissionTaskReadResult>>()
   /** The list reads' own maps, per instance and mission: every page merges against them. */
   const bases = new Map<string, Map<string, MissionPanelMap>>()
   /** Bumped by `clear`: a page read of an earlier epoch never publishes. */
@@ -254,10 +253,11 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
     if (attachment?.aborted) return Promise.resolve("skipped")
     const deadline = performance.now() + TASK_READ_TIMEOUT_MS
     request = structuredClone(request)
-    const key = JSON.stringify([instanceId, missionId]), epoch = epochs.get(instanceId) ?? 0
+    const epoch = epochs.get(instanceId) ?? 0
     // No indefinite unowned reads: callers register selection/reader ownership first.
     if (![...wants.get(instanceId)?.values() ?? []].includes(missionId)) return Promise.resolve("skipped")
     const owner = acquireOwner(instanceId, missionId), ownership = owner.generation
+    const key = JSON.stringify([instanceId, missionId, epoch, ownership])
     // The same request already waiting in this mission's chain is that read.
     const signature = JSON.stringify([key, epoch, ownership, request])
     const waiting = queuedReads.get(signature)
@@ -313,7 +313,8 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
       update(instanceId, publication)
       return "read"
     }
-    const queued = (pageReads.get(key) ?? Promise.resolve()).then(run, run)
+    const prior = pageReads.get(key)
+    const queued = (prior && prior.signal === attachment ? prior.done : Promise.resolve()).then(run, run)
     const next = (async (): Promise<MissionTaskReadResult> => {
       try {
         return await raceTaskRead(queued, signal)
@@ -328,11 +329,12 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
         if ((epochs.get(instanceId) ?? 0) === epoch) { tally(instanceId, missionId, -1); publishPages(instanceId) }
       }
     })()
-    pageReads.set(key, next)
+    const flight = { done: next, signal: attachment }
+    pageReads.set(key, flight)
     queuedReads.set(signature, next)
     queuedSignals.set(signature, attachment)
     void next.finally(() => {
-      if (pageReads.get(key) === next) pageReads.delete(key)
+      if (pageReads.get(key) === flight) pageReads.delete(key)
       if (queuedReads.get(signature) === next) { queuedReads.delete(signature); queuedSignals.delete(signature) }
     })
     return next
@@ -341,22 +343,24 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
   const refresh = async (instanceId: string, signal = signalForInstance?.(instanceId)): Promise<void> => {
     if (signal?.aborted) return
     const pending = inFlight.get(instanceId)
-    if (pending && refreshSignals.get(instanceId) === signal) {
+    if (pending && pending.signal === signal) {
       trailing.add(instanceId)
-      await pending
+      await pending.done
       return
     }
+    const flight = { done: Promise.resolve(), signal }
+    inFlight.set(instanceId, flight)
     const run = (async () => {
       do {
+        if (inFlight.get(instanceId) !== flight) return
         trailing.delete(instanceId)
         await performRefresh(instanceId, signal)
-      } while (!signal?.aborted && trailing.has(instanceId))
+      } while (inFlight.get(instanceId) === flight && !signal?.aborted && trailing.has(instanceId))
     })()
-    inFlight.set(instanceId, run)
-    refreshSignals.set(instanceId, signal)
+    flight.done = run
     try { await run }
     finally {
-      if (inFlight.get(instanceId) === run) { inFlight.delete(instanceId); refreshSignals.delete(instanceId) }
+      if (inFlight.get(instanceId) === flight) inFlight.delete(instanceId)
     }
   }
 
@@ -406,6 +410,10 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
     refresh,
     loadTasks: (instanceId, missionId, request) => readTasks(instanceId, missionId, request),
     invalidateTasks: instanceId => {
+      inFlight.delete(instanceId)
+      generations.set(instanceId, (generations.get(instanceId) ?? 0) + 1)
+      trailing.delete(instanceId)
+      requested.delete(instanceId)
       revalidateTasks.add(instanceId)
       if (!pages.has(instanceId)) return
       epochs.set(instanceId, (epochs.get(instanceId) ?? 0) + 1)
@@ -422,6 +430,7 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
       publishPages(instanceId)
     },
     clear: (instanceId) => {
+      inFlight.delete(instanceId)
       generations.set(instanceId, (generations.get(instanceId) ?? 0) + 1)
       epochs.set(instanceId, (epochs.get(instanceId) ?? 0) + 1)
       taskLifetimes.get(instanceId)?.abort()

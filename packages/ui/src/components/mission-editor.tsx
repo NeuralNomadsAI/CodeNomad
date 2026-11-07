@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js"
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import { compareModelError, freezeCompareProfiles, sameCompareModel, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { useI18n } from "../lib/i18n"
 import { deletionErrorKey, missionCleanupPending, MissionDeletionError } from "../lib/mission-cleanup"
 import { missionStore } from "../stores/missions"
@@ -209,7 +209,7 @@ export function MissionEditor(props: {
     let alive = true
     setSourceLocation(undefined); setSourceLocationFailed(false)
     const location = createRequestLocation(props.directory)
-    const current = () => alive && viewCurrent() && sourceIdentity() === key
+    const current = () => operation.current() && alive && viewCurrent() && sourceIdentity() === key
     void getRootClient(props.instanceId).location.get({ location: toRequestLocation(location) }, {
       ...requestLocationOptions(location), signal: AbortSignal.any([operation.signal, AbortSignal.timeout(10_000)]),
     }).then(value => {
@@ -353,7 +353,7 @@ export function MissionEditor(props: {
         // A failed acknowledgement may follow a committed tombstone. Keep its
         // immutable request available for retry even after the list refreshes.
         if (deleteAttempted()) {
-          const snapshot = await serverApi.fetchMission(instanceId, original.id)
+          const snapshot = await backendOf(instanceId).api.fetchMission(instanceId, original.id)
           if (!current()) return
           if (!snapshot.available || snapshot.cleanupUnavailable) throw new MissionDeletionError(503)
           const intent = snapshot.cleanups.find(item => item.missionID === original.id && item.requestID === requestId
@@ -365,10 +365,10 @@ export function MissionEditor(props: {
           // deletion's history. Its durable record answers this exact original request.
         }
         setDeleteAttempted(true)
-        await serverApi.deleteMission(instanceId, original.id, { expectedRevision: original.revision, requestId, deleteManagedSessions: deleteManagedSessions() })
+        await backendOf(instanceId).api.deleteMission(instanceId, original.id, { expectedRevision: original.revision, requestId, deleteManagedSessions: deleteManagedSessions() })
         if (current()) props.onSaved()
       } else {
-        const result = await serverApi.createMission(instanceId, { ...fields, directory, requestId })
+        const result = await backendOf(instanceId).api.createMission(instanceId, { ...fields, directory, requestId })
         if (kind === "create") releaseMissionCreation(origin, creation.requestId)
         if (current()) props.onSaved(result.mission)
         else if (viewCurrent() && identity() === origin && missionStore.demandedInstanceIds().includes(instanceId)) void missionStore.refresh(instanceId)
@@ -388,7 +388,7 @@ export function MissionEditor(props: {
         // Unknown intent keeps the original option/request fenced until verified.
         let key = deletionErrorKey(error)
         try {
-          const snapshot = await serverApi.fetchMission(instanceId, original.id)
+          const snapshot = await backendOf(instanceId).api.fetchMission(instanceId, original.id)
           if (!current()) return
           const intent = snapshot.available && !snapshot.cleanupUnavailable && snapshot.cleanups.find(item => item.missionID === original.id && item.requestID === requestId
             && item.expectedRevision === original.revision && item.deleteManagedSessions === deleteManagedSessions())
