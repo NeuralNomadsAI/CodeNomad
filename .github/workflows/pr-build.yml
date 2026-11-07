@@ -172,6 +172,11 @@ jobs:
       - name: Qualify the pinned client against the technical minimum and latest stable
         shell: pwsh
         run: |
+          $fixtures = Join-Path $env:RUNNER_TEMP 'runtime-contract-fixtures'
+          New-Item -ItemType Directory -Force $fixtures | Out-Null
+          "RUNTIME_CONTRACT_FIXTURES=$fixtures" >> $env:GITHUB_ENV
+          $env:TEMP = $fixtures
+          $env:TMP = $fixtures
           $sandbox = Join-Path $env:RUNNER_TEMP 'opencode-contract-runtime'
           $version = '${{ matrix.runtime }}'
           if ($version -eq 'minimum') {
@@ -258,6 +263,18 @@ jobs:
             node scripts/test-recurring-simple-native.mjs $cli ABCD
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
+
+      - name: Upload isolated runtime contract failure diagnostics
+        if: ${{ failure() && env.RUNTIME_CONTRACT_FIXTURES != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: runtime-contract-failure-windows-${{ matrix.runtime }}
+          path: |
+            ${{ env.RUNTIME_CONTRACT_FIXTURES }}/opencode/missions-native-*/runtime.log
+            ${{ env.RUNTIME_CONTRACT_FIXTURES }}/opencode/missions-native-*/receipt.json
+            ${{ env.RUNTIME_CONTRACT_FIXTURES }}/opencode/missions-native-*/reload-diagnostics.json
+          if-no-files-found: warn
+          retention-days: 7
 
   tests:
     needs: authorize
