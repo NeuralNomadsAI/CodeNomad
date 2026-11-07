@@ -334,6 +334,8 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
     if (!workspaceId || !directory) return
     let disposed = false, inFlight = false, trailing = false
     const operation = captureBackendOperation(workspaceId, undefined, () => !disposed)
+    const releaseLoading = () => { if (!disposed) setSkillsLoading(false) }
+    operation.signal.addEventListener("abort", releaseLoading, { once: true })
     setSkills([])
     setSkillsError(false)
     const load = () => {
@@ -341,7 +343,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       if (inFlight) { trailing = true; return }
       inFlight = true
       setSkillsLoading(true)
-      void getRootClient(workspaceId).skill.list({ location: { directory } }, { signal: operation.signal }).then(
+      void (async () => getRootClient(workspaceId).skill.list({ location: { directory } }, { signal: operation.signal }))().then(
         (response) => {
           if (!operation.current()) return
           if (trailing) { inFlight = false; trailing = false; load(); return }
@@ -368,7 +370,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       if (payload.type === "instance.eventStatus" && payload.instanceId === workspaceId && payload.status === "connected") load()
     })
     const reconnect = serverEvents.forInstance(() => workspaceId).onOpen(() => load())
-    onCleanup(() => { disposed = true; unsubscribe(); status(); reconnect() })
+    onCleanup(() => { disposed = true; operation.signal.removeEventListener("abort", releaseLoading); unsubscribe(); status(); reconnect() })
     load()
   })
 

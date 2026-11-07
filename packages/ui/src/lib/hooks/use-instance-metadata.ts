@@ -4,6 +4,7 @@ import { getLogger } from "../../lib/logger"
 import { getInstanceMetadata, getInstanceMetadataGeneration, mergeInstanceMetadata } from "../../stores/instance-metadata"
 import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "../../stores/request-locations"
 import { backendEvents } from "../server-events"
+import { getRootClient } from "../../stores/opencode-client"
 
 const log = getLogger("session")
 const pendingMetadataRequests = new Map<string, {
@@ -66,7 +67,7 @@ export function loadInstanceMetadata(instance: Instance, options?: { force?: boo
       const [projectResult, projectsResult, mcpResult] = await Promise.allSettled([
         loadInstanceProjectMetadata(instance, options),
         client.project.list(undefined, { signal }),
-        client.mcp.list({ location: requestLocation }, { ...requestLocationOptions(location), signal }),
+        getRootClient(instance.id).mcp.list({ location: requestLocation }, { ...requestLocationOptions(location), signal }),
       ])
 
       const currentProject = getInstanceMetadata(instance.id)?.project

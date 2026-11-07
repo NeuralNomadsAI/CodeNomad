@@ -252,6 +252,16 @@ own. `stores/integrations.ts` owns the production singleton and forwards `instan
 and workspace-stop notifications. The event relay projects only the two payload-free integration notifications,
 retaining the native Location for ownership routing and dropping plugin-authored envelope fields.
 
+Integration HTTP consumers resolve `backendOf(instanceId)` and send the raw workspace ID from
+`parseInstanceKey`; local requests retain their URL, query, headers and body. Catalogue, binding, catalog installation,
+offers, attach, detach and application installation share this routing. Missing backend authority fails closed.
+Each request captures its backend attachment before queueing or dispatch, combines it with caller cancellation,
+and checks revocation after headers and JSON reads. Store publication and reconciliation retain the captured
+generation. Connection suspension is scoped per backend and per instance; a disconnected backend's demanded
+Locations resume on its own reconnect/open. An admitted binding mutation retains exclusive admission until
+settlement; reconciliation requires its captured attachment to remain current. Revocation releases application-installation
+busy indicators immediately; an older completion can release only its own pending operation.
+
 `right-panel/integration-status-module.tsx` registers a native Status section per unambiguous integration with
 `plugin.declared` or `plugin.runtime` facts. Stable `integration:<id>` IDs follow catalog order after Plugins, with
 persisted hiding/order and keyboard Up/Down customization. Retained activation rules alone leave the entry in the
@@ -341,6 +351,10 @@ Commands:
   and `packages/ui/src/stores/integrations-store.test.ts` (event coalescing, no polling).
   `packages/ui/src/stores/integration-bindings-store.test.ts` checks shared exact-target demand, immediate authority
   revocation, generation fences, trailing reads, native/renderer disconnect suspension and captured mutation cleanup.
+  `packages/ui/src/lib/backend-integration-routing.test.ts` exercises the production HTTP consumers, shared stores,
+  catalog installation store, attachment and application-installation callbacks with two backend origins,
+  raw workspace IDs, missing owners, HTTP refusals, exact local request bytes, late headers/JSON, and replacement
+  generation pending ownership.
   `catalog-fixture.ts` builds conforming catalog entries and plugin snapshots; `catalog-pinned-fixture.ts` reads
   `fixtures/catalog-54d6e5d.json`, the published catalog of revision `54d6e5d`, checked against its Git blob ID.
 - `node --import tsx --test packages/server/src/opencode/integrations/docs-url.test.ts

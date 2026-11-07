@@ -30,6 +30,7 @@ export function createIntegrationBindingsStore(
   const connected = (entry: Entry) => !entry.signal?.aborted && !disconnectedBackends.has(parseInstanceKey(entry.target.instanceId).backendId) && !disconnected.has(entry.target.instanceId)
   const [snapshots, setSnapshots] = createSignal<ReadonlyMap<string, IntegrationBindingResponse>>(new Map())
   const [busy, setBusy] = createSignal<ReadonlySet<string>>(new Set())
+  const mutations = new Map<string, { signal?: AbortSignal }>()
   const publish = (id: string, value: IntegrationBindingResponse) => setSnapshots(current => new Map(current).set(id, value))
   const invalidate = (id: string, entry: Entry) => { entry.generation++; publish(id, UNKNOWN) }
   const revoke = (id: string, entry: Entry) => {
@@ -169,16 +170,24 @@ export function createIntegrationBindingsStore(
     /** An admitted mutation runs once; uncertain outcomes also reconcile its captured target, if still shown. */
     async run(target: IntegrationBindingTarget, mutation: () => Promise<void>): Promise<void> {
       const id = key(target)
-      if (busy().has(id)) return
-      setBusy(current => new Set(current).add(id))
       const entry = entries.get(id)
-      const signal = entry?.signal
+      const signal = clock.signal?.(target) ?? entry?.signal
+      if (signal?.aborted || mutations.has(id)) return
+      const owner = { signal }
+      mutations.set(id, owner)
+      setBusy(current => new Set(current).add(id))
+      const release = () => {
+        if (mutations.get(id) !== owner) return
+        mutations.delete(id)
+        setBusy(current => { const next = new Set(current); next.delete(id); return next })
+      }
       if (entry) invalidate(id, entry)
       try { await mutation() }
       finally {
-        setBusy(current => { const next = new Set(current); next.delete(id); return next })
+        const owned = mutations.get(id) === owner
+        release()
         const current = entries.get(id)
-        if (current && current === entry && current.signal === signal && !signal?.aborted) void reconcile(id, current, true)
+        if (owned && current && current === entry && current.signal === signal && !signal?.aborted) void reconcile(id, current, true)
       }
     },
   }

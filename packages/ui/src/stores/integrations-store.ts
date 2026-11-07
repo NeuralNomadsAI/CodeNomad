@@ -43,6 +43,8 @@ export function createIntegrationsStore(
   const clearTimer = clock.clearTimer ?? (timer => clearTimeout(timer as ReturnType<typeof setTimeout>))
   const [snapshots, setSnapshots] = createSignal<ReadonlyMap<string, IntegrationsSnapshot>>(new Map())
   const entries = new Map<string, Entry>()
+  const disconnected = new Set<string>()
+  const disconnectedBackends = new Set<string>()
   const timers = new Map<string, unknown>()
   const timerAuthorities = new Map<string, AbortSignal | undefined>()
   const key = (instanceId: string, directory: string) => `${instanceId}\0${directory}`
@@ -61,7 +63,7 @@ export function createIntegrationsStore(
     entry.authority = authority
     old?.controller.abort()
     const abort = () => {
-      if (entry.authority !== authority) return
+      if (entry.authority !== authority || entries.get(stateKey) !== entry) return
       entry.generation++
       const reading = entry.reading
       entry.reading = undefined
@@ -78,7 +80,7 @@ export function createIntegrationsStore(
   const refreshEntry = (stateKey: string, entry: Entry): Promise<void> => {
     if (entry.demand === 0) return Promise.resolve()
     const authority = bind(stateKey, entry)
-    if (authority?.aborted) return Promise.resolve()
+    if (authority?.aborted || disconnected.has(entry.instanceId) || disconnectedBackends.has(parseInstanceKey(entry.instanceId).backendId)) return Promise.resolve()
     if (entry.reading) {
       entry.reading.dirty = true
       return entry.reading.promise
@@ -142,15 +144,30 @@ export function createIntegrationsStore(
         released = true
         tracked.demand -= 1
         if (tracked.demand > 0) return
-        tracked.reading?.controller.abort()
+        if (entries.get(stateKey) === tracked) entries.delete(stateKey)
+        const reading = tracked.reading
         tracked.releaseAuthority?.()
         tracked.reading = undefined
-        if (entries.get(stateKey) === tracked) entries.delete(stateKey)
+        reading?.controller.abort()
         if (![...entries.values()].some(value => value.instanceId === instanceId && value.demand)) cancelTimer(instanceId)
       }
     },
     refreshDemanded,
     invalidate,
+    connection(instanceId: string | undefined, connected: boolean, backendId?: string): void {
+      const flags = instanceId === undefined ? disconnectedBackends : disconnected
+      const id = instanceId ?? backendId!
+      if (connected) { flags.delete(id); return }
+      flags.add(id)
+      invalidate(instanceId, backendId)
+      for (const entry of entries.values()) {
+        if (instanceId !== undefined ? entry.instanceId !== instanceId : parseInstanceKey(entry.instanceId).backendId !== backendId) continue
+        cancelTimer(entry.instanceId)
+        const reading = entry.reading
+        entry.reading = undefined
+        reading?.controller.abort()
+      }
+    },
     /** A native event of `instanceId`: schedules one coalesced read of its demanded Locations when it may change them. */
     applyEvent(instanceId: string, type: string): void {
       const authority = clock.signal?.(instanceId)
@@ -167,12 +184,13 @@ export function createIntegrationsStore(
       timerAuthorities.set(instanceId, authority)
     },
     clearInstance(instanceId: string): void {
+      disconnected.delete(instanceId)
       cancelTimer(instanceId)
       for (const [stateKey, entry] of [...entries]) {
         if (entry.instanceId !== instanceId) continue
-        entry.reading?.controller.abort()
-        entry.releaseAuthority?.()
         entries.delete(stateKey)
+        entry.releaseAuthority?.()
+        entry.reading?.controller.abort()
       }
       setSnapshots(current => new Map([...current].filter(([stateKey]) => !stateKey.startsWith(`${instanceId}\0`))))
     },

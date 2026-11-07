@@ -24,6 +24,7 @@ export function createIntegrationHostInstallation(props: {
   let disposed = false
   let focusGeneration = 0
   let target: { id: string; identity: string; epoch: string; signature: string } | undefined
+  let pendingOwner: object | undefined
   const cancel = () => { confirmation?.abort(); confirmation = undefined; target = undefined }
   createEffect(() => {
     const owner = identity(), generation = epoch(), entries = props.entries()
@@ -56,6 +57,14 @@ export function createIntegrationHostInstallation(props: {
       && epoch() === captured.epoch && signature(id) === captured.signature
     confirmation = undefined; target = undefined
     if (!current) return
+    const pendingRequest = {}
+    pendingOwner = pendingRequest
+    const releasePending = () => {
+      if (pendingOwner !== pendingRequest) return
+      pendingOwner = undefined
+      if (!disposed) setPending(false)
+    }
+    signal.addEventListener("abort", releasePending, { once: true })
     setPending(true)
     try {
       // Once admitted, cancellation/navigation cannot promise rollback. Never replay this request.
@@ -66,7 +75,11 @@ export function createIntegrationHostInstallation(props: {
     } catch (error) {
       if (operation.current()) showToastNotification({ category: "opencode", variant: "error", message: t(
         error instanceof HttpResponseError && error.code === "unsupported" ? "integrations.installHost.unsupported" : "integrations.installHost.error") })
-    } finally { if (!disposed) setPending(false); if (operation.current()) void integrations.refreshDemanded(instanceId) }
+    } finally {
+      signal.removeEventListener("abort", releasePending)
+      releasePending()
+      if (operation.current()) void integrations.refreshDemanded(instanceId)
+    }
   }
   return { pending, action: (id: string) => !pending() ? eligible(id)?.status?.host?.action : undefined, open }
 }

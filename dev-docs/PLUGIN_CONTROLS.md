@@ -89,6 +89,13 @@ activation is one narrow, authenticated configuration-file mutation.
 
 ## Authority and precedence
 
+UI plugin controls and source requests select `backendOf(instanceId)` and send
+the raw workspace ID from `parseInstanceKey`. Native package actions, MCP reads
+and toggles, and skill discovery use the owning backend's root proxy client.
+Captured attachment signals fence queued work, late publications and dependent
+refreshes; completed operations release their own busy state. Missing owners and
+backend errors fail closed, while local requests retain their existing wire format.
+
 Every read and mutation starts with the workspace's acquired, authenticated
 OpenCode connection and an ownership check for the complete native location.
 `config.get()` is the authority for the daemon's discovered paths:
@@ -266,6 +273,9 @@ guessed paths.
 
 ## Validation
 
+- Backend-owned plugin controls/sources, native package actions, MCP reads/toggles
+  and skill discovery, missing owners, refusal handling, local wire parity and
+  attachment revocation: `packages/ui/src/lib/backend-plugin-routing.test.ts`.
 - JSONC preservation, malformed input, optimistic conflict, and atomic replace:
   `plugin-control-document.test.ts`
 - spec validation, package identity, append and exact removal (comments, CRLF,

@@ -7,7 +7,8 @@ import type {
 } from "../../../server/src/api-types"
 import type { IntegrationView } from "../../../server/src/integration-types"
 import type { PluginSourceAddRequest, PluginSourceMutationResponse, PluginSourceRemoveRequest } from "../../../server/src/plugin-source-types"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
+import { parseInstanceKey } from "../lib/backend-identity"
 import { installIntegration } from "../lib/integrations-api"
 import { integrations } from "./integrations"
 import { pluginControlsCache } from "./plugin-controls"
@@ -38,7 +39,7 @@ const locationKey = (instanceId: string, location: PluginControlLocation) => JSO
 
 export class PluginSourcesStore {
   private readonly added = createSignal<readonly Tracked[]>([])
-  private readonly removing = createSignal<ReadonlySet<string>>(new Set())
+  private readonly removing = createSignal<ReadonlyMap<string, { signal?: AbortSignal }>>(new Map())
   // Bumped when a pending window closes, so derived rows change state without other events.
   private readonly tick = createSignal(0)
 
@@ -115,27 +116,34 @@ export class PluginSourcesStore {
     signal?.throwIfAborted()
     if (!source.expectedRevision) throw new Error("Plugin source confirmation is unavailable")
     const identity = removalKey(instanceId, location, source)
-    if (this.removing[0]().has(identity)) return
-    this.removing[1](previous => new Set(previous).add(identity))
+    const pending = this.removing[0]().get(identity)
+    if (pending && pending.signal === signal) return
+    const attempt = { signal }
+    this.removing[1](previous => new Map(previous).set(identity, attempt))
     try {
       signal?.throwIfAborted()
       const response = await this.api.removePluginSource(instanceId, {
         location: { directory: location.directory }, scope: source.scope, target: source.target, entryIndex: source.entryIndex,
         expectedRevision: source.expectedRevision,
       })
+      if (signal?.aborted) return
       if (response?.scope !== source.scope || response.spec !== source.target || response.reloadPending !== true) throw new Error("Plugin source removal could not be confirmed")
     } finally {
       // An explicit removal supersedes this view's Installing hint even when its response is
       // lost. The reconciled configured/runtime inventory determines whether a row still exists.
       const key = locationKey(instanceId, location)
       if (!signal?.aborted) this.added[1](previous => previous.filter(item => !(item.submitted && item.key === key && item.spec === source.target && item.scope === source.scope)))
-      this.removing[1](previous => { const next = new Set(previous); next.delete(identity); return next })
+      this.removing[1](previous => {
+        if (previous.get(identity) !== attempt) return previous
+        const next = new Map(previous); next.delete(identity); return next
+      })
       if (!signal?.aborted) this.invalidate(instanceId)
     }
   }
 
   isRemoving(instanceId: string, location: PluginControlLocation, source: PluginConfiguredSource): boolean {
-    return this.removing[0]().has(removalKey(instanceId, location, source))
+    const pending = this.removing[0]().get(removalKey(instanceId, location, source))
+    return Boolean(pending && pending.signal === this.signalForInstance?.(instanceId) && !pending.signal?.aborted)
   }
 
   /** Specs added from this location that are still waiting for the inventory, newest last. */
@@ -191,8 +199,8 @@ function samePath(left: string, right: string): boolean {
 }
 
 export const pluginSourcesStore = new PluginSourcesStore({
-  addPluginSource: (instanceId, payload) => serverApi.addPluginSource(instanceId, payload),
-  removePluginSource: (instanceId, payload) => serverApi.removePluginSource(instanceId, payload),
+  addPluginSource: (instanceId, payload) => backendOf(instanceId).api.addPluginSource(parseInstanceKey(instanceId).workspaceId, payload),
+  removePluginSource: (instanceId, payload) => backendOf(instanceId).api.removePluginSource(parseInstanceKey(instanceId).workspaceId, payload),
   installIntegration: (instanceId, directory, integrationId, scope) => installIntegration(instanceId, directory, integrationId, scope),
 }, instanceId => pluginControlsCache.invalidateInstance(instanceId), undefined, undefined,
 instanceId => { void integrations.refreshDemanded(instanceId) }, id => captureBackendOperation(id).signal)

@@ -3,19 +3,29 @@ import type {
 } from "../../../server/src/api-types"
 import { localHttp } from "./auth-recovery"
 import { resolveBackendUrl, type BackendHttp } from "./backend-transport"
+import { captureBackendOperation } from "./backend-operation"
+import { parseInstanceKey } from "./backend-identity"
 import type { AssetTarget, AssetsResult, AssetReadResult } from "../../../server/src/opencode/session-pruning/assets-contract"
 import type { GenerationTarget, ImagesResult } from "../../../server/src/opencode/session-pruning/assets-gallery-contract"
 import type { PanelConversationStatus, PanelImagesStatus, PanelPreferencesSetStatus } from "../../../server/src/panel-extensions/contract"
 import type { ImagesConversationRequest, ImagesConversationResponse } from "../../../server/src/server/routes/images-conversation-contract"
 
 /** The panel extension routes of one backend. */
-export function createPanelExtensionsApi(http: Pick<BackendHttp, "url" | "fetch">) {
+export function createPanelExtensionsApi(http: Pick<BackendHttp, "url" | "fetch">, operation?: ReturnType<typeof captureBackendOperation>) {
   async function request<T>(suffix: string, init?: RequestInit): Promise<T> {
+    const signal = operation ? (init?.signal ? AbortSignal.any([operation.signal, init.signal]) : operation.signal) : init?.signal
+    const assertCurrent = () => {
+      if (signal?.aborted || (operation && !operation.current())) throw new DOMException("Backend unavailable", "AbortError")
+    }
+    assertCurrent()
     const response = await http.fetch(http.url(`/api/panel-extensions${suffix}`), {
-      ...init, headers: { "Content-Type": "application/json" }, credentials: "include",
+      ...init, signal, headers: { "Content-Type": "application/json" }, credentials: "include",
     })
+    assertCurrent()
     if (!response.ok) throw new Error("Panel extension request failed")
-    return response.json()
+    const result = await response.json()
+    assertCurrent()
+    return result
   }
   /** One API 4 method of one exact package; the host supplies instance and digest. */
   const api4 = <T>(id: string, method: string, body: Record<string, unknown>, signal: AbortSignal) =>
@@ -77,3 +87,29 @@ const localPanelExtensions = createPanelExtensionsApi({
 })
 export const panelExtensionsApi4 = localPanelExtensions.panelExtensionsApi4
 export const panelExtensionsApi = localPanelExtensions.panelExtensionsApi
+
+/** Load the backend adapter on contextual demand, keeping the standalone local wire inert. */
+async function contextualApi(instanceId: string) {
+  const operation = captureBackendOperation(instanceId)
+  const { panelExtensionsFor } = await import("./panel-extensions-backend")
+  if (!operation.current()) throw new DOMException("Backend unavailable", "AbortError")
+  return panelExtensionsFor(instanceId, operation.signal)
+}
+
+// Contextual methods retain their public host signatures; only the HTTP boundary sees raw workspace ids.
+for (const name of ["assets", "assetRead", "workItems", "workItemUrl", "panel"] as const) {
+  const routed = async (instanceId: string, ...args: unknown[]) => {
+    const api = (await contextualApi(instanceId)).panelExtensionsApi
+    const call = api[name] as (...args: unknown[]) => unknown
+    return call(parseInstanceKey(instanceId).workspaceId, ...args)
+  }
+  Object.assign(panelExtensionsApi, { [name]: routed })
+}
+for (const name of Object.keys(panelExtensionsApi4) as Array<keyof typeof panelExtensionsApi4>) {
+  const routed = async (authority: { instanceId: string; id: string; digest: string }, ...args: unknown[]) => {
+    const api = (await contextualApi(authority.instanceId)).panelExtensionsApi4
+    const call = api[name] as (...args: unknown[]) => unknown
+    return call({ ...authority, instanceId: parseInstanceKey(authority.instanceId).workspaceId }, ...args)
+  }
+  Object.assign(panelExtensionsApi4, { [name]: routed })
+}

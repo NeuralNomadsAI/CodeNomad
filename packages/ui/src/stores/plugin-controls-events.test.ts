@@ -2,7 +2,6 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { PluginControlsSnapshot } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
-import { pluginControlsCache } from "./plugin-controls"
 
 test("renderer SSE reconnect invalidates every cached worktree without reading hidden surfaces", async (t) => {
   const sources: Array<{ onopen: (() => void) | null; close: () => void; closed: boolean }> = []
@@ -23,7 +22,9 @@ test("renderer SSE reconnect invalidates every cached worktree without reading h
     assert.deepEqual(Object.getOwnPropertyDescriptor(globalThis, "window"), windowDescriptor)
   })
   Object.defineProperty(globalThis, "window", { configurable: true, value: {} })
+  const { pluginControlsCache } = await import("./plugin-controls")
   const { serverEvents } = await import("../lib/server-events")
+  t.after(() => serverEvents.dispose())
   await import("./plugin-controls-events")
   await tick()
   assert.equal(sources.length, 1, "the renderer auto-connects through the mocked browser transport")

@@ -35,7 +35,7 @@ const STATUS_EVENTS = new Set(["agent.updated", "skill.updated", "config.updated
   "integration.updated", "credential.updated", "credential.switched"])
 
 // At most one prefill a second per extension in this window, counted when accepted.
-const lastPrefill = new Map<string, number>()
+const prefillByAttachment = new WeakMap<AbortSignal, Map<string, number>>()
 
 export interface Api4Host {
   /** The displayed conversation's composer. */
@@ -177,6 +177,9 @@ export function useApi4Channel(props: {
     const api = props.host.promptInputApi()
     if (!session || !api) return { result: "no-session" }
     const now = Date.now()
+    const attachment = serverEvents.signalForInstance(props.instanceId)
+    let lastPrefill = prefillByAttachment.get(attachment)
+    if (!lastPrefill) prefillByAttachment.set(attachment, lastPrefill = new Map())
     if (api.getMode() === "shell" || now - (lastPrefill.get(props.id) ?? -Infinity) < PREFILL_INTERVAL_MS) return { result: "busy" }
     lastPrefill.set(props.id, now)
     if (prefillMarkers(text, refs.length) === "invalid") return { result: "invalid" }

@@ -6,7 +6,6 @@ import { BackendEvents, scopeBackendEvent } from "./backend-events"
 import { backends, createBackendClient, localBackend } from "./backend-client"
 import { backendEvents, serverEvents } from "./server-events"
 import { getSseManager, sseManager } from "./sse-manager"
-import { serverApi } from "./api-client"
 import { integrations, integrationBindings, integrationEpoch } from "../stores/integrations"
 import { pluginControlsCache } from "../stores/plugin-controls"
 import "../stores/plugin-controls-events"
@@ -38,7 +37,7 @@ function renderer(t: TestContext) {
   })
 }
 
-function backend(t: TestContext, id: string) {
+function backend(t: TestContext, id: string, read?: (input: RequestInfo | URL) => Response) {
   const sources: FakeEventSource[] = [], requests: string[] = []
   let authenticated = true, unauthorized = false
   const client = createBackendClient({ id, baseUrl: `https://${id}.invalid`,
@@ -46,7 +45,7 @@ function backend(t: TestContext, id: string) {
       const path = new URL(String(input)).pathname
       requests.push(path)
       return path === "/api/auth/status" ? Response.json({ authenticated })
-        : unauthorized ? new Response("{}", { status: 401 }) : Response.json({})
+        : unauthorized ? new Response("{}", { status: 401 }) : read?.(input) ?? Response.json({})
     },
     eventSource: () => {
       const source = new FakeEventSource()
@@ -246,21 +245,24 @@ test("retry backoff, detach and current-view filtering stay source-owned", async
 
 test("production reconnect subscribers revoke and reread only their backend's demanded snapshots", async t => {
   renderer(t)
-  const a = backend(t, "offers_a"), b = backend(t, "offers_b")
   const ids = ["offers_a~ws", "offers_b~ws"], location = { directory: "/same" }
   const targets = ids.map(instanceId => ({ instanceId, directory: "/same", sessionID: "session", integrationId: "fixture" }))
   const reads: string[] = []
-  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+  const read = (id: string) => (input: RequestInfo | URL) => {
     const url = String(input)
-    reads.push(url)
+    reads.push(`${id}:${url}`)
     return Response.json(url.includes("/binding?") ? { state: "attached", label: "Scene" }
       : { location, catalog: { state: "fresh" }, integrations: [], ambiguousSources: [] })
-  })
-  t.mock.method(serverApi, "getPluginControls", async (id: string, location: { directory: string }) => {
-    reads.push(`plugin:${id}`)
-    return { location, runtime: [], configured: { rules: [], sources: [] }, targets: [], controls: [] }
-  })
+  }
+  const a = backend(t, "offers_a", read(ids[0])), b = backend(t, "offers_b", read(ids[1]))
   for (const owner of [a, b]) {
+    const registry = backends as Map<string, typeof owner.client>
+    registry.set(owner.client.id, owner.client)
+    t.after(() => registry.delete(owner.client.id))
+    t.mock.method(owner.client.api, "getPluginControls", async (id: string, location: { directory: string }) => {
+      reads.push(`plugin:${owner.client.id}~${id}`)
+      return { location, runtime: [], configured: { rules: [], sources: [] }, targets: [], controls: [] }
+    })
     t.after(backendEvents.attach(owner.client.id, owner.client.events))
     owner.client.events.start()
   }

@@ -2,12 +2,15 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount }
 import { Download, FileArchive, RefreshCw, Trash2 } from "lucide-solid"
 import type { PanelExtensionManifest, PanelExtensionCatalogEntry } from "../../../../server/src/api-types"
 import { PANEL_EXTENSION_API4_PERMISSIONS, PANEL_EXTENSION_LIMITS } from "../../../../server/src/panel-extensions/contract"
-import { panelExtensionsApi } from "../../lib/panel-extensions-api"
 import { useI18n } from "../../lib/i18n"
 import type { PanelExtensionsController } from "./use-panel-extensions"
 import { ExtensionName } from "./extension-name"
 
 export function ExtensionManager(props: { controller: PanelExtensionsController }) {
+  return <Show keyed when={props.controller.lifetime()}>{_lifetime => <Manager controller={props.controller} />}</Show>
+}
+
+function Manager(props: { controller: PanelExtensionsController }) {
   const { t } = useI18n()
   const [busy, setBusy] = createSignal(false), [failed, setFailed] = createSignal(false), [acknowledged, setAcknowledged] = createSignal(false)
   const [preview, setPreview] = createSignal<{ manifest: PanelExtensionManifest; digest: string;
@@ -23,11 +26,13 @@ export function ExtensionManager(props: { controller: PanelExtensionsController 
     if (disposed) return
     controller?.abort(); controller = new AbortController()
     const current = ++generation
+    const runtime = props.controller.captureOperation()
     setLoading(true); setCatalogFailed(false)
     try {
-      const result = await panelExtensionsApi.catalog(refresh, controller.signal)
-      if (current === generation) setCatalog(result.entries)
-    } catch { if (current === generation) { setCatalog([]); setCatalogFailed(true) } }
+      if (!runtime.current()) return
+      const result = await runtime.api().catalog(refresh, controller.signal)
+      if (runtime.current() && current === generation) setCatalog(result.entries)
+    } catch { if (runtime.current() && current === generation) { setCatalog([]); setCatalogFailed(true) } }
     finally { if (current === generation) setLoading(false) }
   }
   onMount(() => void load())
@@ -45,19 +50,19 @@ export function ExtensionManager(props: { controller: PanelExtensionsController 
     if (pending && !props.controller.entries().some(entry => entry.manifest.id === pending.id && entry.digest === pending.digest)) setRemoval(undefined)
   })
   let picker!: HTMLInputElement
-  const run = async (operation: () => Promise<unknown>) => {
+  const run = async (operation: (runtime: ReturnType<PanelExtensionsController["captureOperation"]>) => Promise<unknown>) => {
     if (disposed || busy()) return
     const runtime = props.controller.captureOperation()
+    if (!runtime.current()) return
     setBusy(true); setFailed(false)
-    // Package administration is client-owned; only its runtime reread follows
-    // the originating attachment. Never replay an admitted install/removal.
-    try { await operation(); if (!disposed && runtime.current()) await props.controller.refresh() } catch { if (!disposed) setFailed(true) }
+    // Never replay an admitted install/removal; presentation follows its captured owner.
+    try { await operation(runtime); if (!disposed && runtime.current()) await props.controller.refresh() } catch { if (!disposed && runtime.current()) setFailed(true) }
     finally { if (!disposed) setBusy(false) }
   }
   const inspect = async (file: File | undefined) => {
     if (!file || disposed || busy()) return
     setPreview(undefined); setAcknowledged(false)
-    await run(async () => {
+    await run(async runtime => {
       if (file.size > PANEL_EXTENSION_LIMITS.archiveBytes) throw new Error("limit")
       const archive = await new Promise<string>((resolve, reject) => {
         const current = reader = new FileReader()
@@ -66,38 +71,38 @@ export function ExtensionManager(props: { controller: PanelExtensionsController 
         current.onabort = () => { if (reader === current) reader = undefined; reject(new DOMException("View closed", "AbortError")) }
         current.readAsDataURL(file)
       })
-      if (disposed) return
-      const result = await panelExtensionsApi.inspect(archive)
+      if (disposed || !runtime.current()) return
+      const result = await runtime.api().inspect(archive)
       const previousDigest = props.controller.entries().find(entry => entry.manifest.id === result.manifest.id)?.digest
-      if (!disposed) setPreview({ ...result, source: { kind: "zip", archive }, previousDigest })
+      if (!disposed && runtime.current()) setPreview({ ...result, source: { kind: "zip", archive }, previousDigest })
     })
   }
   const inspectCatalog = (entry: PanelExtensionCatalogEntry) => {
     if (disposed || busy()) return
     setPreview(undefined); setAcknowledged(false)
-    void run(async () => {
-      if (disposed) return
+    void run(async runtime => {
+      if (disposed || !runtime.current()) return
       const previousDigest = props.controller.entries().find(value => value.manifest.id === entry.manifest.id)?.digest
-      const result = await panelExtensionsApi.inspectCatalog(entry.manifest.id, entry.digest)
-      if (!disposed) setPreview({ ...result, source: { kind: "catalog" }, previousDigest })
+      const result = await runtime.api().inspectCatalog(entry.manifest.id, entry.digest)
+      if (!disposed && runtime.current()) setPreview({ ...result, source: { kind: "catalog" }, previousDigest })
     })
   }
   const remove = () => {
     const pending = removal()
     if (!pending || !props.controller.entries().some(entry => entry.manifest.id === pending.id && entry.digest === pending.digest)) return
-    return run(async () => {
-      await panelExtensionsApi.remove(pending.id, pending.digest)
-      if (!disposed && removal() === pending) setRemoval(undefined)
+    return run(async runtime => {
+      await runtime.api().remove(pending.id, pending.digest)
+      if (!disposed && runtime.current() && removal() === pending) setRemoval(undefined)
     })
   }
   const install = () => {
     const selected = preview()
     if (!selected || !acknowledged() || !props.controller.verified()) return
-    return run(async () => {
+    return run(async runtime => {
       const source = selected.source
-      if (source.kind === "zip") await panelExtensionsApi.install(source.archive, selected.digest, selected.previousDigest)
-      else await panelExtensionsApi.installCatalog(selected.manifest.id, selected.digest, selected.previousDigest)
-      if (!disposed && preview() === selected) { setPreview(undefined); setQuery("") }
+      if (source.kind === "zip") await runtime.api().install(source.archive, selected.digest, selected.previousDigest)
+      else await runtime.api().installCatalog(selected.manifest.id, selected.digest, selected.previousDigest)
+      if (!disposed && runtime.current() && preview() === selected) { setPreview(undefined); setQuery("") }
     })
   }
   return <section class="panel-extension-manager window-shell" aria-label={t("panelExtensions.title")} aria-busy={loading()}>
