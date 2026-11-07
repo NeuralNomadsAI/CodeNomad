@@ -4,6 +4,8 @@ Settings rows and actions, the native Preferences window and its project context
 
 ## Agent conventions
 
+- Stats resolves `backendOf(instanceId).api` for the mounted attachment and sends its raw workspace ID at the HTTP boundary. Attachment changes clear the display and cancel owned reads; responses recheck their captured authority before publishing. Native generation/status duplicates coalesce. The local instance key and request shape stay unchanged. Consumer regressions live in `tests/browser/backend-usage-routing.test.ts`.
+
 - Settings → OpenCode's `OpenCodeLoginStartCard` (stable row anchor `#opencode-login-start`) presents **Start OpenCode at startup** as one lone-setting switch with a one-sentence **i** tip saying it starts when the user session opens; the switch is its state. It reads `GET /api/opencode/login-start` on mount and reconnect (the latest request wins) and changes it with `POST`, the switch disabled until the server answers. A refused change re-reads the state and shows one fixed, localized error under the row (`failed` or `unsupported-binary`); a failed read adds **Try again**; `unavailable` disables the switch with a caption. Runtime, artifacts and the replacement of the former supervision are in [OPENCODE_RUNTIME_SETUP.md](OPENCODE_RUNTIME_SETUP.md#start-opencode-at-login). Browser regression: `tests/browser/opencode-login-start.test.ts`.
 
 - General offers `autoExpandActiveSubsessions` (default true): a new working/compacting/input chevron state opens visible branches belonging to the selected conversation, including its descendants at every depth (`dev-docs/UI_SHELL.md`). Disabling it leaves activity indicators and explicit navigation available; the preference is stored with the shared UI settings.

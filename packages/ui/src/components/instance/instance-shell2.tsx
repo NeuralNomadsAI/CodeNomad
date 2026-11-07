@@ -89,7 +89,7 @@ import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
 import { isPermissionAutoAcceptEnabled } from "../../stores/permission-auto-accept"
 import { readClientLayoutValue, writeClientLayoutValue } from "../../stores/client-state"
 import { runtimeEnv } from "../../lib/runtime-env"
-import { getServerMeta, previewsUnavailable } from "../../lib/server-meta"
+import { createProjectServerMeta } from "../../lib/project-server-meta"
 import { useInterruptionViewport } from "./shell/useInterruptionViewport"
 import { projectScope } from "../../lib/backend-identity"
 
@@ -288,7 +288,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   })
 
   // Remote Control clients hide the preview entry points while their host keeps previews off.
-  onMount(() => { void getServerMeta().catch(() => undefined) })
+  const { previewsUnavailable } = createProjectServerMeta(() => props.instance.id)
 
   onMount(() => {
     if (typeof window === "undefined") return
@@ -463,11 +463,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   async function handleOpenPreview() {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return
+    const instanceId = props.instance.id, scope = projectScope(props.instance)
+    const operation = captureBackendOperation(instanceId, undefined, () => props.instance.id === instanceId && activeSessionIdForInstance() === sessionId)
     try {
-      const restored = await restoreSessionPreview(sessionId, projectScope(props.instance))
+      if (!operation.current()) return
+      const restored = await restoreSessionPreview(sessionId, scope, instanceId)
+      if (!operation.current()) return
       if (restored) showSessionPreview(restored.storageKey)
-      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, projectScope(props.instance))
+      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, scope, instanceId)
     } catch (error) {
+      if (!operation.current()) return
+      if (error instanceof DOMException && error.name === "AbortError") return
       showAlertDialog(t("sessionPreview.open.title"), {
         title: t("sessionPreview.open.title"),
         detail: error instanceof Error ? error.message : String(error),

@@ -4,7 +4,8 @@ import { Plus, Pencil, Trash2, LockKeyhole } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import { backendEvents as serverEvents } from "../../lib/server-events"
 import { requestLocationOptions, toRequestLocation } from "../../stores/request-locations"
-import { serverApi } from "../../lib/api-client"
+import { backendOf } from "../../lib/backend-client"
+import { parseInstanceKey } from "../../lib/backend-identity"
 import { captureBackendOperation } from "../../lib/backend-operation"
 import { SettingsSwitch } from "../settings/settings-switch"
 import type { ProviderAccountsSnapshot } from "../../../../server/src/api-types"
@@ -29,16 +30,25 @@ export function ProviderAccounts(props: {
   let refresh = () => {}
   let run: (id: string, action: "activate" | "remove" | "rename", label?: string) => Promise<boolean> = async () => false
   let scope: string | undefined
+  let scopeAttachment: AbortSignal | undefined
   createEffect(() => {
     const client = props.client, instanceId = props.instanceId, integrationID = props.integrationId, location = { ...props.location }
     let disposed = false, reading = false, writing = false, trailing = false
     const controller = new AbortController()
+    const attachment = serverEvents.signalForInstance(instanceId)
     const operation = captureBackendOperation(instanceId, controller.signal, () => !disposed)
     // Cache-first: keep the catalog snapshot while the authoritative read
     // revalidates behind it.
     const identity = JSON.stringify([instanceId, integrationID, location.directory])
-    if (scope !== identity) { scope = identity; setConnections(props.initialConnections ?? []); setSelection(emptySnapshot()) }
+    if (scope !== identity || scopeAttachment !== attachment) {
+      scope = identity; scopeAttachment = attachment
+      setConnections(operation.current() ? props.initialConnections ?? [] : []); setSelection(emptySnapshot())
+    }
     setError(false); setBusy(false)
+    if (!operation.current()) return
+    let api: ReturnType<typeof backendOf>["api"]
+    try { api = backendOf(instanceId).api } catch { setConnections([]); setSelection(emptySnapshot()); setError(true); return }
+    const { workspaceId } = parseInstanceKey(instanceId)
     const read = async () => {
       if (!operation.current()) return
       if (reading || writing) { trailing = true; return }
@@ -52,7 +62,7 @@ export function ProviderAccounts(props: {
           // The server decides which integrations support automatic selection;
           // only saved credentials can carry logins or become candidates.
           const snapshot = current.some(item => item.type === "credential")
-            ? await serverApi.getProviderAccounts(instanceId, integrationID, location.directory, operation.signal).catch(() => emptySnapshot())
+            ? await api.getProviderAccounts(workspaceId, integrationID, location.directory, operation.signal).catch(() => emptySnapshot())
             : emptySnapshot()
           if (operation.current() && !trailing) {
             setConnections(current)
@@ -70,7 +80,7 @@ export function ProviderAccounts(props: {
       writing = true; setBusy(true); setError(false)
       let failed = false
       try {
-        const snapshot = await serverApi.setProviderAccountSelection(instanceId, integrationID, location.directory, enabled, operation.signal)
+        const snapshot = await api.setProviderAccountSelection(workspaceId, integrationID, location.directory, enabled, operation.signal)
         if (operation.current()) setSelection(snapshot)
       } catch { failed = true }
       finally { writing = false }
@@ -100,8 +110,13 @@ export function ProviderAccounts(props: {
       if (payload.type === "instance.event" && payload.instanceId === instanceId
         && ["integration.updated", "credential.updated", "credential.switched"].includes(payload.event.type)) refresh()
     })
+    let connectionStatus: string | undefined
     const status = serverEvents.on("instance.eventStatus", payload => {
-      if (payload.type === "instance.eventStatus" && payload.instanceId === instanceId && payload.status === "connected") refresh()
+      if (payload.type !== "instance.eventStatus" || payload.instanceId !== instanceId) return
+      const key = `${payload.status}:${payload.generation}`
+      if (key === connectionStatus) return
+      connectionStatus = key
+      if (payload.status === "connected") refresh()
     })
     const reconnect = serverEvents.forInstance(() => instanceId).onOpen(() => refresh())
     const policy = serverEvents.forInstance(() => instanceId).on("storage.configChanged", payload => {

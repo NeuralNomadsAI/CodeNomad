@@ -14,19 +14,17 @@ import {
 import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
 import { HiddenTextNotice, createTextWindow } from "./hidden-text"
 import { isLoopbackHttpUrl } from "./browser-frame-security"
-import { messageImageCandidates, resolveLocalImages } from "../lib/markdown-local-images"
+import { matchLocalImage, messageImageCandidates, resolveLocalImages } from "../lib/markdown-local-images"
+import { createMediaSource } from "../lib/media-source"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { openSessionPreview } from "../stores/session-previews"
 import { instances } from "../stores/instances"
 import { showAlertDialog } from "../stores/alerts"
-import { previewsUnavailable, previewsAvailabilityResolved, getServerMeta } from "../lib/server-meta"
+import { createProjectServerMeta } from "../lib/project-server-meta"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { projectScope } from "../lib/backend-identity"
 
 const log = getLogger("session")
-
-// One session-bound Markdown instance asks for the server meta; the answer
-// decides whether loopback links may open the web preview on this client.
-let loopbackPreviewMetaRequested = false
 
 type MarkdownModule = typeof import("../lib/markdown")
 
@@ -144,7 +142,10 @@ export function Markdown(props: MarkdownProps) {
   // the session; failures surface through the shared alert dialog.
   const openLoopbackPreview = (instanceId: string, sessionId: string, url: string) => {
     const instance = instances().get(instanceId)
-    void openSessionPreview(sessionId, url, instance ? projectScope(instance) : "").catch((error) => {
+    if (!instance) return
+    const operation = captureBackendOperation(instanceId)
+    void openSessionPreview(sessionId, url, projectScope(instance), instanceId).catch((error) => {
+      if (!operation.current()) return
       showAlertDialog(t("sessionPreview.open.title"), {
         title: t("sessionPreview.open.title"),
         detail: error instanceof Error ? error.message : String(error),
@@ -158,13 +159,8 @@ export function Markdown(props: MarkdownProps) {
   // off the default false would otherwise open a dead preview before the
   // server meta answers. Other callers (update checks, settings) usually
   // resolve the meta earlier.
+  const { previewsUnavailable, previewsAvailabilityResolved } = createProjectServerMeta(() => props.sessionId ? props.instanceId : undefined)
   const loopbackLinksOpenPreview = () => previewsAvailabilityResolved() && !previewsUnavailable()
-  if (props.instanceId && props.sessionId && !previewsAvailabilityResolved() && !loopbackPreviewMetaRequested) {
-    loopbackPreviewMetaRequested = true
-    void getServerMeta().catch(() => {
-      loopbackPreviewMetaRequested = false
-    })
-  }
 
   const [html, setHtml] = createSignal("")
   // Whether `html` is the Markdown render rather than its plain-text fallback. The
@@ -439,9 +435,23 @@ export function Markdown(props: MarkdownProps) {
     if (!instanceId || !sessionId || !html().includes("data-local-image")) return
     const store = messageStoreBus.getOrCreate(instanceId)
     const candidates = [...store.getSessionMessageIds(sessionId)].reverse()
-      .flatMap(id => { const message = store.getMessage(id); return message ? messageImageCandidates(message) : [] })
-    Promise.resolve().then(() => {
-      if (!disposed && containerRef) resolveLocalImages(containerRef, candidates)
+      .flatMap(id => { const message = store.getMessage(id); return message ? messageImageCandidates(message, true) : [] })
+    const labels = document.createElement("div")
+    labels.innerHTML = html()
+    const shown = new Set([...labels.querySelectorAll<HTMLElement>("[data-local-image]")].map(element =>
+      matchLocalImage(candidates, element.dataset.localImage ?? "", element.dataset.localImageExact === undefined)))
+    const visibleCandidates = candidates.filter(candidate => shown.has(candidate.source))
+    const sources = visibleCandidates.map(candidate => createMediaSource(() => instanceId, () => candidate.source))
+    let active = true
+    onCleanup(() => { active = false })
+    createEffect(() => {
+      const resolved = visibleCandidates.flatMap((candidate, index) => {
+        const source = sources[index]()
+        return source ? [{ paths: candidate.paths, source }] : []
+      })
+      Promise.resolve().then(() => {
+        if (active && !disposed && containerRef) resolveLocalImages(containerRef, resolved, sources.some(source => source.restricted()))
+      })
     })
   })
 

@@ -90,6 +90,7 @@ import {
   openSidecarTab,
 } from "./stores/sidecars"
 import { projectScope, parseInstanceKey, backendIdOf } from "./lib/backend-identity"
+import { captureBackendOperation } from "./lib/backend-operation"
 import {
   activeAppTab,
   activeAppTabId,
@@ -271,10 +272,12 @@ const App: Component = () => {
       }
     }, 30_000)
     const openRequestedPreview = async (sessionID: string, url: string, requestID: string) => {
-      const findOwners = () => [...instances().values()].filter((instance) => getSessions(instance.id).some((session) => session.id === sessionID))
+      // Host-native requests carry a session id from the local backend only.
+      const localInstances = () => [...instances().values()].filter((instance) => parseInstanceKey(instance.id).backendId === "local")
+      const findOwners = () => localInstances().filter((instance) => getSessions(instance.id).some((session) => session.id === sessionID))
       let owners = findOwners()
       if (owners.length === 0) {
-        await Promise.all([...instances().values()].filter((instance) => instance.client).map((instance) => fetchSessions(instance.id, { reset: true }).catch(() => undefined)))
+        await Promise.all(localInstances().filter((instance) => instance.client).map((instance) => fetchSessions(instance.id, { reset: true }).catch(() => undefined)))
         owners = findOwners()
       }
       const activeTab = activeAppTab()
@@ -290,11 +293,17 @@ const App: Component = () => {
         })
         return
       }
-      if (!await claimNativeBrowserOpen(requestID)) return
+      const operation = captureBackendOperation(owner.id, undefined, () => !disposed && instances().has(owner.id)
+        && getSessions(owner.id).some((session) => session.id === sessionID))
+      if (!operation.current() || !await claimNativeBrowserOpen(requestID)) return
       try {
+        if (!operation.current()) {
+          await releaseNativeBrowserOpen(requestID)
+          return
+        }
         const instance = owner
-        await openSessionPreview(sessionID, url, projectScope(instance))
-        if (disposed) {
+        await openSessionPreview(sessionID, url, projectScope(instance), instance.id)
+        if (!operation.current()) {
           await releaseNativeBrowserOpen(requestID)
           return
         }

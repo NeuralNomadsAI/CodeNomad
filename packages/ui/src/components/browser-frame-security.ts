@@ -46,7 +46,8 @@ export function isLoopbackPreviewUrl(rawUrl: string): boolean {
 export function isLoopbackHttpUrl(rawUrl: string): boolean {
   if (!/^https?:\/\//i.test(rawUrl)) return false
   try {
-    return isLoopbackHostname(new URL(rawUrl).hostname.toLowerCase())
+    const target = new URL(rawUrl)
+    return !target.username && !target.password && isLoopbackHostname(target.hostname.toLowerCase())
   } catch {
     return false
   }
@@ -69,7 +70,9 @@ export function getPreviewFrameSource(
   environment: Pick<RuntimeEnvironment, "host" | "windowContext">,
   preview: { token: string; targetUrl: string; proxyUrl: string },
   parentUrl: string,
+  backendId = "local",
 ): string {
+  if (backendId !== "local") return preview.proxyUrl
   if (environment.windowContext !== "local" || (environment.host !== "electron" && environment.host !== "tauri")) {
     return preview.proxyUrl
   }

@@ -1,5 +1,6 @@
 import { untrack } from "solid-js"
-import { isToolImageContent, toolImageSource } from "./tool-content"
+import { isToolImageContent, toolImageSource, toolImageReference } from "./tool-content"
+import { restrictMediaImage } from "./media-image-interaction"
 
 const decode = (value: string) => { try { return decodeURIComponent(value) } catch { return value } }
 
@@ -71,10 +72,11 @@ function label(element: HTMLElement, failedSource?: string): HTMLSpanElement {
 
 /** Shows each rendered local-image label as its matching transcript image. An image whose
  * match disappears, or whose source fails to load, returns to its alt text; a changed source retries. */
-export function resolveLocalImages(container: ParentNode, candidates: readonly SessionImageCandidate[]): void {
+export function resolveLocalImages(container: ParentNode, candidates: readonly SessionImageCandidate[], restricted = false): void {
   for (const element of container.querySelectorAll<HTMLElement>("[data-local-image]")) {
     const source = matchLocalImage(candidates, element.dataset.localImage ?? "", element.dataset.localImageExact === undefined)
     if (element instanceof HTMLImageElement) {
+      restrictMediaImage(element, Boolean(source && restricted && source.startsWith("blob:")))
       if (!source) element.replaceWith(label(element))
       else if (element.getAttribute("src") !== source) element.src = source
       continue
@@ -89,23 +91,28 @@ export function resolveLocalImages(container: ParentNode, candidates: readonly S
     image.loading = "lazy"
     image.decoding = "async"
     image.referrerPolicy = "no-referrer"
-    image.addEventListener("error", () => { if (image.isConnected) image.replaceWith(label(image, image.getAttribute("src") ?? undefined)) })
+    image.addEventListener("error", () => {
+      if (!image.isConnected) return
+      restrictMediaImage(image, false)
+      image.replaceWith(label(image, image.getAttribute("src") ?? undefined))
+    })
     image.src = source
     element.replaceWith(image)
+    restrictMediaImage(image, restricted && source.startsWith("blob:"))
   }
 }
 
 type PartData = { type?: string; state?: { status?: string; input?: Record<string, unknown>; content?: unknown } }
 export interface MessageImageSource { revision: number; partIds: string[]; parts: Record<string, { data: unknown }> }
 
-function* scanMessage(message: MessageImageSource): Generator<SessionImageCandidate> {
+function* scanMessage(message: MessageImageSource, raw: boolean): Generator<SessionImageCandidate> {
   for (const partId of [...message.partIds].reverse()) {
     const data = message.parts[partId]?.data as PartData | undefined
     if (data?.type !== "tool" || data.state?.status !== "completed" || !Array.isArray(data.state.content)) continue
     const images = data.state.content.filter(isToolImageContent)
     const input = data.state.input?.filePath ?? data.state.input?.path
     for (const image of images) {
-      const source = toolImageSource(image)
+      const source = raw ? toolImageReference(image) : toolImageSource(image)
       if (!source) continue
       const paths = [image.name, images.length === 1 ? input : undefined].filter((value): value is string => typeof value === "string" && value.length > 0)
       if (paths.length) yield { paths, source }
@@ -114,14 +121,16 @@ function* scanMessage(message: MessageImageSource): Generator<SessionImageCandid
 }
 
 const scanned = new WeakMap<object, { revision: number; candidates: SessionImageCandidate[] }>()
+const scannedRaw = new WeakMap<object, { revision: number; candidates: SessionImageCandidate[] }>()
 
 /** One message's tool-result images, newest first, keyed by file name and the single-image tool's file path.
  * Tracks only the message's revision; its parts are rescanned once per revision and shared by every reader. */
-export function messageImageCandidates(message: MessageImageSource): SessionImageCandidate[] {
+export function messageImageCandidates(message: MessageImageSource, raw = false): SessionImageCandidate[] {
+  const cache = raw ? scannedRaw : scanned
   const revision = message.revision
-  const cached = scanned.get(message)
+  const cached = cache.get(message)
   if (cached?.revision === revision) return cached.candidates
-  const candidates = untrack(() => [...scanMessage(message)])
-  scanned.set(message, { revision, candidates })
+  const candidates = untrack(() => [...scanMessage(message, raw)])
+  cache.set(message, { revision, candidates })
   return candidates
 }

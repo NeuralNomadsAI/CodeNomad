@@ -4,29 +4,34 @@ import { serverApi, type ServerApi } from "./api-client"
 
 /** One backend's cached `/api/meta`, with its previews availability signals. */
 export function createServerMetaCache(api: Pick<ServerApi, "fetchServerMeta">) {
-  let cachedMeta: ServerMeta | null = null
-  let pendingMeta: Promise<ServerMeta> | null = null
+  interface Snapshot { cached: ServerMeta | null; pending: Promise<ServerMeta> | null }
+  const local: Snapshot = { cached: null, pending: null }
+  const attachments = new WeakMap<AbortSignal, Snapshot>()
   const [previewsUnavailable, setPreviewsUnavailable] = createSignal(false)
   const [previewsAvailabilityResolved, setPreviewsAvailabilityResolved] = createSignal(false)
 
-  async function getServerMeta(forceRefresh = false): Promise<ServerMeta> {
-    if (cachedMeta && !forceRefresh) {
-      return cachedMeta
+  async function getServerMeta(forceRefresh = false, signal?: AbortSignal): Promise<ServerMeta> {
+    signal?.throwIfAborted()
+    let snapshot = signal ? attachments.get(signal) : local
+    if (!snapshot) { snapshot = { cached: null, pending: null }; attachments.set(signal!, snapshot) }
+    if (snapshot.cached && !forceRefresh) {
+      return snapshot.cached
     }
-    if (pendingMeta) {
-      return pendingMeta
+    if (snapshot.pending) {
+      return snapshot.pending
     }
     const request = api.fetchServerMeta().then((meta) => {
-      cachedMeta = meta
+      signal?.throwIfAborted()
+      snapshot.cached = meta
       setPreviewsUnavailable(meta.previewsUnavailable === true)
       setPreviewsAvailabilityResolved(true)
       return meta
     })
-    pendingMeta = request
+    snapshot.pending = request
     try {
       return await request
     } finally {
-      if (pendingMeta === request) pendingMeta = null
+      if (snapshot.pending === request) snapshot.pending = null
     }
   }
 

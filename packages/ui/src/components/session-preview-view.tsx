@@ -42,9 +42,10 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
   }
 
   const frameSource = (preview: SessionPreviewRecord = props.preview) =>
-    getPreviewFrameSource(runtimeEnv, preview, window.location.href)
+    getPreviewFrameSource(runtimeEnv, preview, window.location.href, preview.owner.client.id)
 
   async function handleCommentTarget(elementTarget: BrowserFrameElementTarget) {
+    const preview = props.preview
     const comment = await showPromptDialog(t("sessionPreview.comment.prompt"), {
       title: t("sessionPreview.comment.title"),
       inputLabel: t("sessionPreview.comment.label"),
@@ -52,7 +53,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
       cancelLabel: t("sessionPreview.comment.cancel"),
     })
     const normalized = comment?.trim()
-    if (!normalized) return
+    if (!normalized || preview !== props.preview || preview.owner.signal.aborted) return
     props.onInsertComment(buildCommentMarkdown(elementTarget, normalized))
   }
 
@@ -70,7 +71,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
         onCancelNavigation={() => cancelSessionPreviewNavigation(props.preview.storageKey)}
         proxyBasePath={`/previews/${encodeURIComponent(props.preview.token)}`}
         addressMode="url"
-        onNavigate={async (address) => frameSource(await openSessionPreview(props.preview.sessionId, address, props.preview.instanceFolder))}
+        onNavigate={async (address) => frameSource(await openSessionPreview(props.preview.sessionId, address, props.preview.instanceFolder, props.preview.instanceId))}
         onNavigationError={showNavigationError}
         onFrameLocation={(path) => {
           const target = new URL(path, props.preview.targetUrl)

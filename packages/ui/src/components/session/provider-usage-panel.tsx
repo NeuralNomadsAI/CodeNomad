@@ -1,7 +1,8 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, type Component } from "solid-js"
 
 import type { ProviderUsageResponse, ProviderUsageWindow } from "../../../../server/src/api-types"
-import { serverApi } from "../../lib/api-client"
+import { backendOf } from "../../lib/backend-client"
+import { parseInstanceKey } from "../../lib/backend-identity"
 import { captureBackendOperation } from "../../lib/backend-operation"
 import { useI18n } from "../../lib/i18n"
 import { useConfig } from "../../stores/preferences"
@@ -30,8 +31,8 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
     return { instanceId: props.instanceId, sessionId: props.sessionId, directory: props.directory, providerId, modelId }
   }, null, { equals: (a, b) => a === b || Boolean(a && b && providerUsageKey(a) === providerUsageKey(b)) })
   const [usage, setUsage] = createSignal<ProviderUsageResponse | null | undefined>()
-  const state = createProviderUsageState((current, signal) => serverApi.fetchProviderUsage(
-    current.instanceId, current.sessionId, current.providerId, current.modelId, signal,
+  const state = createProviderUsageState((current, signal) => backendOf(current.instanceId).api.fetchProviderUsage(
+    parseInstanceKey(current.instanceId).workspaceId, current.sessionId, current.providerId, current.modelId, signal,
   ), value => setUsage(value), current => captureBackendOperation(current.instanceId))
 
   createEffect(() => {
