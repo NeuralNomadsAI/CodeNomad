@@ -51,7 +51,7 @@ async function ownershipRealpath(directory: string, strict = false): Promise<str
   catch (error) { if (strict) throw error }
 }
 
-export interface LocationOwnershipOptions {
+interface LocationOwnershipOptions {
   signal?: AbortSignal
   purpose?: "request" | "event"
   strict?: boolean
@@ -315,12 +315,12 @@ export class WorkspaceManager {
     if (location.workspaceID !== undefined) return false
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return false
-    const directory = await this.getServiceDirectoryForPath(id, location.directory, purpose, strict)
+    const directory = await this.getServiceDirectoryForPath(id, location.directory, { purpose, strict })
     signal?.throwIfAborted()
     return Boolean(directory)
   }
 
-  async getServiceDirectoryForPath(id: string, directory: string, purpose: "request" | "event" = "request", strict = false): Promise<string | undefined> {
+  async getServiceDirectoryForPath(id: string, directory: string, { purpose = "request", strict = false }: Pick<LocationOwnershipOptions, "purpose" | "strict"> = {}): Promise<string | undefined> {
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return undefined
     // Directory authorization does not need the checkout's Git mutation identity.
@@ -496,7 +496,7 @@ export class WorkspaceManager {
         return { slug: "root", directory: target, worktreeDirectory: root }
       }
     }
-    if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target, strict)) return null
+    if (target && root && !isPathWithinWorktree(root, target) && !await sharesGitCommonDirectory(root, target, { strict })) return null
     return resolveOwnedWorktreePath({
       workspaceId: purpose === "event" ? `event:${record.id}` : record.id,
       workspacePath: record.path,

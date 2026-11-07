@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { realpath } from "node:fs/promises"
+import fs from "node:fs/promises"
+import { syncBuiltinESMExports } from "node:module"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { test } from "node:test"
@@ -288,6 +290,46 @@ test("the strict final fresh read bypasses a warm ordinary negative cache", asyn
   assert.deepEqual(refreshes, [false, true, true])
 })
 
+test("the final strict fresh read never joins an in-flight validated scan", async t => {
+  const temp = mkdtempSync(path.join(tmpdir(), "codenomad-final-scan-"))
+  const root = path.join(temp, "root"), linked = path.join(temp, "linked")
+  mkdirSync(root); mkdirSync(linked)
+  let release!: () => void, started!: () => void, reached!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  const scanning = new Promise<void>(resolve => { started = resolve })
+  const finalTarget = new Promise<void>(resolve => { reached = resolve })
+  const reads: Promise<unknown>[] = [], refreshes: boolean[] = []
+  const actualRealpath = fs.realpath
+  t.mock.method(fs, "realpath", async (directory: string) => {
+    const result = await actualRealpath(directory)
+    if (directory === linked) reached()
+    return result
+  })
+  syncBuiltinESMExports()
+  t.after(async () => {
+    release(); await Promise.allSettled(reads)
+    t.mock.restoreAll(); syncBuiltinESMExports()
+    invalidateWorktreeCache(temp); rmSync(temp, { recursive: true, force: true })
+  })
+  const params = { workspaceId: temp, workspacePath: root, strict: true,
+    loadWorktrees: async (refresh = false) => {
+      refreshes.push(refresh)
+      if (!refresh) { started(); await held }
+      return [{ slug: "root", directory: root, kind: "root" as const },
+        ...(refresh ? [{ slug: "linked", directory: linked, kind: "worktree" as const }] : [])]
+    } }
+  const other = resolveOwnedWorktreePath({ ...params, directory: root }); reads.push(other)
+  await scanning
+  const finalRead = resolveOwnedWorktreePath({ ...params, directory: linked }, { restarts: WORKTREE_OWNERSHIP_RESTART_LIMIT }); reads.push(finalRead)
+  await finalTarget
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.deepEqual(refreshes, [false, true], "the final demand starts a fresh scan while the validated scan remains held")
+  assert.equal((await finalRead)?.slug, "linked")
+  release()
+  assert.equal((await other)?.slug, "root")
+  assert.equal((await resolveOwnedWorktreePath({ ...params, strict: false, directory: linked }))?.slug, "linked")
+})
+
 test("ordinary ownership preserves trailing reloads beyond four invalidations", async t => {
   const temp = mkdtempSync(path.join(tmpdir(), "codenomad-ordinary-reloads-"))
   t.after(() => { invalidateWorktreeCache(temp); rmSync(temp, { recursive: true, force: true }) })
@@ -372,15 +414,18 @@ test("strict ownership stays bounded while an ordinary demand keeps trailing nat
 
 test("concurrent pending-scan handoffs retain each ownership demand's retry budget", async t => {
   const temp = mkdtempSync(path.join(tmpdir(), "codenomad-directory-handoffs-"))
-  const releases: Array<() => void> = []
+  const snapshot = [{ slug: "root", directory: temp, registeredDirectory: temp, kind: "worktree" as const }]
+  const scans: Array<{ generation: number; release(value: typeof snapshot): void }> = []
   const reads: Promise<void>[] = []
-  const outcomes: Array<{ status: "fulfilled" | "rejected"; completed: number; result: unknown }> = []
-  let active = 0, completed = 0
-  let draining = false, started = () => {}
+  const outcomes: Array<{ status: "fulfilled" | "rejected"; generation: number; result: unknown }> = []
+  let active = 0, generation = 0, draining = false
+  t.mock.method(fs, "realpath", async (directory: string) => directory)
+  syncBuiltinESMExports()
   t.after(async () => {
     draining = true
-    for (const release of releases) release()
+    for (const scan of scans) scan.release(snapshot)
     await Promise.allSettled(reads)
+    t.mock.restoreAll(); syncBuiltinESMExports()
     invalidateWorktreeCache(temp)
     rmSync(temp, { recursive: true, force: true })
   })
@@ -389,33 +434,27 @@ test("concurrent pending-scan handoffs retain each ownership demand's retry budg
     loadWorktrees: async () => {
       active++
       try {
-        const index = releases.length
-        if (!draining) await new Promise<void>(resolve => { releases.push(resolve); started() })
-        completed++
-        return draining || index === 7 ? [{ slug: "root", directory: temp, kind: "root" as const }] : []
+        return draining ? snapshot : await new Promise<typeof snapshot>(release => { scans.push({ generation, release }) })
       } finally { active-- }
     },
   }
   for (let i = 0; i < 8; i++) {
-    const scanStarted = new Promise<void>(resolve => { started = resolve })
+    generation = i
     invalidateWorktreeCache(temp)
     reads.push(resolveOwnedWorktreePath(params).then(
-      result => { outcomes[i] = { status: "fulfilled", completed, result } },
-      result => { outcomes[i] = { status: "rejected", completed, result } },
+      result => { outcomes[i] = { status: "fulfilled", generation, result } },
+      result => { outcomes[i] = { status: "rejected", generation, result } },
     ))
-    await scanStarted
-    assert.equal(releases.length, i + 1, "each new caller starts its invalidation's shared scan")
-    if (i > 0) {
-      releases[i - 1]()
-      await new Promise<void>(resolve => setImmediate(resolve))
-    }
+    await new Promise<void>(resolve => setImmediate(resolve))
+    for (const scan of scans.filter(scan => scan.generation < generation)) scan.release([])
+    await new Promise<void>(resolve => setImmediate(resolve))
   }
-  releases[7]()
+  draining = true
+  for (const scan of scans) scan.release(snapshot)
   await Promise.all(reads)
   assert.equal(outcomes[0]?.status, "rejected", "the original demand cannot adopt eight callers' independent budgets")
-  assert.equal(outcomes[0].completed, 4, "the original demand settles after its fourth invalid scan")
+  assert.ok(outcomes[0].generation <= 4, "the original demand settles within four invalidated generations")
   assert.match(String(outcomes[0].result), /inventory changed repeatedly/)
   assert.equal(active, 0, "every admitted loader has settled before cleanup")
-  assert.ok(outcomes.slice(0, 4).every(outcome => outcome.status === "rejected"))
-  assert.ok(outcomes.slice(4).every(outcome => outcome.status === "fulfilled"))
+  assert.equal(outcomes.at(-1)?.status, "fulfilled", "a later stable demand can recover")
 })

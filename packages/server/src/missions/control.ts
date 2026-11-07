@@ -8,7 +8,7 @@ import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "./mission-summary"
 import { readMissionContent, type MissionContentRequest, type MissionContentResult } from "./mission-content"
 import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
 import { compactMissionMap, missionTaskPage } from "./mission-compact-map"
-import { MISSION_CREATION_REQUEST_CONFLICT, missionCreationChoices, sameMissionCreationChoices, parseMissionCreationSelection, missionCreationSelection, type MissionCreationMetadata } from "./creation-defaults"
+import { missionCreationChoices, sameMissionCreationChoices, parseMissionCreationSelection, missionCreationSelection, type MissionCreationMetadata } from "./creation-defaults"
 import { MissionCreationIntents } from "./creation-intent"
 import { hasExplicitMissionCreationChoices, resolveMissionCreationDefaults, type MissionCreationSelection } from "./profile-defaults"
 import type { MissionTaskPageResult, MissionTaskRequest } from "./mission-panel-map"
@@ -44,7 +44,7 @@ import { matchesExecution, sameExecution } from "./execution"
 import { sameLocation } from "../opencode/compatibility/location"
 import { missionRecoveryInput, type MissionRecoveryInput } from "./recovery-input"
 import { missionRecoveryControlError } from "./recovery-error"
-import { MissionControlError, MissionCreateNoEffectError, humanDecisionRequired } from "./control-error"
+import { MISSION_CREATION_REQUEST_CONFLICT, MissionControlError, MissionCreateNoEffectError, humanDecisionRequired } from "./control-error"
 import { claimedDecisionFields, coordinatorAskedAnswer, coordinatorDecision, decisionInvocationUnavailable, decisionOutcomeRequired,
   decisionQuestionUnbound, receiptMatches, type CoordinatorAskedAnswer, type MissionDecisionProof } from "./decision-gate"
 import { decisionQuestionTag, fieldDecisionTag } from "./decision-question-tag"
@@ -421,7 +421,8 @@ export class MissionControl {
       return doc && !("deletedAt" in doc) ? doc.oneTime?.creationDefaults : undefined
     })
     if (frozen) {
-      if (!sameMissionCreationChoices(frozen.request, input)) throw new MissionControlError(MISSION_CREATION_REQUEST_CONFLICT, conflict)
+      if (!sameMissionCreationChoices(frozen.request, input)) throw conflict === "prepare-conflict"
+        ? missionRecoveryControlError("prepare-conflict") : new MissionControlError(MISSION_CREATION_REQUEST_CONFLICT, conflict)
       return { input: { ...input, profiles: frozen.profiles, taskMode: frozen.taskMode, creationDefaults: frozen }, fromDocument: true }
     }
   }
@@ -1051,7 +1052,7 @@ export class MissionControl {
       try { await this.options.validateProfiles?.(input.start.profiles, caller.location.directory, taskMode) }
       catch { throw new MissionControlError("Mission profiles do not match the owned native catalog", "invalid-execution") }
       const fresh = await this.ownedRootSession(sessionID)
-      if (!sameLocation(caller.location, fresh.location)) throw new MissionControlError("Coordinator moved from its admitted creation location", "invalid-execution")
+      if (!sameLocation(caller.location, fresh.location)) throw new MissionControlError("Coordinator moved from its admitted creation location", "foreign-session")
       if (!matchesExecution(input.start.profiles?.coordinator, fresh)) throw this.coordinatorProfileMismatch(resolved)
       const event: MissionEvent = {
         version: MISSION_SCHEMA_VERSION,
@@ -1126,7 +1127,7 @@ export class MissionControl {
         || created.title !== input.title || created.notes !== input.notes || created.template !== input.template
         || !sameChoices
         || created.preparedBy?.missionID !== source.id || created.preparedBy.coordinatorSessionID !== sessionID) {
-        throw new MissionControlError("This requestID already prepared a different mission", "prepare-conflict")
+        throw missionRecoveryControlError("prepare-conflict")
       }
       const saved = (await this.snapshot()).missions.find(mission => mission.id === missionID)
       if (!saved) throw new MissionControlError("Mission was deleted and cannot be recreated", "mission-deleted")

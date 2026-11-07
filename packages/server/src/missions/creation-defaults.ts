@@ -7,7 +7,6 @@ import { MissionControlError } from "./control-error"
 import { parseExecution } from "./execution"
 import { MISSION_DEFAULTS_REQUEST_INVALID } from "./recovery-error"
 
-export const MISSION_CREATION_REQUEST_CONFLICT = "Creation request ID was already used with a different mission"
 export const missionCreationTemplateSchema = z.enum(Object.keys(missionProfileRoles) as [MissionTemplateId, ...MissionTemplateId[]])
 export const missionCreationChoicesSchema = z.object({ profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.optional() }).strict()
 const defaultsInputSchema = missionCreationChoicesSchema.extend({

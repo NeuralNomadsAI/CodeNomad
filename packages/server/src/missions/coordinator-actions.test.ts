@@ -76,6 +76,17 @@ test("a stalled inspect-start preference read never holds the project's mutation
   }
 })
 
+test("a coordinator moving during the final creation preflight is a foreign-session refusal", async () => {
+  const sessions = new Map<string, NativeMissionSession>([[coordinator,
+    { id: coordinator, projectID: "project-1", location: { directory: "/repo" } }]])
+  const f = fixture({ sessions, validateProfiles: async () => {
+    sessions.set(coordinator, { ...sessions.get(coordinator)!, location: { directory: "/repo/moved" } })
+  } })
+  await assert.rejects(f.start("custom"), (error: unknown) => error instanceof MissionControlError
+    && error.code === "foreign-session" && error.message === "Coordinator moved from its admitted creation location")
+  assert.equal(f.storage.values.size, 0)
+})
+
 test("explicit prepare capability refusals release newly recorded choices", async () => {
   const f = fixture({ transport: { prepare: async () => { throw new MissionControlError("Update CodeNomad", "mission-preferences-update-required") } } })
   await f.control.create({ requestID: "source", objective: "Source", template: "custom", coordinatorSessionID: coordinator })

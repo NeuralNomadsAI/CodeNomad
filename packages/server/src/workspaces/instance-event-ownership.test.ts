@@ -115,7 +115,7 @@ test("registered-only event ownership retains clone, nested-folder, alias and in
   assert.equal(await owns(linked), false, "a nested opening must not grant the whole sibling checkout")
   assert.equal(await owns(path.join(clone, "nested")), false, "native project IDs cannot authorize an independent physical clone")
   assert.equal(refreshes, 0)
-  assert.equal(await manager.getServiceDirectoryForPath(workspace.id, path.join(alias, "nested"), "event"), realpathSync(path.join(linked, "nested")))
+  assert.equal(await manager.getServiceDirectoryForPath(workspace.id, path.join(alias, "nested"), { purpose: "event" }), realpathSync(path.join(linked, "nested")))
   // Even if the files remain present, removal from the native registration is
   // sufficient to revoke membership after a worktree event/mutation fence.
   registered = [repo, clone]

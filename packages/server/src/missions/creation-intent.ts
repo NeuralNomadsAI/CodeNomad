@@ -1,12 +1,13 @@
 import { z } from "zod"
 import type { MissionStartInput } from "./control-types"
-import { MissionControlError } from "./control-error"
-import { MISSION_CREATION_REQUEST_CONFLICT, missionCreationChoices, missionCreationChoicesSchema, missionCreationTemplateSchema, parseMissionCreationDefaults, sameMissionCreationChoices,
+import { MISSION_CREATION_REQUEST_CONFLICT, MissionControlError } from "./control-error"
+import { missionCreationChoices, missionCreationChoicesSchema, missionCreationTemplateSchema, parseMissionCreationDefaults, sameMissionCreationChoices,
   type MissionCreationMetadata } from "./creation-defaults"
 import { runMissionExclusive } from "./exclusive"
 import type { MissionStorage } from "./journal"
 import type { MissionEvent, MissionJsonValue } from "./model"
 import { MISSION_TITLE_MAX } from "./mission-title"
+import { missionRecoveryControlError } from "./recovery-error"
 
 type Request = MissionStartInput & { title?: string }
 const requestSchema = missionCreationChoicesSchema.extend({ objective: z.string().min(1).max(20_000),
@@ -40,6 +41,7 @@ export class MissionCreationIntents {
   }
 
   private conflict(code: string): never {
+    if (code === "prepare-conflict") throw missionRecoveryControlError("prepare-conflict")
     throw new MissionControlError(MISSION_CREATION_REQUEST_CONFLICT, code)
   }
 

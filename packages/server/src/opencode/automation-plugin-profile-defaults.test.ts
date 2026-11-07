@@ -38,7 +38,7 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
   let probeFailure: "network" | "refused" | "timeout" | "http" | "malformed" | "unproven-negative" | undefined
   let inventoryFailure = false
   let failureCode: string | undefined
-  let bridgeError = "secret backend detail", legacy = false
+  let bridgeError = "secret backend detail", legacy = false, backendFailure = false
   let postOwnership: "lost" | "failed" | undefined
   registerAutomationPluginRoute(app, {
     authManager: { isLoopbackRequest: () => true }, bridgeToken: registration.token, nativeParent: {}, developerCdp: {},
@@ -77,6 +77,7 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
       assert.equal(body.command.kind, "profile-defaults")
       if (denied) return new Response(JSON.stringify({ error: "secret backend refusal" }), { status: 403 })
       if (legacy) return new Response(JSON.stringify({ error: "Unknown mission command" }), { status: 400 })
+      if (backendFailure) return new Response(JSON.stringify({ error: "secret backend reader failure" }), { status: 502 })
       if (failureCode) return new Response(JSON.stringify({ code: failureCode, error: bridgeError }), { status: 409 })
     }
     if (body.mode === "mission-input" && postOwnership) {
@@ -90,7 +91,7 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
   const request = () => resolveMissionProfileDefaults("ses_owner", { template: "custom" })
   const unavailable = (error: unknown) => error instanceof MissionControlError
     && error.code === "mission-preferences-unavailable"
-    && error.message === "Restore CodeNomad backend discovery and ownership, then reload Missions preferences before creating a mission"
+    && error.message === "CodeNomad backend discovery, ownership or preference reading failed; restore the backend and reload Missions preferences"
   const fallback = { profiles: { coordinator: {}, roles: { specialist: {} } }, taskMode: "native",
     origins: { coordinator: "opencode-default", roles: { specialist: "opencode-default" }, taskMode: "opencode-default" }, preferences: "unavailable" }
   assert.deepEqual(await request(), fallback, "without a registered owner, the tool reports its explicit fallback")
@@ -221,6 +222,9 @@ test("profile defaults distinguish absent owners from ambiguous, failed and unre
     && error.code === "mission-preferences-update-required" && error.message.includes("Update CodeNomad"),
     "a legacy owner cannot be discarded without silently losing its preferences")
   legacy = false
+  backendFailure = true
+  await assert.rejects(request(), unavailable, "a current backend's reader failure is unavailable, not an upgrade requirement")
+  backendFailure = false
   failureCode = "invalid-execution"
   bridgeError = MISSION_DEFAULTS_REQUEST_INVALID
   await assert.rejects(request(), (error: unknown) => error instanceof MissionControlError && error.message === MISSION_DEFAULTS_REQUEST_INVALID)

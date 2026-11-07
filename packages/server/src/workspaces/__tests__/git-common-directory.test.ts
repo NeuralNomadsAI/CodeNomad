@@ -234,7 +234,7 @@ test("strict common-directory rejection retains both admitted filesystem reads u
   syncBuiltinESMExports()
   try {
     let settled = false
-    const read = sharesGitCommonDirectory("unreadable-probe", "held-probe", true)
+    const read = sharesGitCommonDirectory("unreadable-probe", "held-probe", { strict: true })
       .finally(() => { settled = true })
     const rejected = assert.rejects(read, error => error === failure)
     await new Promise<void>(resolve => setImmediate(resolve))

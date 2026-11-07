@@ -611,7 +611,7 @@ async function callMissionInput(target: DiscoveredBridgeRegistration, sessionID:
     const recovery = missionRecoveryError(response.body.code, response.body.error)
     if (recovery && recovery.status === response.status) throw missionRecoveryControlError(recovery.code, response.body.error)
     if (kind === "profile-defaults" && response.body.code === "mission-not-owner") throw missionRecoveryControlError("mission-preferences-unavailable")
-    if (kind === "profile-defaults" && [400, 404, 405, 501, 502].includes(response.status)) {
+    if (kind === "profile-defaults" && [400, 404, 405, 501].includes(response.status)) {
       throw missionRecoveryControlError("mission-preferences-update-required")
     }
     throw new Error("CodeNomad could not admit the mission input; inspect ownership/environment and retry the same task")

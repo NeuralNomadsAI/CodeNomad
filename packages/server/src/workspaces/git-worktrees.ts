@@ -27,7 +27,7 @@ export async function isGitAvailable(folder: string): Promise<boolean> {
 // A different physical common directory cannot belong to this local repository,
 // even when independent clones share OpenCode's project ID. This is only a
 // negative preflight; a match still requires the native worktree inventory.
-export async function sharesGitCommonDirectory(left: string, right: string, strict = false): Promise<boolean> {
+export async function sharesGitCommonDirectory(left: string, right: string, { strict = false } = {}): Promise<boolean> {
   try {
     // Strict discovery preserves verified absence separately from ambiguous/read failures.
     const read = strict ? discoverCheckoutCommonDirectory : readGitCommonDirectory

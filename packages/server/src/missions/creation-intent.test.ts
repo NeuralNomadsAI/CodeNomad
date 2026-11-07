@@ -33,7 +33,7 @@ test("pre-dispatch intentions replay original whole choices across instances and
   assert.deepEqual(await restarted.save("msn_first", request, changed, missing, () => {}, "prepare-conflict"), defaults)
   const before = structuredClone([...f.values])
   for (const other of [{ ...request, objective: "Other" }, { ...request, profiles: {} }, { ...request, taskMode: "native" as const }]) {
-    await assert.rejects(restarted.read("msn_first", other, missing, "prepare-conflict"), (error: any) => error.code === "prepare-conflict")
+    await assert.rejects(restarted.read("msn_first", other, missing, "prepare-conflict"), { code: "prepare-conflict", message: "This requestID already prepared a different mission" })
   }
   assert.deepEqual([...f.values], before)
 })

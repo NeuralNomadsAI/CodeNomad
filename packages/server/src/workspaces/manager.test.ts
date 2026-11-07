@@ -250,7 +250,7 @@ describe("workspace manager shared service lifecycle", () => {
       // Pending recovery follows this ownership; it must match prompts and live events.
       for (const purpose of ["request", "event"] as const) {
         assert.equal(await manager.ownsLocation(workspace.id, { directory: nested }, undefined, { purpose }), true)
-        assert.equal(await manager.getServiceDirectoryForPath(workspace.id, nested, purpose), await realpath(nested))
+        assert.equal(await manager.getServiceDirectoryForPath(workspace.id, nested, { purpose }), await realpath(nested))
         assert.equal(await manager.getWorktreeIdentityForPath(workspace.id, nested, purpose), canonicalWorktreeIdentity(await realpath(repo)))
       }
     } finally { await manager.shutdown(); await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }

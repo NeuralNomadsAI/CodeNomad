@@ -48,7 +48,7 @@ async function getCachedWorktrees(
 
   // Strict demands never inherit an ordinary caller's unbounded trailing reads.
   // Both channels share the last validated snapshot and native single-scan work.
-  const loadKey = params.strict ? `${params.workspaceId}\0strict` : params.workspaceId
+  const loadKey = params.strict ? `${params.workspaceId}\0strict${refresh ? ":fresh" : ""}` : params.workspaceId
   let load = worktreeLoads.get(loadKey)
   if (!params.strict && load) return load as Promise<WorktreeCacheEntry>
   if (!load) {
@@ -102,6 +102,7 @@ export function invalidateWorktreeCache(workspaceId?: string): void {
     worktreeCache.delete(workspaceId)
     worktreeLoads.delete(workspaceId)
     worktreeLoads.delete(`${workspaceId}\0strict`)
+    worktreeLoads.delete(`${workspaceId}\0strict:fresh`)
   }
 }
 

@@ -96,7 +96,7 @@ test("missing or unreadable preference readers expose only the fixed unavailable
   for (const read of [undefined, () => ({ settings: null }), () => { throw new Error("secret /private/config.yaml") }]) {
     const response = await fixture(t, read)()
     assert.equal(response.statusCode, 503)
-    assert.deepEqual(response.json(), { code: "mission-preferences-unavailable", error: "Restore CodeNomad backend discovery and ownership, then reload Missions preferences before creating a mission" })
+    assert.deepEqual(response.json(), { code: "mission-preferences-unavailable", error: "CodeNomad backend discovery, ownership or preference reading failed; restore the backend and reload Missions preferences" })
   }
 })
 

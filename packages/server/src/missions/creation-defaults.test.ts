@@ -181,7 +181,7 @@ test("prepare recovers its frozen document before journal publication without re
   assert.equal(f.reads, 1)
   assert.equal(f.created, 1)
   f.invalidate(); f.restart()
-  await assert.rejects(f.control.prepare(f.coordinator, { ...request, profiles: {} }), (error: any) => error.code === "prepare-conflict")
+  await assert.rejects(f.control.prepare(f.coordinator, { ...request, profiles: {} }), { code: "prepare-conflict", message: "This requestID already prepared a different mission" })
   const result = await f.control.prepare(f.coordinator, request)
   assert.deepEqual(result.mission.profiles?.roles, { specialist: { agent: "worker" } })
   assert.equal(result.mission.creationDefaults?.origins.coordinator, "preference")

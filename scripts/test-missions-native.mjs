@@ -297,7 +297,7 @@ try {
       const rows = () => database.prepare("SELECT key, value FROM kv WHERE key LIKE ? ORDER BY key").all("%codenomad-missions/%")
       const retained = rows(), reads = preferenceReads, turns = requests.length
       await assert.rejects(invoke("inspect", { start: { objective: "Refuse coordinator mismatch", template: "custom" } },
-        caller.id, "preferences-mismatch"))
+        caller.id, "preferences-mismatch"), /Coordinator differs from the profile selected by Missions preferences\. Pass profiles\.coordinator \(for example \{\}\) to override that preference\./)
       assert.ok(preferenceReads > reads, "The mismatch was resolved against nonempty owner preferences")
       const after = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
       assert.deepEqual({ ...after, generatedAt: before.generatedAt }, before)

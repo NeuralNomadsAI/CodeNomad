@@ -66,8 +66,8 @@ test("native inventory preserves root fallback while strict readers reject unver
       worktrees: [{ slug: "root", directory: nonGit, serviceDirectory: nonGit, kind: "root",
         ...(missingGit ? { directoryOnly: true } : {}) }],
     })
-    if (!ceiling) assert.equal(await sharesGitCommonDirectory(repo, linked, true), true)
-    else await assert.rejects(sharesGitCommonDirectory(repo, linked, true), /Git discovery is configured/)
+    if (!ceiling) assert.equal(await sharesGitCommonDirectory(repo, linked, { strict: true }), true)
+    else await assert.rejects(sharesGitCommonDirectory(repo, linked, { strict: true }), /Git discovery is configured/)
     const manager = new WorkspaceManager({ rootDir: repo,
       settings: { getOwner: () => ({ environmentVariables: {} }) },
       binaryResolver: { resolveDefault: () => ({ path: process.execPath, label: "fixture" }) },
