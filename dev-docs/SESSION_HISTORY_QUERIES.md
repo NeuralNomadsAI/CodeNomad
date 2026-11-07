@@ -28,6 +28,16 @@ Agents use the same bundle's `codenomad.session_search` Code Mode tool to find
 past discussions. Native tool permissions govern execution. Backend presence
 owns both the tool and RPC registrations.
 
+## Stored-part coverage
+
+With `experimental.part_rows`, native assistant parts can reside in `session_part`
+beside an inline tail. CodeNomad's SQL history, search, outline/navigation, gallery
+and pruning readers use the shared `session-pruning/message-storage.ts` relation:
+ordinal split rows precede the inline tail, and all resulting part indexes use that
+combined order. Stored-byte bounds cover both forms before reconstruction. Existing
+split rows retain this read behavior after `part_rows` is disabled. Missions uses
+the same ordered-content SQL expression with its own read budgets and source fences.
+
 ## Scope and resource limits
 
 Session queries validate the session's current full native location and project.
@@ -49,11 +59,6 @@ after roughly 40 ms of processing; a running SQLite statement or JSON parse
 finishes first. JSON is materialized one message at a time, limited to 16 MiB.
 Oversized or unsupported content is counted as skipped and reported to the UI.
 Never add an index, trigger, FTS table or persistent transcript copy.
-
-The shared `session-pruning/message-storage.ts` relation reconstructs assistant
-content from ordered `session_part` rows followed by the inline tail. Stored-byte
-bounds cover both forms before reconstruction; all resulting part indexes use that
-combined order. Existing split rows retain this read behavior after `part_rows` is disabled.
 
 Cursors bind scope and query; the broker also binds the authorized directory
 inventory. A rowid horizon excludes new rows appended during each location scan.

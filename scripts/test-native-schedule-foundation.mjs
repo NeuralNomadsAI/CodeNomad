@@ -9,6 +9,7 @@ import { setTimeout as sleep } from "node:timers/promises"
 import { OpenCode } from "@opencode/client"
 import { Service } from "@opencode/client/service"
 import { buildNativeScheduleFoundation } from "../packages/server/scripts/build-native-schedule-foundation.mjs"
+import { fixtureCliVersion } from "./native-fixture-cli-version.mjs"
 
 const [cli, root] = process.argv.slice(2)
 const statusOnly = process.argv.includes("--status-only")
@@ -17,8 +18,10 @@ const controlledMaintenance = process.argv.includes("--controlled-maintenance")
 assert(!coldMissing || ["runtime", "provider"].includes(coldMissing), "cold missing artifact must be runtime or provider")
 assert([statusOnly, !!coldMissing, controlledMaintenance].filter(Boolean).length <= 1, "choose one qualification mode")
 assert(cli && path.isAbsolute(cli) && root && path.isAbsolute(root), "absolute isolated CLI and fresh scratch directory required")
+const cliVersion = await fixtureCliVersion(cli)
 assert(!existsSync(root), "Preserve existing evidence; use a fresh scratch child")
 mkdirSync(root, { recursive: true })
+if (process.env.GITHUB_ENV) appendFileSync(process.env.GITHUB_ENV, `NATIVE_SCHEDULE_FOUNDATION_FIXTURE=${root}\n`)
 const save = (name, value) => { writeFileSync(path.join(root, `${name}.json`), JSON.stringify(value, null, 2)); return value }
 const log = event => appendFileSync(path.join(root, "harness.jsonl"), JSON.stringify({ at: Date.now(), ...event }) + "\n")
 const eventsFile = path.join(root, "native.jsonl")
@@ -29,7 +32,8 @@ for (const role of ["CONFIG", "STATE", "DATA", "CACHE"]) env[`XDG_${role}_HOME`]
 Object.assign(env, { XDG_RUNTIME_DIR: path.join(root, "runtime"), HOME: path.join(root, "home"), USERPROFILE: path.join(root, "home"),
   APPDATA: path.join(root, "appdata"), LOCALAPPDATA: path.join(root, "localappdata"), ProgramData: path.join(root, "programdata"),
   TEMP: path.join(root, "tmp"), TMP: path.join(root, "tmp"), PATH: "C:\\Windows\\System32;C:\\Program Files\\Git\\cmd",
-  OPENCODE_DISABLE_PROJECT_CONFIG: "true", OPENCODE_DISABLE_CLAUDE_CODE: "true", OPENCODE_DISABLE_MODELS_FETCH: "true",
+  OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_TEST_HOME: path.join(root, "home"), OPENCODE_DB: path.join(root, "fixture.db"),
+  OPENCODE_DISABLE_CLAUDE_CODE: "true", OPENCODE_DISABLE_MODELS_FETCH: "true",
   OPENCODE_DISABLE_FILEWATCHER: "true", OPENCODE_DISABLE_FFF: "true", OPENCODE_LOG_LEVEL: "DEBUG" })
 for (const [key, value] of Object.entries(env))
   if (key.startsWith("XDG_") || ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "ProgramData", "TEMP", "TMP"].includes(key))
@@ -78,7 +82,7 @@ const launch = async label => {
     if (!existsSync(registrationFile)) return false
     const registration = JSON.parse(readFileSync(registrationFile))
     if (registration.pid !== child.pid) return false
-    endpoint = await Service.discover({ file: registrationFile, version: "2.2.3" })
+    endpoint = await Service.discover({ file: registrationFile, version: cliVersion })
     return !!endpoint
   })
   assert.equal(endpoint.url, `http://127.0.0.1:${port}`)
@@ -312,7 +316,7 @@ try {
   assert(observed.filter(event => event.kind === "language-cache").every(event => event.same))
   assert.equal(observed.filter(event => ["provider-http-hook", "forbidden-lifecycle", "forbidden-child", "forbidden-signal"].includes(event.kind)).length, 0)
   assert.equal(providerRequests.length, 0)
-  save("result", { completed: true, nativeVersion: "2.2.3", casCount: 3, highWater: 3, launchedCount: 0,
+  save("result", { completed: true, nativeVersion: cliVersion, casCount: 3, highWater: 3, launchedCount: 0,
     coldWakeWithoutProjectClient: true, lostACKNoAutomaticResend: true, forcedCompaction: true,
     remoteTitleAndCompactionLocal: true, providerHTTP: providerRequests.length, forbiddenWakeOperations: 0,
     productInstalledRegistration: false, coreBusinessAdmissionQualified: false })
@@ -323,6 +327,7 @@ try {
     try { save("plugin-diagnostics", await client.plugin.list({ location: { directory: project } })) } catch {}
   }
   save("result", { completed: false, message: error.message, stack: error.stack })
+  save("failure-diagnostic", { message: error.message, stack: error.stack })
   console.error(error)
   process.exitCode = 1
 } finally {
@@ -334,4 +339,5 @@ try {
     providerRequests, sharedServiceAccess: "none", externalClient: statusOnly ? "harness only; read-only status qualification"
       : controlledMaintenance ? "harness clock tick RPC; controlled-time maintenance explicitly qualified"
         : "harness only; bounded no-project-client cold window recorded" })
+  save("receipt", JSON.parse(readFileSync(path.join(root, "result.json"), "utf8")))
 }

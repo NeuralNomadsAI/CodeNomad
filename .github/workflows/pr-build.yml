@@ -219,6 +219,14 @@ jobs:
           # Parallel siblings, a recursive grandchild and coordinator readout.
           node scripts/test-missions-native-trajectory.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Context IDs must resolve native schedule metadata; the retained product
+          # bundle must admit cold scheduled passages with the backend closed.
+          node scripts/test-native-schedule-context.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $scheduleParent = node -p "require('node:path').join(require('node:os').tmpdir(), 'opencode')"
+          $scheduleScratch = Join-Path $scheduleParent "schedule-wakes-$([guid]::NewGuid().ToString('N'))"
+          node --import tsx scripts/test-native-mission-schedule-product.mjs $cli $scheduleScratch --parent-ready --kinds=at,in
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           if ('${{ matrix.runtime }}' -eq 'latest') {
             # Missions Preferences' Location subagent-depth editor against the
             # native config schema and production JSONC document admission.
@@ -267,6 +275,27 @@ jobs:
             node scripts/test-recurring-simple-native.mjs $cli ABCD
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
+
+      - name: Upload isolated schedule product failure diagnostics
+        if: ${{ failure() && env.NATIVE_SCHEDULE_PRODUCT_FIXTURE != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: schedule-product-failure-${{ matrix.runtime }}
+          path: |
+            ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/receipt.json
+            ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/failure-diagnostic.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload isolated schedule foundation failure diagnostics
+        if: ${{ failure() && env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE != '' }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: schedule-foundation-failure-${{ matrix.runtime }}
+          path: |
+            ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/receipt.json
+            ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/failure-diagnostic.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload isolated runtime contract failure diagnostics
         if: ${{ failure() && env.RUNTIME_CONTRACT_FIXTURES != '' }}
