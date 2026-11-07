@@ -1,6 +1,6 @@
 export const sessionMessages = {
   "browser.viewport.emulationHint": "Recarga con identidad móvil, entrada táctil y densidad de píxeles. No simula el motor del navegador, el teclado ni las barras del sistema.",
-  "browser.viewport.emulationUnavailable": "La emulación requiere una vista previa web nativa en la aplicación de escritorio.",
+  "browser.viewport.emulationUnavailable": "Solo dimensiones. La emulación de dispositivos no está disponible en esta vista previa.",
   "sessionList.filter.includeMainSessions": "Sesiones principales",
   "sessionList.filter.includeSubsessions": "Subsesiones",
   "session.pruning.maintenance_required": "La sesión o su almacenamiento está ocupado. Espera a que termine la operación actual y vuelve a intentar la limpieza.",

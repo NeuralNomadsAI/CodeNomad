@@ -34,6 +34,7 @@ pub(crate) struct BrowserTargetRegistration {
     registration_id: String,
     url: String,
     bounds: BrowserTargetBounds,
+    visible: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -173,7 +174,7 @@ impl BrowserController {
             window_label: window.label().to_string(),
             webview_label: label.clone(),
             generation,
-            visible: true,
+            visible: input.visible.unwrap_or(true),
         };
         #[cfg(windows)]
         let installed = install_webview2_handlers(
@@ -1182,9 +1183,9 @@ fn no_browser_target_error() -> String {
     "No visible local browser target for this session".to_string()
 }
 
-#[cfg(not(windows))]
+#[cfg(any(test, not(windows)))]
 fn unsupported() -> String {
-    "Native browser control is only supported by the Tauri Windows runtime".to_string()
+    "Agent browser automation is unavailable in Tauri on macOS and Linux. Open the web preview manually, or use Electron for agent browser automation.".to_string()
 }
 
 #[cfg(windows)]
@@ -1415,6 +1416,19 @@ mod regressions;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn webkit_agent_refusal_offers_manual_preview_and_electron() {
+        assert_eq!(super::unsupported(), "Agent browser automation is unavailable in Tauri on macOS and Linux. Open the web preview manually, or use Electron for agent browser automation.");
+    }
+
+    #[test]
+    fn renderer_registration_can_require_hidden_creation() {
+        let input: super::BrowserTargetRegistration = serde_json::from_value(serde_json::json!({
+            "sessionId": "session", "registrationId": "registration", "url": "https://example.org",
+            "bounds": { "x": 0, "y": 0, "width": 300, "height": 200 }, "visible": false
+        })).unwrap();
+        assert_eq!(input.visible, Some(false));
+    }
     use super::*;
 
     #[test]

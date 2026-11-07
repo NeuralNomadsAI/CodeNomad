@@ -9,6 +9,8 @@ import {
   controlTauriBrowserTarget,
   emulateBrowserTarget,
   nativeBrowserHost,
+  browserHostCapabilities,
+  localOverlayOpen,
   onTauriBrowserNavigation,
   physicalBrowserBounds,
   registerTauriBrowserTarget,
@@ -132,7 +134,7 @@ function getElementSelector(element: Element): string {
 export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   const { t } = useI18n()
   const [emulationBusy, setEmulationBusy] = createSignal(false)
-  const [emulationReady, setEmulationReady] = createSignal(false)
+  const [registrationReady, setRegistrationReady] = createSignal(false)
   const [frameSrc, setFrameSrc] = createSignal(props.initialUrl)
   const [pathInput, setPathInput] = createSignal(props.initialAddress ?? "/")
   const [viewportPreset, setViewportPreset] = createSignal<BrowserViewportPreset>("responsive")
@@ -140,6 +142,8 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   const [navigating, setNavigating] = createSignal(false)
   const [highlight, setHighlight] = createSignal<{ x: number; y: number; width: number; height: number } | null>(null)
   const browserHost = nativeBrowserHost(runtimeEnv)
+  const capabilities = browserHostCapabilities(runtimeEnv)
+  const emulationReady = () => registrationReady() && capabilities.emulation
   const nativeBrowserAvailable = Boolean(browserHost) && props.addressMode === "url"
   const [nativeMode, setNativeMode] = createSignal(nativeBrowserAvailable)
   const [nativeTarget, setNativeTarget] = createSignal(props.initialAddress ?? "")
@@ -182,7 +186,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     setHistoryBusy(journal?.traversing ?? false)
   }
   const captureHistory = async () => {
-    if (!journal || disposed || !(browserHost === "electron" ? webviewReady : untrack(emulationReady))) return
+    if (!journal || !capabilities.history || disposed || !(browserHost === "electron" ? webviewReady : untrack(registrationReady))) return
     const sequence = ++historyRead
     const registration = browserRegistrationId
     const guestId = historyGuestId()
@@ -216,9 +220,9 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     if (!disposed && registrationId === browserRegistrationId) appliedEmulation = { registrationId, preset }
   }
   const restoreEmulation = async (registrationId: string) => {
-    // Readiness means we own a registered target, not that a profile succeeded.
-    // Keep failures retryable, including selecting the same retained template.
-    setEmulationReady(true)
+    // Registration/history stay usable when emulation is unavailable or fails.
+    setRegistrationReady(true)
+    if (!capabilities.emulation) return
     const profile = untrack(() => emulationProfile(viewportPreset()))
     if (profile === "none") return
     const generation = ++emulationGeneration
@@ -235,7 +239,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     setViewportMenuOpen(false)
     const previous = appliedEmulation?.registrationId === browserRegistrationId ? appliedEmulation.preset : undefined
     const next = emulationProfile(preset)
-    if (previous === next || !nativeMode()) { setViewportPreset(preset); return }
+    if (previous === next || !nativeMode() || !capabilities.emulation) { setViewportPreset(preset); return }
     setEmulationBusy(true)
     const generation = ++emulationGeneration
     const registrationId = browserRegistrationId
@@ -466,7 +470,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       const sessionId = props.sessionId
       if (!webviewReady || !sessionId || registering) return
       if (registered && registeredSessionId !== sessionId) {
-        setEmulationReady(false)
+        setRegistrationReady(false)
         const previousId = browserRegistrationId
         browserRegistrationId = crypto.randomUUID()
         registering = true
@@ -480,7 +484,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       }
       if (visible === registered) return
       if (!visible) {
-        setEmulationReady(false)
+        setRegistrationReady(false)
         if (retryTimer) clearTimeout(retryTimer)
         retryTimer = undefined
         if (registered) {
@@ -536,7 +540,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     webview.addEventListener("did-finish-load", captureHistory)
     syncRegistration()
     cleanupWebviewListeners = () => {
-      setEmulationReady(false)
+      setRegistrationReady(false)
       active = false
       if (retryTimer) clearTimeout(retryTimer)
       webview.removeEventListener("did-navigate", syncLocation)
@@ -575,7 +579,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     }
     const bounds = () => {
       if (props.active === false) return null
-      if (viewportMenuOpen() || document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')) return null
+      if (viewportMenuOpen() || localOverlayOpen()) return null
       const rect = element.getBoundingClientRect()
       const clip = frameWrapRef?.getBoundingClientRect() ?? rect
       const left = Math.max(rect.left, clip.left, 0)
@@ -612,7 +616,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         nativeVisible = false
         registeredSessionId = ""
         tauriRegistered = false
-        setEmulationReady(false)
+        setRegistrationReady(false)
         void unregisterTauriBrowserTarget(previousId).catch(reportNativeError).finally(() => {
           registering = false
           if (active) syncBounds()
@@ -664,8 +668,9 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
           return
         }
         registered = true
-        nativeVisible = true
+        nativeVisible = false
         tauriRegistered = true
+        // Registration starts hidden; re-read overlays and geometry before reveal.
         await restoreEmulation(registrationId)
         void captureHistory()
         syncErrorReported = false
@@ -682,6 +687,14 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     createEffect(syncBounds)
     window.addEventListener("resize", syncBounds)
     window.addEventListener("scroll", syncBounds, true)
+    let scaleQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+    const scaleChanged = () => {
+      scaleQuery.removeEventListener("change", scaleChanged)
+      scaleQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+      scaleQuery.addEventListener("change", scaleChanged)
+      syncBounds()
+    }
+    scaleQuery.addEventListener("change", scaleChanged)
     queueMicrotask(syncBounds)
     cleanupTauriTarget = () => {
       active = false
@@ -689,11 +702,13 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       overlayObserver.disconnect()
       window.removeEventListener("resize", syncBounds)
       window.removeEventListener("scroll", syncBounds, true)
+      scaleQuery.removeEventListener("change", scaleChanged)
       unlistenNavigation()
       if (registered) void unregisterTauriBrowserTarget(browserRegistrationId).catch(reportNativeError)
       registered = false
       nativeVisible = false
       tauriRegistered = false
+      setRegistrationReady(false)
     }
   }
 
@@ -849,12 +864,12 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   return (
     <div class="flex h-full min-h-0 w-full flex-col bg-surface">
       <div class="relative flex shrink-0 items-center gap-2 px-3 py-2" style={{ "border-bottom": "1px solid var(--border-base)" }}>
-        <button type="button" class="new-tab-button" onClick={handleBack} disabled={Boolean(journal && (historyBusy() || !history()?.index || (nativeMode() && !emulationReady())))} title={props.labels.back} aria-label={props.labels.back}>
+        <button type="button" class="new-tab-button" onClick={handleBack} disabled={Boolean(journal && (historyBusy() || !history()?.index || (nativeMode() && !registrationReady())))} title={props.labels.back} aria-label={props.labels.back}>
           <ArrowLeft class="h-4 w-4" />
         </button>
         <Show when={journal}>
           <button type="button" class="new-tab-button" onClick={() => void traverseHistory(1)}
-            disabled={historyBusy() || (nativeMode() && !emulationReady()) || (history()?.index ?? 0) >= (history()?.urls.length ?? 1) - 1}
+            disabled={historyBusy() || (nativeMode() && !registrationReady()) || (history()?.index ?? 0) >= (history()?.urls.length ?? 1) - 1}
             title={props.labels.forward} aria-label={props.labels.forward}>
             <ArrowRight class="h-4 w-4" />
           </button>
@@ -918,9 +933,9 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
                     role="menuitemradio"
                     aria-checked={viewportPreset() === option.id ? "true" : "false"}
                     aria-label={option.getLabel(props.labels)}
-                    disabled={nativeMode() && emulationProfile(option.id) !== "none" && !emulationReady()}
+                    disabled={nativeMode() && capabilities.emulation && emulationProfile(option.id) !== "none" && !emulationReady()}
                     title={emulationProfile(option.id) !== "none"
-                      ? t(nativeMode() ? "browser.viewport.emulationHint" : "browser.viewport.emulationUnavailable")
+                      ? t(nativeMode() && capabilities.emulation ? "browser.viewport.emulationHint" : "browser.viewport.emulationUnavailable")
                       : option.getLabel(props.labels)}
                     onClick={() => void selectViewport(option.id)}
                   >
@@ -987,6 +1002,8 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
             <div
               ref={bindTauriPlaceholder}
               title={props.title}
+              role="region"
+              aria-label={props.title}
               class={isResponsiveViewport() ? "bg-surface" : "bg-surface shadow-xl"}
               style={{
                 width: viewport().width ? `${viewport().width}px` : "100%",

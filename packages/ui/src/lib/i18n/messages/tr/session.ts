@@ -1,4 +1,5 @@
 export const sessionMessages = {
+  "browser.viewport.emulationUnavailable": "Yalnızca boyutlar. Bu önizlemede cihaz emülasyonu kullanılamıyor.",
   "sessionList.filter.includeMainSessions": "Ana oturumlar",
   "sessionList.filter.includeSubsessions": "Alt oturumlar",
   "session.pruning.maintenance_required": "Oturum veya depolama alanı meşgul. Geçerli işlem bitince temizlemeyi yeniden deneyin.",

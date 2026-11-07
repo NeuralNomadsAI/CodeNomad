@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import Fastify from "fastify"
-import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
+import { AUTOMATION_BRIDGE_PATH, BROWSER_AUTOMATION_UNAVAILABLE } from "../../opencode/automation-plugin"
 import { registerAutomationPluginRoute } from "./automation-plugin"
 
 test("a slow unrelated workspace cannot hide an already verified automation owner", { timeout: 2_000 }, async t => {
@@ -10,7 +10,11 @@ test("a slow unrelated workspace cannot hide an already verified automation owne
   const unrelated = new Promise<void>(resolve => { unblock = resolve })
   t.after(async () => { unblock(); await app.close() })
   registerAutomationPluginRoute(app, {
-    authManager: { isLoopbackRequest: () => true }, bridgeToken: "fixture", nativeParent: { available: true }, developerCdp: {},
+    authManager: { isLoopbackRequest: () => true }, bridgeToken: "fixture",
+    nativeParent: { available: true, request: async (method: string) => {
+      assert.equal(method, "browser.probe")
+      throw new Error("No visible local browser target for this session")
+    } }, developerCdp: {},
     workspaceManager: {
       getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "/repo" } }) } }),
       list: () => [{ id: "slow-unrelated" }, { id: "owner" }],
@@ -19,7 +23,7 @@ test("a slow unrelated workspace cannot hide an already verified automation owne
   } as never)
   const response = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
     headers: { "x-codenomad-automation-token": "fixture" }, payload: { mode: "browser-claim", sessionID: "ses_owner" } })
-  assert.equal(response.statusCode, 200)
+  assert.equal(response.statusCode, 200, "a supported host can claim a session before opening its first preview")
 })
 
 test("targets the inspected window independently of the visible conversation", async () => {
@@ -169,11 +173,12 @@ test("browser works with an unavailable developer target and unrelated inventory
   })
 
   assert.equal((await request({ mode: "browser-claim", sessionID: "session-1" })).statusCode, 200)
-  assert.equal(nativeCalls.length, 0)
+  assert.deepEqual(nativeCalls, [{ method: "browser.probe", params: { sessionID: "session-1" } }])
   assert.equal((await request({ mode: "browser-probe", sessionID: "session-1" })).statusCode, 200)
   const open = await request({ mode: "browser-execute", sessionID: "session-1", command: { action: "open", url: "https://example.com" } })
   assert.equal(open.statusCode, 200)
   assert.deepEqual(nativeCalls, [
+    { method: "browser.probe", params: { sessionID: "session-1" } },
     { method: "browser.probe", params: { sessionID: "session-1" } },
     {
       method: "browser.execute",
@@ -191,6 +196,46 @@ test("browser works with an unavailable developer target and unrelated inventory
   assert.equal(developer.statusCode, 404)
   assert.match(developer.json().error, /Native automation has no active/)
   await app.close()
+})
+
+test("WebKit browser refusals precede preview creation and preserve Mission-only claims", async t => {
+  const app = Fastify({ logger: false })
+  t.after(() => app.close())
+  const nativeCalls: string[] = []
+  registerAutomationPluginRoute(app, {
+    authManager: { isLoopbackRequest: () => true }, bridgeToken: "secret",
+    nativeParent: { available: true, request: async (method: string) => {
+      nativeCalls.push(method)
+      throw new Error(BROWSER_AUTOMATION_UNAVAILABLE)
+    } },
+    workspaceManager: {
+      getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "/repo" } }) } }),
+      list: () => [{ id: "owner" }], ownsLocation: async () => true,
+    },
+  } as never)
+  const request = (body: Record<string, unknown>) => app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
+    headers: { "x-codenomad-automation-token": "secret" }, payload: { sessionID: "owned", ...body } })
+
+  assert.equal((await request({ mode: "browser-claim", purpose: "mission" })).statusCode, 200)
+  assert.deepEqual(nativeCalls, [])
+  const claim = await request({ mode: "browser-claim" })
+  assert.equal(claim.statusCode, 409)
+  assert.equal(claim.json().error, BROWSER_AUTOMATION_UNAVAILABLE)
+  assert.deepEqual(nativeCalls, ["browser.probe"], "claim refuses without requesting preview creation")
+  const probe = await request({ mode: "browser-probe" })
+  assert.equal(probe.statusCode, 404)
+  assert.equal(probe.json().error, BROWSER_AUTOMATION_UNAVAILABLE)
+  for (const command of [
+    { action: "open", url: "https://example.com" }, { action: "navigate", url: "https://example.com" },
+    { action: "screenshot" }, { action: "snapshot" }, { action: "click", ref: "e1" },
+    { action: "type", ref: "e1", text: "x" }, { action: "select", ref: "e1", values: ["x"] },
+    { action: "hover", ref: "e1" }, { action: "drag", ref: "e1", to: "e2" },
+    { action: "scroll", direction: "down" }, { action: "press", key: "Enter" }, { action: "wait", text: "Ready" },
+  ]) {
+    const response = await request({ mode: "browser-execute", command })
+    assert.equal(response.statusCode, 409, command.action)
+    assert.equal(response.json().error, BROWSER_AUTOMATION_UNAVAILABLE, command.action)
+  }
 })
 
 test("a backend without a desktop host claims owned sessions for Mission dispatch only", async () => {

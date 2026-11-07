@@ -83,6 +83,8 @@ Tauri uses a child webview owned by the local application window: WebView2 on Wi
 
 Native views follow the preview bounds and hide beneath local menus, lists and dialogs. Reshow applies the latest bounds before revealing the retained document. WebKit Back/Forward uses each view's native back-forward list, with registration-owned entry identities and a 32-entry journal; restored sessions load the selected saved URL on explicit opening. WebKit viewport presets change dimensions only. Element comments are unavailable in native previews.
 
+Local Tauri primary renderers receive `__CODENOMAD_BROWSER_CAPABILITIES__` during initialization, with independent `embedding`, `history`, `emulation` and `automation` flags. WebKit publishes `reason: "webkit"` for its unavailable emulation/automation; unsupported targets publish `reason: "unsupported-platform"`. UI host selection consumes this contract; registration/history readiness stays independent of device emulation. UI registrations request hidden construction and recheck `localOverlayOpen()`, clipped bounds and display scale before the first reveal, including asynchronous construction beneath a dialog.
+
 Agent browser automation (`codenomad.browser`, including open, probe and page actions) is unavailable on Tauri macOS/Linux and returns an explicit refusal. Open these previews manually, or use Electron or Tauri Windows for agent automation. Plain-browser and remote-view clients use the sandboxed iframe proxy.
 
 On macOS, a page reading the clipboard after a user gesture can display the system's native **Paste** button. That button performs user-initiated paste. Site permission requests, downloads and new windows are denied by the native preview policy.

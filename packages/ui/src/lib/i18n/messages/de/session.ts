@@ -1,6 +1,6 @@
 export const sessionMessages = {
   "browser.viewport.emulationHint": "Lädt mit mobiler Kennung, Touch und Pixeldichte neu. Browser-Engine, Tastatur und Systemleisten werden nicht simuliert.",
-  "browser.viewport.emulationUnavailable": "Die Geräteemulation erfordert eine native Webvorschau in der Desktop-App.",
+  "browser.viewport.emulationUnavailable": "Nur Abmessungen. Geräteemulation ist in dieser Vorschau nicht verfügbar.",
   "sessionList.filter.includeMainSessions": "Hauptsitzungen",
   "sessionList.filter.includeSubsessions": "Untersitzungen",
   "session.pruning.maintenance_required": "Die Sitzung oder ihr Speicher ist beschäftigt. Warte, bis der aktuelle Vorgang abgeschlossen ist, und versuche die Bereinigung erneut.",
