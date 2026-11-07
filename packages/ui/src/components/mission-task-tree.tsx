@@ -9,8 +9,8 @@ import { sessions } from "../stores/session-state"
 import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
 import { MissionGraph, orderMissionTasks } from "./mission-graph"
 import { createMissionRecoveryAction } from "./mission-recovery-button"
-import { missionPanelScroll } from "./mission-panel-scroll"
 import { useMissionPanelStore } from "./mission-panel-scope"
+import { missionPanelScroll } from "./mission-panel-scroll"
 import type { MissionTaskRequest } from "../../../server/src/missions/mission-panel-map"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 
@@ -101,7 +101,8 @@ export function MissionTaskTree(props: {
   const scope = () => instances().get(props.instanceId)?.folder ?? props.instanceId
   const open = () => missionProjectView(scope()).tasksCollapsed !== true
   let root!: HTMLElement
-  const panelScrolls = missionPanelScroll(() => root, () => props.active ?? true)
+  // Keeps the focused task in view through nested growth; the panel is the only scroller.
+  missionPanelScroll(() => root, () => props.active ?? true)
   const [sentinel, setSentinel] = createSignal<HTMLLIElement>()
   const loadNext = () => {
     const offset = nextOffset()
@@ -113,11 +114,12 @@ export function MissionTaskTree(props: {
     const observer = new IntersectionObserver(entries => {
       // Reaching the manual fallback with the keyboard is not an activation.
       if (entries.some(entry => entry.isIntersecting) && !target.contains(document.activeElement) && !read()?.failure) loadNext()
-    }, { root: panelScrolls() ? root.closest(".mission-control") : target.closest(".mission-flow"), rootMargin: "0px 0px 120px 0px" })
+    // The panel is the tree's only scroller.
+    }, { root: root.closest(".mission-control"), rootMargin: "0px 0px 120px 0px" })
     observer.observe(target)
     onCleanup(() => observer.disconnect())
   })
-  return <section ref={root} class="mission-tree mission-disclosure" data-scroller={panelScrolls() ? "panel" : undefined}>
+  return <section ref={root} class="mission-tree mission-disclosure">
     <h3><button type="button" class="mission-disclosure-trigger" aria-expanded={open()} aria-controls={id}
       onClick={() => updateMissionProjectView(scope(), { tasksCollapsed: open() || undefined })}>
       <ChevronRight class="disclosure-chevron h-4 w-4" aria-hidden="true" /><span>{t("missionsPanel.tasks")}</span>

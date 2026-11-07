@@ -39,7 +39,7 @@ const long = [mission("long", chain), ...Array.from({ length: 11 }, (_, index) =
 const fan = [mission("fan", [task("read", [], "completed"), task("bench", ["read"]), task("schema", ["read"]), task("lone"), task("cleanup", ["bench", "schema"])]),
   ...Array.from({ length: 11 }, (_, index) => mission(`other${index}`))]
 
-async function open(context: BrowserContextOptions, missions: MissionMap[], selected: string, view: { listExpanded?: boolean; rtl?: boolean; frame?: string } = {}) {
+async function open(context: BrowserContextOptions, missions: MissionMap[], selected: string, view: { rtl?: boolean; frame?: string } = {}) {
   const page = await (await browser.newContext({ locale: "en-US", ...context })).newPage()
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -63,7 +63,7 @@ async function open(context: BrowserContextOptions, missions: MissionMap[], sele
     ;(window as any).missionFixture.connectCatalog()
     const instances = "/src/stores/instances.ts", state = "/src/stores/mission-view-state.ts"
     ;(await import(instances)).updateInstance("fixture", { metadata: { project: { id: "project" } } })
-    ;(await import(state)).updateMissionProjectView("fixture", { selected, listExpanded: view.listExpanded || undefined })
+    ;(await import(state)).updateMissionProjectView("fixture", { selected })
   }, { selected, view })
   await page.locator(".mission-tree-node").first().waitFor()
   await settle(page)
@@ -83,67 +83,36 @@ async function reachable(page: Page) {
     const panel = document.querySelector<HTMLElement>(".mission-control")!, box = () => panel.getBoundingClientRect()
     const inside = (element: Element) => { const rect = element.getBoundingClientRect(), bounds = box(); return rect.top >= bounds.top - 1 && rect.bottom <= bounds.bottom + 1 }
     panel.scrollTop = 0
-    const top = inside(document.querySelector(".mission-picker-field")!) && inside(document.querySelector('.mission-picker-actions button')!)
-    panel.scrollTop = panel.scrollHeight
-    const bottom = inside([...document.querySelectorAll(".mission-tree-node")].at(-1)!)
+    const top = inside(document.querySelector(".mission-picker-search")!) && inside(document.querySelector('.mission-picker-actions button')!)
+    // Rows of the missions after the selected one follow its tasks.
+    const last = [...document.querySelectorAll(".mission-tree-node")].at(-1)!
+    last.scrollIntoView({ block: "end" })
+    const bottom = inside(last) && panel.scrollTop > 0
+    // The header stays at the top of the scrolled panel.
+    const header = inside(document.querySelector('.mission-picker-actions button')!) && inside(document.querySelector(".mission-picker-search")!)
     panel.scrollTop = 0
-    return { top, bottom }
+    return { top, bottom, header }
   })
 }
 
 for (const variant of [{ name: "desktop LTR", context: {} }, { name: "touch RTL", context: { hasTouch: true, isMobile: true }, rtl: true }]) {
-  test(`${variant.name}: 300px with the expanded picker scrolls the whole panel once; nothing is clipped`, async () => {
-    const { page, errors } = await open({ ...variant.context, viewport: { width: 900, height: 300 } }, long, "long", { listExpanded: true, rtl: variant.rtl })
-    try {
-      assert.equal(await page.locator(".mission-picker-inline .mission-picker-options > li").count(), 12)
-      assert.equal(await page.locator(".mission-tree-node").count(), 40)
-      assert.equal(await page.locator(".mission-tree").getAttribute("data-scroller"), "panel")
-      const found = await scrollers(page)
-      // The picker's own bounded list is a separate compact list by design.
-      assert.deepEqual(found.filter(name => !String(name).includes("mission-picker-options")), ["mission-control"], `single task scroller, found ${found}`)
-      assert.equal(await page.locator(".mission-flow").evaluate(element => getComputedStyle(element).overflowY), "visible")
-      assert.deepEqual(await reachable(page), { top: true, bottom: true })
-      assert.deepEqual(errors, [])
-    } finally { await page.context().close() }
-  })
-
-  test(`${variant.name}: 600px keeps the header fixed and the task flow as sole scroller, filling to the bottom; collapse adds no chrome`, async () => {
+  test(`${variant.name}: the panel is the single scroller under a fixed header, and its scrollbar never changes its width`, async () => {
     const { page, errors } = await open({ ...variant.context, viewport: { width: 900, height: 600 } }, long, "long", { rtl: variant.rtl })
     try {
-      assert.equal(await page.locator(".mission-tree").getAttribute("data-scroller"), null)
-      assert.deepEqual(await scrollers(page), ["mission-flow mission-flow-linked"])
-      // Down to the window bottom, inside the existing panel/detail/group paddings.
-      const gaps = await page.evaluate(() => {
-        const contentBottom = (selector: string) => { const element = document.querySelector(selector)!
-          return element.getBoundingClientRect().bottom - parseFloat(getComputedStyle(element).paddingBottom) }
-        return [contentBottom(".mission-control") - document.querySelector(".mission-detail")!.getBoundingClientRect().bottom,
-          contentBottom(".mission-detail") - document.querySelector(".mission-tree")!.getBoundingClientRect().bottom,
-          contentBottom(".mission-tree") - document.querySelector(".mission-flow")!.getBoundingClientRect().bottom]
-      })
-      assert.ok(gaps.every(gap => Math.abs(gap) <= 1), `tasks fill to the bottom: ${gaps}`)
-
-      // At 600px the expanded picker still leaves the minimum task room; at 520px it does not:
-      // the panel takes over, and collapsing restores the inner flow.
-      await page.locator(".mission-picker-expander").click()
-      await settle(page)
-      assert.equal(await page.locator(".mission-tree").getAttribute("data-scroller"), null)
-      assert.deepEqual((await scrollers(page)).filter(name => !String(name).includes("mission-picker-options")), ["mission-flow mission-flow-linked"])
-      await page.locator(".mission-picker-expander").click()
-      await page.setViewportSize({ width: 900, height: 520 })
-      await page.locator(".mission-picker-expander").click()
-      await page.waitForFunction(() => document.querySelector(".mission-tree")?.getAttribute("data-scroller") === "panel")
-      await settle(page)
-      assert.deepEqual((await scrollers(page)).filter(name => !String(name).includes("mission-picker-options")), ["mission-control"])
-      assert.deepEqual(await reachable(page), { top: true, bottom: true })
-      await page.locator(".mission-picker-expander").click()
-      await page.waitForFunction(() => !document.querySelector(".mission-tree")?.hasAttribute("data-scroller"))
-      await settle(page)
-      assert.deepEqual(await scrollers(page), ["mission-flow mission-flow-linked"])
-
-      await page.locator(".mission-tree h3 button").click()
-      await settle(page)
-      assert.deepEqual(await scrollers(page), [], "collapsed tasks need no scroller")
-      assert.equal(await page.locator(".mission-tree").getAttribute("data-scroller"), null)
+      assert.equal(await page.locator(".mission-rows .mission-row").count(), 12)
+      assert.equal(await page.locator(".mission-tree-node").count(), 40)
+      assert.deepEqual(await scrollers(page), ["mission-control"], "one scroller: no list or task flow of its own")
+      assert.equal(await page.locator(".mission-flow").evaluate(element => getComputedStyle(element).overflowY), "visible")
+      assert.deepEqual(await reachable(page), { top: true, bottom: true, header: true })
+      const width = await page.locator(".mission-control").evaluate(element => element.clientWidth)
+      // A very short window lets the header scroll away; a tall one needs no scroller.
+      for (const height of [300, 4000]) {
+        await page.setViewportSize({ width: 900, height })
+        await settle(page)
+        assert.deepEqual(await scrollers(page), height === 300 ? ["mission-control"] : [], `${height}px`)
+        if (height === 300) assert.deepEqual(await reachable(page), { top: true, bottom: true, header: false })
+        assert.equal(await page.locator(".mission-control").evaluate(element => element.clientWidth), width, `${height}px: stable width`)
+      }
       assert.deepEqual(errors, [])
     } finally { await page.context().close() }
   })
@@ -241,58 +210,27 @@ test("a map of 500 tasks and 40 actors shows a page of rows, reads further on re
   } finally { await page.context().close() }
 })
 
-test("picker keys: Space opens once, composing Enter keeps the popup, arrows/Home/End/Enter/Escape and outside dismissal", async () => {
+test("rows are buttons: Enter and Space select; the filter keeps composition keys and selects nothing", async () => {
   const { page, errors } = await open({ viewport: { width: 900, height: 600 } }, long, "long")
   try {
-    const field = page.locator(".mission-picker-field")
-    const expanded = () => field.getAttribute("aria-expanded")
-    const selected = () => field.locator("bdi").innerText()
-    await field.focus()
-    await page.keyboard.press("Space")
-    assert.equal(await expanded(), "true", "Space opens the closed combobox")
-    await settle(page)
-    assert.equal(await expanded(), "true", "the native keyup click does not toggle it closed")
-
-    // The popup list overflows, so typing moves focus into its search.
-    await page.keyboard.type("Objective other")
-    const search = page.locator(".mission-picker-popup .mission-picker-search")
-    assert.equal(await search.evaluate(element => element === document.activeElement), true)
-    for (const init of [{ isComposing: true }, { keyCode: 229 }]) {
-      await search.evaluate((element, init) => element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init })), init)
-      await search.evaluate((element, init) => element.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true, ...init })), init)
-      await search.evaluate((element, init) => element.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true, ...init })), init)
-      assert.equal(await expanded(), "true", `composition keys (${JSON.stringify(init)}) stay with the text`)
-      assert.equal(await selected(), "Objective long")
-    }
-    const active = () => page.locator(".mission-picker-popup .mission-picker-option-active bdi").innerText()
-    assert.equal(await active(), "Objective other0", "composition arrows did not move the active option")
-    await page.keyboard.press("End")
-    assert.equal(await active(), "Objective other10")
-    await page.keyboard.press("Home")
-    await page.keyboard.press("ArrowDown")
-    assert.equal(await active(), "Objective other1")
+    const selected = () => page.locator(".mission-row-select[aria-current=true] .session-item-title").innerText()
+    const row = (title: string) => page.locator(".mission-row-select").filter({ has: page.locator(".session-item-title", { hasText: new RegExp(`^${title}$`) }) })
+    await row("Objective other1").focus()
     await page.keyboard.press("Enter")
-    assert.equal(await expanded(), "false")
     assert.equal(await selected(), "Objective other1")
-    assert.equal(await field.evaluate(element => element === document.activeElement), true, "focus returns to the field")
-
-    // Enter opens through the native button click exactly once; Space selects the active option.
-    await page.keyboard.press("Enter")
-    assert.equal(await expanded(), "true")
-    await page.keyboard.press("ArrowUp")
+    await row("Objective other0").focus()
     await page.keyboard.press("Space")
-    assert.equal(await expanded(), "false")
     assert.equal(await selected(), "Objective other0")
-
-    await page.keyboard.press("ArrowDown")
-    assert.equal(await expanded(), "true")
-    await page.keyboard.press("Escape")
-    assert.equal(await expanded(), "false")
-    assert.equal(await field.evaluate(element => element === document.activeElement), true)
-    await page.keyboard.press("ArrowDown")
-    await page.mouse.click(20, 20)
-    assert.equal(await expanded(), "false", "outside pointer dismissal")
-    assert.equal(await selected(), "Objective other0")
+    const search = page.locator(".mission-picker-search")
+    await search.fill("Objective other1")
+    for (const init of [{ isComposing: true }, { keyCode: 229 }]) {
+      for (const key of ["Enter", "Escape", "ArrowDown"]) await search.evaluate((element, { key, init }) =>
+        element.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init })), { key, init })
+      assert.equal(await search.inputValue(), "Objective other1", `composition keys (${JSON.stringify(init)}) stay with the text`)
+      assert.equal(await selected(), "Objective other0", "filtering never selects")
+    }
+    assert.equal(await row("Objective other1").count(), 1)
+    assert.equal(await row("Objective other2").count(), 0, "the filter narrows the rows")
     assert.deepEqual(errors, [])
   } finally { await page.context().close() }
 })

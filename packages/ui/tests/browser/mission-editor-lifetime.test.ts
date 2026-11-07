@@ -141,7 +141,7 @@ for (const method of ["POST", "PATCH"] as const) for (const phase of ["mutation"
         if (change === "new-editor") {
           assert.equal(await page.locator("form.mission-editor textarea").first().inputValue(), "Newer editor draft")
           assert.equal(await page.getByRole("alert").count(), 0)
-          assert.equal(await page.locator(".mission-picker-control").isVisible(), false, "the newer creation form replaces the list")
+          assert.equal(await page.locator(".mission-rows").isVisible(), false, "the newer creation form replaces the list")
           await page.locator("form.mission-editor").getByRole("button", { name: "Cancel", exact: true }).click()
         }
         if (change !== "project") await (await inlineMissionEntry(page, "Saved result")).waitFor()
@@ -180,7 +180,7 @@ for (const method of ["POST", "PATCH"] as const) test(`current legitimate ${meth
     if (method === "PATCH") {
       await selectMission(page, "Objective one")
       await selectMission(page, "Objective two")
-    } else assert.equal(await page.locator(".mission-picker-control").isVisible(), false, "the creation form replaces the list")
+    } else assert.equal(await page.locator(".mission-rows").isVisible(), false, "the creation form replaces the list")
     assert.equal(await page.locator("form.mission-editor button[type=submit]").first().isDisabled(), false)
     const before = (await page.evaluate(() => window.missionEditorLifetime.selectedHistory())).length
     await page.locator("form.mission-editor button[type=submit]").first().click()
@@ -292,7 +292,7 @@ test("creation-uncertain retains original request/draft across close, remount an
     // Discovery remains summary-only while the creation form hides the picker.
     await page.locator("form.mission-editor").getByRole("button", { name: "Refresh mission map", exact: true }).click()
     await page.waitForFunction(() => (window.missionEditorLifetime.state("fixture") as { summaries?: Array<{ id: string }> }).summaries?.some(value => value.id === "late"))
-    assert.equal(await page.locator(".mission-picker-control").isVisible(), false)
+    assert.equal(await page.locator(".mission-rows").isVisible(), false)
     await page.locator("form.mission-editor").evaluate(form => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
     assert.equal(attempts.length, 1)
     assert.deepEqual(await page.evaluate(() => window.missionEditorLifetime.held()), original)

@@ -7,7 +7,7 @@ import { fixtureEventStream } from "./fixture-event-stream"
 import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
 import { chromium, type Browser, type Locator, type Page } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
-import { clickMissionAction, inlineMissionEntry, missionGeneralAction, missionPicker, missionPickerExpander, missionPickerField, missionPopupOption,
+import { clickMissionAction, inlineMissionEntry, missionGeneralAction, missionMenuTrigger, missionPicker, missionRows, missionToolbar,
   missionRefresh, missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
 
 import { borrowFixture } from "./fixture-borrow"
@@ -66,20 +66,19 @@ async function until(condition: () => boolean, timeout = 5_000) {
 }
 /** The selected Mission's detail: a separate section below the picker. */
 const selectedCard = (page: Page) => page.locator("section.mission-detail")
-/** Screen-reader status ("State · time") of the Mission shown in the current-mission field. */
-const selectedStatus = (page: Page, state: string) => missionPickerField(page).locator(".sr-only").filter({ hasText: new RegExp(`^${state} · `) })
+/** Screen-reader status ("State · time") of the selected Mission's row. */
+const selectedStatus = (page: Page, state: string) => page.locator(".mission-row-select[aria-current=true] .sr-only").filter({ hasText: new RegExp(`^${state} · `) })
 /** The selected Mission's contextual Play/Pause/Check control: the toolbar's first button. */
-const primaryControl = (page: Page) => selectedCard(page).locator(".mission-action-bar > button").first()
+const primaryControl = (page: Page) => missionToolbar(page).locator("button").first()
 const taskRow = (page: Page, key: string) => page.locator(`.mission-tree li[data-task-key="${key}"]`)
 const taskButton = (page: Page, key: string) => taskRow(page, key).locator(".mission-tree-task")
 const taskState = (page: Page, key: string, state: string) => page.locator(`.mission-tree li[data-task-key="${key}"][data-state="${state}"]`)
-const readAll = (page: Page) => selectedCard(page).locator(".mission-overview-toggle")
+const readAll = (page: Page) => missionToolbar(page).locator(".mission-overview-toggle")
 const screenshotPath = (name: string) => path.join(os.tmpdir(), "opencode", `${name}-${process.env.CODENOMAD_MISSION_CAPTURE_TAG ?? "updated"}.png`)
 const fixtureText = (page: Page, key: string) => fixtureCall(page, "text", key) as Promise<string>
-/** Locale-neutral explicit picker choice (the field's accessible name is localized). */
+/** Locale-neutral explicit choice of a row by its title. */
 async function pickLocalized(page: Page, title: string) {
-  await missionPicker(page).locator("button.mission-picker-field").click()
-  await missionPopupOption(page, title).click()
+  await (await inlineMissionEntry(page, title)).click()
   await selectedCard(page).waitFor()
 }
 async function localizedPreferences(page: Page, name: string) {
@@ -1103,7 +1102,7 @@ test("one Play control starts and resumes; partial Pause survives remount and St
     await fixtureCall(page, "mount", true)
     assert.equal(await play.isDisabled(), true)
     assert.equal(await stop.isDisabled(), true)
-    assert.equal(await page.getByRole("button", { name: "More actions", exact: true }).count(), 0, "no overflow menu in the panel")
+    assert.equal(await missionMenuTrigger(page).count(), 1, "secondary actions live in the selection's overflow menu")
     await page.screenshot({ path: screenshotPath("mission-lifecycle-stopped") })
     assert.deepEqual(calls.map(call => call.action), ["start", "pause", "pause", "start", "stop"])
   } finally { await page.close() }
@@ -1207,7 +1206,7 @@ test("edits keep drafts and original revision during refresh, and creation retri
     await page.locator("form.mission-editor").waitFor({ state: "detached" })
     // Only the picker selects: deleting the selected Mission never falls back to
     // another one, even the current conversation's coordinator Mission.
-    await missionPickerField(page).locator(".mission-picker-placeholder").waitFor()
+    await selectedMissionTitle(page).waitFor({ state: "detached" })
     assert.equal(await selectedCard(page).count(), 0)
     await (await inlineMissionEntry(page, "Objective one")).waitFor()
     assert.equal(deletions.length, 2)
@@ -1377,10 +1376,9 @@ test("compact mission rows retain a completed branching plan, direct readers and
     const lastTask = await page.locator(".mission-tree li").last().boundingBox()
     assert.ok(lastTask && lastTask.y + lastTask.height < 800, "the complete plan fits at a normal panel height")
     await inlineMissionEntry(page, "Ship the Mission Centre")
-    const indexRows = await missionPicker(page).locator(".mission-picker-inline button.mission-picker-option").evaluateAll(rows => rows.map(row => row.getBoundingClientRect().toJSON()))
+    const indexRows = await missionRows(page).locator("button.mission-row-select").evaluateAll(rows => rows.map(row => row.getBoundingClientRect().toJSON()))
     assert.equal(indexRows.length, 2)
     assert.ok(indexRows[1].top >= indexRows[0].bottom)
-    await missionPickerExpander(page).click()
     assert.equal(await page.locator(".mission-control-metrics").count(), 0)
     // Creation is a labelled icon in the general toolbar (accessible name and tooltip).
     const create = missionGeneralAction(page, "Create mission")
@@ -1445,26 +1443,26 @@ test("top-level mission rows expose short one-line titles, semantic states, read
     assert.equal(await selectedCard(page).count(), 0, "no detail until a Mission is selected")
     assert.equal(await selectedMissionTitle(page).count(), 0)
     // Each entry is one line: a status mark and the title; the state · time stays in the tooltip and screen-reader text.
-    const parts = await rows[0].evaluate(el => [...el.children].map(child => child.className))
-    assert.deepEqual(parts, ["mission-picker-mark", "mission-picker-title", "sr-only"])
+    const parts = await rows[0].evaluate(el => [...el.children].map(child => child.getAttribute("class")!.split(" ")[0]))
+    assert.deepEqual(parts, ["lucide", "session-item-title", "sr-only"])
     assert.match(await rows[0].locator(".sr-only").textContent() ?? "", /^In progress · /)
     assert.match(await rows[0].getAttribute("title") ?? "", new RegExp(`^${titleOf(0).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} — In progress · `))
-    const title = await rows[0].locator(".mission-picker-title").evaluate(el => ({ overflow: getComputedStyle(el).textOverflow, wrap: getComputedStyle(el).whiteSpace }))
+    const title = await rows[0].locator(".session-item-title").evaluate(el => ({ overflow: getComputedStyle(el).textOverflow, wrap: getComputedStyle(el).whiteSpace }))
     assert.deepEqual(title, { overflow: "ellipsis", wrap: "nowrap" })
-    assert.equal(await rows[0].locator(".mission-picker-title").evaluate(el => el.scrollWidth > el.clientWidth), true, "the long title is visually shortened")
+    assert.equal(await rows[0].locator(".session-item-title").evaluate(el => el.scrollWidth > el.clientWidth), true, "the long title is visually shortened")
     const heights = await Promise.all(rows.map(row => row.evaluate(el => el.getBoundingClientRect().height)))
-    const titleHeight = await rows[0].locator(".mission-picker-title").evaluate(el => el.getBoundingClientRect().height)
+    const titleHeight = await rows[0].locator(".session-item-title").evaluate(el => el.getBoundingClientRect().height)
     assert.ok(heights.every(height => height < titleHeight * 2), "single-line rows")
-    const marks = await Promise.all(rows.map(row => row.locator(".mission-picker-mark").getAttribute("data-mark")))
+    const marks = await Promise.all(rows.map(row => row.locator(".mission-row-flag").getAttribute("data-mark")))
     assert.deepEqual(marks, ["idle", "idle", "interrupted"], "only the resumable failure needs attention; history already present reads as seen")
-    const colors = await missionPicker(page).locator(".mission-picker-inline .mission-picker-mark").evaluateAll(items => items.map(el => getComputedStyle(el).backgroundColor))
+    const colors = await missionRows(page).locator(".mission-row-flag").evaluateAll(items => items.map(el => getComputedStyle(el).color))
     assert.equal(new Set(colors).size, 2, "idle rows share the neutral mark")
     await rows[1].click()
     await selectedCard(page).waitFor()
-    // The detail follows the whole picker as its own section, never inside the selected row.
+    // The detail is the selected row's children: right after it in the tree, before the next row.
     assert.equal(await page.locator(".mission-control").evaluate(panel => {
-      const index = panel.querySelector(".mission-picker")!, detail = panel.querySelector("section.mission-detail")!
-      return !index.contains(detail) && Boolean(index.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING)
+      const selected = panel.querySelector(".mission-row:has(.mission-row-select[aria-current=true])")!, detail = panel.querySelector("section.mission-detail")!
+      return selected.parentElement!.contains(detail) && Boolean(selected.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING)
     }), true)
     assert.equal(await selectedCard(page).locator("form, textarea, .mission-disclosure:not(.mission-tree), .mission-result").count(), 0)
     assert.equal(await rows[1].getAttribute("aria-current"), "true")
@@ -1472,14 +1470,15 @@ test("top-level mission rows expose short one-line titles, semantic states, read
     const highlight = await page.evaluate(() => { const probe = document.createElement("div"); probe.style.background = "var(--list-item-highlight-bg)"; document.body.append(probe)
       const color = getComputedStyle(probe).backgroundColor; probe.remove(); return color })
     // Rows animate their background; compare settled values, with and without the pointer over the row.
+    const rowBase = rows[1].locator("xpath=ancestor::div[contains(@class, 'session-item-base')]")
     const settledBackground = async () => {
-      await rows[1].evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished)))
-      return rows[1].evaluate(el => getComputedStyle(el).backgroundColor)
+      await rowBase.evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished)))
+      return rowBase.evaluate(el => getComputedStyle(el).backgroundColor)
     }
     await page.mouse.move(0, 0)
     assert.equal(await settledBackground(), highlight, "selection uses the shared list highlight, never the input-field surface")
     await rows[1].hover()
-    await page.waitForFunction(() => Boolean(document.querySelector("button.mission-picker-option-selected:hover")))
+    await page.waitForFunction(() => Boolean(document.querySelector(".mission-row-select[aria-current=true]:hover")))
     assert.equal(await settledBackground(), highlight, "rollover overlays the selected highlight instead of replacing it")
     await readAll(page).click()
     await page.locator(".mission-reader").getByText("Full context for mission 1", { exact: true }).waitFor()

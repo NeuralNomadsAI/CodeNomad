@@ -9,7 +9,7 @@ import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type BrowserContextOptions, type Page, type Route } from "playwright"
 import type { MissionMap, MissionTask } from "../../../server/src/api-types"
 import { MISSION_TASK_PAGE } from "../../../server/src/missions/mission-panel-map"
-import { missionPickerExpander, missionPickerField, missionPopupOption, missionDetail, missionGeneralAction, inlineMissionEntry, selectMission, selectedMissionTitle } from "./mission-actions"
+import { missionDetail, missionGeneralAction, inlineMissionEntry, selectMission, selectedMissionTitle } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, url: string
@@ -60,7 +60,7 @@ async function open(options: BrowserContextOptions = {}, holdDepth = false) {
     return route.fulfill({ json: {} })
   })
   await page.goto(url, { timeout: 60_000 })
-  await missionPickerField(page).waitFor()
+  await page.locator(".mission-rows button.mission-row-select").first().waitFor()
   return { page, errors, mutations, close: () => context.close(), releaseDepth: async () => {
     assert(depthRoute, "the actual depth HTTP request is held")
     // Exactly the default HTTP fixture reply, including its depth-read validation error.
@@ -71,7 +71,7 @@ async function open(options: BrowserContextOptions = {}, holdDepth = false) {
 
 const scrolls = (page: Page, selector: string) => page.locator(selector).first().evaluate(element => element.scrollHeight > element.clientHeight + 1)
 
-test("a long mission's task group fills the panel to the window bottom with a single task scroller", async () => {
+test("a long mission's tasks scroll with the panel, the only scroller, under its fixed header", async () => {
   for (const viewport of [{ width: 1000, height: 600 }, { width: 1000, height: 420 }]) {
     const f = await open({ viewport })
     try {
@@ -81,23 +81,17 @@ test("a long mission's task group fills the panel to the window bottom with a si
       await flow.locator(".mission-tree-more").waitFor({ state: "attached" })
       assert.equal(await flow.locator(".mission-tree-node").count(), MISSION_TASK_PAGE)
       assert.equal(await detail.locator(".mission-tree .mission-disclosure-trigger small").innerText(), String(TASKS), "the group shows its task count")
-      assert.equal(await scrolls(f.page, ".mission-tree .mission-flow"), true, `the task list scrolls at ${viewport.height}px`)
+      assert.equal(await scrolls(f.page, ".mission-tree .mission-flow"), false, `no task scroller at ${viewport.height}px`)
       assert.equal(await scrolls(f.page, "#tab-body"), false, `no host scrollbar at ${viewport.height}px`)
-      assert.equal(await scrolls(f.page, ".mission-control"), false, `no second panel scrollbar at ${viewport.height}px`)
-      const [flowBox, detailBox, bodyBox] = await Promise.all([flow.boundingBox(), detail.boundingBox(), f.page.locator("#tab-body").boundingBox()])
-      const padding = await f.page.locator(".mission-control").evaluate(element => parseFloat(getComputedStyle(element).paddingBottom))
-      assert(flowBox && detailBox && bodyBox, "measured")
-      assert(Math.abs(detailBox.y + detailBox.height - (bodyBox.y + bodyBox.height - padding)) <= 2, `the detail reaches the panel bottom at ${viewport.height}px`)
-      // Only the detail/tree paddings separate the list from the window bottom.
-      const gap = detailBox.y + detailBox.height - (flowBox.y + flowBox.height)
-      assert(gap >= 0 && gap <= 16, `the task list fills the remaining height at ${viewport.height}px (gap ${gap})`)
-      assert(flowBox.height >= 100, `the task list keeps a usable height at ${viewport.height}px`)
-      // The list's end (the gap and its read further) is reachable by scrolling the task list only.
+      assert.equal(await scrolls(f.page, ".mission-control"), true, `the panel scrolls at ${viewport.height}px`)
+      // The list's end (its read further) is reachable by scrolling the panel; the header stays.
       const last = flow.locator(".mission-tree-list > li").last()
       await last.scrollIntoViewIfNeeded()
       assert.equal(await f.page.locator("#tab-body").evaluate(element => element.scrollTop), 0)
-      assert(await flow.evaluate(element => element.scrollTop) > 0)
-      // Collapsing keeps the header and count; expanding restores the filled list.
+      assert(await f.page.locator(".mission-control").evaluate(element => element.scrollTop) > 0)
+      const [header, panel] = await Promise.all([f.page.locator(".mission-control-header").boundingBox(), f.page.locator(".mission-control").boundingBox()])
+      assert(header && panel && Math.abs(header.y - panel.y) <= 1, `the header stays at the panel top at ${viewport.height}px: ${header?.y} vs ${panel?.y}`)
+      // Collapsing keeps the header and count.
       const trigger = detail.locator(".mission-tree .mission-disclosure-trigger")
       await trigger.click()
       assert.equal(await trigger.getAttribute("aria-expanded"), "false")
@@ -105,7 +99,6 @@ test("a long mission's task group fills the panel to the window bottom with a si
       assert.equal(await scrolls(f.page, "#tab-body"), false)
       await trigger.click()
       assert.equal(await trigger.getAttribute("aria-expanded"), "true")
-      assert.equal(await scrolls(f.page, ".mission-tree .mission-flow"), true)
       assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
     } finally { await f.close() }
   }
@@ -131,61 +124,44 @@ test("the task conversation arrow appears on desktop hover and stays visible on 
   }
 })
 
-test("the mission name opens a transient popup closed by selection, Escape and outside interaction", async () => {
+test("rows select a Mission whose detail is the row's children; its chevron folds the detail and the filter keeps it listed", async () => {
   const f = await open()
   try {
-    const field = missionPickerField(f.page), popup = f.page.locator(".mission-picker-popup")
+    const row = (title: string) => f.page.locator(".mission-row").filter({ has: f.page.locator(".session-item-title", { hasText: new RegExp(`^${title}$`) }) })
+    const chevron = (title: string) => row(title).locator(".session-item-expander")
+    const actions = f.page.locator(".mission-picker-selection-actions .mission-action-bar")
     assert.equal(await missionDetail(f.page).count(), 0, "nothing is selected by default")
-    await field.click()
-    assert.equal(await field.getAttribute("aria-expanded"), "true")
-    await missionPopupOption(f.page, "Short audit").click()
-    await popup.waitFor({ state: "detached" })
-    assert.equal(await field.getAttribute("aria-expanded"), "false")
-    assert.equal(await selectedMissionTitle(f.page).innerText(), "Short audit")
+    assert.equal(await actions.count(), 0, "no selection mounts no toolbar")
+    assert.equal(await f.page.locator(".mission-picker-idle-actions .mission-action-bar button:enabled").count(), 0, "the same buttons show disabled")
+    // Selecting a row expands it: its detail directly follows it, its toolbar is in the header.
+    await (await inlineMissionEntry(f.page, "Short audit")).click()
     assert.equal(await missionDetail(f.page).getAttribute("aria-label"), "Short audit")
-    assert.equal(await field.evaluate(element => element === document.activeElement), true, "selection returns focus to the field")
-    // Outside pointer interaction dismisses without changing the selection.
-    await field.click()
-    await popup.waitFor()
-    await f.page.locator("#chat").click()
-    await popup.waitFor({ state: "detached" })
+    assert.equal(await chevron("Short audit").getAttribute("aria-expanded"), "true")
+    assert.equal(await chevron("Long migration").getAttribute("aria-expanded"), "false")
+    await actions.waitFor()
+    assert.equal(await row("Short audit").evaluate(element => Boolean(element.nextElementSibling?.querySelector("section.mission-detail"))), true)
+    // The selected row's chevron folds and unfolds its detail without changing the selection.
+    await chevron("Short audit").click()
+    assert.equal(await chevron("Short audit").getAttribute("aria-expanded"), "false")
+    assert.equal(await missionDetail(f.page).isVisible(), false, "folded, the detail stays mounted but hidden")
     assert.equal(await selectedMissionTitle(f.page).innerText(), "Short audit")
-    // Keyboard: arrows open, Escape dismisses and keeps focus on the field.
-    await field.focus()
-    await f.page.keyboard.press("ArrowDown")
-    await popup.waitFor()
-    await f.page.keyboard.press("Escape")
-    await popup.waitFor({ state: "detached" })
-    assert.equal(await field.evaluate(element => element === document.activeElement), true)
-    assert.equal(await f.page.locator(".mission-picker-inline").count(), 0, "the popup never opens the persistent list")
-    assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
-  } finally { await f.close() }
-})
-
-test("the chevron's inline list persists across selection and remount", async () => {
-  const f = await open()
-  try {
-    const expander = missionPickerExpander(f.page), inline = f.page.locator(".mission-picker-inline")
-    assert.equal(await expander.getAttribute("aria-expanded"), "false")
-    await (await inlineMissionEntry(f.page, "Long migration")).click()
-    assert.equal(await expander.getAttribute("aria-expanded"), "true")
+    assert.equal(await actions.isVisible(), true, "the toolbar still acts on the folded selection")
+    await chevron("Short audit").click()
     await missionDetail(f.page).waitFor()
-    assert.equal(await inline.isVisible(), true, "selecting from the inline list keeps it open")
-    assert.equal(await (await inlineMissionEntry(f.page, "Long migration")).getAttribute("aria-current"), "true")
-    await f.page.locator("#chat").click()
-    assert.equal(await inline.isVisible(), true, "outside interaction does not dismiss the persistent list")
-    await f.page.evaluate(() => (window as any).missionHost.mount(false))
-    await f.page.evaluate(() => (window as any).missionHost.mount(true))
-    await inline.waitFor()
-    assert.equal(await missionPickerExpander(f.page).getAttribute("aria-expanded"), "true", "expansion survives remount")
+    // Another row's chevron selects it.
+    await chevron("Long migration").click()
     assert.equal(await selectedMissionTitle(f.page).innerText(), "Long migration")
-    await missionPickerExpander(f.page).click()
-    await inline.waitFor({ state: "detached" })
+    await missionDetail(f.page).and(f.page.locator('[aria-label="Long migration"]')).waitFor()
+    // The filter narrows the other rows only.
+    await f.page.locator(".mission-picker-search").fill("audit")
+    assert.equal(await row("Short audit").count(), 1)
+    assert.equal(await row("Long migration").count(), 1, "the selected row stays listed")
+    await f.page.locator(".mission-picker-search").fill("")
+    // The selection survives a remount.
     await f.page.evaluate(() => (window as any).missionHost.mount(false))
     await f.page.evaluate(() => (window as any).missionHost.mount(true))
-    await missionPickerField(f.page).waitFor()
-    assert.equal(await missionPickerExpander(f.page).getAttribute("aria-expanded"), "false", "collapse survives remount")
-    assert.equal(await inline.count(), 0)
+    await missionDetail(f.page).waitFor()
+    assert.equal(await selectedMissionTitle(f.page).innerText(), "Long migration")
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })
@@ -274,7 +250,7 @@ async function assertFocusVisible(page: Page, label: string) {
       for (let node: Element | null = focused; node; node = node.parentElement) ancestors.push(describe(node))
       return { focused: describe(focused), ancestors, viewport: { width: innerWidth, height: innerHeight },
         documentFocused: document.hasFocus(), visibility: document.visibilityState,
-        mode: document.querySelector(".mission-tree, form.mission-editor")?.getAttribute("data-scroller"),
+        mode: document.querySelector("form.mission-editor")?.getAttribute("data-scroller"),
         owners: [".mission-control", ".mission-tree", ".mission-flow", "#tab-body", "[role=tabpanel]", "form.mission-editor > .window-body"].map(selector => ({ selector, ...describe(document.querySelector(selector)) })),
         hits: document.elementsFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2).map(describe) }
     })
@@ -329,7 +305,7 @@ for (const layout of focusLayouts) for (const releaseAt of ["Notes", "Scheduling
   })
 }
 
-test("task-tree keyboard focus stays reachable across inner and whole-panel scrolling, tiny and RTL/zoom layouts", async () => {
+test("task-tree keyboard focus stays reachable in the single panel scroller, tiny and RTL/zoom layouts", async () => {
   const f = await open()
   try {
     const detail = await selectMission(f.page, "Long migration")
@@ -344,8 +320,8 @@ test("task-tree keyboard focus stays reachable across inner and whole-panel scro
       }, Boolean(layout.rtlZoom))
       assert.equal(await target.evaluate(element => element === document.activeElement), true, `the same task retains focus in ${layout.name}`)
       await assertFocusVisible(f.page, `task-tree ${layout.name}`)
-      assert.equal(await scrolls(f.page, ".mission-tree .mission-flow"), !layout.panel, `task scroller in ${layout.name}`)
-      assert.equal(await scrolls(f.page, ".mission-control"), layout.panel, `panel scroller in ${layout.name}`)
+      assert.equal(await scrolls(f.page, ".mission-tree .mission-flow"), false, `no task scroller in ${layout.name}`)
+      assert.equal(await scrolls(f.page, ".mission-control"), true, `panel scroller in ${layout.name}`)
       assert.equal(await scrolls(f.page, "#tab-body"), false, `no host scroller in ${layout.name}`)
     }
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])

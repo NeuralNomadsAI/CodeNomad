@@ -4,7 +4,7 @@ import { chromium, type Browser, type Page, type Route } from "playwright"
 import type { MissionMap, MissionTask } from "../../../server/src/api-types"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
-import { missionGeneralAction, missionPickerField, selectMission } from "./mission-actions"
+import { missionGeneralAction, missionRows, selectMission } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, url: string
@@ -45,7 +45,7 @@ async function open(consumer: "creation" | "tree", viewport = { width: 1000, hei
   })
   try {
     await page.goto(url, { timeout: 60_000 })
-    await missionPickerField(page).waitFor()
+    await missionRows(page).locator("button.mission-row-select").first().waitFor()
     if (consumer === "tree") await selectMission(page, "Focus migration")
     else {
       await missionGeneralAction(page, "Create mission").click()
@@ -128,7 +128,9 @@ for (const consumer of ["creation", "tree"] as const) {
           // Real consumer observation, while its active focus/lifetime guards decide ownership.
           node.append(document.createElement("span"))
         }, { condition, selector: region(consumer) })
-        if (condition !== "visible") await f.page.setViewportSize({ width: 1000, height: 420 })
+        // Short enough to move the focused control out of view (a tree task sits wherever its rows put it).
+        const shrunk = consumer === "tree" && condition === "window-unfocused" ? Math.max(160, Math.floor((await focus.boundingBox())!.y) - 4) : 420
+        if (condition !== "visible") await f.page.setViewportSize({ width: 1000, height: shrunk })
         await frames(other ?? f.page)
         assert.equal(await f.page.evaluate(() => (window as any).focusAudit.writes.length), 0, `${condition} view leaves every scroll owner alone`)
         if (condition === "window-unfocused") {
@@ -193,14 +195,13 @@ for (const viewport of [{ width: 1000, height: 600 }, { width: 260, height: 300 
       const task = target(f.page, "tree"), identity = await task.elementHandle()
       await task.focus(); await frames(f.page)
       assert.equal(await visible(f.page), true)
-      const before = await f.page.locator(".mission-tree").getAttribute("data-scroller")
       const size = await f.page.locator(".mission-tree-list").evaluate(element => element.getBoundingClientRect().height)
       await audit(f.page)
       await f.grow()
       await f.page.waitForFunction(() => document.querySelectorAll(".mission-tree-recovery").length === 20)
       await frames(f.page)
       assert.equal(await identity!.evaluate(element => element === document.activeElement), true, "HTTP publication retains the exact DOM focus target")
-      assert.equal(await f.page.locator(".mission-tree").getAttribute("data-scroller"), before, "the existing vertical owner is unchanged")
+      assert.equal(await f.page.locator(".mission-control").evaluate(element => getComputedStyle(element).overflowY), "auto", "the panel stays the only vertical owner")
       assert(await f.page.locator(".mission-tree-list").evaluate(element => element.getBoundingClientRect().height) > size, "real recovery controls grew the nested list")
       assert.equal(await visible(f.page), true, "the same task stays hit-testable after nested HTTP growth")
       assert.deepEqual(f.errors, [])

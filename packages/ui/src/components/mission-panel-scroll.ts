@@ -31,7 +31,9 @@ export function missionPanelScroll(element: () => HTMLElement | undefined, activ
         if (/^(auto|scroll)$/.test(getComputedStyle(node).overflowY) && node.scrollHeight > node.clientHeight + 1) {
           const box = focused.getBoundingClientRect(), port = node.getBoundingClientRect(), scale = port.height / node.offsetHeight
           const contentTop = port.top + node.clientTop * scale
-          const top = Math.max(0, contentTop), bottom = Math.min(window.innerHeight, contentTop + node.clientHeight * scale)
+          // A sticky header covers the scroller's top: its scroll padding (mission-control.css).
+          const covered = (parseFloat(getComputedStyle(node).scrollPaddingTop) || 0) * scale
+          const top = Math.max(0, contentTop + covered), bottom = Math.min(window.innerHeight, contentTop + node.clientHeight * scale)
           const above = box.top - top, below = box.bottom - bottom
           // Nearest edge also handles controls taller than the available viewport.
           const delta = above < 0 && below < 0 ? Math.max(above, below) : above > 0 && below > 0 ? Math.min(above, below) : 0

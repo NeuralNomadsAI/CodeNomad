@@ -6,7 +6,7 @@ import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrenc
 import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget, waitForMissionPanelRefresh } from "./mission-panel-route"
-import { inlineMissionEntry, missionPicker, missionPickerExpander, missionPickerField, missionToolbarAction, selectMission } from "./mission-actions"
+import { inlineMissionEntry, missionToolbarAction, selectedMissionTitle, selectMission } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 import { recurrenceCurrentPageInput } from "../../../server/src/missions/recurrence-current"
 import { projectMissionPanel } from "../../../server/src/missions/mission-panel-projection"
@@ -83,12 +83,7 @@ async function refresh(page: Page) {
   await fixtureCall(page, "refresh")
   await response
 }
-const mark = async (page: Page, title: string) => (await inlineMissionEntry(page, title)).locator(".mission-picker-mark").getAttribute("data-mark")
-async function collapse(page: Page) {
-  const expander = missionPickerExpander(page)
-  if (await expander.getAttribute("aria-expanded") === "true") await expander.click()
-  return expander
-}
+const mark = async (page: Page, title: string) => (await inlineMissionEntry(page, title)).locator(".mission-row-flag").getAttribute("data-mark")
 
 test("marks follow the session palette and a completion stays green until this window shows it", async () => {
   let list = [
@@ -103,39 +98,32 @@ test("marks follow the session palette and a completion stays green until this w
     { missionId: "working", actors: [{ sessionId: "ses_working", state: "running" as const }] }]
   const { page, errors } = await open(() => list, () => activity)
   try {
-    // Collapsed, the chevron counts the other missions' attention, like a session parent:
-    // interrupted, paused and prepared missions colour only their own rows.
-    const expander = missionPickerExpander(page)
-    await page.waitForFunction(() => document.querySelector(".mission-picker-expander")?.getAttribute("data-attention") === "working")
-    assert.equal(await expander.getAttribute("aria-label"), "Show all missions (1 running)")
-    await (await inlineMissionEntry(page, "Objective stuck")).waitFor() // expand once, not from each parallel read
+    // Each row's flag carries its own mark.
+    await (await inlineMissionEntry(page, "Objective stuck")).waitFor()
+    await page.waitForFunction(() => [...document.querySelectorAll(".mission-rows .mission-row-flag")].some(element => element.getAttribute("data-mark") === "working"))
     assert.deepEqual(await Promise.all(["Objective stuck", "Objective working", "Objective history", "Objective failed", "Objective paused", "Objective prepared"]
       .map(title => mark(page, title))), ["interrupted", "working", "idle", "interrupted", "paused", "prepared"])
     assert.equal(await page.evaluate(() => {
-      const element = [...document.querySelectorAll<HTMLElement>(".mission-picker-inline .mission-picker-mark")].find(item => item.dataset.mark === "prepared")!
+      const element = [...document.querySelectorAll<HTMLElement>(".mission-rows .mission-row-flag")].find(item => item.dataset.mark === "prepared")!
       const probe = document.createElement("span"); probe.style.color = "var(--accent-primary)"; document.body.append(probe)
       const blue = getComputedStyle(probe).color; probe.remove()
-      return getComputedStyle(element).backgroundColor === blue
+      return getComputedStyle(element).color === blue
     }), true, "a prepared mission is accent blue, like a composed prompt")
-    assert.equal(await expander.getAttribute("data-attention"), null, "the open list shows each mark itself")
-    assert.equal(await expander.getAttribute("aria-label"), "Hide the mission list")
 
     list = list.map(value => value.id === "working" ? { ...value, status: "completed", updatedAt: 7, finishSequence: 2, revision: 2 } : value)
     activity = activity.filter(item => item.missionId !== "working")
     await refresh(page)
-    await page.waitForFunction(() => [...document.querySelectorAll(".mission-picker-inline .mission-picker-mark")]
+    await page.waitForFunction(() => [...document.querySelectorAll(".mission-rows .mission-row-flag")]
       .some(element => element.getAttribute("data-mark") === "done"))
     assert.equal(await mark(page, "Objective working"), "done")
     assert.equal(await mark(page, "Objective history"), "idle", "missions already completed on the first read count as seen")
-    await collapse(page)
-    assert.equal(await expander.getAttribute("aria-label"), "Show all missions (1 finished)")
 
     await selectMission(page, "Objective working")
-    await page.waitForFunction(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark") === "idle")
+    await page.waitForFunction(() => document.querySelector(".mission-row-select[aria-current=true] .mission-row-flag")?.getAttribute("data-mark") === "idle")
     assert.equal(await mark(page, "Objective working"), "idle")
     await fixtureCall(page, "flush")
     await page.reload()
-    await missionPickerField(page).locator(".mission-picker-title").waitFor()
+    await selectedMissionTitle(page).waitFor()
     assert.equal(await mark(page, "Objective working"), "idle", "seen completions stay seen in this window")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
@@ -152,13 +140,13 @@ test("a selected mission completing behind the creation form stays green until i
     assert.equal(await page.locator("section.mission-detail").isVisible(), false)
     list = list.map(value => value.id === "selected" ? { ...value, status: "completed", updatedAt: 3, finishSequence: 1, revision: 2 } : value)
     await refresh(page)
-    // The hidden (still mounted) current-mission line keeps the unseen completion green.
-    const fieldMark = () => page.evaluate(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark"))
-    await page.waitForFunction(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark") === "done")
+    // The hidden (still mounted) tree keeps the unseen completion green.
+    const fieldMark = () => page.evaluate(() => document.querySelector(".mission-row-select[aria-current=true] .mission-row-flag")?.getAttribute("data-mark"))
+    await page.waitForFunction(() => document.querySelector(".mission-row-select[aria-current=true] .mission-row-flag")?.getAttribute("data-mark") === "done")
     await page.waitForTimeout(200)
     assert.equal(await fieldMark(), "done", "a completion behind the form is not seen")
     await page.locator("form.mission-editor").getByRole("button", { name: "Cancel", exact: true }).click()
-    await page.waitForFunction(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark") === "idle")
+    await page.waitForFunction(() => document.querySelector(".mission-row-select[aria-current=true] .mission-row-flag")?.getAttribute("data-mark") === "idle")
     assert.equal(await page.locator("section.mission-detail").isVisible(), true, "seen once its detail shows again")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
@@ -178,7 +166,7 @@ test("a stopped coordinator offers recovery in Pause's place only while nothing 
     activity = [{ missionId: "run", actors: [{ sessionId: "ses_run", state: "idle-without-report" }, { sessionId: "ses_worker", state: "idle-without-report" }] }]
     await refresh(page)
     await missionToolbarAction(page, "Recover interrupted mission").click()
-    await page.waitForFunction(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark") === "interrupted")
+    await page.waitForFunction(() => document.querySelector(".mission-row-select[aria-current=true] .mission-row-flag")?.getAttribute("data-mark") === "interrupted")
     for (let attempt = 0; !recoveries.length && attempt < 100; attempt++) await page.waitForTimeout(20)
     assert.deepEqual(recoveries, [{ expectedRevision: 1, target: "coordinator" }])
 
@@ -209,7 +197,6 @@ test("a recurring passage waiting for an answer is red; stopped and paused sched
   try {
     // Schedules are read only through a connected instance.
     await fixtureCall(page, "connectCatalog")
-    await page.waitForFunction(() => !document.querySelector(".mission-picker-expander")?.hasAttribute("disabled"))
     await (await inlineMissionEntry(page, "Waiting review")).waitFor()
     assert.deepEqual(await Promise.all(["Waiting review", "Stopped review", "Paused review"].map(title => mark(page, title))),
       ["working", "idle", "paused"])
@@ -220,13 +207,13 @@ test("a recurring passage waiting for an answer is red; stopped and paused sched
     await page.locator('.mission-tree [data-task-key="task-one"]').waitFor()
     await page.evaluate(() => (window as any).missionFixture.queuePermission("ses_child", "child-permission"))
     await page.evaluate(() => new Promise(requestAnimationFrame))
-    assert.equal(await missionPicker(page).locator(".mission-picker-field .mission-picker-mark").getAttribute("data-mark"), "working")
+    assert.equal(await page.locator(".mission-row-select[aria-current=true] .mission-row-flag").getAttribute("data-mark"), "working")
     await page.evaluate(() => (window as any).missionFixture.queuePermission("ses_independent", "independent-permission"))
-    await page.waitForFunction(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark") === "permission")
+    await page.waitForFunction(() => document.querySelector(".mission-row-select[aria-current=true] .mission-row-flag")?.getAttribute("data-mark") === "permission")
     // Other rows read the live passage's own conversation.
     await selectMission(page, "Stopped review")
     await page.evaluate(() => (window as any).missionFixture.queuePermission("ses_passage"))
-    await page.waitForFunction(() => [...document.querySelectorAll(".mission-picker-inline .mission-picker-mark")]
+    await page.waitForFunction(() => [...document.querySelectorAll(".mission-rows .mission-row-flag")]
       .some(element => element.getAttribute("data-mark") === "permission"))
     assert.equal(await mark(page, "Waiting review"), "permission")
     assert.match(await (await inlineMissionEntry(page, "Waiting review")).locator(".sr-only").textContent() ?? "", /Awaiting your input/)
@@ -239,8 +226,8 @@ test("a failed mission reads as interrupted and resumes through coordinator reco
   const { page, errors, recoveries } = await open(() => [value], () => [])
   try {
     await selectMission(page, "Objective failed")
-    assert.match(await missionPickerField(page).locator(".sr-only").textContent() ?? "", /^Failed · /)
-    assert.equal(await missionPicker(page).locator(".mission-picker-field .mission-picker-mark").getAttribute("data-mark"), "interrupted")
+    assert.match(await page.locator(".mission-row-select[aria-current=true] .sr-only").textContent() ?? "", /^Failed · /)
+    assert.equal(await page.locator(".mission-row-select[aria-current=true] .mission-row-flag").getAttribute("data-mark"), "interrupted")
     assert.equal(await missionToolbarAction(page, "Stop mission permanently").isDisabled(), true)
     await missionToolbarAction(page, "Recover interrupted mission").click()
     for (let attempt = 0; !recoveries.length && attempt < 100; attempt++) await page.waitForTimeout(20)

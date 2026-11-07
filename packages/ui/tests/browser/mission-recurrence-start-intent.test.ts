@@ -207,11 +207,11 @@ async function open(f: Awaited<ReturnType<typeof fixture>>) {
   await selectMission(page, TITLE)
   return { page, errors }
 }
-/** The lifecycle buttons before the separator: [label, enabled]. */
-const lifecycle = (page: Page) => missionDetail(page).locator(".mission-action-bar").evaluate(bar => {
+/** The lifecycle buttons before the Summary eye: [label, enabled]. */
+const lifecycle = (page: Page) => page.locator(".mission-picker-selection-actions .mission-action-bar").evaluate(bar => {
   const result: Array<[string | null, boolean]> = []
   for (const node of bar.children) {
-    if (node.classList.contains("mission-action-separator")) break
+    if (node.classList.contains("mission-overview-toggle")) break
     if (node instanceof HTMLButtonElement) result.push([node.getAttribute("aria-label"), !node.disabled])
   }
   return result

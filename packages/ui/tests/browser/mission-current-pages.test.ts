@@ -139,7 +139,7 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     })
     assert.ok(selections.some(input => input.selector.source === "activity" && input.selector.actorOffset === 160))
     await screenshot("after")
-    await page.waitForFunction(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark") === "permission")
+    await page.waitForFunction(() => document.querySelector(".mission-row-select[aria-current=true] .mission-row-flag")?.getAttribute("data-mark") === "permission")
     const taskReads = selections.filter(input => input.selector.source === "tasks").length, bodyReads = selections.filter(input => input.body).length
     await f.control.update({ missionID: map.id, requestID: "notes-only", expectedRevision: map.revision, objective: map.objective, notes: "Unrelated root notes" })
     const refreshed = page.waitForResponse(response => response.request().method() === "POST" && response.request().postDataJSON()?.selector?.header === true)

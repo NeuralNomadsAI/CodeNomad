@@ -10,7 +10,7 @@ import solid from "vite-plugin-solid"
 import type { MissionMap } from "../../../server/src/api-types"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
-import { clickMissionAction, missionPickerField, selectMission, toggleMissionOverview } from "./mission-actions"
+import { clickMissionAction, missionRows, selectMission, toggleMissionOverview } from "./mission-actions"
 import type {} from "./fixtures/mission-navigation"
 import { panelMissions } from "./mission-content-fixture"
 import { collectMissionReadFailures, MISSION_READ_HEADER } from "./mission-read-observation-fixture"
@@ -147,7 +147,7 @@ async function setup(missing = false, holdSchedule = false) {
     navigationStartedAt = Date.now(); documentBaseline = ownedHTTP.documentArrivals
     await page.goto(url)
     // Loaded Missions enable the current-mission field (nothing is selected by default).
-    await missionPickerField(page).and(page.locator(":enabled")).waitFor()
+    await missionRows(page).locator("button.mission-row-select").first().waitFor()
   } catch (error) {
     failedSetupHeld = held.promise
     try {

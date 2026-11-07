@@ -16,7 +16,8 @@ import { MissionEditor, type MissionEditorAction } from "../../../../mission-edi
 import { missionEditor, openMissionEditor, settleMissionEditor } from "../../../../../stores/mission-editor-state"
 import { MissionTracking } from "../../../../mission-tracking"
 import { missionIncludesSession, selectMissionAttention } from "../../../../mission-attention-model"
-import { MissionPicker } from "../../../../mission-picker"
+import { MissionPanelHeader, MissionRows } from "../../../../mission-picker"
+import { MissionActionBar, MissionActionSlot } from "../../../../mission-action-bar"
 import { missionMark, type MissionPickerEntry } from "../../../../mission-picker-model"
 import { createDocumentAttention } from "../../../../session/session-idle-attention"
 import { MissionSelectedActions } from "../../../../mission-selected-actions"
@@ -96,6 +97,20 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const captureView = createMissionViewFence(() => JSON.stringify([props.instanceId, directory(), projectID(), listProjectChanges()]), () => props.isActive?.() ?? true)
   let intent = 0
   const selectMission = (id: string) => { intent++; updateMissionProjectView(scope(), { selected: id, selectedRecurrence: undefined, selectedScheduled: undefined }) }
+  // An open reader of another one-time Mission follows a chosen one to its summary.
+  const followReader = (id: string) => {
+    const reader = missionProjectView(scope()).reader
+    if (!reader || reader.missionId === id || reader.recurrence || reader.kind === "playbook" || reader.kind === "recurrence") return
+    updateMissionProjectView(scope(), { reader: { missionId: id, kind: "overview" } })
+  }
+  const [actionSlot, setActionSlot] = createSignal<HTMLElement>()
+  // The sticky header's height is the panel's scroll padding (mission-control.css).
+  const measureHeader = (header: HTMLElement) => {
+    const observer = new ResizeObserver(() => header.parentElement?.style.setProperty("--mission-header-height", `${header.offsetHeight}px`))
+    observer.observe(header)
+    onCleanup(() => observer.disconnect())
+  }
+  const [query, setQuery] = createSignal("")
   const openEditor = (action: MissionEditorAction) => {
     intent++
     openMissionEditor(editorScope(), action)
@@ -370,7 +385,6 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const viewScope = completionScope()
     untrack(() => markMissionsFinishedSeen(viewScope, shown, completed, true))
   })
-  const listExpanded = () => missionProjectView(scope()).listExpanded === true
   const refreshLabel = () => props.t(controlRetry()?.pending() ? "missions.control.refreshResend" : "missions.control.refresh")
   const reading = () => refreshing() || missionStore.reading(props.instanceId) || currentPassage.inventory()?.reading(props.instanceId)
     || recurrence.loading() || scheduled.loading() || currentPassage.loading() || editorReading()
@@ -392,17 +406,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   return (
     // While creating, the form replaces the list and the selected detail, which stay mounted
     // (hidden by mission-control.css) so their pending controls and retries survive.
+    <MissionActionSlot.Provider value={actionSlot}>
     <section class="mission-control" data-creating={creating() ? "" : undefined} aria-label={props.t("missions.control.title")}>
-      <header class="mission-control-header">
-        <MissionPicker entries={pickerEntries()} selectedKey={selectedKey()}
-          paging={() => <MissionPanelPaging instanceId={props.instanceId} lane="summaries" search />}
-          expanded={listExpanded()} onExpandedChange={value => updateMissionProjectView(scope(), { listExpanded: value || undefined })}
-          onSelect={entry => {
-            const [kind, id] = [entry.key.slice(0, entry.key.indexOf(":")), entry.key.slice(entry.key.indexOf(":") + 1)]
-            if (kind === "schedule") { intent++; updateMissionProjectView(scope(), { selectedRecurrence: id, selectedScheduled: undefined }) }
-            else if (kind === "scheduled") { intent++; updateMissionProjectView(scope(), { selectedRecurrence: undefined, selectedScheduled: id }) }
-            else selectMission(id)
-          }}
+      <header class="mission-control-header" ref={measureHeader}>
+        <MissionPanelHeader actionSlot={setActionSlot}
+          idleActions={<MissionActionBar inline label={props.t("missionsPanel.picker.actions")} reading={false} />}
+          query={query()} onQuery={setQuery} filterable={pickerEntries().length > 0}
           createDisabled={state().status === "unavailable" || Boolean(editor())}
           creating={creating()}
           onCreate={() => openEditor({ kind: "create" })}
@@ -466,10 +475,19 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         </div>
       </Show>
 
+      <MissionRows entries={pickerEntries()} query={query()} selectedKey={selectedKey()}
+        paging={<MissionPanelPaging instanceId={props.instanceId} lane="summaries" search />}
+        onSelect={entry => {
+          const [kind, id] = [entry.key.slice(0, entry.key.indexOf(":")), entry.key.slice(entry.key.indexOf(":") + 1)]
+          if (kind === "schedule") { intent++; updateMissionProjectView(scope(), { selectedRecurrence: id, selectedScheduled: undefined }) }
+          else if (kind === "scheduled") { intent++; updateMissionProjectView(scope(), { selectedRecurrence: undefined, selectedScheduled: id }) }
+          else batch(() => { followReader(id); selectMission(id) })
+        }}
+        detail={<>
       {recurrence.view()}
       {scheduled.view()}
 
-      {/* Nothing below the picker until a Mission is selected; its detail is a separate section. */}
+      {/* The selection's detail is the selected row's children. */}
       {/* A parked failed read keeps the stale banner and the refresh button instead. */}
        <Show when={selectedRow() && !mission() && state().status !== "error"}><p role="status">{props.t(missionStore.mapMissing(props.instanceId, selectedRow()!.id)
          ? "missions.control.reader.missing" : "missions.control.loading")}</p></Show>
@@ -492,6 +510,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           {tracking()}
         </section>
       }}</Show>
+      </>} />
 
       <Show when={!selectedSchedule() && !selectedScheduled() && scheduled.entries().length === 0 && recurrence.entries().length === 0}><Switch>
         <Match when={state().status === "loading" && rows().length === 0}>
@@ -530,6 +549,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         disabled={Boolean(editor()) || !["ready", "loading"].includes(state().status) || Boolean(state().cleanupUnavailable)} active={props.isActive?.() ?? true}
         refresh={() => missionStore.refresh(props.instanceId)} /></Show>
     </section>
+    </MissionActionSlot.Provider>
   )
 }
 

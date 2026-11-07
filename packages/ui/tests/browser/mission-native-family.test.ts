@@ -15,7 +15,7 @@ import { outlineInputSchema, outlineResultSchema, outlinePreviewInputSchema, out
   navigationWindowInputSchema, navigationWindowResultSchema } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
-import { missionPicker, missionPopupOption } from "./mission-actions"
+import { inlineMissionEntry, selectedMissionTitle } from "./mission-actions"
 import type {} from "./fixtures/mission-native-family"
 import { panelMissions } from "./mission-content-fixture"
 import { collectPanelReadFailures, PANEL_READ_HEADER } from "./panel-read-fixture"
@@ -197,7 +197,7 @@ async function setup(label: string, narrow = false, independent = false) {
   }
   try { await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 }); await page.waitForFunction(() => window.missionNativeFamily?.snapshot().session === "ses_B", undefined, { timeout: 30000 })
     // Only the picker selects a Mission: restoring a coordinator conversation leaves none selected.
-    if (!narrow) await pickerField(page).waitFor()
+    if (!narrow) await page.locator(".mission-rows button.mission-row-select").first().waitFor()
     assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).selectedMission, undefined) }
   catch (error) { await save(); release(); await page.close(); throw error }
   return { page, errors, failures, requests, rawRequestFailures, panelListCancellations, save, drainRequestFailures, arrival, completion, release, defer: () => { deferred = true },
@@ -206,15 +206,10 @@ async function setup(label: string, narrow = false, independent = false) {
 }
 const composer = (page: Page) => page.locator("textarea.prompt-input:visible")
 const selectedMission = async (page: Page) => (await page.evaluate(() => window.missionNativeFamily.snapshot())).selectedMission
-// Locale-neutral picker field: the RTL cases render the Hebrew accessible name.
-const pickerField = (page: Page) => missionPicker(page).locator("button.mission-picker-field")
-/** The user's explicit picker choice, the only route that changes the selected Mission. */
+/** The user's explicit row choice, the only route that changes the selected Mission (locale-neutral). */
 async function pickMission(page: Page, id: "A" | "B") {
   const session = (await page.evaluate(() => window.missionNativeFamily.snapshot())).session
-  if (await selectedMission(page) !== id) {
-    if (await pickerField(page).getAttribute("aria-expanded") !== "true") await pickerField(page).click()
-    await missionPopupOption(page, `Objective ${id}`).click()
-  }
+  if (await selectedMission(page) !== id) await (await inlineMissionEntry(page, `Objective ${id}`)).click()
   await page.waitForFunction(id => window.missionNativeFamily.snapshot().selectedMission === id, id)
   assert.equal((await page.evaluate(() => window.missionNativeFamily.snapshot())).session, session, "picking a Mission does not navigate")
 }
@@ -279,7 +274,7 @@ test("production SessionList/SessionView select recursive children, steer/queue 
 
 test("only the explicit picker choice selects a Mission; coordinator, worker and descendant navigation keep it", { timeout: 60000 }, async () => {
   const ctx = await setup("manual-mission-selection"), { page } = ctx
-  const title = () => pickerField(page).locator(".mission-picker-title").innerText()
+  const title = () => selectedMissionTitle(page).innerText()
   try {
     await expand(page, "A"); await expand(page, "actor"); await expand(page, "child")
     // Arriving in Mission A's coordinator selects nothing by itself.
