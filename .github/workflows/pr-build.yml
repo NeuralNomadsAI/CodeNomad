@@ -706,6 +706,19 @@ jobs:
         timeout-minutes: 10
         run: node scripts/test-opencode-install-native.mjs
 
+      # Tauri's resources: the pinned Node archive's executable with the pinned
+      # npm (`.npm-version`), so an npm update runs OpenCode's real postinstall.
+      - name: Test first installation with Tauri's Node and pinned npm
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          resources="$RUNNER_TEMP/tauri-node-resources"
+          node -e "require('./scripts/prepare-node-runtime.cjs').prepareBundledNodeRuntime({ resourcesRoot: process.argv[1] }).catch(error => { console.error(error); process.exit(1) })" "$resources"
+          target="$(node -p "require('./scripts/prepare-node-runtime.cjs').currentTarget()")"
+          executable="$(node -p "process.platform === 'win32' ? 'node.exe' : 'bin/node'")"
+          CODENOMAD_FIXTURE_NODE="$resources/node/$target/$executable" \
+            node scripts/test-opencode-install-native.mjs
+
       # Electron's npm-only resources and its executable as Node: OpenCode's real
       # postinstall runs through the scoped `node` command (sh adapter or node.cmd).
       - name: Test first installation with Electron's Node and npm-only resources

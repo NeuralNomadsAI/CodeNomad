@@ -138,7 +138,7 @@ test('no major jump, downgrade or replay of an uncertain/pre-existing branch mut
   assert.deepEqual(fixture.calls, [])
 })
 
-test('maintenance is scheduled/default-branch-only; no automatic merge or npm packaging override', () => {
+test('maintenance is scheduled/default-branch-only; no automatic merge, and packaging never resolves latest npm', () => {
   const root = path.resolve(__dirname, '../..')
   const workflow = fs.readFileSync(path.join(root, '.github/workflows/runtime-maintenance.yml'), 'utf8')
   assert.match(workflow, /schedule:/)
@@ -150,5 +150,7 @@ test('maintenance is scheduled/default-branch-only; no automatic merge or npm pa
   assert.doesNotMatch(checkJob, /contents: write|pull-requests: write/)
   assert.match(workflow, /needs: check/)
   assert.doesNotMatch(workflow, /pull_request_target:|pull_request:|--global|--force|auto-merge|issues: write/)
-  assert.doesNotMatch(fs.readFileSync(path.join(root, 'scripts/prepare-node-runtime.cjs'), 'utf8'), /NPM_VERSION|npm@latest/)
+  for (const file of ['scripts/prepare-node-runtime.cjs', 'scripts/bundled-npm.cjs']) {
+    assert.doesNotMatch(fs.readFileSync(path.join(root, file), 'utf8'), /npm\/latest|npm@latest|dist-tags/)
+  }
 })

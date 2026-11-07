@@ -58,7 +58,9 @@ keeps PATH priority and the automatic npm updater never overwrites it.
 
 Default host installation runs the backend's npm (bundled in Electron's resources
 for its integrated Node, beside Tauri's bundled Node, or beside a standalone server's
-own Node) to run a standard global npm installation of `@opencode/cli`. Existing writable npm installations on PATH are
+own Node) to run a standard global npm installation of `@opencode/cli`. Both desktop
+hosts bundle the npm release pinned in `.npm-version` (`dev-docs/RUNTIME_MAINTENANCE.md`);
+a standalone server uses the npm installed with its Node. Existing writable npm installations on PATH are
 reused after verifying their manifest and launcher identity; standalone/curl,
 Homebrew and custom installations remain user-managed. With no PATH installation,
 the user prefix is `%APPDATA%/npm` on Windows and `~/.local` on POSIX, or an explicit

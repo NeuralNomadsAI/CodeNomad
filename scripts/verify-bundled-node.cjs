@@ -1,5 +1,7 @@
 const fs = require("fs")
 const path = require("path")
+const { NPM_VERSION } = require("./bundled-npm.cjs")
+const { npmRelativePath } = require("./prepare-node-runtime.cjs")
 
 const npmOnly = process.argv.includes("--npm-only")
 const targets = process.argv.slice(2).filter(arg => arg !== "--npm-only")
@@ -19,15 +21,19 @@ function verify(spec) {
     throw new Error(`Invalid verification spec: ${spec}`)
   }
 
-  const binary = path.join(root, "node", target, npmOnly ? "npm/bin/npm-cli.js" : expectedBinary(target))
-  if (npmOnly && fs.existsSync(path.join(root, "node", target, expectedBinary(target)))) {
+  const runtimeRoot = path.join(root, "node", target)
+  const npmRoot = path.join(runtimeRoot, npmRelativePath(target, npmOnly))
+  if (npmOnly && fs.existsSync(path.join(runtimeRoot, expectedBinary(target)))) {
     throw new Error(`Electron resources must contain npm only: ${root}`)
   }
-  if (!fs.existsSync(binary) || !fs.statSync(binary).isFile()) {
-    throw new Error(`Missing bundled runtime file: ${binary}`)
+  for (const file of [...(npmOnly ? [] : [path.join(runtimeRoot, expectedBinary(target))]), path.join(npmRoot, "bin", "npm-cli.js")]) {
+    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) {
+      throw new Error(`Missing bundled runtime file: ${file}`)
+    }
+    console.log(`[verify-bundled-node] ${file}`)
   }
-
-  console.log(`[verify-bundled-node] ${binary}`)
+  const npmVersion = JSON.parse(fs.readFileSync(path.join(npmRoot, "package.json"), "utf8")).version
+  if (npmVersion !== NPM_VERSION) throw new Error(`Bundled npm ${npmVersion} does not match the ${NPM_VERSION} pin: ${npmRoot}`)
 }
 
 for (const target of targets) {
