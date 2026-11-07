@@ -22,8 +22,11 @@
   Extraction is the same system `tar` that unpacks POSIX Node archives
   (Windows' own `System32\tar.exe`, never a GNU tar from PATH); it refuses `..`
   members and strips a leading `/`, and the extracted tree is refused unless it holds
-  only npm's `package/` directory of regular files and directories, so links and
-  devices fail closed. `scripts/prepare-node-runtime.cjs` places
+  only npm's `package/` directory of regular files and directories. Every entry,
+  the `package/` root first, is checked with `lstat` and never followed, and a file
+  with more than one hard link is refused: the archive's integrity covers its own
+  bytes, so a linked root or file that would substitute host content, and every
+  device, fails closed. `scripts/prepare-node-runtime.cjs` places
   it where `bundledNpm()` (`opencode-update/npm-runtime.ts`) looks: beside Tauri's
   Node as in the official archive (`node_modules/npm` on Windows,
   `lib/node_modules/npm` on POSIX) or in Electron's npm-only resources

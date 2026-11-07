@@ -71,17 +71,22 @@ function tarball(entries) {
   return zlib.gzipSync(Buffer.concat([...blocks, Buffer.alloc(1024)]))
 }
 
-function npmFixture({ engine = ">=20.0.0", version = NPM_VERSION, extra = [], integrity, tarballUrl } = {}) {
+// A complete npm package as registry entries under package/.
+function npmEntries({ engine = ">=20.0.0", version = NPM_VERSION } = {}) {
   const semver = JSON.stringify(require.resolve("semver"))
-  const body = tarball([
+  return [
     { name: "package/package.json", data: JSON.stringify({ name: "npm", version, engines: { node: engine }, bundleDependencies: ["semver"] }) },
     { name: "package/LICENSE", data: "npm license" },
     { name: "package/bin/npm-cli.js", data: "#!/usr/bin/env node\n", mode: 0o755 },
     { name: "package/bin/node-gyp-bin/node-gyp", data: "#!/bin/sh\n", mode: 0o755 },
     { name: "package/node_modules/semver/package.json", data: JSON.stringify({ name: "semver" }) },
     { name: "package/node_modules/semver/index.js", data: `module.exports = require(${semver})` },
-    ...extra,
-  ])
+  ]
+}
+
+// The registry serves `entries` with matching metadata: integrity alone accepts the archive.
+function npmFixture({ engine, version = NPM_VERSION, extra = [], entries, integrity, tarballUrl } = {}) {
+  const body = tarball(entries ?? [...npmEntries({ engine, version }), ...extra])
   const requests = []
   const request = async url => {
     requests.push(url)
@@ -198,6 +203,41 @@ test("npm package extraction keeps executable bits and follows pax long paths", 
   assert.equal(fs.readFileSync(path.join(npmRoot, ...long.slice("package/".length).split("/")), "utf8"), "pax")
   assert.equal(fs.existsSync(path.join(npmRoot, "truncated")), false)
   if (process.platform !== "win32") assert.equal(fs.statSync(path.join(npmRoot, "bin/npm-cli.js")).mode & 0o111, 0o111)
+})
+
+// Windows creates symbolic links only with Developer Mode or the privilege; POSIX always can.
+function canSymlink(t) {
+  if (process.platform !== "win32") return true
+  const probe = path.join(withResources(t), "link")
+  try { fs.symlinkSync(path.dirname(probe), probe, "dir"); return true } catch { return false }
+}
+
+test("an archived package root linked to host content is refused before any resources are written", async t => {
+  if (!canSymlink(t)) return t.skip("this Windows host cannot create symbolic links")
+  // A decoy holding a complete npm package passes every later check if the link is followed.
+  const decoy = path.join(withResources(t), "decoy")
+  for (const { name, data } of npmEntries()) {
+    const file = path.join(decoy, ...name.slice("package/".length).split("/"))
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, data)
+  }
+  const before = fs.readdirSync(decoy).sort()
+  const resourcesRoot = withResources(t)
+  const { request } = npmFixture({ entries: [{ name: "package", type: "2", link: decoy }] })
+  await assert.rejects(prepareBundledNodeRuntime({ resourcesRoot, target: "linux-x64", npmOnly: true, runtimeNodeVersion: "22.20.0", request }),
+    /Unsupported npm package entry: package$|Unexpected npm package contents/)
+  assert.equal(fs.existsSync(path.join(resourcesRoot, "node")), false)
+  assert.deepEqual(fs.readdirSync(decoy).sort(), before, "host content is left untouched")
+})
+
+test("an in-archive hard link is refused before any resources are written", async t => {
+  const resourcesRoot = withResources(t)
+  const entries = npmEntries().filter(entry => entry.name !== "package/bin/npm-cli.js")
+  const { request } = npmFixture({ entries: [...entries, { name: "package/cli.js", data: "#!/usr/bin/env node\n", mode: 0o755 },
+    { name: "package/bin/npm-cli.js", type: "1", link: "package/cli.js" }] })
+  await assert.rejects(prepareBundledNodeRuntime({ resourcesRoot, target: "linux-x64", npmOnly: true, runtimeNodeVersion: "22.20.0", request }),
+    /Unsupported npm package entry: package[\\/](bin[\\/]npm-cli|cli)\.js/)
+  assert.equal(fs.existsSync(path.join(resourcesRoot, "node")), false)
 })
 
 test("Electron's integrated Node version comes from the installed executable", () => {

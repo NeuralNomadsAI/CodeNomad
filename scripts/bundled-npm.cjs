@@ -29,21 +29,28 @@ function verifyIntegrity(buffer, integrity) {
   if (!expected.includes(actual)) throw new Error("Integrity mismatch for the npm package")
 }
 
-/** The system tar refuses absolute and `..` member paths; this also refuses any
- * link, device or other root than npm's `package/` that it may have written. */
+/** The system tar refuses `..` member paths and strips a leading `/`; this also
+ * refuses any other root than npm's `package/`, and any link or device it wrote.
+ * The verified archive authorizes only its own bytes: a `package` link (POSIX
+ * symlink, Windows junction) would make the walk and the copy read host content
+ * instead, and a hard link shares its data with a file outside the archive's
+ * control. Every entry, the root first, is checked with lstat, never followed. */
 function extractedPackage(extractRoot) {
   const roots = fs.readdirSync(extractRoot)
   if (roots.length !== 1 || roots[0] !== "package") throw new Error(`Unexpected npm package contents: ${roots.join(", ")}`)
-  const pending = [path.join(extractRoot, "package")]
+  const npmRoot = path.join(extractRoot, "package")
+  const pending = [npmRoot]
   while (pending.length) {
     const directory = pending.pop()
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const file = path.join(directory, entry.name)
-      if (entry.isDirectory()) pending.push(file)
-      else if (!entry.isFile()) throw new Error(`Unsupported npm package entry: ${path.relative(extractRoot, file)}`)
+    if (!fs.lstatSync(directory).isDirectory()) throw new Error(`Unsupported npm package entry: ${path.relative(extractRoot, directory)}`)
+    for (const name of fs.readdirSync(directory)) {
+      const file = path.join(directory, name)
+      const stat = fs.lstatSync(file)
+      if (stat.isDirectory()) pending.push(file)
+      else if (!stat.isFile() || stat.nlink !== 1) throw new Error(`Unsupported npm package entry: ${path.relative(extractRoot, file)}`)
     }
   }
-  return path.join(extractRoot, "package")
+  return npmRoot
 }
 
 function readPackage(npmRoot) {
