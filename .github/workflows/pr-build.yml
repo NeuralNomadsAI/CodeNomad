@@ -197,6 +197,10 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-pruning-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if ('${{ matrix.runtime }}' -eq 'latest') {
+            node scripts/test-session-pruning-native.mjs $cli --part-rows
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
           # Shipped Missions bundle: loading, model-visible tools through the
           # ordinary prompt loop, journal RPC and recurrence capability.
           node scripts/test-missions-native-contract.mjs $cli

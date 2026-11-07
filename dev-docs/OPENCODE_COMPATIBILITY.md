@@ -145,6 +145,14 @@ connections and Missions authority checks keep their blocking contracts. See
 
 ### Replay contract
 
+SQL history/search, navigation/outline, gallery and pruning consume assistant
+`session_part` rows in ordinal order followed by inline content. The shared bounded
+`message-storage.ts` relation mirrors native history, including mixed messages and
+stored split rows while `experimental.part_rows` is disabled. Pruning deletes only
+selected split rows and inline entries under its existing claim and transaction fences.
+Missions assistant-message projections use the same ordered-content SQL expression,
+retaining their own read budgets and source fences for mixed messages.
+
 Text/reasoning/tool/step provider data is one `native` field (on a key shared by
 a tool call and its result, the result wins). Summary compactions reference
 `metadata.keepID`, with kept text in `metadata.recent`; provider compactions
