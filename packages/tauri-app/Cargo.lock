@@ -530,6 +530,8 @@ dependencies = [
  "gtk",
  "keepawake",
  "libc",
+ "objc2",
+ "objc2-web-kit",
  "open",
  "parking_lot",
  "regex",

@@ -19,6 +19,14 @@ mod emulation;
 #[path = "browser_controller_page.rs"]
 mod page;
 
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+#[path = "browser_history.rs"]
+mod history_ids;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "browser_history_webkit.rs"]
+mod webkit_history;
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BrowserTargetRegistration {
@@ -111,7 +119,7 @@ impl BrowserController {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     pub(crate) fn register(
         &self,
         window: &Window,
@@ -141,6 +149,9 @@ impl BrowserController {
             move |webview, payload| {
                 if payload.event() == PageLoadEvent::Started
                     && payload.url().as_str() != "about:blank"
+                    && navigation_controller
+                        .owned_registration(webview.window().label(), &navigation_registration_id)
+                        .is_ok_and(|current| current.generation == generation)
                 {
                     navigation_controller
                         .invalidate_page_for_generation(&navigation_registration_id, generation);
@@ -156,19 +167,6 @@ impl BrowserController {
                 true
             },
         )?;
-        if let Err(error) = install_webview2_handlers(
-            &webview,
-            self.clone(),
-            input.registration_id.clone(),
-            window.label().to_string(),
-            generation,
-        ) {
-            let _ = self
-                .embedded_views
-                .close(window.app_handle(), window.label(), &label);
-            return Err(error);
-        }
-
         let registration = Registration {
             session_id: input.session_id,
             registration_id: input.registration_id.clone(),
@@ -177,6 +175,25 @@ impl BrowserController {
             generation,
             visible: true,
         };
+        #[cfg(windows)]
+        let installed = install_webview2_handlers(
+            &webview,
+            self.clone(),
+            input.registration_id.clone(),
+            window.label().to_string(),
+            generation,
+        );
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let installed = webkit_history::install(&webview, self.clone(), registration.clone());
+        if let Err(error) = installed {
+            let _ = self
+                .embedded_views
+                .close(window.app_handle(), window.label(), &label);
+            return Err(error);
+        }
+
+        #[cfg(target_os = "macos")]
+        let observation = registration.clone();
         let previous = match self.publish_registration(registration, renderer_version, url.as_str())
         {
             Ok(previous) => previous,
@@ -188,6 +205,8 @@ impl BrowserController {
             }
         };
         if let Some(previous) = previous {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            webkit_history::remove(window.app_handle(), previous.webview_label.clone());
             let _ = self.embedded_views.close(
                 window.app_handle(),
                 &previous.window_label,
@@ -228,6 +247,8 @@ impl BrowserController {
                 return Err("Browser target changed during creation".into());
             }
         }
+        #[cfg(target_os = "macos")]
+        webkit_history::observe(window.app_handle().clone(), self.clone(), observation);
         Ok(())
     }
 
@@ -299,7 +320,7 @@ impl BrowserController {
         Ok(previous)
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     pub(crate) fn register(
         &self,
         _window: &Window,
@@ -418,7 +439,65 @@ impl BrowserController {
         .map(|()| Value::Null)
     }
 
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn emit_webkit_navigation(&self, app: &AppHandle, registration: &Registration, url: &str) {
+        if allowed_url(url).is_err()
+            || !self
+                .owned_registration(&registration.window_label, &registration.registration_id)
+                .is_ok_and(|current| current.generation == registration.generation)
+        {
+            return;
+        }
+        self.invalidate_page_for_generation(&registration.registration_id, registration.generation);
+        if let Some(webview) = app.get_webview(&registration.window_label) {
+            let _ = webview.emit(
+                "browser-target:navigated",
+                json!({ "registrationId": registration.registration_id, "url": url }),
+            );
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn action(
+        &self,
+        app: &AppHandle,
+        window_label: &str,
+        input: BrowserTargetAction,
+    ) -> Result<Value, String> {
+        let registration = self.owned_registration(window_label, &input.registration_id)?;
+        let webview = app
+            .get_webview(&registration.webview_label)
+            .ok_or("Browser preview is no longer available")?;
+        match input.action.as_str() {
+            "history" => webkit_history::action(self, &webview, &registration, None),
+            "history-go" => webkit_history::action(
+                self,
+                &webview,
+                &registration,
+                Some(input.entry_id.ok_or("Browser history entry is required")?),
+            ),
+            "back" => webview
+                .eval("history.back()")
+                .map(|()| Value::Null)
+                .map_err(|error| error.to_string()),
+            "reload" => webview
+                .reload()
+                .map(|()| Value::Null)
+                .map_err(|error| error.to_string()),
+            "navigate" => webview
+                .navigate(allowed_url(
+                    input
+                        .url
+                        .as_deref()
+                        .ok_or("Browser navigation URL is required")?,
+                )?)
+                .map(|()| Value::Null)
+                .map_err(|error| error.to_string()),
+            _ => Err("Unsupported browser target action".into()),
+        }
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     pub(crate) fn action(
         &self,
         _app: &AppHandle,
@@ -464,6 +543,8 @@ impl BrowserController {
         inner.page_load_expectations.remove(registration_id);
         drop(inner);
         ready.notify_all();
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        webkit_history::remove(app, registration.webview_label.clone());
         self.embedded_views
             .close(app, window_label, &registration.webview_label)?;
         Ok(())
@@ -523,7 +604,7 @@ impl BrowserController {
     }
 
     pub(crate) fn remove_window<R: tauri::Runtime>(&self, app: &AppHandle<R>, window_label: &str) {
-        let retries = if let Ok(mut inner) = self.inner.0.lock() {
+        let (retries, children) = if let Ok(mut inner) = self.inner.0.lock() {
             let version = inner
                 .renderer_versions
                 .entry(window_label.to_string())
@@ -537,6 +618,15 @@ impl BrowserController {
                 .values()
                 .filter(|registration| registration.window_label == window_label)
                 .map(|registration| registration.registration_id.clone())
+                .collect::<Vec<_>>();
+            let children = ids
+                .iter()
+                .filter_map(|id| {
+                    inner
+                        .registrations
+                        .get(id)
+                        .map(|registration| registration.webview_label.clone())
+                })
                 .collect::<Vec<_>>();
             for id in ids {
                 inner
@@ -559,10 +649,16 @@ impl BrowserController {
                     Some((request_id.clone(), claim.clone()))
                 })
                 .collect::<Vec<_>>();
-            retries
+            (retries, children)
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
+        for child in children {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            webkit_history::remove(app, child);
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            let _ = child;
+        }
         self.embedded_views.remove_owner(app, window_label);
         for (request_id, claim) in retries {
             Self::emit_open_request(app, &request_id, &claim);
@@ -830,6 +926,17 @@ impl BrowserController {
             return Err("Browser target belongs to another window".to_string());
         }
         Ok(registration.clone())
+    }
+
+    #[cfg(any(test, target_os = "linux", target_os = "macos"))]
+    fn check_history_registration(&self, expected: &Registration) -> Result<(), String> {
+        let current = self.owned_registration(&expected.window_label, &expected.registration_id)?;
+        if current.generation != expected.generation
+            || current.webview_label != expected.webview_label
+        {
+            return Err("Browser target changed during history request".into());
+        }
+        Ok(())
     }
 
     fn invalidate_page(&self, registration_id: &str) {

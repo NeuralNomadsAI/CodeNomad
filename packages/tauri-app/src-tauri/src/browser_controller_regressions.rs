@@ -157,6 +157,35 @@ fn controller_with_registration() -> (BrowserController, Registration) {
 }
 
 #[test]
+fn history_requires_current_owner_and_generation_but_survives_hide() {
+    let (controller, expected) = controller_with_registration();
+    assert!(controller.check_history_registration(&expected).is_ok());
+    let mut foreign = expected.clone();
+    foreign.window_label = OTHER.into();
+    assert!(controller.check_history_registration(&foreign).is_err());
+    let mut stale = expected.clone();
+    stale.generation += 1;
+    assert!(controller.check_history_registration(&stale).is_err());
+    {
+        let mut inner = controller.inner.0.lock().unwrap();
+        inner
+            .registrations
+            .get_mut(&expected.registration_id)
+            .unwrap()
+            .visible = false;
+    }
+    assert!(controller.check_history_registration(&expected).is_ok());
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .registrations
+        .remove(&expected.registration_id);
+    assert!(controller.check_history_registration(&expected).is_err());
+}
+
+#[test]
 fn only_primary_renderer_reload_disposes_its_native_browser_children() {
     let (app, owner, child) = app_with_preview();
     let (controller, registration) = controller_with_registration();
