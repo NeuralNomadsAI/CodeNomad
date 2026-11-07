@@ -1,5 +1,7 @@
 import { createSignal } from "solid-js"
-import { serverApi } from "../lib/api-client"
+import { backendOf, type BackendClient } from "../lib/backend-client"
+import { captureBackendOperation } from "../lib/backend-operation"
+import { tGlobal } from "../lib/i18n"
 import type { PreviewSession } from "../../../server/src/api-types"
 import { readClientLayoutValue, writeClientLayoutValue } from "./client-state"
 import { BrowserHistoryJournal, historyUrl, parseBrowserHistory, type BrowserHistory } from "../lib/browser-history"
@@ -10,6 +12,8 @@ interface SessionPreviewRecord extends PreviewSession {
   storageKey: string
   instanceFolder: string
   history: BrowserHistory
+  instanceId: string
+  owner: { client: BackendClient; signal: AbortSignal }
 }
 
 interface StoredSessionPreview {
@@ -25,9 +29,26 @@ const DEFAULT_PREVIEW_URL = "http://localhost:3000"
 
 const [sessionPreviews, setSessionPreviews] = createSignal<Map<string, SessionPreviewRecord>>(new Map())
 const storedPreviews = new Map<string, StoredSessionPreview>()
-const restorePromises = new Map<string, Promise<SessionPreviewRecord | null>>()
+const restorePromises = new Map<string, { signal: AbortSignal; version: number; promise: Promise<SessionPreviewRecord | null> }>()
 const operationVersions = new Map<string, number>()
+const previewRevocations = new Map<string, () => void>()
 let storageInitialized = false
+
+function publishPreview(record: SessionPreviewRecord) {
+  previewRevocations.get(record.storageKey)?.()
+  const revoke = () => {
+    previewRevocations.delete(record.storageKey)
+    setSessionPreviews(previous => {
+      const next = new Map(previous)
+      next.delete(record.storageKey)
+      return next
+    })
+    void record.owner.client.api.deletePreview(record.token).catch(() => undefined)
+  }
+  record.owner.signal.addEventListener("abort", revoke, { once: true })
+  previewRevocations.set(record.storageKey, () => record.owner.signal.removeEventListener("abort", revoke))
+  setSessionPreviews(previous => new Map(previous).set(record.storageKey, record))
+}
 
 function beginOperation(storageKey: string): number {
   const version = (operationVersions.get(storageKey) ?? 0) + 1
@@ -102,48 +123,65 @@ function previewKey(sessionId: string, instanceFolder: string): string {
 }
 
 export function getPreviewSessionIds(instanceFolder: string): string[] {
-  return [...sessionPreviews().values()].filter((preview) => preview.instanceFolder === instanceFolder).map((preview) => preview.sessionId)
+  return [...sessionPreviews().values()].filter((preview) => preview.instanceFolder === instanceFolder && !preview.owner.signal.aborted).map((preview) => preview.sessionId)
 }
 
 function getSessionPreview(sessionId: string, instanceFolder = ""): SessionPreviewRecord | null {
   initializeStorage()
   const storageKey = previewKey(sessionId, instanceFolder)
   const preview = sessionPreviews().get(storageKey)
-  return preview ?? null
+  return preview && !preview.owner.signal.aborted ? preview : null
 }
 
-async function openSessionPreview(sessionId: string, url: string, instanceFolder = ""): Promise<SessionPreviewRecord> {
+async function createPreview(client: BackendClient, sessionId: string, url: string) {
+  const preview = await client.api.createPreview({ sessionId, url })
+  if (client.id === "local") return preview
+  try {
+    const source = new URL(client.url(preview.proxyUrl))
+    if (!historyUrl(source.href) || !historyUrl(preview.targetUrl) || source.origin !== new URL(client.url("/")).origin) throw new TypeError()
+    return { ...preview, proxyUrl: source.href }
+  } catch {
+    void client.api.deletePreview(preview.token).catch(() => undefined)
+    throw new TypeError(tGlobal("sessionPreview.open.invalidUrl"))
+  }
+}
+
+async function openSessionPreview(sessionId: string, url: string, instanceFolder = "", instanceId = ""): Promise<SessionPreviewRecord> {
+  if (!historyUrl(url)) throw new TypeError(tGlobal("sessionPreview.open.invalidUrl"))
+  const client = backendOf(instanceId)
+  const operation = captureBackendOperation(instanceId)
+  operation.signal.throwIfAborted()
   initializeStorage()
   const storageKey = previewKey(sessionId, instanceFolder)
   const operationVersion = beginOperation(storageKey)
   const existing = sessionPreviews().get(storageKey)
   const saved = storedPreviews.get(storageKey)
-  const preview = await serverApi.createPreview({ sessionId, url })
-  if (operationVersions.get(storageKey) !== operationVersion) {
-    void serverApi.deletePreview(preview.token).catch(() => undefined)
+  const preview = await createPreview(client, sessionId, url)
+  if (!operation.current() || operationVersions.get(storageKey) !== operationVersion) {
+    void client.api.deletePreview(preview.token).catch(() => undefined)
     const current = sessionPreviews().get(storageKey)
-    if (current) return { ...current, sessionId }
+    if (operation.current() && current && !current.owner.signal.aborted) return { ...current, sessionId }
     throw new Error("Preview navigation was superseded")
   }
-  const record: SessionPreviewRecord = { ...preview, mode: "preview", storageKey, instanceFolder,
+  const record: SessionPreviewRecord = { ...preview, sessionId, instanceId, owner: { client, signal: operation.signal },
+    mode: "preview", storageKey, instanceFolder,
     history: new BrowserHistoryJournal(existing?.history ?? parseBrowserHistory(saved?.history, saved?.targetUrl ?? preview.targetUrl)).visitUrl(preview.targetUrl) }
-  setSessionPreviews((prev) => {
-    const next = new Map(prev)
-    next.set(storageKey, record)
-    return next
-  })
+  publishPreview(record)
   storePreview(record.storageKey, record)
   // Mission readers are project-scoped; an explicit browser open owns the central surface.
   updateMissionProjectView(instanceFolder, { reader: undefined })
-  if (existing) void serverApi.deletePreview(existing.token).catch(() => undefined)
+  if (existing) void existing.owner.client.api.deletePreview(existing.token).catch(() => undefined)
   return record
 }
 
-function restoreSessionPreview(sessionId: string, instanceFolder = ""): Promise<SessionPreviewRecord | null> {
+function restoreSessionPreview(sessionId: string, instanceFolder = "", instanceId = ""): Promise<SessionPreviewRecord | null> {
+  const client = backendOf(instanceId)
+  const operation = captureBackendOperation(instanceId)
+  if (!operation.current()) return Promise.resolve(null)
   initializeStorage()
   const storageKey = previewKey(sessionId, instanceFolder)
   const current = sessionPreviews().get(storageKey)
-  if (current) return Promise.resolve({ ...current, sessionId })
+  if (current && current.owner.signal === operation.signal) return Promise.resolve({ ...current, sessionId })
   // Adopt the old project-wide URL once, for the first session that restores it.
   // Other sessions then start independently rather than inheriting its page.
   if (!storedPreviews.has(storageKey) && instanceFolder && storedPreviews.has(instanceFolder)) {
@@ -154,27 +192,30 @@ function restoreSessionPreview(sessionId: string, instanceFolder = ""): Promise<
   const stored = storedPreviews.get(storageKey)
   if (!stored) return Promise.resolve(null)
   const pending = restorePromises.get(storageKey)
-  if (pending) return pending
+  if (pending?.signal === operation.signal && pending.version === operationVersions.get(storageKey)) return pending.promise
 
   const operationVersion = beginOperation(storageKey)
-  const restore = serverApi.createPreview({ sessionId, url: stored.targetUrl }).then((preview) => {
-    if (operationVersions.get(storageKey) !== operationVersion) {
-      void serverApi.deletePreview(preview.token).catch(() => undefined)
-      const currentPreview = sessionPreviews().get(storageKey)
-      return currentPreview ? { ...currentPreview, sessionId } : null
+  const restore = createPreview(client, sessionId, stored.targetUrl).then((preview) => {
+    if (!operation.current() || operationVersions.get(storageKey) !== operationVersion) {
+      void client.api.deletePreview(preview.token).catch(() => undefined)
+      // A later reader/chat gesture must not look like a missing saved URL:
+      // the shell would then create its default page and steal that surface.
+      if (operation.current()) throw new DOMException("Preview navigation was superseded", "AbortError")
+      return null
     }
-    const record: SessionPreviewRecord = { ...preview, mode: stored.mode, storageKey, instanceFolder,
+    const record: SessionPreviewRecord = { ...preview, sessionId, instanceId, owner: { client, signal: operation.signal },
+      mode: stored.mode, storageKey, instanceFolder,
       history: parseBrowserHistory(stored.history, preview.targetUrl) }
-    setSessionPreviews((prev) => new Map(prev).set(storageKey, record))
+    publishPreview(record)
     return record
-  }).finally(() => restorePromises.delete(storageKey))
-  restorePromises.set(storageKey, restore)
+  }).finally(() => { if (restorePromises.get(storageKey)?.promise === restore) restorePromises.delete(storageKey) })
+  restorePromises.set(storageKey, { signal: operation.signal, version: operationVersion, promise: restore })
   return restore
 }
 
 function showSessionPreview(storageKey: string) {
   const current = sessionPreviews().get(storageKey)
-  if (!current) return
+  if (!current || current.owner.signal.aborted) return
   updateMissionProjectView(current.instanceFolder, { reader: undefined })
   setSessionPreviews((prev) => {
     const next = new Map(prev)
@@ -209,10 +250,9 @@ function showSessionChatFor(sessionId: string, instanceFolder = "") {
 
 function updateSessionPreviewLocation(storageKey: string, targetUrl: string) {
   const current = sessionPreviews().get(storageKey)
-  if (!current) return
-  const target = new URL(targetUrl)
-  if (target.protocol !== "http:" && target.protocol !== "https:") return
-  const normalized = target.href
+  if (!current || current.owner.signal.aborted) return
+  const normalized = historyUrl(targetUrl)
+  if (!normalized) return
   setSessionPreviews((prev) => new Map(prev).set(storageKey, { ...current, targetUrl: normalized }))
   // History capture publishes the committed URL and cursor together. Avoid
   // replacing a valid saved history with an interim location-only snapshot.
@@ -221,7 +261,7 @@ function updateSessionPreviewLocation(storageKey: string, targetUrl: string) {
 export function updateSessionPreviewHistory(storageKey: string, history: BrowserHistory) {
   const current = sessionPreviews().get(storageKey)
   const targetUrl = historyUrl(history.urls[history.index])
-  if (!current || !targetUrl) return
+  if (!current || current.owner.signal.aborted || !targetUrl) return
   const next = { ...current, targetUrl, history: parseBrowserHistory(history, targetUrl) }
   setSessionPreviews(previous => new Map(previous).set(storageKey, next))
   storePreview(storageKey, next)
@@ -233,6 +273,8 @@ export function cancelSessionPreviewNavigation(storageKey: string) {
 
 async function closeSessionPreview(storageKey: string) {
   beginOperation(storageKey)
+  previewRevocations.get(storageKey)?.()
+  previewRevocations.delete(storageKey)
   const current = sessionPreviews().get(storageKey)
   // Clear persistence before notifying the active-session restore effect.
   storePreview(storageKey, null)
@@ -244,7 +286,7 @@ async function closeSessionPreview(storageKey: string) {
     next.delete(storageKey)
     return next
   })
-  await serverApi.deletePreview(current.token).catch(() => undefined)
+  await current.owner.client.api.deletePreview(current.token).catch(() => undefined)
 }
 
 export {

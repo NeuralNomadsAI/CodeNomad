@@ -2,7 +2,8 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack }
 import { RefreshCw } from "lucide-solid"
 import type { ServiceUsageSnapshot } from "../../../../server/src/api-types"
 import { useI18n } from "../../lib/i18n"
-import { serverApi } from "../../lib/api-client"
+import { backendOf } from "../../lib/backend-client"
+import { parseInstanceKey } from "../../lib/backend-identity"
 import { captureBackendOperation } from "../../lib/backend-operation"
 import { backendEvents as serverEvents } from "../../lib/server-events"
 import { isExecutionTerminalEvent } from "../../lib/native-execution-events"
@@ -30,7 +31,10 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
     let controller: AbortController | undefined
     const operation = captureBackendOperation(id, undefined, () => !disposed)
     setDays(count); setSnapshot(undefined); setError(false); setBusy(false); setStale(true)
-    if (!id) return
+    if (!id || !operation.current()) return
+    let api: ReturnType<typeof backendOf>["api"]
+    try { api = backendOf(id).api } catch { setError(true); return }
+    const { workspaceId } = parseInstanceKey(id)
     const current = (epoch: number) => operation.current() && untrack(visible) && epoch === revision
     const load = async () => {
       if (!operation.current() || !untrack(visible) || !connected) return
@@ -49,13 +53,13 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
           || identity && previous.identity && identity !== previous.identity
           || !previous.identity && connection && previous.connection && connection !== previous.connection)) setSnapshot(undefined)
       }
-      void serverApi.getServiceUsageOwner(id, signal).then(value => {
+      void api.getServiceUsageOwner(workspaceId, signal).then(value => {
         if (!current(epoch) || freshEpoch === epoch) return
         verify(value.owner, value.identity, value.connection)
         verified = value
       }).catch(() => {})
       if (restore) {
-        void serverApi.getCachedServiceUsage(id, timezone, selected, signal).then(cached => {
+        void api.getCachedServiceUsage(workspaceId, timezone, selected, signal).then(cached => {
           if (!current(epoch)) return
           if (freshEpoch === epoch) {
             const fresh = untrack(snapshot)
@@ -78,7 +82,7 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
       }
       const to = Date.now()
       try {
-        const next = await serverApi.getServiceUsage(id, { from: to - count * 86_400_000, to, timezone, ...(!periodKnown ? { restorePeriod: true } : {}) }, signal)
+        const next = await api.getServiceUsage(workspaceId, { from: to - count * 86_400_000, to, timezone, ...(!periodKnown ? { restorePeriod: true } : {}) }, signal)
         if (current(epoch)) {
           if (verified?.owner && next.owner && verified.owner !== next.owner
             || verified?.identity && next.identity && verified.identity !== next.identity) {

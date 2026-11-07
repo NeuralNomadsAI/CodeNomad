@@ -308,7 +308,7 @@ function ToolCallDetails(props: {
     const body = renderer().renderBody(rendererContext)
     const state = props.toolState()
     if (state?.status !== "completed" || !state.content?.some(isToolImageContent)) return body
-    return <>{body}<ToolOutputImages state={props.toolState()} onContentRendered={() => {
+    return <>{body}<ToolOutputImages instanceId={props.instanceId} state={props.toolState()} onContentRendered={() => {
       scrollHelpers.restoreAfterRender()
       props.onContentRendered?.()
     }} /></>

@@ -354,6 +354,7 @@ jobs:
           packages/ui/src/lib/client-identity.test.ts
           packages/ui/src/lib/backend-identity.test.ts
           packages/ui/src/lib/backend-client.test.ts
+          packages/ui/src/lib/backend-usage-routing.test.ts
           packages/ui/src/lib/backend-transport.test.ts
           packages/ui/src/lib/backend-route-joining.test.ts
           packages/ui/src/lib/local-route-joining.test.ts
@@ -421,6 +422,7 @@ jobs:
           packages/ui/src/stores/session-pending-state.test.ts
           packages/ui/src/stores/session-tree.test.ts
           packages/ui/src/stores/session-previews.test.ts
+          packages/ui/src/stores/backend-preview-routing.test.ts
           packages/ui/src/lib/browser-history.test.ts
           packages/ui/src/lib/keyboard-offset.test.ts
           packages/ui/src/stores/workspace-load-readiness.test.ts

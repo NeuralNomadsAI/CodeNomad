@@ -9,6 +9,8 @@ import MessagePart from "./message-part"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
 import { captureBackendOperation } from "../lib/backend-operation"
+import { backendOf } from "../lib/backend-client"
+import { createMediaSource } from "../lib/media-source"
 import { isTauriHost } from "../lib/runtime-env"
 import { useSpeech } from "../lib/hooks/use-speech"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
@@ -50,7 +52,7 @@ export default function MessageItem(props: MessageItemProps) {
   const [deletingTechnicalParts, setDeletingTechnicalParts] = createSignal(false)
 
   type ImagePreviewState = {
-    url: string
+    url: () => string | undefined
     name: string
     anchor: HTMLElement
   }
@@ -216,7 +218,7 @@ export default function MessageItem(props: MessageItemProps) {
     return typeof part.url === "string" && part.url.startsWith("data:image/")
   }
 
-  const handleAttachmentDownload = async (part: FilePart) => {
+  const handleAttachmentDownload = async (part: FilePart, resolvedSource: () => string | undefined) => {
     const url = part.url
     if (!url) return
 
@@ -230,6 +232,15 @@ export default function MessageItem(props: MessageItemProps) {
       document.body.appendChild(anchor)
       anchor.click()
       document.body.removeChild(anchor)
+    }
+
+    let backend
+    try { backend = backendOf(props.instanceId) } catch { return }
+    if (backend.id !== "local") {
+      const operation = captureBackendOperation(props.instanceId)
+      const source = resolvedSource()
+      if (operation.current() && source) directDownload(source)
+      return
     }
 
     if (url.startsWith("data:")) {
@@ -255,8 +266,8 @@ export default function MessageItem(props: MessageItemProps) {
     }
   }
 
-  const showImagePreview = (anchor: HTMLElement, url: string, name: string) => {
-    if (!url) return
+  const showImagePreview = (anchor: HTMLElement, url: () => string | undefined, name: string) => {
+    if (!url()) return
     setImagePreview({ anchor, url, name })
   }
 
@@ -781,6 +792,7 @@ export default function MessageItem(props: MessageItemProps) {
               {(attachment) => {
                 const name = getAttachmentName(attachment)
                 const isImage = isImageAttachment(attachment)
+                const source = createMediaSource(() => props.instanceId, () => attachment.url, false)
                 return (
                   <div
                     class={`attachment-chip ${isImage ? "attachment-chip-image" : ""}`}
@@ -788,7 +800,7 @@ export default function MessageItem(props: MessageItemProps) {
                     onMouseEnter={(e) => {
                       if (!isImage) return
                       const el = e.currentTarget as HTMLElement
-                      showImagePreview(el, attachment.url || "", name)
+                      showImagePreview(el, source, name)
                     }}
                     onMouseLeave={() => setImagePreview(null)}
                   >
@@ -802,13 +814,13 @@ export default function MessageItem(props: MessageItemProps) {
                         />
                       </svg>
                     }>
-                      <img src={attachment.url} alt={name} class="h-5 w-5 object-cover" />
+                      <img src={source()} alt={name} class="h-5 w-5 object-cover" />
                     </Show>
                     <span class="truncate max-w-[180px]">{name}</span>
                     <Show when={!attachment.url?.startsWith("file://")}>
                       <button
                         type="button"
-                        onClick={() => void handleAttachmentDownload(attachment)}
+                        onClick={() => void handleAttachmentDownload(attachment, source)}
                         class="attachment-download"
                         aria-label={t("messageItem.attachment.downloadAriaLabel", { name })}
                         title={t("messageItem.attachment.downloadAriaLabel", { name })}
@@ -841,7 +853,7 @@ export default function MessageItem(props: MessageItemProps) {
                         style={{ left: `${coords.left}px`, top: `${coords.top}px` }}
                         aria-hidden="true"
                       >
-                        <img src={state.url} alt={state.name} />
+                        <img src={state.url()} alt={state.name} />
                       </div>
                     )
                   }}

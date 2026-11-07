@@ -26,3 +26,6 @@ export function toolImageSource(file: ToolFileContent, backend: string | Pick<Ba
   } catch { /* Non-URL/local file references cannot be loaded by the renderer. */ }
   return undefined
 }
+
+/** Keep deferred paths unjoined until a mounted consumer has selected its instance owner. */
+export const toolImageReference = (file: ToolFileContent) => toolImageSource(file, { url: path => path })
