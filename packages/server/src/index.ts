@@ -26,6 +26,7 @@ import { resolveUi } from "./ui/remote-ui"
 import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, DEFAULT_AUTH_USERNAME } from "./auth/manager"
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
+import { RemoteServerBrowseManager } from "./codenomad-servers/browse-manager"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
 import { nativeServiceStarter } from "./workspaces/native-service-start"
 import { acceptsIpv4Loopback, resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "./server/listener-base-url"
@@ -520,11 +521,15 @@ async function main() {
   // so a deletion through HTTPS drains a mission admitted through the bridge.
   const worktreeDeletionFence = new WorktreeDeletionFence()
   const missionsHost = () => missionBridge !== "failed"
+  const remoteServerBrowseManager = new RemoteServerBrowseManager(settings)
+  const reconcileBackends = () => remoteServerBrowseManager.reconcile()
+  eventBus.on("storage.stateChanged", reconcileBackends)
 
   // The same application behind every listener of this backend.
   const listenerDeps = {
     workspaceManager,
     settings,
+    remoteServerBrowseManager,
     fileSystemBrowser,
     eventBus,
     serverMeta,
@@ -711,6 +716,8 @@ async function main() {
             await workspaceManager.shutdown()
           },
           stopHttpServers: async () => {
+            eventBus.off("storage.stateChanged", reconcileBackends)
+            remoteServerBrowseManager.close()
             await pruningLifecycle.stop()
             await automationLifecycle.stop()
             await missionsLifecycle.stop()

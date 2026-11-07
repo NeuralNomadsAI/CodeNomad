@@ -22,85 +22,121 @@ export const BrowseBody = z.object({ path: z.string().max(8192).optional() }).st
 export const ConnectBody = z.object({ username: z.string().min(1).max(1024).optional(), password: z.string().min(1).max(8192).optional(),
   pairingLink: z.string().max(8192).optional() }).strict()
 
-/** Only saved backend profiles can choose a network target. Owns no projects or event streams. */
+type ProfileAuthority = Readonly<{ id: string; origin: string; skipTlsVerify: boolean; key: string }>
+type ConnectionState = {
+  credentials?: CodeNomadServerCredentials
+  clients: Map<string, { authority: ProfileAuthority; client: CodeNomadServerClient }>
+  pending: Map<CodeNomadServerClient, ProfileAuthority>
+  queues: Map<string, Promise<unknown>>
+  authorities: Map<string, ProfileAuthority>
+  owners: number
+}
+// Listeners of one backend share the SettingsService and one revocable authority.
+const connections = new WeakMap<object, ConnectionState>()
+
+/** Saved profiles are the sole network authority; cached clients own revocable transfers. */
 export class RemoteServerBrowseManager {
-  #credentials?: CodeNomadServerCredentials
-  #clients = new Map<string, { key: string; client: CodeNomadServerClient }>()
-  #pending = new Set<CodeNomadServerClient>()
-  #queues = new Map<string, Promise<unknown>>()
+  readonly #state: ConnectionState
   #closed = false
 
-  constructor(private readonly settings: Pick<SettingsService, "getOwner" | "configYamlPathForAuthority">) {}
+  constructor(private readonly settings: Pick<SettingsService, "getOwner" | "configYamlPathForAuthority">) {
+    let state = connections.get(settings)
+    if (!state) {
+      state = { clients: new Map(), pending: new Map(), queues: new Map(), authorities: new Map(), owners: 0 }
+      connections.set(settings, state)
+    }
+    this.#state = state
+    state.owners++
+  }
 
   private get credentials() {
-    return this.#credentials ??= new CodeNomadServerCredentials(path.join(path.dirname(this.settings.configYamlPathForAuthority()), "remote-server-credentials.json"))
+    return this.#state.credentials ??= new CodeNomadServerCredentials(path.join(path.dirname(this.settings.configYamlPathForAuthority()), "remote-server-credentials.json"))
   }
 
   private profile(id: string) {
     const values = this.settings.getOwner("state", "ui").remoteServers
     const profile = Array.isArray(values) ? values.map(value => Profile.safeParse(value)).find(value => value.success && value.data.id === id) : undefined
     if (!profile?.success) { this.remove(id); throw new CodeNomadServerError("unknown_server") }
-    const origin = normalizeExplicitOrigin(profile.data.baseUrl)
+    let origin: string
+    try { origin = normalizeExplicitOrigin(profile.data.baseUrl) }
+    catch (error) { this.remove(id); throw error }
     return { ...profile.data, origin, key: `${origin}|${profile.data.skipTlsVerify}` }
   }
 
-  private serial<T>(id: string, run: () => Promise<T>): Promise<T> {
-    const pending = (this.#queues.get(id) ?? Promise.resolve()).catch(() => {}).then(() => {
+  private capture(id: string): ProfileAuthority {
+    if (this.#closed) throw new CodeNomadServerError("unreachable")
+    const profile = this.profile(id)
+    let authority = this.#state.authorities.get(id)
+    if (authority && authority.key !== profile.key) { this.remove(id); authority = undefined }
+    // Disk identities also belong to this exact policy, including before a replacement login.
+    this.credentials.read(id, profile.origin, profile.skipTlsVerify)
+    if (!authority) {
+      authority = Object.freeze({ id, origin: profile.origin, skipTlsVerify: profile.skipTlsVerify, key: profile.key })
+      this.#state.authorities.set(id, authority)
+    }
+    return authority
+  }
+
+  private assertCurrent(authority: ProfileAuthority) {
+    if (this.#state.authorities.get(authority.id) !== authority) throw new CodeNomadServerError("unreachable")
+    if (this.profile(authority.id).key !== authority.key) {
+      this.remove(authority.id)
+      throw new CodeNomadServerError("unreachable")
+    }
+  }
+
+  private serial<T>(authority: ProfileAuthority, run: () => Promise<T>): Promise<T> {
+    const id = authority.id
+    const pending = (this.#state.queues.get(id) ?? Promise.resolve()).catch(() => {}).then(() => {
       if (this.#closed) throw new CodeNomadServerError("unreachable")
+      this.assertCurrent(authority)
       return run()
     })
-    this.#queues.set(id, pending)
-    void pending.finally(() => { if (this.#queues.get(id) === pending) this.#queues.delete(id) }).catch(() => {})
+    this.#state.queues.set(id, pending)
+    void pending.finally(() => { if (this.#state.queues.get(id) === pending) this.#state.queues.delete(id) }).catch(() => {})
     return pending
   }
 
-  connect(id: string, body: z.infer<typeof ConnectBody>) {
-    return this.serial(id, async () => {
-      const profile = this.profile(id)
+  async connect(id: string, body: z.infer<typeof ConnectBody>) {
+    const profile = this.capture(id)
+    body = { ...body }
+    return this.serial(profile, async () => {
       // Validate the exact saved origin and link syntax before constructing any transport or resolving DNS.
       const code = body.pairingLink === undefined ? undefined : pairingCode(body.pairingLink, profile.origin)
       if (Boolean(body.username) !== Boolean(body.password)) throw new CodeNomadServerError("needs_credentials")
       let secret: CodeNomadServerSecret | undefined = code ? undefined : body.password
         ? { kind: "password", username: body.username!, password: body.password }
-        : this.credentials.read(id, profile.origin)
+        : this.credentials.read(id, profile.origin, profile.skipTlsVerify)
       const client = new CodeNomadServerClient(profile.origin, secret, {
         skipTlsVerify: profile.skipTlsVerify,
         onSecretChanged: next => { secret = next },
-        onRejected: () => { if (!code && !body.password) this.remove(id) },
+        onRejected: () => { if (!code && !body.password && this.#state.authorities.get(id) === profile) this.remove(id) },
       })
-      this.#pending.add(client)
+      this.#state.pending.set(client, profile)
       try {
         if (code) secret = await client.pair(code)
         const result = await client.json<{ authenticated?: unknown; pairingRequired?: unknown }>("/api/auth/status")
         if (result.body?.pairingRequired === true) throw new CodeNomadServerError("needs_credentials")
         if (result.status !== 200) throw new CodeNomadServerError("unreachable")
         if (result.body?.authenticated !== true) throw new CodeNomadServerError("needs_credentials")
-        if (this.#closed || this.profile(id).key !== profile.key) throw new CodeNomadServerError("unknown_server")
-        // Commit only after remote authentication succeeds; failed replacements keep the working identity.
-        if (secret) this.credentials.set(id, profile.origin, secret)
-        this.#clients.get(id)?.client.close()
-        this.#clients.delete(id)
+        this.assertCurrent(profile)
+        if (this.#closed || client.closed) throw new CodeNomadServerError("unknown_server")
+        // Publish only under the still-current authority after remote authentication.
+        if (secret) this.credentials.set(id, profile.origin, secret, profile.skipTlsVerify)
+        this.#state.clients.get(id)?.client.close()
+        this.#state.clients.delete(id)
         return { ok: true }
-      } finally { this.#pending.delete(client); client.close() }
+      } finally { this.#state.pending.delete(client); client.close() }
     })
   }
 
-  browse(id: string, body: z.infer<typeof BrowseBody>): Promise<RemoteServerBrowseResponse> {
-    return this.serial(id, async () => {
-      const profile = this.profile(id)
-      let entry = this.#clients.get(id)
-      if (entry?.key !== profile.key) { entry?.client.close(); this.#clients.delete(id); entry = undefined }
-      if (!entry) {
-        const client = new CodeNomadServerClient(profile.origin, this.credentials.read(id, profile.origin), {
-          skipTlsVerify: profile.skipTlsVerify,
-          onRejected: () => { this.credentials.delete(id); this.#clients.get(id)?.client.close(); this.#clients.delete(id) },
-          onSecretChanged: secret => this.credentials.set(id, profile.origin, secret),
-        })
-        entry = { key: profile.key, client }
-        this.#clients.set(id, entry)
-      }
+  async browse(id: string, body: z.infer<typeof BrowseBody>): Promise<RemoteServerBrowseResponse> {
+    const profile = this.capture(id)
+    body = { ...body }
+    return this.serial(profile, async () => {
+      const entry = this.client(profile)
       const suffix = body.path === undefined ? "" : `?path=${encodeURIComponent(body.path)}`
-      if (!this.credentials.has(id, profile.origin)) {
+      if (!this.credentials.has(id, profile.origin, profile.skipTlsVerify)) {
         const status = await entry.client.json<{ pairingRequired?: unknown }>("/api/auth/status")
         if (status.body?.pairingRequired === true) throw new CodeNomadServerError("needs_credentials")
       }
@@ -113,22 +149,68 @@ export class RemoteServerBrowseManager {
         const parsed = Recent.safeParse(value)
         return parsed.success ? [parsed.data] : []
       }) : []
+      this.assertCurrent(profile)
       return { listing, recents }
     })
   }
 
+  private client(profile: ProfileAuthority) {
+      this.assertCurrent(profile)
+      const id = profile.id
+      let entry = this.#state.clients.get(id)
+      if (entry?.authority !== profile) { entry?.client.close(); this.#state.clients.delete(id); entry = undefined }
+      if (!entry) {
+        const client = new CodeNomadServerClient(profile.origin, this.credentials.read(id, profile.origin, profile.skipTlsVerify), {
+          skipTlsVerify: profile.skipTlsVerify,
+          onRejected: () => { if (this.#state.clients.get(id)?.client === client) this.remove(id) },
+          onSecretChanged: secret => {
+            if (this.#state.clients.get(id)?.client === client && !client.closed) {
+              this.assertCurrent(profile)
+              this.credentials.set(id, profile.origin, secret, profile.skipTlsVerify)
+            }
+          },
+        })
+        entry = { authority: profile, client }
+        this.#state.clients.set(id, entry)
+      }
+      return entry
+  }
+
+  /** Settings commits synchronously revoke removed or retargeted owners. */
+  reconcile() {
+    if (this.#closed) return
+    for (const id of new Set([...this.credentials.ids(), ...this.#state.authorities.keys()])) {
+      try {
+        const profile = this.profile(id)
+        const authority = this.#state.authorities.get(id)
+        if (authority && authority.key !== profile.key) this.remove(id)
+        else this.credentials.read(id, profile.origin, profile.skipTlsVerify)
+      } catch { this.remove(id) }
+    }
+  }
+
   private remove(id: string) {
-    this.#clients.get(id)?.client.close()
-    this.#clients.delete(id)
+    this.#state.authorities.delete(id)
+    for (const [client, owner] of this.#state.pending) if (owner.id === id) client.close()
+    this.#state.clients.get(id)?.client.close()
+    this.#state.clients.delete(id)
     this.credentials.delete(id)
   }
 
-  forget(id: string) { return this.serial(id, async () => { this.remove(id); return { ok: true } }) }
+  async forget(id: string) {
+    if (this.#closed) throw new CodeNomadServerError("unreachable")
+    this.remove(id)
+    return { ok: true }
+  }
 
   close() {
+    if (this.#closed) return
     this.#closed = true
-    for (const { client } of this.#clients.values()) client.close()
-    for (const client of this.#pending) client.close()
-    this.#clients.clear()
+    if (--this.#state.owners) return
+    connections.delete(this.settings)
+    this.#state.authorities.clear()
+    for (const { client } of this.#state.clients.values()) client.close()
+    for (const client of this.#state.pending.keys()) client.close()
+    this.#state.clients.clear()
   }
 }

@@ -63,6 +63,15 @@ Yolo state endpoints live at `/workspaces/:id/yolo/sessions/:sessionId`; Yolo no
 
 ## Client And Events
 
+`index.ts` owns one `RemoteServerBrowseManager`, its settings-change subscription
+and shutdown across HTTP, HTTPS and the private bridge. Standalone listeners sharing
+the same `SettingsService` share credentials, clients, queues and profile generations.
+Browse/connect capture the profile id, normalized origin, TLS policy and generation
+before queueing; dispatch and publication recheck that owner. Profile removal,
+retargeting and TLS changes revoke active and queued work and the private identity.
+Forget revokes every listener immediately. Stored credentials bind to origin and TLS
+policy; entries without a TLS-policy field bind to verified TLS.
+
 Remote Browse obtains remote recent projects and folders through a backend-held password session or Remote Control device credential. The UI switches its Browse list in place, requests username/password inline when needed, and opens a remote tab only after a folder is selected. An expired password session is reauthenticated once. Saving a profile authorizes its destination address: eligible targets include loopback, RFC1918 LAN, Docker, Hyper-V, CGNAT/Tailscale (`100.64.0.0/10`), MagicDNS and `*.ts.net`, IPv6 ULA/link-local, and names resolving to these addresses. Connections require working network routes and TLS; verification follows the saved profile and its existing explicit opt-out confirmation. Browsing credentials remain private to the backend. All upstream remote-server requests omit `Origin`; never forge it or forward credentials through redirects or to a foreign origin. Adding a Remote Control pairing link saves its origin and redeems its one-use code via a fresh cookie-free HTTPS tunnel exchange, after exact saved-origin validation before DNS. The backend checks device authentication before persisting the credential; the UI receives success only and scrubs the field. Revocation clears rejected credentials; Back to Browse and a fresh link repair tunnel browsing. Unsupported pairing endpoints offer inline password recovery, with a remote update required for tunnel pairing or a direct-listener URL for password access. Embedded native views retain their own authentication and remote-window storage independently of backend browsing ([REMOTE_CONTROL.md](REMOTE_CONTROL.md#backend-to-backend-pairing)).
 
 `packages/ui/src/lib/sdk-manager.ts` uses `OpenCode.make()` and caches generated Promise clients by instance proxy path. `packages/ui/src/stores/opencode-client.ts` is the root-client authority; native directory/location fields select the worktree.

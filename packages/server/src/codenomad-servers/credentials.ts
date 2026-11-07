@@ -7,12 +7,13 @@ export type CodeNomadServerSecret =
   | { kind: "device"; cookie: string }
   | { kind: "session"; cookie: string }
 
-type Entry = { origin: string; secret: CodeNomadServerSecret }
+type Entry = { origin: string; skipTlsVerify?: boolean; secret: CodeNomadServerSecret }
 
 function validEntry(value: unknown): value is Entry {
   if (!value || typeof value !== "object") return false
-  const entry = value as { origin?: unknown; secret?: Record<string, unknown> }
+  const entry = value as { origin?: unknown; skipTlsVerify?: unknown; secret?: Record<string, unknown> }
   if (typeof entry.origin !== "string" || !entry.secret || typeof entry.secret !== "object") return false
+  if (entry.skipTlsVerify !== undefined && typeof entry.skipTlsVerify !== "boolean") return false
   const secret = entry.secret
   if (secret.kind === "password") return typeof secret.username === "string" && typeof secret.password === "string" && (secret.cookie === undefined || typeof secret.cookie === "string")
   return (secret.kind === "device" || secret.kind === "session") && typeof secret.cookie === "string"
@@ -32,19 +33,22 @@ export class CodeNomadServerCredentials {
   }
 
   /** The secret, only for the exact origin it was obtained from. */
-  read(serverId: string, origin: string): CodeNomadServerSecret | undefined {
+  read(serverId: string, origin: string, skipTlsVerify = false): CodeNomadServerSecret | undefined {
     const entry = this.#entries.get(serverId)
     if (!entry) return undefined
-    if (entry.origin !== origin) { this.delete(serverId); return undefined }
+    if (entry.origin !== origin || (entry.skipTlsVerify ?? false) !== skipTlsVerify) { this.delete(serverId); return undefined }
     return { ...entry.secret }
   }
 
-  has(serverId: string, origin: string): boolean {
-    return this.#entries.get(serverId)?.origin === origin
+  has(serverId: string, origin: string, skipTlsVerify = false): boolean {
+    const entry = this.#entries.get(serverId)
+    return entry?.origin === origin && (entry.skipTlsVerify ?? false) === skipTlsVerify
   }
 
-  set(serverId: string, origin: string, secret: CodeNomadServerSecret): void {
-    const next = new Map(this.#entries).set(serverId, { origin, secret: { ...secret } })
+  ids(): string[] { return [...this.#entries.keys()] }
+
+  set(serverId: string, origin: string, secret: CodeNomadServerSecret, skipTlsVerify = false): void {
+    const next = new Map(this.#entries).set(serverId, { origin, skipTlsVerify, secret: { ...secret } })
     this.persist(next)
     this.#entries = next
   }

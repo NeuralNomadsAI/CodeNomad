@@ -128,6 +128,7 @@ interface HttpServerDeps {
   httpsOptions?: { key: string | Buffer; cert: string | Buffer; ca?: string | Buffer }
   workspaceManager: WorkspaceManager
   settings: SettingsService
+  remoteServerBrowseManager?: RemoteServerBrowseManager
   fileSystemBrowser: FileSystemBrowser
   eventBus: EventBus
   serverMeta: ServerMeta
@@ -404,9 +405,16 @@ export function createHttpServer(deps: HttpServerDeps) {
     workspaceManager: deps.workspaceManager,
   })
   registerRemoteServerRoutes(app, { logger: apiLogger })
-  const remoteServerBrowse = new RemoteServerBrowseManager(deps.settings)
+  const remoteServerBrowse = deps.remoteServerBrowseManager ?? new RemoteServerBrowseManager(deps.settings)
   registerRemoteServerBrowseRoutes(app, { manager: remoteServerBrowse, getSelfOrigins })
-  app.addHook("onClose", async () => remoteServerBrowse.close())
+  const reconcileBackends = () => remoteServerBrowse.reconcile()
+  if (!deps.remoteServerBrowseManager) deps.eventBus.on("storage.stateChanged", reconcileBackends)
+  app.addHook("onClose", async () => {
+    if (!deps.remoteServerBrowseManager) {
+      deps.eventBus.off("storage.stateChanged", reconcileBackends)
+      remoteServerBrowse.close()
+    }
+  })
   registerRemoteProxyRoutes(app, { logger: proxyLogger, sessionManager: deps.remoteProxySessionManager })
   registerRemoteControlRoutes(app, { manager: deps.remoteControlManager })
   registerSpeechRoutes(app, { speechService: deps.speechService })

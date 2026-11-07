@@ -10,6 +10,7 @@ export async function startFakeCodeNomad(options: { password?: string; root?: st
   const state = {
     password: options.password ?? "remote-password", sessions: new Set<string>(), logins: 0,
     requests: [] as RecordedRequest[],
+    handlers: new Map<string, RequestListener>(),
     overrides: new Map<string, { status: number; body: unknown; headers?: Record<string, string> }>(),
     recents: [{ path: "/srv/projects/app", projectName: "App", lastAccessed: 42, password: "must-not-leak" }],
   }
@@ -19,6 +20,8 @@ export async function startFakeCodeNomad(options: { password?: string; root?: st
     let body = ""
     for await (const chunk of request) body += chunk
     state.requests.push({ method: request.method!, path: `${url.pathname}${url.search}`, headers: request.headers, body })
+    const handler = state.handlers.get(url.pathname)
+    if (handler) return handler(request, response)
     const json = (status: number, value: unknown, headers: Record<string, string> = {}) => {
       response.writeHead(status, { "content-type": "application/json", ...headers }); response.end(JSON.stringify(value))
     }

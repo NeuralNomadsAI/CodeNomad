@@ -138,6 +138,15 @@ and its platform permissions as credential storage. The local UI receives only
 success; secrets stay out of UI state and logs, and the add field is scrubbed after
 the attempt. Never retain codes for retries.
 
+HTTP, HTTPS and the private bridge share the backend's browse authority and private
+credential cache. Admission captures the profile id, exact origin, TLS policy and
+revocable generation before queueing; dispatch and credential publication recheck
+that authority. Address/TLS changes invalidate active and queued operations and
+stored identities. Persisted entries without a TLS-policy field bind to verified TLS.
+Forgetting through any listener revokes every listener's active and queued browsing.
+Backend shutdown closes the shared owner; standalone listeners release their shared
+lease, and the last lease closes the connections.
+
 The credential survives local launches. Forgetting the saved server deletes it;
 revocation clears the rejected credential. To repair tunnel browsing, use Back to
 Browse and paste a fresh pairing link into the add field. Pairing errors name the
@@ -161,6 +170,10 @@ password access. Invalid, expired or replayed codes map to `pairing_expired`
 retrying a rate-limited attempt.
 
 ## Validation
+
+- `codenomad-servers/review-regressions.test.ts` covers queued passwords across
+  address/TLS changes, persisted TLS binding, cross-listener Forget and shared-owner
+  shutdown with real HTTP remotes.
 
 - `remote-surface.test.ts` drives the real `createHttpServer` through the
   ingress. It covers unpaired access, pairing, `Origin`/`Host` checks,
