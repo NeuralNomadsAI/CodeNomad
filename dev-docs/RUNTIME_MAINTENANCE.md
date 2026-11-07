@@ -75,24 +75,35 @@
   `stable`/latest major stay on those supported references.
 - **Bundled Runtime Maintenance** runs daily (07:23 UTC, subject to GitHub's
   scheduling delays) and on manual dispatch, on the default branch only.
-  It selects newer LTS releases within the pinned Node major only. It never
-  upgrades an installed application or OpenCode.
-- A Node update creates a version-specific **regular (non-draft) PR** changing
-  only `.node-version`; review and merge are manual. Events from `GITHUB_TOKEN`
-  start no workflows, so a maintainer closes and reopens the PR to run
-  validation. Existing proposals, including closed ones, are left alone; orphan
-  branches after an uncertain API response require manual reconciliation, never
-  a force-push.
-- **npm is warning-only.** The check compares npm's latest published version
-  with the bundled npm pin (`.npm-version`). It audits that published
-  npm CLI and its bundled dependencies using an isolated temporary lockfile,
-  with installation scripts disabled, separately from the application's
-  dependency audit. The JSON advisory report is retained as an Actions artifact
+  It selects newer LTS releases within the pinned Node major only, and npm's
+  latest published release. It never upgrades an installed application or OpenCode.
+- Each update creates a version-specific **regular (non-draft) PR** changing one
+  pin only: `.node-version` (branch `maintenance/node-<version>`) or
+  `.npm-version` (`maintenance/npm-<version>`); review and merge are manual.
+  Events from `GITHUB_TOKEN` start no workflows, so a maintainer closes and
+  reopens the PR to run validation. The proposal rereads the pin from the default
+  branch and writes nothing when it changed; existing proposals, including closed
+  ones, are left alone; orphan branches after an uncertain API response require
+  manual reconciliation, never a force-push.
+- An npm release is proposed only when its `engines.node` accepts both runtimes
+  it would run under: `.node-version` (CI and Tauri) and the Node integrated in
+  the exact Electron version of `packages/electron-app/package.json`, read from
+  Electron's release index (`releases.electronjs.org/releases.json`). The npm
+  proposal also requires those two files unchanged on the default branch.
+  Otherwise the job warns and names the rejected runtime; updating that runtime
+  first unblocks the proposal. Major npm releases are proposed too, because npm
+  ships fixes on its current major only; their title and body mark the major,
+  and the body lists the breaking-change, lifecycle-script and fixture checks the
+  maintainer completes before merging.
+- The check audits the pinned npm CLI and its bundled dependencies, and the
+  proposed npm when there is one, using an isolated temporary lockfile with
+  installation scripts disabled, separately from the application's dependency
+  audit. Advisories in the pinned npm are warnings; the npm proposal body
+  summarizes both audits. The JSON reports are retained as one Actions artifact
   for seven days.
-- Version lag and advisory counts need applicability review. Changing
-  `.npm-version` is a manual, reviewed change.
+- Version lag and advisory counts need applicability review.
 - Failed metadata/audit requests fail the job; updates and advisories only emit
-  warnings and a job summary, never an unrelated PR build gate.
+  warnings, a job summary and proposals, never an unrelated PR build gate.
 
 Repository settings must allow GitHub Actions to create pull requests.
 The audit job has read-only repository permissions. A separate trusted proposal
@@ -102,6 +113,6 @@ Run `npm run check:runtime` locally for the same read-only assessment.
 
 ## Agent conventions
 
-- Bundled runtime maintenance keeps `.node-version` and `.npm-version` exact and proposes only same-major LTS upgrades as regular, non-draft PRs without automatic merge. The scheduled npm CLI/dependency audit is warning-only. Never bundle npm from another source than the verified `.npm-version` registry package, resolve `latest` at build time, skip the engines guard, auto-fix dependencies, merge or publish from that check, or report a failed audit as clean. Application runtime changes require reviewed builds/releases.
+- Bundled runtime maintenance keeps `.node-version` and `.npm-version` exact. It proposes only same-major Node LTS upgrades and newer npm releases whose `engines.node` accepts `.node-version` and the pinned Electron's Node, each as a regular, non-draft PR changing that one pin, without automatic merge; a major npm proposal says so in its title and body. Never bundle npm from another source than the verified `.npm-version` registry package, resolve `latest` at build time, skip the engines guard, auto-fix dependencies, merge or publish from the check, or report a failed audit as clean. Application runtime changes require reviewed builds/releases.
 - Documents reference `.node-version` and `.npm-version` and never restate the pinned Node or bundled npm version: maintenance updates only those files.
 - Documents never restate Tauri crate or CLI versions: they point to `packages/tauri-app/Cargo.toml`/`Cargo.lock` and the `@tauri-apps/*` entries of `packages/tauri-app/package.json` and `packages/ui/package.json`. Never merge a Tauri update whose vendored crates fail re-qualification or whose `@tauri-apps/*` packages trail the crates' minor.
