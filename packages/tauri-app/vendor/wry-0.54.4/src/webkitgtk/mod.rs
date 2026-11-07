@@ -841,13 +841,19 @@ impl InnerWebView {
     }
 
     let (size, _) = self.webview.allocated_size();
-    if self
+    if let Some(parent) = self
       .webview
       .parent()
       .and_then(|p| p.downcast::<gtk::Fixed>().ok())
-      .is_some()
     {
-      bounds.position = LogicalPosition::new(size.x(), size.y()).into();
+      // Hidden widgets can have a stale allocation. Read GtkFixed's retained
+      // layout so sequential position/size updates preserve both coordinates.
+      let x = parent.child_property::<i32>(&self.webview, "x");
+      let y = parent.child_property::<i32>(&self.webview, "y");
+      let (width, height) = self.webview.size_request();
+      bounds.position = LogicalPosition::new(x, y).into();
+      bounds.size = LogicalSize::new(width.max(1), height.max(1)).into();
+      return Ok(bounds);
     }
     bounds.size = LogicalSize::new(size.width(), size.height()).into();
 

@@ -62,6 +62,16 @@ fn main() {
     })
     .build_gtk(&fixed)
     .unwrap();
+  // The application registers a fresh child hidden, then sends separate
+  // position/size updates before its first allocation or reveal.
+  child.set_visible(false).unwrap();
+  let mut pending = child.bounds().unwrap();
+  pending.position = LogicalPosition::new(100, 80).into();
+  child.set_bounds(pending).unwrap();
+  let mut pending = child.bounds().unwrap();
+  pending.size = LogicalSize::new(300, 200).into();
+  child.set_bounds(pending).unwrap();
+  assert_eq!(child.bounds().unwrap().position.to_logical::<i32>(1.0), LogicalPosition::new(100, 80));
   child.webview().connect_permission_request(|_, request| {
     println!("PERMISSION_DENIED {}", request.type_().name());
     request.deny();
@@ -173,6 +183,14 @@ fn main() {
         1 => {
           window.resize(900, 650);
           child.set_visible(false).unwrap();
+          // Match Tauri's separate SetPosition/SetSize round trips while hidden.
+          let mut retained = child.bounds().unwrap();
+          retained.position = LogicalPosition::new(140, 90).into();
+          child.set_bounds(retained).unwrap();
+          let mut retained = child.bounds().unwrap();
+          retained.size = LogicalSize::new(280, 180).into();
+          child.set_bounds(retained).unwrap();
+          assert_eq!(child.bounds().unwrap().position.to_logical::<i32>(1.0), LogicalPosition::new(140, 90));
         }
         2 => {
           child.reparent(&fixed).unwrap();

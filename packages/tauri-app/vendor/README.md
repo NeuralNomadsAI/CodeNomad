@@ -16,6 +16,8 @@ MIT/Apache-2.0 crates, including licenses, selected through `[patch.crates-io]`.
   window's own child container.
 - Wry stores child positions in `GtkFixed` and sizes in GTK size requests, alongside
   immediate allocation, so resize/menu/hide-show allocations keep the rectangle.
+  Bounds reads use that retained layout while hidden, preserving position across
+  Tauri's separate position and size updates before reveal.
   Bounds follow the actual parent after reparenting. IPC callbacks keep weak
   WebView references so destruction releases both the view and its IPC manager.
 - WKWebView: the runtime supplies `with_id(&label)` to Wry. During construction,
