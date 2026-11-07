@@ -11,7 +11,7 @@ import { recurrenceInputBudget } from "../../../server/src/missions/recurrence-r
 import { controlOperationID, controlReceiptID } from "../../../server/src/missions/receipt-identity"
 import { captureMissionView } from "./mission-view-capture"
 import { clickMissionAction, inlineMissionEntry, missionDetail, missionEntryStatus, missionPicker, missionRefresh, missionToolbarAction,
-  missionPickerField, selectMission, selectedMissionTitle } from "./mission-actions"
+  selectMission, selectedMissionTitle } from "./mission-actions"
 import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
 import { recurrenceSnapshotSchema, recurrenceControlHttpSchema, recurrenceControlRequestSchema, recurrenceControlStatusSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { recurrenceManualRequestSchema, recurrenceManualResultSchema } from "../../../server/src/missions/recurrence-manual-rpc"
@@ -37,12 +37,12 @@ function scheduleFixture(): RecurrenceSchedule {
 }
 const TITLE = "Daily source review"
 const CHECK = `Check control outcome for ${TITLE}`, RESUME = `Resume schedule ${TITLE}`, STOP = `Stop schedule ${TITLE}`, RUN_NOW = `Run ${TITLE} now`
-/** The selected item's lifecycle buttons (before the separator): [label, enabled]. Inapplicable ones stay, disabled. */
+/** The selected item's lifecycle buttons (before the Summary eye): [label, enabled]. Inapplicable ones stay, disabled. */
 async function lifecycleButtons(page: Page) {
-  return missionDetail(page).locator(".mission-action-bar").evaluate(bar => {
+  return page.locator(".mission-picker-selection-actions .mission-action-bar").evaluate(bar => {
     const result: Array<[string | null, boolean]> = []
     for (const node of bar.children) {
-      if (node.classList.contains("mission-action-separator")) break
+      if (node.classList.contains("mission-overview-toggle")) break
       if (node instanceof HTMLButtonElement) result.push([node.getAttribute("aria-label"), !node.disabled])
     }
     return result
@@ -105,7 +105,7 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 })
     // The open conversation is the one-time coordinator, yet only the picker selects a Mission.
     await (await inlineMissionEntry(page, "One-time review")).waitFor()
-    assert.equal(await missionPickerField(page).locator(".mission-picker-placeholder").innerText(), "No mission selected")
+    assert.equal(await selectedMissionTitle(page).count(), 0, "no row is selected")
     assert.equal(await missionDetail(page).count(), 0, "the open coordinator conversation does not select its Mission")
     await selectMission(page, "One-time review")
     await captureMissionView(page, "unified-list-desktop")
@@ -119,7 +119,7 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     assert.equal(await entry.getAttribute("aria-current"), "true")
     const detail = missionDetail(page)
     await detail.waitFor()
-    assert.equal(await missionPicker(page).locator("section.mission-detail").count(), 0, "the detail is a separate section, not inside the picker")
+    assert.equal(await missionPicker(page).locator("section.mission-detail").count(), 0, "the detail is the selected row's children, never in the header")
     assert.equal(await detail.getByText(/Next: /).count(), 0, "the entry alone says when the next run is")
     await captureMissionView(page, "schedule-detail-next-passage")
     for (const state of ["paused", "stopped"] as const) {
@@ -165,7 +165,7 @@ test("unified list retains one-time missions, next passage, explicit Resume and 
     await missionToolbarAction(page, RESUME).waitFor({ state: "visible" })
     // Without an admitted passage, the detail lists past runs directly; no result prose or More.
     assert.equal(await detail.locator(".mission-result-text, .mission-more").count(), 0)
-    assert.equal(await detail.locator(".mission-overview-toggle").count(), 1)
+    assert.equal(await page.locator(".mission-picker-selection-actions .mission-overview-toggle").count(), 1)
     assert.match(await detail.locator("button.mission-past-run").innerText(), /^Oct 8, 2026, 8:15 AM · Completed/)
     await captureMissionView(page, "schedule-history")
     await page.setViewportSize({ width: 390, height: 850 })
@@ -216,11 +216,12 @@ test("rows say Next, stuck passages explain their one action, history is plain a
     assert.equal(await missionToolbarAction(page, "Start mission").isEnabled(), true)
     const scoped = await page.locator(".mission-control").evaluate(panel => {
       const picker = panel.querySelector(".mission-picker")!, detail = panel.querySelector("section.mission-detail")!
-      const entries = [...picker.querySelectorAll(".mission-picker-inline button.mission-picker-option")]
-      return entries.length === 2 && !picker.contains(detail)
-        && Boolean(picker.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING)
+      const entries = [...panel.querySelectorAll(".mission-rows button.mission-row-select")]
+      const selected = panel.querySelector(".mission-row:has(.mission-row-select[aria-current=true])")!
+      return entries.length === 2 && !picker.contains(detail) && selected.parentElement!.contains(detail)
+        && Boolean(selected.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING)
     })
-    assert.equal(scoped, true, "the selected one-time detail follows the whole list")
+    assert.equal(scoped, true, "the selected one-time detail is its row's children")
     assert.equal(await detail.getByRole("button", { name: "Technical details", exact: true }).count(), 0, "identifiers live in readers")
     await captureMissionView(page, "one-time-scoped")
     await selectMission(page, schedule.title)
@@ -423,7 +424,7 @@ for (const variant of variants) test(`a ${variant.action} refused before dispatc
     for (let attempt = 0; snapshots <= before && attempt < 100; attempt++) await page.waitForTimeout(50)
     assert.ok(snapshots > before, "the row revalidates after the refusal")
     // Released: the same controls as before, nothing held, nothing to check.
-    await page.waitForFunction(expected => JSON.stringify([...document.querySelector(".mission-detail .mission-action-bar")!.children]
+    await page.waitForFunction(expected => JSON.stringify([...document.querySelector(".mission-picker-selection-actions .mission-action-bar")!.children]
       .filter(node => node instanceof HTMLButtonElement).slice(0, expected.length)
       .map(node => [node.getAttribute("aria-label"), !(node as HTMLButtonElement).disabled])) === JSON.stringify(expected), initial)
     assert.equal(await missionToolbarAction(page, CHECK).count(), 0)

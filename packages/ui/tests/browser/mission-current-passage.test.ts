@@ -17,7 +17,7 @@ import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrenc
 import { currentRecurrenceContent } from "../../../server/src/missions/recurrence-current"
 import { recurrenceCurrentPageInput } from "../../../server/src/missions/recurrence-current"
 import { captureMissionView } from "./mission-view-capture"
-import { missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
+import { missionMenuTrigger, missionToolbar, missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
 import { projectMissionPanel } from "../../../server/src/missions/mission-panel-projection"
 import { missionPanelPage } from "../../../server/src/missions/mission-panel-page"
@@ -131,7 +131,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     const card = await selectMission(page, "Daily commit review")
     await card.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor()
     assert.equal(reads, 1)
-    assert.equal(await page.locator(".mission-picker section.mission-detail").count(), 0, "the detail is a separate section below the picker")
+    assert.equal(await page.locator(".mission-picker section.mission-detail").count(), 0, "the detail is the selected row's children, never in the header")
     assert(!(await card.innerText()).includes("Exact passage briefing"), "briefing prose belongs to the central reader")
     assert.equal(await card.locator(".mission-needs").getByText("Real child request", { exact: true }).count(), 1)
     // Schedule controls name their schedule; the isolated passage never offers one-time Mission mutations.
@@ -140,9 +140,9 @@ test("actual MissionControl reuses the current task tree and attention, with bri
       .evaluateAll(nodes => nodes.map(node => [node.getAttribute("aria-label"), (node as HTMLButtonElement).disabled]))
     assert.deepEqual(mutations, [["Start", true], ["Stop schedule Daily commit review", true], ["Run Daily commit review now", true]],
       "isolated read never opens ordinary mutations")
-    for (const label of ["Edit selected mission", "Delete selected mission…"]) assert.equal(await missionToolbarAction(page, label).isDisabled(), true, `${label} stays disabled for a schedule`)
+    assert.equal(await missionToolbarAction(page, "Delete selected mission…").isDisabled(), true, "Delete stays disabled for a schedule")
     assert.equal(await card.locator("form, textarea").count(), 0, "no coordinator field in the panel")
-    assert.equal(await page.getByRole("button", { name: "More actions", exact: true }).count(), 0, "no overflow menu")
+    assert.equal(await missionMenuTrigger(page).isDisabled(), true, "the overflow menu (Edit included) has nothing to offer")
     const order = await card.evaluate(node => {
       const request = node.querySelector(".mission-needs")!, tasks = node.querySelector(".mission-tree")!
       return Boolean(request.compareDocumentPosition(tasks) & Node.DOCUMENT_POSITION_FOLLOWING)
@@ -157,7 +157,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
       await page.evaluate(() => { document.documentElement.dir = "ltr" })
       await page.setViewportSize({ width: 1200, height: 950 })
     }
-    const overview = card.getByRole("button", { name: "Summary", exact: true })
+    const overview = missionToolbar(page).getByRole("button", { name: "Summary", exact: true })
     await overview.click()
     await page.locator(".mission-reader").getByText("Exact passage briefing", { exact: true }).waitFor()
     assert.equal(await overview.getAttribute("aria-pressed"), "true")

@@ -2,25 +2,14 @@
    the dependency rail and the conversation shortcut, carries the attenuated,
    rollover and selected states. The flow spans the panel edge to edge. */
 .mission-control .mission-flow { margin-inline: calc(-1 * var(--space-sm)); }
-/* The flow is the scroll container, so the absolute dependency overlay scrolls
-   with the rows it measures (mission-graph.css keeps it position: relative). */
-.mission-tree .mission-flow { overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
-/* The panel is a fixed-height column: the task group takes the remaining height
-   down to the window bottom and is the only scroller (no outer second scrollbar). */
-.mission-control { display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
+/* The panel is a fixed-height column and the only scroller (its header stays put,
+   mission-control.css); the flow keeps its natural height, and the absolute
+   dependency overlay moves with the rows it measures (mission-graph.css keeps the
+   flow position: relative). The stable gutter keeps the panel width when the
+   scrollbar appears. */
+.mission-tree .mission-flow { overflow: clip visible; }
+.mission-control { display: flex; flex-direction: column; height: 100%; overflow-y: auto; scrollbar-gutter: stable; }
 .mission-control > * { flex-shrink: 0; }
-.mission-control > .mission-detail { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
-.mission-control > .mission-detail > * { flex-shrink: 0; }
-.mission-control > .mission-detail > .mission-tree { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 8rem; }
-/* Collapsed, the group is only its heading and reserves no task room. */
-.mission-control > .mission-detail > .mission-tree:has(> div[hidden]) { min-height: 0; }
-.mission-control .mission-tree > div:not([hidden]) { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
-.mission-control .mission-tree .mission-flow { flex: 1 1 auto; min-height: 0; }
-/* Short layouts (mission-panel-scroll.ts): when the rest of the panel leaves no room
-   for the group's minimum, the panel scrolls everything and the flow keeps its
-   natural height, so nothing is clipped and scrollers never nest. */
-.mission-control:has(> .mission-detail > .mission-tree[data-scroller="panel"]) > .mission-detail { flex-shrink: 0; }
-.mission-control .mission-tree[data-scroller="panel"] .mission-flow { overflow: clip visible; overscroll-behavior: auto; }
 /* Separates the task group from the selected mission's toolbar above it. */
 .mission-control .mission-tree { border-top: 1px solid var(--border-base); padding-top: var(--space-xs); }
 .mission-tree > h3 .mission-disclosure-trigger > small { font-variant-numeric: tabular-nums; }

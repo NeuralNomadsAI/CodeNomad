@@ -6,6 +6,7 @@ import path from "node:path"
 import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
+import { missionMenuItemState } from "./mission-actions"
 import { NativeMissionDocumentStore } from "../../../server/src/missions/mission-document-store"
 import { missionDocumentChanges as changes } from "../../../server/src/missions/mission-document-state"
 import { missionScheduleView } from "../../../server/src/missions/mission-schedule-view"
@@ -148,15 +149,15 @@ const detail = (page: Page) => page.locator(".mission-unified-schedule")
 const technicalCalendars = () => (["principal", "reconciliation"] as const).map((role, slot) => ({ role, slot: role === "principal" ? slot : 0,
   timeGeneration: 1, scheduleID: `sch_${role}_${"a".repeat(90)}`, sessionID: `ses_cn_schedule_${role}_${"b".repeat(90)}`,
   highWater: 2, pendingWake: null, wakePreparing: null }))
-const button = (page: Page, name: string) => detail(page).getByRole("button", { name, exact: true })
+/** A selected schedule's control: its toolbar sits in the header's selection line, text actions in its detail. */
+const button = (page: Page, name: string) => page.locator(".mission-picker-selection-actions, .mission-unified-schedule").getByRole("button", { name, exact: true })
 const deferred = () => {
   let resolve!: () => void
   const promise = new Promise<void>(yes => { resolve = yes })
   return { promise, resolve }
 }
 async function select(page: Page) {
-  await page.getByRole("combobox").click()
-  await page.getByRole("option").filter({ hasText: "Inspect local changes" }).click()
+  await page.locator(".mission-rows button.mission-row-select").filter({ hasText: "Inspect local changes" }).click()
   await detail(page).waitFor()
 }
 async function click(page: Page, name: string, confirm = false) {
@@ -198,7 +199,7 @@ test("real panel Create → Play → Pause/Resume → Run now → Stop → Delet
     assert.equal(f.doc.launchedCount, 1); assert.equal(f.doc.successfulCount, 1)
     await capture(page, "schedule-running-history-en.png")
     await click(page, "Stop", true)
-    await page.waitForFunction(() => (document.querySelector('.mission-unified-schedule [aria-label="Start"]') as HTMLButtonElement)?.disabled)
+    await page.waitForFunction(() => (document.querySelector('.mission-picker-selection-actions [aria-label="Start"]') as HTMLButtonElement)?.disabled)
     await click(page, "Delete", true); await detail(page).waitFor({ state: "detached" })
     assert.deepEqual(f.posts.map(post => post.action), ["create", "play", "pause", "resume", "run-now", "stop", "delete"])
     assert.equal(new Set(f.posts.map(post => post.requestID)).size, f.posts.length)
@@ -303,12 +304,11 @@ test(`confirmed publication barrier retains ${scenario} across stale inventory a
     const count = f.posts.length, confirmedRevision = f.doc.revision
     assert.ok(confirmedRevision > stale!.revision!, JSON.stringify({ confirmedRevision, staleRevision: stale!.revision, posts: f.posts }))
     assert.equal(await button(page, "Start").isDisabled(), true)
-    assert.equal(await button(page, "Edit selected mission").isDisabled(), true)
+    assert.equal((await missionMenuItemState(page, "edit")).enabled, false)
     assert.doesNotMatch(await detail(page).innerText(), /This request is unconfirmed/)
     old.resolve(); await following.promise
     assert.equal(await button(page, "Start").isDisabled(), true, "an older in-flight publication cannot clear the confirmed minimum")
     await button(page, "Start").evaluate(element => element.dispatchEvent(new MouseEvent("click", { bubbles: true })))
-    await button(page, "Edit selected mission").evaluate(element => element.dispatchEvent(new MouseEvent("click", { bubbles: true })))
     assert.equal(await page.locator("form.mission-editor").count(), 0)
     assert.equal(f.posts.length, count)
     await page.evaluate(() => (window as any).missionFixture.mount(false))
@@ -576,9 +576,12 @@ for (const negativeFirst of [true, false]) test(`cold reopen keeps the first pag
     await pointRead
     await page.getByRole("button", { name: "Load more Missions", exact: true }).and(page.locator(":enabled")).waitFor()
     await button(page, "Refresh saved request").waitFor()
-    await page.getByRole("combobox").click()
-    assert.equal(await page.getByRole("option").filter({ hasText: "Inventory Mission" }).count(), 8)
-    await page.keyboard.press("Escape")
+    assert.equal(await page.locator(".mission-rows button.mission-row-select").filter({ hasText: "Inventory Mission" }).count(), 8)
+    // Inventory paging belongs to the list, not to the selection: folding keeps it.
+    const selectedChevron = page.locator(".mission-row:has(.mission-row-select[aria-current=true]) .session-item-expander")
+    await selectedChevron.click()
+    assert.equal(await page.getByRole("button", { name: "Load more Missions", exact: true }).isVisible(), true, "folding the selection keeps Load more")
+    await selectedChevron.click()
     assert.equal(await button(page, "Check passage").isDisabled(), true, "retained partial metadata grants no new control")
     assert.equal(await button(page, "Stop…").isDisabled(), true)
     if (negativeFirst) {
@@ -652,8 +655,7 @@ test("the schedule list summarizes each launch criterion and its role; a stored 
       condition: { kind: "branch-commits", directory: "fixture", ref: "refs/heads/main" }, ends: { maxLaunches: null, afterMs: null, at: Date.parse("2026-12-31T17:00:00Z") } } })
     await f.addSchedule("msn_files", { title: "Follow package changes", launch: { when: [{ kind: "files-changed", paths: ["package.json"] }] } })
     await page.evaluate(() => (window as any).missionFixture.refresh())
-    await page.getByRole("combobox").click()
-    const option = (title: string) => page.getByRole("option").filter({ hasText: title })
+    const option = (title: string) => page.locator(".mission-rows button.mission-row-select").filter({ hasText: title })
     assert.match(await option("Daily review").innerText(), /Every day · 09:00 · Europe\/Paris/)
     assert.match(await option("Review new commits").innerText(), /Selected weekdays · .* · 09:00 · Europe\/Paris; if · New commits on a local branch · main/)
     assert.match(await option("Follow package changes").innerText(), /Explicit files change · package\.json/)

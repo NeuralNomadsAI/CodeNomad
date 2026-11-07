@@ -10,7 +10,7 @@ Görevler, kalıcı bir proje planını OpenCode'un kendi konuşmalarıyla birle
 
 ## Oluşturun, ardından açıkça başlatın {#create}
 
-1. Sağ panelde **Görevler** bölümünü açıp **Görev oluştur** eylemini seçin. Form, oluşturana veya iptal edene kadar görev listesinin ve seçili görevin görev düğümlerinin yerini alır.
+1. Sağ panelde **Görevler** bölümünü açıp **Görev oluştur** eylemini seçin. Form, oluşturana veya iptal edene kadar görev ağacının yerini alır.
 2. **Görev ne yapmalı?** alanını doldurun ve ilk cümleden otomatik doldurulan **Başlık** alanını kontrol edin (en fazla 60 karakter).
 3. **Bir kez, hemen** için **Zamanlama** bölümünü kapalı bırakın veya zamanlama ya da olay eklemek için genişletip **Şu durumda başlat** altındaki **Ölçüt ekle** eylemini kullanın. Sıraları nasıl birleştiklerini belirler.
 4. **Rehber**, **Notlar**, **Ajanlar ve modeller**, **Görev oturumları**, projenin **Alt oturum iç içe geçme derinliği** ayarı, kayıtlı özetler ve isteğe bağlı takip edilen konuşmalar için **Seçenekler** bölümünü genişletin. **İki modeli karşılaştır** seçildiğinde **Model A** ve **Model B** seçicileri ana formda görünür.
@@ -38,10 +38,11 @@ Rehber koordinasyona yön verir; OpenCode izinlerini aşmaz veya başarıyı gar
 
 ## Ağacı izleyin ve sonuçları okuyun {#tracking}
 
-1. Görev başlığını seçin. Baştaki ok listeyi açık tutar; başlık alanı geçici bir seçici açar.
-2. Merkezi genel bakış için **Özet** (göz) eylemini seçin veya ilgili sonucu, iş özetini ve kanıtları görmek için bir görev düğümünü seçin.
-3. Bağımlılık bağlantılarını ve **Raporlar** bölümünü izleyin; koordinatörün konuşma dökümüne ihtiyaç duyduğunuzda **Konuşmayı aç** eylemini kullanın.
-4. **Yanıtınız gerekiyor** altında **Yanıtla** eylemiyle istekte bulunan aktörün konuşmasını ve istek panelini açın.
+1. Bir görevin satırını seçin: görev düğümleri altında, eylemleri ise üst bilginin ikinci satırında görünür. Satırın oku görev düğümlerini daraltır veya genişletir; **Görevleri filtrele** diğer satırları süzer.
+2. Merkezi genel bakış için **Özet** (göz) eylemini seçin; açıkken başka bir görevi seçmek o görevin genel bakışını gösterir. İlgili sonucu, iş özetini ve kanıtları görmek için bir görev düğümünü seçin.
+3. **Diğer eylemler** (⋯), **Şimdi kes**, **Güncelleme iste** ve **Seçili görevi düzenle** eylemlerini içerir; geçerli olmayan eylemler devre dışı kalır.
+4. Bağımlılık bağlantılarını ve **Raporlar** bölümünü izleyin; koordinatörün konuşma dökümüne ihtiyaç duyduğunuzda **Konuşmayı aç** eylemini kullanın.
+5. **Yanıtınız gerekiyor** altında **Yanıtla** eylemiyle istekte bulunan aktörün konuşmasını ve istek panelini açın.
 
 | Gösterge | Neyi gösterir |
 | --- | --- |
@@ -61,7 +62,7 @@ Görev sayfaları yalnızca istenen sayfa tamamen alındıktan sonra görünür.
 
 ### Renkler ve kesintiye uğrayan görevler {#status-colours}
 
-Görev işaretleri, görev düğümü simgeleri ve listenin oku oturum listesinin renklerini kullanır: renk yalnızca şu anda size ihtiyaç duyan şeyi gösterir.
+Görev bayrakları ve görev düğümü simgeleri oturum listesinin renklerini kullanır: renk yalnızca şu anda size ihtiyaç duyan şeyi gösterir. Yinelenen bir görev, bayrak yerine bir tekrar simgesi gösterir.
 
 | Renk | Anlamı |
 | --- | --- |
@@ -71,7 +72,7 @@ Görev işaretleri, görev düğümü simgeleri ve listenin oku oturum listesini
 | Yeşil | Bu pencerede henüz açmadığınız tamamlanmış bir görev; seçtiğiniz anda nötr olur. |
 | Mavi | Hazırlanmış bir görev; yazılmış bir istem gibi başlatılmaya hazırdır. |
 
-Geri kalan her şey nötrdür; tamamlanan ve başarısız görev düğümleri de: sonuçlar durum metninde ve simgelerde yer alır. Liste daraltılmışken oku, diğer görevler arasında kırmızı, sarı ve yeşilden en acil olanı alır; daraltılmış oturumlarda olduğu gibi turuncu ve mavi yalnızca kendi satırlarında görünür.
+Geri kalan her şey nötrdür; tamamlanan ve başarısız görev düğümleri de: sonuçlar durum metninde ve simgelerde yer alır.
 
 Koordinatörü sonuca varmadan durduğunda ve başka hiçbir şey çalışmıyorken bir görev **Kesintiye uğradı** olur. **Başarısız** olarak gösterilen bir görev de sürdürülebilir. İki durumda da araç çubuğunun ilk düğmesi **Kesintiye uğrayan görevi kurtar** olur: koordinatörden kayıtlı plan ve sonuçlara göre yeniden değerlendirme yapmasını ister ve başarısız bir görevi önce yeniden açar. Koordinatör tek seferlik bir görevi başarısız olarak bitirmez: sizsiz hiçbir şey ilerleyemediğinde **Yanıtınız gerekiyor** altında size bir soru sorar. Bir görevi yalnızca siz durdurursunuz.
 
@@ -92,7 +93,7 @@ Yalnızca istek panelinde verdiğiniz yanıt **Yanıtınız** sayılır; bir aja
 
 Koordinatöre ilk plandan sonra, her görev sonuçlandırıldığında, insan yanıtı beklerken ve son rapordan önce bir proje durum özeti yayımlaması talimatı verilir. Bu, yazılmış bir değerlendirmedir; canlı etkinlik sayacı veya garantili periyodik yaşam sinyali değildir. Bir bildirim, durum özetinden sonra haritanın değiştiğini belirtir.
 
-Yeni bir koordinatör değerlendirmesi için araç çubuğunun altındaki **Güncelleme iste** eylemini kullanıp **Özet** bölümünü okuyun. **Güncelleme istendi…**, isteğin beklediğini, henüz yanıtlanmadığını gösterir. **Gönderim doğrulanmadı** otomatik yeniden göndermeye izin vermez: ayrı bir yeni istekte bulunmadan önce koordinatör konuşmasını açın. Bu, salt okunur bir korumalı ortam değil, sıradan bir OpenCode girdisidir; koordinatör normal izinlerini korur.
+Yeni bir koordinatör değerlendirmesi için **Diğer eylemler** (⋯) altındaki **Güncelleme iste** eylemini kullanıp **Özet** bölümünü okuyun. **Güncelleme istendi…**, isteğin beklediğini, henüz yanıtlanmadığını gösterir. **Gönderim doğrulanmadı** otomatik yeniden göndermeye izin vermez: ayrı bir yeni istekte bulunmadan önce koordinatör konuşmasını açın. Bu, salt okunur bir korumalı ortam değil, sıradan bir OpenCode girdisidir; koordinatör normal izinlerini korur.
 
 ## Bağlam bir görevde nasıl akar {#context-flow}
 
@@ -273,7 +274,7 @@ Makbuz okuması kısmi hazırlığı doğruladığında **Tekrar dene** görün�
 
 Yeni hazırlanmış bir görevin ilk başlatılmasından önce başlık, talimatlar, notlar, çalışma kitabı, istenen ajan/model/düşünme, görev oturumu modu ve **Zamanlama** düzenlenebilir. Aynı Görevi koruyarak başlatma ölçütleri ekleyebilir veya kaldırabilirsiniz. Kaydetme görevi duraklatılmış tutar ve yeni, boş bir koordinatör hazırlar; ilk konuşma korunur. Yalnızca Play işi başlatır veya zamanlamayı etkinleştirir. Başlatmadan sonra talimatlar ve notlar etkin görevin düzenleme kurallarına uyar. Kaydetme onaylanmazsa **Kayıtlı isteği yenile** ilk sonucu okur; kısmi hazırlık başlatmayı, metin düzenlemeyi ve silmeyi engellediği sürece aynı isteği koruyun.
 
-Düzenlenebilir tek seferlik görev veya yerel zamanlama için **Seçili görevi düzenle** eylemini kullanın. Kilitli alanların yanındaki açıklamaları okuyun. Revizyon çakışmasında **Güncel yapılandırmayı yeniden yükle** eylemini seçin, ardından yeniden kaydetmeden önce korunan taslağı incelemek için **Karşılaştırma için önceki taslak** bölümünü açın. Mevcut günlük zamanlamalar kendi araç çubuklarındaki kontrolleri korur.
+Düzenlenebilir tek seferlik görev veya yerel zamanlama için **Diğer eylemler** (⋯) altındaki **Seçili görevi düzenle** eylemini kullanın. Kilitli alanların yanındaki açıklamaları okuyun. Revizyon çakışmasında **Güncel yapılandırmayı yeniden yükle** eylemini seçin, ardından yeniden kaydetmeden önce korunan taslağı incelemek için **Karşılaştırma için önceki taslak** bölümünü açın. Mevcut günlük zamanlamalar kendi araç çubuklarındaki kontrolleri korur.
 
 Yerel zamanlamada **Seçili görevi sil…**, kaydı kaldırmadan önce gelecek geçişleri devre dışı bırakır. Konuşmalar ve sonuçlar korunur; uzlaştırma bekleyen temizlik **Teknik ayrıntılar** içinde görünür kalır. Doğrulanmamış silme isteğini koruyup özgün isteği yenileyin.
 

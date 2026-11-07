@@ -301,8 +301,8 @@ test("scrolling loads all 400 tasks without gap controls and preserves independe
       assert.ok(await f.page.locator(".mission-tree-more button").count() <= 1)
       assert.equal(await f.page.locator(".mission-tree-gap").count(), 0)
       await f.page.evaluate(() => {
-        const tree = document.querySelector(".mission-tree")!, flow = tree.querySelector<HTMLElement>(".mission-flow")!
-        const scroller = tree.getAttribute("data-scroller") === "panel" ? tree.closest<HTMLElement>(".mission-control")! : flow
+        // The panel is the tree's only scroller.
+        const scroller = document.querySelector(".mission-tree")!.closest<HTMLElement>(".mission-control")!
         scroller.scrollTop = scroller.scrollHeight
       })
       await f.page.waitForFunction(count => document.querySelectorAll(".mission-tree-node").length > count, before)
@@ -552,7 +552,7 @@ for (const failure of ["network", "changed"] as const) test(`sliced task ${failu
     return route.fulfill({ json: answer })
   })
   try {
-    const original = await rows(f.page), toolbar = f.page.locator(".mission-action-bar"), element = await toolbar.elementHandle()
+    const original = await rows(f.page), toolbar = f.page.locator(".mission-picker-selection-actions .mission-action-bar"), element = await toolbar.elementHandle()
     await more(f.page)
     const read = f.page.locator(".mission-tree-read")
     await read.waitFor()

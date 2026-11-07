@@ -7,6 +7,7 @@ import { registerMissionRoutes } from "../../../server/src/server/routes/mission
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./mission-panel-route"
 import { panelMissions } from "./mission-content-fixture"
+import { missionMenuItem } from "./mission-actions"
 
 // "Request an update" sends an application-authored native prompt: its admission
 // reads the authoritative full snapshot, never the panel's hints.
@@ -72,7 +73,8 @@ test("project damage the hints have not seen refuses the coordinator request: no
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).missionNavigation))
     await page.evaluate(async id => (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("/fixture", { selected: id }), mission.id)
-    await page.locator("section.mission-detail .mission-action-request").click()
+    await page.locator("section.mission-detail").waitFor()
+    await (await missionMenuItem(page, "request")).click()
     await page.locator(".mission-briefing-feedback").getByText("No prompt was sent", { exact: false }).waitFor()
     assert.deepEqual(reads, [`/api/workspaces/fixture/missions/${mission.id}/admission`], "admission reads the full snapshot only")
     assert.deepEqual(writes.filter(path => path.endsWith("/prompt")), [], "no prompt reached the coordinator")

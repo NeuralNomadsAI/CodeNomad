@@ -10,7 +10,7 @@ Les Missions associent un plan de projet durable aux conversations natives OpenC
 
 ## Créer, puis démarrer explicitement {#create}
 
-1. Ouvrez **Missions** dans le panneau droit et choisissez **Créer une mission**. Le formulaire remplace la liste des missions et les tâches de la mission sélectionnée jusqu’à ce que vous créiez ou annuliez.
+1. Ouvrez **Missions** dans le panneau droit et choisissez **Créer une mission**. Le formulaire remplace l’arbre des missions jusqu’à ce que vous créiez ou annuliez.
 2. Remplissez **Que doit faire la mission ?** et vérifiez **Titre**, prérempli depuis la première phrase (jusqu’à 60 caractères).
 3. Laissez **Programmation** repliée pour **Une fois, immédiatement**, ou développez-la et utilisez **Ajouter un critère** sous **Lancer quand** pour ajouter des horaires ou des événements. Leur ordre fixe leur combinaison.
 4. Développez **Options** pour **Scénario**, **Notes**, **Agents et modèles**, **Sessions des tâches**, la **Profondeur d’imbrication des sous-sessions** du projet, les consignes enregistrées et les conversations suivies facultatives. Avec **Comparer deux modèles**, les sélecteurs **Modèle A** et **Modèle B** apparaissent dans le formulaire principal.
@@ -38,10 +38,11 @@ Le scénario guide la coordination ; il ne contourne pas les autorisations nativ
 
 ## Suivre l’arbre et lire les résultats {#tracking}
 
-1. Sélectionnez le titre de mission. Le chevron de tête maintient sa liste ouverte ; le champ de titre ouvre un sélecteur temporaire.
-2. Choisissez **Résumé** (œil) pour la vue centrale, ou sélectionnez un nœud de tâche pour son résultat, sa consigne et ses preuves exacts.
-3. Suivez les liens de dépendance et **Rapports** ; utilisez **Ouvrir la conversation** pour le coordinateur si vous avez besoin de sa transcription.
-4. Sous **Votre réponse est attendue**, choisissez **Répondre** pour ouvrir la conversation de l’acteur demandeur et le dock d’interruption.
+1. Sélectionnez la ligne d’une mission : ses tâches apparaissent en dessous et ses actions sur la deuxième ligne de l’en-tête. Le chevron de la ligne replie ou déplie ses tâches ; **Filtrer les missions** restreint les autres lignes.
+2. Choisissez **Résumé** (œil) pour la vue centrale ; tant qu’elle est ouverte, sélectionner une autre mission affiche la vue de cette mission. Sélectionnez un nœud de tâche pour son résultat, sa consigne et ses preuves exacts.
+3. **Plus d'actions** (⋯) regroupe **Interrompre maintenant**, **Demander un point** et **Modifier la mission sélectionnée** ; les actions qui ne s’appliquent pas restent désactivées.
+4. Suivez les liens de dépendance et **Rapports** ; utilisez **Ouvrir la conversation** pour le coordinateur si vous avez besoin de sa transcription.
+5. Sous **Votre réponse est attendue**, choisissez **Répondre** pour ouvrir la conversation de l’acteur demandeur et le dock d’interruption.
 
 | Indicateur | Ce qu’il établit |
 | --- | --- |
@@ -61,7 +62,7 @@ Les pages de tâches ne s'affichent qu'une fois entièrement reçues. Une lectur
 
 ### Couleurs et missions interrompues {#status-colours}
 
-Les marques des missions, les icônes des tâches et le chevron de la liste reprennent les couleurs de la liste des sessions : la couleur ne montre que ce qui vous attend maintenant.
+Les drapeaux des missions et les icônes des tâches reprennent les couleurs de la liste des sessions : la couleur ne montre que ce qui vous attend maintenant. Une mission récurrente affiche une icône de répétition à la place du drapeau.
 
 | Couleur | Signification |
 | --- | --- |
@@ -71,7 +72,7 @@ Les marques des missions, les icônes des tâches et le chevron de la liste repr
 | Vert | Une mission terminée que vous n'avez pas encore ouverte dans cette fenêtre ; elle redevient neutre dès que vous la sélectionnez. |
 | Bleu | Une mission préparée, prête à démarrer comme un prompt rédigé. |
 
-Tout le reste est neutre, y compris les tâches terminées ou en échec : les résultats figurent dans le texte d'état et les icônes. Quand la liste est repliée, son chevron prend la plus urgente des couleurs rouge, jaune et vert parmi les autres missions ; comme pour les sessions repliées, l'orange et le bleu n'apparaissent que sur leurs propres lignes.
+Tout le reste est neutre, y compris les tâches terminées ou en échec : les résultats figurent dans le texte d'état et les icônes.
 
 Une mission est **Interrompue** quand son coordinateur s'est arrêté sans conclure alors que rien d'autre ne tourne. Une mission affichée **Échouée** peut aussi être reprise. Dans les deux cas, le premier bouton de la barre d'outils devient **Reprendre la mission interrompue** : il demande au coordinateur de refaire le point à partir du plan et des résultats enregistrés, et rouvre d'abord une mission échouée. Un coordinateur ne termine pas une mission ponctuelle en échec : quand plus rien ne peut avancer sans vous, il vous pose une question sous **Votre réponse est attendue**. Vous seul arrêtez une mission.
 
@@ -92,7 +93,7 @@ Seule une réponse donnée dans le dock d’interruption compte comme **Votre r�
 
 Le coordinateur reçoit l’instruction de publier un point sur le projet après son plan initial, après le règlement des tâches, lorsqu’il attend un humain et avant le rapport final. Il s’agit d’une évaluation rédigée, pas d’un compteur d’activité en direct ni d’un signal périodique garanti. Un avis indique si le plan a changé depuis ce point.
 
-Utilisez **Demander un point** sous la barre d’outils pour une nouvelle évaluation du coordinateur, puis lisez **Résumé**. **Point demandé…** signifie que la demande attend, pas qu’elle a reçu une réponse. **Envoi non confirmé** n’autorise pas le renvoi automatique : ouvrez la conversation du coordinateur avant de faire une nouvelle demande séparée. C’est une entrée native ordinaire, pas un bac à sable en lecture seule ; le coordinateur conserve ses autorisations normales.
+Utilisez **Demander un point** sous **Plus d'actions** (⋯) pour une nouvelle évaluation du coordinateur, puis lisez **Résumé**. **Point demandé…** signifie que la demande attend, pas qu’elle a reçu une réponse. **Envoi non confirmé** n’autorise pas le renvoi automatique : ouvrez la conversation du coordinateur avant de faire une nouvelle demande séparée. C’est une entrée native ordinaire, pas un bac à sable en lecture seule ; le coordinateur conserve ses autorisations normales.
 
 ## Comment le contexte circule dans une mission {#context-flow}
 
@@ -273,7 +274,7 @@ Lorsqu’une lecture du reçu confirme une préparation partielle, **Réessayer*
 
 Avant le premier lancement d’une nouvelle mission préparée, vous pouvez modifier son titre, ses instructions, ses notes, son playbook, ses agents/modèles/réflexion demandés, le mode des sessions de tâches et sa **Programmation**. Vous pouvez ajouter ou retirer des critères de lancement en conservant la même Mission. Enregistrer la garde en pause et prépare un nouveau coordinateur vide ; la conversation initiale est conservée. Seul Play démarre le travail ou arme une programmation. Après lancement, les instructions et notes suivent les règles d’édition de la mission active. Si l’enregistrement reste incertain, **Actualiser la requête enregistrée** lit son résultat d’origine ; conservez cette requête tant qu’une préparation partielle bloque Play, l’édition des textes et la suppression.
 
-Utilisez **Modifier la mission sélectionnée** sur une mission ponctuelle ou une programmation native modifiable. Lisez les explications près des champs verrouillés. En cas de conflit de révision, choisissez **Recharger la configuration actuelle**, puis ouvrez **Ancien brouillon pour comparaison** pour examiner le brouillon conservé avant d’enregistrer à nouveau. Les programmations quotidiennes existantes conservent les commandes de leur propre barre d’outils.
+Utilisez **Modifier la mission sélectionnée** sous **Plus d'actions** (⋯) sur une mission ponctuelle ou une programmation native modifiable. Lisez les explications près des champs verrouillés. En cas de conflit de révision, choisissez **Recharger la configuration actuelle**, puis ouvrez **Ancien brouillon pour comparaison** pour examiner le brouillon conservé avant d’enregistrer à nouveau. Les programmations quotidiennes existantes conservent les commandes de leur propre barre d’outils.
 
 Pour une programmation native, **Supprimer la mission sélectionnée…** désactive les futurs passages avant de retirer l’entrée. Conversations et résultats sont conservés ; le nettoyage en attente de réconciliation reste visible dans **Détails techniques**. Conservez une suppression non confirmée et actualisez sa requête d’origine.
 
