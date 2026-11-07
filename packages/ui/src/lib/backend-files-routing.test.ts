@@ -13,7 +13,7 @@ import { useWorkspaceTree } from "../components/instance/shell/right-panel/useWo
 import { useGitHistory } from "../components/instance/shell/right-panel/useGitHistory"
 import { useWorkspaceFileEditor } from "../components/workspace-file-editor"
 import { useGitChanges } from "../components/instance/shell/right-panel/useGitChanges"
-import { reloadWorktrees, createWorktree, deleteWorktree } from "../stores/worktrees"
+import { reloadWorktrees, createWorktree, deleteWorktree, setWorktreeSlugForParentSession, clearPendingWorktreeMoves } from "../stores/worktrees"
 
 type Wire = { url: string; method: string; body: string; headers: [string, string][]; credentials?: RequestCredentials }
 const registry = backends as Map<string, BackendClient>
@@ -36,6 +36,7 @@ async function fixture(t: TestContext, id: string) {
       : path.includes("/git-status") ? [{ path: `${id}.txt`, originalPath: null, stagedStatus: "modified", unstagedStatus: "modified",
         stagedAdditions: 1, stagedDeletions: 0, unstagedAdditions: 1, unstagedDeletions: 0 }]
       : path.includes("/files/preview") || path.includes("/files/content") ? { contents: "baseline" }
+      : path.endsWith("/git-history/c") ? { id: "c", parent: null, message: id, files: [] }
       : path.includes("/git-diff") || path.includes("/git-history/c") ? { before: "", after: "", isBinary: true, image }
       : path.includes("/git-history?") ? { commits: [{ id: "c", subject: id }], head: "c", hasMore: false }
       : path.includes("/files?") ? [{ path: `${id}.txt`, name: `${id}.txt`, type: "file" }]
@@ -60,9 +61,13 @@ const cases: { path: string; method?: string; body?: string; call: (api: ServerA
   { path: "/git-branches?directory=%2Frepo", call: (a, id) => a.fetchLocalGitBranches(id, directory) },
   { path: "/worktrees", method: "POST", body: '{"slug":"new","fromSlug":"root"}', call: (a, id) => a.createWorktree(id, { slug: "new", fromSlug: "root" }) },
   { path: "/worktrees/new?force=true", method: "DELETE", call: (a, id) => a.deleteWorktree(id, "new", { force: true }) },
+  { path: "/worktrees/feature%2Fa%20b%25", method: "DELETE", call: (a, id) => a.deleteWorktree(id, "feature/a b%") },
   { path: "/sessions/s/worktree", method: "POST", body: '{"worktreeSlug":"new"}', call: (a, id) => a.moveSessionFamily(id, "s", { worktreeSlug: "new" }) },
   { path: "/files?path=src&directory=%2Frepo", call: (a, id) => a.listWorkspaceFiles(id, "src", directory) },
   { path: "/files/search?q=a+b&directory=%2Frepo&limit=7&type=file", call: (a, id) => a.searchWorkspaceFiles(id, " a b ", { directory, limit: 7, type: "file" }) },
+  { path: "/files/search?q=a+%2B%23%3F%C3%A9", call: (a, id) => a.searchWorkspaceFiles(id, " a +#?é ") },
+  { path: "/files/search?q=a", call: (a, id) => a.searchWorkspaceFiles(id, "a", { limit: 0 }) },
+  { path: "/files/search?q=a&limit=1&type=directory", call: (a, id) => a.searchWorkspaceFiles(id, "a", { limit: 1, type: "directory" }) },
   { path: "/files/preview?path=a.png&directory=%2Frepo", call: (a, id) => a.previewWorkspaceFile(id, "a.png", directory) },
   { path: "/files/content?path=a.png&encoding=base64", call: (a, id) => a.readWorkspaceFile(id, "a.png", { encoding: "base64" }) },
   { path: "/files/content?path=a.txt&directory=%2Frepo&worktree=other", method: "PUT", body: '{"contents":"hello"}', call: (a, id) => a.writeWorkspaceFile(id, "a.txt", "hello", { directory, worktree: "other" }) },
@@ -132,6 +137,10 @@ test("real tree, commit history and file editor consumers use their owning backe
     await until(() => h.tree.rows().length === 1 && !!h.history.page())
     assert.equal(h.tree.rows()[0].path, `${owner.backend.id}.txt`)
     assert.equal(h.history.page()!.commits[0].subject, owner.backend.id)
+    await h.history.select("c")
+    assert.equal(h.history.error(), null)
+    assert.deepEqual(h.history.details(), { id: "c", parent: null, message: owner.backend.id, files: [] })
+    assert.ok(owner.requests.some(request => request.url === "/api/workspaces/w/worktrees/root/git-history/c"))
     h.editor.adopt("baseline"); h.editor.change("edited")
     await h.editor.save()
     assert.ok(owner.requests.some(request => request.method === "PUT" && request.body === '{"contents":"edited"}'))
@@ -191,6 +200,25 @@ test("Changes mutations and worktree consumers dispatch through B rather than lo
   assert.equal(a.requests.length, 0)
 })
 
+test("the real family-move consumer dispatches through B rather than local or A", async t => {
+  const a = await fixture(t, "moveA"), b = await fixture(t, "moveB"), key = "moveB~w"
+  t.after(() => clearPendingWorktreeMoves(key))
+  t.mock.method(backendOf("w").api, "moveSessionFamily", async () => assert.fail("family move reached the local backend"))
+  const custom = toast.custom
+  toast.custom = (() => "test") as typeof toast.custom
+  t.after(() => { toast.custom = custom })
+  await reloadWorktrees(key)
+  const refreshes: string[] = []
+  await setWorktreeSlugForParentSession(key, "s/1", "root", {
+    refreshSessions: async id => { refreshes.push(id) },
+  })
+  assert.deepEqual(b.requests.filter(request => request.method === "POST"), [{
+    url: "/api/workspaces/w/sessions/s%2F1/worktree", method: "POST", body: '{"worktreeSlug":"root"}',
+  }])
+  assert.deepEqual(refreshes, [key])
+  assert.equal(a.requests.length, 0)
+})
+
 test("Electron and Tauri reject remote workspace targets before local IPC", async t => {
   let calls = 0
   const previous = Object.getOwnPropertyDescriptor(globalThis, "window")
@@ -203,7 +231,10 @@ test("Electron and Tauri reject remote workspace targets before local IPC", asyn
     } })
     assert.equal(canOpenWorkspacePaths("w"), true)
     assert.equal(canOpenWorkspacePaths("remote~w"), false)
-    await assert.rejects(openWorkspacePath({ instanceId: "remote~w", worktreeSlug: "root", path: "/remote/path", target: "editor" }), /unavailable/)
+    for (const target of ["default", "reveal", "terminal", "editor"] as const) {
+      await assert.rejects(openWorkspacePath({ instanceId: "remote~w", worktreeSlug: "root", path: "/remote/path", target }), /unavailable/)
+      assert.equal(calls, host === "electron" ? 0 : 1)
+    }
     assert.equal(calls, host === "electron" ? 0 : 1)
     await openWorkspacePath({ instanceId: "w", worktreeSlug: "root", target: "default" })
   }

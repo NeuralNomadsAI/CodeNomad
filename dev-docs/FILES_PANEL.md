@@ -177,6 +177,10 @@ opaque device/inode identity distinct from mtime.
 
 ## Validation
 
+- `lib/backend-files-routing.test.ts`: real HTTP backends and Files/Git consumers,
+  including commit selection and session-family moves; literal local/remote wire
+  encoding and search defaults; all four native workspace targets refuse remote
+  instances before Electron or Tauri IPC. The UI unit CI runs this contract.
 - `workspaces/file-watches.test.ts`: real host file operations, replacement,
   physical containment, bounded handles and disposal/admission fencing.
 - `tests/browser/file-preview-panel.test.ts`: the real instance shell keeps the
