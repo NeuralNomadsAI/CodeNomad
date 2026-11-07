@@ -5,7 +5,8 @@ import { sameExecution, type MissionExecution } from "../../../server/src/missio
 import { changeMissionProfile, setMissionProfileRole } from "./mission-profile-controls-data"
 import { useI18n } from "../lib/i18n"
 import { globalMissionTaskMode, normalizeMissionDefaults, missionDefaultsFor, missionTaskModeFor, type MissionDefaultScope, type MissionProfileDefault, type MissionTaskMode } from "../lib/mission-defaults"
-import { useConfig } from "../stores/preferences"
+import { useConfig, preferencesOf } from "../stores/preferences"
+import { backendEvents } from "../lib/backend-events"
 import { MissionProfileControls } from "./mission-profile-controls"
 import { MissionProfileSummary } from "./mission-profile-summary"
 import { MissionTaskModeControls } from "./mission-task-mode-controls"
@@ -44,13 +45,22 @@ const hasProfiles = (profiles?: MissionProfiles) => Boolean(profiles?.coordinato
 // the fold and edits still being written survive Settings navigation and remounts.
 const [template, setTemplate] = createSignal<MissionDefaultScope>("all")
 const [profilesOpen, setProfilesOpen] = createSignal(false)
-const [queued, setQueued] = createSignal<DefaultsEdit[]>([])
-const [failed, setFailed] = createSignal(false), [reloading, setReloading] = createSignal(false)
-let writes = Promise.resolve()
-let writeSignal: AbortSignal | undefined
+function createPreferenceEdits() {
+  const [queued, setQueued] = createSignal<DefaultsEdit[]>([])
+  const [failed, setFailed] = createSignal(false), [reloading, setReloading] = createSignal(false)
+  return { queued, setQueued, failed, setFailed, reloading, setReloading, writes: Promise.resolve(), writeSignal: undefined as AbortSignal | undefined }
+}
+const preferenceEdits = new WeakMap<AbortSignal, ReturnType<typeof createPreferenceEdits>>()
 
 export function MissionPreferences(props: { instanceId: string; directory?: string; active: () => boolean }) {
-  const { t } = useI18n(), config = useConfig()
+  const { t } = useI18n(), config = useConfig(() => props.instanceId)
+  const editState = () => {
+    const attachment = backendEvents.signalForInstance(props.instanceId)
+    let edits = preferenceEdits.get(attachment)
+    if (!edits) { edits = createPreferenceEdits(); preferenceEdits.set(attachment, edits) }
+    return edits
+  }
+  const queued = () => editState().queued(), failed = () => editState().failed(), reloading = () => editState().reloading()
   /** Every choice is written at once. Edits still queued show immediately, on top of the saved value. */
   const shown = () => queued().reduce((defaults, edit) => edit(defaults) ?? defaults, normalizeMissionDefaults(config.preferences().missionProfileDefaults))
   let scopeSelect: HTMLSelectElement | undefined, profilesFold: HTMLDetailsElement | undefined
@@ -61,22 +71,24 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
   const disabled = () => !props.active() || reloading() || (!writing() && (!config.isUiConfigLoaded() || !config.missionDefaultsValid()))
   /** Applies the edit to the value stored at its turn, compare-and-swapped against that value; never replayed. */
   const commit = (edit: DefaultsEdit, repair = false) => {
-    const operation = captureBackendOperation("")
+    const state = editState(), { setFailed, setQueued } = state
+    const instanceId = props.instanceId, target = preferencesOf(instanceId)
+    const operation = captureBackendOperation(instanceId, undefined, () => props.instanceId === instanceId)
     if (!operation.current()) return
     setFailed(false); setQueued(edits => [...edits, edit])
-    const previous = writeSignal === operation.signal ? writes : Promise.resolve()
-    writeSignal = operation.signal
-    writes = previous.then(async () => {
+    const previous = state.writeSignal === operation.signal ? state.writes : Promise.resolve()
+    state.writeSignal = operation.signal
+    state.writes = previous.then(async () => {
       try {
         operation.signal.throwIfAborted()
-        const next = edit(normalizeMissionDefaults(config.preferences().missionProfileDefaults))
+        const next = edit(normalizeMissionDefaults(target.preferences().missionProfileDefaults))
         if (!next) throw new Error("Mission defaults changed since this edit")
-        await config.saveMissionDefaults(next, config.missionPreferenceSnapshot("missionProfileDefaults"), repair)
+        await target.saveMissionDefaults(next, target.missionPreferenceSnapshot("missionProfileDefaults"), repair)
       } catch (error) {
         if (!operation.current()) return
         // Show what is actually stored (read-only). Later edits recheck what they were made from.
         if (!(error instanceof ConfigOwnerReconciliationPendingError)) setFailed(true)
-        await config.reloadMissionPreferences().catch(() => {})
+        await target.reloadMissionPreferences().catch(() => {})
       } finally { setQueued(edits => edits.filter(queued => queued !== edit)) }
     })
   }
@@ -85,25 +97,29 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
     if (!document.activeElement || document.activeElement === document.body) target()?.focus()
   })
   const reload = async () => {
-    const operation = captureBackendOperation("")
+    const { setReloading, setFailed } = editState()
+    const instanceId = props.instanceId, target = preferencesOf(instanceId)
+    const operation = captureBackendOperation(instanceId, undefined, () => props.instanceId === instanceId)
     if (!operation.current()) return
     if (writing() || reloading() || !props.active()) return
     setReloading(true); setFailed(false)
-    try { await config.reloadMissionPreferences() } catch {} finally { setReloading(false); if (operation.current()) refocus(() => scopeSelect) }
+    try { await target.reloadMissionPreferences() } catch {} finally { setReloading(false); if (operation.current()) refocus(() => scopeSelect) }
   }
   const confirm = (message: string, confirmLabel: string) => showConfirmDialog(message, {
     variant: "warning", confirmLabel, cancelLabel: t("missions.control.cancel"), dismissible: false,
   })
   const scopeLabel = (scope: MissionDefaultScope) => t(scope === "all" ? "missions.defaults.allPlaybooks" : `missions.control.template.${scope}`)
   const resetProfiles = async () => {
-    const operation = captureBackendOperation("")
+    const instanceId = props.instanceId
+    const operation = captureBackendOperation(instanceId, undefined, () => props.instanceId === instanceId)
     const scope = template()
     if (!(await confirm(t("missions.defaults.resetProfilesConfirm", { scope: scopeLabel(scope) }), t("missions.preferences.reset")))) return
     if (!operation.current()) return
     commit(withProfiles(scope)); refocus(() => profilesFold?.querySelector("select"))
   }
   const repair = async () => {
-    const operation = captureBackendOperation("")
+    const instanceId = props.instanceId
+    const operation = captureBackendOperation(instanceId, undefined, () => props.instanceId === instanceId)
     if (!(await confirm(t("missions.defaults.repairConfirm"), t("missions.defaults.reset")))) return
     if (!operation.current()) return
     commit(() => [], true); refocus(() => scopeSelect)
@@ -151,6 +167,6 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
     <Show when={failed()}><p role="alert">{t("missions.defaults.error")}</p></Show>
     {/* Location depth writes OpenCode configuration; it is a separate group, not part of these defaults. */}
     <MissionSubagentDepth instanceId={props.instanceId} directory={props.directory} active={props.active} />
-    <MissionModelLibrary active={props.active} />
+    <MissionModelLibrary instanceId={props.instanceId} active={props.active} />
   </div>
 }

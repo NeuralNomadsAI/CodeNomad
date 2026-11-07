@@ -64,6 +64,11 @@ export const localBackend: BackendClient = Object.freeze({
 
 export const backends: ReadonlyMap<BackendId, BackendClient> = new Map([[localBackend.id, localBackend]])
 
+/** Native machine access and backend administration belong to the page's host. */
+export function isLocalBackend(backend: BackendClient): boolean {
+  return backend === localBackend
+}
+
 /** Resolve the owner from the opaque UI key; a missing backend never falls back to local. */
 export function backendOf(instanceId: string): BackendClient {
   const { backendId } = parseInstanceKey(instanceId)

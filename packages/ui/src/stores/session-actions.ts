@@ -13,7 +13,7 @@ export type { SessionTechnicalPartDeletionPlan } from "./session-history"
 import { canonicalContent } from "../../../server/src/opencode/session-pruning/revision"
 import type { ClientPart } from "../types/message"
 
-import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
+import { preferencesOf, setAgentModelPreference } from "./preferences"
 import { beginSessionGenerationAdmission, providers, sessions, setActiveParentSession, withSession } from "./session-state"
 import { createSession } from "./session-api"
 import { showAlertDialog } from "./alerts"
@@ -157,7 +157,7 @@ function getVariantKeysForModel(instanceId: string, model: { providerId: string;
 }
 
 function getThinkingVariantToSend(instanceId: string, model: { providerId: string; modelId: string }): string | undefined {
-  const selected = getModelThinkingSelection(model)
+  const selected = preferencesOf(instanceId).getModelThinkingSelection(model)
   if (!selected) return undefined
   const keys = getVariantKeysForModel(instanceId, model)
   if (keys.length === 0) return undefined
@@ -608,7 +608,7 @@ async function applySessionModel(
     await setAgentModelPreference(instanceId, session.agent, model)
   }
   if (signal.aborted) return
-  addRecentModelPreference(model)
+  preferencesOf(instanceId).addRecentModelPreference(model)
 
   updateSessionInfo(instanceId, sessionId)
 }
