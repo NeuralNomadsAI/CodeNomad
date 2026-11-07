@@ -40,7 +40,7 @@ async function main() {
     writeFileSync(join(output,`${name}.txt`),snapshot)
     if(name === "advanced") {
       assert.ok(!JSON.stringify(nodes).includes("never-expose-this-secret"))
-      for(const label of ["First choice","Shadow label","Frame action","Closed shadow root (unavailable)","Cross-origin frame (unavailable)"]) assert.ok(snapshot.includes(label),`${label}: ${snapshot}`)
+      for(const label of ["First choice","Shadow label","Frame action","Closed action","Closed field","Cross-origin frame (unavailable)"]) assert.ok(snapshot.includes(label),`${label}: ${snapshot}`)
       for(const hidden of ["Hidden attribute","Hidden display","Hidden inert","Hidden ARIA","Hidden shadow action"]) assert.ok(!snapshot.includes(hidden))
       const secret=nodes.find(node=>node.role === "textbox" && node.name === "Secret")!
       const secretHandle=(await current.send({op:"resolve",node:secret.node!})).handle as string

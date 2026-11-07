@@ -2,6 +2,9 @@
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
+#[path = "input_native.rs"]
+mod native;
+pub(crate) use native::Held;
 
 type Guard = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 type Completion = unsafe extern "C" fn(*mut c_void, *const u8, usize, *const c_char);
@@ -23,12 +26,14 @@ pub(crate) enum Read {
     Checkpoint,
     Capture,
     Page(String),
+    Input {document:String,operation:serde_json::Value,held:Held},
 }
 
 struct Pending {
     sender: mpsc::SyncSender<Result<Vec<u8>, String>>,
     guard: Guard,
     limit: usize,
+    input: Option<(*mut c_void,String,serde_json::Value,Held)>,
 }
 
 unsafe extern "C" fn completed(
@@ -49,11 +54,19 @@ unsafe extern "C" fn completed(
         if length > pending.limit || (length != 0 && bytes.is_null()) {
             return Err("Native browser result exceeds its byte budget".into());
         }
-        Ok(if length == 0 {
+        let bytes=if length == 0 {
             Vec::new()
         } else {
             unsafe { std::slice::from_raw_parts(bytes, length) }.to_vec()
-        })
+        };
+        if let Some((view,document,operation,held))=&pending.input {
+            let response:serde_json::Value=serde_json::from_slice(&bytes).map_err(|error|error.to_string())?;
+            if response["document"].as_str()!=Some(document.as_str()) {return Err("Browser page document changed before input".into());}
+            unsafe {native::dispatch(*view,operation,held)}?;
+            (pending.guard)()?;
+            return serde_json::to_vec(&serde_json::json!({"document":document,"result":{}})).map_err(|error|error.to_string());
+        }
+        Ok(bytes)
     })();
     let _ = pending.sender.send(result);
 }
@@ -92,7 +105,9 @@ pub(crate) fn read(
                     Read::Checkpoint => 1024 * 1024,
                     Read::Capture => 16 * 1024 * 1024,
                     Read::Page(_) => 4 * 1024 * 1024,
+                    Read::Input {..} => 4 * 1024 * 1024,
                 },
+                input:match &operation {Read::Input {document,operation,held}=>Some((view,document.clone(),operation.clone(),held.clone())),_=>None},
             }))
             .cast::<c_void>();
             unsafe {
@@ -112,6 +127,7 @@ pub(crate) fn read(
                             context,
                         );
                     }
+                    Read::Input {..}=>cn_page_read(view,c"{\"op\":\"checkpoint\"}".as_ptr(),deadline.saturating_duration_since(Instant::now()).as_millis().clamp(1,u32::MAX as u128) as u32,completed,context),
                 }
             }
         })

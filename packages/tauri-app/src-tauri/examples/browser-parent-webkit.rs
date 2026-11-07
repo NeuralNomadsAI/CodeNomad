@@ -240,6 +240,21 @@ fn main() {
                     let response = native_request::dispatch(request, fence, |request, fence| {
                         let id = live.lock().unwrap().clone();
                         match request.method.as_str() {
+                            "fixture.action-probe" | "fixture.action-control" => {
+                                let programs:Value=serde_json::from_str(include_str!("../../tests/browser-parent/action-programs.generated.json")).unwrap();
+                                let kind=if request.method=="fixture.action-probe" {"observe"} else {request.params.as_ref().and_then(|value|value["kind"].as_str()).ok_or("Invalid fixture control")?};
+                                let script=programs["programs"][kind].as_str().ok_or("Invalid fixture control")?;
+                                let view=app.webviews().into_values().find(|view|view.label().starts_with(&format!("browser-{id}-"))).ok_or("Fixture preview missing")?;
+                                view.eval(script).map_err(|error|error.to_string())?;
+                                if request.method=="fixture.action-probe" {
+                                    let bytes=embedded_view::input::read(&view,embedded_view::input::Read::Checkpoint,std::time::Instant::now()+Duration::from_secs(5),move ||fence.check())?;
+                                    let checkpoint:Value=serde_json::from_slice(&bytes).map_err(|error|error.to_string())?;
+                                    let text=checkpoint["body"].as_str().and_then(|body|body.split_once("__CN_PROBE__").map(|(_,value)|value)).ok_or("Fixture observation missing")?;
+                                    let observed=serde_json::from_str(text.trim()).map_err(|error|error.to_string())?;
+                                    let _=view.eval(programs["programs"]["remove-probe"].as_str().unwrap());
+                                    Ok(observed)
+                                } else {Ok(Value::Null)}
+                            }
                             "fixture.read-mutation" => {
                                 let script = match request.params.as_ref().and_then(|value| value["kind"].as_str()) {
                                     Some("pushstate") => "history.pushState({}, '', '?same-document')",

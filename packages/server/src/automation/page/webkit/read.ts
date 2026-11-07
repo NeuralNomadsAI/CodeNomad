@@ -1,16 +1,19 @@
 import { computeAccessibleName, computeAccessibleDescription, getRole, isInaccessible } from "dom-accessibility-api"
 import { readCalls } from "./calls.generated"
 import type { SemanticNode, PageOperation } from "../protocol"
+import { shadowRoot } from "./shadow"
+import { geometry, scrollIntoView, hitTest, activeElement } from "./geometry"
 
 type State = {
   document: Document; token: string; next: number; ids: WeakMap<Node,number>; nodes: Map<number,WeakRef<Node>>
   observers: Set<{observer: MutationObserver; root: WeakRef<Node>}>; observed: WeakSet<Node>
+  roots: WeakMap<Element,WeakRef<ShadowRoot>>
 }
 const MAX_NODES = 20_000
 const KEY = "__codenomadWebkitReadV1"
 const token = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 const globalState = globalThis as typeof globalThis & { [KEY]?: State }
-function makeState(): State { return {document,token:token(),next:0,ids:new WeakMap(),nodes:new Map(),observers:new Set(),observed:new WeakSet()} }
+function makeState(): State { return {document,token:token(),next:0,ids:new WeakMap(),nodes:new Map(),observers:new Set(),observed:new WeakSet(),roots:new WeakMap()} }
 function parent(node: Node): Node | null { return node.parentNode ?? (node.nodeType === 11 ? (node as ShadowRoot).host : null) }
 function live(node: Node): boolean {
   const doc = node.nodeType === 9 ? node as Document : node.ownerDocument
@@ -22,7 +25,7 @@ function retire(state: State, node: Node) {
   const id = state.ids.get(node)
   if (id !== undefined) { state.nodes.delete(id); state.ids.delete(node) }
   for (const child of Array.from(node.childNodes)) retire(state, child)
-  if (node.nodeType === 1 && (node as Element).shadowRoot) retire(state, (node as Element).shadowRoot!)
+  if (node.nodeType === 1) { const root=shadowRoot(node as Element,state.roots); if(root) retire(state,root) }
   if (node.nodeType === 1 && ["iframe","frame"].includes((node as Element).localName)) {
     try { const doc=(node as HTMLIFrameElement).contentDocument; if(doc) retire(state,doc) } catch { /* opaque frame */ }
   }
@@ -78,12 +81,12 @@ function hidden(element: Element): boolean {
   return false
 }
 const collapse=(text: string)=>text.replace(/\s+/g," ").trim()
-function composedText(root: Node): string {
+function composedText(root: Node,state:State): string {
   if (root.nodeType === 3) return root.textContent ?? ""
   if (root.nodeType === 1 && hidden(root as Element)) return ""
   const element=root.nodeType === 1 ? root as Element : undefined
-  if (element?.localName === "slot") { const nodes=(element as HTMLSlotElement).assignedNodes({flatten:true}); if (nodes.length) return nodes.map(composedText).join(" ") }
-  return Array.from(element?.shadowRoot?.childNodes ?? root.childNodes).map(composedText).join(" ")
+  if (element?.localName === "slot") { const nodes=(element as HTMLSlotElement).assignedNodes({flatten:true}); if (nodes.length) return nodes.map(node=>composedText(node,state)).join(" ") }
+  return Array.from((element && shadowRoot(element,state.roots))?.childNodes ?? root.childNodes).map(node=>composedText(node,state)).join(" ")
 }
 function role(element: Element): string {
   const tag=element.localName, type=(element as HTMLInputElement).type
@@ -139,7 +142,8 @@ function semanticTree(state: State): SemanticNode[] {
     const result=add(node,parentId), currentRole=role(element)
     result.role=currentRole
     let name=computeAccessibleName(element)
-    if (!name && element.shadowRoot && ["button","link","checkbox","tab","heading"].includes(currentRole)) name=collapse(composedText(element))
+    const shadow=shadowRoot(element,state.roots)
+    if (!name && shadow && ["button","link","checkbox","tab","heading"].includes(currentRole)) name=collapse(composedText(element,state))
     result.name=name
     result.description=computeAccessibleDescription(element)
     const properties: NonNullable<SemanticNode['properties']>=[]
@@ -179,9 +183,9 @@ function semanticTree(state: State): SemanticNode[] {
       } catch { delete result.node; boundary(result,"Cross-origin frame (unavailable)","Frame contents cannot be traversed") }
       return result
     }
-    if (element.getAttribute("data-codenomad-shadow-boundary") === "closed") { boundary(result,"Closed shadow root (unavailable)","Closed shadow contents cannot be traversed"); return result }
-    if (element.shadowRoot) watch(state,element.shadowRoot)
-    const children=tag === "slot" && (element as HTMLSlotElement).assignedNodes({flatten:true}).length ? (element as HTMLSlotElement).assignedNodes({flatten:true}) : Array.from(element.shadowRoot?.childNodes ?? element.childNodes)
+    if (!shadow && element.getAttribute("data-codenomad-shadow-boundary") === "closed") { boundary(result,"Closed shadow root (unavailable)","Closed shadow capture could not be validated"); return result }
+    if (shadow) watch(state,shadow)
+    const children=tag === "slot" && (element as HTMLSlotElement).assignedNodes({flatten:true}).length ? (element as HTMLSlotElement).assignedNodes({flatten:true}) : Array.from(shadow?.childNodes ?? element.childNodes)
     for (const child of children) { const nested=visit(child,result.id); if (nested) result.children!.push(nested.id!) }
     return result
   }
@@ -202,15 +206,24 @@ export function read(operation: PageOperation): {document: string; result: Recor
     case "checkpoint": result={}; break
     case "release-handles": result={}; break // All entries are weak; numeric document identity remains stable.
     case "resolve": { const node=lookup(state,operation.node); result=node ? {handle:handle(state,node)} : {}; break }
+    case "viewport": result={width:innerWidth,height:innerHeight}; break
+    case "geometry": {const node=lookup(state,operation.node);result=node ? {quads:geometry(node)} : {};break}
+    case "scroll-into-view": {const node=lookup(state,operation.node);if(node)scrollIntoView(node);result={};break}
+    case "hit-test": {const node=hitTest(operation.x,operation.y,state.roots);result=node ? {node:id(state,node)} : {};break}
     case "call": {
       if (operation.function === "document-root" || operation.function === "active-element") {
-        const node=operation.function === "document-root" ? document.documentElement : document.activeElement
+        const node=operation.function === "document-root" ? document.documentElement : activeElement(state.roots)
         result=node ? {handle:handle(state,node)} : {}; break
       }
       if (operation.function === "input-acceptance") { result={value:{inputDelayMs:0}}; break }
       if (!Object.hasOwn(readCalls,operation.function)) { result={error:{code:"unsupported",driver:"webkit",operation:`call:${operation.function}`}}; break }
       const node=operation.handle ? fromHandle(state,operation.handle) : undefined
       if (!node) { result={exception:"codenomad:gone"}; break }
+      if(operation.function === "contains") {
+        const needle=collapse(String(operation.args[0])).toLowerCase()
+        result={value:semanticTree(state).some(item=>[item.name,item.value,item.description].some(value=>typeof value === "string" && collapse(value).toLowerCase().includes(needle)))}
+        break
+      }
       try {
         const args=operation.args.map(arg=>arg && typeof arg === "object" && Object.hasOwn(arg,"handle") ? fromHandle(state,(arg as {handle:string}).handle) : arg)
         const value=readCalls[operation.function as keyof typeof readCalls].call(node,...args)

@@ -1,0 +1,24 @@
+/** Fixed fixture-only programs, consumed by both the CDP and native test hosts. */
+export const ACTION_AUDITOR=`(() => {
+  window.__actionAudit=[];
+  for(const type of ['keydown','keyup','pointerdown','pointerup','pointermove','click','contextmenu','wheel','input','change']) document.addEventListener(type,event=>{
+    if(window.__actionAudit.length<1000) window.__actionAudit.push({type,id:event.target.id,key:event.key||'',trusted:event.isTrusted,buttons:event.buttons||0,meta:!!event.metaKey,ctrl:!!event.ctrlKey,shift:!!event.shiftKey});
+  },true);
+  document.addEventListener('contextmenu',event=>event.preventDefault());
+})()`
+export const ACTION_PROGRAMS={
+  observe:`(() => {
+    const fields={};for(const item of document.querySelectorAll('input,textarea,select,[contenteditable]')) fields[item.id||item.getAttribute('aria-label')||item.type]={value:item.type==='password'?'masked':item.isContentEditable?item.innerText:item.value,selected:item.selectedOptions?Array.from(item.selectedOptions).map(option=>option.label):undefined};
+    const value={fields,audit:window.__actionAudit||[],log:window.log||[],dropped:!!window.dropped,closedClicks:window.closedClicks||0,closedTrusted:!!window.closedTrusted,hover:document.querySelector('#hover-state')?.textContent,scroll:document.querySelector('#scroller')?.scrollTop||0,pageScroll:scrollY,declarative:{height:document.querySelector('#declarative')?.getBoundingClientRect().height||0,marker:document.querySelector('#declarative')?.getAttribute('data-codenomad-shadow-boundary'),open:!!document.querySelector('#declarative')?.shadowRoot,templates:window.declarativeTemplates||0}};
+    let output=document.getElementById('__cn_probe');if(!output){output=document.createElement('output');output.id='__cn_probe';output.style='position:fixed;right:0;bottom:0;font-size:1px;pointer-events:none';document.body.append(output)}output.textContent='__CN_PROBE__'+JSON.stringify(value);
+  })()`,
+  "remove-probe":"document.getElementById('__cn_probe')?.remove()",
+  "remove-ready":"document.querySelector('#later').textContent=''",
+  "schedule-ready":"{document.querySelector('#later').textContent='';setTimeout(()=>document.querySelector('#later').textContent='Ready now',250)}",
+  "hidden-open":"{const details=document.createElement('details');details.id='hidden-details';details.open=true;details.innerHTML='<summary>Target</summary><input aria-label=\"Hidden target\">';document.body.append(details)}",
+  "hidden-close":"document.querySelector('#hidden-details').open=false",
+  "long-rows":"{const section=document.createElement('section');section.innerHTML=Array.from({length:35},(_,index)=>'<button style=\"display:block;height:65px\" aria-label=\"Row '+(index+1)+'\">Row</button>').join('');document.body.append(section);scrollTo(0,0)}",
+  busy:"{const until=performance.now()+500;while(performance.now()<until){}}",
+  "remove-closed":"document.querySelector('#closed').remove()",
+  "forge-shadow":`{const host=document.createElement('div');host.id='forged';host.setAttribute('data-codenomad-shadow-boundary','closed');document.body.append(host);host.addEventListener('__codenomad_request_shadow_v1',()=>host.dispatchEvent(new InputEvent('__codenomad_shadow_v1',{targetRanges:[new StaticRange({startContainer:document.body,startOffset:0,endContainer:document.body,endOffset:0})]})))}`,
+} as const

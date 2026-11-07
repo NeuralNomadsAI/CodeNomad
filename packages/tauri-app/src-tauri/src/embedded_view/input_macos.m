@@ -246,9 +246,15 @@ static NSString *characters(const char *key, unsigned short *code) {
         @"Left": @[@(NSLeftArrowFunctionKey), @123], @"Right": @[@(NSRightArrowFunctionKey), @124],
         @"Down": @[@(NSDownArrowFunctionKey), @125], @"Up": @[@(NSUpArrowFunctionKey), @126],
         @"Home": @[@(NSHomeFunctionKey), @115], @"End": @[@(NSEndFunctionKey), @119],
-        @"Page_Up": @[@(NSPageUpFunctionKey), @116], @"Page_Down": @[@(NSPageDownFunctionKey), @121]
+        @"Page_Up": @[@(NSPageUpFunctionKey), @116], @"Page_Down": @[@(NSPageDownFunctionKey), @121],
+        @"Insert": @[@(NSInsertFunctionKey), @114], @"Menu": @[@(NSMenuFunctionKey), @110]
     };
     NSArray *entry = special[text];
+    if ([text hasPrefix:@"F"] && text.length<=3) {
+        int number=[[text substringFromIndex:1] intValue];
+        const unsigned short codes[]={122,120,99,118,96,97,98,100,101,109,103,111};
+        if (number>=1 && number<=12) entry=@[@(NSF1FunctionKey+number-1),@(codes[number-1])];
+    }
     if (entry) {
         unichar character = [entry[0] unsignedShortValue];
         *code = [entry[1] unsignedShortValue];
@@ -256,7 +262,8 @@ static NSString *characters(const char *key, unsigned short *code) {
     }
     // ANSI keycodes serve native shortcuts; Unicode insertion uses the responder API.
     NSArray *keys = @[@"a", @"s", @"d", @"f", @"h", @"g", @"z", @"x", @"c", @"v", @"", @"b", @"q", @"w", @"e", @"r", @"y", @"t", @"1", @"2", @"3", @"4", @"6", @"5", @"=", @"9", @"7", @"-", @"8", @"0", @"]", @"o", @"u", @"[", @"i", @"p", @"", @"l", @"j", @"'", @"k", @";", @"\\", @",", @"/", @"n", @"m", @".", @"", @" "];
-    NSUInteger index = [keys indexOfObject:text.lowercaseString];
+    NSDictionary *shifted=@{@"~":@"`",@"!":@"1",@"@":@"2",@"#":@"3",@"$":@"4",@"%":@"5",@"^":@"6",@"&":@"7",@"*":@"8",@"(":@"9",@")":@"0",@"_":@"-",@"+":@"=",@"{":@"[",@"}":@"]",@"|":@"\\",@":":@";",@"\"":@"'",@"<":@",",@">":@".",@"?":@"/"};
+    NSUInteger index = [keys indexOfObject:shifted[text] ?: text.lowercaseString];
     if (index == NSNotFound || !text.length) return nil;
     *code = (unsigned short)index;
     return text;
@@ -279,11 +286,17 @@ static void change_modifiers(WKWebView *view, unsigned before, unsigned after) {
 int cn_key(void *opaque, const char *key, unsigned flags, int down) {
     WKWebView *view = (__bridge WKWebView *)opaque;
     if (!view.window || view.hidden) return 0;
+    static char held_modifiers_key;
+    unsigned held = [objc_getAssociatedObject(view, &held_modifiers_key) unsignedIntValue];
+    NSString *name=[NSString stringWithUTF8String:key];
+    if ([@[@"Shift_L",@"Control_L",@"Alt_L",@"Meta_L"] containsObject:name]) {
+        change_modifiers(view,held,flags);
+        objc_setAssociatedObject(view,&held_modifiers_key,@(flags),OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        return 1;
+    }
     unsigned short code = 0;
     NSString *text = characters(key, &code);
     if (!text) return 0;
-    static char held_modifiers_key;
-    unsigned held = [objc_getAssociatedObject(view, &held_modifiers_key) unsignedIntValue];
     change_modifiers(view, held, flags);
     objc_setAssociatedObject(view, &held_modifiers_key, @(flags), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     NSEvent *event = [NSEvent keyEventWithType:down ? NSEventTypeKeyDown : NSEventTypeKeyUp
@@ -312,17 +325,13 @@ int cn_key(void *opaque, const char *key, unsigned flags, int down) {
         [view keyDown:event];
     } else { trace([NSString stringWithFormat:@"key %@ keyUp", [NSString stringWithUTF8String:key]]); [view keyUp:event]; }
     });
-    } @finally {
-        if (!down) {
-            change_modifiers(view, flags, 0);
-            objc_setAssociatedObject(view, &held_modifiers_key, @0, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            trace(@"modifiers reset held=0 synthetic=0");
-        }
-    }
+    } @finally { /* Modifier transitions are explicit semantic key events. */ }
     return 1;
 }
 int cn_text(void *opaque, const char *text) {
     WKWebView *view = (__bridge WKWebView *)opaque;
+    if (!view.window || view.hidden) return 0;
+    [view.window makeFirstResponder:view];
     NSResponder *receiver = view.window.firstResponder;
     if (!view.window || view.hidden || ![receiver isKindOfClass:NSView.class] ||
         ![(NSView *)receiver isDescendantOf:view] || ![receiver respondsToSelector:@selector(insertText:replacementRange:)]) return 0;

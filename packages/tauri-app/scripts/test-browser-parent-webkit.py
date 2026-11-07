@@ -28,9 +28,12 @@ class Fixture(http.server.BaseHTTPRequestHandler):
                 body = (directory / 'read-advanced.html').read_text().replace('{{CROSS}}', f'http://localhost:{self.server.server_port}')
             elif name == 'frame':
                 body = '<title>Child document</title><button>Frame action</button><label>Frame field <input value="Child value"></label>'
+            elif name == 'extra':
+                body = (directory / 'action-extra.html').read_text()
             else:
                 body = fixtures.get(name, '<button>New document</button>')
-            body = body.encode('utf-8')
+            programs = json.loads((directory / 'action-programs.generated.json').read_text())
+            body = (body + '<script>' + programs['auditor'] + '</script>').encode('utf-8')
         else:
             body = b'<!doctype html><meta charset="utf-8"><title>Parent channel fixture</title><h1>Native parent fixture</h1><dialog>Overlay</dialog>'
         if self.path == '/redirect':

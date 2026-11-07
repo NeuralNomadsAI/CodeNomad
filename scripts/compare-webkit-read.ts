@@ -51,7 +51,7 @@ async function main() {
       const controls=(nodes:SemanticNode[])=>{
         // Compare what the shared renderer exposes, excluding native date-editor internals.
         const visible=new Set([...render(nodes).matchAll(/\[n(\d+)\]/g)].map(match=>Number(match[1])))
-        return nodes.filter(node=>visible.has(node.node!) && actionable.has(String(node.role)) && !["Closed action","Frame action","Frame field"].includes(String(node.name))).map(signature).sort()
+        return nodes.filter(node=>visible.has(node.node!) && actionable.has(String(node.role)) && !["Frame action","Frame field"].includes(String(node.name))).map(signature).sort()
       }
       assert.deepEqual(controls(webkit.result.nodes),controls(chromiumNodes),`${name}: actionable controls differ`)
       writeFileSync(join(output,`${name}.json`),JSON.stringify(comparison,null,2))
