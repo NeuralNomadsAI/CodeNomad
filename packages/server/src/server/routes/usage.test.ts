@@ -7,13 +7,16 @@ import Fastify from "fastify"
 import { OpenCode } from "@opencode/client"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
 import { registerUsageRoutes, type UsageRouteDeps } from "./usage"
-import { clearProviderUsageCache, resolveUsageProvider } from "../../usage/service"
+import { clearProviderUsageCache, getProviderUsage, resolveUsageProvider } from "../../usage/service"
 import type { ProviderReadContext } from "../../usage/types"
+import { createOpenCodeFreeExhaustion } from "../../usage/opencode-free-exhaustion"
+import { createOpenCodeFreeUsage } from "../../usage/opencode-free-usage"
+import { readUsageCredentials } from "../../usage/native-credentials"
 
 function harness() {
   const expires = Date.now() + 3600000
   const state = { nativeCalls: [] as string[], quotaCalls: 0, directory: "/wsl/repo", switched: false, oldEndpoint: false, fail: false,
-    stale: false, statsMissing: false, freeSteps: 42, statsQuery: undefined as URLSearchParams | undefined, statsGate: undefined as (() => Promise<void>) | undefined,
+    stale: false, evicted: false, statsMissing: false, freeSteps: 42, statsQuery: undefined as URLSearchParams | undefined, statsGate: undefined as (() => Promise<void>) | undefined,
     daemonEnvironment: { HOME: "/home/dev" } as Record<string, string>, hostFiles: new Map<string, { path: string }>(),
     integrations: {} as Record<string, string>, settings: {} as Record<string, unknown>, providerMissing: false,
     providerDirectory: undefined as string | undefined, providerQuery: undefined as URLSearchParams | undefined }
@@ -62,15 +65,18 @@ function harness() {
   } })
   const connection = { client, assertCurrent: () => { if (state.stale) throw new Error("stale connection") } } as ServiceConnection
   const manager: UsageRouteDeps["workspaceManager"] = {
-    get: id => id === "instance" ? workspace : undefined,
+    get: id => id === "instance" && !state.evicted ? workspace : undefined,
     getSharedServiceConnection: async () => connection,
     ownsLocation: async (_id, location) => location.directory === "/wsl/repo",
     getSessionEnvironment: async () => ({ ...state.daemonEnvironment }),
     getServiceWslDistro: () => "Ubuntu",
     getHostPathForServicePath: async (_id, servicePath) => state.hostFiles.get(servicePath)?.path,
   }
-  registerUsageRoutes(app, { workspaceManager: manager })
-  return { app, state, logs }
+  const exhaustion = createOpenCodeFreeExhaustion()
+  const freeUsage = createOpenCodeFreeUsage(exhaustion)
+  registerUsageRoutes(app, { workspaceManager: manager, freeUsage })
+  app.addHook("onClose", async () => { exhaustion.dispose(); freeUsage.dispose() })
+  return { app, state, logs, exhaustion, connection }
 }
 const url = "/api/usage/openai?instanceId=instance&sessionId=session&modelId=gpt-5"
 const freeUrl = "/api/usage/opencode?instanceId=instance&sessionId=session&modelId=big-pickle"
@@ -85,6 +91,7 @@ test("free estimate reads only service-wide daily stats after session ownership,
     const response = await app.inject(freeUrl)
     assert.equal(response.statusCode, 200, response.body)
     assert.equal(response.json().estimated, true)
+    assert.equal(response.json().providerName, "OpenCode Console")
     assert.equal(response.json().windows.daily.usedPercent, 25)
     assert.equal(response.json().windows.daily.valueLabel, "50 / 200")
     const query = state.statsQuery!
@@ -119,9 +126,36 @@ test("missing stats or invalid step counts report unavailable rather than unused
   const { app, state } = harness()
   try {
     state.statsMissing = true
-    assert.equal((await app.inject(freeUrl)).statusCode, 503)
+    const missing = await app.inject(freeUrl)
+    assert.equal(missing.statusCode, 200)
+    assert.equal(missing.json().ok, false)
+    assert.equal(missing.json().providerName, "OpenCode Console")
+    assert.equal(missing.json().freeEstimate.requests, null)
+    assert.deepEqual(missing.json().windows, {})
     state.statsMissing = false; state.freeSteps = -1
-    assert.equal((await app.inject(freeUrl)).statusCode, 503)
+    const invalid = await app.inject(freeUrl)
+    assert.equal(invalid.statusCode, 200)
+    assert.equal(invalid.json().ok, false)
+    assert.equal(invalid.json().freeEstimate.requests, null)
+  } finally { await app.close() }
+})
+
+test("free exhaustion survives stats failure and appears on other free models without credentials", async () => {
+  const { app, state, connection, exhaustion } = harness()
+  try {
+    const now = Date.now()
+    exhaustion.observe(connection, { type: "session.step.started", created: now - 1,
+      data: { sessionID: "another-session", assistantMessageID: "m", model: { providerID: "opencode", id: "big-pickle" } } })
+    exhaustion.observe(connection, { type: "session.step.failed", created: now,
+      data: { sessionID: "another-session", assistantMessageID: "m", error: { type: "provider.quota" } } })
+    state.statsMissing = true
+    const response = await app.inject(freeUrl.replace("big-pickle", "example-free"))
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.json().ok, true)
+    assert.deepEqual(response.json().freeEstimate, { requests: null, reference: 200, exhausted: true })
+    assert.equal(response.json().windows.daily.usedPercent, 100)
+    assert.equal(response.json().windows.daily.valueLabel, undefined)
+    assert.equal(state.nativeCalls.includes("/api/credential"), false)
   } finally { await app.close() }
 })
 
@@ -338,7 +372,7 @@ test("Go exposes only its allowlisted expired-key reason and fixed action", asyn
   } finally { clearProviderUsageCache(); await app.close() }
 })
 
-test("pay-as-you-go Zen sessions keep the env-cookie behaviour and never send Console credentials to Go", async () => {
+test("paid opencode sessions read Console counters, never the Go cookie endpoint", async () => {
   const { app, state, logs } = harness()
   const previous = { workspace: process.env.OPENCODE_GO_WORKSPACE_ID, cookie: process.env.OPENCODE_GO_AUTH_COOKIE }
   delete process.env.OPENCODE_GO_WORKSPACE_ID; delete process.env.OPENCODE_GO_AUTH_COOKIE
@@ -347,23 +381,30 @@ test("pay-as-you-go Zen sessions keep the env-cookie behaviour and never send Co
   globalThis.fetch = async (input, init) => {
     const headers = new Headers(init?.headers)
     requests.push({ url: String(input), authorization: headers.get("authorization"), cookie: headers.get("cookie") })
-    return new Response('<script>rollingUsage:{usagePercent:12,resetInSec:60}</script>')
+    return Response.json(String(input).includes("summary") ? {
+      totalRequests: "12", totalInputTokens: "0", totalOutputTokens: "0", totalCacheReadTokens: "0",
+      totalCacheWrite5mTokens: "0", totalCacheWrite1hTokens: "0", totalCostMicroCents: "0", services: [],
+    } : { items: [], pageInfo: { page: 1, pageSize: 50, total: 0, pageCount: 0 } })
   }
   state.integrations.opencode = "opencode"
-  const zenUrl = url.replace("/usage/openai", "/usage/opencode")
+  const consoleUrl = url.replace("/usage/openai", "/usage/opencode")
   clearProviderUsageCache()
   try {
-    const unconfigured = await app.inject({ url: zenUrl })
-    assert.equal(unconfigured.json().configured, false, "previous Not configured result")
-    assert.deepEqual(requests, [])
     process.env.OPENCODE_GO_WORKSPACE_ID = "wrk_fixture"; process.env.OPENCODE_GO_AUTH_COOKIE = "fixture-cookie"
-    clearProviderUsageCache()
-    const scraped = await app.inject({ url: zenUrl })
-    assert.equal(scraped.json().windows["5h"].usedPercent, 12)
-    assert.deepEqual(requests, [{ url: "https://opencode.ai/workspace/wrk_fixture/go", authorization: null, cookie: "auth=fixture-cookie" }])
-    assert.equal([unconfigured.body, scraped.body, ...logs].join("").includes("secret-"), false)
+    const response = await app.inject({ url: consoleUrl })
+    assert.equal(response.json().ok, true)
+    assert.equal(response.json().providerId, "opencode-console")
+    assert.equal(state.providerQuery, undefined, "fixed Console reads need no model-provider settings")
+    assert.equal(response.json().providerName, "OpenCode Console")
+    assert.deepEqual(response.json().console.requests, { "24h": 12, "7d": 12, "30d": 12 })
+    assert.deepEqual(response.json().console.budgets, { status: "unavailable", items: [] })
+    assert.equal(requests.length, 4)
+    assert.ok(requests.every(r => r.url.startsWith("https://opencode.ai/console/api/usage/") &&
+      r.authorization === "Bearer secret-console" && r.cookie === null))
+    assert.equal([response.body, ...logs].join("").includes("secret-"), false)
   } finally {
     globalThis.fetch = previousFetch
+    clearProviderUsageCache()
     await app.close()
     if (previous.workspace === undefined) delete process.env.OPENCODE_GO_WORKSPACE_ID
     else process.env.OPENCODE_GO_WORKSPACE_ID = previous.workspace
@@ -371,6 +412,75 @@ test("pay-as-you-go Zen sessions keep the env-cookie behaviour and never send Co
     else process.env.OPENCODE_GO_AUTH_COOKIE = previous.cookie
   }
 })
+
+for (const boundary of ["unchanged", "move", "reconnect", "evict"] as const) {
+  test(`Console route timeout stays typed and revalidates publication (${boundary})`, async t => {
+    const { app, state, logs, connection } = harness()
+    const timeout = globalThis.setTimeout
+    t.mock.method(globalThis, "setTimeout", (callback: (...args: any[]) => void, delay?: number, ...args: any[]) =>
+      timeout(callback, delay === 15_000 ? 20 : delay, ...args))
+    const cleanup = new AbortController()
+    let transportSignal: AbortSignal | undefined, entered!: () => void, calls = 0
+    const started = new Promise<void>(resolve => { entered = resolve })
+    t.mock.method(globalThis, "fetch", async (_input: unknown, init?: RequestInit) => {
+      calls++
+      transportSignal = init!.signal!
+      if (boundary === "move") state.directory = "/foreign"
+      if (boundary === "reconnect") state.stale = true
+      if (boundary === "evict") state.evicted = true
+      entered()
+      const signal = AbortSignal.any([transportSignal, cleanup.signal])
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new DOMException("secret-upstream", "AbortError")), { once: true })
+      })
+    })
+    clearProviderUsageCache()
+    let other: ReturnType<typeof getProviderUsage> | undefined
+    try {
+      const response = app.inject(url.replace("/usage/openai", "/usage/opencode"))
+      await started
+      const auth = await readUsageCredentials(connection, new AbortController().signal)
+      other = getProviderUsage("opencode", { auth })
+      const result = await response
+      assert.equal(result.statusCode, boundary === "unchanged" ? 200 : boundary === "reconnect" ? 503 : 403)
+      if (boundary === "unchanged") {
+        assert.equal(result.json().unavailableReason, "opencode-console-network-error")
+        assert.equal(result.json().providerName, "OpenCode Console")
+        assert.equal(result.json().ok, false)
+        assert.deepEqual(result.json().windows, {})
+        assert.equal(result.json().console, undefined)
+      } else assert.equal(result.json().unavailableReason, undefined)
+      assert.equal(state.nativeCalls.filter(path => path === "/api/session/session").length, 2)
+      assert.equal(transportSignal?.aborted, false, "route timeout cannot cancel another caller's shared transport")
+      assert.equal(calls, 1)
+      assert.equal([result.body, ...logs].join("").includes("secret-"), false)
+    } finally {
+      cleanup.abort()
+      await other
+      clearProviderUsageCache()
+      await app.close()
+    }
+  })
+}
+
+for (const status of [401, 403]) {
+  test(`Console HTTP ${status} reason reaches the route without upstream secrets or Go fallback`, async t => {
+    const { app, logs } = harness()
+    let calls = 0
+    t.mock.method(globalThis, "fetch", async () => { calls++; return new Response("secret-upstream", { status }) })
+    clearProviderUsageCache()
+    try {
+      const response = await app.inject(url.replace("/usage/openai", "/usage/opencode"))
+      assert.equal(response.statusCode, 200)
+      assert.equal(response.json().ok, false)
+      assert.equal(response.json().unavailableReason, `opencode-console-${status === 401 ? "invalid-credential" : "access-denied"}`)
+      assert.deepEqual(response.json().windows, {})
+      assert.equal(response.json().console, undefined)
+      assert.equal(calls, 1)
+      assert.equal([response.body, ...logs].join("").includes("secret-"), false)
+    } finally { clearProviderUsageCache(); await app.close() }
+  })
+}
 
 // opencode-claude's `claude-code` and OpenCode's own Claude Agent both run Claude Code.
 for (const providerId of ["claude-code", "claude-agent"]) {

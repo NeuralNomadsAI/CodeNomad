@@ -168,6 +168,7 @@ jobs:
       - run: npm run build:pruning --workspace @neuralnomads/codenomad
       - run: npm run build:automation --workspace @neuralnomads/codenomad
       - run: npm run build:missions --workspace @neuralnomads/codenomad
+      - run: npm run build:memory --workspace @neuralnomads/codenomad
       - name: Qualify the pinned client against the technical minimum and latest stable
         shell: pwsh
         run: |
@@ -187,6 +188,8 @@ jobs:
           node scripts/test-plugin-runtime-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-automation-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node --import tsx scripts/test-memory-tool-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # Design agent activation through backend leases: load-time registration,
           # user priority and permissions, union, expiry and retained installations.
@@ -293,6 +296,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The electron package fetches its binary on first use; fetch it once
+      # before parallel tests and command substitutions use it.
+      - name: Install the Electron binary
+        run: npx --no install-electron
+
       - name: Typecheck desktop clients
         run: npm run typecheck
 
@@ -302,11 +310,14 @@ jobs:
       - name: Build bundled mission integration
         run: npm run build:missions --workspace @neuralnomads/codenomad
 
+      - name: Build bundled memory integration
+        run: npm run build:memory --workspace @neuralnomads/codenomad
+
       - name: Test desktop packaging invariants
-        run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs
+        run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs packages/tauri-app/scripts/vendored-patches.test.mjs
 
       - name: Test CI fixture diagnostics and artifact announcements
-        run: node --test scripts/native-fixture-diagnostics.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/windows-signing.test.cjs .github/scripts/zip-entry.test.cjs .github/scripts/release-pr-notes.test.cjs
+        run: node --test scripts/native-fixture-diagnostics.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/dependabot-policy.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/windows-signing.test.cjs .github/scripts/zip-entry.test.cjs .github/scripts/release-pr-notes.test.cjs
 
       - name: Test Electron client state
         env:
@@ -596,6 +607,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install the Electron binary
+        run: npx --no install-electron
+
       - name: Install Chromium for UI rendering regressions
         run: npx playwright install --with-deps chromium
 
@@ -648,8 +662,7 @@ jobs:
         run: cargo test --locked -- --test-threads=1
 
       - name: Test updater installer launch handoff
-        working-directory: packages/tauri-app
-        run: cargo test --locked -p tauri-plugin-updater windows_launch_tests
+        run: node scripts/test-tauri-updater-handoff.mjs
 
       - name: Test owned Tauri zoom input script
         run: node --test packages/tauri-app/tests/window-zoom-script.test.mjs
@@ -685,6 +698,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install the Electron binary
+        run: npx --no install-electron
+
       - name: Test binary compatibility and shared lifecycle
         run: >-
           node --import tsx --test
@@ -701,6 +717,19 @@ jobs:
       - name: Test first installation without system Node
         timeout-minutes: 10
         run: node scripts/test-opencode-install-native.mjs
+
+      # Tauri's resources: the pinned Node archive's executable with the pinned
+      # npm (`.npm-version`), so an npm update runs OpenCode's real postinstall.
+      - name: Test first installation with Tauri's Node and pinned npm
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          resources="$RUNNER_TEMP/tauri-node-resources"
+          node -e "require('./scripts/prepare-node-runtime.cjs').prepareBundledNodeRuntime({ resourcesRoot: process.argv[1] }).catch(error => { console.error(error); process.exit(1) })" "$resources"
+          target="$(node -p "require('./scripts/prepare-node-runtime.cjs').currentTarget()")"
+          executable="$(node -p "process.platform === 'win32' ? 'node.exe' : 'bin/node'")"
+          CODENOMAD_FIXTURE_NODE="$resources/node/$target/$executable" \
+            node scripts/test-opencode-install-native.mjs
 
       # Electron's npm-only resources and its executable as Node: OpenCode's real
       # postinstall runs through the scoped `node` command (sh adapter or node.cmd).

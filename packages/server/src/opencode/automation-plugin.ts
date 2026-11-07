@@ -11,6 +11,9 @@ import { parseMissionCreationDefaultsInput } from "../missions/creation-defaults
 import { MISSION_PREFERENCES_UNAVAILABLE, resolveMissionCreationDefaults } from "../missions/profile-defaults"
 import { isConnectionRefused } from "./connection-errors"
 import { PAGE_ACTION_PROPERTIES, PAGE_ACTIONS, parsePageAction, type RefAction } from "../automation/page/parse"
+import { MemoryError } from "../memory/model"
+import type { MemoryErrorCode } from "../memory/model"
+import type { MemoryOperation, MemoryResult } from "../memory/api"
 
 export const AUTOMATION_BRIDGE_PATH = "/api/opencode-plugin/automation"
 const REQUEST_TIMEOUT_MS = 95_000
@@ -62,6 +65,7 @@ interface BridgeResponse {
   result?: unknown
   error?: string
   code?: unknown
+  titles?: string[]
 }
 
 interface ProbedBridge {
@@ -76,7 +80,7 @@ type BridgeDirectoryOptions = {
   platform?: NodeJS.Platform
   env?: NodeJS.ProcessEnv
   home?: string
-  windowsLocalAppData?: string | null
+  windowsLocalAppData?: WindowsDiscovery
   strict?: boolean
 }
 
@@ -97,35 +101,49 @@ export async function automationBridgeDirectories(options: BridgeDirectoryOption
   const env = options.env ?? process.env
   const primary = automationBridgeDirectory(options)
   if (platform !== "linux" || !env.WSL_DISTRO_NAME) return [primary]
-  const windowsLocalAppData = options.windowsLocalAppData !== undefined ? options.windowsLocalAppData : await resolveWslWindowsLocalAppData(env, options.strict)
+  const windowsLocalAppData = options.windowsLocalAppData !== undefined ? options.windowsLocalAppData : await resolveWslWindowsLocalAppData(env, { strict: options.strict })
   if (options.strict && !windowsLocalAppData && windowsLocalAppData !== false) throw new Error("Windows mission backend discovery is unavailable")
   return windowsLocalAppData
     ? [...new Set([primary, path.posix.join(windowsLocalAppData, "CodeNomad", "automation-bridges")])]
     : [primary]
 }
 
-function windowsDiscoveryOutput(file: string, args: string[], env: NodeJS.ProcessEnv): Promise<string> {
-  return new Promise((resolve, reject) => execFile(file, args, { env, encoding: "utf8", timeout: 2_000, windowsHide: true },
+export async function discoverAutomationBridgeDirectories(signal?: AbortSignal, options: BridgeDirectoryOptions = {}): Promise<string[]> {
+  signal?.throwIfAborted()
+  const env = options.env ?? process.env
+  if ((options.platform ?? process.platform) !== "linux" || !env.WSL_DISTRO_NAME) return automationBridgeDirectories(options)
+  const windowsLocalAppData = options.windowsLocalAppData !== undefined ? options.windowsLocalAppData
+    : await resolveWslWindowsLocalAppData(env, { strict: options.strict, signal, cacheFailures: false })
+  signal?.throwIfAborted()
+  return automationBridgeDirectories({ ...options, windowsLocalAppData })
+}
+
+function windowsDiscoveryOutput(file: string, args: string[], env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => execFile(file, args, { env, signal, encoding: "utf8", timeout: 2_000, maxBuffer: MAX_REGISTRATION_BYTES, windowsHide: true },
     (error, stdout) => error ? reject(error) : resolve(stdout.trim())))
 }
 
-function resolveWslWindowsLocalAppData(env: NodeJS.ProcessEnv, strict = false): Promise<WindowsDiscovery> {
+function resolveWslWindowsLocalAppData(env: NodeJS.ProcessEnv, { strict = false, signal, cacheFailures = true }: { strict?: boolean; signal?: AbortSignal; cacheFailures?: boolean } = {}): Promise<WindowsDiscovery> {
   const key = `${env.WSL_DISTRO_NAME}\0${env.PATH}`
-  if (cachedWslWindowsLocalAppData?.key === key && (!strict || cachedWslWindowsLocalAppData.expiresAt > Date.now())) return Promise.resolve(cachedWslWindowsLocalAppData.value)
-  if (pendingWslWindowsLocalAppData?.key === key) return pendingWslWindowsLocalAppData.promise
+  if (cachedWslWindowsLocalAppData?.key === key && (typeof cachedWslWindowsLocalAppData.value === "string"
+    || cacheFailures && (!strict || cachedWslWindowsLocalAppData.expiresAt > Date.now()))) return Promise.resolve(cachedWslWindowsLocalAppData.value)
+  if (cacheFailures && !signal && pendingWslWindowsLocalAppData?.key === key) return pendingWslWindowsLocalAppData.promise
   const promise = (async (): Promise<WindowsDiscovery> => {
     try {
-      const windowsPath = await windowsDiscoveryOutput("cmd.exe", ["/d", "/s", "/c", "echo %LOCALAPPDATA%"], env)
-      const translated = await windowsDiscoveryOutput("wslpath", ["-u", windowsPath], env)
+      const windowsPath = await windowsDiscoveryOutput("cmd.exe", ["/d", "/s", "/c", "echo %LOCALAPPDATA%"], env, signal)
+      signal?.throwIfAborted()
+      const translated = await windowsDiscoveryOutput("wslpath", ["-u", windowsPath], env, signal)
+      signal?.throwIfAborted()
       return path.posix.isAbsolute(translated) ? translated : null
     } catch (error) {
+      signal?.throwIfAborted()
       return ["ENOENT", "ENOEXEC"].includes((error as NodeJS.ErrnoException).code ?? "") ? false : null
     }
   })().then(value => {
-    cachedWslWindowsLocalAppData = { key, value, expiresAt: typeof value === "string" ? Infinity : Date.now() + 2_000 }
+    if (cacheFailures || typeof value === "string") cachedWslWindowsLocalAppData = { key, value, expiresAt: typeof value === "string" ? Infinity : Date.now() + 2_000 }
     return value
   }).finally(() => { if (pendingWslWindowsLocalAppData?.promise === promise) pendingWslWindowsLocalAppData = undefined })
-  pendingWslWindowsLocalAppData = { key, promise }
+  if (cacheFailures && !signal) pendingWslWindowsLocalAppData = { key, promise }
   return promise
 }
 
@@ -322,15 +340,17 @@ export async function verifyHumanAnswerBridge(body: import("../missions/human-an
   return false
 }
 
-async function registrations({ pruneStale = true, strict = false } = {}): Promise<DiscoveredBridgeRegistration[]> {
+async function registrations({ pruneStale = true, strict = false } = {}, signal?: AbortSignal): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
-  const directories = await automationBridgeDirectories({ strict })
+  const directories = signal ? await discoverAutomationBridgeDirectories(signal, { strict }) : await automationBridgeDirectories({ strict })
   for (const [directoryIndex, directory] of directories.entries()) {
+    signal?.throwIfAborted()
     let entries: RegistrationFile[] = []
     const entryLimit = directoryIndex === 0 ? MAX_LOCAL_REGISTRY_FILES : MAX_REGISTRATIONS
     try {
       const stream = await opendir(directory)
       for await (const entry of stream) {
+        signal?.throwIfAborted()
         if (!entry.isFile()) continue
         const file = registrationFile(entry.name, directoryIndex === 0)
         if (!file) continue
@@ -342,12 +362,14 @@ async function registrations({ pruneStale = true, strict = false } = {}): Promis
         }
       }
     } catch (error) {
+      signal?.throwIfAborted()
       if (strict && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error
       continue
     }
     entries.sort((left, right) => right.startedAt - left.startedAt)
     entries.length = Math.min(entries.length, entryLimit)
     for (const entry of entries) {
+      signal?.throwIfAborted()
       const target = path.join(directory, entry.name)
       if (entry.deadPublisher) {
         if (pruneStale) await rm(target, { force: true }).catch(() => undefined)
@@ -393,13 +415,15 @@ async function callBridge(
   registration: DiscoveredBridgeRegistration,
   body: Record<string, unknown>,
   timeoutMs = PROBE_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<{ status: number; body: BridgeResponse }> {
-  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs)
+  signal?.throwIfAborted()
+  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs, signal)
   const response = await fetch(registration.url, {
     method: "POST",
     headers: { "content-type": "application/json", "x-codenomad-automation-token": registration.token },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
   })
   const contentLength = Number(response.headers.get("content-length"))
   if (Number.isFinite(contentLength) && contentLength > MAX_BRIDGE_RESPONSE_BYTES) {
@@ -430,7 +454,9 @@ function callWindowsBridge(
   registration: AutomationBridgeRegistration,
   body: Record<string, unknown>,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<{ status: number; body: BridgeResponse }> {
+  signal?.throwIfAborted()
   return new Promise((resolve, reject) => {
     const child = spawn("curl.exe", [
       "--verbose", "--silent", "--show-error", "--max-time", String(timeoutMs / 1_000),
@@ -450,6 +476,7 @@ function callWindowsBridge(
       if (settled) return false
       settled = true
       clearTimeout(timer)
+      signal?.removeEventListener("abort", onAbort)
       if (error) reject(error)
       return true
     }
@@ -457,6 +484,9 @@ function callWindowsBridge(
       child.kill()
       finish(new Error("Native automation bridge request timed out"))
     }, timeoutMs)
+    const onAbort = () => { child.kill(); finish(signal!.reason) }
+    signal?.addEventListener("abort", onAbort, { once: true })
+    if (signal?.aborted) { onAbort(); return }
     child.stdout.on("data", (chunk: Buffer) => {
       stdoutBytes += chunk.length
       if (stdoutBytes > MAX_BRIDGE_RESPONSE_BYTES + 16) {
@@ -651,6 +681,47 @@ export async function sendMissionInput(sessionID: string,
     throw error
   }
   return callMissionInput(targets[0], sessionID, kind, input)
+}
+
+/** Discover independently of desktop capabilities; never pick between owning backends. */
+export async function sendMemoryInput(sessionID: string, command: MemoryOperation, signal?: AbortSignal): Promise<MemoryResult> {
+  return sendMemoryBridge(sessionID, "memory-input", command, signal) as Promise<MemoryResult>
+}
+
+export async function requestMemoryContext(sessionID: string, signal?: AbortSignal): Promise<import("../memory/contract").MemoryInstructionContext> {
+  return sendMemoryBridge(sessionID, "memory-context", undefined, signal) as Promise<import("../memory/contract").MemoryInstructionContext>
+}
+
+async function sendMemoryBridge(sessionID: string, mode: "memory-input" | "memory-context", command?: MemoryOperation, signal?: AbortSignal): Promise<unknown> {
+  signal?.throwIfAborted()
+  const active = await registrations({}, signal)
+  signal?.throwIfAborted()
+  const targets: DiscoveredBridgeRegistration[] = []
+  let unowned = 0
+  for (let index = 0; index < active.length && targets.length < 2; index += PROBE_CONCURRENCY) {
+    signal?.throwIfAborted()
+    const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async registration => {
+      try {
+        const response = await callBridge(registration, { mode: "memory-probe", sessionID }, MISSION_PROBE_TIMEOUT_MS, signal)
+        if (response.status === 400 && response.body.code === "invalid") unowned++
+        return response.status === 200 ? registration : undefined
+      } catch { return undefined }
+    }))
+    targets.push(...batch.filter((value): value is DiscoveredBridgeRegistration => Boolean(value)))
+  }
+  signal?.throwIfAborted()
+  // Global plugin activation also covers Locations outside CodeNomad. Only an
+  // explicit ownership refusal clears stale context there. Context callers also
+  // attempt cleanup on transport failures; memory mutations retain strict ownership.
+  if (mode === "memory-context" && active.length > 0 && unowned === active.length) return { supported: true, value: null }
+  if (targets.length !== 1) throw new MemoryError(targets.length ? "conflict" : "unreadable", "Memory requires exactly one owning CodeNomad backend")
+  const response = await callBridge(targets[0]!, { mode, sessionID, ...(command ? { command } : {}) }, REQUEST_TIMEOUT_MS, signal)
+  if (response.status !== 200) {
+    const codes: MemoryErrorCode[] = ["disabled", "full", "conflict", "invalid", "unreadable", "git_unavailable", "malformed"]
+    const code = codes.find(code => code === response.body.code) ?? "unreadable"
+    throw new MemoryError(code, code === "full" ? "Memory is full. Merge or delete entries before retrying." : `Memory operation failed: ${code}`, response.body.titles)
+  }
+  return response.body.result
 }
 
 export async function executeBrowserTool(sessionID: string, input: unknown) {

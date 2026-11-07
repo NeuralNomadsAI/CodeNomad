@@ -4,10 +4,13 @@ import http from "node:http"
 import os from "node:os"
 import path from "node:path"
 import test from "node:test"
+import childProcess from "node:child_process"
+import { syncBuiltinESMExports } from "node:module"
 import {
   AUTOMATION_BRIDGE_PATH,
   automationBridgeDirectory,
   automationBridgeDirectories,
+  discoverAutomationBridgeDirectories,
   createAutomationBridgeRegistration,
   parseBrowserAction,
   parseDeveloperAction,
@@ -224,6 +227,36 @@ test("discovers the Windows bridge registry from a WSL plugin", async () => {
     "/run/user/1000/codenomad/automation-bridges",
     "/mnt/c/Users/dev/AppData/Local/CodeNomad/automation-bridges",
   ])
+})
+
+test("slow WSL registry discovery stays cancellable, retries cancellation and caches a qualified path", async t => {
+  const options = { platform: "linux" as const, env: { WSL_DISTRO_NAME: "Ubuntu", XDG_RUNTIME_DIR: "/run/user/1000" }, home: "/home/dev" }
+  let calls = 0, aborted = false
+  const mock = t.mock.method(childProcess, "execFile", ((_file: string, _args: string[], settings: { signal?: AbortSignal }, callback: (error: Error | null, stdout: string) => void) => {
+    calls++
+    settings.signal?.addEventListener("abort", () => { aborted = true; callback(new Error("cancelled"), "") }, { once: true })
+    return {} as never
+  }) as unknown as typeof childProcess.execFile)
+  syncBuiltinESMExports()
+  try {
+    const controller = new AbortController()
+    const pending = discoverAutomationBridgeDirectories(controller.signal, options)
+    // The first interop command stays held. A real timer must still run.
+    await new Promise(resolve => setTimeout(resolve, 10))
+    controller.abort(new Error("budget expired"))
+    await assert.rejects(pending, /budget expired/)
+    assert.equal(aborted, true); assert.equal(calls, 1)
+    mock.mock.restore()
+    t.mock.method(childProcess, "execFile", ((_file: string, _args: string[], _settings: unknown, callback: (error: null, stdout: string) => void) => {
+      calls++; callback(null, calls === 2 ? "C:\\Users\\dev\\AppData\\Local\r\n" : "/mnt/c/Users/dev/AppData/Local\n")
+      return {} as never
+    }) as unknown as typeof childProcess.execFile)
+    syncBuiltinESMExports()
+    const expected = await automationBridgeDirectories({ ...options, windowsLocalAppData: "/mnt/c/Users/dev/AppData/Local" })
+    assert.deepEqual(await discoverAutomationBridgeDirectories(undefined, options), expected)
+    assert.deepEqual(await discoverAutomationBridgeDirectories(undefined, options), expected)
+    assert.equal(calls, 3, "successful Windows discovery is cached across demands")
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports() }
 })
 
 test("removes only the generated legacy global plugin shim", async () => {

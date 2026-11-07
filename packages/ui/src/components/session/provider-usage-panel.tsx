@@ -5,8 +5,11 @@ import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
 import { openExternalUrl } from "../../lib/external-url"
 import { useConfig } from "../../stores/preferences"
+import { openSettings } from "../../stores/settings-screen"
+import { InfoPopoverButton } from "../info-popover-button"
+import { ProviderUsageConsole } from "./provider-usage-console"
 import { serverEvents } from "../../lib/server-events"
-import { createProviderUsageState, providerUsageKey, shouldShowProviderUsageWindow, type ProviderUsageSource } from "./provider-usage-state"
+import { createProviderUsageState, isFreeUsageSource, nextUtcMidnight, providerUsageKey, shouldShowProviderUsageWindow, type ProviderUsageSource } from "./provider-usage-state"
 
 interface ProviderUsagePanelProps {
   instanceId: string
@@ -47,6 +50,10 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
       // for this native location; account/config/connection boundaries below
       // still revoke the display immediately and fence pending reads.
       if (source() && (!event.event.location || event.event.location.directory === props.directory)) void state.refresh()
+    } else if (event.event.type === "session.step.failed" && isFreeUsageSource(source()) &&
+      (!event.event.location || event.event.location.directory === props.directory) &&
+      (event.event.data as { error?: { type?: string } } | undefined)?.error?.type === "provider.quota") {
+      void state.refresh()
     } else if (["credential.updated", "credential.switched", "integration.updated", "config.updated", "server.connected"].includes(event.event.type)) revalidate()
   })
   let lastInstanceStatus: string | undefined
@@ -68,6 +75,15 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
     if (status === "connected" && source()) void state.refresh()
   })
   const refreshTimer = setInterval(() => { if (source()) void state.refresh() }, REFRESH_INTERVAL_MS)
+  createEffect(() => {
+    if (!isFreeUsageSource(source())) return
+    let timer: ReturnType<typeof setTimeout>
+    const schedule = () => {
+      timer = setTimeout(() => { state.expireUtcDay(); void state.refresh(); schedule() }, nextUtcMidnight(Date.now()) - Date.now())
+    }
+    schedule()
+    onCleanup(() => clearTimeout(timer))
+  })
   onCleanup(() => {
     state.dispose()
     clearInterval(refreshTimer)
@@ -80,8 +96,11 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   const displayedLabels = createMemo(() =>
     entries().map(([label]) => label).filter(label => shouldShowProviderUsageWindow(label, preferences().showProviderUsageCreditBalance)),
   )
+  const hasReadings = createMemo(() => displayedLabels().length > 0 || Boolean(usage()?.console))
   const unavailableMessage = createMemo(() => {
     const data = usage()
+    const consoleMessage = data ? consoleError(data) : undefined
+    if (consoleMessage) return t(consoleMessage)
     if (data?.unavailableReason === "openai-token-sharing-unsupported") return t("providerUsage.openaiTokenSharingUnsupported")
     if (data?.unavailableReason === "opencode-go-key-expired") return t("providerUsage.openCodeGoKeyExpired")
     if (data?.unavailableReason === "minimax-limits-not-shared") return t("providerUsage.minimaxLimitsNotShared")
@@ -102,7 +121,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
       ? { href: "https://opencode.ai/console/login", label: t("providerUsage.createOpenCodeGoKey") } : null)
 
   const windowLabel = (label: string): string => {
-    // Model-scoped limits arrive as `window:Model`, e.g. `7d:Opus`.
+    // Model-scoped limits arrive as `window:Model`, e.g. `requests:gemini-2.5-pro` or `7d:Opus`.
     const scope = label.indexOf(":")
     if (scope > 0) return `${windowLabel(label.slice(0, scope))} · ${label.slice(scope + 1)}`
     const key = ({
@@ -113,6 +132,10 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
       weekly: "weekly",
       daily: "daily",
       monthly: "monthly",
+      tokens: "tokens",
+      input_tokens: "inputTokens",
+      output_tokens: "outputTokens",
+      usage: "usage",
       "monthly-code": "monthlyCode",
       credits: "credits",
       key_limit: "keyLimit",
@@ -138,6 +161,9 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
   const displayValue = (window: ProviderUsageWindow) => {
     const consumption = window.consumption
     const number = new Intl.NumberFormat(locale(), { maximumFractionDigits: 8 })
+    const estimate = usage()?.freeEstimate
+    if (estimate) return estimate.requests === null ? t("providerUsage.unavailableValue")
+      : <bdi dir="ltr">{number.format(estimate.requests)} / {number.format(estimate.reference)}</bdi>
     if (consumption && "used" in consumption) return usedValue("providerUsage.usedCountOnly", consumption.limit === undefined
       ? number.format(consumption.used) : `${number.format(consumption.used)} / ${number.format(consumption.limit)}`)
     if (consumption && "creditsUsed" in consumption) return usedValue("providerUsage.creditsUsed", number.format(consumption.creditsUsed))
@@ -159,7 +185,9 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
     if (!resetAt) return null
     const date = new Date(resetAt)
     if (!Number.isFinite(date.getTime())) return null
-    return t(usage()?.estimated ? "providerUsage.estimatedReset" : "providerUsage.resets", { time: date.toLocaleString(locale(), { dateStyle: "short", timeStyle: "short" }) })
+    const estimated = usage()?.estimated
+    const time = date.toLocaleString(locale(), { dateStyle: "short", timeStyle: "short", ...(estimated ? { timeZone: "UTC" } : {}) })
+    return t(estimated ? "providerUsage.estimatedReset" : "providerUsage.resets", { time: estimated ? `${time} UTC` : time })
   }
 
   const barColor = (percent: number | null) => {
@@ -170,13 +198,13 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
 
   return (
     <div>
-      <Show when={usage() !== undefined} fallback={<div class="right-panel-empty-text">{t("providerUsage.loading")}</div>}>
-        <Show when={usage()} fallback={<div class="right-panel-empty-text">{t("providerUsage.unavailable")}</div>}>
+      <Show when={usage() !== undefined} fallback={<div role="status" class="right-panel-empty-text">{t("providerUsage.loading")}</div>}>
+        <Show when={usage()} fallback={<div role="status" class="right-panel-empty-text">{t("providerUsage.unavailable")}</div>}>
           {(data) => (
             <Show
-              when={data().supported && data().configured && data().ok && !unavailableMessage() && displayedLabels().length > 0}
+              when={data().supported && data().configured && data().ok && !unavailableMessage() && hasReadings()}
               fallback={
-                <Show when={unavailableMessage()} fallback={<div class="right-panel-empty-text">
+                <Show when={unavailableMessage()} fallback={<div role="status" class="right-panel-empty-text">
                   {t(
                     !data().supported
                       ? "providerUsage.unsupported"
@@ -192,16 +220,28 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
                       onClick={event => { event.preventDefault(); void openExternalUrl(link().href, "provider-usage") }}>
                       {link().label}
                     </a>}</Show>
+                    <Show when={["opencode-console-missing-credential", "opencode-console-access-denied", "opencode-console-invalid-credential"].includes(data().unavailableReason ?? "")}>
+                      <button type="button" class="window-action mt-1" onClick={() => void openSettings("providers")}>{t("providerUsage.console.settings")}</button>
+                    </Show>
                   </div>}
                 </Show>
               }
             >
               <div class="space-y-2">
+                <Show when={data().console}>{console => <ProviderUsageConsole usage={console()} />}</Show>
+                <Show when={data().estimated}>
+                  <div class="flex items-center gap-1 text-[10px] text-tertiary">
+                    <span>{t("providerUsage.estimated")}</span>
+                    <InfoPopoverButton label={t("providerUsage.estimated")}>{t("providerUsage.estimateInfo")}</InfoPopoverButton>
+                    <Show when={data().freeEstimate?.exhausted}><span role="status" class="font-medium text-primary">{t("providerUsage.exhausted")}</span></Show>
+                  </div>
+                </Show>
                 <For each={displayedLabels()}>
                   {(label) => {
                     // Retain this row's value until For reconciles a removed
                     // label; its effects must not read an absent window.
                     const window = createMemo<ProviderUsageWindow>(previous => usage()?.windows[label] ?? previous, usage()!.windows[label])
+                    const usedPercent = () => label === "daily" && usage()?.freeEstimate?.exhausted ? 100 : window().usedPercent
                     return (
                       <div>
                         <div class="mb-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1 text-[11px] text-primary">
@@ -218,16 +258,16 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
                             </Show>
                           </div>
                         </div>
-                        <Show when={window().usedPercent !== null}>
+                        <Show when={usedPercent() !== null}>
                           <div class="h-2 overflow-hidden border border-base" style={{ "background-color": "var(--surface-inset)" }}>
                             <div
                               class="h-full transition-[width] duration-300"
-                              style={{ width: `${Math.max(0, Math.min(100, window().usedPercent ?? 0))}%`, "background-color": barColor(window().usedPercent) }}
+                              style={{ width: `${Math.max(0, Math.min(100, usedPercent() ?? 0))}%`, "background-color": barColor(usedPercent()) }}
                               role="progressbar"
                               aria-label={t("providerUsage.progressLabel", { window: windowLabel(label) })}
                               aria-valuemin={0}
                               aria-valuemax={100}
-                              aria-valuenow={Math.round(window().usedPercent ?? 0)}
+                              aria-valuenow={Math.round(usedPercent() ?? 0)}
                             />
                           </div>
                         </Show>
@@ -240,10 +280,7 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
           )}
         </Show>
       </Show>
-      <Show when={usage()?.supported && usage()?.configured && usage()?.ok && displayedLabels().length > 0}>
-        <Show when={usage()?.estimated}>
-          <div class="mt-1 text-[10px] text-tertiary">{t("providerUsage.estimated")}</div>
-        </Show>
+      <Show when={usage()?.supported && usage()?.configured && usage()?.ok && !unavailableMessage() && hasReadings()}>
         <div class="mt-2 truncate text-right text-sm font-semibold text-secondary">
           {usage()?.providerName ?? props.providerId}
           <Show when={usage()?.copilotPlan}>{plan => ` · ${t(`providerUsage.copilotPlans.${plan()}`)}`}</Show>
@@ -254,3 +291,13 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
 }
 
 export default ProviderUsagePanel
+
+function consoleError(data: ProviderUsageResponse) {
+  return ({
+    "opencode-console-missing-credential": "providerUsage.console.missingCredential",
+    "opencode-console-access-denied": "providerUsage.console.accessDenied",
+    "opencode-console-invalid-credential": "providerUsage.console.invalidCredential",
+    "opencode-console-invalid-response": "providerUsage.console.malformed",
+    "opencode-console-network-error": "providerUsage.console.network",
+  } as Record<string, string>)[data.unavailableReason ?? ""]
+}

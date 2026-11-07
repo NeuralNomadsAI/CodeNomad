@@ -17,6 +17,7 @@ import { EventBus } from "../events/bus"
 import { registerWorkspaceRoutes } from "./routes/workspaces"
 import { registerTemporaryWorkspaceRoutes } from "./routes/temporary-workspaces"
 import { syncSessionGitContext } from "../workspaces/session-git-context"
+import { syncSessionMemoryContext } from "../workspaces/session-memory-context"
 import { assertOrdinaryMissionScheduleBody, assertOrdinaryMissionScheduleSession, MissionScheduleInputError } from "./mission-schedule-input-guard"
 import { readGitStatus } from "../workspaces/git-requirement"
 import { registerSettingsRoutes } from "./routes/settings"
@@ -108,12 +109,17 @@ import { createOpenCodeUpdateService } from "../opencode-update/service"
 import { WorktreeDeletionFence } from "../workspaces/worktree-session-evacuation"
 import type { NativeParent } from "../native-parent"
 import { isAutomationPluginRequest, registerAutomationPluginRoute } from "./routes/automation-plugin"
+import type { MemoryStore } from "../memory/store"
+import { MemoryService } from "../memory/service"
+import { registerMemoryRoutes } from "./routes/memory"
 import { DeveloperCdp } from "../developer-cdp"
 import { formatHostForUrl, isLoopbackHost, isWildcardHost, stripHostBrackets } from "./network-host"
 import { validatePromptAttachmentBudget } from "./prompt-attachment-budget"
 import { ProviderAccountsService, AccountSelectionFailed } from "../provider-accounts/service"
 import { registerProviderAccountsRoutes } from "./routes/provider-accounts"
 import { observeProviderQuotaFailures } from "../provider-accounts/quota-observer"
+import { createOpenCodeFreeExhaustion } from "../usage/opencode-free-exhaustion"
+import { createOpenCodeFreeUsage } from "../usage/opencode-free-usage"
 import { deferPendingDiscovery, grantPendingReconciliation, PENDING_DISCOVERY_DEFERRED, PENDING_RECONCILIATION_HEADER } from "../workspaces/pending-discovery"
 
 interface HttpServerDeps {
@@ -143,6 +149,7 @@ interface HttpServerDeps {
   logger: Logger
   nativeParent: NativeParent
   automationBridgeToken: string
+  memoryStore?: MemoryStore
   panelExtensions?: PanelExtensionStore
   /** Shared by every listener of one backend; a fresh one serves a lone server. */
   worktreeDeletionFence?: WorktreeDeletionFence
@@ -392,10 +399,15 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerServiceUsageRoutes(app, new ServiceUsage(deps.workspaceManager, deps.settings))
   const loginStart = createOpenCodeLoginStart(deps.settings, deps.workspaceManager)
   registerOpenCodeLoginStartRoutes(app, { loginStart, auth: deps.authManager, remoteDevices: deps.remoteControlManager })
-  registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, refreshLoginStart: () => loginStart.refresh() })
+  const memory = deps.memoryStore ? new MemoryService(deps.memoryStore, deps.settings, deps.workspaceManager, deps.eventBus) : undefined
+  if (memory) registerMemoryRoutes(app, memory)
+  registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, refreshLoginStart: () => loginStart.refresh(),
+    withConfigLock: memory ? action => memory.withSettingsLock(action) : undefined })
   const accounts = new ProviderAccountsService(deps.settings)
-  const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts)
-  app.addHook("onClose", async () => stopQuotaObserver())
+  const freeExhaustion = createOpenCodeFreeExhaustion()
+  const freeUsage = createOpenCodeFreeUsage(freeExhaustion)
+  const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts, freeExhaustion.observe)
+  app.addHook("onClose", async () => { stopQuotaObserver(); freeExhaustion.dispose(); freeUsage.dispose() })
   registerProviderAccountsRoutes(app, { accounts, workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerOpenCodeUpdateRoutes(app, {
     service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager, loginStart),
@@ -426,6 +438,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerPreviewRoutes(app, { previewManager: deps.previewManager })
   const developerCdp = new DeveloperCdp()
   registerAutomationPluginRoute(app, {
+    memory,
     authManager: deps.authManager,
     settings: deps.settings,
     bridgeToken: deps.automationBridgeToken,
@@ -436,7 +449,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     remoteDevices: deps.remoteControlManager,
   })
   app.addHook("onClose", async () => developerCdp.close())
-  registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
+  registerUsageRoutes(app, { workspaceManager: deps.workspaceManager, freeUsage })
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings,
     scheduleSettingsActivation: new NativeScheduleSettingsActivation(configurationControls, deps.workspaceManager),
     scheduleCapability: new NativeScheduleCapabilityReader(configurationControls, deps.workspaceManager),
@@ -470,7 +483,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerImagesConversationRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerSessionGoalRoute(app, { workspaceManager: deps.workspaceManager })
   registerSessionMediaRoutes(app, { workspaceManager: deps.workspaceManager })
-  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, permissionReceipts: deps.permissionReceipts,
+  registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, memory, permissionReceipts: deps.permissionReceipts,
     humanAnswers: { auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, bridgeToken: deps.automationBridgeToken,
       remoteDevices: deps.remoteControlManager } })
 
@@ -557,6 +570,7 @@ interface InstanceProxyDeps {
   logger: Logger
   worktreeDeletionFence: WorktreeDeletionFence
   accounts?: ProviderAccountsService
+  memory?: MemoryService
   permissionReceipts?: PermissionReceipts
   humanAnswers?: Parameters<typeof replyMissionHumanAnswer>[4]
 }
@@ -738,6 +752,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         workspaceManager: deps.workspaceManager,
         worktreeDeletionFence: deps.worktreeDeletionFence,
         accounts: deps.accounts,
+        memory: deps.memory,
         permissionReceipts: deps.permissionReceipts,
         humanAnswers: deps.humanAnswers,
         pathSuffix: "",
@@ -755,6 +770,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         workspaceManager: deps.workspaceManager,
         worktreeDeletionFence: deps.worktreeDeletionFence,
         accounts: deps.accounts,
+        memory: deps.memory,
         permissionReceipts: deps.permissionReceipts,
         humanAnswers: deps.humanAnswers,
         pathSuffix: request.params["*"] ?? "",
@@ -772,6 +788,7 @@ export function registerInstanceProxyRoutes(app: FastifyInstance, deps: Instance
         workspaceManager: deps.workspaceManager,
         worktreeDeletionFence: deps.worktreeDeletionFence,
         accounts: deps.accounts,
+        memory: deps.memory,
         permissionReceipts: deps.permissionReceipts,
         humanAnswers: deps.humanAnswers,
         pathSuffix: `api/session/${encodeURIComponent(request.params.sessionId)}/prompt`,
@@ -795,6 +812,7 @@ interface InstanceProxyRequestArgs {
   workspaceManager: InstanceProxyWorkspaceManager
   worktreeDeletionFence: WorktreeDeletionFence
   accounts?: ProviderAccountsService
+  memory?: MemoryService
   permissionReceipts?: PermissionReceipts
   humanAnswers?: Parameters<typeof replyMissionHumanAnswer>[4]
   logger: Logger
@@ -1276,6 +1294,9 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           // Advisory context must not turn Git recovery into another send blocker.
           // Do not log SDK bodies (they may include unrelated session context).
           logger.debug({ workspaceId, sessionId }, "Unable to update Git availability context")
+        }
+        if (connection) {
+          await wait(syncSessionMemoryContext(connection, args.memory, sessionId!, signal))
         }
       }
       signal.throwIfAborted()

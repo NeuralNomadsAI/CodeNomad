@@ -12,8 +12,13 @@ import { _electron, type ElectronApplication } from "playwright"
 test("the shared engine drives a real Electron preview through the guarded native channel, without a visible window", { timeout: 90_000 }, async t => {
   const profile = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-engine-"))
   let app: ElectronApplication | undefined
-  const server = createServer((_request, response) => {
+  const server = createServer((request, response) => {
     response.setHeader("Content-Type", "text/html")
+    // Transparent content is not contentful: first contentful paint follows the reveal, and Chromium
+    // drops key and click input until then (or its 500 ms commit-deferral limit).
+    if (request.url === "/late") return response.end(`<!doctype html><body style="opacity:0"><input autofocus><output id="late">Waiting</output>
+      <script>document.addEventListener('keydown', event => { document.getElementById('late').textContent = 'Late:' + event.key })
+      setTimeout(() => { document.body.style.opacity = '1' }, 400)</script></body>`)
     response.end(`<!doctype html><main><form>
       <label>Title <input value="Prefilled"></label>
       <label>Plan <select><option value="custom">Flexible</option><option value="wayfinder">Exploration</option></select></label>
@@ -83,4 +88,8 @@ test("the shared engine drives a real Electron preview through the guarded nativ
   await running.evaluate(() => (globalThis as any).automationPreview.visible(true))
   await running.evaluate(async (_electron, url) => (globalThis as any).automationPreview.navigate(url), `${guestURL}?next`)
   await assert.rejects(execute({ action: "click", ref: confirm }), /stale ref/)
+  await running.evaluate(async (_electron, url) => (globalThis as any).automationPreview.navigate(url), `${guestURL}late`)
+  await execute({ action: "press", key: "x" })
+  assert.equal((await execute({ action: "wait", text: "Late:x", gone: false, timeout: 500 })).found, true,
+    "a key pressed right after a navigation waits until the page accepts input instead of being dropped")
 })

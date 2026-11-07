@@ -36,7 +36,9 @@ const run = (args) => executeNpm(node, [npm, ...args], env, process.platform, pr
 const options = { home: root, env, node, npm, registerPath: async () => {} }
 const result = { root, legacyVersion: LEGACY_VERSION, target: RECOMMENDED_OPENCODE_VERSION }
 try {
-  await run(["install", "--global", "--prefix", prefix, "--no-audit", "--no-fund", "--registry", "https://registry.npmjs.org", `opencode-ai@${LEGACY_VERSION}`])
+  // A user's 1.x installation ran its postinstall: allow exactly it (npm 12+ blocks it).
+  await run(["install", "--global", "--prefix", prefix, "--no-audit", "--no-fund", "--registry", "https://registry.npmjs.org",
+    `--allow-scripts=opencode-ai@${LEGACY_VERSION}`, `opencode-ai@${LEGACY_VERSION}`])
   const plan = sharedInstallationPlan(options)
   assert.equal(plan.prefix, prefix)
   assert.equal(plan.legacy?.version, LEGACY_VERSION, "the published 1.x shim is recognized from its manifest and target")

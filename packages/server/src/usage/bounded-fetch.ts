@@ -17,6 +17,10 @@ export function parseQuotaBaseURL(value: unknown): URL | null {
   } catch { return null }
 }
 
+export class BoundedResponseError extends Error {
+  constructor(message = "Invalid quota response") { super(message) }
+}
+
 // Credential-bearing quota reads. Errors are generic on purpose: callers must
 // never log or return upstream bodies, headers or transport details.
 export async function fetchBoundedJson(url: string, headers: Record<string, string>, signal = AbortSignal.timeout(15_000),
@@ -24,10 +28,11 @@ export async function fetchBoundedJson(url: string, headers: Record<string, stri
   signal.throwIfAborted()
   const { errorCodes, ...init } = request
   const response = await fetch(url, { ...init, signal, redirect: "error", headers })
-  if ((!response.ok && !errorCodes) || !response.body) {
+  if (!response.ok && (!errorCodes || !response.body)) {
     await response.body?.cancel().catch(() => {})
     throw new ProviderHttpError(response.status)
   }
+  if (!response.body) throw new BoundedResponseError()
   const reader = response.body.getReader()
   const abort = () => { void reader.cancel().catch(() => {}) }
   signal.addEventListener("abort", abort, { once: true })
@@ -39,11 +44,13 @@ export async function fetchBoundedJson(url: string, headers: Record<string, stri
       const chunk = await reader.read()
       if (chunk.done) break
       size += chunk.value.byteLength
-      if (size > maxBytes) throw new Error("Quota response too large")
+      if (size > Math.min(maxBytes, MAX_RESPONSE_BYTES)) throw new BoundedResponseError("Quota response too large")
       chunks.push(chunk.value)
     }
     signal.throwIfAborted()
-    const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"))
+    let payload
+    try { payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) }
+    catch { throw new BoundedResponseError() }
     if (!response.ok) {
       const code = payload?.code ?? payload?.error?.code
       throw new ProviderHttpError(response.status, errorCodes?.includes(code) ? code : undefined)

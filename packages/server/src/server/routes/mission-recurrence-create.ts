@@ -55,6 +55,11 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
     // Refused before any hold: an unqualified principal could never verify.
     const auth = deps.auth, human = auth && recurrenceHumanSession(request, { auth, remoteDevices: deps.remoteDevices })
     if (!auth || !human || !deps.bridgeToken) return reply.code(401).send({ error: "Human authentication required" })
+    const watched = (request.body as { watchedConversationIDs?: unknown } | undefined)?.watchedConversationIDs
+    // Zod's array max still parses every item; enforce the existing ceiling first.
+    if (!Array.isArray(watched) || watched.length > 32 || !watched.every(id => typeof id === "string")) {
+      return reply.code(400).send({ error: "Invalid recurrence creation request" })
+    }
     const lifetime = requestAdmission(request, reply)
     let admission: Awaited<ReturnType<typeof admitMissionCreationLocations>> | undefined
     // Flips immediately before the only native write; until then a refusal proves no effect.

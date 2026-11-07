@@ -739,10 +739,10 @@ describe("CodeNomad-managed plugin provenance and recovery", () => {
   })
 
   it("leaves exact CodeNomad-named rules ordinary without an installation", async () => {
-    const fixture = createFixture({ globalPlugins: ["-codenomad.automation", "-codenomad-session-pruning", "-codenomad-session-pruning-tui", "-codenomad.*"] })
+    const fixture = createFixture({ globalPlugins: ["-codenomad.automation", "-codenomad-session-pruning", "-codenomad.*"] })
     const snapshot = await fixture.controls.read("workspace", fixture.location)
     assert.deepEqual(snapshot.controls.map(entry => [entry.id, entry.managedBy, entry.effective]), [
-      ["codenomad-session-pruning", undefined, "disabled"], ["codenomad-session-pruning-tui", undefined, "disabled"],
+      ["codenomad-session-pruning", undefined, "disabled"],
       ["codenomad.automation", undefined, "disabled"],
     ])
   })

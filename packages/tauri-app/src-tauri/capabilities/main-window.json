@@ -35,6 +35,8 @@
     "allow-client-state-renderer-flushed",
     "allow-client-state-navigation-flushed",
     "allow-client-state-startup-command-result",
+    "allow-memory-cleanup-result",
+    "allow-memory-cleanup-claim",
     "allow-data-profiles-list-others",
     "allow-data-profiles-delete-others",
     "allow-data-profiles-set-next-launch",

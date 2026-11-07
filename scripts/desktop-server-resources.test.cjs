@@ -8,19 +8,30 @@ const { resolveNpmTarget, validateServerProductionLock } = require("./desktop-se
 const { resolveEsbuildExecutable } = require("../packages/tauri-app/scripts/prebuild.js")
 const { copyPackagedServerResources } = require("./desktop-server-resources.cjs")
 
-test("Electron resource verification requires npm only while Tauri requires Node", t => {
+test("Electron resource verification requires the pinned npm only while Tauri requires Node beside it", t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-runtime-contract-"))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
-  const target = "win32-x64"
-  const directory = path.join(root, "node", target)
-  fs.mkdirSync(path.join(directory, "npm/bin"), { recursive: true })
-  fs.writeFileSync(path.join(directory, "npm/bin/npm-cli.js"), "")
-  const verify = (...args) => spawnSync(process.execPath, [path.join(__dirname, "verify-bundled-node.cjs"), ...args, `${root}@${target}`])
-  assert.equal(verify("--npm-only").status, 0)
-  assert.notEqual(verify().status, 0)
-  fs.writeFileSync(path.join(directory, "node.exe"), "")
-  assert.notEqual(verify("--npm-only").status, 0)
-  assert.equal(verify().status, 0)
+  const npmVersion = fs.readFileSync(path.join(__dirname, "..", ".npm-version"), "utf8").trim()
+  const writeNpm = (directory, version = npmVersion) => {
+    fs.mkdirSync(path.join(directory, "bin"), { recursive: true })
+    fs.writeFileSync(path.join(directory, "bin/npm-cli.js"), "")
+    fs.writeFileSync(path.join(directory, "package.json"), JSON.stringify({ name: "npm", version }))
+  }
+  for (const [target, binary, npm] of [["win32-x64", "node.exe", "node_modules/npm"], ["linux-x64", "bin/node", "lib/node_modules/npm"]]) {
+    const directory = path.join(root, "node", target)
+    const verify = (...args) => spawnSync(process.execPath, [path.join(__dirname, "verify-bundled-node.cjs"), ...args, `${root}@${target}`])
+    writeNpm(path.join(directory, "npm"))
+    assert.equal(verify("--npm-only").status, 0)
+    assert.notEqual(verify().status, 0)
+    writeNpm(path.join(directory, "npm"), "0.0.1")
+    assert.notEqual(verify("--npm-only").status, 0, "a stale npm is refused")
+    fs.rmSync(directory, { recursive: true })
+    fs.mkdirSync(path.dirname(path.join(directory, binary)), { recursive: true })
+    fs.writeFileSync(path.join(directory, binary), "")
+    writeNpm(path.join(directory, npm))
+    assert.notEqual(verify("--npm-only").status, 0)
+    assert.equal(verify().status, 0)
+  }
 })
 
 test("maps every supported desktop target to npm OS and CPU", () => {
@@ -59,7 +70,7 @@ test("integrity-pins the full server production closure in the root lock", () =>
 
   assert.ok(closure.size > 100)
   assert.equal(lock.packages["node_modules/fastify"].version, "4.29.1")
-  assert.equal(lock.packages["node_modules/undici"].version, "6.28.1")
+  assert.equal(lock.packages["node_modules/undici"].version, "6.29.1")
   assert.equal(lock.packages["packages/server/node_modules/commander"].version, "12.1.0")
   assert.equal(lock.packages["packages/server/node_modules/fuzzysort"].version, "2.0.4")
   assert.equal(closure.has("node_modules/@opencode/plugin"), false, "the opt-in pruning plugin API is not a server production dependency")
@@ -94,15 +105,16 @@ test("resolves a macOS ARM64 esbuild binary nested under esbuild", (t) => {
   })
 })
 
-test("both desktop resource layouts retain a self-contained unified automation bundle", async (t) => {
+for (const feature of ["automation", "memory"])
+test(`both desktop resource layouts retain a self-contained ${feature} bundle`, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-automation-resources-"))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const serverRoot = path.join(root, "source")
   for (const name of ["public", "node_modules"]) fs.mkdirSync(path.join(serverRoot, name), { recursive: true })
   fs.writeFileSync(path.join(serverRoot, "package.json"), JSON.stringify({ type: "module" }))
-  const relative = path.join("dist", "plugins", "automation", "plugin.mjs")
+  const relative = path.join("dist", "plugins", feature, "plugin.mjs")
   await require("esbuild").build({
-    entryPoints: [path.join(__dirname, "../packages/server/src/opencode/automation/desktop-plugin.ts")],
+    entryPoints: [path.join(__dirname, `../packages/server/src/opencode/${feature}/desktop-plugin.ts`)],
     outfile: path.join(serverRoot, relative), bundle: true, platform: "node", format: "esm", target: "node22",
   })
   for (const host of ["electron", "tauri"]) {
@@ -112,7 +124,7 @@ test("both desktop resource layouts retain a self-contained unified automation b
     assert.deepEqual(fs.readFileSync(target), fs.readFileSync(path.join(serverRoot, relative)))
     const { desktopPlugin } = await import(require("node:url").pathToFileURL(target).href)
     const plugin = desktopPlugin(path.join(root, "absent-presence"))
-    assert.equal(plugin.id, "codenomad.automation")
+    assert.equal(plugin.id, `codenomad.${feature}`)
     const cleanup = await plugin.setup({})
     await cleanup()
   }

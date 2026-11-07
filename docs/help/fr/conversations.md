@@ -9,7 +9,7 @@ Les en-têtes de raisonnement et d’outils indiquent la durée de chaque étape
 ## Trouver des conversations et naviguer {#navigate-conversations}
 
 1. Sélectionnez une ligne sous **Sessions**, ou utilisez **Nouvelle session** pour démarrer une conversation parente.
-2. Cliquez sur le chevron d’un parent pour déplier ou replier ses sous-sessions en conservant leurs badges. Un chevron replié affiche l’état le plus urgent de ses descendants : en attente de saisie, actif, en compactage ou inactif ; son libellé accessible les compte.
+2. Cliquez sur le chevron d’un parent pour déplier ou replier ses sous-sessions en conservant leurs badges. Déplié ou replié, le chevron affiche l’état le plus urgent de ses descendants : en attente de saisie, actif, en compactage ou inactif ; son libellé accessible les compte. Faites un clic droit dessus et choisissez **Marquer comme lu** pour effacer d’un coup les badges **Inactif** et **Interrompu** de la conversation et de toutes ses sous-sessions.
 3. Utilisez **Rechercher des sessions…**, **Sessions principales** / **Sous-sessions**, le filtre de worktree et le tri **Activité**, **Nom** ou **Worktree** pour réduire la liste. Dans les résultats de recherche, faites glisser le pointeur sur les cases des lignes pour sélectionner ou désélectionner plusieurs conversations d'un coup.
 4. Utilisez **Retour** et **Avancer** dans la barre latérale pour revisiter les conversations affichées.
 

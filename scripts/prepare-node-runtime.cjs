@@ -3,12 +3,10 @@ const https = require("https")
 const os = require("os")
 const path = require("path")
 const { spawnSync } = require("child_process")
+const { NPM_VERSION, checkNpmEngine, downloadPinnedNpm, readExactVersion } = require("./bundled-npm.cjs")
 
-// CI, Tauri's Node and both hosts' npm come from this exact LTS release.
-const nodeVersion = fs.readFileSync(path.join(__dirname, "..", ".node-version"), "utf8").trim()
-if (!/^\d+\.\d+\.\d+$/.test(nodeVersion)) {
-  throw new Error(".node-version must pin an exact Node.js release")
-}
+// CI and Tauri's Node come from this exact LTS release; both hosts' npm from .npm-version.
+const nodeVersion = readExactVersion(".node-version")
 const MANAGED_NODE_VERSION = `v${nodeVersion}`
 
 const ARTIFACTS = {
@@ -111,8 +109,8 @@ function find7zip() {
   }
 }
 
-function run(command, args) {
-  const result = spawnSync(command, args, { stdio: "inherit" })
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, { stdio: "inherit", windowsHide: true, ...options })
   if (result.status !== 0) {
     if (result.error) throw result.error
     throw new Error(`${command} ${args.join(" ")} exited with code ${result.status || 1}`)
@@ -129,24 +127,46 @@ function extractArchive(archivePath, destination) {
     run(sevenZip, ["x", archivePath, `-o${destination}`, "-y"])
     return
   }
-  run("tar", ["-xzf", archivePath, "-C", destination])
+  // Windows' own bsdtar, never a GNU tar from PATH that reads `C:` as a remote
+  // host; relative names from the archive's directory for the same reason.
+  const tar = process.platform === "win32" ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe") : "tar"
+  const cwd = path.dirname(archivePath)
+  run(tar, ["-xzf", path.basename(archivePath), "-C", path.relative(cwd, destination) || "."], { cwd })
 }
 
-function pruneForRuntime(sourceRoot, destinationRoot, binaryRelativePath, npmOnly = false) {
-  const sourceBinary = path.join(sourceRoot, binaryRelativePath)
-  const destinationBinary = path.join(destinationRoot, binaryRelativePath)
+/** Where bundledNpm() looks: beside Tauri's Node as in the official archive, or
+ * directly under the target folder of Electron's npm-only resources. */
+function npmRelativePath(target, npmOnly) {
+  if (npmOnly) return "npm"
+  return target.startsWith("win32-") ? path.join("node_modules", "npm") : path.join("lib", "node_modules", "npm")
+}
 
+/** Assembles the runtime folder from the archive's Node binary and license
+ * (Tauri only) and the separately verified npm package (both hosts). */
+function assembleRuntime({ nodeRoot, npmRoot, destinationRoot, target, binaryRelativePath, npmOnly = false }) {
   fs.rmSync(destinationRoot, { recursive: true, force: true })
   fs.mkdirSync(destinationRoot, { recursive: true })
   if (!npmOnly) {
+    const destinationBinary = path.join(destinationRoot, binaryRelativePath)
     fs.mkdirSync(path.dirname(destinationBinary), { recursive: true })
-    fs.copyFileSync(sourceBinary, destinationBinary)
+    fs.copyFileSync(path.join(nodeRoot, binaryRelativePath), destinationBinary)
+    fs.copyFileSync(path.join(nodeRoot, "LICENSE"), path.join(destinationRoot, "LICENSE"))
   }
-  const npmRelativePath = binaryRelativePath === "node.exe" ? "node_modules/npm" : "lib/node_modules/npm"
-  const npmSource = path.join(sourceRoot, npmRelativePath)
-  if (!fs.existsSync(path.join(npmSource, "bin/npm-cli.js"))) throw new Error("Node archive is missing npm")
-  fs.cpSync(npmSource, path.join(destinationRoot, npmOnly ? "npm" : npmRelativePath), { recursive: true })
-  if (!npmOnly) fs.copyFileSync(path.join(sourceRoot, "LICENSE"), path.join(destinationRoot, "LICENSE"))
+  if (!fs.existsSync(path.join(npmRoot, "bin", "npm-cli.js"))) throw new Error("The npm package is missing npm-cli.js")
+  fs.cpSync(npmRoot, path.join(destinationRoot, npmRelativePath(target, npmOnly)), { recursive: true })
+}
+
+/** Electron runs the backend with its integrated Node: ask the installed Electron
+ * executable, which electron-builder packages, for its Node version. */
+function installedElectronNodeVersion(electron = require("electron")) {
+  const result = spawnSync(electron, ["-p", "process.versions.node"], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8", windowsHide: true, timeout: 60000,
+  })
+  const version = String(result.stdout ?? "").trim()
+  if (result.error || result.status !== 0 || !/^\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error(`Could not read the Node version of the installed Electron (${electron}); fetch it with npx --no install-electron`)
+  }
+  return version
 }
 
 async function prepareBundledNodeRuntime(options) {
@@ -164,29 +184,40 @@ async function prepareBundledNodeRuntime(options) {
   const nodeRoot = path.join(resourcesRoot, "node")
   const runtimeRoot = path.join(nodeRoot, target)
   const runtimeBinary = path.join(runtimeRoot, spec.binary)
+  const get = options.request || request
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), `codenomad-node-${target}-`))
   const archivePath = path.join(tempRoot, spec.archive)
   const extractRoot = path.join(tempRoot, "extract")
+  const npmWork = path.join(tempRoot, "npm")
 
   try {
     fs.rmSync(nodeRoot, { recursive: true, force: true })
+
+    // The engine guard runs before anything is written to the resources.
+    console.log(`[node-runtime] downloading npm ${NPM_VERSION}`)
+    fs.mkdirSync(npmWork)
+    const npmRoot = await downloadPinnedNpm({ request: get, extract: extractArchive, workRoot: npmWork })
+    const runtimeNode = options.npmOnly ? options.runtimeNodeVersion || installedElectronNodeVersion() : nodeVersion
+    const engine = checkNpmEngine(npmRoot, runtimeNode, options.npmOnly ? "Electron's integrated runtime" : "Tauri's bundled runtime")
+    console.log(`[node-runtime] npm ${NPM_VERSION} engine ok: Node ${runtimeNode} satisfies ${engine}`)
+
+    if (!options.npmOnly) {
+      console.log(`[node-runtime] downloading ${spec.archive}`)
+      const expectedSha = await fetchExpectedSha(spec.archive)
+      await downloadFile(`https://nodejs.org/dist/${MANAGED_NODE_VERSION}/${spec.archive}`, archivePath)
+      const actualSha = sha256File(archivePath)
+      if (actualSha !== expectedSha) {
+        throw new Error(`Checksum mismatch for ${spec.archive}`)
+      }
+      extractArchive(archivePath, extractRoot)
+      if (!fs.existsSync(path.join(extractRoot, spec.root, spec.binary))) {
+        throw new Error(`Node binary missing after extraction: ${path.join(extractRoot, spec.root, spec.binary)}`)
+      }
+    }
+
     fs.mkdirSync(nodeRoot, { recursive: true })
-
-    console.log(`[node-runtime] downloading ${spec.archive}`)
-    const expectedSha = await fetchExpectedSha(spec.archive)
-    await downloadFile(`https://nodejs.org/dist/${MANAGED_NODE_VERSION}/${spec.archive}`, archivePath)
-    const actualSha = sha256File(archivePath)
-    if (actualSha !== expectedSha) {
-      throw new Error(`Checksum mismatch for ${spec.archive}`)
-    }
-
-    extractArchive(archivePath, extractRoot)
-    const extractedRoot = path.join(extractRoot, spec.root)
-    if (!fs.existsSync(path.join(extractedRoot, spec.binary))) {
-      throw new Error(`Node binary missing after extraction: ${path.join(extractedRoot, spec.binary)}`)
-    }
-
-    pruneForRuntime(extractedRoot, runtimeRoot, spec.binary, options.npmOnly)
+    assembleRuntime({ nodeRoot: path.join(extractRoot, spec.root), npmRoot, destinationRoot: runtimeRoot, target,
+      binaryRelativePath: spec.binary, npmOnly: options.npmOnly })
     if (!options.npmOnly && !target.startsWith("win32-")) {
       fs.chmodSync(runtimeBinary, 0o755)
     }
@@ -207,7 +238,10 @@ async function prepareBundledNodeRuntime(options) {
 
 module.exports = {
   MANAGED_NODE_VERSION,
-  pruneForRuntime,
+  assembleRuntime,
+  extractArchive,
+  installedElectronNodeVersion,
+  npmRelativePath,
   prepareBundledNodeRuntime,
   normalizeTarget,
   currentTarget,

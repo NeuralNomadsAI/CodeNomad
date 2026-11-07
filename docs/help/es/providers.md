@@ -5,7 +5,7 @@ La autenticación de proveedores pertenece al servicio OpenCode conectado, no al
 ## Conectar un proveedor de modelos o búsqueda {#connect}
 
 1. Abre un espacio de trabajo y después **Configuración → Proveedores**. **Modelos** empieza expandido; expande **Búsqueda web** para los proveedores de búsqueda. **Imágenes** reúne los ajustes de imágenes.
-2. En ese grupo, elige **Seleccionar proveedor** y después **Conectar**.
+2. En ese grupo, elige **Seleccionar proveedor** y después **Conectar**. Para un proveedor de modelos que ya aparece en la lista, usa **Añadir cuenta** (+) en su fila, también para su primera conexión.
 3. Para un proveedor de modelos, completa el **Método de autenticación** nativo ofrecido: clave API, OAuth o comando. Para OAuth, usa **Abrir página de autorización** y envía un código de autorización solo cuando se solicite. Los proveedores de búsqueda se conectan con una clave API.
 4. Comprueba la fila del proveedor configurado al terminar. **Modelos** vuelve a leer tras las conexiones, los cambios de cuenta y las reconexiones; **Búsqueda web** también tiene **Actualizar**.
 
@@ -28,7 +28,7 @@ Con varias credenciales guardadas en una integración compatible, **Seleccionar 
 | Integración elegible | Tipo de cuenta elegible |
 | --- | --- |
 | OpenAI / Codex | Cuentas de suscripción OAuth de Codex por navegador/dispositivo, no claves de pago por uso de OpenAI ni el método de inicio de sesión de ChatGPT cuyo uso OpenAI no proporciona. |
-| OpenCode Go | Clave Go o inicio de sesión/clave de OpenCode Console usados **solo para el proveedor Go**, no créditos Zen de pago por uso. |
+| OpenCode Go | Clave Go o inicio de sesión/clave de OpenCode Console usados **solo para el proveedor Go**; los modelos de pago de Console siguen siendo manuales. |
 | Anthropic | Inicio de sesión OAuth de Claude Pro/Max de OpenCode, **no** el inicio de sesión de Claude Code. |
 | GitHub Copilot | OAuth con cuota legible de solicitudes premium; las credenciales de endpoint empresarial no son candidatas legibles. |
 | Planes de programación | Basados en claves: `zai-coding-plan`, `zhipuai-coding-plan`, `kimi-for-coding`, `minimax-coding-plan`, `minimax-cn-coding-plan`. |
@@ -50,13 +50,25 @@ La visibilidad y los favoritos organizan los selectores de CodeNomad; no desinst
 
 Usa **Uso** en el panel derecho para ver los periodos del plan del proveedor de la conversación activa, sus horas de reinicio y los saldos compatibles. Estas lecturas del proveedor difieren de los **Tokens** por mensaje y las estimaciones de coste: una cuota de suscripción no es una factura calculada a partir de la transcripción visible. Una lectura ausente, obsoleta o desconocida no equivale a uso cero ni demuestra capacidad restante. **Saldo de créditos del proveedor** en **Configuración → Avanzado** controla la visualización complementaria del saldo.
 
-Para los modelos gratuitos de OpenCode Zen, **Uso** estima el consumo con los pasos registrados por este servicio desde las 00:00 UTC, sobre una base supuesta de 200 solicitudes/día y un reinicio estimado a la siguiente medianoche UTC. Los pasos aproximan las solicitudes; otro tráfico y los límites variables por IP pueden diferir del uso real de la cuota.
+Para las conexiones de Google que usan el método de autenticación Gemini CLI de OpenCode, **Uso** muestra límites por modelo; para las conexiones de Antigravity, muestra los límites **5 horas** y **Semanal**, con cuotas separadas por familia de modelos cuando se proporcionan. Si la cuota no está disponible, aparece «El uso no está disponible temporalmente.». La selección de estas cuentas sigue siendo manual.
+
+Las [preguntas frecuentes de Antigravity](https://antigravity.google/docs/faq/) de Google indican que usar software de terceros con un inicio de sesión de Antigravity infringe sus condiciones y puede provocar la suspensión o cancelación de la cuenta.
+
+Para los modelos de pago de la integración `opencode`, **OpenCode Console** muestra **Solicitudes** para **Hoy (UTC)**, **7 días (UTC)** y **30 días (UTC)**. Son periodos de días naturales UTC que incluyen hoy y comienzan a las 00:00 UTC de hoy, de hace seis días y de hace 29 días, respectivamente. **Solicitudes por modelo · 30 días** indica cada modelo y su proveedor. Los contadores corresponden a la cuenta de Console conectada y usan el formato numérico del idioma de la aplicación. **Presupuestos de cuentas de servicio** muestra **Presupuestos no disponibles.** OpenCode Go usa su propio lector de cuota.
+
+El lector usa la clave API `opencode` guardada o, preferentemente, su conexión OAuth de Console. OAuth requiere `https://opencode.ai/console` y el ID de organización de la conexión; el acceso a Console necesita el permiso **Usage › Read**. CodeNomad nunca renueva estas credenciales. Una conexión OAuth no válida o caducada debe repararse mediante su propietario, aunque también haya una clave API guardada.
+
+Los errores de Console distinguen conexión ausente, credenciales no válidas o caducadas (401), acceso denegado (403), respuesta de uso no válida y fallo de red. Para errores de conexión, abre **Configuración → Proveedores**, comprueba el inicio de sesión y sus permisos y actualiza **Uso**. Si falla un resumen o una página de modelos, toda la lectura de Console queda no disponible.
+
+Para los modelos gratuitos de OpenCode (`big-pickle` e IDs terminados en `-free`), **Uso** muestra **Estimado**: los pasos registrados por este servicio desde las 00:00 UTC frente a una referencia de 200 solicitudes/día, con reinicio estimado en la siguiente medianoche UTC. Los pasos aproximan las solicitudes; el tráfico de otros clientes y los límites variables por IP pueden diferir de la cuota real. Un fallo de cuota en un paso gratuito marca todos los modelos gratuitos de esa conexión OpenCode como **Agotado** hasta las 00:00 UTC. El indicador muestra 100 % y conserva el contador conocido; un contador desconocido sigue siendo desconocido. La marca se guarda en memoria del backend por conexión y se borra al reiniciar.
+
+La calibración de la estimación gratuita con Console está implementada pero desactivada hasta verificar que Console cuenta solicitudes gratuitas en el ámbito correspondiente. La estimación, la marca de agotamiento y los contadores de pago de Console son solo informativos; la selección automática de cuenta usa sus propios lectores de cuota y reglas.
 
 OpenAI no proporciona datos de uso para uno de los métodos de inicio de sesión de ChatGPT: Uso lo indica en lugar de mostrar periodos de cuota. Elija [Ver uso de ChatGPT](https://chatgpt.com/settings/usage) para consultar el uso de las aplicaciones y gestionar su acceso a su plan y créditos en ChatGPT. Chatear sigue funcionando, y volver a conectar el mismo inicio de sesión no restaura la lectura.
 
-Uso sigue la credencial nativa seleccionada. Claude mediante `anthropic`/`claude` usa el OAuth de Anthropic de OpenCode. El proveedor **Claude Agent** de OpenCode (`claude-agent`) y el proveedor `claude-code` usan el inicio de sesión de Claude Code en el equipo del daemon, incluida su distribución WSL: `CLAUDE_CODE_OAUTH_TOKEN`, después el inicio de sesión almacenado, con `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` o `~/.claude` determinando el almacenamiento de archivos; macOS local puede usar el Llavero. CodeNomad no sustituye un inicio de sesión de Claude por el otro.
+Las fuentes de credenciales para Uso dependen del proveedor. Claude mediante `anthropic`/`claude` usa el OAuth de Anthropic de OpenCode. El proveedor **Claude Agent** de OpenCode (`claude-agent`) y el proveedor `claude-code` usan el inicio de sesión de Claude Code en el equipo del daemon, incluida su distribución WSL: `CLAUDE_CODE_OAUTH_TOKEN`, después el inicio de sesión almacenado, con `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` o `~/.claude` determinando el almacenamiento de archivos; macOS local puede usar el Llavero. CodeNomad no sustituye un inicio de sesión de Claude por el otro.
 
-Si caduca el inicio de sesión de un proveedor, actualiza/inicia sesión mediante su propietario —OpenCode, Claude Code o Codex CLI— y actualiza después CodeNomad. CodeNomad no intercambia tokens de actualización de propietarios externos. La caducidad del inicio de sesión del servidor CodeNomad es independiente: reconecta/inicia sesión en CodeNomad sin suponer que una solicitud fallida del proveedor se reenviará. Consulta [Solución de problemas](troubleshooting.md).
+Los lectores de uso pueden renovar tokens de acceso solo en la memoria del servidor y solo para proveedores cuyo token de actualización permanece estable en cada uso, incluidos Gemini CLI y Antigravity. OpenCode conserva el control de la conexión guardada. Para otros inicios de sesión de proveedores caducados, actualiza/inicia sesión mediante su propietario —OpenCode, Claude Code o Codex CLI— y actualiza después CodeNomad. La caducidad del inicio de sesión del servidor CodeNomad es independiente: reconecta/inicia sesión en CodeNomad sin suponer que una solicitud fallida del proveedor se reenviará. Consulta [Solución de problemas](troubleshooting.md).
 
 Cuando MiniMax responde correctamente sin proporcionar límites, **Uso** muestra **MiniMax no comparte sus límites** en lugar de los valores de cuota.
 

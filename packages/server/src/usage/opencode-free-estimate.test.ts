@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { estimateOpenCodeFreeUsage, isOpenCodeFreeModel, openCodeFreeWindow } from "./opencode-free-estimate"
 
-test("only OpenCode Zen free models are estimated", () => {
+test("only OpenCode Console free models are estimated", () => {
   assert.equal(isOpenCodeFreeModel("opencode", "big-pickle"), true)
   assert.equal(isOpenCodeFreeModel("opencode", "deepseek-v4-flash-free"), true)
   assert.equal(isOpenCodeFreeModel("opencode", "claude-sonnet-4"), false)
@@ -22,6 +22,7 @@ test("the estimate sums every free model since 00:00 UTC and resets at the next 
   const stats = { models: [model("opencode", "big-pickle", 30), model("opencode", "x-free", 20), model("opencode", "paid", 99), model("other", "y-free", 50)] }
   const usage = estimateOpenCodeFreeUsage(stats, "opencode", "x-free", now)
   assert.equal(usage.estimated, true)
+  assert.equal(usage.providerName, "OpenCode Console")
   assert.deepEqual(usage.windows.daily, { usedPercent: 25, remainingPercent: 75, windowSeconds: 86_400, resetAt: window.resetAt, valueLabel: "50 / 200" })
   stats.models.push(model("opencode", "big-pickle", 500))
   assert.equal(estimateOpenCodeFreeUsage(stats, "opencode", "x-free", now).windows.daily.usedPercent, 100)

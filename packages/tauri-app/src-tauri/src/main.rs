@@ -18,6 +18,8 @@ mod launch;
 #[cfg(target_os = "linux")]
 mod linux_tls;
 mod local_windows;
+#[cfg(target_os = "macos")]
+mod macos_relaunch;
 mod managed_node;
 mod menu_bar;
 mod menu_labels;
@@ -42,6 +44,8 @@ mod window_zoom;
 mod windows_browser_accelerators;
 #[cfg(windows)]
 mod windows_notification_identity;
+#[cfg(windows)]
+mod windows_session_end;
 mod workspace_open;
 
 use cli_manager::{CliProcessManager, CliStatus};
@@ -2015,6 +2019,9 @@ fn main() {
             preferences_window::preferences_accept_request,
             preferences_window::preferences_resolve_transition,
             preferences_window::preferences_opener_startup_state,
+            preferences_window::memory_cleanup::preferences_memory_cleanup,
+            preferences_window::memory_cleanup::memory_cleanup_result,
+            preferences_window::memory_cleanup::memory_cleanup_claim,
             window_control,
             window_zoom::owned_webview_zoom,
             popup_titlebar_menu,
@@ -2214,6 +2221,10 @@ fn main() {
             }
             #[cfg(target_os = "linux")]
             tauri::RunEvent::Exit => appimage_exit::stop_mounted_children(),
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Exit if shutdown::restart_on_exit() => {
+                macos_relaunch::relaunch_and_exit(&app_handle)
+            }
             tauri::RunEvent::WindowEvent {
                 label,
                 event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Enter { paths, .. }),

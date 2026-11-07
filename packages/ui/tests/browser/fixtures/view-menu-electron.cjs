@@ -44,17 +44,18 @@ app.whenReady().then(() => {
     focus(index) { focused = index === null ? nonLocal : windows[index]; if (index !== null) mru = focused; app.emit("browser-window-focus", {}, focused) },
     blur() { focused = null; app.emit("browser-window-blur", {}, mru) },
     clear(index) { clearWorkspaceMenuWindow(windows[index].webContents.id) },
+    // Menu items are native objects: their properties are the state the native menu model shows.
     snapshot() {
       const menu = Menu.getApplicationMenu().getMenuItemById("menu-view").submenu
-      return menu.items.filter(item => item.id?.startsWith("view-")).map(item => {
-        const index = menu.getIndexOfCommandId(item.commandId)
-        return { id: item.id, label: menu.getLabelAt(index), checked: menu.isItemCheckedAt(index), enabled: menu.isEnabledAt(index) }
-      })
+      return menu.items.filter(item => item.id?.startsWith("view-") && menu.getIndexOfCommandId(item.commandId) >= 0)
+        .map(item => ({ id: item.id, label: item.label, checked: item.checked, enabled: item.enabled }))
     },
     workspaceEnabled() {
       const menu = Menu.getApplicationMenu().getMenuItemById("menu-file").submenu
-      return ["open-workspace-folder", "open-workspace-terminal", "open-workspace-editor"].map(id =>
-        menu.isEnabledAt(menu.getIndexOfCommandId(menu.getMenuItemById(id).commandId)))
+      return ["open-workspace-folder", "open-workspace-terminal", "open-workspace-editor"].map(id => {
+        const item = menu.getMenuItemById(id)
+        return menu.getIndexOfCommandId(item.commandId) >= 0 && item.enabled
+      })
     },
     helpLabels() { return Menu.getApplicationMenu().getMenuItemById("menu-help").submenu.items.map(item => item.label) },
     titlebarHelp() {

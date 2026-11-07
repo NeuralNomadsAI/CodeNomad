@@ -5,7 +5,7 @@ Provider authentication belongs to the connected OpenCode service, not to the br
 ## Connect a model or search provider {#connect}
 
 1. Open a workspace, then **Settings → Providers**. **Models** starts expanded; expand **Web search** for search providers. **Images** holds the image settings.
-2. In that group, choose **Select provider**, then **Connect**.
+2. In that group, choose **Select provider**, then **Connect**. For a model provider already listed below, use **Add account** (+) in its row, including for its first connection.
 3. For a model provider, complete the native **Authentication method** offered: API key, OAuth or command. For OAuth, use **Open authorization page** and submit an authorization code only when requested. Search providers connect with an API key.
 4. Check the configured-provider row after completion. **Models** rereads after connections, account changes and reconnects; **Web search** also has **Refresh**.
 
@@ -28,7 +28,7 @@ With multiple saved credentials on a supported integration, **Auto-select accoun
 | Eligible integration | Eligible account type |
 | --- | --- |
 | OpenAI / Codex | Codex browser/device OAuth subscription accounts, not OpenAI pay-as-you-go keys or the ChatGPT sign-in method whose usage OpenAI does not provide. |
-| OpenCode Go | Go key, or OpenCode Console sign-in/key used for the **Go provider only**, not Zen pay-as-you-go credits. |
+| OpenCode Go | Go key, or OpenCode Console sign-in/key used for the **Go provider only**; paid Console models stay manual. |
 | Anthropic | OpenCode's Claude Pro/Max OAuth login, **not** the Claude Code login. |
 | GitHub Copilot | OAuth with readable premium-request quota; enterprise-endpoint credentials are not readable candidates. |
 | Coding plans | Key-based `zai-coding-plan`, `zhipuai-coding-plan`, `kimi-for-coding`, `minimax-coding-plan`, `minimax-cn-coding-plan`. |
@@ -50,13 +50,25 @@ Visibility and favorites organize CodeNomad's selectors; they do not uninstall m
 
 Use **Usage** in the right panel for the active conversation's provider-plan windows, reset times and supported balances. These provider readings are different from per-message **Tokens** and cost estimates: a subscription quota is not a bill calculated from the visible transcript. A missing, stale or unknown reading is not zero usage or proof of remaining capacity. **Provider credit balance** in **Settings → Advanced** controls supplemental balance display.
 
-For free OpenCode Zen models, **Usage** estimates consumption from this service's recorded steps since 00:00 UTC, using an assumed reference of 200 requests/day and the next UTC midnight as an estimated reset. Steps approximate requests; other traffic and changing IP-based limits can make the estimate differ from actual quota usage.
+For Google connections using OpenCode's Gemini CLI authentication method, **Usage** shows per-model limits; for Antigravity connections, it shows **5 hours** and **Weekly** limits, with separate model-family pools where supplied. Unavailable quota shows “Usage is temporarily unavailable.” These connections stay under manual account selection.
+
+Google's [Antigravity FAQ](https://antigravity.google/docs/faq/) states that using third-party software with an Antigravity login violates its terms and may lead to account suspension or termination.
+
+For paid models on the `opencode` integration, **OpenCode Console** shows **Requests** for **Today (UTC)**, **7 days (UTC)** and **30 days (UTC)**. These are UTC calendar windows including today, beginning at 00:00 UTC today, six days ago and 29 days ago respectively. **Requests by model · 30 days** lists each model with its provider. Counts follow the connected Console account and use your app language's number formatting. **Service account budgets** shows **Budgets unavailable.** OpenCode Go uses its own quota reader.
+
+The reader uses the saved `opencode` API key or, preferentially, its OAuth Console connection. OAuth requires `https://opencode.ai/console` and the connection's organization ID; Console access needs the **Usage › Read** permission. CodeNomad never refreshes these credentials. An invalid or expired OAuth connection must be repaired through its owner, even when an API key is also saved.
+
+Console errors distinguish a missing connection, invalid or expired credentials (401), access denied (403), an invalid usage response, and network failure. For connection errors, use **Settings → Providers** to check the login and its permissions, then refresh **Usage**. A failed summary or model page makes the entire Console reading unavailable.
+
+For free OpenCode models (`big-pickle` and model IDs ending in `-free`), **Usage** shows **Estimated**: this service's recorded steps since 00:00 UTC against a reference of 200 requests/day, with an estimated reset at the next UTC midnight. Steps approximate requests; other clients' traffic and variable IP-based limits can make the actual quota differ. A quota failure on a free-model step marks all free models on that OpenCode connection **Exhausted** until 00:00 UTC. The gauge shows 100% while the known count stays unchanged; an unknown count stays unknown. The mark lives in backend memory per connection and clears on restart.
+
+Console calibration of the free estimate is implemented but disabled pending verification that Console counts free requests in the matching scope. The free estimate, exhaustion mark and paid Console counters are display-only; automatic account selection uses its separate quota readers and rules.
 
 OpenAI does not provide usage for one ChatGPT sign-in method: Usage says so instead of showing quota windows. Choose [View ChatGPT usage](https://chatgpt.com/settings/usage) to review app usage and manage access to your plan and credits in ChatGPT. Chatting still works, and reconnecting the same login does not restore the reading.
 
-Usage follows the selected native credential. Claude through `anthropic`/`claude` uses OpenCode's Anthropic OAuth. OpenCode's **Claude Agent** provider (`claude-agent`) and the `claude-code` provider use the Claude Code login on the daemon's host, including its WSL distribution: `CLAUDE_CODE_OAUTH_TOKEN`, then the stored login, with `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` or `~/.claude` determining file storage; local macOS can use Keychain. CodeNomad does not substitute one Claude login for the other.
+Usage credential sources depend on the provider. Claude through `anthropic`/`claude` uses OpenCode's Anthropic OAuth. OpenCode's **Claude Agent** provider (`claude-agent`) and the `claude-code` provider use the Claude Code login on the daemon's host, including its WSL distribution: `CLAUDE_CODE_OAUTH_TOKEN`, then the stored login, with `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` or `~/.claude` determining file storage; local macOS can use Keychain. CodeNomad does not substitute one Claude login for the other.
 
-For an expired provider login, refresh/sign in through its owner—OpenCode, Claude Code or Codex CLI—then refresh CodeNomad. CodeNomad does not exchange externally owned refresh tokens. A CodeNomad server-login expiry is separate: reconnect/sign in to CodeNomad without assuming a failed provider request will be resent. See [Troubleshooting](troubleshooting.md).
+Usage readers may refresh access tokens only in server memory and only for providers whose refresh token stays stable on each use, including Gemini CLI and Antigravity. OpenCode retains ownership of the saved connection. For other expired provider logins, refresh/sign in through their owner—OpenCode, Claude Code or Codex CLI—then refresh CodeNomad. A CodeNomad server-login expiry is separate: reconnect/sign in to CodeNomad without assuming a failed provider request will be resent. See [Troubleshooting](troubleshooting.md).
 
 When MiniMax successfully returns no limits, **Usage** shows **MiniMax doesn't share its limits** in place of quota values.
 

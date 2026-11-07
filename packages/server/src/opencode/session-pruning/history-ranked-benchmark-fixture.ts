@@ -44,7 +44,7 @@ export function instrumentRankedScan(db: DatabaseSync) {
     }
     if (sql.includes("AS mask")) {
       const iterate = statement.iterate.bind(statement)
-      statement.iterate = function* (...params) {
+      statement.iterate = function* (...params): Generator<any, undefined> {
         if (!began) began = performance.now()
         if (!stats.plan.length) stats.plan = prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params as any[]).map(row => String(row.detail))
         stats.chunks++

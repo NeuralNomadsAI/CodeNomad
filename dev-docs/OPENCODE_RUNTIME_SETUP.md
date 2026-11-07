@@ -58,7 +58,15 @@ keeps PATH priority and the automatic npm updater never overwrites it.
 
 Default host installation runs the backend's npm (bundled in Electron's resources
 for its integrated Node, beside Tauri's bundled Node, or beside a standalone server's
-own Node) to run a standard global npm installation of `@opencode/cli`. Existing writable npm installations on PATH are
+own Node) to run a standard global npm installation of `@opencode/cli`. Both desktop
+hosts bundle the npm release pinned in `.npm-version` (`dev-docs/RUNTIME_MAINTENANCE.md`);
+a standalone server uses the npm installed with its Node. npm blocks dependency install
+scripts unless its `allow-scripts` policy lists them (the default from npm 12), and the
+package's postinstall links the platform executable. CodeNomad's global installation
+therefore allows exactly the `@opencode/cli@<version>` it installs:
+`--allow-scripts` on direct npm, `npm_config_allow_scripts` (with inherited values
+removed) for the npm a native upgrade runs. The platform packages have no install
+scripts. Never enable all scripts or write an npmrc for this. Existing writable npm installations on PATH are
 reused after verifying their manifest and launcher identity; standalone/curl,
 Homebrew and custom installations remain user-managed. With no PATH installation,
 the user prefix is `%APPDATA%/npm` on Windows and `~/.local` on POSIX, or an explicit
@@ -341,8 +349,9 @@ fully and never discard unknown fields or relax history checks.
   input.
 - Catalogs update through resource-specific events. `session.message.content.updated`
   is replay-only (never published live), so live invalidation ignores it.
-- Pruning preview stays query-only and TUI refresh synchronization stays in
-  place: the plugin API has no `session.message`, and publication can race.
+- Pruning preview stays query-only, and the CodeNomad transcript invalidates and
+  rereads after a prune: the plugin API has no `session.message`, and publication
+  can race.
 - Keep these older-identity authority checks; the synthetic migration seed alone
   never justifies removing them.
 
